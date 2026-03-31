@@ -116,7 +116,12 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         }
 
         binding.downloadE2bButton.setOnClickListener {
-            runModelAction(ModelFileManager.LocalModel.E2B, true)
+            val model = ModelFileManager.LocalModel.E2B
+            if (binding.downloadE2bButton.tag?.toString()?.contains("cancel_mode") == true) {
+                ModelDownloadWorker.cancel(requireContext(), model)
+            } else {
+                runModelAction(model, true)
+            }
         }
         binding.e2bAccessButton.setOnClickListener {
             openHfModelAccessPage(ModelFileManager.LocalModel.E2B)
@@ -125,7 +130,12 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             runModelAction(ModelFileManager.LocalModel.E2B, false)
         }
         binding.downloadE4bButton.setOnClickListener {
-            runModelAction(ModelFileManager.LocalModel.E4B, true)
+            val model = ModelFileManager.LocalModel.E4B
+            if (binding.downloadE4bButton.tag?.toString()?.contains("cancel_mode") == true) {
+                ModelDownloadWorker.cancel(requireContext(), model)
+            } else {
+                runModelAction(model, true)
+            }
         }
         binding.e4bAccessButton.setOnClickListener {
             openHfModelAccessPage(ModelFileManager.LocalModel.E4B)
@@ -285,6 +295,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             showProgress(model, true)
             setStatus(model, "ダウンロード待機中")
             ModelDownloadWorker.enqueue(requireContext(), model)
+            // 進捗監視を開始
+            observeDownloadWork(model)
             Toast.makeText(requireContext(), "バックグラウンドでダウンロードを開始しました", Toast.LENGTH_SHORT).show()
             return
         }
@@ -332,6 +344,22 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         }
     }
 
+    private fun setCancelMode(model: ModelFileManager.LocalModel, isCancelMode: Boolean) {
+        val downloadButton = when (model) {
+            ModelFileManager.LocalModel.E2B -> binding.downloadE2bButton
+            ModelFileManager.LocalModel.E4B -> binding.downloadE4bButton
+        }
+
+        downloadButton.isEnabled = true
+        if (isCancelMode) {
+            downloadButton.text = "キャンセル"
+            downloadButton.tag = "cancel_mode_${model.name}"
+        } else {
+            downloadButton.text = "ダウンロード"
+            downloadButton.tag = "download_mode_${model.name}"
+        }
+    }
+
     private fun showProgress(model: ModelFileManager.LocalModel, visible: Boolean) {
         val progressBar = when (model) {
             ModelFileManager.LocalModel.E2B -> binding.e2bDownloadProgress
@@ -350,7 +378,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         }
     }
 
-    private fun updateProgress(model: ModelFileManager.LocalModel, downloaded: Long, total: Long) {
+    private fun updateProgress(model: ModelFileManager.LocalModel, downloaded: Long, total: Long, speedMbps: Double = 0.0, remainingSec: Double = 0.0) {
         val progressBar = when (model) {
             ModelFileManager.LocalModel.E2B -> binding.e2bDownloadProgress
             ModelFileManager.LocalModel.E4B -> binding.e4bDownloadProgress
@@ -364,7 +392,20 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             progressBar.isIndeterminate = false
             progressBar.max = 1000
             progressBar.progress = ((downloaded * 1000L) / total).toInt()
-            text.text = "${formatGb(downloaded)} / ${formatGb(total)}"
+            
+            val speedStr = String.format(Locale.US, "%.1f MB/s", speedMbps)
+            val remainingStr = if (remainingSec > 0) {
+                String.format(Locale.US, "残り %d 秒", remainingSec.toLong())
+            } else {
+                ""
+            }
+            val details = listOfNotNull(
+                "${formatGb(downloaded)} / ${formatGb(total)}",
+                if (speedMbps > 0) speedStr else null,
+                if (remainingSec > 0) remainingStr else null
+            ).joinToString(" | ")
+            
+            text.text = details
         } else {
             progressBar.isIndeterminate = true
             text.text = "${formatGb(downloaded)} / ? GB"
@@ -410,11 +451,15 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             WorkInfo.State.BLOCKED -> {
                 setAccessButtonVisible(model, false)
                 setModelButtonsEnabled(model, false)
+                setCancelMode(model, true)
                 showProgress(model, true)
                 val downloaded = workInfo.progress.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, -1L)
                 val total = workInfo.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, -1L)
+                val speedMbps = workInfo.progress.getDouble(ModelDownloadWorker.KEY_SPEED_MBPS, 0.0)
+                val remainingSec = workInfo.progress.getDouble(ModelDownloadWorker.KEY_ESTIMATED_REMAINING_SEC, 0.0)
+                
                 if (downloaded >= 0L) {
-                    updateProgress(model, downloaded, total)
+                    updateProgress(model, downloaded, total, speedMbps, remainingSec)
                     if (total > 0L) {
                         val percent = ((downloaded * 100L) / total).toInt()
                         setStatus(model, "ダウンロード中 ${percent}%")
@@ -428,12 +473,14 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             WorkInfo.State.SUCCEEDED -> {
                 setAccessButtonVisible(model, false)
                 setModelButtonsEnabled(model, true)
+                setCancelMode(model, false)
                 showProgress(model, false)
                 refreshStatus()
                 notifyOnce(model, workInfo, "ダウンロード完了")
             }
             WorkInfo.State.FAILED -> {
                 setModelButtonsEnabled(model, true)
+                setCancelMode(model, false)
                 showProgress(model, false)
                 refreshStatus()
                 val error = workInfo.outputData.getString(ModelDownloadWorker.KEY_ERROR_MESSAGE)
@@ -445,6 +492,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             WorkInfo.State.CANCELLED -> {
                 setAccessButtonVisible(model, false)
                 setModelButtonsEnabled(model, true)
+                setCancelMode(model, false)
                 showProgress(model, false)
                 refreshStatus()
                 if (!ModelFileManager.isDownloaded(requireContext(), model)) {

@@ -2,10 +2,13 @@ package com.nezumi_ai.data.inference
 
 import android.content.Context
 import android.net.Uri
+import android.os.StatFs
 import android.provider.OpenableColumns
+import android.util.Log
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
 object ModelFileManager {
 
@@ -14,6 +17,7 @@ object ModelFileManager {
         E4B
     }
 
+    private const val TAG = "ModelFileManager"
     private const val E2B_FILENAME = "gemma-3n-e2b.task"
     private const val E4B_FILENAME = "gemma-3n-e4b.task"
 
@@ -21,6 +25,11 @@ object ModelFileManager {
         "https://huggingface.co/google/gemma-3n-E2B-it-litert-preview/resolve/main/gemma-3n-E2B-it-int4.task"
     private const val E4B_HF_URL =
         "https://huggingface.co/google/gemma-3n-E4B-it-litert-preview/resolve/main/gemma-3n-E4B-it-int4.task"
+
+    private const val MAX_RETRIES = 3
+    private const val RETRY_DELAY_MS = 2000L
+    private const val MIN_FREE_DISK_BYTES = 100 * 1024 * 1024 // 100MB
+    private const val BUFFER_SIZE = 32 * 1024 // 32KB buffer
 
     data class ImportedTaskModel(
         val name: String,
@@ -103,6 +112,10 @@ object ModelFileManager {
         val tmpFile = File("${file.absolutePath}.download")
         val legacyE2B = File(file.parentFile, "gemma-3n-e2b.litertlm")
         val legacyE2BTmp = File("${legacyE2B.absolutePath}.download")
+        
+        // クリーンアップ一時ファイル
+        cleanupTempFiles(file)
+        
         val deletedMain = !file.exists() || file.delete()
         val deletedTmp = !tmpFile.exists() || tmpFile.delete()
         val deletedLegacyMain = model != LocalModel.E2B || !legacyE2B.exists() || legacyE2B.delete()
@@ -116,17 +129,69 @@ object ModelFileManager {
         onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null
     ): Result<File> {
         val file = modelFile(context, model)
-        if (file.exists()) return Result.success(file)
+        if (file.exists() && file.length() > 0) {
+            Log.d(TAG, "Model file already exists: ${file.absolutePath}")
+            return Result.success(file)
+        }
 
         val url = when (model) {
             LocalModel.E2B -> E2B_HF_URL
             LocalModel.E4B -> E4B_HF_URL
         }
 
-        return runCatching {
-            downloadFile(context, url, file, onProgress)
-            file
+        return try {
+            // ディスク容量チェック
+            val requiredSpace = getContentLength(url, HfAuthManager.getToken(context))
+            if (!hasEnoughSpace(file, requiredSpace)) {
+                return Result.failure(
+                    IllegalStateException(
+                        "ディスク容量不足です。${requiredSpace / (1024 * 1024)}MB以上の空き容量が必要です"
+                    )
+                )
+            }
+
+            downloadFileWithRetry(context, url, file, onProgress)
+            
+            // ファイル検証
+            if (!file.exists() || file.length() == 0L) {
+                cleanupTempFiles(file)
+                return Result.failure(IllegalStateException("ダウンロードファイルが空です"))
+            }
+            
+            Log.d(TAG, "Model download completed: ${file.absolutePath} (${file.length()} bytes)")
+            Result.success(file)
+        } catch (e: Exception) {
+            Log.e(TAG, "Download failed", e)
+            cleanupTempFiles(file)
+            Result.failure(e)
         }
+    }
+
+    private fun downloadFileWithRetry(
+        context: Context,
+        urlString: String,
+        outFile: File,
+        onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)?
+    ) {
+        var lastException: Exception? = null
+        
+        repeat(MAX_RETRIES) { attempt ->
+            try {
+                Log.d(TAG, "Download attempt ${attempt + 1}/$MAX_RETRIES: $urlString")
+                downloadFile(context, urlString, outFile, onProgress)
+                return // 成功時はリターン
+            } catch (e: Exception) {
+                lastException = e
+                Log.w(TAG, "Attempt ${attempt + 1} failed: ${e.message}")
+                
+                if (attempt < MAX_RETRIES - 1) {
+                    // リトライ待機
+                    Thread.sleep(RETRY_DELAY_MS)
+                }
+            }
+        }
+        
+        throw lastException ?: Exception("Download failed after $MAX_RETRIES attempts")
     }
 
     private fun downloadFile(
@@ -136,9 +201,12 @@ object ModelFileManager {
         onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)?
     ) {
         val tmpFile = File("${outFile.absolutePath}.download")
+        tmpFile.parentFile?.mkdirs()
+        
+        // 既存の不完全な一時ファイルをクリア
         if (tmpFile.exists()) tmpFile.delete()
+        
         val token = HfAuthManager.getToken(context)
-
         val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
             connectTimeout = 30_000
             readTimeout = 60_000
@@ -150,39 +218,102 @@ object ModelFileManager {
             }
         }
 
-        connection.connect()
-        val code = connection.responseCode
-        if (code !in 200..299) {
-            connection.disconnect()
-            val message = when (code) {
-                401 -> "Download failed (HTTP 401). Hugging Faceのライセンス同意後、HF token (hf_xxx) を設定してください。"
-                403 -> "Download failed (HTTP 403). gemma規約を見て承認してください。"
-                else -> "Download failed (HTTP $code)."
+        try {
+            connection.connect()
+            val code = connection.responseCode
+            if (code !in 200..299) {
+                connection.disconnect()
+                val message = when (code) {
+                    401 -> "Download failed (HTTP 401). Hugging Faceのライセンス同意後、HF token (hf_xxx) を設定してください。"
+                    403 -> "Download failed (HTTP 403). gemma規約を見て承認してください。"
+                    else -> "Download failed (HTTP $code)."
+                }
+                throw IllegalStateException(message)
             }
-            throw IllegalStateException(message)
-        }
 
-        val totalBytes = connection.contentLengthLong
-        onProgress?.invoke(0L, totalBytes)
+            val totalBytes = connection.contentLengthLong
+            if (totalBytes <= 0) {
+                throw IllegalStateException("Cannot determine file size")
+            }
+            
+            onProgress?.invoke(0L, totalBytes)
+            Log.d(TAG, "Downloading: $totalBytes bytes")
 
-        connection.inputStream.use { input ->
-            tmpFile.outputStream().use { output ->
-                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                var read: Int
-                var downloaded = 0L
-                while (input.read(buffer).also { read = it } >= 0) {
-                    if (read == 0) continue
-                    output.write(buffer, 0, read)
-                    downloaded += read
-                    onProgress?.invoke(downloaded, totalBytes)
+            connection.inputStream.use { input ->
+                tmpFile.outputStream().use { output ->
+                    val buffer = ByteArray(BUFFER_SIZE)
+                    var read: Int
+                    var downloaded = 0L
+                    
+                    while (input.read(buffer).also { read = it } > 0) {
+                        output.write(buffer, 0, read)
+                        downloaded += read
+                        onProgress?.invoke(downloaded, totalBytes)
+                        
+                        // タイムアウト検出
+                        if (downloaded > totalBytes * 1.1) {
+                            throw IllegalStateException("Downloaded more than expected")
+                        }
+                    }
                 }
             }
-        }
-        connection.disconnect()
 
-        if (outFile.exists()) outFile.delete()
-        if (!tmpFile.renameTo(outFile)) {
-            throw IllegalStateException("Failed to save model file: ${outFile.absolutePath}")
+            // ファイル整合性確認
+            if (tmpFile.length() != totalBytes) {
+                tmpFile.delete()
+                throw IllegalStateException(
+                    "File size mismatch: ${tmpFile.length()} vs $totalBytes"
+                )
+            }
+
+            // ファイルを確定
+            if (outFile.exists()) outFile.delete()
+            if (!tmpFile.renameTo(outFile)) {
+                throw IllegalStateException("Failed to save model file: ${outFile.absolutePath}")
+            }
+            
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun getContentLength(urlString: String, token: String): Long {
+        return try {
+            val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 10_000
+                readTimeout = 10_000
+                requestMethod = "HEAD"
+                setRequestProperty("User-Agent", "nezumi-ai/1.0")
+                if (token.isNotBlank()) {
+                    setRequestProperty("Authorization", "Bearer $token")
+                }
+            }
+            connection.connect()
+            val length = connection.contentLengthLong
+            connection.disconnect()
+            if (length > 0) length else 500 * 1024 * 1024 // デフォルト500MB
+        } catch (e: Exception) {
+            Log.w(TAG, "Cannot determine content length", e)
+            500 * 1024 * 1024 // デフォルト推定500MB
+        }
+    }
+
+    private fun hasEnoughSpace(file: File, requiredBytes: Long): Boolean {
+        val stat = StatFs(file.parentFile?.absolutePath ?: return false)
+        val availableBytes = stat.availableBytes
+        val required = requiredBytes + MIN_FREE_DISK_BYTES
+        return availableBytes >= required
+    }
+
+    private fun cleanupTempFiles(baseFile: File) {
+        try {
+            val tmpFile = File("${baseFile.absolutePath}.download")
+            if (tmpFile.exists()) {
+                tmpFile.delete()
+                Log.d(TAG, "Cleaned up temp file: ${tmpFile.absolutePath}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to cleanup temp files", e)
         }
     }
 

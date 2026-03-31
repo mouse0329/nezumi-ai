@@ -7,6 +7,8 @@ import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
 import com.nezumi_ai.databinding.ActivityMainBinding
+import com.nezumi_ai.utils.PreferencesHelper
+import com.nezumi_ai.utils.WelcomeDialog
 
 class MainActivity : AppCompatActivity() {
 
@@ -26,6 +28,17 @@ class MainActivity : AppCompatActivity() {
             // 起動安定性優先: アプリ固有UIではActionBar/FABを使わない
             binding.toolbar.visibility = android.view.View.GONE
             binding.fab.hide()
+
+            // 初回起動時にウェルカムダイアログを表示
+            if (PreferencesHelper.isFirstLaunch(this)) {
+                try {
+                    val navController = findNavController(R.id.nav_host_fragment_content_main)
+                    WelcomeDialog.show(this, navController)
+                } catch (e: Exception) {
+                    // ナビゲーションコントローラが取得できない場合はダイアログのみ表示
+                    WelcomeDialog.show(this)
+                }
+            }
         } catch (t: Throwable) {
             Log.e(TAG, "Fatal error in onCreate", t)
             throw t
