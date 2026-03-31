@@ -34,6 +34,7 @@ import net.openid.appauth.AuthorizationException
 import net.openid.appauth.AuthorizationResponse
 import net.openid.appauth.AuthorizationService
 import java.util.Locale
+import java.util.UUID
 
 class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
@@ -41,6 +42,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     private val binding get() = _binding!!
     private var authService: AuthorizationService? = null
     private val notifiedDownloadResults = mutableSetOf<String>()
+    private val lastProgressByModel = mutableMapOf<ModelFileManager.LocalModel, DownloadProgressSnapshot>()
+    private val activeWorkIdByModel = mutableMapOf<ModelFileManager.LocalModel, UUID>()
     private lateinit var settingsRepository: SettingsRepository
 
     private val authLauncher =
@@ -438,6 +441,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun renderDownloadState(model: ModelFileManager.LocalModel, workInfo: WorkInfo?) {
         if (workInfo == null) {
+            clearProgressTracking(model)
             setAccessButtonVisible(model, false)
             setModelButtonsEnabled(model, true)
             showProgress(model, false)
@@ -459,9 +463,10 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 val remainingSec = workInfo.progress.getDouble(ModelDownloadWorker.KEY_ESTIMATED_REMAINING_SEC, 0.0)
                 
                 if (downloaded >= 0L) {
-                    updateProgress(model, downloaded, total, speedMbps, remainingSec)
-                    if (total > 0L) {
-                        val percent = ((downloaded * 100L) / total).toInt()
+                    val monotonic = monotonicProgress(model, workInfo.id, downloaded, total)
+                    updateProgress(model, monotonic.downloadedBytes, monotonic.totalBytes, speedMbps, remainingSec)
+                    if (monotonic.totalBytes > 0L) {
+                        val percent = ((monotonic.downloadedBytes * 100L) / monotonic.totalBytes).toInt()
                         setStatus(model, "ダウンロード中 ${percent}%")
                     } else {
                         setStatus(model, "ダウンロード中")
@@ -471,6 +476,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 }
             }
             WorkInfo.State.SUCCEEDED -> {
+                clearProgressTracking(model)
                 setAccessButtonVisible(model, false)
                 setModelButtonsEnabled(model, true)
                 setCancelMode(model, false)
@@ -479,6 +485,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 notifyOnce(model, workInfo, "ダウンロード完了")
             }
             WorkInfo.State.FAILED -> {
+                clearProgressTracking(model)
                 setModelButtonsEnabled(model, true)
                 setCancelMode(model, false)
                 showProgress(model, false)
@@ -490,6 +497,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 notifyOnce(model, workInfo, error)
             }
             WorkInfo.State.CANCELLED -> {
+                clearProgressTracking(model)
                 setAccessButtonVisible(model, false)
                 setModelButtonsEnabled(model, true)
                 setCancelMode(model, false)
@@ -500,6 +508,44 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 }
             }
         }
+    }
+
+    private fun monotonicProgress(
+        model: ModelFileManager.LocalModel,
+        workId: UUID,
+        downloaded: Long,
+        total: Long
+    ): DownloadProgressSnapshot {
+        val previousWorkId = activeWorkIdByModel[model]
+        if (previousWorkId != workId) {
+            activeWorkIdByModel[model] = workId
+            lastProgressByModel.remove(model)
+        }
+
+        val previous = lastProgressByModel[model]
+        val normalizedTotal = if (total > 0L) total else (previous?.totalBytes ?: total)
+        val candidateDownloaded = when {
+            previous == null -> downloaded
+            normalizedTotal > 0L && previous.totalBytes == normalizedTotal ->
+                maxOf(previous.downloadedBytes, downloaded)
+            normalizedTotal <= 0L && previous.totalBytes <= 0L ->
+                maxOf(previous.downloadedBytes, downloaded)
+            else -> downloaded
+        }
+        val normalizedDownloaded = if (normalizedTotal > 0L) {
+            candidateDownloaded.coerceIn(0L, normalizedTotal)
+        } else {
+            candidateDownloaded.coerceAtLeast(0L)
+        }
+
+        return DownloadProgressSnapshot(normalizedDownloaded, normalizedTotal).also {
+            lastProgressByModel[model] = it
+        }
+    }
+
+    private fun clearProgressTracking(model: ModelFileManager.LocalModel) {
+        lastProgressByModel.remove(model)
+        activeWorkIdByModel.remove(model)
     }
 
     private fun setStatus(model: ModelFileManager.LocalModel, text: String) {
@@ -583,4 +629,9 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         super.onDestroyView()
         _binding = null
     }
+
+    private data class DownloadProgressSnapshot(
+        val downloadedBytes: Long,
+        val totalBytes: Long
+    )
 }
