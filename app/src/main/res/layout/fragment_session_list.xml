@@ -1,37 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="@color/bg_session_list">
+    xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:background="@color/bg_session_list">
 
     <!-- Header -->
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="16dp" android:gravity="center_vertical">
 
-        <ImageView
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:src="@drawable/ic_app_icon_96"
-            android:contentDescription="@string/app_name"
-            android:layout_marginEnd="12dp"
-            android:scaleType="centerInside" />
+        <ImageView android:layout_width="32dp" android:layout_height="32dp" android:src="@drawable/ic_app_icon_96" android:contentDescription="@string/app_name" android:layout_marginEnd="12dp" android:scaleType="centerInside" />
 
         <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/app_title_sessions" android:textSize="26sp" android:textStyle="bold" android:textColor="@color/text_primary" />
 
         <ImageButton android:id="@+id/settings_button" android:layout_width="36dp" android:layout_height="36dp" android:layout_marginEnd="10dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/action_settings" android:src="@drawable/settings_24" android:tint="@color/text_primary" />
 
-        <com.google.android.material.floatingactionbutton.FloatingActionButton
-            android:id="@+id/new_session_button"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:contentDescription="@string/new_session"
-            app:fabCustomSize="44dp"
-            app:maxImageSize="22dp"
-            app:srcCompat="@drawable/ic_add"
-            app:backgroundTint="@color/primary"
-            app:tint="@color/white"
-            app:useCompatPadding="false" />
+        <com.google.android.material.floatingactionbutton.FloatingActionButton android:id="@+id/new_session_button" android:layout_width="44dp" android:layout_height="44dp" android:contentDescription="@string/new_session" app:fabCustomSize="44dp" app:maxImageSize="22dp" app:srcCompat="@drawable/ic_add" app:backgroundTint="@color/primary" app:tint="@color/white" app:useCompatPadding="false" />
     </LinearLayout>
 
     <!-- Sessions RecyclerView -->
