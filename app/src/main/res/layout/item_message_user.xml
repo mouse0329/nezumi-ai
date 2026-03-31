@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:gravity="end"
+    android:layout_margin="8dp">
+
+    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="end">
+
+        <TextView android:id="@+id/user_message_text" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="User message" android:textSize="14sp" android:textColor="@color/white" android:background="@drawable/bg_message_user" android:padding="11dp" android:maxWidth="280dp" />
+
+        <TextView android:id="@+id/user_message_time" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="14:25" android:textSize="11sp" android:textColor="@color/text_secondary" android:layout_marginTop="3dp" android:layout_marginEnd="4dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/revoke_prompt_button"
+            style="@style/Widget.Nezumiai.Button.Outlined"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/revoke_prompt"
+            android:textSize="11sp"
+            android:minHeight="0dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            app:cornerRadius="12dp" />
+    </LinearLayout>
+</LinearLayout>
+

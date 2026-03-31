@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Widget.Nezumiai.Button" parent="Widget.Material3.Button">
+        <item name="backgroundTint">@color/nezumi_primary</item>
+        <item name="android:textColor">@color/nezumi_on_primary</item>
+    </style>
+
+    <style name="Widget.Nezumiai.Button.Outlined" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="strokeColor">@color/nezumi_primary</item>
+        <item name="android:textColor">@color/nezumi_primary</item>
+    </style>
+
+    <style name="Widget.Nezumiai.Button.Toggle" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="backgroundTint">@color/backend_toggle_background</item>
+        <item name="strokeColor">@color/backend_toggle_stroke</item>
+        <item name="android:textColor">@color/backend_toggle_text</item>
+    </style>
+</resources>

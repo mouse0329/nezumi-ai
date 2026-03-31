@@ -1,7 +1,14 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Base.Theme.Nezumiai" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your dark theme here. -->
-        <!-- <item name="colorPrimary">@color/my_dark_primary</item> -->
+        <item name="colorPrimary">@color/nezumi_primary</item>
+        <item name="colorOnPrimary">@color/nezumi_on_primary</item>
+        <item name="colorPrimaryContainer">@color/nezumi_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/nezumi_on_primary_container</item>
+        <item name="colorSecondary">@color/nezumi_primary</item>
+        <item name="colorOnSecondary">@color/nezumi_on_primary</item>
+        <item name="colorSurface">@color/white</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="materialButtonStyle">@style/Widget.Nezumiai.Button</item>
     </style>
 </resources>

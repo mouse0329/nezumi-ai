@@ -1,5 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Basic -->
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+
+    <!-- Primary Colors -->
+    <color name="primary">#374151</color>
+    <color name="primary_light">#E5E7EB</color>
+    <color name="accent">#6B7280</color>
+    <color name="nezumi_primary">#374151</color>
+    <color name="nezumi_on_primary">#FFFFFFFF</color>
+    <color name="nezumi_primary_container">#D1D5DB</color>
+    <color name="nezumi_on_primary_container">#111827</color>
+
+    <!-- Text Colors -->
+    <color name="text_primary">#111827</color>
+    <color name="text_secondary">#4B5563</color>
+
+    <!-- Background Colors -->
+    <color name="bg_session_list">#F5F6F8</color>
+    <color name="bg_chat">#F5F6F8</color>
+
+    <!-- Border Colors -->
+    <color name="border">#B6BDC8</color>
 </resources>

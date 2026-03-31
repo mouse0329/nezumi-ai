@@ -1,7 +1,58 @@
 <resources>
-    <string name="app_name">nezumi-ai</string>
-    <string name="action_settings">Settings</string>
-    <!-- Strings used for fragments for navigation -->
+    <string name="app_name">ネズミAI</string>
+    <string name="action_settings">設定</string>
+
+    <!-- MVP Strings -->
+    <string name="app_title_sessions">ネズミAI-チャット</string>
+    <string name="new_session">新規セッション</string>
+    <string name="chat_title">チャット</string>
+    <string name="switch_model">モデル切り替え</string>
+    <string name="enter_message">メッセージを入力...</string>
+    <string name="send">送信</string>
+    <string name="back">戻る</string>
+    <string name="delete">削除</string>
+    <string name="hf_token_title">Hugging Face Token</string>
+    <string name="hf_token_hint">hf_xxx を入力</string>
+    <string name="hf_token_save">トークン保存</string>
+    <string name="hf_auth_not_linked">OAuth未連携</string>
+    <string name="hf_auth_linked">OAuth連携済み</string>
+    <string name="hf_oauth_login">HF🤗でログイン</string>
+    <string name="hf_oauth_logout">ログアウト</string>
+    <string name="model_dropdown_hint">モデル</string>
+    <string name="model_e2b_label">Gemma 3n E2B</string>
+    <string name="model_e4b_label">Gemma 3n E4B</string>
+    <string name="model_not_downloaded">モデル未ダウンロード</string>
+    <string name="model_loading">モデルをロード中...</string>
+    <string name="context_meter_format">コンテキスト使用量: %1$d / %2$d</string>
+    <string name="response_generating">応答中</string>
+    <string name="revoke_prompt">取り消し</string>
+    <string name="revoke_prompt_done">プロンプトを取り消しました</string>
+    <string name="revoke_prompt_none">取り消せるプロンプトがありません</string>
+    <string name="send_icon">➤</string>
+    <string name="stop_icon">■</string>
+    <string name="inference_title">推論パラメータ</string>
+    <string name="context_window_fixed">コンテキスト: 4096 (固定)</string>
+    <string name="context_compression_label">コンテキスト圧縮（標準OFF）</string>
+    <string name="context_compression_threshold_format">自動圧縮しきい値: %1$d%%</string>
+    <string name="temperature_label">温度</string>
+    <string name="temperature_hint">温度 (0.0 - 2.0)</string>
+    <string name="topk_label">Top-K</string>
+    <string name="topk_hint">Top-K (1 - 128)</string>
+    <string name="max_tokens_label">Max Tokens</string>
+    <string name="max_tokens_hint">Max Tokens (64 - 4096)</string>
+    <string name="save_inference">推論設定を保存</string>
+    <string name="backend_label">バックエンド</string>
+    <string name="backend_cpu">CPU</string>
+    <string name="backend_gpu">GPU</string>
+    <string name="import_task_model">.task を追加</string>
+    <string name="open_hf_approval_page">ページで承認</string>
+    <string name="imported_task_title">追加済み .task</string>
+    <string name="imported_task_empty">まだ追加された .task はありません</string>
+    <string name="open_license_page">License</string>
+    <string name="license_title">License</string>
+    <string name="license_body">This app includes open-source software.\n\nThis application uses multiple open-source libraries and models. Please review the license terms below before distribution.</string>
+
+    <!-- Fragments for navigation -->
     <string name="first_fragment_label">First Fragment</string>
     <string name="second_fragment_label">Second Fragment</string>
     <string name="next">Next</string>
