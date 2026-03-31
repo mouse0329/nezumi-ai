@@ -6,6 +6,7 @@ import android.os.StatFs
 import android.provider.OpenableColumns
 import android.util.Log
 import java.io.File
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
@@ -123,6 +124,12 @@ object ModelFileManager {
         return deletedMain && deletedTmp && deletedLegacyMain && deletedLegacyTmp
     }
 
+    fun deleteTempDownload(context: Context, model: LocalModel): Boolean {
+        val file = modelFile(context, model)
+        val tmpFile = File("${file.absolutePath}.download")
+        return !tmpFile.exists() || tmpFile.delete()
+    }
+
     fun ensureDownloaded(
         context: Context,
         model: LocalModel,
@@ -154,7 +161,6 @@ object ModelFileManager {
             
             // ファイル検証
             if (!file.exists() || file.length() == 0L) {
-                cleanupTempFiles(file)
                 return Result.failure(IllegalStateException("ダウンロードファイルが空です"))
             }
             
@@ -162,7 +168,6 @@ object ModelFileManager {
             Result.success(file)
         } catch (e: Exception) {
             Log.e(TAG, "Download failed", e)
-            cleanupTempFiles(file)
             Result.failure(e)
         }
     }
@@ -202,65 +207,100 @@ object ModelFileManager {
     ) {
         val tmpFile = File("${outFile.absolutePath}.download")
         tmpFile.parentFile?.mkdirs()
-        
-        // 既存の不完全な一時ファイルをクリア
-        if (tmpFile.exists()) tmpFile.delete()
-        
+
+        var resumeFrom = if (tmpFile.exists()) tmpFile.length().coerceAtLeast(0L) else 0L
         val token = HfAuthManager.getToken(context)
-        val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 30_000
-            readTimeout = 60_000
-            instanceFollowRedirects = true
-            requestMethod = "GET"
-            setRequestProperty("User-Agent", "nezumi-ai/1.0")
-            if (token.isNotBlank()) {
-                setRequestProperty("Authorization", "Bearer $token")
+
+        fun openDownloadConnection(rangeStart: Long): HttpURLConnection {
+            return (URL(urlString).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 30_000
+                readTimeout = 60_000
+                instanceFollowRedirects = true
+                requestMethod = "GET"
+                setRequestProperty("User-Agent", "nezumi-ai/1.0")
+                if (token.isNotBlank()) {
+                    setRequestProperty("Authorization", "Bearer $token")
+                }
+                if (rangeStart > 0L) {
+                    setRequestProperty("Range", "bytes=$rangeStart-")
+                }
             }
         }
 
+        var connection = openDownloadConnection(resumeFrom)
         try {
             connection.connect()
             val code = connection.responseCode
-            if (code !in 200..299) {
+
+            if (resumeFrom > 0L && code == HttpURLConnection.HTTP_OK) {
+                // サーバーがRangeを受け付けない場合は先頭から取り直す
                 connection.disconnect()
-                val message = when (code) {
+                tmpFile.delete()
+                resumeFrom = 0L
+                connection = openDownloadConnection(0L)
+                connection.connect()
+            }
+
+            val responseCode = connection.responseCode
+            if (responseCode !in 200..299) {
+                connection.disconnect()
+                val message = when (responseCode) {
                     401 -> "Download failed (HTTP 401). Hugging Faceのライセンス同意後、HF token (hf_xxx) を設定してください。"
                     403 -> "Download failed (HTTP 403). gemma規約を見て承認してください。"
-                    else -> "Download failed (HTTP $code)."
+                    else -> "Download failed (HTTP $responseCode)."
                 }
                 throw IllegalStateException(message)
             }
 
-            val totalBytes = connection.contentLengthLong
-            if (totalBytes <= 0) {
+            val totalBytes = if (responseCode == HttpURLConnection.HTTP_PARTIAL) {
+                val contentRange = connection.getHeaderField("Content-Range")
+                val rangeTotal = contentRange
+                    ?.substringAfterLast('/')
+                    ?.toLongOrNull()
+                rangeTotal ?: (resumeFrom + connection.contentLengthLong).takeIf { it > 0L } ?: -1L
+            } else {
+                connection.contentLengthLong
+            }
+
+            if (totalBytes <= 0L) {
                 throw IllegalStateException("Cannot determine file size")
             }
-            
-            onProgress?.invoke(0L, totalBytes)
-            Log.d(TAG, "Downloading: $totalBytes bytes")
+
+            if (resumeFrom >= totalBytes) {
+                if (outFile.exists()) outFile.delete()
+                if (!tmpFile.renameTo(outFile)) {
+                    throw IllegalStateException("Failed to save model file: ${outFile.absolutePath}")
+                }
+                onProgress?.invoke(totalBytes, totalBytes)
+                return
+            }
+
+            onProgress?.invoke(resumeFrom, totalBytes)
+            Log.d(TAG, "Downloading: $resumeFrom / $totalBytes bytes")
 
             connection.inputStream.use { input ->
-                tmpFile.outputStream().use { output ->
+                val append = responseCode == HttpURLConnection.HTTP_PARTIAL && resumeFrom > 0L
+                FileOutputStream(tmpFile, append).buffered(BUFFER_SIZE).use { output ->
                     val buffer = ByteArray(BUFFER_SIZE)
                     var read: Int
-                    var downloaded = 0L
-                    
+                    var downloaded = resumeFrom
+
                     while (input.read(buffer).also { read = it } > 0) {
                         output.write(buffer, 0, read)
                         downloaded += read
                         onProgress?.invoke(downloaded, totalBytes)
-                        
+
                         // タイムアウト検出
                         if (downloaded > totalBytes * 1.1) {
                             throw IllegalStateException("Downloaded more than expected")
                         }
                     }
+                    output.flush()
                 }
             }
 
             // ファイル整合性確認
             if (tmpFile.length() != totalBytes) {
-                tmpFile.delete()
                 throw IllegalStateException(
                     "File size mismatch: ${tmpFile.length()} vs $totalBytes"
                 )
@@ -271,7 +311,7 @@ object ModelFileManager {
             if (!tmpFile.renameTo(outFile)) {
                 throw IllegalStateException("Failed to save model file: ${outFile.absolutePath}")
             }
-            
+
         } finally {
             connection.disconnect()
         }

@@ -9,7 +9,6 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
-import java.io.File
 
 class ModelDownloadWorker(
     appContext: Context,
@@ -23,24 +22,39 @@ class ModelDownloadWorker(
             ?: return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "unknown model"))
 
         return try {
-            val startTime = System.currentTimeMillis()
-            var lastTime = startTime
+            var lastTime = System.currentTimeMillis()
             var lastDownloaded = 0L
+            var hasBaseline = false
 
             val result = ModelFileManager.ensureDownloaded(applicationContext, model) { downloaded, total ->
                 val currentTime = System.currentTimeMillis()
                 val timeDeltaMs = currentTime - lastTime
-                
+
+                if (!hasBaseline) {
+                    hasBaseline = true
+                    lastTime = currentTime
+                    lastDownloaded = downloaded
+                    setProgressAsync(
+                        workDataOf(
+                            KEY_DOWNLOADED_BYTES to downloaded,
+                            KEY_TOTAL_BYTES to total,
+                            KEY_SPEED_MBPS to 0.0,
+                            KEY_ESTIMATED_REMAINING_SEC to 0.0
+                        )
+                    )
+                    return@ensureDownloaded
+                }
+
                 // スピード計算（MB/s）
                 val speedMbps = if (timeDeltaMs > 0) {
-                    val bytesDelta = downloaded - lastDownloaded
+                    val bytesDelta = (downloaded - lastDownloaded).coerceAtLeast(0L)
                     (bytesDelta.toDouble() / (1024.0 * 1024.0)) / (timeDeltaMs.toDouble() / 1000.0)
                 } else {
                     0.0
                 }
-                
+
                 // 推定残り時間（秒）
-                val remainingBytes = total - downloaded
+                val remainingBytes = (total - downloaded).coerceAtLeast(0L)
                 val estimatedSecRemaining = if (speedMbps > 0) {
                     (remainingBytes.toDouble() / (1024.0 * 1024.0)) / speedMbps
                 } else {
@@ -76,22 +90,8 @@ class ModelDownloadWorker(
                     Result.failure(workDataOf(KEY_ERROR_MESSAGE to (e.message ?: "download failed")))
                 }
             )
-        } finally {
-            // キャンセル時に一時ファイルをクリーンアップ
-            cleanupTempFiles(modelName)
-        }
-    }
-
-    private fun cleanupTempFiles(modelNameStr: String?) {
-        val modelName = modelNameStr ?: return
-        val model = modelFromName(modelName) ?: return
-        
-        val modelFile = ModelFileManager.modelFile(applicationContext, model)
-        val tmpFile = File("${modelFile.absolutePath}.download")
-        
-        if (tmpFile.exists()) {
-            val deleted = tmpFile.delete()
-            android.util.Log.d("ModelDownloadWorker", "Cleanup temp file: $deleted (${tmpFile.absolutePath})")
+        } catch (e: Exception) {
+            Result.failure(workDataOf(KEY_ERROR_MESSAGE to (e.message ?: "download failed")))
         }
     }
 
@@ -123,6 +123,7 @@ class ModelDownloadWorker(
 
         fun cancel(context: Context, model: ModelFileManager.LocalModel) {
             WorkManager.getInstance(context).cancelUniqueWork(modelWorkName(model))
+            ModelFileManager.deleteTempDownload(context, model)
         }
 
         private fun modelFromName(name: String): ModelFileManager.LocalModel? {
