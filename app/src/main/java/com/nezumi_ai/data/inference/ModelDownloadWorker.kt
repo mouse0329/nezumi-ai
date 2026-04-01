@@ -1,6 +1,16 @@
 package com.nezumi_ai.data.inference
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
@@ -9,6 +19,8 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.nezumi_ai.MainActivity
+import com.nezumi_ai.R
 
 class ModelDownloadWorker(
     appContext: Context,
@@ -78,6 +90,7 @@ class ModelDownloadWorker(
 
             result.fold(
                 onSuccess = {
+                    showDownloadCompletedNotification(model, it.length())
                     Result.success(
                         workDataOf(
                             KEY_DOWNLOADED_BYTES to it.length(),
@@ -102,6 +115,9 @@ class ModelDownloadWorker(
         const val KEY_ERROR_MESSAGE = "error_message"
         const val KEY_SPEED_MBPS = "speed_mbps"
         const val KEY_ESTIMATED_REMAINING_SEC = "estimated_remaining_sec"
+        private const val NOTIFICATION_CHANNEL_ID = "model_download_channel"
+        private const val NOTIFICATION_CHANNEL_NAME = "モデルダウンロード"
+        private const val NOTIFICATION_CHANNEL_DESCRIPTION = "モデルのバックグラウンドダウンロード完了通知"
 
         fun modelWorkName(model: ModelFileManager.LocalModel): String =
             "model_download_${model.name.lowercase()}"
@@ -133,5 +149,62 @@ class ModelDownloadWorker(
                 else -> null
             }
         }
+    }
+
+    private fun showDownloadCompletedNotification(model: ModelFileManager.LocalModel, sizeBytes: Long) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val hasPermission = ContextCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!hasPermission) return
+        }
+
+        ensureNotificationChannel()
+
+        val launchIntent = Intent(applicationContext, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            applicationContext,
+            model.ordinal,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val modelLabel = when (model) {
+            ModelFileManager.LocalModel.E2B -> "Gemma 3n E2B"
+            ModelFileManager.LocalModel.E4B -> "Gemma 3n E4B"
+        }
+        val sizeMb = sizeBytes / (1024.0 * 1024.0)
+        val notification = NotificationCompat.Builder(applicationContext, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_add)
+            .setContentTitle("モデルのダウンロードが完了しました")
+            .setContentText("$modelLabel (${String.format("%.1f", sizeMb)} MB)")
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText("$modelLabel のダウンロードが完了しました。チャット画面から利用できます。")
+            )
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        NotificationManagerCompat.from(applicationContext)
+            .notify(1000 + model.ordinal, notification)
+    }
+
+    private fun ensureNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (manager.getNotificationChannel(NOTIFICATION_CHANNEL_ID) != null) return
+        val channel = NotificationChannel(
+            NOTIFICATION_CHANNEL_ID,
+            NOTIFICATION_CHANNEL_NAME,
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = NOTIFICATION_CHANNEL_DESCRIPTION
+        }
+        manager.createNotificationChannel(channel)
     }
 }

@@ -1,11 +1,15 @@
 package com.nezumi_ai.presentation.ui.fragment
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
@@ -29,7 +33,9 @@ import com.nezumi_ai.R
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.databinding.FragmentSettingsBinding
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import net.openid.appauth.AuthorizationException
 import net.openid.appauth.AuthorizationResponse
 import net.openid.appauth.AuthorizationService
@@ -44,6 +50,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     private val notifiedDownloadResults = mutableSetOf<String>()
     private val lastProgressByModel = mutableMapOf<ModelFileManager.LocalModel, DownloadProgressSnapshot>()
     private val activeWorkIdByModel = mutableMapOf<ModelFileManager.LocalModel, UUID>()
+    private val cancelRequestedByModel = mutableMapOf<ModelFileManager.LocalModel, Boolean>()
+    private var pendingDownloadPermissionModel: ModelFileManager.LocalModel? = null
     private lateinit var settingsRepository: SettingsRepository
 
     private val authLauncher =
@@ -69,13 +77,37 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     private val importTaskLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) return@registerForActivityResult
-            val result = ModelFileManager.importTaskFromUri(requireContext(), uri)
-            result.onSuccess {
-                Toast.makeText(requireContext(), ".task を追加しました: ${it.name}", Toast.LENGTH_SHORT).show()
-                renderImportedTasks()
-            }.onFailure {
-                Toast.makeText(requireContext(), "追加失敗: ${it.message}", Toast.LENGTH_LONG).show()
+            binding.importTaskButton.isEnabled = false
+            Toast.makeText(requireContext(), ".task を読み込み中...", Toast.LENGTH_SHORT).show()
+            viewLifecycleOwner.lifecycleScope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    ModelFileManager.importTaskFromUri(requireContext(), uri)
+                }
+                binding.importTaskButton.isEnabled = true
+                result.onSuccess {
+                    Toast.makeText(requireContext(), ".task を追加しました: ${it.name}", Toast.LENGTH_SHORT).show()
+                    renderImportedTasks()
+                }.onFailure {
+                    Toast.makeText(requireContext(), "追加失敗: ${it.message}", Toast.LENGTH_LONG).show()
+                }
             }
+        }
+
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val model = pendingDownloadPermissionModel
+            pendingDownloadPermissionModel = null
+            if (model == null) return@registerForActivityResult
+
+            if (!isAdded) return@registerForActivityResult
+            if (!granted) {
+                Toast.makeText(
+                    requireContext(),
+                    "通知が許可されていないため、完了通知は表示されません",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            runModelAction(model, true)
         }
 
     override fun onCreateView(
@@ -121,9 +153,10 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         binding.downloadE2bButton.setOnClickListener {
             val model = ModelFileManager.LocalModel.E2B
             if (binding.downloadE2bButton.tag?.toString()?.contains("cancel_mode") == true) {
+                showCancelInProgress(model)
                 ModelDownloadWorker.cancel(requireContext(), model)
             } else {
-                runModelAction(model, true)
+                requestNotificationPermissionForDownload(model)
             }
         }
         binding.e2bAccessButton.setOnClickListener {
@@ -135,9 +168,10 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         binding.downloadE4bButton.setOnClickListener {
             val model = ModelFileManager.LocalModel.E4B
             if (binding.downloadE4bButton.tag?.toString()?.contains("cancel_mode") == true) {
+                showCancelInProgress(model)
                 ModelDownloadWorker.cancel(requireContext(), model)
             } else {
-                runModelAction(model, true)
+                requestNotificationPermissionForDownload(model)
             }
         }
         binding.e4bAccessButton.setOnClickListener {
@@ -190,11 +224,22 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             binding.temperatureInput.setText(String.format(Locale.US, "%.2f", config.temperature))
             binding.topkInput.setText(config.maxTopK.toString())
             binding.maxTokensInput.setText(config.maxTokens.toString())
-            if (config.backendType.uppercase() == "GPU") {
-                binding.backendToggleGroup.check(binding.backendGpuButton.id)
-            } else {
-                binding.backendToggleGroup.check(binding.backendCpuButton.id)
+            when (config.backendType.uppercase()) {
+                "GPU" -> binding.backendToggleGroup.check(binding.backendGpuButton.id)
+                "NPU" -> binding.backendToggleGroup.check(binding.backendNpuButton.id)
+                else -> {
+                    binding.backendToggleGroup.check(binding.backendCpuButton.id)
+                }
             }
+            binding.resourceMonitorSwitch.isChecked = settingsRepository.isResourceMonitorEnabled()
+        }
+    }
+
+    private fun selectedBackendType(): String {
+        return when (binding.backendToggleGroup.checkedButtonId) {
+            binding.backendGpuButton.id -> "GPU"
+            binding.backendNpuButton.id -> "NPU"
+            else -> "CPU"
         }
     }
 
@@ -205,10 +250,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         val temperature = binding.temperatureInput.text.toString().toFloatOrNull()
         val topK = binding.topkInput.text.toString().toIntOrNull()
         val maxTokens = binding.maxTokensInput.text.toString().toIntOrNull()
-        val backendType = when (binding.backendToggleGroup.checkedButtonId) {
-            binding.backendGpuButton.id -> "GPU"
-            else -> "CPU"
-        }
+        val backendType = selectedBackendType()
         if (temperature == null || topK == null || maxTokens == null) {
             Toast.makeText(requireContext(), "推論設定の入力値が不正です", Toast.LENGTH_SHORT).show()
             return
@@ -220,8 +262,10 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 temperature = temperature,
                 maxTopK = topK,
                 maxTokens = maxTokens,
-                backendType = backendType
+                backendType = backendType,
+                backendTargetModel = "ALL"
             )
+            settingsRepository.updateResourceMonitorEnabled(binding.resourceMonitorSwitch.isChecked)
             loadInferenceSettings()
             Toast.makeText(requireContext(), "推論設定を保存しました", Toast.LENGTH_SHORT).show()
         }
@@ -269,11 +313,39 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         binding.importedTaskEmptyText.visibility = if (imported.isEmpty()) View.VISIBLE else View.GONE
 
         imported.forEachIndexed { index, model ->
-            val item = TextView(requireContext()).apply {
-                text = "• ${model.name}"
+            val row = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+            }
+
+            val nameView = TextView(requireContext()).apply {
+                text = model.name
                 textSize = 13f
                 setTextColor(ContextCompat.getColor(requireContext(), R.color.text_primary))
+                layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    1f
+                )
             }
+
+            val deleteButton = Button(requireContext(), null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                text = getString(R.string.delete)
+                textSize = 11f
+                setOnClickListener {
+                    val result = ModelFileManager.deleteImportedTask(requireContext(), model.path)
+                    result.onSuccess {
+                        Toast.makeText(requireContext(), ".task を削除しました", Toast.LENGTH_SHORT).show()
+                        renderImportedTasks()
+                    }.onFailure {
+                        Toast.makeText(requireContext(), "削除失敗: ${it.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+
+            row.addView(nameView)
+            row.addView(deleteButton)
+
             val params = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -282,7 +354,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 val marginPx = (6 * resources.displayMetrics.density).toInt()
                 params.topMargin = marginPx
             }
-            binding.importedTaskListContainer.addView(item, params)
+            binding.importedTaskListContainer.addView(row, params)
         }
     }
 
@@ -317,12 +389,33 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         }
     }
 
+    private fun requestNotificationPermissionForDownload(model: ModelFileManager.LocalModel) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            runModelAction(model, true)
+            return
+        }
+
+        val granted = ContextCompat.checkSelfPermission(
+            requireContext(),
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            runModelAction(model, true)
+            return
+        }
+
+        pendingDownloadPermissionModel = model
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
     private fun refreshStatus() {
         val e2bFile = ModelFileManager.modelFile(requireContext(), ModelFileManager.LocalModel.E2B)
         val e4bFile = ModelFileManager.modelFile(requireContext(), ModelFileManager.LocalModel.E4B)
+        val e2bDownloaded = ModelFileManager.isDownloaded(requireContext(), ModelFileManager.LocalModel.E2B)
+        val e4bDownloaded = ModelFileManager.isDownloaded(requireContext(), ModelFileManager.LocalModel.E4B)
 
-        setStatus(ModelFileManager.LocalModel.E2B, statusText(e2bFile.exists(), e2bFile.length()))
-        setStatus(ModelFileManager.LocalModel.E4B, statusText(e4bFile.exists(), e4bFile.length()))
+        setStatus(ModelFileManager.LocalModel.E2B, statusText(e2bDownloaded, e2bFile.length()))
+        setStatus(ModelFileManager.LocalModel.E4B, statusText(e4bDownloaded, e4bFile.length()))
     }
 
     private fun statusText(downloaded: Boolean, sizeBytes: Long): String {
@@ -441,6 +534,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun renderDownloadState(model: ModelFileManager.LocalModel, workInfo: WorkInfo?) {
         if (workInfo == null) {
+            clearCancelInProgress(model)
             clearProgressTracking(model)
             setAccessButtonVisible(model, false)
             setModelButtonsEnabled(model, true)
@@ -453,9 +547,28 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             WorkInfo.State.ENQUEUED,
             WorkInfo.State.RUNNING,
             WorkInfo.State.BLOCKED -> {
+                val cancelInProgress = cancelRequestedByModel[model] == true
                 setAccessButtonVisible(model, false)
-                setModelButtonsEnabled(model, false)
-                setCancelMode(model, true)
+                if (cancelInProgress) {
+                    setCancelMode(model, false)
+                    setModelButtonsEnabled(model, false)
+                    setStatus(model, "キャンセル処理中...")
+                    showProgress(model, true)
+                    val progressBar = when (model) {
+                        ModelFileManager.LocalModel.E2B -> binding.e2bDownloadProgress
+                        ModelFileManager.LocalModel.E4B -> binding.e4bDownloadProgress
+                    }
+                    val text = when (model) {
+                        ModelFileManager.LocalModel.E2B -> binding.e2bDownloadText
+                        ModelFileManager.LocalModel.E4B -> binding.e4bDownloadText
+                    }
+                    progressBar.isIndeterminate = true
+                    text.text = "中断中..."
+                    return
+                } else {
+                    setModelButtonsEnabled(model, false)
+                    setCancelMode(model, true)
+                }
                 showProgress(model, true)
                 val downloaded = workInfo.progress.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, -1L)
                 val total = workInfo.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, -1L)
@@ -476,6 +589,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 }
             }
             WorkInfo.State.SUCCEEDED -> {
+                clearCancelInProgress(model)
                 clearProgressTracking(model)
                 setAccessButtonVisible(model, false)
                 setModelButtonsEnabled(model, true)
@@ -485,6 +599,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 notifyOnce(model, workInfo, "ダウンロード完了")
             }
             WorkInfo.State.FAILED -> {
+                clearCancelInProgress(model)
                 clearProgressTracking(model)
                 setModelButtonsEnabled(model, true)
                 setCancelMode(model, false)
@@ -497,6 +612,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 notifyOnce(model, workInfo, error)
             }
             WorkInfo.State.CANCELLED -> {
+                clearCancelInProgress(model)
                 clearProgressTracking(model)
                 setAccessButtonVisible(model, false)
                 setModelButtonsEnabled(model, true)
@@ -508,6 +624,28 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 }
             }
         }
+    }
+
+    private fun showCancelInProgress(model: ModelFileManager.LocalModel) {
+        cancelRequestedByModel[model] = true
+        setCancelMode(model, false)
+        setModelButtonsEnabled(model, false)
+        showProgress(model, true)
+        setStatus(model, "キャンセル処理中...")
+        val progressBar = when (model) {
+            ModelFileManager.LocalModel.E2B -> binding.e2bDownloadProgress
+            ModelFileManager.LocalModel.E4B -> binding.e4bDownloadProgress
+        }
+        val text = when (model) {
+            ModelFileManager.LocalModel.E2B -> binding.e2bDownloadText
+            ModelFileManager.LocalModel.E4B -> binding.e4bDownloadText
+        }
+        progressBar.isIndeterminate = true
+        text.text = "中断中..."
+    }
+
+    private fun clearCancelInProgress(model: ModelFileManager.LocalModel) {
+        cancelRequestedByModel.remove(model)
     }
 
     private fun monotonicProgress(

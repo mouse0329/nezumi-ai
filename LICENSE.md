@@ -26,33 +26,42 @@ limitations under the License.
 
 ### AndroidX と Material Components
 - **ライセンス**: Apache License 2.0
-- **リポジトリ**: https://github.com/androidx
+- **リポジトリ**: [androidx](https://github.com/androidx)
 - **説明**: 最新のAndroid開発パターンとMaterial Designコンポーネントを提供する包括的なライブラリスイート
 
 ### Kotlin Standard Library
 - **ライセンス**: Apache License 2.0
-- **リポジトリ**: https://github.com/JetBrains/kotlin
+- **リポジトリ**: [JetBrains/kotlin](https://github.com/JetBrains/kotlin)
 - **説明**: Kotlinプログラミング言語とその標準ライブラリ。非同期操作用のコルーチンを含みます
 
 ### MediaPipe Tasks
 - **ライセンス**: Apache License 2.0
-- **リポジトリ**: https://github.com/google/mediapipe
+- **リポジトリ**: [google/mediapipe](https://github.com/google/mediapipe)
 - **説明**: Googleの MediaPipeフレームワークで、コンピュータビジョン、オーディオ、テキストタスク用のML機能を提供
 
 ### Hugging Face Models
 - **ライセンス**: Model Hub and Inference API
-- **ウェブサイト**: https://huggingface.co
-- **説明**: Gemmaおよび他のモデルがHugging Faceで利用可能です。各モデルは独自のライセンス条項を持ちます。使用前に必ず確認してください。
+- **ウェブサイト**: [huggingface.co](https://huggingface.co)
+- **説明**: モデルの配布ページ・モデルカード確認に利用します。モデル規約の一次情報は提供元の公式条項を確認してください。
 
 ### Gemma Model
 - **ライセンス**: Gemma Community License
-- **公式ページ**: https://ai.google.dev/gemma
-- **説明**: GoogleのGemmaモデルファミリーは、Gemma Terms of Useのライセンスです。完全なライセンス条項は https://ai.google.dev/gemma/terms を参照してください。
+- **公式ページ**: [ai.google.dev/gemma](https://ai.google.dev/gemma)
+- **説明**: Gemmaモデルの利用条件は Gemma Terms of Use を優先して確認してください。完全なライセンス条項は [Gemma Terms](https://ai.google.dev/gemma/terms) を参照してください。
 
-### E2B Sandbox
+### AppAuth for Android
 - **ライセンス**: Apache License 2.0
-- **リポジトリ**: https://github.com/e2b-dev
-- **説明**: 信頼できないコードを安全に実行するためのクラウドサンドボックス
+- **リポジトリ**: [openid/AppAuth-Android](https://github.com/openid/AppAuth-Android)
+- **説明**: Hugging Face OAuth 認証フローに使用します。
+
+### Markwon
+- **ライセンス**: Apache License 2.0
+- **リポジトリ**: [noties/Markwon](https://github.com/noties/Markwon)
+- **説明**: Markdown レンダリング（テーブル拡張含む）に使用します。
+
+### Project Repository
+- **リポジトリ**: [mouse0329/nezumi-ai](https://github.com/mouse0329/nezumi-ai)
+- **説明**: このアプリのソースコードと更新履歴です。
 
 ---
 
@@ -80,14 +89,15 @@ limitations under the License.
 
 詳細なライセンスファイルについては、以下のウェブサイトを参照してください：
 
-- AndroidX: https://opensource.google/licenses/
-- Kotlin: https://www.apache.org/licenses/LICENSE-2.0
-- MediaPipe: https://www.apache.org/licenses/LICENSE-2.0
-- Hugging Face: https://huggingface.co
-- Gemma: https://ai.google.dev/gemma/terms
-- E2B: https://www.apache.org/licenses/LICENSE-2.0
+- AndroidX: [opensource.google/licenses](https://opensource.google/licenses/)
+- Kotlin: [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)
+- MediaPipe: [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)
+- Hugging Face: [huggingface.co](https://huggingface.co)
+- Gemma: [Gemma Terms](https://ai.google.dev/gemma/terms)
+- AppAuth: [openid/AppAuth-Android](https://github.com/openid/AppAuth-Android)
+- Markwon: [noties/Markwon](https://github.com/noties/Markwon)
 
 ---
 
-**最終更新**: 2026年3月31日  
+**最終更新**: 2026年4月1日  
 **注意**: このドキュメントは参考情報です。法的に有効なライセンス条項については、各プロジェクトの公式ページを参照してください。
