@@ -257,6 +257,8 @@ class ChatViewModel(
                 content = "",
                 isStreaming = true
             )
+            val activeStreamingMessageId = streamingMessageId
+                ?: throw IllegalStateException("Failed to create streaming message")
 
             val responseBuilder = StringBuilder()
             var lastPersistedContent = ""
@@ -293,22 +295,31 @@ class ChatViewModel(
                                     }
                                 }
                             }
-                            streamingMessageId?.let { id ->
+// streamingMessageId（または activeStreamingMessageId）の存在を確認
+                            val messageIdToUpdate = streamingMessageId ?: activeStreamingMessageId
+                            messageIdToUpdate?.let { id ->
                                 val contentForUi = responseBuilder.toString()
                                 val now = SystemClock.elapsedRealtime()
+
+                                // Markdownテーブルの場合は更新間隔を広げるなど、描画負荷を考慮したインターバル設定
                                 val persistInterval = if (isLikelyMarkdownTable(contentForUi)) {
                                     STREAM_PERSIST_INTERVAL_TABLE_MS
                                 } else {
                                     STREAM_PERSIST_INTERVAL_MS
                                 }
+
+                                // 1. 前回の保存内容と異なる
+                                // 2. 最終的な応答（finalFromModel != null）である、または一定時間が経過した
                                 val shouldPersist = contentForUi != lastPersistedContent &&
                                     (finalFromModel != null || now - lastPersistAt >= persistInterval)
+
                                 if (shouldPersist) {
                                     messageRepository.updateMessageContent(
                                         messageId = id,
                                         content = contentForUi,
                                         isStreaming = true
                                     )
+                                    // 保存状態を更新
                                     lastPersistedContent = contentForUi
                                     lastPersistAt = now
                                 }
@@ -324,24 +335,20 @@ class ChatViewModel(
             val completeResponse = finalizeResponseForCommit(responseBuilder.toString())
 
             if (completeResponse.isNotEmpty()) {
-                streamingMessageId?.let { id ->
-                    messageRepository.updateMessageContent(
-                        messageId = id,
-                        content = completeResponse,
-                        isStreaming = false
-                    )
-                }
+                messageRepository.updateMessageContent(
+                    messageId = activeStreamingMessageId,
+                    content = completeResponse,
+                    isStreaming = false
+                )
                 maybeGenerateSessionTitle(sessionId, userMessage, completeResponse)
                 _uiMessage.emit("生成が完了しました")
                 Log.d(TAG, "AI response saved to database: ${completeResponse.take(50)}...")
             } else {
-                streamingMessageId?.let { id ->
-                    messageRepository.updateMessageContent(
-                        messageId = id,
-                        content = "申し訳ありません。応答を生成できませんでした。",
-                        isStreaming = false
-                    )
-                }
+                messageRepository.updateMessageContent(
+                    messageId = activeStreamingMessageId,
+                    content = "申し訳ありません。応答を生成できませんでした。",
+                    isStreaming = false
+                )
             }
         } catch (t: Throwable) {
             if (t is FirstTokenTimeoutException) {
