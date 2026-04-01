@@ -2,6 +2,9 @@ package com.nezumi_ai.data.inference
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -32,6 +35,7 @@ class ModelManager(
     private var currentModelName: String? = null
     private var currentConfig: InferenceConfig? = null
     private val loadMutex = Mutex()
+    private val inferenceMutex = Mutex()
     
     /**
      * モデルを初期化（ロード）
@@ -93,7 +97,11 @@ class ModelManager(
         sessionId: Long,
         prompt: String,
         temperature: Float = 0.7f
-    ) = inferenceEngine.inference(sessionId, prompt, temperature)
+    ): Flow<String> = flow {
+        inferenceMutex.withLock {
+            emitAll(inferenceEngine.inference(sessionId, prompt, temperature))
+        }
+    }
     
     /**
      * モデルが利用可能かチェック

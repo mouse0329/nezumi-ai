@@ -1,6 +1,7 @@
 package com.nezumi_ai.presentation.viewmodel
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -12,6 +13,7 @@ import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -36,6 +38,8 @@ class ChatViewModel(
         private const val TAG = "ChatViewModel"
         private const val RESPONSE_TIMEOUT_MS = 120_000L
         private const val COMPRESSION_SIMULATED_COST_MS = 450L
+        private const val STREAM_PERSIST_INTERVAL_MS = 66L
+        private const val STREAM_PERSIST_INTERVAL_TABLE_MS = 16L
         private const val DEFAULT_SESSION_TITLE = "新しいチャット"
         const val CONTEXT_WINDOW_CHARS = 4_096
         private const val MAX_CONTEXT_CHARS = CONTEXT_WINDOW_CHARS
@@ -83,7 +87,7 @@ class ChatViewModel(
         // ViewModel初期化時は設定のみ取得（モデルロードはしない）
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                _selectedModel.value = settingsRepository.getSelectedModel().uppercase()
+                _selectedModel.value = normalizeModel(settingsRepository.getSelectedModel())
             } catch (t: Throwable) {
                 val e = if (t is Exception) t else RuntimeException(t)
                 Log.e(TAG, "Error initializing ModelManager", e)
@@ -113,11 +117,17 @@ class ChatViewModel(
     }
 
     fun switchModel(model: String) {
+        if (_isLoading.value || _isModelLoading.value) {
+            viewModelScope.launch {
+                _uiMessage.emit("生成中またはモデル処理中はモデル切替できません")
+            }
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             val normalizedModel = normalizeModel(model)
             settingsRepository.updateModel(normalizedModel)
             _selectedModel.value = normalizedModel
-            val config = settingsRepository.getInferenceConfig()
+            val config = settingsRepository.getInferenceConfigForModel(normalizedModel)
             val result = loadModelWithOverlay(normalizedModel, config, onlyIfAvailable = true)
             if (result.isFailure) {
                 Log.e(TAG, "Failed to switch model: $normalizedModel", result.exceptionOrNull())
@@ -214,7 +224,7 @@ class ChatViewModel(
                 )
                 return
             }
-            val config = settingsRepository.getInferenceConfig()
+            val config = settingsRepository.getInferenceConfigForModel(selectedModel)
             val loadResult = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = false)
             if (loadResult.isFailure) {
                 throw (loadResult.exceptionOrNull()
@@ -224,12 +234,19 @@ class ChatViewModel(
             Log.d(TAG, "Starting inference for session $sessionId")
             
             val promptWithContext = buildPromptWithSessionContext(sessionId, config)
+            val promptForModel = trimPromptForTokenBudget(promptWithContext, config.maxTokens)
+            if (promptForModel.length < promptWithContext.length) {
+                Log.w(
+                    TAG,
+                    "Prompt trimmed for token budget: ${promptWithContext.length} -> ${promptForModel.length}, maxTokens=${config.maxTokens}"
+                )
+            }
 
             // ストリーミング推論を実行
             val aiResponseFlow = withContext(Dispatchers.IO) {
                 manager.runInference(
                     sessionId = sessionId,
-                    prompt = promptWithContext,
+                    prompt = promptForModel,
                     temperature = config.temperature
                 )
             }
@@ -244,6 +261,8 @@ class ChatViewModel(
                 ?: throw IllegalStateException("Failed to create streaming message")
 
             val responseBuilder = StringBuilder()
+            var lastPersistedContent = ""
+            var lastPersistAt = 0L
 
             // ストリーム内容を収集
             // タイムアウトは「最初の出力が来るまで」のみ有効。
@@ -268,23 +287,43 @@ class ChatViewModel(
                                 responseBuilder.clear()
                                 responseBuilder.append(finalFromModel)
                             } else {
-                                val currentText = responseBuilder.toString()
-                                when {
-                                    chunk.isEmpty() -> Unit
-                                    chunk == currentText -> Unit
-                                    chunk.startsWith(currentText) -> {
-                                        responseBuilder.append(chunk.removePrefix(currentText))
-                                    }
-                                    else -> {
-                                        responseBuilder.append(chunk)
+                                if (chunk.isNotEmpty()) {
+                                    val merged = mergeStreamingChunk(responseBuilder.toString(), chunk)
+                                    if (merged != responseBuilder.toString()) {
+                                        responseBuilder.clear()
+                                        responseBuilder.append(merged)
                                     }
                                 }
                             }
-                            messageRepository.updateMessageContent(
-                                messageId = activeStreamingMessageId,
-                                content = responseBuilder.toString(),
-                                isStreaming = true
-                            )
+// streamingMessageId（または activeStreamingMessageId）の存在を確認
+                            val messageIdToUpdate = streamingMessageId ?: activeStreamingMessageId
+                            messageIdToUpdate?.let { id ->
+                                val contentForUi = responseBuilder.toString()
+                                val now = SystemClock.elapsedRealtime()
+
+                                // Markdownテーブルの場合は更新間隔を広げるなど、描画負荷を考慮したインターバル設定
+                                val persistInterval = if (isLikelyMarkdownTable(contentForUi)) {
+                                    STREAM_PERSIST_INTERVAL_TABLE_MS
+                                } else {
+                                    STREAM_PERSIST_INTERVAL_MS
+                                }
+
+                                // 1. 前回の保存内容と異なる
+                                // 2. 最終的な応答（finalFromModel != null）である、または一定時間が経過した
+                                val shouldPersist = contentForUi != lastPersistedContent &&
+                                    (finalFromModel != null || now - lastPersistAt >= persistInterval)
+
+                                if (shouldPersist) {
+                                    messageRepository.updateMessageContent(
+                                        messageId = id,
+                                        content = contentForUi,
+                                        isStreaming = true
+                                    )
+                                    // 保存状態を更新
+                                    lastPersistedContent = contentForUi
+                                    lastPersistAt = now
+                                }
+                            }
                             Log.d(TAG, "Received chunk: $chunk")
                         }
                     } finally {
@@ -302,6 +341,7 @@ class ChatViewModel(
                     isStreaming = false
                 )
                 maybeGenerateSessionTitle(sessionId, userMessage, completeResponse)
+                _uiMessage.emit("生成が完了しました")
                 Log.d(TAG, "AI response saved to database: ${completeResponse.take(50)}...")
             } else {
                 messageRepository.updateMessageContent(
@@ -359,7 +399,7 @@ class ChatViewModel(
         sessionRepository.getSessionById(sessionId) ?: return
         val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
         _selectedModel.value = selectedModel
-        val config = settingsRepository.getInferenceConfig()
+        val config = settingsRepository.getInferenceConfigForModel(selectedModel)
         val result = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = true)
         if (result.isFailure) {
             Log.e(TAG, "Failed to load model for session $sessionId", result.exceptionOrNull())
@@ -367,9 +407,13 @@ class ChatViewModel(
     }
 
     private fun normalizeModel(model: String): String {
+        val trimmed = model.trim()
+        val lowered = trimmed.lowercase()
+        val isLocalTaskPath =
+            (lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && File(trimmed).isAbsolute
         return when {
-            model.uppercase() == "E4B" -> "E4B"
-            (model.endsWith(".task") || model.endsWith(".litertlm")) && model.startsWith("/") -> model
+            trimmed.equals("E4B", ignoreCase = true) -> "E4B"
+            isLocalTaskPath -> trimmed
             else -> "E2B"
         }
     }
@@ -422,6 +466,46 @@ class ChatViewModel(
             }
         }
         return text
+    }
+
+    private fun mergeStreamingChunk(current: String, chunk: String): String {
+        if (chunk.isEmpty()) return current
+        if (current.isEmpty()) return chunk
+        if (chunk == current) return current
+
+        // 累積全文が届くケース
+        if (chunk.startsWith(current)) return chunk
+        // 既に反映済みの重複delta
+        if (current.endsWith(chunk)) return current
+        // 巻き戻った累積全文らしきケースは現状維持
+        if (current.startsWith(chunk)) return current
+
+        val overlap = suffixPrefixOverlap(current, chunk)
+        if (overlap > 0) {
+            return current + chunk.substring(overlap)
+        }
+
+        // deltaとして連結（最終的にはFINALで確定全文に置換される）
+        return current + chunk
+    }
+
+    private fun suffixPrefixOverlap(left: String, right: String): Int {
+        val max = minOf(left.length, right.length)
+        for (size in max downTo 1) {
+            if (left.regionMatches(left.length - size, right, 0, size, ignoreCase = false)) {
+                return size
+            }
+        }
+        return 0
+    }
+
+    private fun isLikelyMarkdownTable(content: String): Boolean {
+        if (!content.contains('|')) return false
+        val lines = content.lines()
+        if (lines.size < 2) return false
+        return lines.zipWithNext().any { (a, b) ->
+            a.contains('|') && (b.contains("|---") || b.contains("| :") || b.contains("|-"))
+        }
     }
 
     private suspend fun buildPromptWithSessionContext(
@@ -515,6 +599,15 @@ class ChatViewModel(
     private fun trimPromptToWindow(prompt: String, contextWindow: Int): String {
         if (prompt.length <= contextWindow) return prompt
         return prompt.takeLast(contextWindow)
+    }
+
+    private fun trimPromptForTokenBudget(prompt: String, maxTokens: Int): String {
+        // MediaPipeのmaxTokensは入力+出力の合計。出力分を予約して入力を保守的に圧縮する。
+        val reservedOutputTokens = (maxTokens / 4).coerceIn(64, 512)
+        val maxInputTokens = (maxTokens - reservedOutputTokens).coerceAtLeast(64)
+        // 日本語では1文字あたりトークン消費が大きくなりやすいため、1文字=1トークンで保守的に見積もる。
+        if (prompt.length <= maxInputTokens) return prompt
+        return prompt.takeLast(maxInputTokens)
     }
 
     private suspend fun requireModelManager(): ModelManager {

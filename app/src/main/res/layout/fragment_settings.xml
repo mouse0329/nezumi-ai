@@ -40,7 +40,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        app:cardBackgroundColor="@color/white"
+        app:cardBackgroundColor="@color/surface_card"
         app:cardCornerRadius="16dp">
 
         <LinearLayout
@@ -111,7 +111,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
-        app:cardBackgroundColor="@color/white"
+        app:cardBackgroundColor="@color/surface_card"
         app:cardCornerRadius="16dp">
 
         <LinearLayout
@@ -192,7 +192,22 @@
                     android:layout_height="wrap_content"
                     android:minWidth="84dp"
                     android:text="@string/backend_gpu" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/backend_npu_button"
+                    style="@style/Widget.Nezumiai.Button.Toggle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="84dp"
+                    android:text="@string/backend_npu" />
             </com.google.android.material.button.MaterialButtonToggleGroup>
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/resource_monitor_switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="@string/resource_monitor_label" />
 
             <TextView
                 android:layout_width="wrap_content"
@@ -258,7 +273,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
-        app:cardBackgroundColor="@color/white"
+        app:cardBackgroundColor="@color/surface_card"
         app:cardCornerRadius="16dp">
 
         <LinearLayout
@@ -340,7 +355,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
-        app:cardBackgroundColor="@color/white"
+        app:cardBackgroundColor="@color/surface_card"
         app:cardCornerRadius="16dp">
 
         <LinearLayout
@@ -422,7 +437,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
-        app:cardBackgroundColor="@color/white"
+        app:cardBackgroundColor="@color/surface_card"
         app:cardCornerRadius="16dp">
 
         <LinearLayout

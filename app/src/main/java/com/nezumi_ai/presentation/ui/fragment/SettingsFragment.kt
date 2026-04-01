@@ -226,10 +226,20 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             binding.maxTokensInput.setText(config.maxTokens.toString())
             when (config.backendType.uppercase()) {
                 "GPU" -> binding.backendToggleGroup.check(binding.backendGpuButton.id)
+"NPU" -> binding.backendToggleGroup.check(binding.backendNpuButton.id)
                 else -> {
                     binding.backendToggleGroup.check(binding.backendCpuButton.id)
                 }
             }
+            binding.resourceMonitorSwitch.isChecked = settingsRepository.isResourceMonitorEnabled()
+        }
+    }
+
+    private fun selectedBackendType(): String {
+        return when (binding.backendToggleGroup.checkedButtonId) {
+            binding.backendGpuButton.id -> "GPU"
+            binding.backendNpuButton.id -> "NPU"
+            else -> "CPU"
         }
     }
 
@@ -259,8 +269,10 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 temperature = temperature,
                 maxTopK = topK,
                 maxTokens = maxTokens,
-                backendType = backendType
+                backendType = backendType,
+                backendTargetModel = "ALL"
             )
+            settingsRepository.updateResourceMonitorEnabled(binding.resourceMonitorSwitch.isChecked)
             loadInferenceSettings()
             Toast.makeText(requireContext(), "推論設定を保存しました", Toast.LENGTH_SHORT).show()
         }

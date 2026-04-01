@@ -16,5 +16,6 @@ data class SettingsEntity(
     val temperature: Float = 0.7f,
     val maxTopK: Int = 40,
     val maxTokens: Int = 512,
+    val resourceMonitorEnabled: Boolean = false,
     val lastModified: Long = System.currentTimeMillis()
 )

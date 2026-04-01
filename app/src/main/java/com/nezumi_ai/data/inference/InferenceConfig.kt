@@ -15,7 +15,11 @@ data class InferenceConfig(
         val normalizedTemp = temperature.coerceIn(0.0f, 2.0f)
         val normalizedTopK = maxTopK.coerceIn(1, 128)
         val normalizedMaxTokens = maxTokens.coerceIn(64, normalizedContext)
-        val normalizedBackend = if (backendType.uppercase() == "GPU") "GPU" else "CPU"
+        val normalizedBackend = when (backendType.uppercase()) {
+            "GPU" -> "GPU"
+            "NPU" -> "NPU"
+            else -> "CPU"
+        }
         return InferenceConfig(
             contextWindow = normalizedContext,
             contextCompressionEnabled = contextCompressionEnabled,
