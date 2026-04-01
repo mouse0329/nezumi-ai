@@ -25,6 +25,9 @@
     <string name="model_loading">モデルをロード中...</string>
     <string name="context_meter_format">コンテキスト使用量: %1$d / %2$d</string>
     <string name="response_generating">応答中</string>
+    <string name="response_compressing">圧縮中</string>
+    <string name="compress_context">圧縮</string>
+    <string name="compress_context_busy">圧縮中</string>
     <string name="scroll_to_bottom">一番下へ</string>
     <string name="scroll_to_bottom_icon">↓</string>
     <string name="revoke_prompt">取り消し</string>

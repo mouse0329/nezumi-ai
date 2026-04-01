@@ -5,13 +5,19 @@ import android.net.Uri
 import android.os.StatFs
 import android.provider.OpenableColumns
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.channels.FileLock
 import java.security.MessageDigest
+import kotlin.coroutines.coroutineContext
 
 object ModelFileManager {
 
@@ -23,6 +29,8 @@ object ModelFileManager {
     private const val TAG = "ModelFileManager"
     private const val E2B_FILENAME = "gemma-3n-e2b.task"
     private const val E4B_FILENAME = "gemma-3n-e4b.task"
+    private const val E2B_LEGACY_LITERTLM_FILENAME = "gemma-3n-e2b.litertlm"
+    private const val E4B_LEGACY_LITERTLM_FILENAME = "gemma-3n-e4b.litertlm"
 
     private const val E2B_HF_URL =
         "https://huggingface.co/google/gemma-3n-E2B-it-litert-preview/resolve/main/gemma-3n-E2B-it-int4.task"
@@ -224,7 +232,7 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
             return Result.failure(IllegalStateException("モデル整合性情報が不足しています。再ダウンロードしてください"))
         }
 
-        val actualSha = runCatching { sha256(file) }.getOrElse {
+        val actualSha = runCatching { sha256Blocking(file) }.getOrElse {
             return Result.failure(IllegalStateException("モデル検証に失敗しました: ${it.message}"))
         }
         
@@ -245,129 +253,179 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
 
     fun deleteModel(context: Context, model: LocalModel): Boolean {
         val file = modelFile(context, model)
-        val tmpFile = File("${file.absolutePath}.download")
-        val metaFile = metadataFile(file)
-        val legacyE2B = File(file.parentFile, "gemma-3n-e2b.litertlm")
-        val legacyE2BTmp = File("${legacyE2B.absolutePath}.download")
-        
-        // クリーンアップ一時ファイル
-        cleanupTempFiles(file)
-        
-        val deletedMain = !file.exists() || file.delete()
-        val deletedTmp = !tmpFile.exists() || tmpFile.delete()
-        val deletedMeta = !metaFile.exists() || metaFile.delete()
-        val deletedLegacyMain = model != LocalModel.E2B || !legacyE2B.exists() || legacyE2B.delete()
-        val deletedLegacyTmp = model != LocalModel.E2B || !legacyE2BTmp.exists() || legacyE2BTmp.delete()
-        return deletedMain && deletedTmp && deletedMeta && deletedLegacyMain && deletedLegacyTmp
+        return withModelTryLock(context, model) {
+            val tmpFile = File("${file.absolutePath}.download")
+            val metaFile = metadataFile(file)
+            val legacyLiteRtLm = File(file.parentFile, legacyLiteRtLmFilename(model))
+            val legacyLiteRtLmTmp = File("${legacyLiteRtLm.absolutePath}.download")
+            val legacyLiteRtLmMeta = File("${legacyLiteRtLm.absolutePath}.meta")
+
+            cleanupTempFiles(file)
+
+            val deletedMain = !file.exists() || file.delete()
+            val deletedTmp = !tmpFile.exists() || tmpFile.delete()
+            val deletedMeta = !metaFile.exists() || metaFile.delete()
+            val deletedLegacyMain = !legacyLiteRtLm.exists() || legacyLiteRtLm.delete()
+            val deletedLegacyTmp = !legacyLiteRtLmTmp.exists() || legacyLiteRtLmTmp.delete()
+            val deletedLegacyMeta = !legacyLiteRtLmMeta.exists() || legacyLiteRtLmMeta.delete()
+            deletedMain && deletedTmp && deletedMeta && deletedLegacyMain && deletedLegacyTmp && deletedLegacyMeta
+        } ?: false
     }
 
     fun deleteTempDownload(context: Context, model: LocalModel): Boolean {
         val file = modelFile(context, model)
         val tmpFile = File("${file.absolutePath}.download")
-        return !tmpFile.exists() || tmpFile.delete()
+        // UIスレッドから呼ばれることがあるので、ロックが取れない場合は無理に待たない
+        val result = withModelTryLock(context, model) {
+            !tmpFile.exists() || tmpFile.delete()
+        }
+        return result ?: (!tmpFile.exists() || tmpFile.delete())
     }
 
-    fun ensureDownloaded(
+    suspend fun ensureDownloaded(
         context: Context,
         model: LocalModel,
         onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null
-    ): Result<File> {
+    ): Result<File> = withContext(Dispatchers.IO) {
         val file = modelFile(context, model)
-// 1. まず、ファイルが不完全（小さすぎるなど）な場合は削除する (codexの意図)
-        if (file.exists() && file.length() < MIN_VALID_MODEL_BYTES) {
-            Log.w(TAG, "Model file is too small, removing: ${file.length()} bytes")
-            file.delete()
-        }
-
-        // 2. 次に、有効なファイルが存在するか確認する (mainの意図)
-        if (isValidDownloadedFile(file)) {
-            Log.d(TAG, "Valid model file already exists: ${file.absolutePath}")
-            return Result.success(file)
-        }
-        
-        }
-
-        if (file.exists()) {
-            Log.w(TAG, "Invalid model file detected. Redownloading: ${file.absolutePath}")
-            file.delete()
-            metadataFile(file).delete()
-        }
-
-        val url = when (model) {
-            LocalModel.E2B -> E2B_HF_URL
-            LocalModel.E4B -> E4B_HF_URL
-        }
-
-        return try {
-            // ディスク容量チェック
-            val remoteMetadata = getRemoteMetadata(url, HfAuthManager.getToken(context))
-            val requiredSpace = remoteMetadata.contentLength
-            if (!hasEnoughSpace(file, requiredSpace)) {
-                return Result.failure(
-                    IllegalStateException(
-                        "ディスク容量不足です。${requiredSpace / (1024 * 1024)}MB以上の空き容量が必要です"
-                    )
-                )
+        withModelLock(context, model) {
+            coroutineContext.ensureActive()
+            cleanupLegacyLiteRtLmFiles(file, model)
+            // 1) 不完全ファイル（小さすぎる等）は削除
+            if (file.exists() && file.length() < MIN_VALID_MODEL_BYTES) {
+                Log.w(TAG, "Model file is too small, removing: ${file.length()} bytes")
+                file.delete()
+                metadataFile(file).delete()
             }
-            val expectedSha256 = remoteMetadata.sha256
 
-            if (file.exists()) {
-                if (expectedSha256 != null) {
-                    val localSha256 = sha256(file)
-                    if (localSha256.equals(expectedSha256, ignoreCase = true)) {
-                        Log.d(TAG, "Model file already exists and hash is valid: ${file.absolutePath}")
-                        return Result.success(file)
-                    }
-                    Log.w(TAG, "Existing model hash mismatch. Re-downloading model.")
+            // 2) 有効なファイルが存在するなら即返す（サイズ+SHAメタデータあり）
+            if (isValidDownloadedFile(file)) {
+                Log.d(TAG, "Valid model file already exists: ${file.absolutePath}")
+                return@withModelLock Result.success(file)
+            }
+
+            val url = when (model) {
+                LocalModel.E2B -> E2B_HF_URL
+                LocalModel.E4B -> E4B_HF_URL
+            }
+
+            try {
+                val remoteMetadata = getRemoteMetadata(url, HfAuthManager.getToken(context))
+                // 2.5) 既存ファイルはあるが .meta が壊れている/欠けているだけなら復旧して再取得を回避
+                if (recoverExistingDownloadedFile(
+                        file = file,
+                        remoteContentLength = remoteMetadata.contentLength,
+                        expectedSha256 = remoteMetadata.sha256
+                    )
+                ) {
+                    Log.d(TAG, "Recovered existing model file without re-download: ${file.absolutePath}")
+                    return@withModelLock Result.success(file)
+                }
+
+                // 3) 復旧できない既存ファイルは削除
+                if (file.exists()) {
+                    Log.w(TAG, "Invalid model file detected. Redownloading: ${file.absolutePath}")
                     file.delete()
-                } else {
-                    Log.d(TAG, "Model file already exists (hash unavailable): ${file.absolutePath}")
-                    return Result.success(file)
+                    metadataFile(file).delete()
                 }
-            }
-            downloadFileWithRetry(context, url, file, onProgress)
-            
-            // ファイル検証
-            if (!isValidDownloadedFile(file)) {
-                return Result.failure(IllegalStateException("ダウンロードファイルの整合性検証に失敗しました"))
-            }
-            if (expectedSha256 != null) {
-                val localSha256 = sha256(file)
-                if (!localSha256.equals(expectedSha256, ignoreCase = true)) {
-                    return Result.failure(
-                        IllegalStateException("SHA-256 mismatch: expected=$expectedSha256 actual=$localSha256")
+
+                val requiredSpace = remoteMetadata.contentLength
+                if (!hasEnoughSpace(file, requiredSpace)) {
+                    return@withModelLock Result.failure(
+                        IllegalStateException(
+                            "ディスク容量不足です。${requiredSpace / (1024 * 1024)}MB以上の空き容量が必要です"
+                        )
                     )
                 }
+
+                downloadFileWithRetry(context, url, file, onProgress)
+
+                // 最低限のサイズ・メタデータ整合性チェック（SHAはメタデータ側で必須化）
+                if (!isValidDownloadedFile(file)) {
+                    return@withModelLock Result.failure(IllegalStateException("ダウンロードファイルの整合性検証に失敗しました"))
+                }
+
+                Log.d(TAG, "Model download completed: ${file.absolutePath} (${file.length()} bytes)")
+                Result.success(file)
+            } catch (e: Exception) {
+                Log.e(TAG, "Download failed", e)
+                Result.failure(e)
             }
-            
-            Log.d(TAG, "Model download completed: ${file.absolutePath} (${file.length()} bytes)")
-            Result.success(file)
-        } catch (e: Exception) {
-            Log.e(TAG, "Download failed", e)
-            Result.failure(e)
         }
     }
 
-    private fun downloadFileWithRetry(
+    private fun recoverExistingDownloadedFile(
+        file: File,
+        remoteContentLength: Long,
+        expectedSha256: String?
+    ): Boolean {
+        if (!file.exists() || !file.isFile) return false
+        val length = file.length()
+        if (length < MIN_VALID_MODEL_BYTES) return false
+
+        // HEAD失敗時はcontentLengthが推定値の可能性があるため、SHA取得時のみサイズ厳密化
+        if (!expectedSha256.isNullOrBlank() && remoteContentLength > 0L && length != remoteContentLength) {
+            return false
+        }
+
+        val actualSha = runCatching { sha256Blocking(file) }.getOrNull() ?: return false
+        if (!expectedSha256.isNullOrBlank() && !actualSha.equals(expectedSha256, ignoreCase = true)) {
+            Log.w(TAG, "Remote hash differs from local file hash. Trusting local measured hash for metadata recovery.")
+        }
+
+        // 検証時は「実ファイルから計算したSHA」を正として扱う
+        writeMetadata(file, length, actualSha)
+        return true
+    }
+
+    private suspend fun downloadFileWithRetry(
         context: Context,
         urlString: String,
         outFile: File,
         onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)?
     ) {
         var lastException: Exception? = null
+        var restartFromZeroCount = 0
+        var reachedFullDownloadOnce = false
+        var reachedNearCompletionOnce = false
         
         repeat(MAX_RETRIES) { attempt ->
             try {
                 Log.d(TAG, "Download attempt ${attempt + 1}/$MAX_RETRIES: $urlString")
-                downloadFile(context, urlString, outFile, onProgress)
+                val restarted = downloadFile(
+                    context = context,
+                    urlString = urlString,
+                    outFile = outFile,
+                    onProgress = { downloaded, total ->
+                        if (total > 0L && downloaded >= (total * 98L / 100L)) {
+                            reachedNearCompletionOnce = true
+                        }
+                        if (total > 0L && downloaded >= total) {
+                            reachedFullDownloadOnce = true
+                        }
+                        onProgress?.invoke(downloaded, total)
+                    }
+                )
+                if (restarted) restartFromZeroCount++
+                if (restartFromZeroCount >= 2) {
+                    throw IllegalStateException(
+                        "ダウンロード再開に失敗したため中断しました（0からの再取得が繰り返されています）。" +
+                            "ネットワークやサーバー応答を確認してください。"
+                    )
+                }
                 return // 成功時はリターン
             } catch (e: Exception) {
                 lastException = e
                 Log.w(TAG, "Attempt ${attempt + 1} failed: ${e.message}")
+
+                // 100% 到達後の失敗は再取得ループに見えるため、同一ジョブ内での再ダウンロードを止める
+                if (reachedFullDownloadOnce || reachedNearCompletionOnce) {
+                    throw e
+                }
                 
                 if (attempt < MAX_RETRIES - 1) {
-                    // リトライ待機
-                    Thread.sleep(RETRY_DELAY_MS)
+                    // リトライ待機（キャンセル可能）
+                    delay(RETRY_DELAY_MS)
                 }
             }
         }
@@ -375,17 +433,21 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         throw lastException ?: Exception("Download failed after $MAX_RETRIES attempts")
     }
 
-    private fun downloadFile(
+    /**
+     * @return true if it had to restart from zero due to Range not supported.
+     */
+    private suspend fun downloadFile(
         context: Context,
         urlString: String,
         outFile: File,
         onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)?
-    ) {
+    ): Boolean {
         val tmpFile = File("${outFile.absolutePath}.download")
         tmpFile.parentFile?.mkdirs()
 
         var resumeFrom = if (tmpFile.exists()) tmpFile.length().coerceAtLeast(0L) else 0L
         val token = HfAuthManager.getToken(context)
+        var restartedFromZero = false
 
         fun openDownloadConnection(rangeStart: Long): HttpURLConnection {
             return (URL(urlString).openConnection() as HttpURLConnection).apply {
@@ -405,6 +467,7 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
 
         var connection = openDownloadConnection(resumeFrom)
         try {
+            coroutineContext.ensureActive()
             connection.connect()
             val code = connection.responseCode
 
@@ -413,7 +476,9 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
                 connection.disconnect()
                 tmpFile.delete()
                 resumeFrom = 0L
+                restartedFromZero = true
                 connection = openDownloadConnection(0L)
+                coroutineContext.ensureActive()
                 connection.connect()
             }
 
@@ -456,8 +521,14 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
                 if (!tmpFile.renameTo(outFile)) {
                     throw IllegalStateException("Failed to save model file: ${outFile.absolutePath}")
                 }
+                // 既に全量あり：検証してメタデータを書き直す（キャンセル可能）
+                val actualSha256 = sha256Suspend(outFile)
+                if (!expectedSha256.isNullOrBlank() && !actualSha256.equals(expectedSha256, ignoreCase = true)) {
+                    Log.w(TAG, "Checksum mismatch against remote header hash after resume-complete. Using local measured hash.")
+                }
+                writeMetadata(outFile, totalBytes, actualSha256)
                 onProgress?.invoke(totalBytes, totalBytes)
-                return
+                return restartedFromZero
             }
 
             onProgress?.invoke(resumeFrom, totalBytes)
@@ -471,6 +542,7 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
                     var downloaded = resumeFrom
 
                     while (input.read(buffer).also { read = it } > 0) {
+                        coroutineContext.ensureActive()
                         output.write(buffer, 0, read)
                         downloaded += read
                         onProgress?.invoke(downloaded, totalBytes)
@@ -502,17 +574,17 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
                 throw IllegalStateException("Failed to save model file: ${outFile.absolutePath}")
             }
 
-            val actualSha256 = sha256(outFile)
+            // ここが「検証中...」で止まって見える主因になりやすいので、キャンセル可能にして確実にメタデータを書く
+            val actualSha256 = sha256Suspend(outFile)
             if (!expectedSha256.isNullOrBlank() && !actualSha256.equals(expectedSha256, ignoreCase = true)) {
-                outFile.delete()
-                metadataFile(outFile).delete()
-                throw IllegalStateException("Checksum mismatch")
+                Log.w(TAG, "Checksum mismatch against remote header hash. Using local measured hash.")
             }
-            writeMetadata(outFile, totalBytes, expectedSha256 ?: actualSha256)
+            writeMetadata(outFile, totalBytes, actualSha256)
 
         } finally {
             connection.disconnect()
         }
+        return restartedFromZero
     }
 
     private fun getRemoteMetadata(urlString: String, token: String): RemoteMetadata {
@@ -553,18 +625,6 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         return if (cleaned.matches(Regex("^[a-f0-9]{64}$"))) cleaned else null
     }
 
-    private fun sha256(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(BUFFER_SIZE)
-            var read: Int
-            while (input.read(buffer).also { read = it } > 0) {
-                digest.update(buffer, 0, read)
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
-    }
-
     private fun hasEnoughSpace(file: File, requiredBytes: Long): Boolean {
         val stat = StatFs(file.parentFile?.absolutePath ?: return false)
         val availableBytes = stat.availableBytes
@@ -584,16 +644,60 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         }
     }
 
+    private fun cleanupLegacyLiteRtLmFiles(baseFile: File, model: LocalModel) {
+        try {
+            val legacy = File(baseFile.parentFile, legacyLiteRtLmFilename(model))
+            val legacyTmp = File("${legacy.absolutePath}.download")
+            val legacyMeta = File("${legacy.absolutePath}.meta")
+            if (legacy.exists()) legacy.delete()
+            if (legacyTmp.exists()) legacyTmp.delete()
+            if (legacyMeta.exists()) legacyMeta.delete()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to cleanup legacy litertlm files", e)
+        }
+    }
+
+    private fun legacyLiteRtLmFilename(model: LocalModel): String {
+        return when (model) {
+            LocalModel.E2B -> E2B_LEGACY_LITERTLM_FILENAME
+            LocalModel.E4B -> E4B_LEGACY_LITERTLM_FILENAME
+        }
+    }
+
     private fun isValidDownloadedFile(file: File): Boolean {
         if (!file.exists()) return false
         val fileLength = file.length()
         if (fileLength <= 0L) return false
 
         val metadata = readMetadata(file) ?: return false
+        // サイズ一致だけだと「破損してるのにダウンロード済み扱い」になりがちなので SHA を必須にする
+        if (metadata.expectedSha256.isNullOrBlank()) return false
         return fileLength == metadata.expectedBytes
     }
 
     private fun metadataFile(file: File): File = File("${file.absolutePath}.meta")
+    private fun cancelMarkerFile(context: Context, model: LocalModel): File {
+        val dir = File(context.filesDir, "models")
+        if (!dir.exists()) dir.mkdirs()
+        return File(dir, ".${model.name.lowercase()}.cancel")
+    }
+
+    fun markCancelRequested(context: Context, model: LocalModel, requested: Boolean) {
+        runCatching {
+            val marker = cancelMarkerFile(context, model)
+            if (requested) {
+                marker.writeText(System.currentTimeMillis().toString())
+            } else {
+                if (marker.exists()) marker.delete()
+            }
+        }.onFailure {
+            Log.w(TAG, "Failed to update cancel marker", it)
+        }
+    }
+
+    fun isCancelRequested(context: Context, model: LocalModel): Boolean {
+        return runCatching { cancelMarkerFile(context, model).exists() }.getOrDefault(false)
+    }
 
     private fun readMetadata(file: File): ModelMetadata? {
         return try {
@@ -637,11 +741,25 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         return null
     }
 
-    private fun sha256(file: File): String {
+    private fun sha256Blocking(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().buffered(BUFFER_SIZE).use { input ->
             val buffer = ByteArray(BUFFER_SIZE)
             while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private suspend fun sha256Suspend(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered(BUFFER_SIZE).use { input ->
+            val buffer = ByteArray(BUFFER_SIZE)
+            while (true) {
+                coroutineContext.ensureActive()
                 val read = input.read(buffer)
                 if (read <= 0) break
                 digest.update(buffer, 0, read)
@@ -656,5 +774,33 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
                 val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                 if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
             }
+    }
+
+    private inline fun <T> withModelLock(context: Context, model: LocalModel, block: () -> T): T {
+        val lockDir = File(context.filesDir, "models")
+        if (!lockDir.exists()) lockDir.mkdirs()
+        val lockFile = File(lockDir, ".${model.name.lowercase()}.lock")
+        RandomAccessFile(lockFile, "rw").channel.use { channel ->
+            val lock = channel.lock()
+            try {
+                return block()
+            } finally {
+                runCatching { lock.release() }
+            }
+        }
+    }
+
+    private inline fun <T> withModelTryLock(context: Context, model: LocalModel, block: () -> T): T? {
+        val lockDir = File(context.filesDir, "models")
+        if (!lockDir.exists()) lockDir.mkdirs()
+        val lockFile = File(lockDir, ".${model.name.lowercase()}.lock")
+        RandomAccessFile(lockFile, "rw").channel.use { channel ->
+            val lock = channel.tryLock() ?: return null
+            try {
+                return block()
+            } finally {
+                runCatching { lock.release() }
+            }
+        }
     }
 }
