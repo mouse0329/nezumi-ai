@@ -97,6 +97,21 @@ object ModelFileManager {
         outFile
     }
 
+    fun deleteImportedTask(context: Context, path: String): Result<Unit> = runCatching {
+        val file = File(path)
+        val importedDir = File(context.filesDir, "models/imported")
+        if (!file.absolutePath.startsWith(importedDir.absolutePath + File.separator)) {
+            throw IllegalArgumentException("削除対象が不正です")
+        }
+        if (!file.exists()) return@runCatching
+        if (!file.isFile || !file.name.lowercase().endsWith(".task")) {
+            throw IllegalArgumentException(".task ファイルのみ削除できます")
+        }
+        if (!file.delete()) {
+            throw IllegalStateException("ファイル削除に失敗しました")
+        }
+    }
+
     fun isModelAvailable(context: Context, modelName: String): Boolean {
         if ((modelName.endsWith(".task") || modelName.endsWith(".litertlm")) && modelName.startsWith("/")) {
             return File(modelName).exists()
