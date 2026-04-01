@@ -240,6 +240,8 @@ class ChatViewModel(
                 content = "",
                 isStreaming = true
             )
+            val activeStreamingMessageId = streamingMessageId
+                ?: throw IllegalStateException("Failed to create streaming message")
 
             val responseBuilder = StringBuilder()
 
@@ -278,13 +280,11 @@ class ChatViewModel(
                                     }
                                 }
                             }
-                            streamingMessageId?.let { id ->
-                                messageRepository.updateMessageContent(
-                                    messageId = id,
-                                    content = responseBuilder.toString(),
-                                    isStreaming = true
-                                )
-                            }
+                            messageRepository.updateMessageContent(
+                                messageId = activeStreamingMessageId,
+                                content = responseBuilder.toString(),
+                                isStreaming = true
+                            )
                             Log.d(TAG, "Received chunk: $chunk")
                         }
                     } finally {
@@ -296,23 +296,19 @@ class ChatViewModel(
             val completeResponse = finalizeResponseForCommit(responseBuilder.toString())
 
             if (completeResponse.isNotEmpty()) {
-                streamingMessageId?.let { id ->
-                    messageRepository.updateMessageContent(
-                        messageId = id,
-                        content = completeResponse,
-                        isStreaming = false
-                    )
-                }
+                messageRepository.updateMessageContent(
+                    messageId = activeStreamingMessageId,
+                    content = completeResponse,
+                    isStreaming = false
+                )
                 maybeGenerateSessionTitle(sessionId, userMessage, completeResponse)
                 Log.d(TAG, "AI response saved to database: ${completeResponse.take(50)}...")
             } else {
-                streamingMessageId?.let { id ->
-                    messageRepository.updateMessageContent(
-                        messageId = id,
-                        content = "申し訳ありません。応答を生成できませんでした。",
-                        isStreaming = false
-                    )
-                }
+                messageRepository.updateMessageContent(
+                    messageId = activeStreamingMessageId,
+                    content = "申し訳ありません。応答を生成できませんでした。",
+                    isStreaming = false
+                )
             }
         } catch (t: Throwable) {
             if (t is FirstTokenTimeoutException) {
