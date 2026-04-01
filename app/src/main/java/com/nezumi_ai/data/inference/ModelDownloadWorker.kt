@@ -1,14 +1,24 @@
 package com.nezumi_ai.data.inference
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import androidx.work.BackoffPolicy
 import androidx.work.CoroutineWorker
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
+import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import java.net.SocketException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import java.util.concurrent.TimeUnit
 
 class ModelDownloadWorker(
     appContext: Context,
@@ -20,6 +30,7 @@ class ModelDownloadWorker(
             ?: return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "model is missing"))
         val model = modelFromName(modelName)
             ?: return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "unknown model"))
+        setForeground(createForegroundInfo(modelName, 0L, -1L))
 
         return try {
             var lastTime = System.currentTimeMillis()
@@ -69,6 +80,7 @@ class ModelDownloadWorker(
                         KEY_ESTIMATED_REMAINING_SEC to estimatedSecRemaining
                     )
                 )
+                setForegroundAsync(createForegroundInfo(modelName, downloaded, total))
                 
                 if (timeDeltaMs > 500) { // 0.5秒ごとに更新
                     lastTime = currentTime
@@ -87,12 +99,62 @@ class ModelDownloadWorker(
                     )
                 },
                 onFailure = { e ->
-                    Result.failure(workDataOf(KEY_ERROR_MESSAGE to (e.message ?: "download failed")))
+                    if (shouldRetry(e)) {
+                        Result.retry()
+                    } else {
+                        Result.failure(workDataOf(KEY_ERROR_MESSAGE to (e.message ?: "download failed")))
+                    }
                 }
             )
         } catch (e: Exception) {
-            Result.failure(workDataOf(KEY_ERROR_MESSAGE to (e.message ?: "download failed")))
+            if (shouldRetry(e)) {
+                Result.retry()
+            } else {
+                Result.failure(workDataOf(KEY_ERROR_MESSAGE to (e.message ?: "download failed")))
+            }
         }
+    }
+
+    private fun shouldRetry(error: Throwable): Boolean {
+        if (runAttemptCount >= MAX_WORK_RETRY) return false
+        val message = error.message.orEmpty().lowercase()
+        if (error is SocketTimeoutException || error is UnknownHostException || error is SocketException) {
+            return true
+        }
+        return "timeout" in message || "connection reset" in message || "unexpected end of stream" in message
+    }
+
+    private fun createForegroundInfo(modelName: String, downloaded: Long, total: Long): ForegroundInfo {
+        val manager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val existing = manager.getNotificationChannel(NOTIFICATION_CHANNEL_ID)
+            if (existing == null) {
+                val channel = NotificationChannel(
+                    NOTIFICATION_CHANNEL_ID,
+                    "Model download",
+                    NotificationManager.IMPORTANCE_LOW
+                )
+                manager.createNotificationChannel(channel)
+            }
+        }
+
+        val contentText = if (total > 0L) {
+            val percent = ((downloaded.toDouble() / total.toDouble()) * 100.0).toInt().coerceIn(0, 100)
+            "$percent% ($downloaded / $total bytes)"
+        } else {
+            "Downloading..."
+        }
+
+        val notification = NotificationCompat.Builder(applicationContext, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle("Downloading model: $modelName")
+            .setContentText(contentText)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setProgress(100, if (total > 0L) ((downloaded * 100L) / total).toInt() else 0, total <= 0L)
+            .build()
+
+        return ForegroundInfo(NOTIFICATION_ID, notification)
     }
 
     companion object {
@@ -102,6 +164,9 @@ class ModelDownloadWorker(
         const val KEY_ERROR_MESSAGE = "error_message"
         const val KEY_SPEED_MBPS = "speed_mbps"
         const val KEY_ESTIMATED_REMAINING_SEC = "estimated_remaining_sec"
+        private const val NOTIFICATION_CHANNEL_ID = "model_download_channel"
+        private const val NOTIFICATION_ID = 2001
+        private const val MAX_WORK_RETRY = 5
 
         fun modelWorkName(model: ModelFileManager.LocalModel): String =
             "model_download_${model.name.lowercase()}"
@@ -113,6 +178,11 @@ class ModelDownloadWorker(
             val request = OneTimeWorkRequestBuilder<ModelDownloadWorker>()
                 .setInputData(workDataOf(KEY_MODEL_NAME to model.name))
                 .setConstraints(constraints)
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    15,
+                    TimeUnit.SECONDS
+                )
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork(
                 modelWorkName(model),
