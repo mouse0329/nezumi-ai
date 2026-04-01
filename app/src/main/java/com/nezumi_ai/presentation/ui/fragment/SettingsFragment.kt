@@ -226,7 +226,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             binding.maxTokensInput.setText(config.maxTokens.toString())
             when (config.backendType.uppercase()) {
                 "GPU" -> binding.backendToggleGroup.check(binding.backendGpuButton.id)
-                "NPU" -> binding.backendToggleGroup.check(binding.backendNpuButton.id)
+"NPU" -> binding.backendToggleGroup.check(binding.backendNpuButton.id)
                 else -> {
                     binding.backendToggleGroup.check(binding.backendCpuButton.id)
                 }
@@ -239,6 +239,13 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         return when (binding.backendToggleGroup.checkedButtonId) {
             binding.backendGpuButton.id -> "GPU"
             binding.backendNpuButton.id -> "NPU"
+            else -> "CPU"
+        }
+    }
+
+    private fun selectedBackendType(): String {
+        return when (binding.backendToggleGroup.checkedButtonId) {
+            binding.backendGpuButton.id -> "GPU"
             else -> "CPU"
         }
     }
