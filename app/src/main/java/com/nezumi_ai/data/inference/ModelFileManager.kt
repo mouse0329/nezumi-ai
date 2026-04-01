@@ -30,7 +30,13 @@ object ModelFileManager {
     private const val MAX_RETRIES = 3
     private const val RETRY_DELAY_MS = 2000L
     private const val MIN_FREE_DISK_BYTES = 100 * 1024 * 1024 // 100MB
+    private const val MIN_VALID_MODEL_BYTES = 50L * 1024L * 1024L // 50MB
     private const val BUFFER_SIZE = 32 * 1024 // 32KB buffer
+
+    private data class RemoteMetadata(
+        val contentLength: Long,
+        val sha256: String?
+    )
 
     data class ImportedTaskModel(
         val name: String,
@@ -98,8 +104,10 @@ object ModelFileManager {
         return isDownloaded(context, resolveModelName(modelName))
     }
 
-    fun isDownloaded(context: Context, model: LocalModel): Boolean =
-        modelFile(context, model).exists()
+    fun isDownloaded(context: Context, model: LocalModel): Boolean {
+        val file = modelFile(context, model)
+        return file.exists() && file.length() >= MIN_VALID_MODEL_BYTES
+    }
 
     fun previewTreeUrl(model: LocalModel): String {
         return when (model) {
@@ -136,9 +144,9 @@ object ModelFileManager {
         onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null
     ): Result<File> {
         val file = modelFile(context, model)
-        if (file.exists() && file.length() > 0) {
-            Log.d(TAG, "Model file already exists: ${file.absolutePath}")
-            return Result.success(file)
+        if (file.exists() && file.length() < MIN_VALID_MODEL_BYTES) {
+            Log.w(TAG, "Model file is too small, removing and re-downloading: ${file.length()} bytes")
+            file.delete()
         }
 
         val url = when (model) {
@@ -148,7 +156,8 @@ object ModelFileManager {
 
         return try {
             // ディスク容量チェック
-            val requiredSpace = getContentLength(url, HfAuthManager.getToken(context))
+            val remoteMetadata = getRemoteMetadata(url, HfAuthManager.getToken(context))
+            val requiredSpace = remoteMetadata.contentLength
             if (!hasEnoughSpace(file, requiredSpace)) {
                 return Result.failure(
                     IllegalStateException(
@@ -156,12 +165,35 @@ object ModelFileManager {
                     )
                 )
             }
+            val expectedSha256 = remoteMetadata.sha256
 
+            if (file.exists()) {
+                if (expectedSha256 != null) {
+                    val localSha256 = sha256(file)
+                    if (localSha256.equals(expectedSha256, ignoreCase = true)) {
+                        Log.d(TAG, "Model file already exists and hash is valid: ${file.absolutePath}")
+                        return Result.success(file)
+                    }
+                    Log.w(TAG, "Existing model hash mismatch. Re-downloading model.")
+                    file.delete()
+                } else {
+                    Log.d(TAG, "Model file already exists (hash unavailable): ${file.absolutePath}")
+                    return Result.success(file)
+                }
+            }
             downloadFileWithRetry(context, url, file, onProgress)
             
             // ファイル検証
             if (!file.exists() || file.length() == 0L) {
                 return Result.failure(IllegalStateException("ダウンロードファイルが空です"))
+            }
+            if (expectedSha256 != null) {
+                val localSha256 = sha256(file)
+                if (!localSha256.equals(expectedSha256, ignoreCase = true)) {
+                    return Result.failure(
+                        IllegalStateException("SHA-256 mismatch: expected=$expectedSha256 actual=$localSha256")
+                    )
+                }
             }
             
             Log.d(TAG, "Model download completed: ${file.absolutePath} (${file.length()} bytes)")
@@ -252,6 +284,14 @@ object ModelFileManager {
                 throw IllegalStateException(message)
             }
 
+            val contentType = connection.contentType.orEmpty().lowercase()
+            if (contentType.contains("text/html") || contentType.contains("application/json")) {
+                throw IllegalStateException(
+                    "Unexpected response Content-Type: $contentType. " +
+                        "認証エラーや規約未同意の可能性があります。"
+                )
+            }
+
             val totalBytes = if (responseCode == HttpURLConnection.HTTP_PARTIAL) {
                 val contentRange = connection.getHeaderField("Content-Range")
                 val rangeTotal = contentRange
@@ -305,6 +345,11 @@ object ModelFileManager {
                     "File size mismatch: ${tmpFile.length()} vs $totalBytes"
                 )
             }
+            if (tmpFile.length() < MIN_VALID_MODEL_BYTES) {
+                throw IllegalStateException(
+                    "Downloaded file is unexpectedly small: ${tmpFile.length()} bytes"
+                )
+            }
 
             // ファイルを確定
             if (outFile.exists()) outFile.delete()
@@ -317,7 +362,7 @@ object ModelFileManager {
         }
     }
 
-    private fun getContentLength(urlString: String, token: String): Long {
+    private fun getRemoteMetadata(urlString: String, token: String): RemoteMetadata {
         return try {
             val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10_000
@@ -330,12 +375,41 @@ object ModelFileManager {
             }
             connection.connect()
             val length = connection.contentLengthLong
+            val etag = connection.getHeaderField("X-Linked-Etag")
+                ?: connection.getHeaderField("ETag")
             connection.disconnect()
-            if (length > 0) length else 500 * 1024 * 1024 // デフォルト500MB
+            val normalizedHash = normalizeSha256FromEtag(etag)
+            RemoteMetadata(
+                contentLength = if (length > 0) length else 500 * 1024 * 1024,
+                sha256 = normalizedHash
+            )
         } catch (e: Exception) {
             Log.w(TAG, "Cannot determine content length", e)
-            500 * 1024 * 1024 // デフォルト推定500MB
+            RemoteMetadata(contentLength = 500 * 1024 * 1024, sha256 = null)
         }
+    }
+
+    private fun normalizeSha256FromEtag(rawEtag: String?): String? {
+        if (rawEtag.isNullOrBlank()) return null
+        val cleaned = rawEtag
+            .trim()
+            .removePrefix("W/")
+            .trim('"')
+            .removePrefix("sha256:")
+            .lowercase()
+        return if (cleaned.matches(Regex("^[a-f0-9]{64}$"))) cleaned else null
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(BUFFER_SIZE)
+            var read: Int
+            while (input.read(buffer).also { read = it } > 0) {
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun hasEnoughSpace(file: File, requiredBytes: Long): Boolean {
