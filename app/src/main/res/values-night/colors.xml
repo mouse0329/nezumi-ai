@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Primary Colors -->
+    <color name="primary">#64748B</color>
+    <color name="primary_light">#1F2937</color>
+    <color name="accent">#94A3B8</color>
+    <color name="nezumi_primary">#4B5563</color>
+    <color name="nezumi_on_primary">#FFFFFFFF</color>
+    <color name="nezumi_primary_container">#374151</color>
+    <color name="nezumi_on_primary_container">#F9FAFB</color>
+
+    <!-- Text Colors -->
+    <color name="text_primary">#F3F4F6</color>
+    <color name="text_secondary">#9CA3AF</color>
+
+    <!-- Background Colors -->
+    <color name="bg_session_list">#0F172A</color>
+    <color name="bg_chat">#111827</color>
+    <color name="surface_card">#1F2937</color>
+    <color name="loading_overlay">#B3000000</color>
+    <color name="context_meter_progress">#CBD5E1</color>
+    <color name="context_meter_track">#374151</color>
+
+    <!-- Border Colors -->
+    <color name="border">#374151</color>
+</resources>

@@ -13,8 +13,8 @@ android {
         applicationId = "com.nezumi_ai"
         minSdk = 30
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 5
+        versionName = "1.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["appAuthRedirectScheme"] = "nezumiai"
@@ -79,6 +79,10 @@ dependencies {
 
     // OAuth (Hugging Face)
     implementation("net.openid:appauth:0.11.1")
+
+    // Markdown rendering
+    implementation("io.noties.markwon:core:4.6.2")
+    implementation("io.noties.markwon:ext-tables:4.6.2")
     
     // Testing
     testImplementation("junit:junit:4.13.2")

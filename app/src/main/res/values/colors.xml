@@ -20,6 +20,10 @@
     <!-- Background Colors -->
     <color name="bg_session_list">#F5F6F8</color>
     <color name="bg_chat">#F5F6F8</color>
+    <color name="surface_card">#FFFFFFFF</color>
+    <color name="loading_overlay">#B3FFFFFF</color>
+    <color name="context_meter_progress">#4B5563</color>
+    <color name="context_meter_track">#D1D5DB</color>
 
     <!-- Border Colors -->
     <color name="border">#B6BDC8</color>

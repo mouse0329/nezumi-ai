@@ -16,6 +16,8 @@ import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.SimpleItemAnimator
 import com.nezumi_ai.R
 import com.nezumi_ai.databinding.FragmentChatBinding
 import com.nezumi_ai.data.database.NezumiAiDatabase
@@ -26,9 +28,12 @@ import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.presentation.viewmodel.ChatViewModel
 import com.nezumi_ai.presentation.viewmodel.ChatViewModelFactory
 import com.nezumi_ai.presentation.ui.adapter.MessageAdapter
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.max
 
 class ChatFragment : Fragment(R.layout.fragment_chat) {
@@ -41,8 +46,14 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private val args: ChatFragmentArgs by navArgs()
     private var modelOptions: List<ModelOption> = emptyList()
     private var responseTypingAnimationJob: Job? = null
+    private var usageMonitorJob: Job? = null
+    private lateinit var settingsRepository: SettingsRepository
+    private val cpuUsageSampler = CpuUsageSampler()
     private var isGenerating = false
     private var isModelLoadingNow = false
+    private var resourceMonitorEnabled = false
+    private var currentBackendType = "CPU"
+    private var currentModelKey = "E2B"
     
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -61,7 +72,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         val database = NezumiAiDatabase.getInstance(requireContext())
         val sessionRepository = ChatSessionRepository(database.chatSessionDao())
         val messageRepository = MessageRepository(database.messageDao())
-        val settingsRepository = SettingsRepository(database.settingsDao())
+        settingsRepository = SettingsRepository(database.settingsDao())
         val factory = ChatViewModelFactory(
             requireContext().applicationContext,
             sessionRepository,
@@ -70,6 +81,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         )
         viewModel = ViewModelProvider(this, factory).get(ChatViewModel::class.java)
         setupModelDropdown()
+        refreshResourceMonitorSetting()
         
         // RecyclerView設定
         adapter = MessageAdapter { message ->
@@ -80,6 +92,18 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 stackFromEnd = true
             }
             adapter = this@ChatFragment.adapter
+            (itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                    updateScrollToBottomButtonVisibility()
+                }
+            })
+        }
+        binding.scrollToBottomButton.setOnClickListener {
+            val lastIndex = adapter.itemCount - 1
+            if (lastIndex >= 0) {
+                scrollToBottom(lastIndex)
+            }
         }
         
         // セッションID取得（Navigation argsから）
@@ -94,9 +118,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         // メッセージの監視
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.messages.collect { messages ->
-                adapter.submitList(messages)
-                if (messages.isNotEmpty()) {
-                    scrollToBottom(messages.size - 1)
+                val wasAtBottom = isAtBottom()
+                adapter.submitList(messages) {
+                    if (messages.isNotEmpty() && wasAtBottom) {
+                        scrollToBottom(messages.size - 1)
+                    }
+                    updateScrollToBottomButtonVisibility()
                 }
             }
         }
@@ -111,10 +138,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             if (message.isNotEmpty()) {
                 viewModel.sendMessage(message)
                 binding.messageInput.text.clear()
-                val lastIndex = adapter.itemCount - 1
-                if (lastIndex >= 0) {
-                    scrollToBottom(lastIndex)
-                }
             }
         }
 
@@ -123,6 +146,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             viewModel.isLoading.collect { isLoading ->
                 isGenerating = isLoading
                 renderSendButtonState()
+                renderModelDropdownState()
                 if (isLoading) {
                     startResponseTypingAnimation()
                 } else {
@@ -133,6 +157,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.selectedModel.collect { model ->
+                currentModelKey = model
+                refreshCurrentBackendType()
                 val selected = modelOptions.firstOrNull { it.key == model } ?: return@collect
                 if (binding.modelDropdown.text?.toString() != selected.label) {
                     binding.modelDropdown.setText(selected.label, false)
@@ -167,7 +193,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 isModelLoadingNow = loading
                 binding.modelLoadingOverlay.visibility = if (loading) View.VISIBLE else View.GONE
                 binding.backButton.isEnabled = !loading
-                binding.modelDropdown.isEnabled = !loading && modelOptions.isNotEmpty()
+                renderModelDropdownState()
                 renderSendButtonState()
                 binding.messageInput.isEnabled = !loading
             }
@@ -177,10 +203,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     override fun onResume() {
         super.onResume()
         setupModelDropdown()
+        refreshResourceMonitorSetting()
+        refreshCurrentBackendType()
     }
 
     override fun onStop() {
         super.onStop()
+        stopUsageMonitor()
         if (isGenerating) {
             viewModel.stopGeneration()
             stopResponseTypingAnimation()
@@ -207,7 +236,18 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         if (position < 0) return
         binding.messagesRecyclerView.post {
             binding.messagesRecyclerView.scrollToPosition(position)
+            updateScrollToBottomButtonVisibility()
         }
+    }
+
+    private fun isAtBottom(): Boolean {
+        val lm = binding.messagesRecyclerView.layoutManager as? LinearLayoutManager ?: return true
+        val lastVisible = lm.findLastVisibleItemPosition()
+        return lastVisible >= adapter.itemCount - 2
+    }
+
+    private fun updateScrollToBottomButtonVisibility() {
+        binding.scrollToBottomButton.visibility = if (isAtBottom()) View.GONE else View.VISIBLE
     }
 
     private fun setupModelDropdown() {
@@ -226,8 +266,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             labels
         )
         binding.modelDropdown.setAdapter(spinnerAdapter)
-        binding.modelDropdown.isEnabled = true
-        binding.modelDropdownLayout.isEnabled = true
+        renderModelDropdownState()
+        syncSelectedModelLabel()
         binding.modelDropdown.onItemClickListener =
             AdapterView.OnItemClickListener { _, _, position, _ ->
                 val selected = modelOptions.getOrNull(position) ?: return@OnItemClickListener
@@ -254,12 +294,85 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         val label: String
     )
 
+    private fun syncSelectedModelLabel() {
+        val selected = modelOptions.firstOrNull { it.key == viewModel.selectedModel.value }
+            ?: modelOptions.firstOrNull()
+            ?: return
+        binding.modelDropdown.setText(selected.label, false)
+    }
+
     private fun renderSendButtonState() {
         // 生成中は常に「停止(四角)」を優先表示
         binding.sendButton.text =
             if (isGenerating) getString(R.string.stop_icon) else getString(R.string.send_icon)
         // モデルロード中のみ操作不可
         binding.sendButton.isEnabled = !isModelLoadingNow
+    }
+
+    private fun renderModelDropdownState() {
+        val enabled = !isModelLoadingNow && !isGenerating && modelOptions.isNotEmpty()
+        binding.modelDropdown.isEnabled = enabled
+        binding.modelDropdownLayout.isEnabled = enabled
+    }
+
+    private fun refreshResourceMonitorSetting() {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val enabled = settingsRepository.isResourceMonitorEnabled()
+            withContext(Dispatchers.Main) {
+                resourceMonitorEnabled = enabled
+                binding.resourceUsageText.visibility = if (enabled) View.VISIBLE else View.GONE
+                if (enabled) {
+                    startUsageMonitor()
+                } else {
+                    stopUsageMonitor()
+                }
+            }
+        }
+    }
+
+    private fun refreshCurrentBackendType() {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val backend = settingsRepository.getBackendForModel(currentModelKey)
+            withContext(Dispatchers.Main) {
+                currentBackendType = backend.uppercase()
+                if (resourceMonitorEnabled) {
+                    updateResourceUsageText(
+                        cpuPercent = 0,
+                        gpuPercent = if (isGenerating && currentBackendType == "GPU") 100 else 0,
+                        npuPercent = if (isGenerating && currentBackendType == "NPU") 100 else 0
+                    )
+                }
+            }
+        }
+    }
+
+    private fun startUsageMonitor() {
+        if (usageMonitorJob?.isActive == true) return
+        usageMonitorJob = viewLifecycleOwner.lifecycleScope.launch {
+            while (isActive && resourceMonitorEnabled) {
+                val cpu = withContext(Dispatchers.IO) {
+                    cpuUsageSampler.sampleProcessCpuPercent()
+                }
+                val gpu = if (isGenerating && currentBackendType == "GPU") 100 else 0
+                val npu = if (isGenerating && currentBackendType == "NPU") 100 else 0
+                updateResourceUsageText(cpu, gpu, npu)
+                delay(1000L)
+            }
+        }
+    }
+
+    private fun stopUsageMonitor() {
+        usageMonitorJob?.cancel()
+        usageMonitorJob = null
+    }
+
+    private fun updateResourceUsageText(cpuPercent: Int, gpuPercent: Int, npuPercent: Int) {
+        binding.resourceUsageText.text = getString(
+            R.string.resource_usage_format,
+            cpuPercent.coerceIn(0, 100),
+            gpuPercent.coerceIn(0, 100),
+            npuPercent.coerceIn(0, 100)
+        )
     }
 
     private fun startResponseTypingAnimation() {
@@ -286,7 +399,56 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     override fun onDestroyView() {
         responseTypingAnimationJob?.cancel()
         responseTypingAnimationJob = null
+        stopUsageMonitor()
         super.onDestroyView()
         _binding = null
+    }
+
+    private class CpuUsageSampler {
+        private var lastProcJiffies: Long? = null
+        private var lastTotalJiffies: Long? = null
+
+        fun sampleProcessCpuPercent(): Int {
+            val total = readTotalCpuJiffies() ?: return 0
+            val proc = readProcessCpuJiffies() ?: return 0
+
+            val prevProc = lastProcJiffies
+            val prevTotal = lastTotalJiffies
+            lastProcJiffies = proc
+            lastTotalJiffies = total
+
+            if (prevProc == null || prevTotal == null) return 0
+            val procDelta = (proc - prevProc).coerceAtLeast(0L)
+            val totalDelta = (total - prevTotal).coerceAtLeast(1L)
+            val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+            val percent = (procDelta * 100.0 * cores.toDouble()) / totalDelta.toDouble()
+            return percent.toInt().coerceIn(0, 100)
+        }
+
+        private fun readTotalCpuJiffies(): Long? {
+            return runCatching {
+                val line = java.io.File("/proc/stat").useLines { lines ->
+                    lines.firstOrNull { it.startsWith("cpu ") }
+                } ?: return null
+                line.trim().split(Regex("\\s+"))
+                    .drop(1)
+                    .mapNotNull { it.toLongOrNull() }
+                    .sum()
+            }.getOrNull()
+        }
+
+        private fun readProcessCpuJiffies(): Long? {
+            return runCatching {
+                val stat = java.io.File("/proc/self/stat").readText()
+                val end = stat.lastIndexOf(')')
+                if (end <= 0) return null
+                val tail = stat.substring(end + 2).trim()
+                val parts = tail.split(Regex("\\s+"))
+                if (parts.size <= 13) return null
+                val utime = parts[11].toLongOrNull() ?: return null
+                val stime = parts[12].toLongOrNull() ?: return null
+                utime + stime
+            }.getOrNull()
+        }
     }
 }
