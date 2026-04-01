@@ -54,6 +54,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var resourceMonitorEnabled = false
     private var currentBackendType = "CPU"
     private var currentModelKey = "E2B"
+    private var isCompressingNow = false
     
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -114,6 +115,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         binding.backButton.setOnClickListener {
             findNavController().navigateUp()
         }
+        binding.compressContextButton.setOnClickListener {
+            viewModel.compressContextManually()
+        }
         
         // メッセージの監視
         viewLifecycleOwner.lifecycleScope.launch {
@@ -151,6 +155,18 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     startResponseTypingAnimation()
                 } else {
                     stopResponseTypingAnimation()
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.isCompressing.collect { compressing ->
+                isCompressingNow = compressing
+                renderCompressButtonState()
+                if (isGenerating) {
+                    binding.responseTypingText.text =
+                        if (isCompressingNow) getString(R.string.response_compressing)
+                        else getString(R.string.response_generating)
                 }
             }
         }
@@ -195,6 +211,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 binding.backButton.isEnabled = !loading
                 renderModelDropdownState()
                 renderSendButtonState()
+                renderCompressButtonState()
                 binding.messageInput.isEnabled = !loading
             }
         }
@@ -315,6 +332,14 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         binding.modelDropdownLayout.isEnabled = enabled
     }
 
+    private fun renderCompressButtonState() {
+        val enabled = !isModelLoadingNow && !isGenerating
+        binding.compressContextButton.isEnabled = enabled
+        binding.compressContextButton.text =
+            if (isCompressingNow) getString(R.string.compress_context_busy)
+            else getString(R.string.compress_context)
+    }
+
     private fun refreshResourceMonitorSetting() {
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             val enabled = settingsRepository.isResourceMonitorEnabled()
@@ -382,7 +407,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             var dotCount = 0
             while (true) {
                 val dots = ".".repeat(dotCount)
-                binding.responseTypingText.text = getString(R.string.response_generating) + dots
+                val base = if (isCompressingNow) {
+                    getString(R.string.response_compressing)
+                } else {
+                    getString(R.string.response_generating)
+                }
+                binding.responseTypingText.text = base + dots
                 dotCount = (dotCount + 1) % 4
                 delay(350)
             }

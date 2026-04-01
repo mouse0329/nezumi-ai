@@ -14,6 +14,7 @@ import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import java.io.File
+import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 
 class ChatViewModel(
@@ -37,12 +39,13 @@ class ChatViewModel(
     companion object {
         private const val TAG = "ChatViewModel"
         private const val RESPONSE_TIMEOUT_MS = 120_000L
-        private const val COMPRESSION_SIMULATED_COST_MS = 450L
+        private const val COMPRESSION_TIMEOUT_MS = 25_000L
         private const val STREAM_PERSIST_INTERVAL_MS = 66L
         private const val STREAM_PERSIST_INTERVAL_TABLE_MS = 16L
         private const val DEFAULT_SESSION_TITLE = "新しいチャット"
         const val CONTEXT_WINDOW_CHARS = 4_096
         private const val MAX_CONTEXT_CHARS = CONTEXT_WINDOW_CHARS
+        private const val COMPRESSION_RECENT_MESSAGE_COUNT = 6
     }
 
     private class FirstTokenTimeoutException : CancellationException("FIRST_TOKEN_TIMEOUT")
@@ -69,6 +72,9 @@ class ChatViewModel(
 
     private val _isModelLoading = MutableStateFlow(false)
     val isModelLoading: StateFlow<Boolean> = _isModelLoading
+
+    private val _isCompressing = MutableStateFlow(false)
+    val isCompressing: StateFlow<Boolean> = _isCompressing
 
     private val _sessionTitle = MutableStateFlow(DEFAULT_SESSION_TITLE)
     val sessionTitle: StateFlow<String> = _sessionTitle
@@ -167,6 +173,72 @@ class ChatViewModel(
         }
     }
 
+    fun compressContextManually() {
+        val sessionId = _currentSessionId.value ?: return
+        if (_isLoading.value || _isModelLoading.value || _isCompressing.value) {
+            viewModelScope.launch {
+                _uiMessage.emit("生成中または処理中のため圧縮できません")
+            }
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val manager = requireModelManager()
+                val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
+                _selectedModel.value = selectedModel
+                val engineModelName = toEngineModelName(selectedModel)
+                if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
+                    _uiMessage.emit("モデル未ダウンロードのため圧縮できません")
+                    return@launch
+                }
+
+                val config = settingsRepository.getInferenceConfigForModel(selectedModel)
+                val loadResult = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = false)
+                if (loadResult.isFailure) {
+                    _uiMessage.emit("圧縮用モデルのロードに失敗しました")
+                    return@launch
+                }
+
+                val messages = messageRepository.getMessagesForSessionOnce(sessionId)
+                    .filterNot { it.role == "assistant" && it.isStreaming }
+                if (messages.size <= COMPRESSION_RECENT_MESSAGE_COUNT) {
+                    _uiMessage.emit("圧縮対象の履歴がまだ少ないです")
+                    return@launch
+                }
+
+                val olderMessages = messages.dropLast(COMPRESSION_RECENT_MESSAGE_COUNT)
+                val signature = olderMessages.fold(17) { acc, msg ->
+                    ((acc * 31) + msg.role.hashCode()) * 31 + msg.content.hashCode()
+                }
+                val cached = compressedContextCache[sessionId]
+                if (cached != null && cached.signature == signature) {
+                    _uiMessage.emit("圧縮コンテキストは最新です")
+                    return@launch
+                }
+
+                _isCompressing.value = true
+                val summary = try {
+                    requestCompressedContextSummary(
+                        sessionId = sessionId,
+                        manager = manager,
+                        messages = olderMessages,
+                        config = config
+                    )
+                } finally {
+                    _isCompressing.value = false
+                }
+                compressedContextCache[sessionId] = CompressedContextCache(signature, summary)
+                _uiMessage.emit("コンテキストを圧縮しました")
+            } catch (t: Throwable) {
+                _isCompressing.value = false
+                val e = if (t is Exception) t else RuntimeException(t)
+                Log.e(TAG, "Manual context compression failed", e)
+                _uiMessage.emit("圧縮に失敗しました: ${e.message}")
+            }
+        }
+    }
+
     fun stopGeneration() {
         generationJob?.cancel(CancellationException("Stopped by user"))
     }
@@ -233,7 +305,7 @@ class ChatViewModel(
             
             Log.d(TAG, "Starting inference for session $sessionId")
             
-            val promptWithContext = buildPromptWithSessionContext(sessionId, config)
+            val promptWithContext = buildPromptWithSessionContext(sessionId, config, manager)
             val promptForModel = trimPromptForTokenBudget(promptWithContext, config.maxTokens)
             if (promptForModel.length < promptWithContext.length) {
                 Log.w(
@@ -510,7 +582,8 @@ class ChatViewModel(
 
     private suspend fun buildPromptWithSessionContext(
         sessionId: Long,
-        config: InferenceConfig
+        config: InferenceConfig,
+        manager: ModelManager
     ): String {
         val messages = messageRepository.getMessagesForSessionOnce(sessionId)
         if (messages.isEmpty()) return ""
@@ -527,12 +600,12 @@ class ChatViewModel(
         }
 
         val validMessages = messages.filterNot { it.role == "assistant" && it.isStreaming }
-        if (validMessages.size <= 6) {
+        if (validMessages.size <= COMPRESSION_RECENT_MESSAGE_COUNT) {
             return trimPromptToWindow(fullPrompt, config.contextWindow)
         }
 
-        val olderMessages = validMessages.dropLast(6)
-        val recentMessages = validMessages.takeLast(6)
+        val olderMessages = validMessages.dropLast(COMPRESSION_RECENT_MESSAGE_COUNT)
+        val recentMessages = validMessages.takeLast(COMPRESSION_RECENT_MESSAGE_COUNT)
         val signature = olderMessages.fold(17) { acc, msg ->
             ((acc * 31) + msg.role.hashCode()) * 31 + msg.content.hashCode()
         }
@@ -540,9 +613,18 @@ class ChatViewModel(
         val compressedSummary = if (cached != null && cached.signature == signature) {
             cached.summary
         } else {
-            delay(COMPRESSION_SIMULATED_COST_MS)
-            buildCompressedSummary(olderMessages).also { summary ->
-                compressedContextCache[sessionId] = CompressedContextCache(signature, summary)
+            _isCompressing.value = true
+            try {
+                requestCompressedContextSummary(
+                    sessionId = sessionId,
+                    manager = manager,
+                    messages = olderMessages,
+                    config = config
+                ).also { summary ->
+                    compressedContextCache[sessionId] = CompressedContextCache(signature, summary)
+                }
+            } finally {
+                _isCompressing.value = false
             }
         }
 
@@ -561,6 +643,91 @@ class ChatViewModel(
         contextBuilder.append("Assistant:")
 
         return trimPromptToWindow(contextBuilder.toString(), config.contextWindow)
+    }
+
+    private suspend fun requestCompressedContextSummary(
+        sessionId: Long,
+        manager: ModelManager,
+        messages: List<MessageEntity>,
+        config: InferenceConfig
+    ): String {
+        if (messages.isEmpty()) return "要約: （圧縮対象なし）\nキーワード: なし"
+
+        val transcript = messages.joinToString(separator = "\n") { msg ->
+            val role = if (msg.role == "assistant") "assistant" else "user"
+            "$role: ${msg.content.trim()}"
+        }
+
+        val compressionPrompt = buildString {
+            append("以下の会話履歴を要約してください。\n")
+            append("以下の形式で出力して。挨拶は不要。\n")
+            append("{\"summary\": \"（ここに要約）\", \"keywords\": [\"A\", \"B\", \"C\"]}\n")
+            append("keywords は重要語を3-8個の配列で出力してください。\n")
+            append("会話履歴:\n")
+            append(transcript)
+        }
+
+        val raw = withTimeoutOrNull(COMPRESSION_TIMEOUT_MS) {
+            val flow = manager.runInference(
+                sessionId = sessionId,
+                prompt = compressionPrompt,
+                temperature = config.temperature.coerceIn(0f, 0.7f)
+            )
+            val builder = StringBuilder()
+            flow.collect { chunk ->
+                val final = InferenceStreamProtocol.decodeFinal(chunk)
+                if (final != null) {
+                    builder.clear()
+                    builder.append(final)
+                } else if (chunk.isNotEmpty()) {
+                    val merged = mergeStreamingChunk(builder.toString(), chunk)
+                    if (merged != builder.toString()) {
+                        builder.clear()
+                        builder.append(merged)
+                    }
+                }
+            }
+            builder.toString().trim()
+        }
+
+        val parsed = raw?.let { parseCompressionJson(it) }
+        return if (parsed != null) {
+            buildString {
+                append("要約: ")
+                append(parsed.first)
+                append("\nキーワード: ")
+                append(parsed.second.joinToString(", "))
+            }
+        } else {
+            buildCompressedSummaryFallback(messages)
+        }
+    }
+
+    private fun parseCompressionJson(raw: String): Pair<String, List<String>>? {
+        val jsonText = extractJsonObject(raw) ?: return null
+        return runCatching {
+            val obj = JSONObject(jsonText)
+            val summary = obj.optString("summary").trim()
+            if (summary.isBlank()) return null
+            val keywords = mutableListOf<String>()
+            val arr = obj.optJSONArray("keywords")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val kw = arr.optString(i).trim()
+                    if (kw.isNotBlank()) keywords += kw
+                }
+            }
+            val normalized = keywords.distinct().take(8)
+            Pair(summary, if (normalized.isNotEmpty()) normalized else listOf("要点"))
+        }.getOrNull()
+    }
+
+    private fun extractJsonObject(text: String): String? {
+        val start = text.indexOf('{')
+        if (start < 0) return null
+        val end = text.lastIndexOf('}')
+        if (end <= start) return null
+        return text.substring(start, end + 1)
     }
 
     private fun estimateContextUsageChars(messages: List<MessageEntity>): Int {
@@ -583,7 +750,7 @@ class ChatViewModel(
         return contextBuilder.toString()
     }
 
-    private fun buildCompressedSummary(messages: List<MessageEntity>): String {
+    private fun buildCompressedSummaryFallback(messages: List<MessageEntity>): String {
         if (messages.isEmpty()) return "（圧縮対象なし）"
         return messages.takeLast(24).joinToString(separator = "\n") { msg ->
             val role = if (msg.role == "assistant") "A" else "U"

@@ -20,8 +20,18 @@ android {
         manifestPlaceholders["appAuthRedirectScheme"] = "nezumiai"
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("C:/Users/mouse/mouse.jks")
+            storePassword = "4t#DKk0"
+            keyAlias = "key0"
+            keyPassword = "4t#DKk0"
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

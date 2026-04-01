@@ -34,12 +34,15 @@ import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.databinding.FragmentSettingsBinding
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.openid.appauth.AuthorizationException
 import net.openid.appauth.AuthorizationResponse
 import net.openid.appauth.AuthorizationService
 import java.util.Locale
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.UUID
 
 class SettingsFragment : Fragment(R.layout.fragment_settings) {
@@ -50,8 +53,11 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     private val notifiedDownloadResults = mutableSetOf<String>()
     private val lastProgressByModel = mutableMapOf<ModelFileManager.LocalModel, DownloadProgressSnapshot>()
     private val activeWorkIdByModel = mutableMapOf<ModelFileManager.LocalModel, UUID>()
+    private val activeRunAttemptByModel = mutableMapOf<ModelFileManager.LocalModel, Int>()
     private val cancelRequestedByModel = mutableMapOf<ModelFileManager.LocalModel, Boolean>()
+    private val observedDownloadModels = mutableSetOf<ModelFileManager.LocalModel>()
     private var pendingDownloadPermissionModel: ModelFileManager.LocalModel? = null
+    private val verifyPollingJobByModel = mutableMapOf<ModelFileManager.LocalModel, Job>()
     private lateinit var settingsRepository: SettingsRepository
 
     private val authLauncher =
@@ -226,7 +232,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             binding.maxTokensInput.setText(config.maxTokens.toString())
             when (config.backendType.uppercase()) {
                 "GPU" -> binding.backendToggleGroup.check(binding.backendGpuButton.id)
-"NPU" -> binding.backendToggleGroup.check(binding.backendNpuButton.id)
+                "NPU" -> binding.backendToggleGroup.check(binding.backendNpuButton.id)
                 else -> {
                     binding.backendToggleGroup.check(binding.backendCpuButton.id)
                 }
@@ -239,13 +245,6 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         return when (binding.backendToggleGroup.checkedButtonId) {
             binding.backendGpuButton.id -> "GPU"
             binding.backendNpuButton.id -> "NPU"
-            else -> "CPU"
-        }
-    }
-
-    private fun selectedBackendType(): String {
-        return when (binding.backendToggleGroup.checkedButtonId) {
-            binding.backendGpuButton.id -> "GPU"
             else -> "CPU"
         }
     }
@@ -281,6 +280,9 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     override fun onResume() {
         super.onResume()
         renderHfTokenState()
+        // LiveData 更新を取りこぼした場合の保険（特に「検証中…」→SUCCEEDED 遷移）
+        refreshWorkInfoOnce(ModelFileManager.LocalModel.E2B)
+        refreshWorkInfoOnce(ModelFileManager.LocalModel.E4B)
         refreshStatus()
         renderImportedTasks()
     }
@@ -375,16 +377,30 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             setAccessButtonVisible(model, false)
             setModelButtonsEnabled(model, false)
             showProgress(model, true)
-            setStatus(model, "ダウンロード待機中")
-            ModelDownloadWorker.enqueue(requireContext(), model)
-            // 進捗監視を開始
-            observeDownloadWork(model)
-            Toast.makeText(requireContext(), "バックグラウンドでダウンロードを開始しました", Toast.LENGTH_SHORT).show()
+            setStatus(model, "ダウンロードキュー投入中...")
+            viewLifecycleOwner.lifecycleScope.launch {
+                val enqueued = withContext(Dispatchers.IO) {
+                    ModelDownloadWorker.enqueue(requireContext(), model)
+                }
+                if (!isAdded) return@launch
+                if (enqueued) {
+                    setStatus(model, "ダウンロード待機中")
+                    // 進捗監視を開始
+                    observeDownloadWork(model)
+                    Toast.makeText(requireContext(), "バックグラウンドでダウンロードを開始しました", Toast.LENGTH_SHORT).show()
+                } else {
+                    setStatus(model, "既にダウンロード処理が実行中です")
+                    // 既存キューの状態を再描画して、UIを実態に合わせる
+                    refreshWorkInfoOnce(model)
+                }
+            }
             return
         }
         viewLifecycleOwner.lifecycleScope.launch {
             ModelDownloadWorker.cancel(requireContext(), model)
-            val ok = ModelFileManager.deleteModel(requireContext(), model)
+            val ok = withContext(Dispatchers.IO) {
+                ModelFileManager.deleteModel(requireContext(), model)
+            }
             Toast.makeText(
                 requireContext(),
                 if (ok) "削除しました" else "削除に失敗しました",
@@ -521,6 +537,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     }
 
     private fun observeDownloadWork(model: ModelFileManager.LocalModel) {
+        if (!observedDownloadModels.add(model)) return
         WorkManager.getInstance(requireContext())
             .getWorkInfosForUniqueWorkLiveData(ModelDownloadWorker.modelWorkName(model))
             .observe(viewLifecycleOwner) { infos ->
@@ -530,17 +547,54 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun pickLatestRelevantWorkInfo(infos: List<WorkInfo>): WorkInfo? {
         if (infos.isEmpty()) return null
-        val active = infos.firstOrNull {
-            it.state == WorkInfo.State.RUNNING ||
-                it.state == WorkInfo.State.ENQUEUED ||
-                it.state == WorkInfo.State.BLOCKED
+
+        fun isActive(state: WorkInfo.State): Boolean {
+            return state == WorkInfo.State.RUNNING ||
+                state == WorkInfo.State.ENQUEUED ||
+                state == WorkInfo.State.BLOCKED
         }
+
+        fun statePriority(state: WorkInfo.State): Int {
+            return when (state) {
+                WorkInfo.State.RUNNING -> 5
+                WorkInfo.State.ENQUEUED -> 4
+                WorkInfo.State.BLOCKED -> 3
+                WorkInfo.State.SUCCEEDED -> 2
+                WorkInfo.State.FAILED -> 1
+                WorkInfo.State.CANCELLED -> 0
+            }
+        }
+
+        fun progressedBytes(info: WorkInfo): Long {
+            val progressBytes = info.progress.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, -1L)
+            if (progressBytes >= 0L) return progressBytes
+            return info.outputData.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, -1L)
+        }
+
+        val active = infos
+            .asSequence()
+            .filter { isActive(it.state) }
+            .maxWithOrNull(
+                compareBy<WorkInfo>(
+                    { statePriority(it.state) },
+                    { progressedBytes(it) },
+                    { it.runAttemptCount }
+                ).thenBy { it.id.toString() }
+            )
         if (active != null) return active
-        return infos.lastOrNull()
+
+        return infos.maxWithOrNull(
+            compareBy<WorkInfo>(
+                { statePriority(it.state) },
+                { progressedBytes(it) },
+                { it.runAttemptCount }
+            ).thenBy { it.id.toString() }
+        )
     }
 
     private fun renderDownloadState(model: ModelFileManager.LocalModel, workInfo: WorkInfo?) {
         if (workInfo == null) {
+            stopVerifyPolling(model)
             clearCancelInProgress(model)
             clearProgressTracking(model)
             setAccessButtonVisible(model, false)
@@ -557,6 +611,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 val cancelInProgress = cancelRequestedByModel[model] == true
                 setAccessButtonVisible(model, false)
                 if (cancelInProgress) {
+                    stopVerifyPolling(model)
                     setCancelMode(model, false)
                     setModelButtonsEnabled(model, false)
                     setStatus(model, "キャンセル処理中...")
@@ -583,19 +638,40 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 val remainingSec = workInfo.progress.getDouble(ModelDownloadWorker.KEY_ESTIMATED_REMAINING_SEC, 0.0)
                 
                 if (downloaded >= 0L) {
-                    val monotonic = monotonicProgress(model, workInfo.id, downloaded, total)
+                    val monotonic = monotonicProgress(
+                        model = model,
+                        workId = workInfo.id,
+                        runAttemptCount = workInfo.runAttemptCount,
+                        downloaded = downloaded,
+                        total = total
+                    )
                     updateProgress(model, monotonic.downloadedBytes, monotonic.totalBytes, speedMbps, remainingSec)
                     if (monotonic.totalBytes > 0L) {
                         val percent = ((monotonic.downloadedBytes * 100L) / monotonic.totalBytes).toInt()
-                        setStatus(model, "ダウンロード中 ${percent}%")
+                        if (monotonic.downloadedBytes >= monotonic.totalBytes) {
+                            setStatus(model, "ダウンロード完了後の検証中...")
+                            // 検証フェーズ中は進捗更新が止まりやすいので、短時間だけ状態をポーリングしてUIを追従させる
+                            startVerifyPolling(model)
+                            val text = when (model) {
+                                ModelFileManager.LocalModel.E2B -> binding.e2bDownloadText
+                                ModelFileManager.LocalModel.E4B -> binding.e4bDownloadText
+                            }
+                            text.text = "${formatGb(monotonic.totalBytes)} / ${formatGb(monotonic.totalBytes)} | 検証中..."
+                        } else {
+                            stopVerifyPolling(model)
+                            setStatus(model, "ダウンロード中 ${percent}%")
+                        }
                     } else {
+                        stopVerifyPolling(model)
                         setStatus(model, "ダウンロード中")
                     }
                 } else {
+                    stopVerifyPolling(model)
                     setStatus(model, "ダウンロード待機中")
                 }
             }
             WorkInfo.State.SUCCEEDED -> {
+                stopVerifyPolling(model)
                 clearCancelInProgress(model)
                 clearProgressTracking(model)
                 setAccessButtonVisible(model, false)
@@ -606,6 +682,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 notifyOnce(model, workInfo, "ダウンロード完了")
             }
             WorkInfo.State.FAILED -> {
+                stopVerifyPolling(model)
                 clearCancelInProgress(model)
                 clearProgressTracking(model)
                 setModelButtonsEnabled(model, true)
@@ -619,6 +696,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 notifyOnce(model, workInfo, error)
             }
             WorkInfo.State.CANCELLED -> {
+                stopVerifyPolling(model)
                 clearCancelInProgress(model)
                 clearProgressTracking(model)
                 setAccessButtonVisible(model, false)
@@ -631,6 +709,37 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 }
             }
         }
+    }
+
+    private fun refreshWorkInfoOnce(model: ModelFileManager.LocalModel) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val infos = withContext(Dispatchers.IO) {
+                try {
+                    WorkManager.getInstance(requireContext())
+                        .getWorkInfosForUniqueWork(ModelDownloadWorker.modelWorkName(model))
+                        .get(2, TimeUnit.SECONDS)
+                } catch (_: TimeoutException) {
+                    null
+                } catch (_: Exception) {
+                    null
+                }
+            } ?: return@launch
+            renderDownloadState(model, pickLatestRelevantWorkInfo(infos))
+        }
+    }
+
+    private fun startVerifyPolling(model: ModelFileManager.LocalModel) {
+        if (verifyPollingJobByModel[model]?.isActive == true) return
+        verifyPollingJobByModel[model] = viewLifecycleOwner.lifecycleScope.launch {
+            repeat(12) { // 最大 ~12秒（長引く場合はLiveDataに任せる）
+                refreshWorkInfoOnce(model)
+                kotlinx.coroutines.delay(1000)
+            }
+        }
+    }
+
+    private fun stopVerifyPolling(model: ModelFileManager.LocalModel) {
+        verifyPollingJobByModel.remove(model)?.cancel()
     }
 
     private fun showCancelInProgress(model: ModelFileManager.LocalModel) {
@@ -658,12 +767,17 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     private fun monotonicProgress(
         model: ModelFileManager.LocalModel,
         workId: UUID,
+        runAttemptCount: Int,
         downloaded: Long,
         total: Long
     ): DownloadProgressSnapshot {
         val previousWorkId = activeWorkIdByModel[model]
-        if (previousWorkId != workId) {
+        val previousRunAttempt = activeRunAttemptByModel[model]
+        // WorkManager の retry は同一 workId のまま runAttemptCount が増える。
+        // この場合は再試行が始まっているので、前回の100%を引き継がず進捗をリセットする。
+        if (previousWorkId != workId || previousRunAttempt != runAttemptCount) {
             activeWorkIdByModel[model] = workId
+            activeRunAttemptByModel[model] = runAttemptCount
             lastProgressByModel.remove(model)
         }
 
@@ -691,6 +805,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     private fun clearProgressTracking(model: ModelFileManager.LocalModel) {
         lastProgressByModel.remove(model)
         activeWorkIdByModel.remove(model)
+        activeRunAttemptByModel.remove(model)
     }
 
     private fun setStatus(model: ModelFileManager.LocalModel, text: String) {
@@ -771,6 +886,9 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     override fun onDestroyView() {
         authService?.dispose()
         authService = null
+        observedDownloadModels.clear()
+        verifyPollingJobByModel.values.forEach { it.cancel() }
+        verifyPollingJobByModel.clear()
         super.onDestroyView()
         _binding = null
     }

@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.pm.ServiceInfo
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -18,11 +19,15 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.nezumi_ai.MainActivity
 import com.nezumi_ai.R
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -34,18 +39,35 @@ class ModelDownloadWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
+        val startedAt = System.currentTimeMillis()
         val modelName = inputData.getString(KEY_MODEL_NAME)
             ?: return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "model is missing"))
         val model = modelFromName(modelName)
             ?: return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "unknown model"))
+
+        // キャンセル要求が先に出ている場合、開始しない（WorkManagerのキャンセル反映レース対策）
+        if (ModelFileManager.isCancelRequested(applicationContext, model)) {
+            return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "cancelled"))
+        }
         setForeground(createForegroundInfo(modelName, 0L, -1L))
 
         return try {
             var lastTime = System.currentTimeMillis()
             var lastDownloaded = 0L
             var hasBaseline = false
+            var lastForegroundUpdateTime = 0L
+            var lastProgressUpdateTime = 0L
+            var lastProgressDownloaded = -1L
+            var reachedNearCompletion = false
 
-            val result = ModelFileManager.ensureDownloaded(applicationContext, model) { downloaded, total ->
+            val result = withTimeout(MAX_SINGLE_WORK_DURATION_MS) {
+                ModelFileManager.ensureDownloaded(applicationContext, model) { downloaded, total ->
+                if (ModelFileManager.isCancelRequested(applicationContext, model)) {
+                    throw CancellationException("cancel requested")
+                }
+                if (total > 0L && downloaded >= (total * 98L / 100L)) {
+                    reachedNearCompletion = true
+                }
                 val currentTime = System.currentTimeMillis()
                 val timeDeltaMs = currentTime - lastTime
 
@@ -53,14 +75,18 @@ class ModelDownloadWorker(
                     hasBaseline = true
                     lastTime = currentTime
                     lastDownloaded = downloaded
-                    setProgressAsync(
-                        workDataOf(
-                            KEY_DOWNLOADED_BYTES to downloaded,
-                            KEY_TOTAL_BYTES to total,
-                            KEY_SPEED_MBPS to 0.0,
-                            KEY_ESTIMATED_REMAINING_SEC to 0.0
-                        )
+                    val data = workDataOf(
+                        KEY_DOWNLOADED_BYTES to downloaded,
+                        KEY_TOTAL_BYTES to total,
+                        KEY_SPEED_MBPS to 0.0,
+                        KEY_ESTIMATED_REMAINING_SEC to 0.0
                     )
+                    setProgressAsync(data)
+                    // 通知バーとアプリの進捗を揃える
+                    setForegroundAsync(createForegroundInfo(modelName, downloaded, total))
+                    lastProgressUpdateTime = currentTime
+                    lastProgressDownloaded = downloaded
+                    lastForegroundUpdateTime = currentTime
                     return@ensureDownloaded
                 }
 
@@ -80,20 +106,35 @@ class ModelDownloadWorker(
                     0.0
                 }
 
-                setProgressAsync(
-                    workDataOf(
+                val reachedEnd = total > 0L && downloaded >= total
+                val elapsedSinceLastProgress = currentTime - lastProgressUpdateTime
+                val progressedBytes = (downloaded - lastProgressDownloaded).coerceAtLeast(0L)
+                val shouldPublishProgress = reachedEnd ||
+                    elapsedSinceLastProgress >= PROGRESS_UPDATE_INTERVAL_MS ||
+                    progressedBytes >= PROGRESS_UPDATE_MIN_BYTES
+
+                if (shouldPublishProgress) {
+                    val data = workDataOf(
                         KEY_DOWNLOADED_BYTES to downloaded,
                         KEY_TOTAL_BYTES to total,
                         KEY_SPEED_MBPS to speedMbps,
                         KEY_ESTIMATED_REMAINING_SEC to estimatedSecRemaining
                     )
-                )
-                setForegroundAsync(createForegroundInfo(modelName, downloaded, total))
-                
-                if (timeDeltaMs > 500) { // 0.5秒ごとに更新
+                    setProgressAsync(data)
+                    lastProgressUpdateTime = currentTime
+                    lastProgressDownloaded = downloaded
+                    // progress更新と同じ値で通知も更新してズレを防ぐ（通知更新は更に間引く）
+                    if (currentTime - lastForegroundUpdateTime >= FOREGROUND_UPDATE_INTERVAL_MS || reachedEnd) {
+                        setForegroundAsync(createForegroundInfo(modelName, downloaded, total))
+                        lastForegroundUpdateTime = currentTime
+                    }
+                }
+
+                if (timeDeltaMs > 500) { // 0.5秒ごとに速度を更新
                     lastTime = currentTime
                     lastDownloaded = downloaded
                 }
+            }
             }
 
             result.fold(
@@ -108,25 +149,41 @@ class ModelDownloadWorker(
                     )
                 },
                 onFailure = { e ->
-                    if (shouldRetry(e)) {
+                    if (!reachedNearCompletion && shouldRetry(e, startedAt)) {
                         Result.retry()
                     } else {
-                        Result.failure(workDataOf(KEY_ERROR_MESSAGE to (e.message ?: "download failed")))
+                        handleFailure(model, e)
                     }
                 }
             )
+        } catch (e: TimeoutCancellationException) {
+            handleFailure(model, IllegalStateException("ダウンロードが一定時間内に完了しなかったため中断しました"))
+        } catch (e: CancellationException) {
+            // cancellation marker が立っている場合は temp を掃除して終了
+            ModelFileManager.deleteTempDownload(applicationContext, model)
+            throw e
         } catch (e: Exception) {
-            if (shouldRetry(e)) {
+            if (shouldRetry(e, startedAt)) {
                 Result.retry()
             } else {
-                Result.failure(workDataOf(KEY_ERROR_MESSAGE to (e.message ?: "download failed")))
+                handleFailure(model, e)
             }
         }
     }
 
-    private fun shouldRetry(error: Throwable): Boolean {
+    private fun shouldRetry(error: Throwable, startedAt: Long): Boolean {
         if (runAttemptCount >= MAX_WORK_RETRY) return false
+        if (System.currentTimeMillis() - startedAt >= MAX_SINGLE_WORK_DURATION_MS) return false
         val message = error.message.orEmpty().lowercase()
+        if ("checksum mismatch" in message ||
+            "整合性検証" in message ||
+            "再取得が繰り返されています" in message ||
+            "content-type" in message ||
+            "http 401" in message ||
+            "http 403" in message
+        ) {
+            return false
+        }
         if (error is SocketTimeoutException || error is UnknownHostException || error is SocketException) {
             return true
         }
@@ -163,7 +220,15 @@ class ModelDownloadWorker(
             .setProgress(100, if (total > 0L) ((downloaded * 100L) / total).toInt() else 0, total <= 0L)
             .build()
 
-        return ForegroundInfo(NOTIFICATION_ID, notification)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            ForegroundInfo(NOTIFICATION_ID, notification)
+        }
     }
 
     companion object {
@@ -175,14 +240,34 @@ class ModelDownloadWorker(
         const val KEY_ESTIMATED_REMAINING_SEC = "estimated_remaining_sec"
         private const val NOTIFICATION_CHANNEL_ID = "model_download_channel"
         private const val NOTIFICATION_ID = 2001
-        private const val MAX_WORK_RETRY = 5
+        private const val MAX_WORK_RETRY = 2
+        private const val MAX_SINGLE_WORK_DURATION_MS = 25L * 60L * 1000L
+        // setProgressAsync を投げすぎると UI/WorkManager 側が詰まって「検証中で止まって見える」ことがあるため、強めに間引く
+        private const val PROGRESS_UPDATE_INTERVAL_MS = 1000L
+        private const val PROGRESS_UPDATE_MIN_BYTES = 2L * 1024L * 1024L
+        // 通知がアプリより遅れて見えないよう、progress更新と同程度に揃える
+        private const val FOREGROUND_UPDATE_INTERVAL_MS = 1000L
         private const val NOTIFICATION_CHANNEL_NAME = "モデルダウンロード"
         private const val NOTIFICATION_CHANNEL_DESCRIPTION = "モデルのバックグラウンドダウンロード完了通知"
 
         fun modelWorkName(model: ModelFileManager.LocalModel): String =
             "model_download_${model.name.lowercase()}"
 
-        fun enqueue(context: Context, model: ModelFileManager.LocalModel) {
+        fun enqueue(context: Context, model: ModelFileManager.LocalModel): Boolean {
+            val workManager = WorkManager.getInstance(context)
+            val hasActive = runCatching {
+                workManager.getWorkInfosForUniqueWork(modelWorkName(model))
+                    .get(2, TimeUnit.SECONDS)
+                    .any {
+                        it.state == WorkInfo.State.ENQUEUED ||
+                            it.state == WorkInfo.State.RUNNING ||
+                            it.state == WorkInfo.State.BLOCKED
+                    }
+            }.getOrDefault(false)
+            if (hasActive) return false
+
+            // 新規開始時は、過去のキャンセル要求をクリアする
+            ModelFileManager.markCancelRequested(context, model, false)
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
@@ -195,14 +280,17 @@ class ModelDownloadWorker(
                     TimeUnit.SECONDS
                 )
                 .build()
-            WorkManager.getInstance(context).enqueueUniqueWork(
+            workManager.enqueueUniqueWork(
                 modelWorkName(model),
                 ExistingWorkPolicy.KEEP,
                 request
             )
+            return true
         }
 
         fun cancel(context: Context, model: ModelFileManager.LocalModel) {
+            // WorkManagerのキャンセル反映より先に止められるよう、永続フラグを立てる
+            ModelFileManager.markCancelRequested(context, model, true)
             WorkManager.getInstance(context).cancelUniqueWork(modelWorkName(model))
             ModelFileManager.deleteTempDownload(context, model)
         }
@@ -214,6 +302,14 @@ class ModelDownloadWorker(
                 else -> null
             }
         }
+    }
+
+    private fun handleFailure(model: ModelFileManager.LocalModel, error: Throwable): Result {
+        val message = error.message ?: "download failed"
+        // 失敗時は一時ファイルを掃除し、ユーザーへ通知する
+        ModelFileManager.deleteTempDownload(applicationContext, model)
+        showDownloadFailedNotification(model, message)
+        return Result.failure(workDataOf(KEY_ERROR_MESSAGE to message))
     }
 
     private fun showDownloadCompletedNotification(model: ModelFileManager.LocalModel, sizeBytes: Long) {
@@ -257,6 +353,48 @@ class ModelDownloadWorker(
 
         NotificationManagerCompat.from(applicationContext)
             .notify(1000 + model.ordinal, notification)
+    }
+
+    private fun showDownloadFailedNotification(model: ModelFileManager.LocalModel, reason: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val hasPermission = ContextCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!hasPermission) return
+        }
+
+        ensureNotificationChannel()
+
+        val launchIntent = Intent(applicationContext, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            applicationContext,
+            100 + model.ordinal,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val modelLabel = when (model) {
+            ModelFileManager.LocalModel.E2B -> "Gemma 3n E2B"
+            ModelFileManager.LocalModel.E4B -> "Gemma 3n E4B"
+        }
+        val notification = NotificationCompat.Builder(applicationContext, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle("モデルのダウンロードに失敗しました")
+            .setContentText("$modelLabel: $reason")
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText("$modelLabel のダウンロードを中断しました。理由: $reason")
+            )
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        NotificationManagerCompat.from(applicationContext)
+            .notify(2000 + model.ordinal, notification)
     }
 
     private fun ensureNotificationChannel() {
