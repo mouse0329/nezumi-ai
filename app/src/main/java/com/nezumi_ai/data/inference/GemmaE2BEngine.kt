@@ -6,9 +6,12 @@ import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import com.google.mediapipe.tasks.genai.llminference.ProgressListener
 import com.google.common.util.concurrent.MoreExecutors
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Gemma推論エンジン実装（MediaPipe LLM Inference）
@@ -24,6 +27,8 @@ class GemmaE2BEngine(
     private var llmInference: LlmInference? = null
     private var loadedModelPath: String? = null
     private var loadedConfig: InferenceConfig? = null
+    private val modelMutex = Mutex()
+    private val inferenceMutex = Mutex()
     
     enum class BackendType {
         CPU,
@@ -32,6 +37,7 @@ class GemmaE2BEngine(
     
     override suspend fun loadModel(modelName: String, config: InferenceConfig): Result<Unit> {
         return try {
+            modelMutex.withLock {
             val normalizedConfig = config.normalized()
             val modelFile = resolveLocalModelFile(modelName)
             if (modelFile == null || !modelFile.exists()) {
@@ -48,8 +54,13 @@ class GemmaE2BEngine(
             llmInference = null
 
             Log.d(TAG, "Loading model from path: $modelPath")
+            val isImportedTask = modelPath.startsWith(appContext.filesDir.absolutePath + "/models/imported/")
             val preferredBackend = when (normalizedConfig.backendType.uppercase()) {
                 "GPU" -> LlmInference.Backend.GPU
+                "NPU" -> {
+                    Log.w(TAG, "NPU backend is not supported by current LlmInference. Falling back to CPU.")
+                    LlmInference.Backend.CPU
+                }
                 else -> LlmInference.Backend.CPU
             }
             val options = LlmInference.LlmInferenceOptions.builder()
@@ -59,11 +70,27 @@ class GemmaE2BEngine(
                 .setPreferredBackend(preferredBackend)
                 .build()
 
-            llmInference = LlmInference.createFromOptions(appContext, options)
+            llmInference = runCatching {
+                LlmInference.createFromOptions(appContext, options)
+            }.getOrElse { firstError ->
+                if (isImportedTask && preferredBackend == LlmInference.Backend.GPU) {
+                    Log.w(TAG, "Imported .task failed on GPU. Retrying with CPU backend.", firstError)
+                    val fallback = LlmInference.LlmInferenceOptions.builder()
+                        .setModelPath(modelPath)
+                        .setMaxTokens(normalizedConfig.maxTokens)
+                        .setMaxTopK(normalizedConfig.maxTopK)
+                        .setPreferredBackend(LlmInference.Backend.CPU)
+                        .build()
+                    LlmInference.createFromOptions(appContext, fallback)
+                } else {
+                    throw firstError
+                }
+            }
             loadedModelPath = modelPath
             loadedConfig = normalizedConfig
             Log.d(TAG, "Model loaded successfully")
             Result.success(Unit)
+            }
         } catch (t: Throwable) {
             val e = if (t is Exception) t else RuntimeException(t)
             Log.e(TAG, "Failed to load model", e)
@@ -76,24 +103,27 @@ class GemmaE2BEngine(
         prompt: String,
         temperature: Float
     ): Flow<String> = callbackFlow {
-        val engine = llmInference
+        inferenceMutex.lock()
+        var mutexReleased = false
+        fun releaseInferenceMutex() {
+            if (!mutexReleased) {
+                mutexReleased = true
+                inferenceMutex.unlock()
+            }
+        }
+
+        val engine = modelMutex.withLock { llmInference }
         if (engine == null) {
+            releaseInferenceMutex()
             close(IllegalStateException("Model not loaded. Call loadModel() first."))
             return@callbackFlow
         }
         
         try {
             Log.d(TAG, "Starting inference for session $sessionId")
-            var lastPartial = ""
             val progressListener = ProgressListener<String> { partial, _ ->
-                val delta = if (partial.startsWith(lastPartial)) {
-                    partial.removePrefix(lastPartial)
-                } else {
-                    partial
-                }
-                lastPartial = partial
-                if (delta.isNotEmpty()) {
-                    trySend(delta).isSuccess
+                if (partial.isNotEmpty()) {
+                    trySend(partial).isSuccess
                 }
             }
 
@@ -104,11 +134,13 @@ class GemmaE2BEngine(
                         .onSuccess { finalResult ->
                             trySend(InferenceStreamProtocol.encodeFinal(finalResult)).isSuccess
                             Log.d(TAG, "Inference completed for session $sessionId")
+                            releaseInferenceMutex()
                             close()
                         }
                         .onFailure { t ->
                             val e = if (t is Exception) t else RuntimeException(t)
                             Log.e(TAG, "Inference failed for session $sessionId", e)
+                            releaseInferenceMutex()
                             close(e)
                         }
                 },
@@ -119,8 +151,14 @@ class GemmaE2BEngine(
                 if (!future.isDone) {
                     future.cancel(true)
                 }
+                releaseInferenceMutex()
             }
         } catch (t: Throwable) {
+            releaseInferenceMutex()
+            if (t is CancellationException) {
+                close(t)
+                return@callbackFlow
+            }
             val e = if (t is Exception) t else RuntimeException(t)
             Log.e(TAG, "Inference failed for session $sessionId", e)
             close(e)
@@ -129,12 +167,14 @@ class GemmaE2BEngine(
     
     override suspend fun unloadModel(): Result<Unit> {
         return try {
+            modelMutex.withLock {
             Log.d(TAG, "Unloading model")
             llmInference?.close()
             llmInference = null
             loadedModelPath = null
             loadedConfig = null
             Result.success(Unit)
+            }
         } catch (t: Throwable) {
             val e = if (t is Exception) t else RuntimeException(t)
             Log.e(TAG, "Failed to unload model", e)
@@ -147,7 +187,8 @@ class GemmaE2BEngine(
     }
     
     private fun resolveModelPath(modelName: String): String {
-        if ((modelName.endsWith(".task") || modelName.endsWith(".litertlm")) && modelName.startsWith("/")) {
+        val lowered = modelName.lowercase()
+        if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && modelName.startsWith("/")) {
             return modelName
         }
         return when (ModelFileManager.resolveModelName(modelName)) {
@@ -158,13 +199,23 @@ class GemmaE2BEngine(
 
     private fun resolveLocalModelFile(modelName: String): File? {
         val resolved = resolveModelPath(modelName)
-        if ((resolved.endsWith(".task") || resolved.endsWith(".litertlm")) && resolved.startsWith("/")) {
+        val lowered = resolved.lowercase()
+        if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && resolved.startsWith("/")) {
             val file = File(resolved)
-            return if (file.exists()) file else null
+            val validated = ModelFileManager.validateImportedTaskFile(file)
+            if (validated.isFailure) {
+                Log.w(TAG, "Imported task validation failed: ${validated.exceptionOrNull()?.message}")
+                return null
+            }
+            return validated.getOrNull()
         }
 
         val localModel = ModelFileManager.resolveModelName(modelName)
-        val localFile = ModelFileManager.modelFile(appContext, localModel)
-        return if (localFile.exists()) localFile else null
+        val verified = ModelFileManager.validatedModelFileForLoad(appContext, localModel)
+        if (verified.isFailure) {
+            Log.w(TAG, "Local model integrity check failed: ${verified.exceptionOrNull()?.message}")
+            return null
+        }
+        return verified.getOrNull()
     }
 }

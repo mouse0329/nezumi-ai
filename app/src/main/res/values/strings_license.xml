@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- License items -->
+    <string name="license_project_title">Project Repository</string>
+    <string name="license_project_url">https://github.com/mouse0329/nezumi-ai</string>
+    <string name="license_project_desc">Source code and release notes for this app.</string>
+
     <string name="license_androidx_title">AndroidX and Material Components</string>
     <string name="license_androidx_url">https://github.com/androidx</string>
     <string name="license_androidx_desc">Apache License 2.0\n\nComprehensive suite of libraries that provide modern Android development patterns and Material Design components.</string>
@@ -15,15 +19,19 @@
 
     <string name="license_huggingface_title">Hugging Face Models</string>
     <string name="license_huggingface_url">https://huggingface.co</string>
-    <string name="license_huggingface_desc">Model Hub and Inference API\n\nGemma and other models available on Hugging Face. Each model has its own license terms - please verify before use.</string>
+    <string name="license_huggingface_desc">Model Hub and distribution page\n\nGemma を含むモデルの配布ページ確認に使用しています。モデル規約の一次情報は各モデル提供元の条項を確認してください。</string>
 
     <string name="license_gemma_title">Gemma Model</string>
     <string name="license_gemma_url">https://ai.google.dev/gemma</string>
-    <string name="license_gemma_desc">Gemma Community License\n\nGoogle Gemma model family. Licensed under Gemma Terms of Use. Refer to https://ai.google.dev/gemma/terms for complete license terms.</string>
+    <string name="license_gemma_desc">Gemma Terms of Use\n\nGemma モデルの利用条件は Gemma Terms を確認してください。実運用時の規約確認はこの条項を優先してください。</string>
 
-    <string name="license_e2b_title">E2B Sandbox</string>
-    <string name="license_e2b_url">https://github.com/e2b-dev</string>
-    <string name="license_e2b_desc">Apache License 2.0\n\nCloud sandbox for executing untrusted code safely.</string>
+    <string name="license_appauth_title">AppAuth for Android</string>
+    <string name="license_appauth_url">https://github.com/openid/AppAuth-Android</string>
+    <string name="license_appauth_desc">Apache License 2.0\n\nHugging Face OAuth 認証フローに使用しています。</string>
+
+    <string name="license_markwon_title">Markwon</string>
+    <string name="license_markwon_url">https://github.com/noties/Markwon</string>
+    <string name="license_markwon_desc">Apache License 2.0\n\nMarkdown レンダリング（テーブル拡張含む）に使用しています。</string>
 
     <string name="license_open_url">View License</string>
     <string name="license_copyright">Copyright and License Information</string>

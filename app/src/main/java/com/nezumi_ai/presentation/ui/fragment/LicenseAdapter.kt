@@ -2,8 +2,11 @@ package com.nezumi_ai.presentation.ui.fragment
 
 import android.content.Intent
 import android.net.Uri
+import android.text.method.LinkMovementMethod
+import android.text.util.Linkify
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import androidx.core.text.util.LinkifyCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.nezumi_ai.R
 import com.nezumi_ai.databinding.ItemLicenseBinding
@@ -19,6 +22,9 @@ class LicenseAdapter(private val licenses: List<LicenseItem>) :
 
             binding.licenseItemTitle.text = context.getString(license.titleRes)
             binding.licenseItemDescription.text = context.getString(license.descriptionRes)
+            LinkifyCompat.addLinks(binding.licenseItemDescription, Linkify.WEB_URLS)
+            binding.licenseItemDescription.movementMethod = LinkMovementMethod.getInstance()
+            binding.licenseItemDescription.linksClickable = true
 
             binding.licenseItemButton.setOnClickListener {
                 val url = context.getString(license.urlRes)

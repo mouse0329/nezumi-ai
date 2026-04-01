@@ -7,6 +7,8 @@ import android.provider.OpenableColumns
 import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
+import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
@@ -31,10 +33,16 @@ object ModelFileManager {
     private const val RETRY_DELAY_MS = 2000L
     private const val MIN_FREE_DISK_BYTES = 100 * 1024 * 1024 // 100MB
     private const val BUFFER_SIZE = 32 * 1024 // 32KB buffer
+    private const val WARN_SMALL_IMPORTED_TASK_BYTES = 64L * 1024L
 
     data class ImportedTaskModel(
         val name: String,
         val path: String
+    )
+
+    private data class ModelMetadata(
+        val expectedBytes: Long,
+        val expectedSha256: String?
     )
 
     fun resolveModelName(modelName: String): LocalModel {
@@ -62,6 +70,7 @@ object ModelFileManager {
         return dir.listFiles()
             ?.asSequence()
             ?.filter { it.isFile && it.name.lowercase().endsWith(".task") }
+            ?.filter { validateImportedTaskFile(it).isSuccess }
             ?.sortedByDescending { it.lastModified() }
             ?.map { ImportedTaskModel(name = it.nameWithoutExtension, path = it.absolutePath) }
             ?.toList()
@@ -88,18 +97,108 @@ object ModelFileManager {
                 input.copyTo(output)
             }
         } ?: throw IllegalStateException("ファイルを開けませんでした")
+        validateImportedTaskFile(outFile).getOrElse { reason ->
+            outFile.delete()
+            throw IllegalArgumentException("この .task は読み込みできません: ${reason.message}")
+        }
         outFile
     }
 
+    fun deleteImportedTask(context: Context, path: String): Result<Unit> = runCatching {
+        val importedDir = File(context.filesDir, "models/imported").canonicalFile
+        val target = File(path).canonicalFile
+        val importedPrefix = importedDir.path + File.separator
+        if (!target.path.startsWith(importedPrefix)) {
+            throw IllegalArgumentException("不正なパスです")
+        }
+        if (!target.exists() || !target.isFile || !target.name.lowercase().endsWith(".task")) {
+            throw IllegalStateException(".task ファイルが見つかりません")
+        }
+        if (!target.delete()) {
+            throw IllegalStateException(".task の削除に失敗しました")
+        }
+    }
+
     fun isModelAvailable(context: Context, modelName: String): Boolean {
-        if ((modelName.endsWith(".task") || modelName.endsWith(".litertlm")) && modelName.startsWith("/")) {
-            return File(modelName).exists()
+        val lowered = modelName.lowercase()
+        if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && modelName.startsWith("/")) {
+            return validateImportedTaskFile(File(modelName)).isSuccess
         }
         return isDownloaded(context, resolveModelName(modelName))
     }
 
+    fun validateImportedTaskFile(file: File): Result<File> = runCatching {
+        if (!file.exists() || !file.isFile) {
+            throw IllegalStateException("ファイルが見つかりません")
+        }
+        if (!file.canRead()) {
+            throw IllegalStateException("ファイルを読み取れません")
+        }
+        val size = file.length()
+        if (size <= 0L) {
+            throw IllegalStateException("ファイルが空です")
+        }
+        if (size < WARN_SMALL_IMPORTED_TASK_BYTES) {
+            Log.w(TAG, "Imported task is very small: ${file.absolutePath} (${size} bytes)")
+        }
+        if (!looksLikeSupportedTaskContainer(file)) {
+            Log.w(TAG, "Imported task signature check skipped: ${file.absolutePath}")
+        }
+        file
+    }
+
+    private fun looksLikeSupportedTaskContainer(file: File): Boolean {
+        return runCatching {
+            RandomAccessFile(file, "r").use { raf ->
+                if (raf.length() < 8L) return false
+                val first4 = ByteArray(4)
+                raf.readFully(first4)
+                // ZIP container (.task) starts with "PK"
+                val isZip = first4[0] == 'P'.code.toByte() && first4[1] == 'K'.code.toByte()
+                if (isZip) return true
+
+                // FlatBuffer tflite often has "TFL3" at offset 4
+                raf.seek(4L)
+                val tfl3 = ByteArray(4)
+                raf.readFully(tfl3)
+                val marker = String(tfl3, Charsets.US_ASCII)
+                marker == "TFL3"
+            }
+        }.getOrDefault(false)
+    }
+
     fun isDownloaded(context: Context, model: LocalModel): Boolean =
-        modelFile(context, model).exists()
+        isValidDownloadedFile(modelFile(context, model))
+
+    fun validatedModelFileForLoad(context: Context, model: LocalModel): Result<File> {
+        val file = modelFile(context, model)
+        val metadata = readMetadata(file)
+            ?: return Result.failure(IllegalStateException("モデルの整合性メタデータがありません"))
+
+        if (!file.exists() || file.length() <= 0L) {
+            return Result.failure(IllegalStateException("モデルファイルが存在しません"))
+        }
+        if (file.length() != metadata.expectedBytes) {
+            deleteModel(context, model)
+            return Result.failure(IllegalStateException("モデルサイズが不正です。再ダウンロードしてください"))
+        }
+
+        val expectedSha = metadata.expectedSha256
+        if (expectedSha.isNullOrBlank()) {
+            deleteModel(context, model)
+            return Result.failure(IllegalStateException("モデル整合性情報が不足しています。再ダウンロードしてください"))
+        }
+
+        val actualSha = runCatching { sha256(file) }.getOrElse {
+            return Result.failure(IllegalStateException("モデル検証に失敗しました: ${it.message}"))
+        }
+        if (!actualSha.equals(expectedSha, ignoreCase = true)) {
+            deleteModel(context, model)
+            return Result.failure(IllegalStateException("モデルが破損しています。再ダウンロードしてください"))
+        }
+
+        return Result.success(file)
+    }
 
     fun previewTreeUrl(model: LocalModel): String {
         return when (model) {
@@ -111,6 +210,7 @@ object ModelFileManager {
     fun deleteModel(context: Context, model: LocalModel): Boolean {
         val file = modelFile(context, model)
         val tmpFile = File("${file.absolutePath}.download")
+        val metaFile = metadataFile(file)
         val legacyE2B = File(file.parentFile, "gemma-3n-e2b.litertlm")
         val legacyE2BTmp = File("${legacyE2B.absolutePath}.download")
         
@@ -119,9 +219,10 @@ object ModelFileManager {
         
         val deletedMain = !file.exists() || file.delete()
         val deletedTmp = !tmpFile.exists() || tmpFile.delete()
+        val deletedMeta = !metaFile.exists() || metaFile.delete()
         val deletedLegacyMain = model != LocalModel.E2B || !legacyE2B.exists() || legacyE2B.delete()
         val deletedLegacyTmp = model != LocalModel.E2B || !legacyE2BTmp.exists() || legacyE2BTmp.delete()
-        return deletedMain && deletedTmp && deletedLegacyMain && deletedLegacyTmp
+        return deletedMain && deletedTmp && deletedMeta && deletedLegacyMain && deletedLegacyTmp
     }
 
     fun deleteTempDownload(context: Context, model: LocalModel): Boolean {
@@ -136,9 +237,15 @@ object ModelFileManager {
         onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null
     ): Result<File> {
         val file = modelFile(context, model)
-        if (file.exists() && file.length() > 0) {
+        if (isValidDownloadedFile(file)) {
             Log.d(TAG, "Model file already exists: ${file.absolutePath}")
             return Result.success(file)
+        }
+
+        if (file.exists()) {
+            Log.w(TAG, "Invalid model file detected. Redownloading: ${file.absolutePath}")
+            file.delete()
+            metadataFile(file).delete()
         }
 
         val url = when (model) {
@@ -160,8 +267,8 @@ object ModelFileManager {
             downloadFileWithRetry(context, url, file, onProgress)
             
             // ファイル検証
-            if (!file.exists() || file.length() == 0L) {
-                return Result.failure(IllegalStateException("ダウンロードファイルが空です"))
+            if (!isValidDownloadedFile(file)) {
+                return Result.failure(IllegalStateException("ダウンロードファイルの整合性検証に失敗しました"))
             }
             
             Log.d(TAG, "Model download completed: ${file.absolutePath} (${file.length()} bytes)")
@@ -261,6 +368,7 @@ object ModelFileManager {
             } else {
                 connection.contentLengthLong
             }
+            val expectedSha256 = extractSha256FromHeaders(connection)
 
             if (totalBytes <= 0L) {
                 throw IllegalStateException("Cannot determine file size")
@@ -312,6 +420,14 @@ object ModelFileManager {
                 throw IllegalStateException("Failed to save model file: ${outFile.absolutePath}")
             }
 
+            val actualSha256 = sha256(outFile)
+            if (!expectedSha256.isNullOrBlank() && !actualSha256.equals(expectedSha256, ignoreCase = true)) {
+                outFile.delete()
+                metadataFile(outFile).delete()
+                throw IllegalStateException("Checksum mismatch")
+            }
+            writeMetadata(outFile, totalBytes, expectedSha256 ?: actualSha256)
+
         } finally {
             connection.disconnect()
         }
@@ -355,6 +471,72 @@ object ModelFileManager {
         } catch (e: Exception) {
             Log.w(TAG, "Failed to cleanup temp files", e)
         }
+    }
+
+    private fun isValidDownloadedFile(file: File): Boolean {
+        if (!file.exists()) return false
+        val fileLength = file.length()
+        if (fileLength <= 0L) return false
+
+        val metadata = readMetadata(file) ?: return false
+        return fileLength == metadata.expectedBytes
+    }
+
+    private fun metadataFile(file: File): File = File("${file.absolutePath}.meta")
+
+    private fun readMetadata(file: File): ModelMetadata? {
+        return try {
+            val meta = metadataFile(file)
+            if (!meta.exists()) return null
+            val lines = meta.readLines()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            if (lines.isEmpty()) return null
+            val expectedBytes = lines.first().toLongOrNull() ?: return null
+            val expectedSha = lines.getOrNull(1)
+                ?.takeIf { it.matches(Regex("^[a-fA-F0-9]{64}$")) }
+                ?.lowercase()
+            ModelMetadata(expectedBytes, expectedSha)
+        } catch (e: IOException) {
+            Log.w(TAG, "Failed to read metadata: ${file.absolutePath}", e)
+            null
+        }
+    }
+
+    private fun writeMetadata(file: File, expectedBytes: Long, expectedSha256: String) {
+        if (expectedBytes <= 0L) return
+        try {
+            metadataFile(file).writeText("$expectedBytes\n${expectedSha256.lowercase()}")
+        } catch (e: IOException) {
+            Log.w(TAG, "Failed to write metadata: ${file.absolutePath}", e)
+        }
+    }
+
+    private fun extractSha256FromHeaders(connection: HttpURLConnection): String? {
+        val candidates = listOf("X-Linked-ETag", "X-Linked-Etag", "ETag", "Content-Digest")
+        val shaRegex = Regex("([a-fA-F0-9]{64})")
+        for (name in candidates) {
+            val value = connection.getHeaderField(name) ?: continue
+            val normalized = value.replace("\"", "").replace("W/", "")
+            val match = shaRegex.find(normalized)?.groupValues?.get(1)
+            if (!match.isNullOrBlank()) {
+                return match.lowercase()
+            }
+        }
+        return null
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered(BUFFER_SIZE).use { input ->
+            val buffer = ByteArray(BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun queryDisplayName(context: Context, uri: Uri): String? {
