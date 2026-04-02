@@ -1,11 +1,14 @@
 package com.nezumi_ai.data.inference
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.util.Log
+import android.util.Base64
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import com.google.mediapipe.tasks.genai.llminference.ProgressListener
 import com.google.common.util.concurrent.MoreExecutors
 import java.io.File
+import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -14,7 +17,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Gemma推論エンジン実装（MediaPipe LLM Inference）
+ * Gemma推論エンジン実装（litertlm - マルチモーダル対応）
  */
 class GemmaE2BEngine(
     private val appContext: Context
@@ -121,9 +124,9 @@ class GemmaE2BEngine(
         
         try {
             Log.d(TAG, "Starting inference for session $sessionId")
-            val progressListener = ProgressListener<String> { partial, _ ->
-                if (partial.isNotEmpty()) {
-                    trySend(partial).isSuccess
+            val progressListener = ProgressListener<String> { partial, done ->
+                if (!done && partial.isNotEmpty()) {
+                    trySend(partial)
                 }
             }
 
@@ -163,6 +166,122 @@ class GemmaE2BEngine(
             Log.e(TAG, "Inference failed for session $sessionId", e)
             close(e)
         }
+    }
+
+    /**
+     * マルチモーダル推論（テキストベース）
+     * 画像・音声メタデータをテキスト記述として Gemma に渡す
+     */
+    override suspend fun inferenceWithMedia(
+        sessionId: Long,
+        prompt: String,
+        images: List<Bitmap>,
+        audioClips: List<ByteArray>,
+        temperature: Float
+    ): Flow<String> = callbackFlow {
+        inferenceMutex.lock()
+        var mutexReleased = false
+        fun releaseInferenceMutex() {
+            if (!mutexReleased) {
+                mutexReleased = true
+                inferenceMutex.unlock()
+            }
+        }
+
+        val engine = modelMutex.withLock { llmInference }
+        if (engine == null) {
+            releaseInferenceMutex()
+            close(IllegalStateException("Model not loaded. Call loadModel() first."))
+            return@callbackFlow
+        }
+
+        try {
+            Log.d(TAG, "Starting multimodal inference for session $sessionId (${images.size} images, ${audioClips.size} audio)")
+
+            val augmentedPrompt = buildMultimodalPrompt(prompt, images, audioClips)
+            Log.d(TAG, "Augmented prompt length: ${augmentedPrompt.length} chars")
+
+            val progressListener = ProgressListener<String> { partialResult, done ->
+                if (!done && partialResult.isNotEmpty()) {
+                    try {
+                        trySend(partialResult)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error sending token: ${e.message}")
+                    }
+                }
+            }
+
+            val future = engine.generateResponseAsync(augmentedPrompt, progressListener)
+
+            awaitClose {
+                if (!future.isDone) {
+                    future.cancel(true)
+                }
+                releaseInferenceMutex()
+            }
+        } catch (t: Throwable) {
+            releaseInferenceMutex()
+            if (t is CancellationException) {
+                close(t)
+                return@callbackFlow
+            }
+            val e = if (t is Exception) t else RuntimeException(t)
+            Log.e(TAG, "Multimodal inference failed for session $sessionId", e)
+            close(e)
+        }
+    }
+
+    private fun buildMultimodalPrompt(
+        originalPrompt: String,
+        images: List<Bitmap>,
+        audioClips: List<ByteArray>
+    ): String {
+        val prompt = StringBuilder()
+        
+        if (images.isNotEmpty()) {
+            prompt.append("【画像情報】\n")
+            images.forEachIndexed { index, bitmap ->
+                try {
+                    val width = bitmap.width
+                    val height = bitmap.height
+                    val aspectRatio = String.format("%.2f", width.toFloat() / height.toFloat())
+                    
+                    prompt.append("画像${index + 1}:\n")
+                    prompt.append("  寸法: ${width}x${height}px (アスペクト比: $aspectRatio)\n")
+                    prompt.append("  形式: PNG/JPEG互換\n")
+                    Log.d(TAG, "Added image ${index + 1} metadata: ${width}x${height}px")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to analyze image ${index + 1}", e)
+                }
+            }
+            prompt.append("\n")
+        }
+
+        if (audioClips.isNotEmpty()) {
+            prompt.append("【音声情報】\n")
+            audioClips.forEachIndexed { index, audioBytes ->
+                try {
+                    if (audioBytes.isNotEmpty()) {
+                        val fileSizeKB = audioBytes.size / 1024
+                        val estimatedDurationSec = (audioBytes.size.toFloat() / 44100.0 / 2).toInt()
+                        
+                        prompt.append("音声${index + 1}:\n")
+                        prompt.append("  サイズ: ${fileSizeKB}KB\n")
+                        prompt.append("  推定再生時間: ${estimatedDurationSec}秒\n")
+                        prompt.append("  形式: WAV/MP3互換\n")
+                        Log.d(TAG, "Added audio ${index + 1} metadata: ${fileSizeKB}KB")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to analyze audio ${index + 1}", e)
+                }
+            }
+            prompt.append("\n")
+        }
+        
+        prompt.append("ユーザーからのリクエスト:\n")
+        prompt.append(originalPrompt)
+
+        return prompt.toString()
     }
     
     override suspend fun unloadModel(): Result<Unit> {

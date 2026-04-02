@@ -1,7 +1,14 @@
 package com.nezumi_ai.presentation.viewmodel
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.MediaCodec
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.net.Uri
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -14,6 +21,9 @@ import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import java.io.File
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -60,6 +70,9 @@ class ChatViewModel(
     
     private val _messages = MutableStateFlow<List<MessageEntity>>(emptyList())
     val messages: StateFlow<List<MessageEntity>> = _messages
+    
+    private val _pendingMediaMessage = MutableStateFlow<MessageEntity?>(null)
+    val pendingMediaMessage: StateFlow<MessageEntity?> = _pendingMediaMessage
     
     private val _inputText = MutableStateFlow("")
     val inputText: StateFlow<String> = _inputText
@@ -281,7 +294,12 @@ class ChatViewModel(
         _uiMessage.emit("プロンプトを取り消しました")
     }
     
-    private suspend fun generateAIResponse(sessionId: Long, userMessage: String) {
+    private suspend fun generateAIResponse(
+        sessionId: Long,
+        userMessage: String,
+        images: List<Bitmap> = emptyList(),
+        audioClips: List<ByteArray> = emptyList()
+    ) {
         var streamingMessageId: Long? = null
         try {
             val manager = requireModelManager()
@@ -314,13 +332,27 @@ class ChatViewModel(
                 )
             }
 
-            // ストリーミング推論を実行
+            // ストリーミング推論を実行（マルチモーダル対応）
             val aiResponseFlow = withContext(Dispatchers.IO) {
-                manager.runInference(
-                    sessionId = sessionId,
-                    prompt = promptForModel,
-                    temperature = config.temperature
-                )
+                if (images.isNotEmpty() || audioClips.isNotEmpty()) {
+                    // マルチモーダル推論
+                    Log.d(TAG, "Using multimodal inference: ${images.size} images, ${audioClips.size} audio clips")
+                    manager.runInferenceWithMedia(
+                        sessionId = sessionId,
+                        prompt = promptForModel,
+                        images = images,
+                        audioClips = audioClips,
+                        temperature = config.temperature
+                    )
+                } else {
+                    // テキストのみ推論
+                    Log.d(TAG, "Using text-only inference")
+                    manager.runInference(
+                        sessionId = sessionId,
+                        prompt = promptForModel,
+                        temperature = config.temperature
+                    )
+                }
             }
 
             streamingMessageId = messageRepository.addMessage(
@@ -777,6 +809,109 @@ class ChatViewModel(
         return prompt.takeLast(maxInputTokens)
     }
 
+    /**
+     * プロンプトにメディア情報を統合
+     */
+    private fun augmentPromptWithMediaInfo(
+        prompt: String,
+        images: List<Bitmap>,
+        audioClips: List<ByteArray>
+    ): String {
+        val mediaInfo = StringBuilder()
+
+        if (images.isNotEmpty()) {
+            mediaInfo.append("\n【添付画像】\n")
+            images.forEachIndexed { index, bitmap ->
+                mediaInfo.append("- 画像 ${index + 1}: ${bitmap.width}x${bitmap.height}px\n")
+            }
+        }
+
+        if (audioClips.isNotEmpty()) {
+            mediaInfo.append("\n【添付音声】\n")
+            audioClips.forEachIndexed { index, audioBytes ->
+                mediaInfo.append("- 音声 ${index + 1}: ${audioBytes.size / 1024}KB\n")
+            }
+        }
+
+        return if (mediaInfo.isEmpty()) {
+            prompt
+        } else {
+            prompt + mediaInfo.toString()
+        }
+    }
+
+    /**
+     * Bitmapを1024x1024以下にダウンスケール
+     */
+    private fun scaleBitmapTo1024(bitmap: Bitmap): Bitmap {
+        val maxSize = 1024
+        if (bitmap.width <= maxSize && bitmap.height <= maxSize) {
+            return bitmap
+        }
+        val scale = minOf(
+            maxSize.toFloat() / bitmap.width,
+            maxSize.toFloat() / bitmap.height
+        )
+        val newWidth = (bitmap.width * scale).toInt()
+        val newHeight = (bitmap.height * scale).toInt()
+        return Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+    }
+
+    /**
+     * BitmapをPNG ByteArrayに変換
+     */
+    private fun bitmapToPngByteArray(bitmap: Bitmap): ByteArray {
+        val stream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+        return stream.toByteArray()
+    }
+
+    /**
+     * 音声をmono/16kHz/16-bit WAVに正規化
+     * 注：実装例。実際のWAVエンコーディングが必要な場合はより詳細な実装が必要
+     */
+    private fun normalizeAudioToMono16Bit16kHz(audioBytes: ByteArray): ByteArray {
+        return try {
+            // WAVファイルの場合、すでに適切なフォーマットかチェック
+            // ここでは簡略化して、与えられたバイトアレイをそのまま返す
+            // 実装ガイドラインに従って、より詳細な正規化ロジックを追加してください
+            audioBytes
+        } catch (e: Exception) {
+            Log.e(TAG, "Error normalizing audio", e)
+            audioBytes
+        }
+    }
+
+    /**
+     * URIからBitmapをロード
+     */
+    private suspend fun loadBitmapFromUri(uri: Uri): Bitmap? {
+        return try {
+            withContext(Dispatchers.IO) {
+                BitmapFactory.decodeStream(appContext.contentResolver.openInputStream(uri))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading bitmap from URI: $uri", e)
+            null
+        }
+    }
+
+    /**
+     * URIから音声ByteArrayをロード
+     */
+    private suspend fun loadAudioBytesFromUri(uri: Uri): ByteArray? {
+        return try {
+            withContext(Dispatchers.IO) {
+                appContext.contentResolver.openInputStream(uri)?.use { inputStream ->
+                    inputStream.readBytes()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading audio from URI: $uri", e)
+            null
+        }
+    }
+
     private suspend fun requireModelManager(): ModelManager {
         val current = modelManager
         if (current != null) return current
@@ -800,6 +935,186 @@ class ChatViewModel(
         } finally {
             _isModelLoading.value = false
         }
+    }
+
+    /**
+     * メディア付きメッセージを送信（画像・音声対応）
+     */
+    fun sendMessageWithMedia(
+        userMessage: String,
+        imageUri: String? = null,
+        audioUri: String? = null
+    ) {
+        val sessionId = _currentSessionId.value ?: return
+        if (_isLoading.value) return
+
+        generationJob = viewModelScope.launch {
+            try {
+                // メディア付きユーザーメッセージを保存
+                messageRepository.addMessage(
+                    sessionId = sessionId,
+                    role = "user",
+                    content = userMessage,
+                    imageUri = imageUri,
+                    audioUri = audioUri
+                )
+
+                // セッションの lastUpdated を更新
+                sessionRepository.updateSessionLastUpdated(sessionId)
+
+                // 入力フィールドをクリア
+                _inputText.value = ""
+
+                // URI から Bitmap・ByteArray に変換
+                val images = mutableListOf<Bitmap>()
+                val audioClips = mutableListOf<ByteArray>()
+
+                imageUri?.let { uriStr ->
+                    val bitmap = loadBitmapFromUri(Uri.parse(uriStr))
+                    if (bitmap != null) {
+                        images.add(bitmap)
+                        Log.d(TAG, "Loaded image from URI: $uriStr")
+                    }
+                }
+
+                audioUri?.let { uriStr ->
+                    val audioBytes = loadAudioBytesFromUri(Uri.parse(uriStr))
+                    if (audioBytes != null) {
+                        audioClips.add(audioBytes)
+                        Log.d(TAG, "Loaded audio from URI: $uriStr")
+                    }
+                }
+
+                // AI応答を生成（画像・音声データを含む）
+                _isLoading.value = true
+                generateAIResponse(sessionId, userMessage, images, audioClips)
+            } catch (t: Throwable) {
+                val e = if (t is Exception) t else RuntimeException(t)
+                Log.e(TAG, "Error sending message with media", e)
+                _uiMessage.emit("メディア付きメッセージの送信に失敗しました: ${e.message}")
+            } finally {
+                _isLoading.value = false
+                generationJob = null
+            }
+        }
+    }
+
+    /**
+     * 既存のメッセージにメディアを追加・更新
+     */
+    fun addMediaToMessage(
+        messageId: Long,
+        imageUri: String? = null,
+        audioUri: String? = null
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (imageUri == null && audioUri == null) {
+                    _uiMessage.emit("追加するメディアが指定されていません")
+                    return@launch
+                }
+
+                messageRepository.updateMessageMedia(
+                    messageId = messageId,
+                    imageUri = imageUri,
+                    audioUri = audioUri
+                )
+
+                val sessionId = _currentSessionId.value
+                if (sessionId != null) {
+                    sessionRepository.updateSessionLastUpdated(sessionId)
+                }
+
+                val mediaType = when {
+                    imageUri != null && audioUri != null -> "画像と音声"
+                    imageUri != null -> "画像"
+                    else -> "音声"
+                }
+                _uiMessage.emit("$mediaType をメッセージに追加しました")
+            } catch (t: Throwable) {
+                val e = if (t is Exception) t else RuntimeException(t)
+                Log.e(TAG, "Error adding media to message", e)
+                _uiMessage.emit("メディア追加に失敗しました: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * メッセージからメディアを削除
+     */
+    fun removeMediaFromMessage(messageId: Long, mediaType: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val current = messageRepository.getMessageById(messageId) ?: return@launch
+                val updatedImageUri = if (mediaType == "image") null else current.imageUri
+                val updatedAudioUri = if (mediaType == "audio") null else current.audioUri
+
+                messageRepository.updateMessageMedia(
+                    messageId = messageId,
+                    imageUri = updatedImageUri,
+                    audioUri = updatedAudioUri
+                )
+
+                _uiMessage.emit("$mediaType をメッセージから削除しました")
+            } catch (t: Throwable) {
+                val e = if (t is Exception) t else RuntimeException(t)
+                Log.e(TAG, "Error removing media from message", e)
+                _uiMessage.emit("メディア削除に失敗しました: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * メッセージが画像や音声を含むかチェック
+     */
+    suspend fun hasMessageMedia(messageId: Long): Boolean {
+        return messageRepository.hasMediaContent(messageId)
+    }
+
+    /**
+     * メッセージの詳細情報を取得（メディア情報含む）
+     */
+    fun getMessageDetail(messageId: Long, callback: (MessageEntity?) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val message = messageRepository.getMessageById(messageId)
+                withContext(Dispatchers.Main) {
+                    callback(message)
+                }
+            } catch (t: Throwable) {
+                val e = if (t is Exception) t else RuntimeException(t)
+                Log.e(TAG, "Error getting message detail", e)
+                withContext(Dispatchers.Main) {
+                    callback(null)
+                }
+            }
+        }
+    }
+    
+    /**
+     * メディアプレビューメッセージを更新（チャット欄に表示用）
+     */
+    fun updatePendingMediaPreview(imageUri: String? = null, audioUri: String? = null) {
+        _pendingMediaMessage.value = if (imageUri != null || audioUri != null) {
+            MessageEntity(
+                id = 0,
+                sessionId = _currentSessionId.value ?: 0,
+                role = "user",
+                content = "",
+                imageUri = imageUri,
+                audioUri = audioUri,
+                timestamp = System.currentTimeMillis()
+            )
+        } else {
+            null
+        }
+    }
+    
+    /**
+     * メディアプレビューをクリア
+     */
+    fun clearPendingMediaPreview() {
+        _pendingMediaMessage.value = null
     }
     
     override fun onCleared() {

@@ -1,28 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="start" android:layout_margin="8dp">
+    xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="start" android:layout_margin="8dp">
 
     <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="start">
+
+        <!-- Media Preview Container -->
+        <FrameLayout android:id="@+id/media_container" android:layout_width="200dp" android:layout_height="200dp" android:layout_marginBottom="8dp" android:visibility="gone" android:background="@drawable/bg_message_ai" android:foreground="?attr/selectableItemBackground">
+
+            <!-- Image Preview -->
+            <ImageView android:id="@+id/ai_image_preview" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="centerCrop" android:visibility="gone" android:contentDescription="@string/message_image" />
+
+            <!-- Audio Playback Button -->
+            <LinearLayout android:id="@+id/audio_playback_container" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:gravity="center" android:visibility="gone" android:background="@color/primary">
+
+                <com.google.android.material.button.MaterialButton android:id="@+id/ai_audio_play_button" style="@style/Widget.MaterialComponents.Button" android:layout_width="56dp" android:layout_height="56dp" android:text="▶" android:textSize="24sp" android:textColor="@color/white" android:insetTop="0dp" android:insetBottom="0dp" />
+
+                <TextView android:id="@+id/ai_audio_duration" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="0:00" android:textColor="@color/white" android:textSize="12sp" />
+            </LinearLayout>
+        </FrameLayout>
 
         <TextView android:id="@+id/ai_message_text" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="AI response" android:textSize="14sp" android:textColor="@color/text_primary" android:background="@drawable/bg_message_ai" android:padding="11dp" android:maxWidth="280dp" android:textIsSelectable="true" />
 
         <TextView android:id="@+id/ai_message_time" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="14:26" android:textSize="11sp" android:textColor="@color/text_secondary" android:layout_marginTop="3dp" android:layout_marginStart="4dp" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/copy_message_button"
-            style="@style/Widget.Nezumiai.Button.Outlined"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/copy_all"
-            android:textSize="11sp"
-            android:minWidth="0dp"
-            android:paddingStart="10dp"
-            android:paddingEnd="10dp"
-            android:minHeight="0dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            app:cornerRadius="12dp" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/copy_message_button" style="@style/Widget.Nezumiai.Button.Outlined" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="@string/copy_all" android:textSize="11sp" android:minWidth="0dp" android:paddingStart="10dp" android:paddingEnd="10dp" android:minHeight="0dp" android:insetTop="0dp" android:insetBottom="0dp" app:cornerRadius="12dp" />
     </LinearLayout>
 </LinearLayout>

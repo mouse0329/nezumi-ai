@@ -33,6 +33,10 @@
     <string name="revoke_prompt">取り消し</string>
     <string name="copy_all">コピー</string>
     <string name="copied_to_clipboard">コピーしました</string>
+    <string name="message_image">メッセージの画像</string>
+    <string name="add_image_button">画像を追加</string>
+    <string name="add_audio_button">音声を追加</string>
+    <string name="add_media_menu">メディアメニュー</string>
     <string name="revoke_prompt_done">プロンプトを取り消しました</string>
     <string name="revoke_prompt_none">取り消せるプロンプトがありません</string>
     <string name="send_icon">➤</string>

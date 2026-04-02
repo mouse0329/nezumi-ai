@@ -1,12 +1,20 @@
 package com.nezumi_ai.presentation.ui.fragment
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.provider.MediaStore
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.AdapterView
+import android.widget.PopupMenu
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
@@ -34,6 +42,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.combine
 import kotlin.math.max
 
 class ChatFragment : Fragment(R.layout.fragment_chat) {
@@ -55,6 +64,129 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var currentBackendType = "CPU"
     private var currentModelKey = "E2B"
     private var isCompressingNow = false
+    private var selectedImageUri: String? = null
+    private var selectedAudioUri: String? = null
+    
+    private val imagePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            selectedImageUri = uri.toString()
+            Toast.makeText(requireContext(), "画像を選択しました", Toast.LENGTH_SHORT).show()
+            updateMediaPreview()
+        }
+    }
+    
+    private val audioPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            selectedAudioUri = uri.toString()
+            Toast.makeText(requireContext(), "音声を選択しました", Toast.LENGTH_SHORT).show()
+            updateMediaPreview()
+        }
+    }
+
+    private fun updateMediaPreview() {
+        val previewContainer = binding.mediaPreviewContainer
+        previewContainer.removeAllViews()
+
+        if (selectedImageUri.isNullOrEmpty() && selectedAudioUri.isNullOrEmpty()) {
+            binding.mediaPreviewScroll.visibility = View.GONE
+            viewModel.clearPendingMediaPreview()
+            return
+        }
+
+        binding.mediaPreviewScroll.visibility = View.VISIBLE
+        
+        // ViewModelのプレビューメッセージを更新（チャット欄に表示）
+        viewModel.updatePendingMediaPreview(selectedImageUri, selectedAudioUri)
+
+        // 画像プレビュー
+        if (!selectedImageUri.isNullOrEmpty()) {
+            val imageFrame = createMediaPreviewItem(
+                "🖼",
+                selectedImageUri!!.substringAfterLast("/").take(15),
+                { removeMedia("image") }
+            )
+            previewContainer.addView(imageFrame)
+        }
+
+        // 音声プレビュー
+        if (!selectedAudioUri.isNullOrEmpty()) {
+            val audioFrame = createMediaPreviewItem(
+                "🎤",
+                selectedAudioUri!!.substringAfterLast("/").take(15),
+                { removeMedia("audio") }
+            )
+            previewContainer.addView(audioFrame)
+        }
+    }
+
+    private fun createMediaPreviewItem(
+        icon: String,
+        filename: String,
+        onRemove: () -> Unit
+    ): android.widget.FrameLayout {
+        val frame = android.widget.FrameLayout(requireContext()).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(100, 100).apply {
+                marginEnd = 4
+            }
+            setOnClickListener { onRemove() }
+        }
+
+        val container = android.widget.LinearLayout(requireContext()).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            orientation = android.widget.LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER
+            setBackgroundColor(android.graphics.Color.parseColor("#F0D9CC"))
+            isClickable = true
+        }
+
+        val iconText = android.widget.TextView(requireContext()).apply {
+            text = icon
+            textSize = 24f
+            gravity = android.view.Gravity.CENTER
+        }
+        container.addView(iconText)
+
+        val nameText = android.widget.TextView(requireContext()).apply {
+            text = filename
+            textSize = 10f
+            gravity = android.view.Gravity.CENTER
+            setPadding(4, 4, 4, 4)
+        }
+        container.addView(nameText)
+
+        frame.addView(container)
+
+        // 削除ボタン（右上のX）
+        val deleteBtn = android.widget.TextView(requireContext()).apply {
+            text = "✕"
+            textSize = 16f
+            setTextColor(android.graphics.Color.RED)
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                24, 24,
+                android.view.Gravity.TOP or android.view.Gravity.END
+            )
+            setOnClickListener { onRemove() }
+        }
+        frame.addView(deleteBtn)
+
+        return frame
+    }
+
+    private fun removeMedia(type: String) {
+        when (type) {
+            "image" -> selectedImageUri = null
+            "audio" -> selectedAudioUri = null
+        }
+        updateMediaPreview()
+        Toast.makeText(
+            requireContext(),
+            "${if (type == "image") "画像" else "音声"}を削除しました",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
     
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -119,13 +251,22 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             viewModel.compressContextManually()
         }
         
-        // メッセージの監視
+        // メッセージの監視（プレビューメディアを含む）
         viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.messages.collect { messages ->
+            combine(
+                viewModel.messages,
+                viewModel.pendingMediaMessage
+            ) { messages, pendingMedia ->
+                if (pendingMedia != null) {
+                    messages + listOf(pendingMedia)
+                } else {
+                    messages
+                }
+            }.collect { displayMessages ->
                 val wasAtBottom = isAtBottom()
-                adapter.submitList(messages) {
-                    if (messages.isNotEmpty() && wasAtBottom) {
-                        scrollToBottom(messages.size - 1)
+                adapter.submitList(displayMessages) {
+                    if (displayMessages.isNotEmpty() && wasAtBottom) {
+                        scrollToBottom(displayMessages.size - 1)
                     }
                     updateScrollToBottomButtonVisibility()
                 }
@@ -140,9 +281,33 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
             val message = binding.messageInput.text.toString().trim()
             if (message.isNotEmpty()) {
-                viewModel.sendMessage(message)
+                viewModel.sendMessageWithMedia(message, selectedImageUri, selectedAudioUri)
                 binding.messageInput.text.clear()
+                selectedImageUri = null
+                selectedAudioUri = null
+                updateMediaPreview()
+                viewModel.clearPendingMediaPreview()
             }
+        }
+
+        // メディアメニューボタン
+        binding.mediaMenuButton.setOnClickListener { view ->
+            val popupMenu = PopupMenu(requireContext(), view)
+            popupMenu.menuInflater.inflate(R.menu.menu_media_select, popupMenu.menu)
+            popupMenu.setOnMenuItemClickListener { menuItem ->
+                when (menuItem.itemId) {
+                    R.id.menu_select_image -> {
+                        imagePickerLauncher.launch("image/*")
+                        true
+                    }
+                    R.id.menu_select_audio -> {
+                        audioPickerLauncher.launch("audio/*")
+                        true
+                    }
+                    else -> false
+                }
+            }
+            popupMenu.show()
         }
 
         // ローディング状態の監視

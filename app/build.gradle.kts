@@ -84,7 +84,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
-    // On-device LLM (MediaPipe)
+    // On-device LLM (MediaPipe tasks-genai - Gemma support)
     implementation("com.google.mediapipe:tasks-genai:0.10.27")
 
     // OAuth (Hugging Face)

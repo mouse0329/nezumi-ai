@@ -1,6 +1,7 @@
 package com.nezumi_ai.data.inference
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.util.Log
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
@@ -100,6 +101,21 @@ class ModelManager(
     ): Flow<String> = flow {
         inferenceMutex.withLock {
             emitAll(inferenceEngine.inference(sessionId, prompt, temperature))
+        }
+    }
+
+    /**
+     * マルチモーダル推論を実行（画像・音声対応）
+     */
+    suspend fun runInferenceWithMedia(
+        sessionId: Long,
+        prompt: String,
+        images: List<Bitmap> = emptyList(),
+        audioClips: List<ByteArray> = emptyList(),
+        temperature: Float = 0.7f
+    ): Flow<String> = flow {
+        inferenceMutex.withLock {
+            emitAll(inferenceEngine.inferenceWithMedia(sessionId, prompt, images, audioClips, temperature))
         }
     }
     
