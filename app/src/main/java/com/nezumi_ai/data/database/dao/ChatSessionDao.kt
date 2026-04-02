@@ -28,4 +28,7 @@ interface ChatSessionDao {
     
     @Query("DELETE FROM chat_session WHERE id = :sessionId")
     suspend fun deleteById(sessionId: Long)
+
+    @Query("UPDATE chat_session SET selectedModel = :newPath WHERE selectedModel = :oldPath")
+    suspend fun updateSelectedModelPath(oldPath: String, newPath: String)
 }

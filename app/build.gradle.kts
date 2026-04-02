@@ -18,6 +18,11 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["appAuthRedirectScheme"] = "nezumiai"
+        
+        // 大規模モデル対応のためのメモリ設定
+        ndk {
+            abiFilters.add("arm64-v8a")
+        }
     }
 
     signingConfigs {
@@ -30,6 +35,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            // デバッグ時もメモリ効率を優先
+            isMinifyEnabled = false
+        }
+        
         release {
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
@@ -85,6 +95,9 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
     // On-device LLM (MediaPipe tasks-genai - Gemma support)
+    // MPImage / BitmapImageBuilder は tasks-genai の compile classpath に無い。tasks-core に含まれる。
+    // tasks-core の 0.10.27 は Google Maven に無いため 0.10.21 を使用（tasks-genai は 0.10.27 のまま）。
+    implementation("com.google.mediapipe:tasks-core:0.10.21")
     implementation("com.google.mediapipe:tasks-genai:0.10.27")
 
     // OAuth (Hugging Face)

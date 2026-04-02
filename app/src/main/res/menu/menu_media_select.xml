@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:id="@+id/menu_select_image" android:title="🖼 画像" />
-    <item android:id="@+id/menu_select_audio" android:title="🎤 音声" />
+    <item android:id="@+id/menu_select_image" android:title="ギャラリーから選択" />
+    <item android:id="@+id/menu_camera" android:title="カメラで撮影" />
+    <item android:id="@+id/menu_clipboard_paste" android:title="クリップボードから貼り付け" />
+    <item android:id="@+id/menu_select_audio" android:title="音声ファイルを選択" />
+    <item android:id="@+id/menu_record_audio" android:title="その場で録音" />
 </menu>

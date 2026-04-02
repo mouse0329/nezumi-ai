@@ -130,7 +130,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         applyStatusBarInset()
         authService = AuthorizationService(requireContext())
         val database = NezumiAiDatabase.getInstance(requireContext())
-        settingsRepository = SettingsRepository(database.settingsDao())
+        settingsRepository = SettingsRepository(database.settingsDao(), database.chatSessionDao())
 
         binding.backButton.setOnClickListener { findNavController().navigateUp() }
         renderHfTokenState()

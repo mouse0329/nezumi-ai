@@ -78,12 +78,55 @@ object ModelFileManager {
         return File(dir, filename)
     }
 
+    /**
+     * `models/imported` に残っている `.litertlm` を `.task` にリネームする。
+     * Room の selectedModel など保存パスを更新するため、(旧パス, 新パス) を返す。
+     */
+    fun migrateImportedLegacyLiteRtLmFiles(context: Context): List<Pair<String, String>> {
+        val importedDir = File(context.filesDir, "models/imported")
+        if (!importedDir.isDirectory) return emptyList()
+        val legacyFiles = importedDir.listFiles()
+            ?.filter { it.isFile && it.name.lowercase().endsWith(".litertlm") }
+            ?: return emptyList()
+        if (legacyFiles.isEmpty()) return emptyList()
+        val results = mutableListOf<Pair<String, String>>()
+        for (legacy in legacyFiles.sortedBy { it.name }) {
+            if (validateImportedTaskFile(legacy).isFailure) {
+                Log.w(TAG, "Skip imported litertlm migrate (invalid): ${legacy.name}")
+                continue
+            }
+            val base = legacy.nameWithoutExtension
+            var dest = File(importedDir, "$base.task")
+            if (dest.exists()) {
+                dest = File(importedDir, "${base}_${System.currentTimeMillis()}.task")
+            }
+            val oldPath = legacy.absolutePath
+            val legacyMeta = metadataFile(legacy)
+            val destMeta = metadataFile(dest)
+            if (!legacy.renameTo(dest)) {
+                Log.w(TAG, "Failed to rename imported litertlm: ${legacy.name}")
+                continue
+            }
+            if (legacyMeta.exists()) {
+                if (destMeta.exists()) destMeta.delete()
+                if (!legacyMeta.renameTo(destMeta)) {
+                    runCatching {
+                        legacyMeta.copyTo(destMeta, overwrite = true)
+                        legacyMeta.delete()
+                    }.onFailure { Log.w(TAG, "Failed to copy legacy meta for imported model", it) }
+                }
+            }
+            results.add(oldPath to dest.absolutePath)
+        }
+        return results
+    }
+
     fun listImportedTaskModels(context: Context): List<ImportedTaskModel> {
         val dir = File(context.filesDir, "models/imported")
         if (!dir.exists()) return emptyList()
         return dir.listFiles()
             ?.asSequence()
-            ?.filter { it.isFile && it.name.lowercase().endsWith(".task") }
+            ?.filter { it.isFile && (it.name.lowercase().endsWith(".task") || it.name.lowercase().endsWith(".litertlm")) }
             ?.filter { validateImportedTaskFile(it).isSuccess }
             ?.sortedByDescending { it.lastModified() }
             ?.map { ImportedTaskModel(name = it.nameWithoutExtension, path = it.absolutePath) }
@@ -93,8 +136,9 @@ object ModelFileManager {
 
     fun importTaskFromUri(context: Context, uri: Uri): Result<File> = runCatching {
         val displayName = queryDisplayName(context, uri) ?: "custom_model.task"
-        if (!displayName.lowercase().endsWith(".task")) {
-            throw IllegalArgumentException(".task ファイルのみ追加できます")
+        val lower = displayName.lowercase()
+        if (!lower.endsWith(".task") && !lower.endsWith(".litertlm")) {
+            throw IllegalArgumentException(".task または .litertlm ファイルのみ追加できます")
         }
         val importedDir = File(context.filesDir, "models/imported")
         if (!importedDir.exists()) {
@@ -132,8 +176,9 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         if (!target.exists()) return@runCatching
 
         // ファイル形式の厳密なチェック
-        if (!target.isFile || !target.name.lowercase().endsWith(".task")) {
-            throw IllegalArgumentException(".task ファイルのみ削除できます")
+        val lower = target.name.lowercase()
+        if (!target.isFile || (!lower.endsWith(".task") && !lower.endsWith(".litertlm"))) {
+            throw IllegalArgumentException(".task または .litertlm ファイルのみ削除できます")
         }
 
         // 削除実行
@@ -151,7 +196,7 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
     }
 
 /**
-     * インポートされた .task ファイルの基本的なバリデーション
+     * インポートされた .task/.litertlm ファイルの基本的なバリデーション
      */
     fun validateImportedTaskFile(file: File): Result<File> = runCatching {
         if (!file.exists() || !file.isFile) {
@@ -168,8 +213,11 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         if (size < WARN_SMALL_IMPORTED_TASK_BYTES) {
             Log.w(TAG, "Imported task is very small: ${file.absolutePath} (${size} bytes)")
         }
-        if (!looksLikeSupportedTaskContainer(file)) {
-            Log.w(TAG, "Imported task signature check skipped: ${file.absolutePath}")
+        val lower = file.name.lowercase()
+        if (lower.endsWith(".litertlm") || lower.endsWith(".task")) {
+            if (!looksLikeSupportedTaskContainer(file)) {
+                Log.w(TAG, "Imported task signature check skipped: ${file.absolutePath}")
+            }
         }
         file
     }
@@ -290,6 +338,7 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         val file = modelFile(context, model)
         withModelLock(context, model) {
             coroutineContext.ensureActive()
+            migrateLegacyLiteRtLmToTaskIfNeeded(file, model)
             cleanupLegacyLiteRtLmFiles(file, model)
             // 1) 不完全ファイル（小さすぎる等）は削除
             if (file.exists() && file.length() < MIN_VALID_MODEL_BYTES) {
@@ -644,14 +693,57 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         }
     }
 
+    /**
+     * 旧 `.litertlm` を削除せず `.task` へリネームしてダウンロードし直しを避ける。
+     */
+    private fun migrateLegacyLiteRtLmToTaskIfNeeded(taskFile: File, model: LocalModel) {
+        val parent = taskFile.parentFile ?: return
+        val legacy = File(parent, legacyLiteRtLmFilename(model))
+        if (!legacy.isFile) return
+        if (isValidDownloadedFile(taskFile)) return
+
+        if (legacy.length() < MIN_VALID_MODEL_BYTES) {
+            Log.w(TAG, "Legacy litertlm too small to migrate: ${legacy.absolutePath}")
+            return
+        }
+
+        if (taskFile.exists()) {
+            taskFile.delete()
+            metadataFile(taskFile).delete()
+        }
+
+        val legacyMeta = metadataFile(legacy)
+        val destMeta = metadataFile(taskFile)
+        if (!legacy.renameTo(taskFile)) {
+            Log.w(TAG, "Failed to rename legacy litertlm to .task: ${legacy.name}")
+            return
+        }
+        if (legacyMeta.exists()) {
+            if (destMeta.exists()) destMeta.delete()
+            if (!legacyMeta.renameTo(destMeta)) {
+                runCatching {
+                    legacyMeta.copyTo(destMeta, overwrite = true)
+                    legacyMeta.delete()
+                }.onFailure { Log.w(TAG, "Failed to copy legacy meta for bundled model", it) }
+            }
+        }
+        Log.i(TAG, "Migrated bundled litertlm to .task: ${taskFile.name}")
+    }
+
+    /**
+     * 検証済み `.task` があるときだけ旧拡張子の本体・メタを削除する（移行失敗時のデータ破棄を防ぐ）。
+     */
     private fun cleanupLegacyLiteRtLmFiles(baseFile: File, model: LocalModel) {
         try {
             val legacy = File(baseFile.parentFile, legacyLiteRtLmFilename(model))
             val legacyTmp = File("${legacy.absolutePath}.download")
             val legacyMeta = File("${legacy.absolutePath}.meta")
-            if (legacy.exists()) legacy.delete()
+            val taskOk = isValidDownloadedFile(baseFile)
+            if (taskOk) {
+                if (legacy.exists()) legacy.delete()
+                if (legacyMeta.exists()) legacyMeta.delete()
+            }
             if (legacyTmp.exists()) legacyTmp.delete()
-            if (legacyMeta.exists()) legacyMeta.delete()
         } catch (e: Exception) {
             Log.w(TAG, "Failed to cleanup legacy litertlm files", e)
         }

@@ -3,12 +3,14 @@ package com.nezumi_ai.data.inference
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
-import android.util.Base64
+import com.google.mediapipe.framework.image.BitmapImageBuilder
+import com.google.mediapipe.tasks.genai.llminference.AudioModelOptions
+import com.google.mediapipe.tasks.genai.llminference.GraphOptions
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
+import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
 import com.google.mediapipe.tasks.genai.llminference.ProgressListener
 import com.google.common.util.concurrent.MoreExecutors
 import java.io.File
-import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -25,6 +27,8 @@ class GemmaE2BEngine(
     
     companion object {
         private const val TAG = "GemmaE2BEngine"
+        private const val MAX_VISION_IMAGES = 5
+        private const val MAX_BITMAP_EDGE = 1024
     }
     
     private var llmInference: LlmInference? = null
@@ -41,58 +45,80 @@ class GemmaE2BEngine(
     override suspend fun loadModel(modelName: String, config: InferenceConfig): Result<Unit> {
         return try {
             modelMutex.withLock {
-            val normalizedConfig = config.normalized()
-            val modelFile = resolveLocalModelFile(modelName)
-            if (modelFile == null || !modelFile.exists()) {
-                return Result.failure(IllegalStateException("Model file is not available"))
-            }
-
-            val modelPath = modelFile.absolutePath
-            if (loadedModelPath == modelPath && loadedConfig == normalizedConfig && llmInference != null) {
-                Log.d(TAG, "Model already loaded: $modelPath")
-                return Result.success(Unit)
-            }
-
-            llmInference?.close()
-            llmInference = null
-
-            Log.d(TAG, "Loading model from path: $modelPath")
-            val isImportedTask = modelPath.startsWith(appContext.filesDir.absolutePath + "/models/imported/")
-            val preferredBackend = when (normalizedConfig.backendType.uppercase()) {
-                "GPU" -> LlmInference.Backend.GPU
-                "NPU" -> {
-                    Log.w(TAG, "NPU backend is not supported by current LlmInference. Falling back to CPU.")
-                    LlmInference.Backend.CPU
+                val normalizedConfig = config.normalized()
+                val modelFile = resolveLocalModelFile(modelName)
+                if (modelFile == null || !modelFile.exists()) {
+                    return Result.failure(IllegalStateException("Model file is not available"))
                 }
-                else -> LlmInference.Backend.CPU
-            }
-            val options = LlmInference.LlmInferenceOptions.builder()
-                .setModelPath(modelPath)
-                .setMaxTokens(normalizedConfig.maxTokens)
-                .setMaxTopK(normalizedConfig.maxTopK)
-                .setPreferredBackend(preferredBackend)
-                .build()
 
-            llmInference = runCatching {
-                LlmInference.createFromOptions(appContext, options)
-            }.getOrElse { firstError ->
-                if (isImportedTask && preferredBackend == LlmInference.Backend.GPU) {
-                    Log.w(TAG, "Imported .task failed on GPU. Retrying with CPU backend.", firstError)
-                    val fallback = LlmInference.LlmInferenceOptions.builder()
-                        .setModelPath(modelPath)
-                        .setMaxTokens(normalizedConfig.maxTokens)
-                        .setMaxTopK(normalizedConfig.maxTopK)
-                        .setPreferredBackend(LlmInference.Backend.CPU)
-                        .build()
-                    LlmInference.createFromOptions(appContext, fallback)
-                } else {
-                    throw firstError
+                val modelPath = modelFile.absolutePath
+                if (loadedModelPath == modelPath && loadedConfig == normalizedConfig && llmInference != null) {
+                    Log.d(TAG, "Model already loaded: $modelPath")
+                    return Result.success(Unit)
                 }
-            }
-            loadedModelPath = modelPath
-            loadedConfig = normalizedConfig
-            Log.d(TAG, "Model loaded successfully")
-            Result.success(Unit)
+
+                // 既存モデルを解放してメモリを確保
+                llmInference?.close()
+                llmInference = null
+                
+                // メモリプレッシャーを軽減するため、ガベージコレクションを誘発
+                System.gc()
+                
+                // モデルロード前にキャッシュ個数をチェック（不足なら全削除して再生成させる）
+                val modelFileBaseName = modelFile.nameWithoutExtension
+                val cacheValid = CacheManager.validateAndRecoverCacheFiles(appContext, modelFileBaseName)
+                if (!cacheValid) {
+                    Log.i(TAG, "Cache was incomplete and has been deleted. TFLite will regenerate on next load.")
+                }
+                
+                // GPU時は設定ファイルのキャッシュも全削除してメモリ不足を防ぐ
+                val preferredBackend = when (normalizedConfig.backendType.uppercase()) {
+                    "GPU" -> {
+                        Log.i(TAG, "GPU backend: Deleting cached GPU compilation files to prevent OOM during subgraph compilation")
+                        CacheManager.deleteAllModelCacheFiles(appContext, modelFileBaseName)
+                        LlmInference.Backend.GPU
+                    }
+                    "NPU" -> {
+                        Log.w(TAG, "NPU backend requested but not available in current MediaPipe version (0.10.27). Falling back to CPU.")
+                        LlmInference.Backend.CPU
+                    }
+                    else -> LlmInference.Backend.CPU
+                }
+
+                Log.d(TAG, "Loading model from path: $modelPath")
+                val isImportedTask = modelPath.startsWith(appContext.filesDir.absolutePath + "/models/imported/")
+                
+                llmInference = runCatching {
+                    createLlmInferenceWithMultimodalFallbacks(
+                        modelPath = modelPath,
+                        normalizedConfig = normalizedConfig,
+                        preferredBackend = preferredBackend
+                    )
+                }.getOrElse { firstError ->
+                    if (isImportedTask && preferredBackend == LlmInference.Backend.GPU) {
+                        Log.w(TAG, "Imported .task failed on GPU. Retrying with CPU backend.", firstError)
+                        createLlmInferenceWithMultimodalFallbacks(
+                            modelPath = modelPath,
+                            normalizedConfig = normalizedConfig,
+                            preferredBackend = LlmInference.Backend.CPU
+                        )
+                    } else {
+                        throw firstError
+                    }
+                }
+                loadedModelPath = modelPath
+                loadedConfig = normalizedConfig
+                
+                // TFLiteが生成した新規キャッシュファイルをトラッキング
+                CacheManager.updateRecentCacheFiles(appContext)
+                
+                // モデル読み込み完了後、キャッシュクリーンアップを実行
+                // （モデル読込中に生成されたサブグラフキャッシュも保護対象に含まれる）
+                // forceScan = false で、既に updateRecentCacheFiles で記録済みなため、再スキャンしない
+                CacheManager.cleanupCacheIfNeeded(appContext, modelFileBaseName, forceScan = false)
+                
+                Log.d(TAG, "Model loaded successfully")
+                Result.success(Unit)
             }
         } catch (t: Throwable) {
             val e = if (t is Exception) t else RuntimeException(t)
@@ -169,8 +195,7 @@ class GemmaE2BEngine(
     }
 
     /**
-     * マルチモーダル推論（テキストベース）
-     * 画像・音声メタデータをテキスト記述として Gemma に渡す
+     * マルチモーダル推論（LlmInferenceSession + MPImage / mono 16-bit WAV）
      */
     override suspend fun inferenceWithMedia(
         sessionId: Long,
@@ -195,31 +220,100 @@ class GemmaE2BEngine(
             return@callbackFlow
         }
 
+        val wavChunks = audioClips.mapNotNull { raw ->
+            if (raw.isEmpty()) return@mapNotNull null
+            LlmMultimodalAudioHelper.toMono16Bit16kHzWav(appContext, raw)
+                ?: run {
+                    Log.w(TAG, "Audio chunk skipped (decode failed or unsupported format)")
+                    null
+                }
+        }
+
+        val topK = modelMutex.withLock { loadedConfig?.maxTopK ?: 40 }
+        
+        // 音声チャンクが存在し、かつエンジンが正しく初期化されている場合のみ音声を有効化
+        val enableAudio = wavChunks.isNotEmpty()
+        
+        val graph = GraphOptions.builder()
+            .setEnableVisionModality(images.isNotEmpty())
+            .setEnableAudioModality(enableAudio)
+            .build()
+        val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
+            .setTopK(topK)
+            .setTemperature(temperature)
+            .setGraphOptions(graph)
+            .build()
+
+        val session = try {
+            LlmInferenceSession.createFromOptions(engine, sessionOptions)
+        } catch (t: Throwable) {
+            releaseInferenceMutex()
+            if (t is CancellationException) {
+                close(t)
+                return@callbackFlow
+            }
+            val e = if (t is Exception) t else RuntimeException(t)
+            close(e)
+            return@callbackFlow
+        }
+
         try {
-            Log.d(TAG, "Starting multimodal inference for session $sessionId (${images.size} images, ${audioClips.size} audio)")
-
-            val augmentedPrompt = buildMultimodalPrompt(prompt, images, audioClips)
-            Log.d(TAG, "Augmented prompt length: ${augmentedPrompt.length} chars")
-
-            val progressListener = ProgressListener<String> { partialResult, done ->
-                if (!done && partialResult.isNotEmpty()) {
-                    try {
-                        trySend(partialResult)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error sending token: ${e.message}")
+            Log.d(
+                TAG,
+                "Multimodal inference session $sessionId: images=${images.size}, wav=${wavChunks.size}/${audioClips.size}"
+            )
+            session.addQueryChunk(prompt)
+            for (bitmap in images) {
+                val scaled = scaleBitmapForVision(bitmap)
+                try {
+                    session.addImage(BitmapImageBuilder(scaled).build())
+                } finally {
+                    if (scaled !== bitmap) {
+                        scaled.recycle()
                     }
                 }
             }
+            for (wav in wavChunks) {
+                session.addAudio(wav)
+            }
 
-            val future = engine.generateResponseAsync(augmentedPrompt, progressListener)
+            val progressListener = ProgressListener<String> { partial, done ->
+                if (!done && partial.isNotEmpty()) {
+                    trySend(partial)
+                }
+            }
+
+            val future = session.generateResponseAsync(progressListener)
+            future.addListener(
+                {
+                    runCatching { future.get() }
+                        .onSuccess { finalResult ->
+                            trySend(InferenceStreamProtocol.encodeFinal(finalResult)).isSuccess
+                            Log.d(TAG, "Multimodal inference completed for session $sessionId")
+                            releaseInferenceMutex()
+                            close()
+                        }
+                        .onFailure { t ->
+                            val e = if (t is Exception) t else RuntimeException(t)
+                            Log.e(TAG, "Multimodal inference failed for session $sessionId", e)
+                            releaseInferenceMutex()
+                            close(e)
+                        }
+                },
+                MoreExecutors.directExecutor()
+            )
 
             awaitClose {
                 if (!future.isDone) {
-                    future.cancel(true)
+                    runCatching { session.cancelGenerateResponseAsync() }
+                    runCatching { session.close() }  // キャンセル時のみclose
                 }
+                // future.isDone == true（推論完了）の場合はcloseをスキップ
+                // MediaPipeが既にセッションを破棄しているため、再度closeするとSIGABRTが発生
                 releaseInferenceMutex()
             }
         } catch (t: Throwable) {
+            runCatching { session.close() }
             releaseInferenceMutex()
             if (t is CancellationException) {
                 close(t)
@@ -231,59 +325,6 @@ class GemmaE2BEngine(
         }
     }
 
-    private fun buildMultimodalPrompt(
-        originalPrompt: String,
-        images: List<Bitmap>,
-        audioClips: List<ByteArray>
-    ): String {
-        val prompt = StringBuilder()
-        
-        if (images.isNotEmpty()) {
-            prompt.append("【画像情報】\n")
-            images.forEachIndexed { index, bitmap ->
-                try {
-                    val width = bitmap.width
-                    val height = bitmap.height
-                    val aspectRatio = String.format("%.2f", width.toFloat() / height.toFloat())
-                    
-                    prompt.append("画像${index + 1}:\n")
-                    prompt.append("  寸法: ${width}x${height}px (アスペクト比: $aspectRatio)\n")
-                    prompt.append("  形式: PNG/JPEG互換\n")
-                    Log.d(TAG, "Added image ${index + 1} metadata: ${width}x${height}px")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to analyze image ${index + 1}", e)
-                }
-            }
-            prompt.append("\n")
-        }
-
-        if (audioClips.isNotEmpty()) {
-            prompt.append("【音声情報】\n")
-            audioClips.forEachIndexed { index, audioBytes ->
-                try {
-                    if (audioBytes.isNotEmpty()) {
-                        val fileSizeKB = audioBytes.size / 1024
-                        val estimatedDurationSec = (audioBytes.size.toFloat() / 44100.0 / 2).toInt()
-                        
-                        prompt.append("音声${index + 1}:\n")
-                        prompt.append("  サイズ: ${fileSizeKB}KB\n")
-                        prompt.append("  推定再生時間: ${estimatedDurationSec}秒\n")
-                        prompt.append("  形式: WAV/MP3互換\n")
-                        Log.d(TAG, "Added audio ${index + 1} metadata: ${fileSizeKB}KB")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to analyze audio ${index + 1}", e)
-                }
-            }
-            prompt.append("\n")
-        }
-        
-        prompt.append("ユーザーからのリクエスト:\n")
-        prompt.append(originalPrompt)
-
-        return prompt.toString()
-    }
-    
     override suspend fun unloadModel(): Result<Unit> {
         return try {
             modelMutex.withLock {
@@ -304,7 +345,61 @@ class GemmaE2BEngine(
     override suspend fun isAvailable(): Boolean {
         return true
     }
-    
+
+    private fun createLlmInferenceWithMultimodalFallbacks(
+        modelPath: String,
+        normalizedConfig: InferenceConfig,
+        preferredBackend: LlmInference.Backend
+    ): LlmInference {
+        fun baseBuilder() = LlmInference.LlmInferenceOptions.builder()
+            .setModelPath(modelPath)
+            .setMaxTokens(normalizedConfig.maxTokens)
+            .setMaxTopK(normalizedConfig.maxTopK)
+            .setPreferredBackend(preferredBackend)
+
+        // Vision-only で試す（ほとんどのモデルがこれをサポート）
+        runCatching {
+            return LlmInference.createFromOptions(
+                appContext,
+                baseBuilder()
+                    .setMaxNumImages(MAX_VISION_IMAGES)
+                    .build()
+            )
+        }.onFailure {
+            Log.w(TAG, "LlmInference init (vision-only) failed, retrying with text defaults", it)
+        }
+
+        // テキストのみで試す（最後の手段）
+        return LlmInference.createFromOptions(appContext, baseBuilder().build())
+    }
+
+    private fun scaleBitmapForVision(bitmap: Bitmap): Bitmap {
+        val w = bitmap.width
+        val h = bitmap.height
+        if (w <= MAX_BITMAP_EDGE && h <= MAX_BITMAP_EDGE) {
+            return bitmap
+        }
+        
+        // メモリ効率を改善するため、段階的にスケーリング
+        val scale = minOf(
+            MAX_BITMAP_EDGE.toFloat() / w,
+            MAX_BITMAP_EDGE.toFloat() / h
+        )
+        val nw = (w * scale).toInt().coerceAtLeast(1)
+        val nh = (h * scale).toInt().coerceAtLeast(1)
+        
+        return try {
+            Bitmap.createScaledBitmap(bitmap, nw, nh, true)
+        } catch (e: OutOfMemoryError) {
+            Log.w(TAG, "OOM while scaling bitmap, trying smaller size", e)
+            // メモリ不足の場合は、より小さいサイズで再試行
+            val smallerScale = scale * 0.75f
+            val smallerNw = (w * smallerScale).toInt().coerceAtLeast(1)
+            val smallerNh = (h * smallerScale).toInt().coerceAtLeast(1)
+            Bitmap.createScaledBitmap(bitmap, smallerNw, smallerNh, true)
+        }
+    }
+
     private fun resolveModelPath(modelName: String): String {
         val lowered = modelName.lowercase()
         if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && modelName.startsWith("/")) {

@@ -68,6 +68,11 @@ class LicenseFragment : Fragment(R.layout.fragment_license) {
                 R.string.license_mediapipe_url
             ),
             LicenseItem(
+                R.string.license_mediapipe_genai_title,
+                R.string.license_mediapipe_genai_desc,
+                R.string.license_mediapipe_genai_url
+            ),
+            LicenseItem(
                 R.string.license_huggingface_title,
                 R.string.license_huggingface_desc,
                 R.string.license_huggingface_url

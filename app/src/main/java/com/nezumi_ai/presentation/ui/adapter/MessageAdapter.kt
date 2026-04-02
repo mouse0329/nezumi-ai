@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.media.MediaPlayer
-import android.net.Uri
 import android.text.method.LinkMovementMethod
 import android.view.LayoutInflater
 import android.view.View
@@ -17,6 +16,7 @@ import com.nezumi_ai.R
 import com.nezumi_ai.databinding.ItemMessageUserBinding
 import com.nezumi_ai.databinding.ItemMessageAiBinding
 import com.nezumi_ai.data.database.entity.MessageEntity
+import com.nezumi_ai.data.media.MessageMediaStore
 import io.noties.markwon.Markwon
 import io.noties.markwon.ext.tables.TablePlugin
 import java.text.SimpleDateFormat
@@ -92,7 +92,9 @@ class MessageAdapter(
                         userImagePreview.visibility = View.VISIBLE
                         audioPlaybackContainer.visibility = View.GONE
                         try {
-                            userImagePreview.setImageURI(Uri.parse(message.imageUri))
+                            userImagePreview.setImageURI(
+                                MessageMediaStore.toUri(message.imageUri!!)
+                            )
                         } catch (e: Exception) {
                             userImagePreview.setImageResource(android.R.drawable.ic_menu_gallery)
                         }
@@ -121,7 +123,10 @@ class MessageAdapter(
             try {
                 mediaPlayer?.release()
                 mediaPlayer = MediaPlayer().apply {
-                    setDataSource(binding.root.context, Uri.parse(audioUri))
+                    setDataSource(
+                        binding.root.context,
+                        MessageMediaStore.toUri(audioUri)
+                    )
                     setOnPreparedListener { mp ->
                         val duration = mp.duration / 1000
                         val minutes = duration / 60
@@ -172,7 +177,9 @@ class MessageAdapter(
                         aiImagePreview.visibility = View.VISIBLE
                         audioPlaybackContainer.visibility = View.GONE
                         try {
-                            aiImagePreview.setImageURI(Uri.parse(message.imageUri))
+                            aiImagePreview.setImageURI(
+                                MessageMediaStore.toUri(message.imageUri!!)
+                            )
                         } catch (e: Exception) {
                             aiImagePreview.setImageResource(android.R.drawable.ic_menu_gallery)
                         }
@@ -198,7 +205,10 @@ class MessageAdapter(
             try {
                 mediaPlayer?.release()
                 mediaPlayer = MediaPlayer().apply {
-                    setDataSource(binding.root.context, Uri.parse(audioUri))
+                    setDataSource(
+                        binding.root.context,
+                        MessageMediaStore.toUri(audioUri)
+                    )
                     setOnPreparedListener { mp ->
                         val duration = mp.duration / 1000
                         val minutes = duration / 60

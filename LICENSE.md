@@ -39,6 +39,11 @@ limitations under the License.
 - **リポジトリ**: [google/mediapipe](https://github.com/google/mediapipe)
 - **説明**: Googleの MediaPipeフレームワークで、コンピュータビジョン、オーディオ、テキストタスク用のML機能を提供
 
+### MediaPipe Tasks-GenAI
+- **ライセンス**: Apache License 2.0
+- **リポジトリ**: [google/mediapipe](https://github.com/google/mediapipe)
+- **説明**: MediaPipe GenAIタスク。オンデバイスLLM推論を提供し、Gemmaモデルを最適化されたランタイムでサポート
+
 ### Hugging Face Models
 - **ライセンス**: Model Hub and Inference API
 - **ウェブサイト**: [huggingface.co](https://huggingface.co)
