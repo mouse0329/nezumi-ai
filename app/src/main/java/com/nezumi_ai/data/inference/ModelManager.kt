@@ -48,24 +48,30 @@ class ModelManager(
             try {
                 val normalizedConfig = config.normalized()
                 // 既に同じモデルがロードされている場合はスキップ
-                if (currentModelName == modelName && currentConfig == normalizedConfig) {
-                    Log.d(TAG, "Model $modelName is already loaded")
+                // ただしバックエンドが異なる場合は必ず再ロード
+                val shouldSkip = currentModelName == modelName && 
+                                currentConfig == normalizedConfig &&
+                                currentConfig?.backendType == normalizedConfig.backendType
+                
+                if (shouldSkip) {
+                    Log.d(TAG, "Model $modelName is already loaded with same backend: ${normalizedConfig.backendType}")
                     return Result.success(Unit)
                 }
                 
                 // 前のモデルをアンロード
                 if (currentModelName != null) {
+                    Log.d(TAG, "Unloading previous model before loading new one (backend change: ${currentConfig?.backendType} -> ${normalizedConfig.backendType})")
                     inferenceEngine.unloadModel()
                 }
                 
                 // 新しいモデルをロード
-                Log.d(TAG, "Loading model: $modelName")
+                Log.d(TAG, "Loading model: $modelName with backend: ${normalizedConfig.backendType}")
                 val result = inferenceEngine.loadModel(modelName, normalizedConfig)
                 
                 if (result.isSuccess) {
                     currentModelName = modelName
                     currentConfig = normalizedConfig
-                    Log.d(TAG, "Model loaded successfully: $modelName")
+                    Log.d(TAG, "Model loaded successfully: $modelName with backend: ${normalizedConfig.backendType}")
                 } else {
                     Log.e(TAG, "Failed to load model: $modelName")
                 }

@@ -27,6 +27,7 @@ class GemmaE2BEngine(
     private var llmInference: LlmInference? = null
     private var loadedModelPath: String? = null
     private var loadedConfig: InferenceConfig? = null
+    private var loadedBackendType: String? = null
     private val modelMutex = Mutex()
     private val inferenceMutex = Mutex()
     
@@ -45,17 +46,36 @@ class GemmaE2BEngine(
             }
 
             val modelPath = modelFile.absolutePath
-            if (loadedModelPath == modelPath && loadedConfig == normalizedConfig && llmInference != null) {
-                Log.d(TAG, "Model already loaded: $modelPath")
+            val currentBackendType = normalizedConfig.backendType.uppercase()
+            
+            // バックエンドタイプが変わった場合、またはモデルパスが異なる場合は必ずアンロード
+            val needsReload = loadedModelPath != modelPath || 
+                              loadedBackendType != currentBackendType ||
+                              loadedConfig != normalizedConfig ||
+                              llmInference == null
+            
+            if (!needsReload) {
+                Log.d(TAG, "Model already loaded: $modelPath with backend $currentBackendType")
                 return Result.success(Unit)
             }
 
+            // 前のモデルを完全にアンロード
+            Log.d(TAG, "Unloading previous model (backend was: $loadedBackendType, new: $currentBackendType)")
             llmInference?.close()
             llmInference = null
+            loadedModelPath = null
+            loadedConfig = null
+            loadedBackendType = null
+            
+            // GPUからの切り替え時にメモリを確実にクリア
+            if (loadedBackendType == "GPU" || currentBackendType == "GPU") {
+                Log.d(TAG, "Clearing cache for GPU transition")
+                clearGPUCache()
+            }
 
-            Log.d(TAG, "Loading model from path: $modelPath")
+            Log.d(TAG, "Loading model from path: $modelPath with backend: $currentBackendType")
             val isImportedTask = modelPath.startsWith(appContext.filesDir.absolutePath + "/models/imported/")
-            val preferredBackend = when (normalizedConfig.backendType.uppercase()) {
+            val preferredBackend = when (currentBackendType) {
                 "GPU" -> LlmInference.Backend.GPU
                 "NPU" -> {
                     Log.w(TAG, "NPU backend is not supported by current LlmInference. Falling back to CPU.")
@@ -88,7 +108,8 @@ class GemmaE2BEngine(
             }
             loadedModelPath = modelPath
             loadedConfig = normalizedConfig
-            Log.d(TAG, "Model loaded successfully")
+            loadedBackendType = currentBackendType
+            Log.d(TAG, "Model loaded successfully with backend: $currentBackendType")
             Result.success(Unit)
             }
         } catch (t: Throwable) {
@@ -169,10 +190,16 @@ class GemmaE2BEngine(
         return try {
             modelMutex.withLock {
             Log.d(TAG, "Unloading model")
+            // GPU使用中だった場合、メモリをクリア
+            if (loadedBackendType == "GPU") {
+                Log.d(TAG, "Clearing GPU cache during unload")
+                clearGPUCache()
+            }
             llmInference?.close()
             llmInference = null
             loadedModelPath = null
             loadedConfig = null
+            loadedBackendType = null
             Result.success(Unit)
             }
         } catch (t: Throwable) {
@@ -184,6 +211,18 @@ class GemmaE2BEngine(
     
     override suspend fun isAvailable(): Boolean {
         return true
+    }
+    
+    private fun clearGPUCache() {
+        try {
+            Log.d(TAG, "Explicitly clearing GPU memory cache")
+            // ガベージコレクションを強制実行してメモリを解放
+            System.gc()
+            Runtime.getRuntime().gc()
+            Log.d(TAG, "GPU cache cleared")
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to clear GPU cache", t)
+        }
     }
     
     private fun resolveModelPath(modelName: String): String {

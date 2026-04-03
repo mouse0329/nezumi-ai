@@ -215,6 +215,14 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 binding.messageInput.isEnabled = !loading
             }
         }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.modelLoadingStatus.collect { status ->
+                if (status.isNotEmpty()) {
+                    binding.modelLoadingText.text = status
+                }
+            }
+        }
     }
 
     override fun onResume() {
