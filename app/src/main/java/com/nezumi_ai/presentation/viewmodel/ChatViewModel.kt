@@ -86,6 +86,9 @@ class ChatViewModel(
     private val _isModelLoading = MutableStateFlow(false)
     val isModelLoading: StateFlow<Boolean> = _isModelLoading
 
+    private val _modelLoadingStatus = MutableStateFlow("")
+    val modelLoadingStatus: StateFlow<String> = _modelLoadingStatus
+
     private val _isCompressing = MutableStateFlow(false)
     val isCompressing: StateFlow<Boolean> = _isCompressing
 
@@ -381,13 +384,62 @@ class ChatViewModel(
                             if (!firstTokenReceived) {
                                 cancel(FirstTokenTimeoutException())
                             }
-                        }
+val firstTokenTimeoutJob = launch {
+    delay(RESPONSE_TIMEOUT_MS)
+    if (!firstTokenReceived) {
+        cancel(FirstTokenTimeoutException())
+    }
+}
 
-                        try {
-                            aiResponseFlow.collect { chunk ->
-                                if (!firstTokenReceived) {
-                                    firstTokenReceived = true
-                                    firstTokenTimeoutJob.cancel()
+try {
+    aiResponseFlow.collect { chunk ->
+        if (!firstTokenReceived) {
+            firstTokenReceived = true
+            firstTokenTimeoutJob.cancel()
+        }
+        val finalFromModel = InferenceStreamProtocol.decodeFinal(chunk)
+        if (finalFromModel != null) {
+            responseBuilder.clear()
+            responseBuilder.append(finalFromModel)
+        } else {
+            if (chunk.isNotEmpty()) {
+                val currentContent = responseBuilder.toString()
+                val merged = mergeStreamingChunk(currentContent, chunk)
+                if (merged != currentContent && merged.length >= currentContent.length) {
+                    responseBuilder.clear()
+                    responseBuilder.append(merged)
+                    Log.d(TAG, "Chunk merged: ${currentContent.length} -> ${merged.length} chars")
+                } else if (merged.length < currentContent.length) {
+                    Log.w(TAG, "Chunk merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping merge")
+                }
+            }
+        }
+        val messageIdToUpdate = streamingMessageId ?: activeStreamingMessageId
+        messageIdToUpdate?.let { id ->
+            val contentForUi = responseBuilder.toString()
+            val now = SystemClock.elapsedRealtime()
+            val persistInterval = if (isLikelyMarkdownTable(contentForUi)) {
+                STREAM_PERSIST_INTERVAL_TABLE_MS
+            } else {
+                STREAM_PERSIST_INTERVAL_MS
+            }
+            val shouldPersist = contentForUi != lastPersistedContent &&
+                (finalFromModel != null || now - lastPersistAt >= persistInterval)
+            if (shouldPersist) {
+                messageRepository.updateMessageContent(
+                    messageId = id,
+                    content = contentForUi,
+                    isStreaming = true
+                )
+                lastPersistedContent = contentForUi
+                lastPersistAt = now
+            }
+        }
+        Log.d(TAG, "Received chunk: $chunk")
+    }
+} finally {
+    firstTokenTimeoutJob.cancel()
+}
                                 }
                                 val finalFromModel = InferenceStreamProtocol.decodeFinal(chunk)
                                 if (finalFromModel != null) {
@@ -594,18 +646,28 @@ class ChatViewModel(
         // 巻き戻った累積全文らしきケースは現状維持
         if (current.startsWith(chunk)) return current
 
-        val overlap = suffixPrefixOverlap(current, chunk)
+        // 保守的な重複検出: 大きすぎる重複は検出しない
+        // これにより、substring操作での文字削除バグを防止
+        val overlap = suffixPrefixOverlapConservative(current, chunk)
         if (overlap > 0) {
-            return current + chunk.substring(overlap)
+            val merged = current + chunk.substring(overlap)
+            // 結果が元のテキストより短くならないことを確認
+            if (merged.length >= current.length) {
+                return merged
+            }
         }
 
         // deltaとして連結（最終的にはFINALで確定全文に置換される）
         return current + chunk
     }
 
-    private fun suffixPrefixOverlap(left: String, right: String): Int {
-        val max = minOf(left.length, right.length)
-        for (size in max downTo 1) {
+    private fun suffixPrefixOverlapConservative(left: String, right: String): Int {
+        // 重複を検出する際、最大チェック文字数を制限して安全性を確保
+        // これにより、不正な重複検出による文字削除を防止
+        val maxCheckSize = minOf(left.length, right.length, 50)
+        val minCheckSize = 1
+        
+        for (size in maxCheckSize downTo minCheckSize) {
             if (left.regionMatches(left.length - size, right, 0, size, ignoreCase = false)) {
                 return size
             }
@@ -722,10 +784,14 @@ class ChatViewModel(
                     builder.clear()
                     builder.append(final)
                 } else if (chunk.isNotEmpty()) {
-                    val merged = mergeStreamingChunk(builder.toString(), chunk)
-                    if (merged != builder.toString()) {
+                    val currentContent = builder.toString()
+                    val merged = mergeStreamingChunk(currentContent, chunk)
+                    // セーフガード: マージ結果が元のコンテンツより短くならないことを確認
+                    if (merged != currentContent && merged.length >= currentContent.length) {
                         builder.clear()
                         builder.append(merged)
+                    } else if (merged.length < currentContent.length) {
+                        Log.w(TAG, "Context compression merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping")
                     }
                 }
             }
@@ -880,14 +946,22 @@ class ChatViewModel(
         val manager = requireModelManager()
         val engineModelName = toEngineModelName(model)
         _isModelLoading.value = true
+        _modelLoadingStatus.value = "モデルを準備中..."
         return try {
-            if (onlyIfAvailable) {
+            val displayModel = if (model == "E2B" || model == "E4B") model else "カスタム"
+            _modelLoadingStatus.value = "[$displayModel] エンジンを初期化中..."
+            val result = if (onlyIfAvailable) {
                 manager.initializeModelIfAvailable(engineModelName, config)
             } else {
                 manager.initializeModel(engineModelName, config)
             }
+            if (result.isSuccess) {
+                _modelLoadingStatus.value = "[$displayModel] ロード完了"
+            }
+            result
         } finally {
             _isModelLoading.value = false
+            _modelLoadingStatus.value = ""
         }
     }
 

@@ -84,15 +84,20 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) return@registerForActivityResult
             binding.importTaskButton.isEnabled = false
-            Toast.makeText(requireContext(), ".task を読み込み中...", Toast.LENGTH_SHORT).show()
+            val originalText = binding.importTaskButton.text
+            binding.importTaskButton.text = "読み込み中..."
+            Toast.makeText(requireContext(), ".task を読み込み中...", Toast.LENGTH_LONG).show()
             viewLifecycleOwner.lifecycleScope.launch {
                 val result = withContext(Dispatchers.IO) {
                     ModelFileManager.importTaskFromUri(requireContext(), uri)
                 }
                 binding.importTaskButton.isEnabled = true
+                binding.importTaskButton.text = originalText
                 result.onSuccess {
                     Toast.makeText(requireContext(), ".task を追加しました: ${it.name}", Toast.LENGTH_SHORT).show()
                     renderImportedTasks()
+                    // ChatFragment に戻してモデルドロップダウンを即座に更新
+                    findNavController().popBackStack()
                 }.onFailure {
                     Toast.makeText(requireContext(), "追加失敗: ${it.message}", Toast.LENGTH_LONG).show()
                 }
