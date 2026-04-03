@@ -1,5 +1,6 @@
 package com.nezumi_ai.presentation.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nezumi_ai.data.repository.SettingsRepository
@@ -26,9 +27,9 @@ class SettingsViewModel(private val repository: SettingsRepository) : ViewModel(
         }
     }
     
-    fun initializeIfNeeded() {
+    fun initializeIfNeeded(context: Context) {
         viewModelScope.launch {
-            repository.initializeSettingsIfNeeded()
+            repository.initializeSettingsIfNeeded(context.applicationContext)
         }
     }
 }

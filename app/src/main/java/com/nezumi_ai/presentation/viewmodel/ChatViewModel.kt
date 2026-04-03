@@ -1,7 +1,14 @@
 package com.nezumi_ai.presentation.viewmodel
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.MediaCodec
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.net.Uri
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -10,10 +17,13 @@ import com.nezumi_ai.data.repository.MessageRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.inference.InferenceConfig
+import com.nezumi_ai.data.media.MessageMediaStore
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -60,6 +70,9 @@ class ChatViewModel(
     
     private val _messages = MutableStateFlow<List<MessageEntity>>(emptyList())
     val messages: StateFlow<List<MessageEntity>> = _messages
+    
+    private val _pendingMediaMessage = MutableStateFlow<MessageEntity?>(null)
+    val pendingMediaMessage: StateFlow<MessageEntity?> = _pendingMediaMessage
     
     private val _inputText = MutableStateFlow("")
     val inputText: StateFlow<String> = _inputText
@@ -275,16 +288,23 @@ class ChatViewModel(
             return
         }
 
-        val toDelete = messages.subList(targetIndex, messages.size).map { it.id }
-        toDelete.forEach { messageId ->
-            messageRepository.deleteMessageById(messageId)
+        val toDelete = messages.subList(targetIndex, messages.size)
+        toDelete.forEach { msg ->
+            MessageMediaStore.deleteStoredFileIfOwned(appContext, msg.imageUri)
+            MessageMediaStore.deleteStoredFileIfOwned(appContext, msg.audioUri)
+            messageRepository.deleteMessageById(msg.id)
         }
         compressedContextCache.remove(sessionId)
         sessionRepository.updateSessionLastUpdated(sessionId)
         _uiMessage.emit("プロンプトを取り消しました")
     }
     
-    private suspend fun generateAIResponse(sessionId: Long, userMessage: String) {
+    private suspend fun generateAIResponse(
+        sessionId: Long,
+        userMessage: String,
+        images: List<Bitmap> = emptyList(),
+        audioClips: List<ByteArray> = emptyList()
+    ) {
         var streamingMessageId: Long? = null
         try {
             val manager = requireModelManager()
@@ -317,13 +337,27 @@ class ChatViewModel(
                 )
             }
 
-            // ストリーミング推論を実行
+            // ストリーミング推論を実行（マルチモーダル対応）
             val aiResponseFlow = withContext(Dispatchers.IO) {
-                manager.runInference(
-                    sessionId = sessionId,
-                    prompt = promptForModel,
-                    temperature = config.temperature
-                )
+                if (images.isNotEmpty() || audioClips.isNotEmpty()) {
+                    // マルチモーダル推論
+                    Log.d(TAG, "Using multimodal inference: ${images.size} images, ${audioClips.size} audio clips")
+                    manager.runInferenceWithMedia(
+                        sessionId = sessionId,
+                        prompt = promptForModel,
+                        images = images,
+                        audioClips = audioClips,
+                        temperature = config.temperature
+                    )
+                } else {
+                    // テキストのみ推論
+                    Log.d(TAG, "Using text-only inference")
+                    manager.runInference(
+                        sessionId = sessionId,
+                        prompt = promptForModel,
+                        temperature = config.temperature
+                    )
+                }
             }
 
             streamingMessageId = messageRepository.addMessage(
@@ -342,75 +376,126 @@ class ChatViewModel(
             // ストリーム内容を収集
             // タイムアウトは「最初の出力が来るまで」のみ有効。
             var firstTokenReceived = false
-            withContext(Dispatchers.IO) {
-                coroutineScope {
-                    val firstTokenTimeoutJob = launch {
-                        delay(RESPONSE_TIMEOUT_MS)
-                        if (!firstTokenReceived) {
-                            cancel(FirstTokenTimeoutException())
-                        }
-                    }
-
-                    try {
-                        aiResponseFlow.collect { chunk ->
+            try {
+                withContext(Dispatchers.IO) {
+                    coroutineScope {
+                        val firstTokenTimeoutJob = launch {
+                            delay(RESPONSE_TIMEOUT_MS)
                             if (!firstTokenReceived) {
-                                firstTokenReceived = true
-                                firstTokenTimeoutJob.cancel()
+                                cancel(FirstTokenTimeoutException())
                             }
-                            val finalFromModel = InferenceStreamProtocol.decodeFinal(chunk)
-                            if (finalFromModel != null) {
-                                responseBuilder.clear()
-                                responseBuilder.append(finalFromModel)
-                            } else {
-                                if (chunk.isNotEmpty()) {
-                                    val currentContent = responseBuilder.toString()
-                                    val merged = mergeStreamingChunk(currentContent, chunk)
-                                    // セーフガード: マージ結果が元のコンテンツより短くならないことを確認
-                                    // （バグで文字が削除される場合を防止）
-                                    if (merged != currentContent && merged.length >= currentContent.length) {
-                                        responseBuilder.clear()
-                                        responseBuilder.append(merged)
-                                        Log.d(TAG, "Chunk merged: ${currentContent.length} -> ${merged.length} chars")
-                                    } else if (merged.length < currentContent.length) {
-                                        Log.w(TAG, "Chunk merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping merge")
-                                        // マージで短くなる場合は、元のコンテンツを保持
+val firstTokenTimeoutJob = launch {
+    delay(RESPONSE_TIMEOUT_MS)
+    if (!firstTokenReceived) {
+        cancel(FirstTokenTimeoutException())
+    }
+}
+
+try {
+    aiResponseFlow.collect { chunk ->
+        if (!firstTokenReceived) {
+            firstTokenReceived = true
+            firstTokenTimeoutJob.cancel()
+        }
+        val finalFromModel = InferenceStreamProtocol.decodeFinal(chunk)
+        if (finalFromModel != null) {
+            responseBuilder.clear()
+            responseBuilder.append(finalFromModel)
+        } else {
+            if (chunk.isNotEmpty()) {
+                val currentContent = responseBuilder.toString()
+                val merged = mergeStreamingChunk(currentContent, chunk)
+                if (merged != currentContent && merged.length >= currentContent.length) {
+                    responseBuilder.clear()
+                    responseBuilder.append(merged)
+                    Log.d(TAG, "Chunk merged: ${currentContent.length} -> ${merged.length} chars")
+                } else if (merged.length < currentContent.length) {
+                    Log.w(TAG, "Chunk merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping merge")
+                }
+            }
+        }
+        val messageIdToUpdate = streamingMessageId ?: activeStreamingMessageId
+        messageIdToUpdate?.let { id ->
+            val contentForUi = responseBuilder.toString()
+            val now = SystemClock.elapsedRealtime()
+            val persistInterval = if (isLikelyMarkdownTable(contentForUi)) {
+                STREAM_PERSIST_INTERVAL_TABLE_MS
+            } else {
+                STREAM_PERSIST_INTERVAL_MS
+            }
+            val shouldPersist = contentForUi != lastPersistedContent &&
+                (finalFromModel != null || now - lastPersistAt >= persistInterval)
+            if (shouldPersist) {
+                messageRepository.updateMessageContent(
+                    messageId = id,
+                    content = contentForUi,
+                    isStreaming = true
+                )
+                lastPersistedContent = contentForUi
+                lastPersistAt = now
+            }
+        }
+        Log.d(TAG, "Received chunk: $chunk")
+    }
+} finally {
+    firstTokenTimeoutJob.cancel()
+}
+                                }
+                                val finalFromModel = InferenceStreamProtocol.decodeFinal(chunk)
+                                if (finalFromModel != null) {
+                                    responseBuilder.clear()
+                                    responseBuilder.append(finalFromModel)
+                                } else {
+                                    if (chunk.isNotEmpty()) {
+                                        val merged = mergeStreamingChunk(responseBuilder.toString(), chunk)
+                                        if (merged != responseBuilder.toString()) {
+                                            responseBuilder.clear()
+                                            responseBuilder.append(merged)
+                                        }
                                     }
                                 }
-                            }
 // streamingMessageId（または activeStreamingMessageId）の存在を確認
-                            val messageIdToUpdate = streamingMessageId ?: activeStreamingMessageId
-                            messageIdToUpdate?.let { id ->
-                                val contentForUi = responseBuilder.toString()
-                                val now = SystemClock.elapsedRealtime()
+                                val messageIdToUpdate = streamingMessageId ?: activeStreamingMessageId
+                                messageIdToUpdate?.let { id ->
+                                    val contentForUi = responseBuilder.toString()
+                                    val now = SystemClock.elapsedRealtime()
 
-                                // Markdownテーブルの場合は更新間隔を広げるなど、描画負荷を考慮したインターバル設定
-                                val persistInterval = if (isLikelyMarkdownTable(contentForUi)) {
-                                    STREAM_PERSIST_INTERVAL_TABLE_MS
-                                } else {
-                                    STREAM_PERSIST_INTERVAL_MS
+                                    // Markdownテーブルの場合は更新間隔を広げるなど、描画負荷を考慮したインターバル設定
+                                    val persistInterval = if (isLikelyMarkdownTable(contentForUi)) {
+                                        STREAM_PERSIST_INTERVAL_TABLE_MS
+                                    } else {
+                                        STREAM_PERSIST_INTERVAL_MS
+                                    }
+
+                                    // 1. 前回の保存内容と異なる
+                                    // 2. 最終的な応答（finalFromModel != null）である、または一定時間が経過した
+                                    val shouldPersist = contentForUi != lastPersistedContent &&
+                                        (finalFromModel != null || now - lastPersistAt >= persistInterval)
+
+                                    if (shouldPersist) {
+                                        messageRepository.updateMessageContent(
+                                            messageId = id,
+                                            content = contentForUi,
+                                            isStreaming = true
+                                        )
+                                        // 保存状態を更新
+                                        lastPersistedContent = contentForUi
+                                        lastPersistAt = now
+                                    }
                                 }
-
-                                // 1. 前回の保存内容と異なる
-                                // 2. 最終的な応答（finalFromModel != null）である、または一定時間が経過した
-                                val shouldPersist = contentForUi != lastPersistedContent &&
-                                    (finalFromModel != null || now - lastPersistAt >= persistInterval)
-
-                                if (shouldPersist) {
-                                    messageRepository.updateMessageContent(
-                                        messageId = id,
-                                        content = contentForUi,
-                                        isStreaming = true
-                                    )
-                                    // 保存状態を更新
-                                    lastPersistedContent = contentForUi
-                                    lastPersistAt = now
-                                }
+                                Log.d(TAG, "Received chunk: $chunk")
                             }
-                            Log.d(TAG, "Received chunk: $chunk")
+                        } finally {
+                            firstTokenTimeoutJob.cancel()
                         }
-                    } finally {
-                        firstTokenTimeoutJob.cancel()
                     }
+                }
+            } catch (collectionError: Throwable) {
+                Log.e(TAG, "Error during flow collection", collectionError)
+                if (collectionError !is FirstTokenTimeoutException && collectionError !is CancellationException) {
+                    throw collectionError
+                } else {
+                    throw collectionError
                 }
             }
 
@@ -423,7 +508,6 @@ class ChatViewModel(
                     isStreaming = false
                 )
                 maybeGenerateSessionTitle(sessionId, userMessage, completeResponse)
-                _uiMessage.emit("生成が完了しました")
                 Log.d(TAG, "AI response saved to database: ${completeResponse.take(50)}...")
             } else {
                 messageRepository.updateMessageContent(
@@ -801,6 +885,53 @@ class ChatViewModel(
         return prompt.takeLast(maxInputTokens)
     }
 
+    /**
+     * Bitmapを1024x1024以下にダウンスケール
+     */
+    private fun scaleBitmapTo1024(bitmap: Bitmap): Bitmap {
+        val maxSize = 1024
+        if (bitmap.width <= maxSize && bitmap.height <= maxSize) {
+            return bitmap
+        }
+        val scale = minOf(
+            maxSize.toFloat() / bitmap.width,
+            maxSize.toFloat() / bitmap.height
+        )
+        val newWidth = (bitmap.width * scale).toInt()
+        val newHeight = (bitmap.height * scale).toInt()
+        return Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+    }
+
+    /**
+     * URIからBitmapをロード
+     */
+    private suspend fun loadBitmapFromUri(uri: Uri): Bitmap? {
+        return try {
+            withContext(Dispatchers.IO) {
+                appContext.contentResolver.openInputStream(uri)?.use { stream ->
+                    BitmapFactory.decodeStream(stream)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading bitmap from URI: $uri", e)
+            null
+        }
+    }
+
+    /**
+     * URIから音声ByteArrayをロード
+     */
+    private suspend fun loadAudioBytesFromUri(uri: Uri): ByteArray? {
+        return try {
+            withContext(Dispatchers.IO) {
+                appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading audio from URI: $uri", e)
+            null
+        }
+    }
+
     private suspend fun requireModelManager(): ModelManager {
         val current = modelManager
         if (current != null) return current
@@ -833,10 +964,235 @@ class ChatViewModel(
             _modelLoadingStatus.value = ""
         }
     }
+
+    /**
+     * メディア付きメッセージを送信（画像・音声対応）
+     */
+    fun sendMessageWithMedia(
+        userMessage: String,
+        imageUri: String? = null,
+        audioUri: String? = null
+    ) {
+        val sessionId = _currentSessionId.value ?: return
+        if (_isLoading.value) return
+
+        // 計算集約的な処理はDefault（CPU 集約的タスク用）で実行
+        generationJob = viewModelScope.launch(Dispatchers.Default) {
+            var imagesToCleanup = mutableListOf<Bitmap>()
+            try {
+                val storedImage = withContext(Dispatchers.IO) {
+                    MessageMediaStore.persistUriIfNeeded(appContext, imageUri)
+                }
+                val storedAudio = withContext(Dispatchers.IO) {
+                    MessageMediaStore.persistUriIfNeeded(appContext, audioUri)
+                }
+
+                // メディア付きユーザーメッセージを保存（DB アクセス - IO スレッド）
+                withContext(Dispatchers.IO) {
+                    messageRepository.addMessage(
+                        sessionId = sessionId,
+                        role = "user",
+                        content = userMessage,
+                        imageUri = storedImage,
+                        audioUri = storedAudio
+                    )
+                    sessionRepository.updateSessionLastUpdated(sessionId)
+                }
+
+                // 入力フィールドをクリア（UI 更新 - Main スレッド）
+                withContext(Dispatchers.Main) {
+                    _inputText.value = ""
+                }
+
+                // URI から Bitmap・ByteArray に変換
+                val images = mutableListOf<Bitmap>()
+                val audioClips = mutableListOf<ByteArray>()
+
+                storedImage?.let { uriStr ->
+                    val uri = MessageMediaStore.toUri(uriStr)
+                    val bitmap = loadBitmapFromUri(uri)
+                    if (bitmap != null) {
+                        val scaled = scaleBitmapTo1024(bitmap)
+                        if (scaled !== bitmap) bitmap.recycle()
+                        images.add(scaled)
+                        imagesToCleanup.add(scaled)  // ← クリーンアップリストに追加
+                        Log.d(TAG, "Loaded image for inference: $uriStr")
+                    }
+                }
+
+                storedAudio?.let { uriStr ->
+                    val uri = MessageMediaStore.toUri(uriStr)
+                    val audioBytes = loadAudioBytesFromUri(uri)
+                    if (audioBytes != null) {
+                        audioClips.add(audioBytes)
+                        Log.d(TAG, "Loaded audio for inference: $uriStr")
+                    }
+                }
+
+                // AI 応答を生成（計算集約的 - Default スレッド）
+                _isLoading.value = true
+                generateAIResponse(sessionId, userMessage, images, audioClips)
+            } catch (t: Throwable) {
+                val e = if (t is Exception) t else RuntimeException(t)
+                Log.e(TAG, "Error sending message with media", e)
+                // UI 更新 - Main スレッド
+                withContext(Dispatchers.Main) {
+                    _uiMessage.emit("メディア付きメッセージの送信に失敗しました: ${e.message}")
+                }
+            } finally {
+                // UI 更新 - Main スレッド
+                withContext(Dispatchers.Main) {
+                    _isLoading.value = false
+                }
+                // ← Bitmapをクリーンアップ
+                imagesToCleanup.forEach { bitmap ->
+                    if (!bitmap.isRecycled) {
+                        bitmap.recycle()
+                    }
+                }
+                imagesToCleanup.clear()
+                generationJob = null
+            }
+        }
+    }
+
+    /**
+     * 既存のメッセージにメディアを追加・更新
+     */
+    fun addMediaToMessage(
+        messageId: Long,
+        imageUri: String? = null,
+        audioUri: String? = null
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (imageUri == null && audioUri == null) {
+                    _uiMessage.emit("追加するメディアが指定されていません")
+                    return@launch
+                }
+
+                val persistedImage = imageUri?.let {
+                    MessageMediaStore.persistUriIfNeeded(appContext, it) ?: it
+                }
+                val persistedAudio = audioUri?.let {
+                    MessageMediaStore.persistUriIfNeeded(appContext, it) ?: it
+                }
+
+                messageRepository.updateMessageMedia(
+                    messageId = messageId,
+                    imageUri = persistedImage,
+                    audioUri = persistedAudio
+                )
+
+                val sessionId = _currentSessionId.value
+                if (sessionId != null) {
+                    sessionRepository.updateSessionLastUpdated(sessionId)
+                }
+
+                val mediaType = when {
+                    imageUri != null && audioUri != null -> "画像と音声"
+                    imageUri != null -> "画像"
+                    else -> "音声"
+                }
+                _uiMessage.emit("$mediaType をメッセージに追加しました")
+            } catch (t: Throwable) {
+                val e = if (t is Exception) t else RuntimeException(t)
+                Log.e(TAG, "Error adding media to message", e)
+                _uiMessage.emit("メディア追加に失敗しました: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * メッセージからメディアを削除
+     */
+    fun removeMediaFromMessage(messageId: Long, mediaType: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val current = messageRepository.getMessageById(messageId) ?: return@launch
+                if (mediaType == "image") {
+                    MessageMediaStore.deleteStoredFileIfOwned(appContext, current.imageUri)
+                } else {
+                    MessageMediaStore.deleteStoredFileIfOwned(appContext, current.audioUri)
+                }
+                val updatedImageUri = if (mediaType == "image") null else current.imageUri
+                val updatedAudioUri = if (mediaType == "audio") null else current.audioUri
+
+                messageRepository.updateMessageMedia(
+                    messageId = messageId,
+                    imageUri = updatedImageUri,
+                    audioUri = updatedAudioUri
+                )
+
+                _uiMessage.emit("$mediaType をメッセージから削除しました")
+            } catch (t: Throwable) {
+                val e = if (t is Exception) t else RuntimeException(t)
+                Log.e(TAG, "Error removing media from message", e)
+                _uiMessage.emit("メディア削除に失敗しました: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * メッセージが画像や音声を含むかチェック
+     */
+    suspend fun hasMessageMedia(messageId: Long): Boolean {
+        return messageRepository.hasMediaContent(messageId)
+    }
+
+    /**
+     * メッセージの詳細情報を取得（メディア情報含む）
+     */
+    fun getMessageDetail(messageId: Long, callback: (MessageEntity?) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val message = messageRepository.getMessageById(messageId)
+                withContext(Dispatchers.Main) {
+                    callback(message)
+                }
+            } catch (t: Throwable) {
+                val e = if (t is Exception) t else RuntimeException(t)
+                Log.e(TAG, "Error getting message detail", e)
+                withContext(Dispatchers.Main) {
+                    callback(null)
+                }
+            }
+        }
+    }
+    
+    /**
+     * メディアプレビューメッセージを更新（チャット欄に表示用）
+     */
+    fun updatePendingMediaPreview(imageUri: String? = null, audioUri: String? = null) {
+        _pendingMediaMessage.value = if (imageUri != null || audioUri != null) {
+            MessageEntity(
+                id = 0,
+                sessionId = _currentSessionId.value ?: 0,
+                role = "user",
+                content = "",
+                imageUri = imageUri,
+                audioUri = audioUri,
+                timestamp = System.currentTimeMillis()
+            )
+        } else {
+            null
+        }
+    }
+    
+    /**
+     * メディアプレビューをクリア
+     */
+    fun clearPendingMediaPreview() {
+        _pendingMediaMessage.value = null
+    }
     
     override fun onCleared() {
         super.onCleared()
-        // ViewModelがクリアされるときにモデルをアンロード
+        // ViewModelクリア時のリソース完全解放
+        generationJob?.cancel()  // 進行中の推論をキャンセル
+        generationJob = null
+        
+        // モデルをアンロード
         viewModelScope.launch {
             try {
                 modelManager?.unloadModel()

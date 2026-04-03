@@ -26,6 +26,7 @@ data class MessageEntity(
     val role: String, // "user" or "assistant"
     val content: String,
     val imageUri: String? = null,
+    val audioUri: String? = null,
     val timestamp: Long,
     val isStreaming: Boolean = false
 )

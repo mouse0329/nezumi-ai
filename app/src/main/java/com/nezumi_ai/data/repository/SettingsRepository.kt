@@ -1,12 +1,18 @@
 package com.nezumi_ai.data.repository
 
+import android.content.Context
+import com.nezumi_ai.data.database.dao.ChatSessionDao
 import com.nezumi_ai.data.database.dao.SettingsDao
 import com.nezumi_ai.data.database.entity.SettingsEntity
 import com.nezumi_ai.data.inference.InferenceConfig
+import com.nezumi_ai.data.inference.ModelFileManager
 import java.io.File
 import kotlinx.coroutines.flow.Flow
 
-class SettingsRepository(private val dao: SettingsDao) {
+class SettingsRepository(
+    private val dao: SettingsDao,
+    private val chatSessionDao: ChatSessionDao
+) {
     companion object {
         private const val BACKEND_CPU = "CPU"
         private const val BACKEND_GPU = "GPU"
@@ -45,9 +51,26 @@ class SettingsRepository(private val dao: SettingsDao) {
         dao.update(current.copy(autoFallback = enabled))
     }
     
-    suspend fun initializeSettingsIfNeeded() {
+    suspend fun initializeSettingsIfNeeded(context: Context) {
         if (dao.getSettings() == null) {
             dao.insert(SettingsEntity())
+        }
+        migrateImportedLiteRtLmStoredPaths(context)
+    }
+
+    private suspend fun migrateImportedLiteRtLmStoredPaths(context: Context) {
+        val renames = ModelFileManager.migrateImportedLegacyLiteRtLmFiles(context)
+        if (renames.isEmpty()) return
+        val settings = dao.getSettings() ?: return
+        var newSelected = settings.selectedModel
+        for ((oldPath, newPath) in renames) {
+            if (newSelected == oldPath) {
+                newSelected = newPath
+            }
+            chatSessionDao.updateSelectedModelPath(oldPath, newPath)
+        }
+        if (newSelected != settings.selectedModel) {
+            dao.update(settings.copy(selectedModel = newSelected))
         }
     }
 

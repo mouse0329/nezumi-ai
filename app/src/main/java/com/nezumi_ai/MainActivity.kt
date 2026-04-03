@@ -2,13 +2,18 @@ package com.nezumi_ai
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.findNavController
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
+import com.nezumi_ai.data.database.NezumiAiDatabase
+import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.databinding.ActivityMainBinding
 import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.utils.WelcomeDialog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
@@ -28,6 +33,16 @@ class MainActivity : AppCompatActivity() {
             // 起動安定性優先: アプリ固有UIではActionBar/FABを使わない
             binding.toolbar.visibility = android.view.View.GONE
             binding.fab.hide()
+
+            lifecycleScope.launch(Dispatchers.IO) {
+                runCatching {
+                    val db = NezumiAiDatabase.getInstance(this@MainActivity)
+                    SettingsRepository(db.settingsDao(), db.chatSessionDao())
+                        .initializeSettingsIfNeeded(applicationContext)
+                }.onFailure {
+                    Log.w(TAG, "LiteRT-LM (.litertlm) migration failed", it)
+                }
+            }
 
             // 初回起動時にウェルカムダイアログを表示
             if (PreferencesHelper.isFirstLaunch(this)) {

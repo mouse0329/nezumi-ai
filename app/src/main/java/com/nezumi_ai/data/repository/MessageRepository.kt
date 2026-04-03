@@ -17,6 +17,7 @@ class MessageRepository(private val dao: MessageDao) {
         role: String,
         content: String,
         imageUri: String? = null,
+        audioUri: String? = null,
         isStreaming: Boolean = false
     ): Long {
         val message = MessageEntity(
@@ -24,6 +25,7 @@ class MessageRepository(private val dao: MessageDao) {
             role = role,
             content = content,
             imageUri = imageUri,
+            audioUri = audioUri,
             timestamp = System.currentTimeMillis(),
             isStreaming = isStreaming
         )
@@ -49,4 +51,24 @@ class MessageRepository(private val dao: MessageDao) {
         val current = dao.getMessageById(messageId) ?: return
         dao.update(current.copy(content = content, isStreaming = isStreaming))
     }
+
+    suspend fun updateMessageMedia(
+        messageId: Long,
+        imageUri: String? = null,
+        audioUri: String? = null
+    ) {
+        val current = dao.getMessageById(messageId) ?: return
+        dao.update(current.copy(
+            imageUri = imageUri ?: current.imageUri,
+            audioUri = audioUri ?: current.audioUri
+        ))
+    }
+
+    suspend fun hasMediaContent(messageId: Long): Boolean {
+        val message = dao.getMessageById(messageId) ?: return false
+        return message.imageUri != null || message.audioUri != null
+    }
+
+    suspend fun getMessageById(messageId: Long): MessageEntity? =
+        dao.getMessageById(messageId)
 }

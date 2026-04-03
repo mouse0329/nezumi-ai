@@ -1,12 +1,25 @@
 package com.nezumi_ai.presentation.ui.fragment
 
+import android.Manifest
+import android.animation.ValueAnimator
+import android.content.ClipboardManager
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.MediaRecorder
+import android.net.Uri
 import android.os.Bundle
+import android.provider.MediaStore
+import android.util.Log
 import android.view.LayoutInflater
+import android.view.animation.LinearInterpolator
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.AdapterView
+import android.widget.PopupMenu
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
@@ -34,6 +47,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.combine
 import kotlin.math.max
 
 class ChatFragment : Fragment(R.layout.fragment_chat) {
@@ -55,6 +69,91 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var currentBackendType = "CPU"
     private var currentModelKey = "E2B"
     private var isCompressingNow = false
+    private var selectedImageUri: String? = null
+    private var selectedAudioUri: String? = null
+    private var cameraImageUri: Uri? = null
+    
+    // 音声録音関連
+    private var mediaRecorder: MediaRecorder? = null
+    private var isRecordingAudio = false
+    private var recordingAnimationJob: Job? = null
+    private var recordingFile: java.io.File? = null
+    
+    private val imagePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            selectedImageUri = uri.toString()
+            Toast.makeText(requireContext(), "画像を選択しました", Toast.LENGTH_SHORT).show()
+            updateMediaPreview()
+        }
+    }
+    
+    private val cameraLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val extras = result.data?.extras
+            val bitmap = extras?.get("data") as? android.graphics.Bitmap
+            
+            if (bitmap != null) {
+                try {
+                    // Bitmapをファイルに保存
+                    val cameraDir = java.io.File(requireContext().cacheDir, "camera")
+                    if (!cameraDir.exists()) {
+                        cameraDir.mkdirs()
+                    }
+                    
+                    val imageFile = java.io.File(cameraDir, "IMG_${System.currentTimeMillis()}.jpg")
+                    val fos = java.io.FileOutputStream(imageFile)
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, fos)
+                    fos.close()
+                    
+                    // FileProviderでURIを取得
+                    cameraImageUri = androidx.core.content.FileProvider.getUriForFile(
+                        requireContext(),
+                        "com.nezumi_ai.fileprovider",
+                        imageFile
+                    )
+                    
+                    selectedImageUri = cameraImageUri.toString()
+                    
+                    Log.d("ChatFragment", "Camera image saved successfully: ${imageFile.absolutePath}")
+                    Toast.makeText(requireContext(), "写真を撮影しました", Toast.LENGTH_SHORT).show()
+                    updateMediaPreview()
+                    
+                    bitmap.recycle()
+                } catch (e: Exception) {
+                    Log.e("ChatFragment", "Error saving camera bitmap", e)
+                    Toast.makeText(requireContext(), "画像の保存に失敗しました", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                Toast.makeText(requireContext(), "画像データを取得できませんでした", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Log.d("ChatFragment", "Camera cancelled by user")
+        }
+    }
+    
+    private val audioPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            selectedAudioUri = uri.toString()
+            Toast.makeText(requireContext(), "音声を選択しました", Toast.LENGTH_SHORT).show()
+            updateMediaPreview()
+        }
+    }
+
+    private fun updateMediaPreview() {
+        // メディアプレビュー機能は削除されました
+        if (selectedImageUri.isNullOrEmpty() && selectedAudioUri.isNullOrEmpty()) {
+            viewModel.clearPendingMediaPreview()
+            return
+        }
+        
+        // ViewModelのプレビューメッセージを更新（チャット欄に表示）
+        viewModel.updatePendingMediaPreview(selectedImageUri, selectedAudioUri)
+    }
+    
+    // createMediaPreviewItem メソッドは削除されました（プレビュー機能廃止）
+    
+    // removeMedia メソッドは削除されました（プレビュー機能廃止）
+
     
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -73,7 +172,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         val database = NezumiAiDatabase.getInstance(requireContext())
         val sessionRepository = ChatSessionRepository(database.chatSessionDao())
         val messageRepository = MessageRepository(database.messageDao())
-        settingsRepository = SettingsRepository(database.settingsDao())
+        settingsRepository = SettingsRepository(database.settingsDao(), database.chatSessionDao())
         val factory = ChatViewModelFactory(
             requireContext().applicationContext,
             sessionRepository,
@@ -119,13 +218,22 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             viewModel.compressContextManually()
         }
         
-        // メッセージの監視
+        // メッセージの監視（プレビューメディアを含む）
         viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.messages.collect { messages ->
+            combine(
+                viewModel.messages,
+                viewModel.pendingMediaMessage
+            ) { messages, pendingMedia ->
+                if (pendingMedia != null) {
+                    messages + listOf(pendingMedia)
+                } else {
+                    messages
+                }
+            }.collect { displayMessages ->
                 val wasAtBottom = isAtBottom()
-                adapter.submitList(messages) {
-                    if (messages.isNotEmpty() && wasAtBottom) {
-                        scrollToBottom(messages.size - 1)
+                adapter.submitList(displayMessages) {
+                    if (displayMessages.isNotEmpty() && wasAtBottom) {
+                        scrollToBottom(displayMessages.size - 1)
                     }
                     updateScrollToBottomButtonVisibility()
                 }
@@ -140,9 +248,50 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
             val message = binding.messageInput.text.toString().trim()
             if (message.isNotEmpty()) {
-                viewModel.sendMessage(message)
-                binding.messageInput.text.clear()
+                viewModel.sendMessageWithMedia(message, selectedImageUri, selectedAudioUri)
+                binding.messageInput.text?.clear()
+                selectedImageUri = null
+                selectedAudioUri = null
+                updateMediaPreview()
+                viewModel.clearPendingMediaPreview()
             }
+        }
+
+        // クリップボードペースト時の画像自動処理
+        binding.messageInput.onClipboardImagePaste = {
+            pasteFromClipboard()
+        }
+
+        // メディアメニューボタン
+        binding.mediaMenuButton.setOnClickListener { view ->
+            val popupMenu = PopupMenu(requireContext(), view)
+            popupMenu.menuInflater.inflate(R.menu.menu_media_select, popupMenu.menu)
+            popupMenu.setOnMenuItemClickListener { menuItem ->
+                when (menuItem.itemId) {
+                    R.id.menu_select_image -> {
+                        imagePickerLauncher.launch("image/*")
+                        true
+                    }
+                    R.id.menu_camera -> {
+                        launchCamera()
+                        true
+                    }
+                    R.id.menu_clipboard_paste -> {
+                        pasteFromClipboard()
+                        true
+                    }
+                    R.id.menu_select_audio -> {
+                        audioPickerLauncher.launch("audio/*")
+                        true
+                    }
+                    R.id.menu_record_audio -> {
+                        launchAudioRecording()
+                        true
+                    }
+                    else -> false
+                }
+            }
+            popupMenu.show()
         }
 
         // ローディング状態の監視
@@ -437,10 +586,258 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     override fun onDestroyView() {
         responseTypingAnimationJob?.cancel()
         responseTypingAnimationJob = null
+        recordingAnimationJob?.cancel()
+        recordingAnimationJob = null
+        
+        // 録音中の場合は停止
+        if (isRecordingAudio) {
+            stopAudioRecording()
+        }
+        
         stopUsageMonitor()
         super.onDestroyView()
         _binding = null
     }
+
+    private fun launchCamera() {
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            Toast.makeText(requireContext(), "カメラの権限が必要です", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+        try {
+            cameraLauncher.launch(cameraIntent)
+        } catch (e: Exception) {
+            Log.e("ChatFragment", "Camera app not found", e)
+            Toast.makeText(requireContext(), "カメラアプリが見つかりません", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun pasteFromClipboard() {
+        try {
+            val clipboard = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val primaryClip = clipboard.primaryClip
+            
+            if (primaryClip != null && primaryClip.itemCount > 0) {
+                val item = primaryClip.getItemAt(0)
+                
+                // URIが直接利用可能な場合
+                if (item.uri != null) {
+                    val uri = item.uri
+                    // キャッシュディレクトリにコピー
+                    try {
+                        val inputStream = requireContext().contentResolver.openInputStream(uri)
+                        if (inputStream != null) {
+                            val cacheDir = java.io.File(requireContext().cacheDir, "clipboard")
+                            if (!cacheDir.exists()) {
+                                cacheDir.mkdirs()
+                            }
+                            
+                            val cachedFile = java.io.File(cacheDir, "IMG_${System.currentTimeMillis()}.jpg")
+                            val outputStream = java.io.FileOutputStream(cachedFile)
+                            
+                            inputStream.copyTo(outputStream)
+                            inputStream.close()
+                            outputStream.close()
+                            
+                            // FileProviderでURIを取得
+                            val fileUri = androidx.core.content.FileProvider.getUriForFile(
+                                requireContext(),
+                                "com.nezumi_ai.fileprovider",
+                                cachedFile
+                            )
+                            
+                            selectedImageUri = fileUri.toString()
+                            updateMediaPreview()
+                            Toast.makeText(requireContext(), "クリップボードから画像を貼り付けました", Toast.LENGTH_SHORT).show()
+                            Log.d("ChatFragment", "Image pasted from clipboard: ${cachedFile.absolutePath}")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("ChatFragment", "Error processing clipboard URI", e)
+                        Toast.makeText(requireContext(), "クリップボードから画像を取得できませんでした", Toast.LENGTH_SHORT).show()
+                    }
+                } else if (item.text != null) {
+                    // テキストがコピーされている場合（テキストURLなど）
+                    val text = item.text.toString()
+                    if (text.startsWith("content://") || text.startsWith("file://")) {
+                        try {
+                            val uri = Uri.parse(text)
+                            selectedImageUri = uri.toString()
+                            updateMediaPreview()
+                            Toast.makeText(requireContext(), "クリップボードからURIを貼り付けました", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Log.e("ChatFragment", "Invalid URI in clipboard", e)
+                            Toast.makeText(requireContext(), "無効なURIです", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        Toast.makeText(requireContext(), "クリップボードに画像またはURIがありません", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    Toast.makeText(requireContext(), "クリップボードに有効なデータがありません", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                Toast.makeText(requireContext(), "クリップボードが空です", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Log.e("ChatFragment", "Error accessing clipboard", e)
+            Toast.makeText(requireContext(), "クリップボードのアクセスに失敗しました", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun launchAudioRecording() {
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            Toast.makeText(requireContext(), "マイクの権限が必要です", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        startAudioRecording()
+    }
+    
+    private fun startAudioRecording() {
+        try {
+            // 録音開始
+            isRecordingAudio = true
+            
+            // 録音ファイルの作成
+            val recordingDir = java.io.File(requireContext().cacheDir, "recordings")
+            if (!recordingDir.exists()) {
+                recordingDir.mkdirs()
+            }
+            recordingFile = java.io.File(recordingDir, "REC_${System.currentTimeMillis()}.m4a")
+            
+            // MediaRecorderの初期化
+            mediaRecorder = MediaRecorder().apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setAudioEncodingBitRate(128000)
+                setAudioSamplingRate(44100)
+                setOutputFile(recordingFile?.absolutePath)
+                prepare()
+                start()
+            }
+            
+            // 送信ボタンを停止ボタンに変更
+            binding.sendButton.text = "停止"
+            binding.sendButton.setOnClickListener {
+                stopAudioRecording()
+            }
+            
+            // 音量アニメーションを開始
+            startRecordingAmplitudeAnimation()
+            
+            Toast.makeText(requireContext(), "録音開始しました", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Log.e("ChatFragment", "Error starting audio recording", e)
+            Toast.makeText(requireContext(), "録音の開始に失敗しました", Toast.LENGTH_SHORT).show()
+            isRecordingAudio = false
+            mediaRecorder?.release()
+            mediaRecorder = null
+        }
+    }
+    
+    private fun stopAudioRecording() {
+        try {
+            if (mediaRecorder != null && isRecordingAudio) {
+                mediaRecorder?.apply {
+                    try {
+                        stop()
+                        release()
+                    } catch (e: Exception) {
+                        Log.e("ChatFragment", "Error stopping audio recording", e)
+                    }
+                }
+                mediaRecorder = null
+                isRecordingAudio = false
+                
+                // アニメーション停止
+                recordingAnimationJob?.cancel()
+                
+                // 送信ボタンを戻す
+                binding.sendButton.text = getString(R.string.send)
+                binding.sendButton.setOnClickListener {
+                    if (viewModel.isLoading.value) {
+                        viewModel.stopGeneration()
+                        return@setOnClickListener
+                    }
+                    val message = binding.messageInput.text.toString().trim()
+                    if (message.isNotEmpty()) {
+                        viewModel.sendMessageWithMedia(message, selectedImageUri, selectedAudioUri)
+                        binding.messageInput.text?.clear()
+                        selectedImageUri = null
+                        selectedAudioUri = null
+                        updateMediaPreview()
+                        viewModel.clearPendingMediaPreview()
+                    }
+                }
+                
+                // 録音ファイルをコンテキストに追加
+                if (recordingFile != null && recordingFile!!.exists()) {
+                    try {
+                        val recordingUri = androidx.core.content.FileProvider.getUriForFile(
+                            requireContext(),
+                            "com.nezumi_ai.fileprovider",
+                            recordingFile!!
+                        )
+                        selectedAudioUri = recordingUri.toString()
+                        updateMediaPreview()
+                        Toast.makeText(requireContext(), "音声を追加しました", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        Log.e("ChatFragment", "Error creating FileProvider URI for recording", e)
+                        Toast.makeText(requireContext(), "音声ファイルの処理に失敗しました", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("ChatFragment", "Error stopping audio recording", e)
+            Toast.makeText(requireContext(), "録音の停止に失敗しました", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    private fun startRecordingAmplitudeAnimation() {
+        recordingAnimationJob?.cancel()
+        
+        recordingAnimationJob = viewLifecycleOwner.lifecycleScope.launch {
+            while (isRecordingAudio && mediaRecorder != null) {
+                try {
+                    val amplitude = mediaRecorder?.maxAmplitude ?: 0
+                    // 音声レベルに応じたスケール（0.8 ~ 1.2）
+                    val scale = 0.8f + ((amplitude.toFloat() / 32768f) * 0.4f)
+                    val alpha = 0.7f + ((amplitude.toFloat() / 32768f) * 0.3f)
+                    
+                    withContext(Dispatchers.Main) {
+                        // messageInputにアニメーション適用
+                        binding.messageInput.scaleX = scale
+                        binding.messageInput.scaleY = scale
+                        binding.messageInput.alpha = minOf(alpha, 1f)
+                        
+                        // sendButtonにも脈動アニメーション
+                        binding.sendButton.scaleX = scale
+                        binding.sendButton.scaleY = scale
+                    }
+                    
+                    delay(100) // 100msごとに更新
+                } catch (e: Exception) {
+                    Log.d("ChatFragment", "Recording animation error", e)
+                }
+            }
+            
+            // アニメーション終了時に元に戻す
+            withContext(Dispatchers.Main) {
+                binding.messageInput.scaleX = 1f
+                binding.messageInput.scaleY = 1f
+                binding.messageInput.alpha = 1f
+                binding.sendButton.scaleX = 1f
+                binding.sendButton.scaleY = 1f
+            }
+        }
+    }
+
 
     private class CpuUsageSampler {
         private var lastProcJiffies: Long? = null

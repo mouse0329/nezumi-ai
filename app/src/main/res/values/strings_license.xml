@@ -17,6 +17,10 @@
     <string name="license_mediapipe_url">https://github.com/google/mediapipe</string>
     <string name="license_mediapipe_desc">Apache License 2.0\n\nGoogle MediaPipe framework providing ready-to-use ML solutions for computer vision, audio, and text tasks.</string>
 
+    <string name="license_mediapipe_genai_title">MediaPipe Tasks-GenAI</string>
+    <string name="license_mediapipe_genai_url">https://github.com/google/mediapipe/tree/master/mediapipe/tasks/cc</string>
+    <string name="license_mediapipe_genai_desc">Apache License 2.0\n\nMediaPipe GenAI task for on-device LLM inference, providing Gemma model support with optimized runtime performance.</string>
+
     <string name="license_huggingface_title">Hugging Face Models</string>
     <string name="license_huggingface_url">https://huggingface.co</string>
     <string name="license_huggingface_desc">Model Hub and distribution page\n\nGemma を含むモデルの配布ページ確認に使用しています。モデル規約の一次情報は各モデル提供元の条項を確認してください。</string>
