@@ -16,6 +16,7 @@ class MessageRepository(private val dao: MessageDao) {
         sessionId: Long,
         role: String,
         content: String,
+        thinkingContent: String? = null,
         imageUri: String? = null,
         audioUri: String? = null,
         isStreaming: Boolean = false
@@ -24,6 +25,7 @@ class MessageRepository(private val dao: MessageDao) {
             sessionId = sessionId,
             role = role,
             content = content,
+            thinkingContent = thinkingContent,
             imageUri = imageUri,
             audioUri = audioUri,
             timestamp = System.currentTimeMillis(),
@@ -46,10 +48,17 @@ class MessageRepository(private val dao: MessageDao) {
     suspend fun updateMessageContent(
         messageId: Long,
         content: String,
-        isStreaming: Boolean
+        isStreaming: Boolean,
+        thinkingContent: String? = null
     ) {
         val current = dao.getMessageById(messageId) ?: return
-        dao.update(current.copy(content = content, isStreaming = isStreaming))
+        dao.update(
+            current.copy(
+                content = content,
+                thinkingContent = thinkingContent,
+                isStreaming = isStreaming
+            )
+        )
     }
 
     suspend fun updateMessageMedia(

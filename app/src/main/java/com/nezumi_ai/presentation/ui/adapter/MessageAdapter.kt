@@ -27,6 +27,9 @@ import java.util.Locale
 class MessageAdapter(
     private val onUserPromptRevoke: (MessageEntity) -> Unit = {}
 ) : ListAdapter<MessageEntity, RecyclerView.ViewHolder>(MessageDiffCallback()) {
+
+    /** ユーザーが明示的に折りたたんだメッセージ ID（Gallery: 完了後も開いたままがデフォルト） */
+    private val thinkingCollapsedByMessageId = mutableSetOf<Long>()
     
     companion object {
         private const val VIEW_TYPE_USER = 0
@@ -153,7 +156,7 @@ class MessageAdapter(
         }
     }
     
-    class AiMessageViewHolder(private val binding: ItemMessageAiBinding) :
+    inner class AiMessageViewHolder(private val binding: ItemMessageAiBinding) :
         RecyclerView.ViewHolder(binding.root) {
         
         private var mediaPlayer: MediaPlayer? = null
@@ -163,12 +166,65 @@ class MessageAdapter(
 
         init {
             binding.aiMessageText.movementMethod = LinkMovementMethod.getInstance()
+            binding.aiThinkingText.movementMethod = LinkMovementMethod.getInstance()
         }
 
         fun bind(message: MessageEntity) {
             Log.d("MessageAdapter", "BIND_AI_MESSAGE: id=${message.id} content='${message.content.take(50)}'...")
             binding.apply {
-                markwon.setMarkdown(aiMessageText, message.content)
+                val thinking = message.thinkingContent
+                if (!thinking.isNullOrBlank()) {
+                    aiThinkingBlock.visibility = View.VISIBLE
+                    markwon.setMarkdown(aiThinkingText, thinking)
+                } else {
+                    thinkingCollapsedByMessageId.remove(message.id)
+                    aiThinkingBlock.visibility = View.GONE
+                }
+
+                val hasThinking = !thinking.isNullOrBlank()
+                val streamThinking = message.isStreaming && hasThinking
+                val expanded = streamThinking || message.id !in thinkingCollapsedByMessageId
+                if (hasThinking) {
+                    aiThinkingBody.visibility = if (expanded) View.VISIBLE else View.GONE
+                    aiThinkingChevron.text = if (expanded) "▲" else "▼"
+                    aiThinkingToggleLabel.setText(
+                        if (expanded) R.string.gemma_hide_thinking else R.string.gemma_show_thinking
+                    )
+                    aiThinkingToggleRow.contentDescription = root.context.getString(
+                        if (expanded) R.string.gemma_hide_thinking else R.string.gemma_show_thinking
+                    )
+                    aiThinkingToggleRow.setOnClickListener {
+                        if (message.isStreaming && hasThinking) return@setOnClickListener
+                        val nowOpen = aiThinkingBody.visibility == View.VISIBLE
+                        if (nowOpen) {
+                            thinkingCollapsedByMessageId.add(message.id)
+                            aiThinkingBody.visibility = View.GONE
+                            aiThinkingChevron.text = "▼"
+                            aiThinkingToggleLabel.setText(R.string.gemma_show_thinking)
+                            aiThinkingToggleRow.contentDescription =
+                                root.context.getString(R.string.gemma_show_thinking)
+                        } else {
+                            thinkingCollapsedByMessageId.remove(message.id)
+                            aiThinkingBody.visibility = View.VISIBLE
+                            aiThinkingChevron.text = "▲"
+                            aiThinkingToggleLabel.setText(R.string.gemma_hide_thinking)
+                            aiThinkingToggleRow.contentDescription =
+                                root.context.getString(R.string.gemma_hide_thinking)
+                        }
+                    }
+                }
+
+                when {
+                    message.isStreaming && message.content.isBlank() ->
+                        aiMessageText.text = binding.root.context.getString(
+                            if (thinking.isNullOrBlank()) {
+                                R.string.response_generating
+                            } else {
+                                R.string.gemma_answer_generating_hint
+                            }
+                        )
+                    else -> markwon.setMarkdown(aiMessageText, message.content)
+                }
                 aiMessageTime.text = MessageAdapter.formatTime(message.timestamp)
                 
                 // Media handling
@@ -199,7 +255,12 @@ class MessageAdapter(
                 }
                 
                 copyMessageButton.setOnClickListener {
-                    copyAllToClipboard(binding.root.context, message.content)
+                    val text = if (!message.thinkingContent.isNullOrBlank()) {
+                        "【${binding.root.context.getString(R.string.gemma_thinking_section_title)}】\n${message.thinkingContent}\n\n【回答】\n${message.content}"
+                    } else {
+                        message.content
+                    }
+                    copyAllToClipboard(binding.root.context, text)
                 }
             }
         }

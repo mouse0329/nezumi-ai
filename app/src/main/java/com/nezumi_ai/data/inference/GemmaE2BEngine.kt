@@ -29,6 +29,13 @@ class GemmaE2BEngine(
         private const val TAG = "GemmaE2BEngine"
         private const val MAX_VISION_IMAGES = 5
         private const val MAX_BITMAP_EDGE = 1024
+
+        /** AI Edge Gallery の LlmChatViewModel と同様、制御トークンだけのデルタは UI に流さない */
+        private fun shouldEmitPartialText(partial: String): Boolean {
+            if (partial.isEmpty()) return false
+            val t = partial.trimStart()
+            return !t.startsWith("<ctrl", ignoreCase = true)
+        }
     }
     
     private var llmInference: LlmInference? = null
@@ -156,7 +163,7 @@ class GemmaE2BEngine(
         try {
             Log.d(TAG, "Starting inference for session $sessionId")
             val progressListener = ProgressListener<String> { partial, done ->
-                if (!done && partial.isNotEmpty()) {
+                if (!done && shouldEmitPartialText(partial)) {
                     trySend(partial)
                 }
             }
@@ -283,7 +290,7 @@ class GemmaE2BEngine(
             }
 
             val progressListener = ProgressListener<String> { partial, done ->
-                if (!done && partial.isNotEmpty()) {
+                if (!done && shouldEmitPartialText(partial)) {
                     trySend(partial)
                 }
             }

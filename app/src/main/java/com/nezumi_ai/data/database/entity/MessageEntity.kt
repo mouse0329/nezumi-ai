@@ -25,6 +25,8 @@ data class MessageEntity(
     val sessionId: Long,
     val role: String, // "user" or "assistant"
     val content: String,
+    /** Gemma 4 シンキング（履歴のプロンプトには含めない） */
+    val thinkingContent: String? = null,
     val imageUri: String? = null,
     val audioUri: String? = null,
     val timestamp: Long,

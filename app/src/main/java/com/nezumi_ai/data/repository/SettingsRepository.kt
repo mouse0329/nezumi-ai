@@ -222,6 +222,38 @@ class SettingsRepository(
         return current.systemPrompt
     }
 
+    suspend fun isGemmaThinkingEnabled(): Boolean {
+        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
+        return current.gemmaThinkingEnabled
+    }
+
+    suspend fun updateGemmaThinkingEnabled(enabled: Boolean) {
+        val current = dao.getSettings() ?: SettingsEntity()
+        dao.update(
+            current.copy(
+                gemmaThinkingEnabled = enabled,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    /**
+     * 内蔵 Gemma 4（2B/4B）利用時に、モデルカード推奨どおり `<|think|>` を付与するか。
+     */
+    suspend fun shouldInjectGemmaThinkTrigger(): Boolean {
+        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
+        if (!current.gemmaThinkingEnabled) return false
+        return isBuiltinGemma4SelectedModel(current.selectedModel)
+    }
+
+    private fun isBuiltinGemma4SelectedModel(selectedModel: String): Boolean {
+        val t = selectedModel.trim()
+        return t.equals("Gemma4-2B", ignoreCase = true) ||
+            t.equals("Gemma4-4B", ignoreCase = true) ||
+            t.equals("E2B", ignoreCase = true) ||
+            t.equals("E4B", ignoreCase = true)
+    }
+
     suspend fun updateSystemPrompt(prompt: String) {
         val current = dao.getSettings() ?: SettingsEntity()
         dao.update(current.copy(systemPrompt = prompt, lastModified = System.currentTimeMillis()))

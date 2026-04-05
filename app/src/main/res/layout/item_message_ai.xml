@@ -19,6 +19,24 @@
             </LinearLayout>
         </FrameLayout>
 
+        <!-- AI Edge Gallery の MessageBodyThinking に相当: タップで開閉、ストリーミング中は常に展開 -->
+        <LinearLayout android:id="@+id/ai_thinking_block" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="6dp" android:orientation="vertical" android:visibility="gone" android:background="@drawable/bg_message_ai" android:paddingStart="10dp" android:paddingEnd="10dp" android:paddingTop="8dp" android:paddingBottom="8dp" android:maxWidth="280dp">
+
+            <LinearLayout android:id="@+id/ai_thinking_toggle_row" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingTop="4dp" android:paddingBottom="4dp" android:clickable="true" android:focusable="true" android:foreground="?attr/selectableItemBackground">
+
+                <TextView android:id="@+id/ai_thinking_toggle_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/gemma_show_thinking" android:textColor="@color/text_secondary" android:textSize="14sp" android:textStyle="bold" />
+
+                <TextView android:id="@+id/ai_thinking_chevron" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="4dp" android:text="▼" android:textColor="@color/text_secondary" android:textSize="14sp" android:importantForAccessibility="no" />
+            </LinearLayout>
+
+            <LinearLayout android:id="@+id/ai_thinking_body" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:orientation="horizontal" android:visibility="gone">
+
+                <View android:layout_width="2dp" android:layout_height="match_parent" android:layout_marginEnd="10dp" android:background="@color/text_secondary" android:alpha="0.35" />
+
+                <TextView android:id="@+id/ai_thinking_text" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:textColor="@color/text_secondary" android:textSize="13sp" android:textIsSelectable="true" android:lineSpacingMultiplier="1.05" />
+            </LinearLayout>
+        </LinearLayout>
+
         <TextView android:id="@+id/ai_message_text" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="AI response" android:textSize="14sp" android:textColor="@color/text_primary" android:background="@drawable/bg_message_ai" android:padding="11dp" android:maxWidth="280dp" android:textIsSelectable="true" />
 
         <TextView android:id="@+id/ai_message_time" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="14:26" android:textSize="11sp" android:textColor="@color/text_secondary" android:layout_marginTop="3dp" android:layout_marginStart="4dp" />

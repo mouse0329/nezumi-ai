@@ -20,6 +20,7 @@ import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
+import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import java.io.File
 import java.nio.ByteBuffer
@@ -489,6 +490,7 @@ class ChatViewModel(
 
             val responseBuilder = StringBuilder()
             var lastPersistedContent = ""
+            var lastPersistedThinking: String? = null
             var lastPersistAt = 0L
 
             // ストリーム内容を収集
@@ -529,22 +531,29 @@ class ChatViewModel(
                                 }
                                 val messageIdToUpdate = streamingMessageId ?: activeStreamingMessageId
                                 messageIdToUpdate?.let { id ->
-                                    val contentForUi = responseBuilder.toString()
+                                    val parsedStream =
+                                        Gemma4ThinkingParser.parseStreaming(responseBuilder.toString())
+                                    val contentForUi = parsedStream.answer
+                                    val thinkingForUi = parsedStream.thinking
                                     val now = SystemClock.elapsedRealtime()
                                     val persistInterval = if (isLikelyMarkdownTable(contentForUi)) {
                                         STREAM_PERSIST_INTERVAL_TABLE_MS
                                     } else {
                                         STREAM_PERSIST_INTERVAL_MS
                                     }
-                                    val shouldPersist = contentForUi != lastPersistedContent &&
-                                        (finalFromModel != null || now - lastPersistAt >= persistInterval)
+                                    val shouldPersist =
+                                        (contentForUi != lastPersistedContent ||
+                                            thinkingForUi != lastPersistedThinking) &&
+                                            (finalFromModel != null || now - lastPersistAt >= persistInterval)
                                     if (shouldPersist) {
                                         messageRepository.updateMessageContent(
                                             messageId = id,
                                             content = contentForUi,
-                                            isStreaming = true
+                                            isStreaming = true,
+                                            thinkingContent = thinkingForUi
                                         )
                                         lastPersistedContent = contentForUi
+                                        lastPersistedThinking = thinkingForUi
                                         lastPersistAt = now
                                     }
                                 }
@@ -562,21 +571,28 @@ class ChatViewModel(
                 }
             }
 
-            val completeResponse = finalizeResponseForCommit(responseBuilder.toString())
+            val finalParsed = Gemma4ThinkingParser.parse(responseBuilder.toString())
+            val completeResponse = finalParsed.answer
+            val hasPayload =
+                completeResponse.isNotEmpty() || !finalParsed.thinking.isNullOrEmpty()
 
-            if (completeResponse.isNotEmpty()) {
+            if (hasPayload) {
                 messageRepository.updateMessageContent(
                     messageId = activeStreamingMessageId,
                     content = completeResponse,
-                    isStreaming = false
+                    isStreaming = false,
+                    thinkingContent = finalParsed.thinking
                 )
-                maybeGenerateSessionTitle(sessionId, userMessage, completeResponse)
+                if (completeResponse.isNotEmpty()) {
+                    maybeGenerateSessionTitle(sessionId, userMessage, completeResponse)
+                }
                 Log.d(TAG, "AI response saved to database: ${completeResponse.take(50)}...")
             } else {
                 messageRepository.updateMessageContent(
                     messageId = activeStreamingMessageId,
                     content = "申し訳ありません。応答を生成できませんでした。",
-                    isStreaming = false
+                    isStreaming = false,
+                    thinkingContent = null
                 )
             }
         } catch (t: Throwable) {
@@ -586,7 +602,8 @@ class ChatViewModel(
                     messageRepository.updateMessageContent(
                         messageId = id,
                         content = "応答開始がタイムアウトしました。もう一度お試しください。",
-                        isStreaming = false
+                        isStreaming = false,
+                        thinkingContent = null
                     )
                 }
                 return
@@ -597,7 +614,8 @@ class ChatViewModel(
                     messageRepository.updateMessageContent(
                         messageId = id,
                         content = "生成を停止しました。",
-                        isStreaming = false
+                        isStreaming = false,
+                        thinkingContent = null
                     )
                 }
                 return
@@ -626,7 +644,8 @@ class ChatViewModel(
                 messageRepository.updateMessageContent(
                     messageId = id,
                     content = errorMessage,
-                    isStreaming = false
+                    isStreaming = false,
+                    thinkingContent = null
                 )
             } else {
                 messageRepository.addMessage(
@@ -700,21 +719,6 @@ class ChatViewModel(
             .replace(Regex("\\s+"), " ")
         val maxLen = 28
         return if (cleaned.length <= maxLen) cleaned else cleaned.take(maxLen).trimEnd() + "..."
-    }
-
-    private fun finalizeResponseForCommit(raw: String): String {
-        val text = raw.trim()
-        if (text.isEmpty()) return text
-        // 同一全文が連結されるケースを確定時に除去
-        if (text.length % 2 == 0) {
-            val half = text.length / 2
-            val first = text.substring(0, half)
-            val second = text.substring(half)
-            if (first == second) {
-                return first
-            }
-        }
-        return text
     }
 
     private fun mergeStreamingChunk(current: String, chunk: String): String {
@@ -822,8 +826,11 @@ class ChatViewModel(
             }
         }
 
-        val systemPrompt = settingsRepository.getSystemPrompt()
         val contextBuilder = StringBuilder()
+        if (settingsRepository.shouldInjectGemmaThinkTrigger()) {
+            contextBuilder.append("<|think|>\n")
+        }
+        val systemPrompt = settingsRepository.getSystemPrompt()
         if (systemPrompt.isNotEmpty()) {
             contextBuilder.append(systemPrompt)
             contextBuilder.append("\n\n")
@@ -903,11 +910,12 @@ class ChatViewModel(
             return buildCompressedSummaryFallback(messages)
         }
         
-        // 自然言語の要約が返ってきた場合
+        // 自然言語の要約が返ってきた場合（Gemma 4 のシンキングタグは除去して本文だけ使う）
         return if (!raw.isNullOrBlank()) {
+            val answerOnly = Gemma4ThinkingParser.parse(raw.trim()).answer.ifBlank { raw.trim() }
             buildString {
                 append("要約: ")
-                append(raw.trim())
+                append(answerOnly)
                 append("\nキーワード: （自動抽出）")
             }
         } else {
@@ -948,8 +956,11 @@ class ChatViewModel(
 
     private suspend fun buildPromptFromMessages(messages: List<MessageEntity>): String {
         if (messages.isEmpty()) return ""
-        val systemPrompt = settingsRepository.getSystemPrompt()
         val contextBuilder = StringBuilder()
+        if (settingsRepository.shouldInjectGemmaThinkTrigger()) {
+            contextBuilder.append("<|think|>\n")
+        }
+        val systemPrompt = settingsRepository.getSystemPrompt()
         if (systemPrompt.isNotEmpty()) {
             contextBuilder.append(systemPrompt)
             contextBuilder.append("\n\n")

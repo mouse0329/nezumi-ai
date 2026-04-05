@@ -246,6 +246,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 }
             }
             binding.resourceMonitorSwitch.isChecked = settingsRepository.isResourceMonitorEnabled()
+            binding.gemmaThinkingSwitch.isChecked = settingsRepository.isGemmaThinkingEnabled()
         }
     }
 
@@ -281,6 +282,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 backendTargetModel = "ALL"
             )
             settingsRepository.updateResourceMonitorEnabled(binding.resourceMonitorSwitch.isChecked)
+            settingsRepository.updateGemmaThinkingEnabled(binding.gemmaThinkingSwitch.isChecked)
             settingsRepository.updateSystemPrompt(systemPrompt)
             loadInferenceSettings()
             Toast.makeText(requireContext(), "推論設定を保存しました", Toast.LENGTH_SHORT).show()

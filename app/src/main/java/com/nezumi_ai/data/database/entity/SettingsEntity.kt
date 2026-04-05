@@ -17,6 +17,8 @@ data class SettingsEntity(
     val maxTopK: Int = 40,
     val maxTokens: Int = 512,
     val resourceMonitorEnabled: Boolean = false,
+    /** Gemma 4 向け: プロンプト先頭に `<|think|>` を付与してシンキング生成を有効化 */
+    val gemmaThinkingEnabled: Boolean = true,
     val systemPrompt: String = "",
     val lastModified: Long = System.currentTimeMillis()
 )

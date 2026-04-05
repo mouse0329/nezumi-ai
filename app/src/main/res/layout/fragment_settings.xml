@@ -59,6 +59,8 @@
 
                 <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/resource_monitor_switch" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="@string/resource_monitor_label" />
 
+                <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/gemma_thinking_switch" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="@string/gemma_thinking_switch_label" />
+
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="@string/temperature_label" android:textColor="@color/text_primary" android:textSize="13sp" android:textStyle="bold" />
 
                 <EditText android:id="@+id/temperature_input" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:hint="@string/temperature_hint" android:inputType="numberDecimal" />

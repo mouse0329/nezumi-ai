@@ -59,6 +59,11 @@
     <string name="backend_gpu">GPU</string>
     <string name="backend_npu">NPU</string>
     <string name="resource_monitor_label">チャット欄にCPU/GPU/NPU使用率を表示</string>
+    <string name="gemma_thinking_switch_label">Gemma 4 シンキング（内部推理の表示と &lt;|think|&gt; による有効化）</string>
+    <string name="gemma_show_thinking">推理を表示</string>
+    <string name="gemma_hide_thinking">推理を隠す</string>
+    <string name="gemma_thinking_section_title">内部推理（シンキング）</string>
+    <string name="gemma_answer_generating_hint">（回答を生成中…）</string>
     <string name="resource_usage_format">CPU %1$d%% | GPU %2$d%%(推定) | NPU %3$d%%(推定)</string>
     <string name="import_task_model">モデルファイルを追加 (.task / .litertlm)</string>
     <string name="import_task_loading">モデルファイルを読み込み中...</string>
