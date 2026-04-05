@@ -96,9 +96,9 @@ dependencies {
 
     // On-device LLM (MediaPipe tasks-genai - Gemma support)
     // MPImage / BitmapImageBuilder は tasks-genai の compile classpath に無い。tasks-core に含まれる。
-    // tasks-core の 0.10.27 は Google Maven に無いため 0.10.21 を使用（tasks-genai は 0.10.27 のまま）。
-    implementation("com.google.mediapipe:tasks-core:0.10.21")
-    implementation("com.google.mediapipe:tasks-genai:0.10.27")
+    // Updated to 0.10.33 for tf_lite_end_of_vision and multimodal adapter support
+    implementation("com.google.mediapipe:tasks-core:0.10.33")
+    implementation("com.google.mediapipe:tasks-genai:0.10.33")
 
     // OAuth (Hugging Face)
     implementation("net.openid:appauth:0.11.1")

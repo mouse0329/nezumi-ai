@@ -46,101 +46,88 @@ class GemmaE2BEngine(
     override suspend fun loadModel(modelName: String, config: InferenceConfig): Result<Unit> {
         return try {
             modelMutex.withLock {
-val normalizedConfig = config.normalized()
-val modelFile = resolveLocalModelFile(modelName)
-if (modelFile == null || !modelFile.exists()) {
-    return Result.failure(IllegalStateException("Model file is not available"))
-}
-val modelPath = modelFile.absolutePath
-val currentBackendType = normalizedConfig.backendType.uppercase()
-
-val needsReload = loadedModelPath != modelPath || 
-                  loadedBackendType != currentBackendType ||
-                  loadedConfig != normalizedConfig ||
-                  llmInference == null
-
-if (!needsReload) {
-    Log.d(TAG, "Model already loaded: $modelPath with backend $currentBackendType")
-    return Result.success(Unit)
-}
-
-Log.d(TAG, "Unloading previous model (backend was: $loadedBackendType, new: $currentBackendType)")
-llmInference?.close()
-llmInference = null
-loadedModelPath = null
-loadedConfig = null
-loadedBackendType = null
-
-System.gc()
-
-if (loadedBackendType == "GPU" || currentBackendType == "GPU") {
-    Log.d(TAG, "Clearing cache for GPU transition")
-    clearGPUCache()
-} else {
-    // GPU以外はTFLiteキャッシュをバリデート
-    val modelFileBaseName = modelFile.nameWithoutExtension
-    val cacheValid = CacheManager.validateAndRecoverCacheFiles(appContext, modelFileBaseName)
-    if (!cacheValid) {
-        Log.i(TAG, "Cache was incomplete and has been deleted. TFLite will regenerate on next load.")
-    }
-}
-
-Log.d(TAG, "Loading model from path: $modelPath with backend: $currentBackendType")
-val isImportedTask = modelPath.startsWith(appContext.filesDir.absolutePath + "/models/imported/")
-val preferredBackend = when (currentBackendType) {
-    "GPU" -> LlmInference.Backend.GPU
-    "NPU" -> {
-        Log.w(TAG, "NPU backend is not supported by current LlmInference. Falling back to CPU.")
-        LlmInference.Backend.CPU
+                val normalizedConfig = config.normalized()
+                val modelFile = resolveLocalModelFile(modelName)
+                if (modelFile == null || !modelFile.exists()) {
+                    return Result.failure(IllegalStateException("Model file is not available"))
                 }
+
+                val modelPath = modelFile.absolutePath
+                val currentBackendType = normalizedConfig.backendType.uppercase()
+
+                val needsReload = loadedModelPath != modelPath || 
+                                  loadedBackendType != currentBackendType ||
+                                  loadedConfig != normalizedConfig ||
+                                  llmInference == null
+
+                if (!needsReload) {
+                    Log.d(TAG, "Model already loaded: $modelPath with backend $currentBackendType")
+                    return Result.success(Unit)
+                }
+
+                Log.d(TAG, "Unloading previous model (backend was: $loadedBackendType, new: $currentBackendType)")
+                llmInference?.close()
+                llmInference = null
+                loadedModelPath = null
+                loadedConfig = null
+                loadedBackendType = null
+
+                // GPUからの切り替え時にメモリを確実にクリア
+                if (loadedBackendType == "GPU" || currentBackendType == "GPU") {
+                    Log.d(TAG, "Clearing cache for GPU transition")
+                    clearGPUCache()
+                }
+
+                Log.d(TAG, "Loading model from path: $modelPath with backend: $currentBackendType")
+                Log.d(TAG, "Model file size: ${modelFile.length()} bytes, exists: ${modelFile.exists()}, canRead: ${modelFile.canRead()}")
                 
-                // GPU時は設定ファイルのキャッシュも全削除してメモリ不足を防ぐ
-                val preferredBackend = when (normalizedConfig.backendType.uppercase()) {
-                    "GPU" -> {
-                        Log.i(TAG, "GPU backend: Deleting cached GPU compilation files to prevent OOM during subgraph compilation")
-                        CacheManager.deleteAllModelCacheFiles(appContext, modelFileBaseName)
-                        LlmInference.Backend.GPU
-                    }
+                // MediaPipe LiteRT .task ファイルはバイナリフォーマット（ZIP ではない）
+                // ファイルの存在と読み取り可能性は確認済み、ZIP 検証は不要
+                
+                val isImportedTask = modelPath.startsWith(appContext.filesDir.absolutePath + "/models/imported/")
+                val preferredBackend = when (currentBackendType) {
+                    "GPU" -> LlmInference.Backend.GPU
                     "NPU" -> {
-                        Log.w(TAG, "NPU backend requested but not available in current MediaPipe version (0.10.27). Falling back to CPU.")
+                        Log.w(TAG, "NPU backend is not supported by current LlmInference. Falling back to CPU.")
                         LlmInference.Backend.CPU
                     }
                     else -> LlmInference.Backend.CPU
                 }
-llmInference = runCatching {
-    createLlmInferenceWithMultimodalFallbacks(
-        modelPath = modelPath,
-        normalizedConfig = normalizedConfig,
-        preferredBackend = preferredBackend
-    )
-}.getOrElse { firstError ->
-    if (isImportedTask && preferredBackend == LlmInference.Backend.GPU) {
-        Log.w(TAG, "Imported .task failed on GPU. Retrying with CPU backend.", firstError)
-        createLlmInferenceWithMultimodalFallbacks(
-            modelPath = modelPath,
-            normalizedConfig = normalizedConfig,
-            preferredBackend = LlmInference.Backend.CPU
-        )
-    } else {
-        throw firstError
-    }
-}
-loadedModelPath = modelPath
-loadedConfig = normalizedConfig
-loadedBackendType = currentBackendType  // mainから追加
 
-// GPU以外はキャッシュ管理
-if (currentBackendType != "GPU") {
-    CacheManager.updateRecentCacheFiles(appContext)
-    CacheManager.cleanupCacheIfNeeded(appContext, modelFileBaseName, forceScan = false)
-}
+                val options = LlmInference.LlmInferenceOptions.builder()
+                    .setModelPath(modelPath)
+                    .setMaxTokens(normalizedConfig.maxTokens)
+                    .setMaxTopK(normalizedConfig.maxTopK)
+                    .setPreferredBackend(preferredBackend)
+                    .build()
 
-Log.d(TAG, "Model loaded successfully with backend: $currentBackendType")
-Result.success(Unit)
+                llmInference = runCatching {
+                    LlmInference.createFromOptions(appContext, options)
+                }.getOrElse { firstError ->
+                    if (isImportedTask && preferredBackend == LlmInference.Backend.GPU) {
+                        Log.w(TAG, "Imported .task failed on GPU. Retrying with CPU backend.", firstError)
+                        val fallback = LlmInference.LlmInferenceOptions.builder()
+                            .setModelPath(modelPath)
+                            .setMaxTokens(normalizedConfig.maxTokens)
+                            .setMaxTopK(normalizedConfig.maxTopK)
+                            .setPreferredBackend(LlmInference.Backend.CPU)
+                            .build()
+                        LlmInference.createFromOptions(appContext, fallback)
+                    } else {
+                        throw firstError
+                    }
+                }
+
+                loadedModelPath = modelPath
+                loadedConfig = normalizedConfig
+                loadedBackendType = currentBackendType
+                Log.d(TAG, "Model loaded successfully with backend: $currentBackendType")
+                Result.success(Unit)
             }
         } catch (t: Throwable) {
             val e = if (t is Exception) t else RuntimeException(t)
-            Log.e(TAG, "Failed to load model", e)
+            val modelPath = runCatching { loadedModelPath ?: "unknown" }.getOrNull() ?: "unknown"
+            Log.e(TAG, "Failed to load model from: $modelPath. Error: ${e.message}", e)
             Result.failure(e)
         }
     }
@@ -323,8 +310,16 @@ Result.success(Unit)
 
             awaitClose {
                 if (!future.isDone) {
+                    Log.d(TAG, "Cancelling multimodal inference for session $sessionId")
                     runCatching { session.cancelGenerateResponseAsync() }
-                    runCatching { session.close() }  // キャンセル時のみclose
+                    // キャンセル後、listenerが呼ばれるのを待つ（futureが完了するまで）
+                    // cancelの非同期処理が完了するまで少し待つ
+                    try {
+                        future.get(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Timeout/error waiting for cancellation completion", e)
+                    }
+                    runCatching { session.close() }
                 }
                 // future.isDone == true（推論完了）の場合はcloseをスキップ
                 // MediaPipeが既にセッションを破棄しているため、再度closeするとSIGABRTが発生
@@ -418,14 +413,16 @@ private fun clearGPUCache() {
         Log.w(TAG, "Failed to clear GPU cache", t)
     }
 }
+
+
     private fun resolveModelPath(modelName: String): String {
         val lowered = modelName.lowercase()
         if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && modelName.startsWith("/")) {
             return modelName
         }
         return when (ModelFileManager.resolveModelName(modelName)) {
-            ModelFileManager.LocalModel.E4B -> "gemma-3n-e4b.task"
-            ModelFileManager.LocalModel.E2B -> "gemma-3n-e2b.task"
+            ModelFileManager.LocalModel.GEMMA4_2B -> "gemma-4-2b.litertlm"
+            ModelFileManager.LocalModel.GEMMA4_4B -> "gemma-4-4b.litertlm"
         }
     }
 

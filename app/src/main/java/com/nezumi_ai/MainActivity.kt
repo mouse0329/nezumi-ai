@@ -22,6 +22,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var binding: ActivityMainBinding
+    private var dbInitialized = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,16 +34,6 @@ class MainActivity : AppCompatActivity() {
             // 起動安定性優先: アプリ固有UIではActionBar/FABを使わない
             binding.toolbar.visibility = android.view.View.GONE
             binding.fab.hide()
-
-            lifecycleScope.launch(Dispatchers.IO) {
-                runCatching {
-                    val db = NezumiAiDatabase.getInstance(this@MainActivity)
-                    SettingsRepository(db.settingsDao(), db.chatSessionDao())
-                        .initializeSettingsIfNeeded(applicationContext)
-                }.onFailure {
-                    Log.w(TAG, "LiteRT-LM (.litertlm) migration failed", it)
-                }
-            }
 
             // 初回起動時にウェルカムダイアログを表示
             if (PreferencesHelper.isFirstLaunch(this)) {
@@ -57,6 +48,24 @@ class MainActivity : AppCompatActivity() {
         } catch (t: Throwable) {
             Log.e(TAG, "Fatal error in onCreate", t)
             throw t
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        
+        // Database 初期化をここで遅延実行（Binder 負荷軽減）
+        if (!dbInitialized) {
+            dbInitialized = true
+            lifecycleScope.launch(Dispatchers.IO) {
+                runCatching {
+                    val db = NezumiAiDatabase.getInstance(this@MainActivity)
+                    SettingsRepository(db.settingsDao(), db.chatSessionDao())
+                        .initializeSettingsIfNeeded(applicationContext)
+                }.onFailure {
+                    Log.w(TAG, "LiteRT-LM (.litertlm) migration failed", it)
+                }
+            }
         }
     }
 

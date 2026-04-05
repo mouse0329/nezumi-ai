@@ -39,6 +39,40 @@ class ModelManager(
     private val inferenceMutex = Mutex()
     
     /**
+     * メモリ使用率をチェック（外部からアクセス可能）
+     * @return メモリ使用率（0-100）
+     */
+    fun getMemoryUsagePercent(): Int {
+        val runtime = Runtime.getRuntime()
+        val usedMemory = runtime.totalMemory() - runtime.freeMemory()
+        val maxMemory = runtime.maxMemory()
+        return if (maxMemory > 0) {
+            ((usedMemory * 100) / maxMemory).toInt()
+        } else {
+            0
+        }
+    }
+    
+    /**
+     * メモリが十分かチェック（外部からアクセス可能）
+     * @return true: メモリに余裕あり / false: メモリ埋まりすぎ
+     */
+    fun isMemorySufficient(): Boolean {
+        val usage = getMemoryUsagePercent()
+        val isSufficient = usage < 85  // 85%以上の使用率でロード拒否
+        val runtime = Runtime.getRuntime()
+        val usedMB = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
+        val maxMB = runtime.maxMemory() / (1024 * 1024)
+        
+        Log.d(TAG, "Memory check: ${usedMB}MB / ${maxMB}MB (${usage}%)")
+        
+        if (!isSufficient) {
+            Log.w(TAG, "Memory usage is too high ($usage%) - refusing model load")
+        }
+        
+        return isSufficient
+    }
+/**
      * モデルを初期化（ロード）
      */
     suspend fun initializeModel(
@@ -49,13 +83,20 @@ class ModelManager(
             try {
                 val normalizedConfig = config.normalized()
                 // 既に同じモデルがロードされている場合はスキップ
-val shouldSkip = currentModelName == modelName && 
-                currentConfig == normalizedConfig &&
-                currentConfig?.backendType == normalizedConfig.backendType
+                val shouldSkip = currentModelName == modelName && 
+                    currentConfig == normalizedConfig &&
+                    currentConfig?.backendType == normalizedConfig.backendType
 
-if (shouldSkip) {
-    Log.d(TAG, "Model $modelName is already loaded with same backend: ${normalizedConfig.backendType}")
+                if (shouldSkip) {
+                    Log.d(TAG, "Model $modelName is already loaded with same backend: ${normalizedConfig.backendType}")
                     return Result.success(Unit)
+                }
+                
+                // メモリ使用率をチェック
+                if (!isMemorySufficient()) {
+                    val errorMsg = "Cannot load model - memory usage is too high (${getMemoryUsagePercent()}%)"
+                    Log.e(TAG, errorMsg)
+                    return Result.failure(RuntimeException(errorMsg))
                 }
                 
                 // 前のモデルをアンロード
@@ -65,15 +106,16 @@ if (shouldSkip) {
                 }
                 
                 // 新しいモデルをロード
-Log.d(TAG, "Loading model: $modelName with backend: ${normalizedConfig.backendType}")
+                Log.d(TAG, "Loading model: $modelName with backend: ${normalizedConfig.backendType}")
                 val result = inferenceEngine.loadModel(modelName, normalizedConfig)
                 
                 if (result.isSuccess) {
                     currentModelName = modelName
                     currentConfig = normalizedConfig
-Log.d(TAG, "Model loaded successfully: $modelName with backend: ${normalizedConfig.backendType}")
+                    Log.d(TAG, "Model loaded successfully: $modelName with backend: ${normalizedConfig.backendType}")
                 } else {
-                    Log.e(TAG, "Failed to load model: $modelName")
+                    val error = result.exceptionOrNull()
+                    Log.e(TAG, "Failed to load model: $modelName. Reason: ${error?.message}", error)
                 }
                 
                 result

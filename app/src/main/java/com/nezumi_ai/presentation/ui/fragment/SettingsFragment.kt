@@ -84,20 +84,17 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) return@registerForActivityResult
             binding.importTaskButton.isEnabled = false
-            val originalText = binding.importTaskButton.text
-            binding.importTaskButton.text = "読み込み中..."
-            Toast.makeText(requireContext(), ".task を読み込み中...", Toast.LENGTH_LONG).show()
+            binding.importTaskProgressContainer.visibility = View.VISIBLE
             viewLifecycleOwner.lifecycleScope.launch {
                 val result = withContext(Dispatchers.IO) {
                     ModelFileManager.importTaskFromUri(requireContext(), uri)
                 }
                 binding.importTaskButton.isEnabled = true
-                binding.importTaskButton.text = originalText
+                binding.importTaskProgressContainer.visibility = View.GONE
                 result.onSuccess {
-                    Toast.makeText(requireContext(), ".task を追加しました: ${it.name}", Toast.LENGTH_SHORT).show()
+                    val fileType = if (it.name.lowercase().endsWith(".litertlm")) ".litertlm" else ".task"
+                    Toast.makeText(requireContext(), "$fileType を追加しました: ${it.name}", Toast.LENGTH_SHORT).show()
                     renderImportedTasks()
-                    // ChatFragment に戻してモデルドロップダウンを即座に更新
-                    findNavController().popBackStack()
                 }.onFailure {
                     Toast.makeText(requireContext(), "追加失敗: ${it.message}", Toast.LENGTH_LONG).show()
                 }
@@ -161,36 +158,40 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             Toast.makeText(requireContext(), "ログアウトしました", Toast.LENGTH_SHORT).show()
         }
 
-        binding.downloadE2bButton.setOnClickListener {
-            val model = ModelFileManager.LocalModel.E2B
-            if (binding.downloadE2bButton.tag?.toString()?.contains("cancel_mode") == true) {
+        // Gemma 4 2B
+        binding.downloadGemma42bButton.setOnClickListener {
+            val model = ModelFileManager.LocalModel.GEMMA4_2B
+            if (binding.downloadGemma42bButton.tag?.toString()?.contains("cancel_mode") == true) {
                 showCancelInProgress(model)
                 ModelDownloadWorker.cancel(requireContext(), model)
             } else {
                 requestNotificationPermissionForDownload(model)
             }
         }
-        binding.e2bAccessButton.setOnClickListener {
-            openHfModelAccessPage(ModelFileManager.LocalModel.E2B)
+        binding.gemma42bAccessButton.setOnClickListener {
+            openHfModelAccessPage(ModelFileManager.LocalModel.GEMMA4_2B)
         }
-        binding.deleteE2bButton.setOnClickListener {
-            runModelAction(ModelFileManager.LocalModel.E2B, false)
+        binding.deleteGemma42bButton.setOnClickListener {
+            runModelAction(ModelFileManager.LocalModel.GEMMA4_2B, false)
         }
-        binding.downloadE4bButton.setOnClickListener {
-            val model = ModelFileManager.LocalModel.E4B
-            if (binding.downloadE4bButton.tag?.toString()?.contains("cancel_mode") == true) {
+
+        // Gemma 4 4B
+        binding.downloadGemma44bButton.setOnClickListener {
+            val model = ModelFileManager.LocalModel.GEMMA4_4B
+            if (binding.downloadGemma44bButton.tag?.toString()?.contains("cancel_mode") == true) {
                 showCancelInProgress(model)
                 ModelDownloadWorker.cancel(requireContext(), model)
             } else {
                 requestNotificationPermissionForDownload(model)
             }
         }
-        binding.e4bAccessButton.setOnClickListener {
-            openHfModelAccessPage(ModelFileManager.LocalModel.E4B)
+        binding.gemma44bAccessButton.setOnClickListener {
+            openHfModelAccessPage(ModelFileManager.LocalModel.GEMMA4_4B)
         }
-        binding.deleteE4bButton.setOnClickListener {
-            runModelAction(ModelFileManager.LocalModel.E4B, false)
+        binding.deleteGemma44bButton.setOnClickListener {
+            runModelAction(ModelFileManager.LocalModel.GEMMA4_4B, false)
         }
+
         binding.importTaskButton.setOnClickListener {
             importTaskLauncher.launch(arrayOf("*/*"))
         }
@@ -213,8 +214,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
         })
 
-        observeDownloadWork(ModelFileManager.LocalModel.E2B)
-        observeDownloadWork(ModelFileManager.LocalModel.E4B)
+        observeDownloadWork(ModelFileManager.LocalModel.GEMMA4_2B)
+        observeDownloadWork(ModelFileManager.LocalModel.GEMMA4_4B)
         refreshStatus()
         renderImportedTasks()
         loadInferenceSettings()
@@ -223,6 +224,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     private fun loadInferenceSettings() {
         viewLifecycleOwner.lifecycleScope.launch {
             val config = settingsRepository.getInferenceConfig()
+            val systemPrompt = settingsRepository.getSystemPrompt()
             binding.contextWindowText.text = getString(R.string.context_window_fixed)
             binding.contextCompressionSwitch.isChecked = config.contextCompressionEnabled
             binding.contextCompressionThresholdSeek.progress =
@@ -235,6 +237,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             binding.temperatureInput.setText(String.format(Locale.US, "%.2f", config.temperature))
             binding.topkInput.setText(config.maxTopK.toString())
             binding.maxTokensInput.setText(config.maxTokens.toString())
+            binding.systemPromptInput.setText(systemPrompt)
             when (config.backendType.uppercase()) {
                 "GPU" -> binding.backendToggleGroup.check(binding.backendGpuButton.id)
                 "NPU" -> binding.backendToggleGroup.check(binding.backendNpuButton.id)
@@ -266,6 +269,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             Toast.makeText(requireContext(), "推論設定の入力値が不正です", Toast.LENGTH_SHORT).show()
             return
         }
+        val systemPrompt = binding.systemPromptInput.text.toString().trim()
         viewLifecycleOwner.lifecycleScope.launch {
             settingsRepository.updateInferenceConfig(
                 contextCompressionEnabled = contextCompressionEnabled,
@@ -277,6 +281,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 backendTargetModel = "ALL"
             )
             settingsRepository.updateResourceMonitorEnabled(binding.resourceMonitorSwitch.isChecked)
+            settingsRepository.updateSystemPrompt(systemPrompt)
             loadInferenceSettings()
             Toast.makeText(requireContext(), "推論設定を保存しました", Toast.LENGTH_SHORT).show()
         }
@@ -286,8 +291,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         super.onResume()
         renderHfTokenState()
         // LiveData 更新を取りこぼした場合の保険（特に「検証中…」→SUCCEEDED 遷移）
-        refreshWorkInfoOnce(ModelFileManager.LocalModel.E2B)
-        refreshWorkInfoOnce(ModelFileManager.LocalModel.E4B)
+        refreshWorkInfoOnce(ModelFileManager.LocalModel.GEMMA4_2B)
+        refreshWorkInfoOnce(ModelFileManager.LocalModel.GEMMA4_4B)
         refreshStatus()
         renderImportedTasks()
     }
@@ -437,13 +442,14 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     }
 
     private fun refreshStatus() {
-        val e2bFile = ModelFileManager.modelFile(requireContext(), ModelFileManager.LocalModel.E2B)
-        val e4bFile = ModelFileManager.modelFile(requireContext(), ModelFileManager.LocalModel.E4B)
-        val e2bDownloaded = ModelFileManager.isDownloaded(requireContext(), ModelFileManager.LocalModel.E2B)
-        val e4bDownloaded = ModelFileManager.isDownloaded(requireContext(), ModelFileManager.LocalModel.E4B)
-
-        setStatus(ModelFileManager.LocalModel.E2B, statusText(e2bDownloaded, e2bFile.length()))
-        setStatus(ModelFileManager.LocalModel.E4B, statusText(e4bDownloaded, e4bFile.length()))
+        listOf(
+            ModelFileManager.LocalModel.GEMMA4_2B,
+            ModelFileManager.LocalModel.GEMMA4_4B
+        ).forEach { model ->
+            val file = ModelFileManager.modelFile(requireContext(), model)
+            val downloaded = ModelFileManager.isDownloaded(requireContext(), model)
+            setStatus(model, statusText(downloaded, file.length()))
+        }
     }
 
     private fun statusText(downloaded: Boolean, sizeBytes: Long): String {
@@ -457,41 +463,36 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun setModelButtonsEnabled(model: ModelFileManager.LocalModel, enabled: Boolean) {
         when (model) {
-            ModelFileManager.LocalModel.E2B -> {
-                binding.downloadE2bButton.isEnabled = enabled
-                binding.deleteE2bButton.isEnabled = enabled
+            ModelFileManager.LocalModel.GEMMA4_2B -> {
+                binding.downloadGemma42bButton.isEnabled = enabled
+                binding.deleteGemma42bButton.isEnabled = enabled
             }
-            ModelFileManager.LocalModel.E4B -> {
-                binding.downloadE4bButton.isEnabled = enabled
-                binding.deleteE4bButton.isEnabled = enabled
+            ModelFileManager.LocalModel.GEMMA4_4B -> {
+                binding.downloadGemma44bButton.isEnabled = enabled
+                binding.deleteGemma44bButton.isEnabled = enabled
             }
         }
     }
 
     private fun setCancelMode(model: ModelFileManager.LocalModel, isCancelMode: Boolean) {
-        val downloadButton = when (model) {
-            ModelFileManager.LocalModel.E2B -> binding.downloadE2bButton
-            ModelFileManager.LocalModel.E4B -> binding.downloadE4bButton
+        val button = when (model) {
+            ModelFileManager.LocalModel.GEMMA4_2B -> binding.downloadGemma42bButton
+            ModelFileManager.LocalModel.GEMMA4_4B -> binding.downloadGemma44bButton
         }
-
-        downloadButton.isEnabled = true
+        button.isEnabled = true
         if (isCancelMode) {
-            downloadButton.text = "キャンセル"
-            downloadButton.tag = "cancel_mode_${model.name}"
+            button.text = "キャンセル"
+            button.tag = "cancel_mode_${model.name}"
         } else {
-            downloadButton.text = "ダウンロード"
-            downloadButton.tag = "download_mode_${model.name}"
+            button.text = "ダウンロード"
+            button.tag = "download_mode_${model.name}"
         }
     }
 
     private fun showProgress(model: ModelFileManager.LocalModel, visible: Boolean) {
-        val progressBar = when (model) {
-            ModelFileManager.LocalModel.E2B -> binding.e2bDownloadProgress
-            ModelFileManager.LocalModel.E4B -> binding.e4bDownloadProgress
-        }
-        val text = when (model) {
-            ModelFileManager.LocalModel.E2B -> binding.e2bDownloadText
-            ModelFileManager.LocalModel.E4B -> binding.e4bDownloadText
+        val (progressBar, text) = when (model) {
+            ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
+            ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bDownloadProgress to binding.gemma44bDownloadText
         }
         progressBar.visibility = if (visible) View.VISIBLE else View.GONE
         text.visibility = if (visible) View.VISIBLE else View.GONE
@@ -503,13 +504,9 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     }
 
     private fun updateProgress(model: ModelFileManager.LocalModel, downloaded: Long, total: Long, speedMbps: Double = 0.0, remainingSec: Double = 0.0) {
-        val progressBar = when (model) {
-            ModelFileManager.LocalModel.E2B -> binding.e2bDownloadProgress
-            ModelFileManager.LocalModel.E4B -> binding.e4bDownloadProgress
-        }
-        val text = when (model) {
-            ModelFileManager.LocalModel.E2B -> binding.e2bDownloadText
-            ModelFileManager.LocalModel.E4B -> binding.e4bDownloadText
+        val (progressBar, text) = when (model) {
+            ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
+            ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bDownloadProgress to binding.gemma44bDownloadText
         }
 
         if (total > 0) {
@@ -621,13 +618,9 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                     setModelButtonsEnabled(model, false)
                     setStatus(model, "キャンセル処理中...")
                     showProgress(model, true)
-                    val progressBar = when (model) {
-                        ModelFileManager.LocalModel.E2B -> binding.e2bDownloadProgress
-                        ModelFileManager.LocalModel.E4B -> binding.e4bDownloadProgress
-                    }
-                    val text = when (model) {
-                        ModelFileManager.LocalModel.E2B -> binding.e2bDownloadText
-                        ModelFileManager.LocalModel.E4B -> binding.e4bDownloadText
+                    val (progressBar, text) = when (model) {
+                        ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
+                        ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bDownloadProgress to binding.gemma44bDownloadText
                     }
                     progressBar.isIndeterminate = true
                     text.text = "中断中..."
@@ -658,8 +651,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                             // 検証フェーズ中は進捗更新が止まりやすいので、短時間だけ状態をポーリングしてUIを追従させる
                             startVerifyPolling(model)
                             val text = when (model) {
-                                ModelFileManager.LocalModel.E2B -> binding.e2bDownloadText
-                                ModelFileManager.LocalModel.E4B -> binding.e4bDownloadText
+                                ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bDownloadText
+                                ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bDownloadText
                             }
                             text.text = "${formatGb(monotonic.totalBytes)} / ${formatGb(monotonic.totalBytes)} | 検証中..."
                         } else {
@@ -753,13 +746,9 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         setModelButtonsEnabled(model, false)
         showProgress(model, true)
         setStatus(model, "キャンセル処理中...")
-        val progressBar = when (model) {
-            ModelFileManager.LocalModel.E2B -> binding.e2bDownloadProgress
-            ModelFileManager.LocalModel.E4B -> binding.e4bDownloadProgress
-        }
-        val text = when (model) {
-            ModelFileManager.LocalModel.E2B -> binding.e2bDownloadText
-            ModelFileManager.LocalModel.E4B -> binding.e4bDownloadText
+        val (progressBar, text) = when (model) {
+            ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
+            ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bDownloadProgress to binding.gemma44bDownloadText
         }
         progressBar.isIndeterminate = true
         text.text = "中断中..."
@@ -815,17 +804,15 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun setStatus(model: ModelFileManager.LocalModel, text: String) {
         when (model) {
-            ModelFileManager.LocalModel.E2B -> binding.e2bStatus.text = text
-            ModelFileManager.LocalModel.E4B -> binding.e4bStatus.text = text
+            ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bStatus.text = text
+            ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bStatus.text = text
         }
     }
 
     private fun setAccessButtonVisible(model: ModelFileManager.LocalModel, visible: Boolean) {
         when (model) {
-            ModelFileManager.LocalModel.E2B -> binding.e2bAccessButton.visibility =
-                if (visible) View.VISIBLE else View.GONE
-            ModelFileManager.LocalModel.E4B -> binding.e4bAccessButton.visibility =
-                if (visible) View.VISIBLE else View.GONE
+            ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bAccessButton.visibility = if (visible) View.VISIBLE else View.GONE
+            ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bAccessButton.visibility = if (visible) View.VISIBLE else View.GONE
         }
     }
 

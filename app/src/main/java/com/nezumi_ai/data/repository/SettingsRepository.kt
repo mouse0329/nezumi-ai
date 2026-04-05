@@ -217,6 +217,16 @@ class SettingsRepository(
         return map
     }
 
+    suspend fun getSystemPrompt(): String {
+        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
+        return current.systemPrompt
+    }
+
+    suspend fun updateSystemPrompt(prompt: String) {
+        val current = dao.getSettings() ?: SettingsEntity()
+        dao.update(current.copy(systemPrompt = prompt, lastModified = System.currentTimeMillis()))
+    }
+
     private fun encodeBackendMap(map: Map<String, String>): String {
         val e2b = normalizeBackend(map[MODEL_E2B] ?: BACKEND_CPU)
         val e4b = normalizeBackend(map[MODEL_E4B] ?: BACKEND_CPU)

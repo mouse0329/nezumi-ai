@@ -17,5 +17,6 @@ data class SettingsEntity(
     val maxTopK: Int = 40,
     val maxTokens: Int = 512,
     val resourceMonitorEnabled: Boolean = false,
+    val systemPrompt: String = "",
     val lastModified: Long = System.currentTimeMillis()
 )

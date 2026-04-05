@@ -80,7 +80,7 @@ class ChatViewModel(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
 
-    private val _selectedModel = MutableStateFlow("E2B")
+    private val _selectedModel = MutableStateFlow("Gemma4-2B")
     val selectedModel: StateFlow<String> = _selectedModel
 
     private val _isModelLoading = MutableStateFlow(false)
@@ -101,9 +101,19 @@ class ChatViewModel(
     private val _uiMessage = MutableSharedFlow<String>()
     val uiMessage: SharedFlow<String> = _uiMessage
     
+    private val _navigationEvent = MutableSharedFlow<NavigationEvent>()
+    val navigationEvent: SharedFlow<NavigationEvent> = _navigationEvent
+    
+    enum class NavigationEvent {
+        BACK_TO_HOME,  // ホームスクリーンに戻る
+        CLEAR_CHAT     // チャット画面をクリア
+    }
+    
     private var modelManager: ModelManager? = null
     private var generationJob: Job? = null
+    private var messagesCollectionJob: Job? = null
     private val compressedContextCache = mutableMapOf<Long, CompressedContextCache>()
+    private var currentBackendType = "CPU"  // GPU時はキャッシュを無効化するためのフラグ
     
     init {
         // ViewModel初期化時は設定のみ取得（モデルロードはしない）
@@ -115,12 +125,32 @@ class ChatViewModel(
                 Log.e(TAG, "Error initializing ModelManager", e)
             }
         }
+        
+        // バックエンド設定変更を監視
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                settingsRepository.getSettings().collect { settings ->
+                    if (settings != null) {
+                        val currentBackend = settingsRepository.getBackendForModel(_selectedModel.value)
+                        setBackendType(currentBackend)
+                    }
+                }
+            } catch (t: Throwable) {
+                val e = if (t is Exception) t else RuntimeException(t)
+                Log.e(TAG, "Error monitoring settings changes", e)
+            }
+        }
     }
     
     fun setCurrentSession(sessionId: Long) {
         _currentSessionId.value = sessionId
-        viewModelScope.launch {
+        // キャンセル前のコレクションジョブ
+        messagesCollectionJob?.cancel()
+        
+        messagesCollectionJob = viewModelScope.launch {
+            Log.d(TAG, "START_MESSAGE_COLLECTION: sessionId=$sessionId")
             messageRepository.getMessagesForSession(sessionId).collect { msgs ->
+                Log.d(TAG, "UPDATE_MESSAGES_FLOW: count=${msgs.size} messages=${msgs.map { "${it.role}:${it.content.take(30)}" }}")
                 _messages.value = msgs
                 _contextUsageChars.value = estimateContextUsageChars(msgs)
             }
@@ -152,7 +182,40 @@ class ChatViewModel(
             val config = settingsRepository.getInferenceConfigForModel(normalizedModel)
             val result = loadModelWithOverlay(normalizedModel, config, onlyIfAvailable = true)
             if (result.isFailure) {
-                Log.e(TAG, "Failed to switch model: $normalizedModel", result.exceptionOrNull())
+                val error = result.exceptionOrNull()
+                Log.e(TAG, "Failed to switch model: $normalizedModel", error)
+                
+                // メモリ不足エラーを検出
+                if (error?.message?.contains("memory") == true || 
+                    error?.message?.contains("Memory") == true) {
+                    _uiMessage.emit("メモリが不足しています。ホームスクリーンに戻ります...")
+                    _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
+                    return@launch
+                }
+                
+                // ファイル読み込みエラーを検出（PATH NOT FOUND など）
+                val errorMsg = error?.message ?: ""
+                if (errorMsg.contains("Cannot read", ignoreCase = true) ||
+                    errorMsg.contains("not found", ignoreCase = true) ||
+                    errorMsg.contains("corrupt", ignoreCase = true) ||
+                    errorMsg.contains("invalid", ignoreCase = true)) {
+                    
+                    Log.w(TAG, "モデルファイルの読み込みエラー: $normalizedModel")
+                    _uiMessage.emit("❌ モデルファイルが読み込めません。設定画面で再ダウンロードしてください。")
+                    
+                    // ファイルを削除してリセット
+                    try {
+                        val modelEnum = when (normalizedModel.uppercase()) {
+                            "GEMMA4-4B" -> ModelFileManager.LocalModel.GEMMA4_4B
+                            "GEMMA4-2B" -> ModelFileManager.LocalModel.GEMMA4_2B
+                            else -> ModelFileManager.LocalModel.GEMMA4_2B
+                        }
+                        ModelFileManager.clearCorruptedModel(appContext, modelEnum)
+                        Log.i(TAG, "モデルファイルをクリアしました")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "モデルファイルのクリアに失敗", e)
+                    }
+                }
             }
         }
     }
@@ -191,9 +254,9 @@ class ChatViewModel(
 
     fun compressContextManually() {
         val sessionId = _currentSessionId.value ?: return
-        if (_isLoading.value || _isModelLoading.value || _isCompressing.value) {
+        if (_isCompressing.value) {
             viewModelScope.launch {
-                _uiMessage.emit("生成中または処理中のため圧縮できません")
+                _uiMessage.emit("圧縮処理中です")
             }
             return
         }
@@ -212,7 +275,10 @@ class ChatViewModel(
                 val config = settingsRepository.getInferenceConfigForModel(selectedModel)
                 val loadResult = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = false)
                 if (loadResult.isFailure) {
-                    _uiMessage.emit("圧縮用モデルのロードに失敗しました")
+                    val error = loadResult.exceptionOrNull()
+                    val errorMsg = error?.message ?: "Unknown error"
+                    Log.e(TAG, "Compression model load failed: $errorMsg", error)
+                    _uiMessage.emit("圧縮用モデルのロードに失敗しました：$errorMsg")
                     return@launch
                 }
 
@@ -227,7 +293,11 @@ class ChatViewModel(
                 val signature = olderMessages.fold(17) { acc, msg ->
                     ((acc * 31) + msg.role.hashCode()) * 31 + msg.content.hashCode()
                 }
-                val cached = compressedContextCache[sessionId]
+                
+                // GPU時はキャッシュを使用せず常に再計算（メモリ安定性優先）
+                val useCache = currentBackendType != "GPU"
+                val cached = if (useCache) compressedContextCache[sessionId] else null
+                
                 if (cached != null && cached.signature == signature) {
                     _uiMessage.emit("圧縮コンテキストは最新です")
                     return@launch
@@ -244,7 +314,12 @@ class ChatViewModel(
                 } finally {
                     _isCompressing.value = false
                 }
-                compressedContextCache[sessionId] = CompressedContextCache(signature, summary)
+                
+                // GPU時はキャッシュに保存しない
+                if (useCache) {
+                    compressedContextCache[sessionId] = CompressedContextCache(signature, summary)
+                }
+                
                 _uiMessage.emit("コンテキストを圧縮しました")
             } catch (t: Throwable) {
                 _isCompressing.value = false
@@ -257,6 +332,8 @@ class ChatViewModel(
 
     fun stopGeneration() {
         generationJob?.cancel(CancellationException("Stopped by user"))
+        generationJob = null
+        _isLoading.value = false
     }
 
     fun revokeLastPrompt() {
@@ -309,6 +386,13 @@ class ChatViewModel(
         try {
             val manager = requireModelManager()
             val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
+            
+            // メモリ不足チェック
+            if (manager.getMemoryUsagePercent() >= 85) {
+                _uiMessage.emit("メモリが不足しています。ホームスクリーンに戻ります...")
+                _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
+                return
+            }
             _selectedModel.value = selectedModel
             val engineModelName = toEngineModelName(selectedModel)
             if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
@@ -322,8 +406,42 @@ class ChatViewModel(
             val config = settingsRepository.getInferenceConfigForModel(selectedModel)
             val loadResult = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = false)
             if (loadResult.isFailure) {
-                throw (loadResult.exceptionOrNull()
-                    ?: IllegalStateException("モデルのロードに失敗しました"))
+                val error = loadResult.exceptionOrNull()
+                val errorMsg = error?.message ?: "Unknown error"
+                Log.e(TAG, "Model loading failed for $selectedModel: $errorMsg", error)
+                
+                // メモリ不足エラーを検出
+                if (errorMsg.contains("memory", ignoreCase = true)) {
+                    _uiMessage.emit("メモリが不足しています。ホームスクリーンに戻ります...")
+                    _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
+                    return
+                }
+                
+                // ファイル読み込みエラーを検出
+                if (errorMsg.contains("Cannot read", ignoreCase = true) ||
+                    errorMsg.contains("not found", ignoreCase = true) ||
+                    errorMsg.contains("corrupt", ignoreCase = true) ||
+                    errorMsg.contains("invalid", ignoreCase = true)) {
+                    
+                    Log.w(TAG, "モデルファイルの読み込みエラー: $selectedModel")
+                    _uiMessage.emit("❌ モデルファイルが読み込めません。設定画面で再ダウンロードしてください。")
+                    
+                    // ファイルを削除してリセット
+                    try {
+                        val modelEnum = when (selectedModel.uppercase()) {
+                            "GEMMA4-2B" -> ModelFileManager.LocalModel.GEMMA4_2B
+                            "GEMMA4-4B" -> ModelFileManager.LocalModel.GEMMA4_4B
+                            else -> ModelFileManager.LocalModel.GEMMA4_2B
+                        }
+                        ModelFileManager.clearCorruptedModel(appContext, modelEnum)
+                        Log.i(TAG, "モデルファイルをクリアしました")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "モデルファイルのクリアに失敗", e)
+                    }
+                    return
+                }
+                
+                throw (error ?: IllegalStateException("モデルのロード($selectedModel)に失敗しました: $errorMsg"))
             }
             
             Log.d(TAG, "Starting inference for session $sessionId")
@@ -384,62 +502,13 @@ class ChatViewModel(
                             if (!firstTokenReceived) {
                                 cancel(FirstTokenTimeoutException())
                             }
-val firstTokenTimeoutJob = launch {
-    delay(RESPONSE_TIMEOUT_MS)
-    if (!firstTokenReceived) {
-        cancel(FirstTokenTimeoutException())
-    }
-}
+                        }
 
-try {
-    aiResponseFlow.collect { chunk ->
-        if (!firstTokenReceived) {
-            firstTokenReceived = true
-            firstTokenTimeoutJob.cancel()
-        }
-        val finalFromModel = InferenceStreamProtocol.decodeFinal(chunk)
-        if (finalFromModel != null) {
-            responseBuilder.clear()
-            responseBuilder.append(finalFromModel)
-        } else {
-            if (chunk.isNotEmpty()) {
-                val currentContent = responseBuilder.toString()
-                val merged = mergeStreamingChunk(currentContent, chunk)
-                if (merged != currentContent && merged.length >= currentContent.length) {
-                    responseBuilder.clear()
-                    responseBuilder.append(merged)
-                    Log.d(TAG, "Chunk merged: ${currentContent.length} -> ${merged.length} chars")
-                } else if (merged.length < currentContent.length) {
-                    Log.w(TAG, "Chunk merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping merge")
-                }
-            }
-        }
-        val messageIdToUpdate = streamingMessageId ?: activeStreamingMessageId
-        messageIdToUpdate?.let { id ->
-            val contentForUi = responseBuilder.toString()
-            val now = SystemClock.elapsedRealtime()
-            val persistInterval = if (isLikelyMarkdownTable(contentForUi)) {
-                STREAM_PERSIST_INTERVAL_TABLE_MS
-            } else {
-                STREAM_PERSIST_INTERVAL_MS
-            }
-            val shouldPersist = contentForUi != lastPersistedContent &&
-                (finalFromModel != null || now - lastPersistAt >= persistInterval)
-            if (shouldPersist) {
-                messageRepository.updateMessageContent(
-                    messageId = id,
-                    content = contentForUi,
-                    isStreaming = true
-                )
-                lastPersistedContent = contentForUi
-                lastPersistAt = now
-            }
-        }
-        Log.d(TAG, "Received chunk: $chunk")
-    }
-} finally {
-    firstTokenTimeoutJob.cancel()
-}
+                        try {
+                            aiResponseFlow.collect { chunk ->
+                                if (!firstTokenReceived) {
+                                    firstTokenReceived = true
+                                    firstTokenTimeoutJob.cancel()
                                 }
                                 val finalFromModel = InferenceStreamProtocol.decodeFinal(chunk)
                                 if (finalFromModel != null) {
@@ -447,38 +516,34 @@ try {
                                     responseBuilder.append(finalFromModel)
                                 } else {
                                     if (chunk.isNotEmpty()) {
-                                        val merged = mergeStreamingChunk(responseBuilder.toString(), chunk)
-                                        if (merged != responseBuilder.toString()) {
+                                        val currentContent = responseBuilder.toString()
+                                        val merged = mergeStreamingChunk(currentContent, chunk)
+                                        if (merged != currentContent && merged.length >= currentContent.length) {
                                             responseBuilder.clear()
                                             responseBuilder.append(merged)
+                                            Log.d(TAG, "Chunk merged: ${currentContent.length} -> ${merged.length} chars")
+                                        } else if (merged.length < currentContent.length) {
+                                            Log.w(TAG, "Chunk merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping merge")
                                         }
                                     }
                                 }
-// streamingMessageId（または activeStreamingMessageId）の存在を確認
                                 val messageIdToUpdate = streamingMessageId ?: activeStreamingMessageId
                                 messageIdToUpdate?.let { id ->
                                     val contentForUi = responseBuilder.toString()
                                     val now = SystemClock.elapsedRealtime()
-
-                                    // Markdownテーブルの場合は更新間隔を広げるなど、描画負荷を考慮したインターバル設定
                                     val persistInterval = if (isLikelyMarkdownTable(contentForUi)) {
                                         STREAM_PERSIST_INTERVAL_TABLE_MS
                                     } else {
                                         STREAM_PERSIST_INTERVAL_MS
                                     }
-
-                                    // 1. 前回の保存内容と異なる
-                                    // 2. 最終的な応答（finalFromModel != null）である、または一定時間が経過した
                                     val shouldPersist = contentForUi != lastPersistedContent &&
                                         (finalFromModel != null || now - lastPersistAt >= persistInterval)
-
                                     if (shouldPersist) {
                                         messageRepository.updateMessageContent(
                                             messageId = id,
                                             content = contentForUi,
                                             isStreaming = true
                                         )
-                                        // 保存状態を更新
                                         lastPersistedContent = contentForUi
                                         lastPersistAt = now
                                     }
@@ -493,8 +558,6 @@ try {
             } catch (collectionError: Throwable) {
                 Log.e(TAG, "Error during flow collection", collectionError)
                 if (collectionError !is FirstTokenTimeoutException && collectionError !is CancellationException) {
-                    throw collectionError
-                } else {
                     throw collectionError
                 }
             }
@@ -542,7 +605,22 @@ try {
             val e = if (t is Exception) t else RuntimeException(t)
             Log.e(TAG, "Error generating AI response", e)
 
-            val errorMessage = "エラーが発生しました: ${e.message}"
+            // エラーメッセージを詳細化
+            val errorMessage = when {
+                e.message?.contains("Web用モデル") == true -> 
+                    "このモデルはWeb用です。AndroidアプリではWeb用モデルは使用できません。本体デバイス用の.taskファイルをお使いください。"
+                e.message?.contains("END header") == true || e.message?.contains("zip END header") == true -> 
+                    "モデルファイル(.task)のダウンロードが不完全です。ダウンロード中に中断された可能性があります。設定画面でモデルを削除して再度ダウンロードしてください。"
+                e.message?.contains("ZIPファイルが破損") == true -> 
+                    "モデルファイル(.task)が破損しています。コピー中にエラーが発生した可能性があります。ファイルを削除して再度追加してください。"
+                e.message?.contains("Unable to open zip archive") == true -> 
+                    "モデルファイルが破損しているか不正な形式です。設定画面でモデルを再度ダウンロードしてください。"
+                e.message?.contains("ZIP archive") == true ->
+                    "モデルファイルの整合性チェックに失敗しました。ダウンロードが不完全な可能性があります。設定画面でモデルを削除して再度ダウンロードしてください。"
+                e.message?.contains("Model not loaded") == true ->
+                    "モデルがロードされていません。もう一度全てリセットしてから試してください。"
+                else -> "エラーが発生しました：${e.message}"
+            }
             val id = streamingMessageId
             if (id != null) {
                 messageRepository.updateMessageContent(
@@ -577,19 +655,24 @@ try {
         val lowered = trimmed.lowercase()
         val isLocalTaskPath =
             (lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && File(trimmed).isAbsolute
+        
         return when {
-            trimmed.equals("E4B", ignoreCase = true) -> "E4B"
+            trimmed.equals("Gemma4-4B", ignoreCase = true) -> "Gemma4-4B"
+            trimmed.equals("Gemma4-2B", ignoreCase = true) -> "Gemma4-2B"
+            trimmed.equals("E4B", ignoreCase = true) -> "Gemma4-4B"  // 互換性のため E4B → Gemma4-4B
+            trimmed.equals("E2B", ignoreCase = true) -> "Gemma4-2B"  // 互換性のため E2B → Gemma4-2B
             isLocalTaskPath -> trimmed
-            else -> "E2B"
+            else -> "Gemma4-2B"  // デフォルト
         }
     }
 
     private fun toEngineModelName(model: String): String {
         val normalized = normalizeModel(model)
         return when {
-            normalized == "E4B" -> "gemma-3.2:e4b"
+            normalized.equals("Gemma4-4B", ignoreCase = true) -> "gemma4-4b"
+            normalized.equals("Gemma4-2B", ignoreCase = true) -> "gemma4-2b"
             (normalized.endsWith(".task") || normalized.endsWith(".litertlm")) && normalized.startsWith("/") -> normalized
-            else -> "gemma-3.2:e2b"
+            else -> "gemma4-2b"  // デフォルト
         }
     }
 
@@ -713,7 +796,11 @@ try {
         val signature = olderMessages.fold(17) { acc, msg ->
             ((acc * 31) + msg.role.hashCode()) * 31 + msg.content.hashCode()
         }
-        val cached = compressedContextCache[sessionId]
+        
+        // GPU時はキャッシュを使用せず常に再計算（メモリ安定性優先）
+        val useCache = currentBackendType != "GPU"
+        val cached = if (useCache) compressedContextCache[sessionId] else null
+        
         val compressedSummary = if (cached != null && cached.signature == signature) {
             cached.summary
         } else {
@@ -725,15 +812,22 @@ try {
                     messages = olderMessages,
                     config = config
                 ).also { summary ->
-                    compressedContextCache[sessionId] = CompressedContextCache(signature, summary)
+                    // GPU時はキャッシュに保存しない
+                    if (useCache) {
+                        compressedContextCache[sessionId] = CompressedContextCache(signature, summary)
+                    }
                 }
             } finally {
                 _isCompressing.value = false
             }
         }
 
+        val systemPrompt = settingsRepository.getSystemPrompt()
         val contextBuilder = StringBuilder()
-        contextBuilder.append("あなたは親切で簡潔なアシスタントです。会話の文脈を踏まえて日本語で回答してください。\n\n")
+        if (systemPrompt.isNotEmpty()) {
+            contextBuilder.append(systemPrompt)
+            contextBuilder.append("\n\n")
+        }
         contextBuilder.append("以下は過去会話の圧縮コンテキストです:\n")
         contextBuilder.append(compressedSummary)
         contextBuilder.append("\n\n")
@@ -764,9 +858,14 @@ try {
 
         val compressionPrompt = buildString {
             append("以下の会話履歴を要約してください。\n")
-            append("以下の形式で出力して。挨拶は不要。\n")
-            append("{\"summary\": \"（ここに要約）\", \"keywords\": [\"A\", \"B\", \"C\"]}\n")
-            append("keywords は重要語を3-8個の配列で出力してください。\n")
+            append("自然な日本語の文章だけで出力してください。\n")
+            append("\n")
+            append("注意:\n")
+            append("- 自然な日本語の文章のみで出力\n")
+            append("- JSONやコードブロック形式は使用しないでください\n")
+            append("- 挨拶や説明文は不要\n")
+            append("- 要約は1-2文で簡潔に\n")
+            append("\n")
             append("会話履歴:\n")
             append(transcript)
         }
@@ -798,13 +897,18 @@ try {
             builder.toString().trim()
         }
 
-        val parsed = raw?.let { parseCompressionJson(it) }
-        return if (parsed != null) {
+        // JSON形式で返ってきてしまったらフィルタリング（防衛線）
+        if (raw?.trim()?.startsWith("{") == true) {
+            Log.w(TAG, "Context compression returned JSON format instead of natural text: $raw")
+            return buildCompressedSummaryFallback(messages)
+        }
+        
+        // 自然言語の要約が返ってきた場合
+        return if (!raw.isNullOrBlank()) {
             buildString {
                 append("要約: ")
-                append(parsed.first)
-                append("\nキーワード: ")
-                append(parsed.second.joinToString(", "))
+                append(raw.trim())
+                append("\nキーワード: （自動抽出）")
             }
         } else {
             buildCompressedSummaryFallback(messages)
@@ -838,14 +942,18 @@ try {
         return text.substring(start, end + 1)
     }
 
-    private fun estimateContextUsageChars(messages: List<MessageEntity>): Int {
+    private suspend fun estimateContextUsageChars(messages: List<MessageEntity>): Int {
         return buildPromptFromMessages(messages).length.coerceAtMost(MAX_CONTEXT_CHARS)
     }
 
-    private fun buildPromptFromMessages(messages: List<MessageEntity>): String {
+    private suspend fun buildPromptFromMessages(messages: List<MessageEntity>): String {
         if (messages.isEmpty()) return ""
+        val systemPrompt = settingsRepository.getSystemPrompt()
         val contextBuilder = StringBuilder()
-        contextBuilder.append("あなたは親切で簡潔なアシスタントです。会話の文脈を踏まえて日本語で回答してください。\n\n")
+        if (systemPrompt.isNotEmpty()) {
+            contextBuilder.append(systemPrompt)
+            contextBuilder.append("\n\n")
+        }
         for (msg in messages) {
             if (msg.role == "assistant" && msg.isStreaming) continue
             val role = if (msg.role == "assistant") "Assistant" else "User"
@@ -948,15 +1056,32 @@ try {
         _isModelLoading.value = true
         _modelLoadingStatus.value = "モデルを準備中..."
         return try {
-            val displayModel = if (model == "E2B" || model == "E4B") model else "カスタム"
+            val displayModel = when (model.uppercase()) {
+                "GEMMA4-2B" -> "Gemma4-2B"
+                "GEMMA4-4B" -> "Gemma4-4B"
+                else -> "カスタム"
+            }
             _modelLoadingStatus.value = "[$displayModel] エンジンを初期化中..."
+            
             val result = if (onlyIfAvailable) {
                 manager.initializeModelIfAvailable(engineModelName, config)
             } else {
                 manager.initializeModel(engineModelName, config)
             }
+            
             if (result.isSuccess) {
                 _modelLoadingStatus.value = "[$displayModel] ロード完了"
+            } else {
+                val error = result.exceptionOrNull()
+                
+                // メモリ不足エラーを検出
+                if (error?.message?.contains("memory") == true || 
+                    error?.message?.contains("Memory") == true) {
+                    _uiMessage.emit("メモリが不足しています。ホームスクリーンに戻ります...")
+                    viewModelScope.launch {
+                        _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
+                    }
+                }
             }
             result
         } finally {
@@ -989,13 +1114,15 @@ try {
 
                 // メディア付きユーザーメッセージを保存（DB アクセス - IO スレッド）
                 withContext(Dispatchers.IO) {
-                    messageRepository.addMessage(
+                    Log.d(TAG, "SAVE_MESSAGE_START: content='$userMessage'")
+                    val messageId = messageRepository.addMessage(
                         sessionId = sessionId,
                         role = "user",
                         content = userMessage,
                         imageUri = storedImage,
                         audioUri = storedAudio
                     )
+                    Log.d(TAG, "SAVE_MESSAGE_END: messageId=$messageId content='$userMessage'")
                     sessionRepository.updateSessionLastUpdated(sessionId)
                 }
 
@@ -1184,6 +1311,33 @@ try {
      */
     fun clearPendingMediaPreview() {
         _pendingMediaMessage.value = null
+    }
+
+    /**
+     * バックエンドタイプを更新（GPUまたはCPU）
+     * バックエンド切り替え時に呼び出して、キャッシュを無効化する
+     */
+    fun setBackendType(type: String) {
+        if (type != currentBackendType) {
+            Log.d(TAG, "Backend changed from $currentBackendType to $type, clearing cache")
+            currentBackendType = type
+            // バックエンド切り替え時にキャッシュをクリア
+            clearCompressedContextCache()
+        }
+    }
+
+    /**
+     * 圧縮コンテキストキャッシュをクリア
+     * @param sessionId クリアする特定のセッション（nullの場合は全キャッシュクリア）
+     */
+    fun clearCompressedContextCache(sessionId: Long? = null) {
+        if (sessionId != null) {
+            compressedContextCache.remove(sessionId)
+            Log.d(TAG, "Cache cleared for session: $sessionId")
+        } else {
+            compressedContextCache.clear()
+            Log.d(TAG, "All compressed context cache cleared")
+        }
     }
     
     override fun onCleared() {

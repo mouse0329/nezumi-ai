@@ -17,25 +17,34 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.channels.FileLock
 import java.security.MessageDigest
+import java.util.zip.ZipFile
 import kotlin.coroutines.coroutineContext
 
 object ModelFileManager {
 
     enum class LocalModel {
-        E2B,
-        E4B
+        GEMMA4_2B,
+        GEMMA4_4B
     }
 
     private const val TAG = "ModelFileManager"
-    private const val E2B_FILENAME = "gemma-3n-e2b.task"
-    private const val E4B_FILENAME = "gemma-3n-e4b.task"
+    private const val GEMMA4_2B_FILENAME = "gemma-4-2b.litertlm"
+    private const val GEMMA4_4B_FILENAME = "gemma-4-4b.litertlm"
+    
     private const val E2B_LEGACY_LITERTLM_FILENAME = "gemma-3n-e2b.litertlm"
     private const val E4B_LEGACY_LITERTLM_FILENAME = "gemma-3n-e4b.litertlm"
 
-    private const val E2B_HF_URL =
+    // Gemma 3n モデル URL（Google 公式）
+    private const val GEMMA3N_2B_HF_URL =
         "https://huggingface.co/google/gemma-3n-E2B-it-litert-preview/resolve/main/gemma-3n-E2B-it-int4.task"
-    private const val E4B_HF_URL =
+    private const val GEMMA3N_4B_HF_URL =
         "https://huggingface.co/google/gemma-3n-E4B-it-litert-preview/resolve/main/gemma-3n-E4B-it-int4.task"
+    
+    // Gemma 4 モデル URL（litert-community 最適化版）
+    private const val GEMMA4_2B_HF_URL =
+        "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm?download=true"
+    private const val GEMMA4_4B_HF_URL =
+        "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm?download=true"
 
     private const val MAX_RETRIES = 3
     private const val RETRY_DELAY_MS = 2000L
@@ -61,8 +70,10 @@ object ModelFileManager {
 
     fun resolveModelName(modelName: String): LocalModel {
         return when (modelName.lowercase()) {
-            "gemma-3.2:e4b", "e4b", "gemma_e4b" -> LocalModel.E4B
-            else -> LocalModel.E2B
+            "gemma3n-4b", "gemma-3n-4b", "gemma3n_4b", "3n:4b", "gemma3n-2b", "gemma-3n-2b", "gemma3n_2b", "3n:2b" -> LocalModel.GEMMA4_2B  // backward compat: map old Gemma3n to Gemma4-2B
+            "gemma4-2b", "gemma-4-2b", "gemma4_2b", "4:2b" -> LocalModel.GEMMA4_2B
+            "gemma4-4b", "gemma-4-4b", "gemma4_4b", "4:4b" -> LocalModel.GEMMA4_4B
+            else -> LocalModel.GEMMA4_2B  // default
         }
     }
 
@@ -72,8 +83,8 @@ object ModelFileManager {
             dir.mkdirs()
         }
         val filename = when (model) {
-            LocalModel.E2B -> E2B_FILENAME
-            LocalModel.E4B -> E4B_FILENAME
+            LocalModel.GEMMA4_2B -> GEMMA4_2B_FILENAME
+            LocalModel.GEMMA4_4B -> GEMMA4_4B_FILENAME
         }
         return File(dir, filename)
     }
@@ -147,18 +158,46 @@ object ModelFileManager {
         val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_")
         var outFile = File(importedDir, safeName)
         if (outFile.exists()) {
-            val base = safeName.removeSuffix(".task")
+            // .task と .litertlm の両方を正しく処理
+            val base = if (lower.endsWith(".task")) {
+                safeName.removeSuffix(".task")
+            } else {
+                safeName.removeSuffix(".litertlm")
+            }
             outFile = File(importedDir, "${base}_${System.currentTimeMillis()}.task")
         }
+        
+        // ファイルコピー（バッファサイズを大きくして効率化＆同期化を確実に）
+        var copiedBytes = 0L
         context.contentResolver.openInputStream(uri)?.use { input ->
-            outFile.outputStream().use { output ->
-                input.copyTo(output)
+            FileOutputStream(outFile).use { output ->
+                val buffer = ByteArray(BUFFER_SIZE)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } > 0) {
+                    output.write(buffer, 0, bytesRead)
+                    copiedBytes += bytesRead
+                }
+                // バッファをフラッシュ
+                output.flush()
+                // ファイルディスクリプタを同期化（OSレベルで実際にディスクに書き込まれるまで待機）
+                output.channel?.force(true)
             }
         } ?: throw IllegalStateException("ファイルを開けませんでした")
+        
+        // コピー後、ファイルシステムのキャッシュが確実に反映されるまで待機
+        // (まれにディレイが必要なファイルシステムがある)
+        if (!outFile.exists() || outFile.length() == 0L) {
+            throw IllegalStateException("ファイルコピーが失敗した可能性があります：${outFile.absolutePath}")
+        }
+        
+        Log.d(TAG, "Imported task file: ${outFile.absolutePath} ($copiedBytes bytes)")
+        
+        // インポート直後に厳密なバリデーション
         validateImportedTaskFile(outFile).getOrElse { reason ->
             outFile.delete()
             throw IllegalArgumentException("この .task は読み込みできません: ${reason.message}")
         }
+        
         outFile
     }
 
@@ -197,6 +236,9 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
 
 /**
      * インポートされた .task/.litertlm ファイルの基本的なバリデーション
+     * 
+     * MediaPipe LiteRT の .task ファイルはバイナリフォーマット（ZIP ではない）
+     * したがって、ファイルサイズとアクセス権限のみ検証する
      */
     fun validateImportedTaskFile(file: File): Result<File> = runCatching {
         if (!file.exists() || !file.isFile) {
@@ -209,40 +251,137 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         if (size <= 0L) {
             throw IllegalStateException("ファイルが空です")
         }
-        // codex側の最小サイズ定数がある場合はそれを使ってもOK
+        // MediaPipe LiteRT モデルの最小サイズをチェック（通常は 100MB 以上）
         if (size < WARN_SMALL_IMPORTED_TASK_BYTES) {
             Log.w(TAG, "Imported task is very small: ${file.absolutePath} (${size} bytes)")
         }
+        
         val lower = file.name.lowercase()
-        if (lower.endsWith(".litertlm") || lower.endsWith(".task")) {
-            if (!looksLikeSupportedTaskContainer(file)) {
-                Log.w(TAG, "Imported task signature check skipped: ${file.absolutePath}")
+        
+        // .task / .litertlm は両方ともバイナリフォーマット
+        // ZIP ファイルかどうかの判定で誤った検証を避ける
+        if (lower.endsWith(".task") || lower.endsWith(".litertlm")) {
+            // バイナリフォーマットのモデルファイルは、ファイル先頭のマジックナンバーでチェック
+            try {
+                val header = ByteArray(4)
+                file.inputStream().use { stream ->
+                    stream.read(header)
+                }
+                
+                // ZIP の マジックナンバーは 0x50 0x4B 0x03 0x04（"PK..") 
+                val isZip = header[0] == 0x50.toByte() && header[1] == 0x4B.toByte()
+                
+                // もし ZIP マジックナンバーが見つかった場合は警告（誤った形式の可能性）
+                if (isZip) {
+                    Log.w(TAG, "Warning: .task file detected as ZIP format. This may not be a valid MediaPipe LiteRT model.")
+                }
+                
+                Log.d(TAG, "Binary model file validated: ${file.absolutePath} (${size} bytes)")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error reading model file header: ${e.message}", e)
+                // ヘッダ読み込みエラーでもファイルは受け入れる（実運用時のエラーで詳細が分かる）
             }
         }
+        
         file
     }
 
     /**
-     * ファイルヘッダーを読み取り、ZIP(PK)またはTFLite(TFL3)のシグネチャを確認
+     * ZIPアーカイブの整合性を詳細にチェック
+     * 破損している場合は詳細エラーログを出力
      */
-    private fun looksLikeSupportedTaskContainer(file: File): Boolean {
-        return runCatching {
-            RandomAccessFile(file, "r").use { raf ->
-                if (raf.length() < 8L) return false
-                val first4 = ByteArray(4)
-                raf.readFully(first4)
-                // ZIP container (.task) starts with "PK"
-                val isZip = first4[0] == 'P'.code.toByte() && first4[1] == 'K'.code.toByte()
-                if (isZip) return true
-
-                // FlatBuffer tflite often has "TFL3" at offset 4
-                raf.seek(4L)
-                val tfl3 = ByteArray(4)
-                raf.readFully(tfl3)
-                val marker = String(tfl3, Charsets.US_ASCII)
-                marker == "TFL3"
+    private fun validateZipIntegrity(file: File) {
+        try {
+            ZipFile(file).use { zip ->
+                val entries = zip.entries()
+                var entryCount = 0
+                var hasWasmFile = false
+                var hasWebDirectory = false
+                
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    entryCount++
+                    
+                    // Web用モデルの検出
+                    val entryName = entry.name.lowercase()
+                    if (entryName.endsWith(".wasm")) {
+                        hasWasmFile = true
+                        Log.w(TAG, "Web format model detected (WASM): ${entry.name}")
+                    }
+                    if (entryName.startsWith("web/") || entryName.contains("/web/")) {
+                        hasWebDirectory = true
+                        Log.w(TAG, "Web format model detected (directory): ${entry.name}")
+                    }
+                    
+                    // エントリを実際に読み込み可能か確認
+                    try {
+                        zip.getInputStream(entry).use { stream ->
+                            val buffer = ByteArray(8192)
+                            while (stream.read(buffer) > 0) {
+                                // ストリーム読み込みテスト
+                            }
+                        }
+                    } catch (e: Exception) {
+                        throw IOException("ZIPエントリ読み込み失敗: ${entry.name}, ${e.message}", e)
+                    }
+                }
+                
+                // Web用モデルの場合は即座に拒否
+                if (hasWasmFile || hasWebDirectory) {
+                    throw IllegalStateException("Web用モデルはAndroidアプリで使用できません。本体デバイス用の.taskファイルを使用してください。")
+                }
+                
+                if (entryCount == 0) {
+                    throw IllegalStateException("ZIPアーカイブが空です")
+                }
+                Log.d(TAG, "ZIP archive validation passed: ${file.absolutePath} ($entryCount entries)")
             }
-        }.getOrDefault(false)
+        } catch (zipException: Exception) {
+            // 詳細なエラーログを出力
+            Log.e(TAG, "ZIPファイル読み込みエラー: ${file.absolutePath}", zipException)
+            Log.e(TAG, "エラー詳細: ${zipException.message}")
+            
+            // 破損ファイルの自動削除を検討
+            if (shouldDeleteCorruptedFile(zipException)) {
+                Log.i(TAG, "破損ファイルを削除します: ${file.absolutePath}")
+                try {
+                    file.delete()
+                    Log.i(TAG, "破損ファイル削除完了")
+                } catch (delException: Exception) {
+                    Log.w(TAG, "破損ファイルの削除に失敗", delException)
+                }
+            }
+            
+            throw IllegalStateException("ZIPファイルが破損しています: ${zipException.message}", zipException)
+        }
+    }
+    
+    /**
+     * ファイルが破損しているか判定（削除すべきか）
+     */
+    private fun shouldDeleteCorruptedFile(exception: Exception): Boolean {
+        val message = exception.message ?: return false
+        return message.contains("invalid LFH signature", ignoreCase = true) ||
+                message.contains("invalid data") ||
+                message.contains("corrupt", ignoreCase = true) ||
+                message.contains("truncated", ignoreCase = true) ||
+                message.contains("unexpected end", ignoreCase = true)
+    }
+    
+    /**
+     * モデルファイルをクリアして再ダウンロード可能な状態にする
+     */
+    fun clearCorruptedModel(context: Context, model: LocalModel): Result<Unit> = runCatching {
+        val file = modelFile(context, model)
+        if (file.exists()) {
+            file.delete()
+            Log.i(TAG, "モデルファイルをクリアしました: ${file.absolutePath}")
+        }
+        val metadataFile = File(file.parentFile, file.name + ".metadata")
+        if (metadataFile.exists()) {
+            metadataFile.delete()
+            Log.i(TAG, "メタデータをクリアしました: ${metadataFile.absolutePath}")
+        }
     }
 
     /**
@@ -294,8 +433,8 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
 
     fun previewTreeUrl(model: LocalModel): String {
         return when (model) {
-            LocalModel.E2B -> "https://huggingface.co/google/gemma-3n-E2B-it-litert-preview/tree/main"
-            LocalModel.E4B -> "https://huggingface.co/google/gemma-3n-E4B-it-litert-preview/tree/main"
+            LocalModel.GEMMA4_2B -> "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/tree/main"
+            LocalModel.GEMMA4_4B -> "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/tree/main"
         }
     }
 
@@ -354,13 +493,12 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
             }
 
             val url = when (model) {
-                LocalModel.E2B -> E2B_HF_URL
-                LocalModel.E4B -> E4B_HF_URL
+                LocalModel.GEMMA4_2B -> GEMMA4_2B_HF_URL
+                LocalModel.GEMMA4_4B -> GEMMA4_4B_HF_URL
             }
 
             try {
                 val remoteMetadata = getRemoteMetadata(url, HfAuthManager.getToken(context))
-                // 2.5) 既存ファイルはあるが .meta が壊れている/欠けているだけなら復旧して再取得を回避
                 if (recoverExistingDownloadedFile(
                         file = file,
                         remoteContentLength = remoteMetadata.contentLength,
@@ -751,8 +889,8 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
 
     private fun legacyLiteRtLmFilename(model: LocalModel): String {
         return when (model) {
-            LocalModel.E2B -> E2B_LEGACY_LITERTLM_FILENAME
-            LocalModel.E4B -> E4B_LEGACY_LITERTLM_FILENAME
+            LocalModel.GEMMA4_2B -> E2B_LEGACY_LITERTLM_FILENAME
+            LocalModel.GEMMA4_4B -> E4B_LEGACY_LITERTLM_FILENAME
         }
     }
 

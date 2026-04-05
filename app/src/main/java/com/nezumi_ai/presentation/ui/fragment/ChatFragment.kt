@@ -230,6 +230,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     messages
                 }
             }.collect { displayMessages ->
+                android.util.Log.d("ChatFragment", "DISPLAY_MESSAGES: count=${displayMessages.size} messages=${displayMessages.map { "${it.role}:${it.content}" }}")
                 val wasAtBottom = isAtBottom()
                 adapter.submitList(displayMessages) {
                     if (displayMessages.isNotEmpty() && wasAtBottom) {
@@ -344,6 +345,20 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.navigationEvent.collect { event ->
+                when (event) {
+                    ChatViewModel.NavigationEvent.BACK_TO_HOME -> {
+                        Log.i("ChatFragment", "Memory shortage detected - navigating back to home")
+                        findNavController().popBackStack()
+                    }
+                    ChatViewModel.NavigationEvent.CLEAR_CHAT -> {
+                        // 将来の拡張用
+                    }
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
             viewModel.contextUsageChars.collect { used ->
                 val max = ChatViewModel.CONTEXT_WINDOW_CHARS
                 binding.contextMeterText.text =
@@ -451,11 +466,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private fun buildDownloadedModelOptions(): List<ModelOption> {
         val options = mutableListOf<ModelOption>()
-        if (ModelFileManager.isDownloaded(requireContext(), ModelFileManager.LocalModel.E2B)) {
-            options += ModelOption("E2B", getString(R.string.model_e2b_label))
+        if (ModelFileManager.isDownloaded(requireContext(), ModelFileManager.LocalModel.GEMMA4_2B)) {
+            options += ModelOption("Gemma4-2B", "Gemma 4 2B")
         }
-        if (ModelFileManager.isDownloaded(requireContext(), ModelFileManager.LocalModel.E4B)) {
-            options += ModelOption("E4B", getString(R.string.model_e4b_label))
+        if (ModelFileManager.isDownloaded(requireContext(), ModelFileManager.LocalModel.GEMMA4_4B)) {
+            options += ModelOption("Gemma4-4B", "Gemma 4 4B")
         }
         ModelFileManager.listImportedTaskModels(requireContext()).forEach { imported ->
             options += ModelOption(imported.path, imported.name)
@@ -491,6 +506,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private fun renderCompressButtonState() {
         val enabled = !isModelLoadingNow && !isGenerating
+        binding.compressContextButton.visibility = if (isCompressingNow) View.GONE else View.VISIBLE
         binding.compressContextButton.isEnabled = enabled
         binding.compressContextButton.text =
             if (isCompressingNow) getString(R.string.compress_context_busy)
@@ -588,6 +604,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         responseTypingAnimationJob = null
         recordingAnimationJob?.cancel()
         recordingAnimationJob = null
+        
+        // 生成中の場合はキャンセル
+        viewModel.stopGeneration()
         
         // 録音中の場合は停止
         if (isRecordingAudio) {

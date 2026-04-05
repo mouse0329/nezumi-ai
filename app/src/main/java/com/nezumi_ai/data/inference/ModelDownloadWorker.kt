@@ -297,8 +297,8 @@ class ModelDownloadWorker(
 
         private fun modelFromName(name: String): ModelFileManager.LocalModel? {
             return when (name.uppercase()) {
-                ModelFileManager.LocalModel.E2B.name -> ModelFileManager.LocalModel.E2B
-                ModelFileManager.LocalModel.E4B.name -> ModelFileManager.LocalModel.E4B
+                ModelFileManager.LocalModel.GEMMA4_2B.name -> ModelFileManager.LocalModel.GEMMA4_2B
+                ModelFileManager.LocalModel.GEMMA4_4B.name -> ModelFileManager.LocalModel.GEMMA4_4B
                 else -> null
             }
         }
@@ -334,8 +334,8 @@ class ModelDownloadWorker(
         )
 
         val modelLabel = when (model) {
-            ModelFileManager.LocalModel.E2B -> "Gemma 3n E2B"
-            ModelFileManager.LocalModel.E4B -> "Gemma 3n E4B"
+            ModelFileManager.LocalModel.GEMMA4_2B -> "Gemma 4 2B"
+            ModelFileManager.LocalModel.GEMMA4_4B -> "Gemma 4 4B"
         }
         val sizeMb = sizeBytes / (1024.0 * 1024.0)
         val notification = NotificationCompat.Builder(applicationContext, NOTIFICATION_CHANNEL_ID)
@@ -377,8 +377,8 @@ class ModelDownloadWorker(
         )
 
         val modelLabel = when (model) {
-            ModelFileManager.LocalModel.E2B -> "Gemma 3n E2B"
-            ModelFileManager.LocalModel.E4B -> "Gemma 3n E4B"
+            ModelFileManager.LocalModel.GEMMA4_2B -> "Gemma 4 2B"
+            ModelFileManager.LocalModel.GEMMA4_4B -> "Gemma 4 4B"
         }
         val notification = NotificationCompat.Builder(applicationContext, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_error)

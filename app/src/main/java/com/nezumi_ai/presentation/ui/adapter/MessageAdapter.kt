@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.media.MediaPlayer
 import android.text.method.LinkMovementMethod
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -79,6 +80,7 @@ class MessageAdapter(
         private var mediaPlayer: MediaPlayer? = null
         
         fun bind(message: MessageEntity) {
+            Log.d("MessageAdapter", "BIND_USER_MESSAGE: id=${message.id} content='${message.content}'")
             binding.apply {
                 userMessageText.text = message.content
                 userMessageTime.text = MessageAdapter.formatTime(message.timestamp)
@@ -164,6 +166,7 @@ class MessageAdapter(
         }
 
         fun bind(message: MessageEntity) {
+            Log.d("MessageAdapter", "BIND_AI_MESSAGE: id=${message.id} content='${message.content.take(50)}'...")
             binding.apply {
                 markwon.setMarkdown(aiMessageText, message.content)
                 aiMessageTime.text = MessageAdapter.formatTime(message.timestamp)
