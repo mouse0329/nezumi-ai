@@ -285,7 +285,9 @@ class ChatViewModel(
                         val modelEnum = when (normalizedModel.uppercase()) {
                             "GEMMA4-4B" -> ModelFileManager.LocalModel.GEMMA4_4B
                             "GEMMA4-2B" -> ModelFileManager.LocalModel.GEMMA4_2B
-                            else -> ModelFileManager.LocalModel.GEMMA4_2B
+                            "E4B" -> ModelFileManager.LocalModel.GEMMA3N_4B
+                            "E2B" -> ModelFileManager.LocalModel.GEMMA3N_2B
+                            else -> ModelFileManager.LocalModel.GEMMA4_2B  // デフォルト
                         }
                         ModelFileManager.clearCorruptedModel(appContext, modelEnum)
                         Log.i(TAG, "モデルファイルをクリアしました")
@@ -969,8 +971,8 @@ class ChatViewModel(
         return when {
             trimmed.equals("Gemma4-4B", ignoreCase = true) -> "Gemma4-4B"
             trimmed.equals("Gemma4-2B", ignoreCase = true) -> "Gemma4-2B"
-            trimmed.equals("E4B", ignoreCase = true) -> "Gemma4-4B"  // 互換性のため E4B → Gemma4-4B
-            trimmed.equals("E2B", ignoreCase = true) -> "Gemma4-2B"  // 互換性のため E2B → Gemma4-2B
+            trimmed.equals("E4B", ignoreCase = true) -> "E4B"  // Gemma3n 4B (保持)
+            trimmed.equals("E2B", ignoreCase = true) -> "E2B"  // Gemma3n 2B (保持)
             isLocalTaskPath -> trimmed
             else -> "Gemma4-2B"  // デフォルト
         }
@@ -981,6 +983,8 @@ class ChatViewModel(
         return when {
             normalized.equals("Gemma4-4B", ignoreCase = true) -> "gemma4-4b"
             normalized.equals("Gemma4-2B", ignoreCase = true) -> "gemma4-2b"
+            normalized.equals("E4B", ignoreCase = true) -> "gemma-3n-4b"  // Gemma3n 4B
+            normalized.equals("E2B", ignoreCase = true) -> "gemma-3n-2b"  // Gemma3n 2B
             (normalized.endsWith(".task") || normalized.endsWith(".litertlm")) && normalized.startsWith("/") -> normalized
             else -> "gemma4-2b"  // デフォルト
         }

@@ -2,6 +2,27 @@
     <string name="app_name">ネズミAI</string>
     <string name="action_settings">設定</string>
 
+    <!-- Welcome Dialog -->
+    <string name="welcome_title">ネズミAI へようこそ</string>
+    <string name="welcome_message">📝 使い方：
+• セッションタブ：チャット履歴を確認できます
+• チャットタブ：AIとの会話ができます
+• 設定タブ：モデルダウンロードやトークン設定ができます
+
+⚙️ 初期設定：
+1. 設定タブで「HuggingFace トークン認証」を行ってください
+2. モデル（E2B または E4B）をダウンロードしてください
+
+✨ その他：
+• ライセンス表示でオープンソースライブラリの情報を確認できます
+
+それでは、AI チャットをお楽しみください！</string>
+
+    <!-- Empty State Messages -->
+    <string name="no_sessions_title">チャットはまだありません</string>
+    <string name="no_sessions_message">モデルがダウンロードされていることを確認してから「＋」ボタンをタップしてチャットを開始しましょう</string>
+    <string name="create_first_session">チャットを開始</string>
+
     <!-- MVP Strings -->
     <string name="app_title_sessions">ネズミAI-チャット</string>
     <string name="new_session">新規セッション</string>

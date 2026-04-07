@@ -84,6 +84,9 @@ class SessionListFragment : Fragment(R.layout.fragment_session_list) {
             binding.newSessionButton.setOnClickListener {
                 viewModel.createNewSession("新しいチャット")
             }
+            binding.createFirstSessionButton.setOnClickListener {
+                viewModel.createNewSession("新しいチャット")
+            }
             binding.settingsButton.setOnClickListener {
                 findNavController().navigate(R.id.action_sessionListFragment_to_settingsFragment)
             }
@@ -101,6 +104,12 @@ class SessionListFragment : Fragment(R.layout.fragment_session_list) {
                             if (shouldScrollToTop && sessions.isNotEmpty()) {
                                 binding.sessionRecyclerView.scrollToPosition(0)
                             }
+                        }
+                        // 空状態の表示制御
+                        if (sessions.isEmpty()) {
+                            binding.emptyStateContainer.visibility = View.VISIBLE
+                        } else {
+                            binding.emptyStateContainer.visibility = View.GONE
                         }
                         previousSessionCount = sessions.size
                     }

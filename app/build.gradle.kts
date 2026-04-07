@@ -1,8 +1,18 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application") version "8.5.2"
     kotlin("android") version "2.2.0"
     kotlin("kapt") version "2.2.0"
     id("androidx.navigation.safeargs.kotlin") version "2.6.0"
+}
+
+// local.properties から署名設定を読み込む
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localProperties.load(FileInputStream(localPropertiesFile))
 }
 
 android {
@@ -27,10 +37,10 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file("C:/Users/mouse/mouse.jks")
-            storePassword = "4t#DKk0"
-            keyAlias = "key0"
-            keyPassword = "4t#DKk0"
+            storeFile = file(localProperties.getProperty("STORE_FILE", ""))
+            storePassword = localProperties.getProperty("STORE_PASSWORD", "")
+            keyAlias = localProperties.getProperty("KEY_ALIAS", "")
+            keyPassword = localProperties.getProperty("KEY_PASSWORD", "")
         }
     }
 

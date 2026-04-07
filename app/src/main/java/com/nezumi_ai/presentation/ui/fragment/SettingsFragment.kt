@@ -158,10 +158,39 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             Toast.makeText(requireContext(), "ログアウトしました", Toast.LENGTH_SHORT).show()
         }
 
-        // TODO: Add Gemma3n UI elements to fragment_settings.xml with IDs:
-        // - download_gemma3n_2b_button, delete_gemma3n_2b_button, gemma3n_2b_access_button, gemma3n_2b_status, gemma3n_2b_download_progress, gemma3n_2b_download_text
-        // - download_gemma3n_4b_button, delete_gemma3n_4b_button, gemma3n_4b_access_button, gemma3n_4b_status, gemma3n_4b_download_progress, gemma3n_4b_download_text
-        // For now, Gemma3n models fall back to Gemma4_2B UI if download is initiated programmatically
+        /**
+         * ===== 新しいモデルの追加手順 =====
+         * 1. ModelFileManager.kt: LocalModel enum に新しいモデルを追加
+         *    例: MYNEW_2B, MYNEW_4B
+         *
+         * 2. fragment_settings.xml: UI 要素を追加
+         *    各モデルに必要な要素:
+         *    - download_mynew_2b_button, delete_mynew_2b_button
+         *    - mynew_2b_status, mynew_2b_download_progress, mynew_2b_download_text
+         *    - mynew_2b_access_button
+         *
+         * 3. 以下のファイルの with 式を更新：
+         *    - setModelButtonsEnabled() - ボタン有効/無効
+         *    - setCancelMode() - キャンセルボタン処理
+         *    - showProgress() - プログレスバー表示
+         *    - updateProgress() - 進捗更新
+         *    - showCancelInProgress() - キャンセル処理UI
+         *    - setStatus() - ステータステキスト
+         *    - setAccessButtonVisible() - HF アクセスボタン
+         *
+         * 4. ChatViewModel.kt:
+         *    - normalizeModel() に新モデル名の case を追加
+         *    - toEngineModelName() にエンジン名の mapping を追加
+         *    - loadModelWithOverlay() で localModel のケース追加
+         *
+         * 5. SettingsRepository.kt:
+         *    - isBuiltinGemma4Model() に必要に応じて追加（Gemma4 系のみ）
+         *    - getContextWindowForModel() に maxWindow の条件追加
+         *
+         * 6. ModelFileManager.kt:
+         *    - modelFile() に filename mapping 追加
+         *    - resolveModelName() に新モデル判定追加
+         */
 
         // Gemma 4 2B
         binding.downloadGemma42bButton.setOnClickListener {
@@ -195,6 +224,34 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         }
         binding.deleteGemma44bButton.setOnClickListener {
             runModelAction(ModelFileManager.LocalModel.GEMMA4_4B, false)
+        }
+
+        // Gemma 3n E2B
+        binding.downloadE2bButton.setOnClickListener {
+            val model = ModelFileManager.LocalModel.GEMMA3N_2B
+            if (binding.downloadE2bButton.tag?.toString()?.contains("cancel_mode") == true) {
+                showCancelInProgress(model)
+                ModelDownloadWorker.cancel(requireContext(), model)
+            } else {
+                requestNotificationPermissionForDownload(model)
+            }
+        }
+        binding.deleteE2bButton.setOnClickListener {
+            runModelAction(ModelFileManager.LocalModel.GEMMA3N_2B, false)
+        }
+
+        // Gemma 3n E4B
+        binding.downloadE4bButton.setOnClickListener {
+            val model = ModelFileManager.LocalModel.GEMMA3N_4B
+            if (binding.downloadE4bButton.tag?.toString()?.contains("cancel_mode") == true) {
+                showCancelInProgress(model)
+                ModelDownloadWorker.cancel(requireContext(), model)
+            } else {
+                requestNotificationPermissionForDownload(model)
+            }
+        }
+        binding.deleteE4bButton.setOnClickListener {
+            runModelAction(ModelFileManager.LocalModel.GEMMA3N_4B, false)
         }
 
         binding.importTaskButton.setOnClickListener {
@@ -312,6 +369,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         super.onResume()
         renderHfTokenState()
         // LiveData 更新を取りこぼした場合の保険（特に「検証中…」→SUCCEEDED 遷移）
+        refreshWorkInfoOnce(ModelFileManager.LocalModel.GEMMA3N_2B)
+        refreshWorkInfoOnce(ModelFileManager.LocalModel.GEMMA3N_4B)
         refreshWorkInfoOnce(ModelFileManager.LocalModel.GEMMA4_2B)
         refreshWorkInfoOnce(ModelFileManager.LocalModel.GEMMA4_4B)
         refreshStatus()
@@ -464,6 +523,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun refreshStatus() {
         listOf(
+            ModelFileManager.LocalModel.GEMMA3N_2B,
+            ModelFileManager.LocalModel.GEMMA3N_4B,
             ModelFileManager.LocalModel.GEMMA4_2B,
             ModelFileManager.LocalModel.GEMMA4_4B
         ).forEach { model ->
@@ -484,9 +545,13 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun setModelButtonsEnabled(model: ModelFileManager.LocalModel, enabled: Boolean) {
         when (model) {
-            ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> {
-                binding.downloadGemma42bButton.isEnabled = enabled
-                binding.deleteGemma42bButton.isEnabled = enabled
+            ModelFileManager.LocalModel.GEMMA3N_2B -> {
+                binding.downloadE2bButton.isEnabled = enabled
+                binding.deleteE2bButton.isEnabled = enabled
+            }
+            ModelFileManager.LocalModel.GEMMA3N_4B -> {
+                binding.downloadE4bButton.isEnabled = enabled
+                binding.deleteE4bButton.isEnabled = enabled
             }
             ModelFileManager.LocalModel.GEMMA4_2B -> {
                 binding.downloadGemma42bButton.isEnabled = enabled
@@ -501,7 +566,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun setCancelMode(model: ModelFileManager.LocalModel, isCancelMode: Boolean) {
         val button = when (model) {
-            ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.downloadGemma42bButton
+            ModelFileManager.LocalModel.GEMMA3N_2B -> binding.downloadE2bButton
+            ModelFileManager.LocalModel.GEMMA3N_4B -> binding.downloadE4bButton
             ModelFileManager.LocalModel.GEMMA4_2B -> binding.downloadGemma42bButton
             ModelFileManager.LocalModel.GEMMA4_4B -> binding.downloadGemma44bButton
         }
@@ -517,7 +583,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun showProgress(model: ModelFileManager.LocalModel, visible: Boolean) {
         val (progressBar, text) = when (model) {
-            ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
+            ModelFileManager.LocalModel.GEMMA3N_2B -> binding.e2bDownloadProgress to binding.e2bDownloadText
+            ModelFileManager.LocalModel.GEMMA3N_4B -> binding.e4bDownloadProgress to binding.e4bDownloadText
             ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
             ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bDownloadProgress to binding.gemma44bDownloadText
         }
@@ -532,7 +599,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun updateProgress(model: ModelFileManager.LocalModel, downloaded: Long, total: Long, speedMbps: Double = 0.0, remainingSec: Double = 0.0) {
         val (progressBar, text) = when (model) {
-            ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText  // Fallback to Gemma4_2B UI for now
+            ModelFileManager.LocalModel.GEMMA3N_2B -> binding.e2bDownloadProgress to binding.e2bDownloadText
+            ModelFileManager.LocalModel.GEMMA3N_4B -> binding.e4bDownloadProgress to binding.e4bDownloadText
             ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
             ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bDownloadProgress to binding.gemma44bDownloadText
         }
@@ -680,7 +748,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                             // 検証フェーズ中は進捗更新が止まりやすいので、短時間だけ状態をポーリングしてUIを追従させる
                             startVerifyPolling(model)
                             val text = when (model) {
-                                ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.gemma42bDownloadText  // Fallback to Gemma4_2B UI
+                                ModelFileManager.LocalModel.GEMMA3N_2B -> binding.e2bDownloadText
+                                ModelFileManager.LocalModel.GEMMA3N_4B -> binding.e4bDownloadText
                                 ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bDownloadText
                                 ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bDownloadText
                             }
@@ -777,7 +846,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         showProgress(model, true)
         setStatus(model, "キャンセル処理中...")
         val (progressBar, text) = when (model) {
-            ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
+            ModelFileManager.LocalModel.GEMMA3N_2B -> binding.e2bDownloadProgress to binding.e2bDownloadText
+            ModelFileManager.LocalModel.GEMMA3N_4B -> binding.e4bDownloadProgress to binding.e4bDownloadText
             ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
             ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bDownloadProgress to binding.gemma44bDownloadText
         }
@@ -835,7 +905,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun setStatus(model: ModelFileManager.LocalModel, text: String) {
         when (model) {
-            ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.gemma42bStatus.text = text  // Fallback to Gemma4_2B UI
+            ModelFileManager.LocalModel.GEMMA3N_2B -> binding.e2bStatus.text = text
+            ModelFileManager.LocalModel.GEMMA3N_4B -> binding.e4bStatus.text = text
             ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bStatus.text = text
             ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bStatus.text = text
         }
@@ -843,7 +914,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun setAccessButtonVisible(model: ModelFileManager.LocalModel, visible: Boolean) {
         when (model) {
-            ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.gemma42bAccessButton.visibility = if (visible) View.VISIBLE else View.GONE  // Fallback to Gemma4_2B UI
+            ModelFileManager.LocalModel.GEMMA3N_2B -> binding.e2bAccessButton.visibility = if (visible) View.VISIBLE else View.GONE
+            ModelFileManager.LocalModel.GEMMA3N_4B -> binding.e4bAccessButton.visibility = if (visible) View.VISIBLE else View.GONE
             ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bAccessButton.visibility = if (visible) View.VISIBLE else View.GONE
             ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bAccessButton.visibility = if (visible) View.VISIBLE else View.GONE
         }
