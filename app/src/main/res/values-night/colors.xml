@@ -23,4 +23,8 @@
 
     <!-- Border Colors -->
     <color name="border">#374151</color>
+
+    <!-- Thinking Toggle Button (High Contrast) -->
+    <color name="thinking_toggle_stroke">#60A5FA</color>
+    <color name="thinking_toggle_text">#60A5FA</color>
 </resources>

@@ -7,6 +7,11 @@ import androidx.navigation.findNavController
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.PowerManager
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.databinding.ActivityMainBinding
@@ -23,6 +28,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private var dbInitialized = false
+    private var screenOffReceiver: BroadcastReceiver? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,6 +60,9 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         
+        // Register screen off receiver to stop generation when screen sleeps
+        registerScreenOffReceiver()
+        
         // Database 初期化をここで遅延実行（Binder 負荷軽減）
         if (!dbInitialized) {
             dbInitialized = true
@@ -66,6 +75,53 @@ class MainActivity : AppCompatActivity() {
                     Log.w(TAG, "LiteRT-LM (.litertlm) migration failed", it)
                 }
             }
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        
+        // Unregister screen off receiver
+        unregisterScreenOffReceiver()
+    }
+
+    private fun registerScreenOffReceiver() {
+        screenOffReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                    Log.d(TAG, "Screen off detected - stopping generation")
+                    stopGenerationOnScreenOff()
+                }
+            }
+        }
+        
+        val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        try {
+            registerReceiver(screenOffReceiver, filter, Context.RECEIVER_EXPORTED)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to register screen off receiver", e)
+        }
+    }
+
+    private fun unregisterScreenOffReceiver() {
+        screenOffReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to unregister screen off receiver", e)
+            }
+        }
+        screenOffReceiver = null
+    }
+
+    private fun stopGenerationOnScreenOff() {
+        try {
+            val currentFragment = supportFragmentManager.primaryNavigationFragment
+            if (currentFragment is com.nezumi_ai.presentation.ui.fragment.ChatFragment) {
+                currentFragment.stopGeneration()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to stop generation on screen off", e)
         }
     }
 

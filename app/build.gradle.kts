@@ -1,7 +1,7 @@
 plugins {
     id("com.android.application") version "8.5.2"
-    kotlin("android") version "1.9.24"
-    kotlin("kapt") version "1.9.24"
+    kotlin("android") version "2.2.0"
+    kotlin("kapt") version "2.2.0"
     id("androidx.navigation.safeargs.kotlin") version "2.6.0"
 }
 
@@ -13,8 +13,8 @@ android {
         applicationId = "com.nezumi_ai"
         minSdk = 30
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 7
+        versionName = "1.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["appAuthRedirectScheme"] = "nezumiai"
@@ -61,13 +61,14 @@ android {
     
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 }
 
 dependencies {
     // Core
     implementation("androidx.core:core-ktx:1.10.1")
-    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.24")
+    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.2.0")
     
     // UI
     implementation("androidx.appcompat:appcompat:1.6.1")
@@ -78,10 +79,10 @@ dependencies {
     implementation("androidx.navigation:navigation-fragment-ktx:2.6.0")
     implementation("androidx.navigation:navigation-ui-ktx:2.6.0")
     
-    // Room Database
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    kapt("androidx.room:room-compiler:2.6.1")
+    // Room（Kotlin 2.2+ メタデータ対応のコンパイラが必要 ― litertlm 依存のため）
+    implementation("androidx.room:room-runtime:2.7.0")
+    implementation("androidx.room:room-ktx:2.7.0")
+    kapt("androidx.room:room-compiler:2.7.0")
     
     // Lifecycle & ViewModel
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
@@ -94,11 +95,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
-    // On-device LLM (MediaPipe tasks-genai - Gemma support)
-    // MPImage / BitmapImageBuilder は tasks-genai の compile classpath に無い。tasks-core に含まれる。
-    // Updated to 0.10.33 for tf_lite_end_of_vision and multimodal adapter support
-    implementation("com.google.mediapipe:tasks-core:0.10.33")
-    implementation("com.google.mediapipe:tasks-genai:0.10.33")
+    // On-device LLM（AI Edge Gallery と同じ LiteRT-LM + TFLite Play Services）
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.0")
+    implementation("com.google.android.gms:play-services-tflite-java:16.4.0")
+    implementation("com.google.android.gms:play-services-tflite-gpu:16.4.0")
 
     // OAuth (Hugging Face)
     implementation("net.openid:appauth:0.11.1")

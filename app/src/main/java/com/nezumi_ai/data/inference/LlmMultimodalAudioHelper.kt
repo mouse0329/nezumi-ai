@@ -12,8 +12,8 @@ import java.nio.ByteOrder
 import kotlin.math.roundToInt
 
 /**
- * MediaPipe LLM の [com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession.addAudio]
- * が要求する **mono 16-bit PCM の WAV** に近い形へ変換する。
+ * LiteRT-LM の [com.google.ai.edge.litertlm.Content.AudioBytes] 向けに、
+ * **mono 16-bit PCM の WAV** へ変換する。
  */
 object LlmMultimodalAudioHelper {
     private const val TAG = "LlmMultimodalAudio"

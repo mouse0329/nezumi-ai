@@ -32,7 +32,7 @@ class ModelManager(
         }
     }
     
-    private val inferenceEngine: AIInferenceEngine = GemmaE2BEngine(context)
+    private val inferenceEngine: AIInferenceEngine = LiteRtLmEngine(context)
     private var currentModelName: String? = null
     private var currentConfig: InferenceConfig? = null
     private val loadMutex = Mutex()
@@ -144,10 +144,10 @@ class ModelManager(
     suspend fun runInference(
         sessionId: Long,
         prompt: String,
-        temperature: Float = 0.7f
+        config: InferenceConfig
     ): Flow<String> = flow {
         inferenceMutex.withLock {
-            emitAll(inferenceEngine.inference(sessionId, prompt, temperature))
+            emitAll(inferenceEngine.inference(sessionId, prompt, config))
         }
     }
 /**
@@ -158,10 +158,10 @@ suspend fun runInferenceWithMedia(
     prompt: String,
     images: List<Bitmap> = emptyList(),
     audioClips: List<ByteArray> = emptyList(),
-    temperature: Float = 0.7f
+    config: InferenceConfig
 ): Flow<String> = flow {
     inferenceMutex.withLock {
-        emitAll(inferenceEngine.inferenceWithMedia(sessionId, prompt, images, audioClips, temperature))
+        emitAll(inferenceEngine.inferenceWithMedia(sessionId, prompt, images, audioClips, config))
     }
 }
     
@@ -194,4 +194,15 @@ suspend fun runInferenceWithMedia(
      * 現在のモデル名を取得
      */
     fun getCurrentModelName(): String? = currentModelName
+
+    /**
+     * 推論をキャンセル（Gallery方式：cancelProcess() のみ、KV cache は保持）
+     */
+    suspend fun cancelInference() {
+        try {
+            inferenceEngine.cancelInference()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during inference cancellation", e)
+        }
+    }
 }

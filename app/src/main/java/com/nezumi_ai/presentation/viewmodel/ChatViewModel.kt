@@ -1,12 +1,14 @@
 package com.nezumi_ai.presentation.viewmodel
 
 import android.content.Context
+import com.nezumi_ai.BuildConfig
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
+import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Log
@@ -23,6 +25,8 @@ import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import org.json.JSONObject
@@ -36,8 +40,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class ChatViewModel(
@@ -51,15 +57,37 @@ class ChatViewModel(
         private const val TAG = "ChatViewModel"
         private const val RESPONSE_TIMEOUT_MS = 120_000L
         private const val COMPRESSION_TIMEOUT_MS = 25_000L
-        private const val STREAM_PERSIST_INTERVAL_MS = 66L
-        private const val STREAM_PERSIST_INTERVAL_TABLE_MS = 16L
+        /** ストリーム中の Room 更新間隔（Gallery レベル：高速更新） */
+        private const val STREAM_PERSIST_INTERVAL_MS = 100L
+        private const val STREAM_PERSIST_INTERVAL_TABLE_MS = 50L
         private const val DEFAULT_SESSION_TITLE = "新しいチャット"
         const val CONTEXT_WINDOW_CHARS = 4_096
         private const val MAX_CONTEXT_CHARS = CONTEXT_WINDOW_CHARS
         private const val COMPRESSION_RECENT_MESSAGE_COUNT = 6
+        /** 1 回の生成の上限（ネイティブが onDone を返さない場合の保険） */
+        private const val GENERATION_WALL_TIMEOUT_MS = 900_000L
+        /** 最初のトークン以降、この時間チャンクが無ければ打ち切り */
+        private const val GENERATION_STALL_TIMEOUT_MS = 180_000L
+        private const val GENERATION_STALL_CHECK_MS = 5_000L
+
+        /**
+         * ローカル .litertlm を「破損・欠落」とみなして削除してよいときだけ true。
+         * [TF_LITE_AUX not found] など TFLite/NPU ランタイムのエラーはファイル破損ではない。
+         */
+        private fun shouldDeleteLocalModelFileOnLoadError(errorMessage: String): Boolean {
+            if (errorMessage.contains("TF_LITE", ignoreCase = true)) return false
+            return errorMessage.contains("Cannot read", ignoreCase = true) ||
+                errorMessage.contains("not found", ignoreCase = true) ||
+                errorMessage.contains("corrupt", ignoreCase = true) ||
+                errorMessage.contains("invalid", ignoreCase = true)
+        }
     }
 
     private class FirstTokenTimeoutException : CancellationException("FIRST_TOKEN_TIMEOUT")
+
+    private class GenerationStalledException : Exception("GENERATION_STALLED")
+
+    private class GenerationWallTimeoutException : Exception("GENERATION_WALL_TIMEOUT")
 
     private data class CompressedContextCache(
         val signature: Int,
@@ -93,11 +121,18 @@ class ChatViewModel(
     private val _isCompressing = MutableStateFlow(false)
     val isCompressing: StateFlow<Boolean> = _isCompressing
 
+    /** true のとき、このチャットでは設定のシンキングONでも LiteRT の enable_thinking を付けない */
+    private val _chatSessionDisableThinking = MutableStateFlow(false)
+    val chatSessionDisableThinking: StateFlow<Boolean> = _chatSessionDisableThinking.asStateFlow()
+
     private val _sessionTitle = MutableStateFlow(DEFAULT_SESSION_TITLE)
     val sessionTitle: StateFlow<String> = _sessionTitle
 
     private val _contextUsageChars = MutableStateFlow(0)
     val contextUsageChars: StateFlow<Int> = _contextUsageChars
+
+    private val _contextWindowSize = MutableStateFlow(4096)
+    val contextWindowSize: StateFlow<Int> = _contextWindowSize
 
     private val _uiMessage = MutableSharedFlow<String>()
     val uiMessage: SharedFlow<String> = _uiMessage
@@ -115,6 +150,12 @@ class ChatViewModel(
     private var messagesCollectionJob: Job? = null
     private val compressedContextCache = mutableMapOf<Long, CompressedContextCache>()
     private var currentBackendType = "CPU"  // GPU時はキャッシュを無効化するためのフラグ
+    
+    // WakeLock管理
+    private var screenWakeLock: PowerManager.WakeLock? = null
+    private val powerManager: PowerManager? by lazy {
+        appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+    }
     
     init {
         // ViewModel初期化時は設定のみ取得（モデルロードはしない）
@@ -141,32 +182,70 @@ class ChatViewModel(
                 Log.e(TAG, "Error monitoring settings changes", e)
             }
         }
+        
+        // モデル変更を監視してコンテキストウィンドウを更新
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                _selectedModel.collect { model ->
+                    val contextWindow = settingsRepository.getContextWindowForModel(model)
+                    _contextWindowSize.value = contextWindow
+                    Log.d(TAG, "Context window updated for model=$model: $contextWindow")
+                }
+            } catch (t: Throwable) {
+                val e = if (t is Exception) t else RuntimeException(t)
+                Log.e(TAG, "Error monitoring model changes", e)
+            }
+        }
     }
     
     fun setCurrentSession(sessionId: Long) {
         _currentSessionId.value = sessionId
+        _chatSessionDisableThinking.value = true
+        
+        // セッション遷移時に前の推論をキャンセルし、KVキャッシュを確実にクリア
+        stopGeneration()
+        
         // キャンセル前のコレクションジョブ
         messagesCollectionJob?.cancel()
         
         messagesCollectionJob = viewModelScope.launch {
             Log.d(TAG, "START_MESSAGE_COLLECTION: sessionId=$sessionId")
-            messageRepository.getMessagesForSession(sessionId).collect { msgs ->
-                Log.d(TAG, "UPDATE_MESSAGES_FLOW: count=${msgs.size} messages=${msgs.map { "${it.role}:${it.content.take(30)}" }}")
-                _messages.value = msgs
-                _contextUsageChars.value = estimateContextUsageChars(msgs)
-            }
+            messageRepository.getMessagesForSession(sessionId)
+                .collect { msgs ->
+                    if (BuildConfig.DEBUG) {
+                        Log.d(
+                            TAG,
+                            "UPDATE_MESSAGES_FLOW: count=${msgs.size} messages=${msgs.map { "${it.role}:${it.content.take(30)}" }}"
+                        )
+                    }
+                    // Room の Flow は参照を再利用することがあるため、toList() でコピーして新しいオブジェクト参照を作る
+                    _messages.value = msgs.toList()
+                    _contextUsageChars.value = estimateContextUsageChars(msgs)
+                }
         }
         viewModelScope.launch(Dispatchers.IO) {
             val session = sessionRepository.getSessionById(sessionId) ?: return@launch
             _sessionTitle.value = session.name
         }
         viewModelScope.launch(Dispatchers.IO) {
+            // セッション遷移時に圧縮コンテキストキャッシュをクリア
+            clearCompressedContextCache(sessionId)
             loadModelForSessionIfAvailable(sessionId)
         }
     }
     
     fun updateInputText(text: String) {
         _inputText.value = text
+    }
+
+    fun setChatSessionDisableThinking(disabled: Boolean) {
+        // 設定値のみ更新。モデルリロードは行わない。
+        // 次のメッセージ送信時に新しい設定が自動的に適用される。
+        Log.d(TAG, "setChatSessionDisableThinking: disabled=$disabled")
+        _chatSessionDisableThinking.value = disabled
+        viewModelScope.launch {
+            _uiMessage.emit(if (disabled) "このチャットでシンキング: OFF" else "このチャットでシンキング: ON")
+        }
     }
 
     fun switchModel(model: String) {
@@ -180,7 +259,7 @@ class ChatViewModel(
             val normalizedModel = normalizeModel(model)
             settingsRepository.updateModel(normalizedModel)
             _selectedModel.value = normalizedModel
-            val config = settingsRepository.getInferenceConfigForModel(normalizedModel)
+            val config = chatInferenceConfigForModel(normalizedModel)
             val result = loadModelWithOverlay(normalizedModel, config, onlyIfAvailable = true)
             if (result.isFailure) {
                 val error = result.exceptionOrNull()
@@ -196,10 +275,7 @@ class ChatViewModel(
                 
                 // ファイル読み込みエラーを検出（PATH NOT FOUND など）
                 val errorMsg = error?.message ?: ""
-                if (errorMsg.contains("Cannot read", ignoreCase = true) ||
-                    errorMsg.contains("not found", ignoreCase = true) ||
-                    errorMsg.contains("corrupt", ignoreCase = true) ||
-                    errorMsg.contains("invalid", ignoreCase = true)) {
+                if (shouldDeleteLocalModelFileOnLoadError(errorMsg)) {
                     
                     Log.w(TAG, "モデルファイルの読み込みエラー: $normalizedModel")
                     _uiMessage.emit("❌ モデルファイルが読み込めません。設定画面で再ダウンロードしてください。")
@@ -225,7 +301,12 @@ class ChatViewModel(
         val sessionId = _currentSessionId.value ?: return
         if (_isLoading.value) return
         
+        // 前の job をキャンセル
+        generationJob?.cancel(CancellationException("Stopped by user"))
+        generationJob = null
+        
         generationJob = viewModelScope.launch {
+            val thisJob = this // このJobインスタンスを保存
             try {
                 // ユーザーメッセージを保存
                 messageRepository.addMessage(
@@ -248,7 +329,10 @@ class ChatViewModel(
                 Log.e(TAG, "Error sending message", e)
             } finally {
                 _isLoading.value = false
-                generationJob = null
+                // このJobがまだcurrentなら null にする（前のJobから overwrite されない）
+                if (generationJob == thisJob) {
+                    generationJob = null
+                }
             }
         }
     }
@@ -333,8 +417,18 @@ class ChatViewModel(
 
     fun stopGeneration() {
         generationJob?.cancel(CancellationException("Stopped by user"))
-        generationJob = null
+        generationJob = null  // 新しいJobとの競合を即座に防ぐ
         _isLoading.value = false
+        
+        // Gallery方式：Conversation.cancelProcess() を呼ぶ（KV cache は保持）
+        viewModelScope.launch {
+            try {
+                val manager = requireModelManager()
+                manager.cancelInference()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to cancel inference", e)
+            }
+        }
     }
 
     fun revokeLastPrompt() {
@@ -385,11 +479,16 @@ class ChatViewModel(
     ) {
         var streamingMessageId: Long? = null
         try {
+            // Acquire WakeLock to prevent screen sleep during generation
+            acquireScreenWakeLock()
+            
             val manager = requireModelManager()
             val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
             
             // メモリ不足チェック
-            if (manager.getMemoryUsagePercent() >= 85) {
+            val memoryPercent = manager.getMemoryUsagePercent()
+            if (memoryPercent >= 85) {
+                Log.w(TAG, "generateAIResponse: Memory usage too high: $memoryPercent%")
                 _uiMessage.emit("メモリが不足しています。ホームスクリーンに戻ります...")
                 _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
                 return
@@ -404,7 +503,10 @@ class ChatViewModel(
                 )
                 return
             }
-            val config = settingsRepository.getInferenceConfigForModel(selectedModel)
+            val config = chatInferenceConfigForModel(selectedModel)
+            val backend = settingsRepository.getBackendForModel(selectedModel)
+            Log.d(TAG, "generateAIResponse START: model=$selectedModel, enableThinking=${config.enableThinking}, backend=$backend, memoryUsage=$memoryPercent%")
+            
             val loadResult = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = false)
             if (loadResult.isFailure) {
                 val error = loadResult.exceptionOrNull()
@@ -419,10 +521,7 @@ class ChatViewModel(
                 }
                 
                 // ファイル読み込みエラーを検出
-                if (errorMsg.contains("Cannot read", ignoreCase = true) ||
-                    errorMsg.contains("not found", ignoreCase = true) ||
-                    errorMsg.contains("corrupt", ignoreCase = true) ||
-                    errorMsg.contains("invalid", ignoreCase = true)) {
+                if (shouldDeleteLocalModelFileOnLoadError(errorMsg)) {
                     
                     Log.w(TAG, "モデルファイルの読み込みエラー: $selectedModel")
                     _uiMessage.emit("❌ モデルファイルが読み込めません。設定画面で再ダウンロードしてください。")
@@ -466,7 +565,7 @@ class ChatViewModel(
                         prompt = promptForModel,
                         images = images,
                         audioClips = audioClips,
-                        temperature = config.temperature
+                        config = config
                     )
                 } else {
                     // テキストのみ推論
@@ -474,7 +573,7 @@ class ChatViewModel(
                     manager.runInference(
                         sessionId = sessionId,
                         prompt = promptForModel,
-                        temperature = config.temperature
+                        config = config
                     )
                 }
             }
@@ -488,112 +587,277 @@ class ChatViewModel(
             val activeStreamingMessageId = streamingMessageId
                 ?: throw IllegalStateException("Failed to create streaming message")
 
-            val responseBuilder = StringBuilder()
+            val answerBuilder = StringBuilder()
+            val thinkingBuilder = StringBuilder()
+            var nativeThinkingStream = false
             var lastPersistedContent = ""
             var lastPersistedThinking: String? = null
             var lastPersistAt = 0L
 
             // ストリーム内容を収集
             // タイムアウトは「最初の出力が来るまで」のみ有効。
-            var firstTokenReceived = false
+            val firstTokenSeen = AtomicBoolean(false)
+            val lastChunkAt = AtomicLong(SystemClock.elapsedRealtime())
+            val wallEndAt = SystemClock.elapsedRealtime() + GENERATION_WALL_TIMEOUT_MS
+            var streamAbortNote: String? = null
             try {
                 withContext(Dispatchers.IO) {
                     coroutineScope {
                         val firstTokenTimeoutJob = launch {
                             delay(RESPONSE_TIMEOUT_MS)
-                            if (!firstTokenReceived) {
+                            if (!firstTokenSeen.get()) {
                                 cancel(FirstTokenTimeoutException())
+                            }
+                        }
+
+                        val stallWatchJob = launch {
+                            while (isActive) {
+                                delay(GENERATION_STALL_CHECK_MS)
+                                if (!firstTokenSeen.get()) continue
+                                val idle = SystemClock.elapsedRealtime() - lastChunkAt.get()
+                                if (idle >= GENERATION_STALL_TIMEOUT_MS) {
+                                    throw GenerationStalledException()
+                                }
                             }
                         }
 
                         try {
                             aiResponseFlow.collect { chunk ->
-                                if (!firstTokenReceived) {
-                                    firstTokenReceived = true
+                                if (SystemClock.elapsedRealtime() > wallEndAt) {
+                                    throw GenerationWallTimeoutException()
+                                }
+                                if (!firstTokenSeen.getAndSet(true)) {
                                     firstTokenTimeoutJob.cancel()
                                 }
+                                lastChunkAt.set(SystemClock.elapsedRealtime())
                                 val finalFromModel = InferenceStreamProtocol.decodeFinal(chunk)
+                                val thinkDelta = InferenceStreamProtocol.decodeThinkChunk(chunk)
                                 if (finalFromModel != null) {
-                                    responseBuilder.clear()
-                                    responseBuilder.append(finalFromModel)
+                                    Log.d(TAG, "FINAL received: length=${finalFromModel.length}")
+                                    answerBuilder.clear()
+                                    answerBuilder.append(finalFromModel)
+                                } else if (thinkDelta != null) {
+                                    nativeThinkingStream = true
+                                    if (thinkDelta.isNotEmpty()) {
+                                        val curT = thinkingBuilder.toString()
+                                        val mergedT = mergeStreamingChunk(curT, thinkDelta)
+                                        if (mergedT != curT && mergedT.length >= curT.length) {
+                                            thinkingBuilder.clear()
+                                            thinkingBuilder.append(mergedT)
+                                        } else if (mergedT.length < curT.length) {
+                                            Log.w(
+                                                TAG,
+                                                "Thinking chunk merge would shrink: ${curT.length} -> ${mergedT.length}, skipping"
+                                            )
+                                        }
+                                    }
                                 } else {
                                     if (chunk.isNotEmpty()) {
-                                        val currentContent = responseBuilder.toString()
+                                        val currentContent = answerBuilder.toString()
+                                        if (BuildConfig.DEBUG) {
+                                            Log.d(TAG, "RAW_CHUNK: length=${chunk.length} content='${chunk.take(100)}'")
+                                        }
                                         val merged = mergeStreamingChunk(currentContent, chunk)
                                         if (merged != currentContent && merged.length >= currentContent.length) {
-                                            responseBuilder.clear()
-                                            responseBuilder.append(merged)
-                                            Log.d(TAG, "Chunk merged: ${currentContent.length} -> ${merged.length} chars")
+                                            answerBuilder.clear()
+                                            answerBuilder.append(merged)
+                                            if (BuildConfig.DEBUG) {
+                                                Log.d(
+                                                    TAG,
+                                                    "Chunk merged: ${currentContent.length} -> ${merged.length} chars (added ${merged.length - currentContent.length} chars)"
+                                                )
+                                                if (merged.length - currentContent.length != chunk.length) {
+                                                    Log.w(TAG, "⚠ OVERLAP DETECTED: chunk=${chunk.length} chars, but added only ${merged.length - currentContent.length} chars")
+                                                }
+                                            }
                                         } else if (merged.length < currentContent.length) {
-                                            Log.w(TAG, "Chunk merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping merge")
+                                            Log.w(TAG, "❌ Chunk merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping merge")
+                                            if (BuildConfig.DEBUG) {
+                                                Log.w(TAG, "  original chunk: '${chunk.take(80)}'")
+                                                Log.w(TAG, "  current: '${currentContent.take(80)}'")
+                                                Log.w(TAG, "  merged: '${merged.take(80)}'")
+                                            }
+                                        } else if (merged == currentContent) {
+                                            // chunk が既に反映済み
+                                            if (BuildConfig.DEBUG) {
+                                                Log.d(TAG, "DUPLICATE_CHUNK: skipped (already present)")
+                                            }
                                         }
                                     }
                                 }
                                 val messageIdToUpdate = streamingMessageId ?: activeStreamingMessageId
                                 messageIdToUpdate?.let { id ->
-                                    val parsedStream =
-                                        Gemma4ThinkingParser.parseStreaming(responseBuilder.toString())
-                                    val contentForUi = parsedStream.answer
-                                    val thinkingForUi = parsedStream.thinking
+                                    val contentForUi: String
+                                    val thinkingForUi: String?
+                                    if (nativeThinkingStream) {
+                                        contentForUi =
+                                            Gemma4ThinkingParser.sanitizeVisibleText(answerBuilder.toString())
+                                        thinkingForUi =
+                                            Gemma4ThinkingParser.sanitizeVisibleText(thinkingBuilder.toString())
+                                                .ifBlank { null }
+                                        if (BuildConfig.DEBUG && (contentForUi.isNotEmpty() || !thinkingForUi.isNullOrBlank())) {
+                                            Log.d(TAG, "CONTENT_THINKING_STATE: content_len=${contentForUi.length} thinking_len=${thinkingForUi?.length ?: 0}")
+                                        }
+                                    } else {
+                                        val parsedStream =
+                                            Gemma4ThinkingParser.parseStreaming(answerBuilder.toString())
+                                        contentForUi = parsedStream.answer
+                                        thinkingForUi = parsedStream.thinking
+                                    }
                                     val now = SystemClock.elapsedRealtime()
                                     val persistInterval = if (isLikelyMarkdownTable(contentForUi)) {
                                         STREAM_PERSIST_INTERVAL_TABLE_MS
                                     } else {
                                         STREAM_PERSIST_INTERVAL_MS
                                     }
-                                    val shouldPersist =
-                                        (contentForUi != lastPersistedContent ||
-                                            thinkingForUi != lastPersistedThinking) &&
-                                            (finalFromModel != null || now - lastPersistAt >= persistInterval)
-                                    if (shouldPersist) {
+                                    val isFirstVisibleContent =
+                                        contentForUi.isNotEmpty() && lastPersistedContent.isEmpty()
+                                    val isFirstThinkingPersist =
+                                        !thinkingForUi.isNullOrBlank() && lastPersistedThinking.isNullOrBlank()
+                                    // Thinking フェーズのみで content が空の場合は persist を遅延させる
+                                    // （content が来た時、または最終確定時のみ persist する）
+                                    val isThinkingOnlyPhase = contentForUi.isEmpty() && !thinkingForUi.isNullOrBlank()
+                                    val shouldPersistToDb =
+                                        if (isThinkingOnlyPhase) {
+                                            // Thinking のみ中は persist をスキップ
+                                            false
+                                        } else {
+                                            // Content が存在すれば通常の persist ロジック
+                                            (contentForUi != lastPersistedContent ||
+                                                thinkingForUi != lastPersistedThinking) &&
+                                                (finalFromModel != null ||
+                                                    isFirstVisibleContent ||
+                                                    isFirstThinkingPersist ||
+                                                    now - lastPersistAt >= persistInterval)
+                                        }
+                                    if (shouldPersistToDb) {
                                         messageRepository.updateMessageContent(
                                             messageId = id,
                                             content = contentForUi,
-                                            isStreaming = true,
+                                            isStreaming = finalFromModel == null,
                                             thinkingContent = thinkingForUi
                                         )
                                         lastPersistedContent = contentForUi
                                         lastPersistedThinking = thinkingForUi
                                         lastPersistAt = now
+                                    } else if (isThinkingOnlyPhase) {
+                                        // Thinking のみ中でも UI には即座に反映: in-memory で更新
+                                        if (BuildConfig.DEBUG) {
+                                            Log.d(TAG, "THINKING_ONLY_PHASE: updating in-memory id=$id thinkingLen=${thinkingForUi?.length ?: 0}")
+                                        }
+                                        val currentMsgs = _messages.value.toMutableList()
+                                        val idx = currentMsgs.indexOfFirst { it.id == id }
+                                        if (BuildConfig.DEBUG) {
+                                            Log.d(TAG, "THINKING_ONLY_PHASE: found index=$idx current_messages=${currentMsgs.size}")
+                                        }
+                                        if (idx >= 0) {
+                                            val updated = currentMsgs[idx].copy(thinkingContent = thinkingForUi)
+                                            currentMsgs[idx] = updated
+                                            _messages.value = currentMsgs.toList()
+                                            if (BuildConfig.DEBUG) {
+                                                Log.d(TAG, "THINKING_ONLY_PHASE: in-memory updated and emitted")
+                                            }
+                                        } else {
+                                            if (BuildConfig.DEBUG) {
+                                                Log.w(TAG, "THINKING_ONLY_PHASE: could not find message id=$id in ${currentMsgs.map { it.id }}")
+                                            }
+                                        }
                                     }
                                 }
-                                Log.d(TAG, "Received chunk: $chunk")
+                                if (BuildConfig.DEBUG) Log.d(TAG, "Received chunk: $chunk")
                             }
                         } finally {
                             firstTokenTimeoutJob.cancel()
+                            stallWatchJob.cancel()
+                            Log.d(TAG, "Flow collection completed")
                         }
                     }
                 }
             } catch (collectionError: Throwable) {
-                Log.e(TAG, "Error during flow collection", collectionError)
-                if (collectionError !is FirstTokenTimeoutException && collectionError !is CancellationException) {
-                    throw collectionError
+                when {
+                    collectionError is FirstTokenTimeoutException -> {
+                        Log.d(TAG, "First token timeout during flow collection")
+                    }
+                    collectionError is GenerationStalledException -> {
+                        Log.w(TAG, "Generation stalled (no chunks); finalizing partial", collectionError)
+                        streamAbortNote =
+                            "\n\n（長時間出力が途切れたため、ここで打ち切りました）"
+                        withContext(Dispatchers.Main) {
+                            _uiMessage.emit("応答が長時間途切れました。表示された分まで保存しました。")
+                        }
+                    }
+                    collectionError is GenerationWallTimeoutException -> {
+                        Log.w(TAG, "Generation wall timeout; finalizing partial", collectionError)
+                        streamAbortNote =
+                            "\n\n（生成時間の上限に達したため、ここで打ち切りました）"
+                        withContext(Dispatchers.Main) {
+                            _uiMessage.emit("生成時間が上限に達しました。表示された分まで保存しました。")
+                        }
+                    }
+                    collectionError is CancellationException -> {
+                        Log.d(TAG, "Flow collection was cancelled: ${collectionError.message}")
+                    }
+                    else -> {
+                        Log.e(TAG, "Error during flow collection", collectionError)
+                        throw collectionError
+                    }
                 }
             }
 
-            val finalParsed = Gemma4ThinkingParser.parse(responseBuilder.toString())
-            val completeResponse = finalParsed.answer
+            val completeResponse: String
+            val finalThinking: String?
+            if (nativeThinkingStream) {
+                completeResponse =
+                    Gemma4ThinkingParser.sanitizeVisibleText(answerBuilder.toString())
+                finalThinking =
+                    Gemma4ThinkingParser.sanitizeVisibleText(thinkingBuilder.toString()).ifBlank { null }
+            } else {
+                val finalParsed = Gemma4ThinkingParser.parse(answerBuilder.toString())
+                completeResponse = finalParsed.answer
+                finalThinking = finalParsed.thinking
+            }
+            val note = streamAbortNote
+            val contentToSave =
+                when {
+                    note == null -> completeResponse
+                    completeResponse.isNotEmpty() -> completeResponse + note
+                    else -> note.trim()
+                }
+
             val hasPayload =
-                completeResponse.isNotEmpty() || !finalParsed.thinking.isNullOrEmpty()
+                contentToSave.isNotEmpty() || !finalThinking.isNullOrEmpty()
+
+            Log.d(TAG, "Inference collection completed: hasPayload=$hasPayload, completeResponse.length=${completeResponse.length}, finalThinking=${!finalThinking.isNullOrEmpty()}")
 
             if (hasPayload) {
-                messageRepository.updateMessageContent(
-                    messageId = activeStreamingMessageId,
-                    content = completeResponse,
-                    isStreaming = false,
-                    thinkingContent = finalParsed.thinking
-                )
-                if (completeResponse.isNotEmpty()) {
-                    maybeGenerateSessionTitle(sessionId, userMessage, completeResponse)
+                withContext(Dispatchers.IO) {
+                    Log.d(TAG, "Updating message content with final response")
+                    messageRepository.updateMessageContent(
+                        messageId = activeStreamingMessageId,
+                        content = contentToSave,
+                        isStreaming = false,
+                        thinkingContent = finalThinking
+                    )
+                    if (contentToSave.isNotEmpty()) {
+                        Log.d(TAG, "Generating session title")
+                        maybeGenerateSessionTitle(sessionId, userMessage, contentToSave)
+                    }
+                    syncSessionTitleFromDb(sessionId)
                 }
-                Log.d(TAG, "AI response saved to database: ${completeResponse.take(50)}...")
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "AI response saved to database: ${completeResponse.take(50)}...")
+                }
             } else {
-                messageRepository.updateMessageContent(
-                    messageId = activeStreamingMessageId,
-                    content = "申し訳ありません。応答を生成できませんでした。",
-                    isStreaming = false,
-                    thinkingContent = null
-                )
+                Log.w(TAG, "No payload generated, saving default message")
+                withContext(Dispatchers.IO) {
+                    messageRepository.updateMessageContent(
+                        messageId = activeStreamingMessageId,
+                        content = "申し訳ありません。応答を生成できませんでした。",
+                        isStreaming = false,
+                        thinkingContent = null
+                    )
+                    syncSessionTitleFromDb(sessionId)
+                }
             }
         } catch (t: Throwable) {
             if (t is FirstTokenTimeoutException) {
@@ -605,6 +869,9 @@ class ChatViewModel(
                         isStreaming = false,
                         thinkingContent = null
                     )
+                }
+                withContext(Dispatchers.Main) {
+                    _uiMessage.emit("⏱️ 応答タイムアウト")
                 }
                 return
             }
@@ -618,6 +885,7 @@ class ChatViewModel(
                         thinkingContent = null
                     )
                 }
+                Log.d(TAG, "Generation cancelled: ${t.message}")
                 return
             }
             val e = if (t is Exception) t else RuntimeException(t)
@@ -637,7 +905,7 @@ class ChatViewModel(
                     "モデルファイルの整合性チェックに失敗しました。ダウンロードが不完全な可能性があります。設定画面でモデルを削除して再度ダウンロードしてください。"
                 e.message?.contains("Model not loaded") == true ->
                     "モデルがロードされていません。もう一度全てリセットしてから試してください。"
-                else -> "エラーが発生しました：${e.message}"
+                else -> "エラー: ${e.message ?: "Unknown error"}"
             }
             val id = streamingMessageId
             if (id != null) {
@@ -654,6 +922,17 @@ class ChatViewModel(
                     content = errorMessage
                 )
             }
+            // エラーを UI に通知
+            withContext(Dispatchers.Main) {
+                _uiMessage.emit("❌ " + (e.message?.take(30) ?: "エラーが発生しました"))
+            }
+        } finally {
+            // Gallery パターン: 全パスで _isLoading を false にする
+            Log.d(TAG, "Generation concluded, setting isLoading=false")
+            _isLoading.value = false
+            
+            // Release WakeLock when generation completes
+            releaseScreenWakeLock()
         }
     }
 
@@ -662,11 +941,23 @@ class ChatViewModel(
         sessionRepository.getSessionById(sessionId) ?: return
         val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
         _selectedModel.value = selectedModel
-        val config = settingsRepository.getInferenceConfigForModel(selectedModel)
+        val config = chatInferenceConfigForModel(selectedModel)
         val result = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = true)
         if (result.isFailure) {
             Log.e(TAG, "Failed to load model for session $sessionId", result.exceptionOrNull())
         }
+    }
+
+    private suspend fun chatInferenceConfigForModel(model: String): InferenceConfig {
+        val base = settingsRepository.getInferenceConfigForModel(model)
+        val disableThinking = _chatSessionDisableThinking.value
+        val result = if (disableThinking) {
+            base.copy(enableThinking = false)
+        } else {
+            base
+        }
+        Log.d(TAG, "chatInferenceConfigForModel: model=$model, disableThinking=$disableThinking, enableThinking=${result.enableThinking}")
+        return result
     }
 
     private fun normalizeModel(model: String): String {
@@ -695,15 +986,20 @@ class ChatViewModel(
         }
     }
 
+    private suspend fun syncSessionTitleFromDb(sessionId: Long) {
+        val session = sessionRepository.getSessionById(sessionId) ?: return
+        _sessionTitle.value = session.name
+    }
+
     private suspend fun maybeGenerateSessionTitle(
         sessionId: Long,
         userMessage: String,
         aiResponse: String
     ) {
         val session = sessionRepository.getSessionById(sessionId) ?: return
-        if (session.name != DEFAULT_SESSION_TITLE) return
+        if (session.name.trim() != DEFAULT_SESSION_TITLE) return
         val title = buildSessionTitle(userMessage, aiResponse)
-        if (title.isBlank()) return
+        if (title.isBlank() || title == DEFAULT_SESSION_TITLE) return
         sessionRepository.updateSessionName(sessionId, title)
         _sessionTitle.value = title
     }
@@ -740,11 +1036,17 @@ class ChatViewModel(
             val merged = current + chunk.substring(overlap)
             // 結果が元のテキストより短くならないことを確認
             if (merged.length >= current.length) {
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "MERGE_WITH_OVERLAP: overlap=$overlap chars, merged len=${merged.length}")
+                }
                 return merged
             }
         }
 
         // deltaとして連結（最終的にはFINALで確定全文に置換される）
+        if (BuildConfig.DEBUG && overlap == 0) {
+            Log.d(TAG, "MERGE_NO_OVERLAP: concatenating chunk as delta")
+        }
         return current + chunk
     }
 
@@ -756,6 +1058,9 @@ class ChatViewModel(
         
         for (size in maxCheckSize downTo minCheckSize) {
             if (left.regionMatches(left.length - size, right, 0, size, ignoreCase = false)) {
+                if (BuildConfig.DEBUG && size > 5) {
+                    Log.d(TAG, "OVERLAP_FOUND: size=$size left_suffix='${left.takeLast(size)}' right_prefix='${right.take(size)}'")
+                }
                 return size
             }
         }
@@ -830,7 +1135,12 @@ class ChatViewModel(
         if (settingsRepository.shouldInjectGemmaThinkTrigger()) {
             contextBuilder.append("<|think|>\n")
         }
-        val systemPrompt = settingsRepository.getSystemPrompt()
+        var systemPrompt = settingsRepository.getSystemPrompt()
+        val userName = settingsRepository.getUserName()
+        // システムプロンプトにユーザー名を埋め込む
+        if (userName.isNotEmpty()) {
+            systemPrompt = "ユーザー名：$userName\n\n" + systemPrompt
+        }
         if (systemPrompt.isNotEmpty()) {
             contextBuilder.append(systemPrompt)
             contextBuilder.append("\n\n")
@@ -878,10 +1188,14 @@ class ChatViewModel(
         }
 
         val raw = withTimeoutOrNull(COMPRESSION_TIMEOUT_MS) {
+            val compressionConfig = config.copy(
+                temperature = config.temperature.coerceIn(0f, 0.7f),
+                enableThinking = false
+            ).normalized()
             val flow = manager.runInference(
                 sessionId = sessionId,
                 prompt = compressionPrompt,
-                temperature = config.temperature.coerceIn(0f, 0.7f)
+                config = compressionConfig
             )
             val builder = StringBuilder()
             flow.collect { chunk ->
@@ -1073,6 +1387,7 @@ class ChatViewModel(
                 else -> "カスタム"
             }
             _modelLoadingStatus.value = "[$displayModel] エンジンを初期化中..."
+            Log.d(TAG, "loadModelWithOverlay: model=$model, engineName=$engineModelName, enableThinking=${config.enableThinking}, backend=${config.backendType}, contextWindow=${config.contextWindow}")
             
             val result = if (onlyIfAvailable) {
                 manager.initializeModelIfAvailable(engineModelName, config)
@@ -1082,12 +1397,15 @@ class ChatViewModel(
             
             if (result.isSuccess) {
                 _modelLoadingStatus.value = "[$displayModel] ロード完了"
+                Log.d(TAG, "loadModelWithOverlay: SUCCESS - model=$model")
             } else {
                 val error = result.exceptionOrNull()
+                Log.e(TAG, "loadModelWithOverlay: FAILED - model=$model, error=${error?.message}", error)
                 
                 // メモリ不足エラーを検出
                 if (error?.message?.contains("memory") == true || 
                     error?.message?.contains("Memory") == true) {
+                    Log.w(TAG, "loadModelWithOverlay: Out of memory detected")
                     _uiMessage.emit("メモリが不足しています。ホームスクリーンに戻ります...")
                     viewModelScope.launch {
                         _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
@@ -1112,8 +1430,13 @@ class ChatViewModel(
         val sessionId = _currentSessionId.value ?: return
         if (_isLoading.value) return
 
+        // 前の job をキャンセル
+        generationJob?.cancel(CancellationException("Stopped by user"))
+        generationJob = null
+
         // 計算集約的な処理はDefault（CPU 集約的タスク用）で実行
         generationJob = viewModelScope.launch(Dispatchers.Default) {
+            val thisJob = this  // このJobインスタンスを保存
             var imagesToCleanup = mutableListOf<Bitmap>()
             try {
                 val storedImage = withContext(Dispatchers.IO) {
@@ -1189,7 +1512,10 @@ class ChatViewModel(
                     }
                 }
                 imagesToCleanup.clear()
-                generationJob = null
+                // このJobがまだcurrentなら null にする（前のJobから overwrite されない）
+                if (generationJob == thisJob) {
+                    generationJob = null
+                }
             }
         }
     }
@@ -1351,11 +1677,51 @@ class ChatViewModel(
         }
     }
     
+    /**
+     * Acquire WakeLock to prevent screen sleep during generation
+     */
+    private fun acquireScreenWakeLock() {
+        try {
+            val pm = powerManager
+            if (pm == null) {
+                Log.w(TAG, "PowerManager unavailable for WakeLock")
+                return
+            }
+            if (screenWakeLock == null || !screenWakeLock!!.isHeld) {
+                screenWakeLock = pm.newWakeLock(
+                    PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
+                    "nezumiai:generation"
+                )
+                screenWakeLock?.acquire(60 * 60 * 1000) // 60分のタイムアウト
+                Log.d(TAG, "WakeLock acquired for generation")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to acquire WakeLock", e)
+        }
+    }
+    
+    /**
+     * Release WakeLock when generation completes
+     */
+    private fun releaseScreenWakeLock() {
+        try {
+            if (screenWakeLock != null && screenWakeLock!!.isHeld) {
+                screenWakeLock!!.release()
+                Log.d(TAG, "WakeLock released after generation")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to release WakeLock", e)
+        }
+    }
+    
     override fun onCleared() {
         super.onCleared()
         // ViewModelクリア時のリソース完全解放
         generationJob?.cancel()  // 進行中の推論をキャンセル
         generationJob = null
+        
+        // Release WakeLock
+        releaseScreenWakeLock()
         
         // モデルをアンロード
         viewModelScope.launch {

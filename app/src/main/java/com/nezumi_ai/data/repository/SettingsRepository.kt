@@ -1,6 +1,7 @@
 package com.nezumi_ai.data.repository
 
 import android.content.Context
+import android.util.Log
 import com.nezumi_ai.data.database.dao.ChatSessionDao
 import com.nezumi_ai.data.database.dao.SettingsDao
 import com.nezumi_ai.data.database.entity.SettingsEntity
@@ -93,21 +94,35 @@ class SettingsRepository(
         val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
         val backendForSelected = parseBackendMap(current.backendType)[modelToBackendKey(current.selectedModel)]
             ?: BACKEND_CPU
+        val contextWindowForSelected = parseContextWindowMap(current.contextWindowMap)[modelToBackendKey(current.selectedModel)]
+            ?: 4096
+        val enableThinking =
+            current.gemmaThinkingEnabled && isBuiltinGemma4Model(current.selectedModel)
         return InferenceConfig(
-            contextWindow = current.contextWindow,
+            contextWindow = contextWindowForSelected,
             contextCompressionEnabled = current.contextCompressionEnabled,
             contextCompressionThresholdPercent = current.contextCompressionThresholdPercent,
             temperature = current.temperature,
             maxTopK = current.maxTopK,
             maxTokens = current.maxTokens,
+            enableThinking = enableThinking,
             backendType = backendForSelected
         ).normalized()
     }
 
     suspend fun getInferenceConfigForModel(model: String): InferenceConfig {
-        val base = getInferenceConfig()
+        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
         val backend = getBackendForModel(model)
-        return base.copy(backendType = backend).normalized()
+        val contextWindow = getContextWindowForModel(model)
+        val isGemma4 = isBuiltinGemma4Model(model)
+        val enableThinking = current.gemmaThinkingEnabled && isGemma4
+        val base = getInferenceConfig()
+        Log.d("SettingsRepository", "getInferenceConfigForModel: model=$model, isGemma4=$isGemma4, gemmaThinkingEnabled=${current.gemmaThinkingEnabled}, enableThinking=$enableThinking")
+        return base.copy(
+            backendType = backend,
+            contextWindow = contextWindow,
+            enableThinking = enableThinking
+        ).normalized()
     }
 
     suspend fun getBackendForModel(model: String): String {
@@ -116,28 +131,57 @@ class SettingsRepository(
         return parsed[modelToBackendKey(model)] ?: BACKEND_CPU
     }
 
+    suspend fun getContextWindowForModel(model: String): Int {
+        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
+        val parsed = parseContextWindowMap(current.contextWindowMap)
+        val stored = parsed[modelToBackendKey(model)] ?: 4096
+        
+        // モデル別の最大値を制約
+        val maxWindow = when {
+            model.equals("Gemma4-2B", ignoreCase = true) || model.equals("Gemma4-4B", ignoreCase = true) -> 8192
+            else -> 4096  // Gemma3n (E2B, E4B) や他のモデル
+        }
+        
+        return stored.coerceIn(512, maxWindow)
+    }
+
     suspend fun updateInferenceConfig(
         contextCompressionEnabled: Boolean,
         contextCompressionThresholdPercent: Int,
         temperature: Float,
         maxTopK: Int,
         maxTokens: Int,
+        contextWindow: Int = 4096,
         backendType: String,
         backendTargetModel: String = MODEL_E2B
     ) {
         val current = dao.getSettings() ?: SettingsEntity()
         val backendMap = parseBackendMap(current.backendType)
+        val contextWindowMap = parseContextWindowMap(current.contextWindowMap).toMutableMap()
         val normalizedBackend = normalizeBackend(backendType)
         val target = modelToBackendKey(backendTargetModel)
+        
+        // モデル別の最大コンテキスト窓を適用
+        fun getMaxContextWindow(key: String): Int = when {
+            key.contains("Gemma4", ignoreCase = true) -> 8192
+            else -> 4096  // Gemma3n (E2B, E4B) や IMPORTED
+        }
+        
+        val constrainedWindow = contextWindow.coerceIn(512, getMaxContextWindow(backendTargetModel))
+        
         if (target == MODEL_ALL) {
             backendMap[MODEL_E2B] = normalizedBackend
             backendMap[MODEL_E4B] = normalizedBackend
             backendMap[MODEL_IMPORTED] = normalizedBackend
+            contextWindowMap[MODEL_E2B] = contextWindow.coerceIn(512, getMaxContextWindow(MODEL_E2B))
+            contextWindowMap[MODEL_E4B] = contextWindow.coerceIn(512, getMaxContextWindow(MODEL_E4B))
+            contextWindowMap[MODEL_IMPORTED] = contextWindow.coerceIn(512, getMaxContextWindow(MODEL_IMPORTED))
         } else {
             backendMap[target] = normalizedBackend
+            contextWindowMap[target] = constrainedWindow
         }
         val config = InferenceConfig(
-            contextWindow = 4096,
+            contextWindow = constrainedWindow,
             contextCompressionEnabled = contextCompressionEnabled,
             contextCompressionThresholdPercent = contextCompressionThresholdPercent,
             temperature = temperature,
@@ -148,6 +192,7 @@ class SettingsRepository(
         dao.update(
             current.copy(
                 contextWindow = config.contextWindow,
+                contextWindowMap = encodeContextWindowMap(contextWindowMap),
                 contextCompressionEnabled = config.contextCompressionEnabled,
                 contextCompressionThresholdPercent = config.contextCompressionThresholdPercent,
                 temperature = config.temperature,
@@ -158,6 +203,7 @@ class SettingsRepository(
             )
         )
     }
+
 
     private fun normalizeBackend(value: String): String {
         return when {
@@ -238,25 +284,33 @@ class SettingsRepository(
     }
 
     /**
-     * 内蔵 Gemma 4（2B/4B）利用時に、モデルカード推奨どおり `<|think|>` を付与するか。
+     * LiteRT-LM では [InferenceConfig.enableThinking] 経由で `enable_thinking` を付与するため、
+     * プロンプト先頭への `<|think|>` 注入は行わない（二重指定を避ける）。
      */
-    suspend fun shouldInjectGemmaThinkTrigger(): Boolean {
-        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
-        if (!current.gemmaThinkingEnabled) return false
-        return isBuiltinGemma4SelectedModel(current.selectedModel)
+    suspend fun shouldInjectGemmaThinkTrigger(): Boolean = false
+
+    private fun isBuiltinGemma4Model(model: String): Boolean {
+        val t = model.trim()
+        return t.equals("Gemma4-2B", ignoreCase = true) ||
+            t.equals("Gemma4-4B", ignoreCase = true)
     }
 
-    private fun isBuiltinGemma4SelectedModel(selectedModel: String): Boolean {
-        val t = selectedModel.trim()
-        return t.equals("Gemma4-2B", ignoreCase = true) ||
-            t.equals("Gemma4-4B", ignoreCase = true) ||
-            t.equals("E2B", ignoreCase = true) ||
-            t.equals("E4B", ignoreCase = true)
-    }
+    /** チャット画面の「このチャットでシンキングOFF」トグルを出すか（Gemma 4 のみ。Gemma 3n は非対応） */
+    fun modelSupportsGemmaThinking(model: String): Boolean = isBuiltinGemma4Model(model)
 
     suspend fun updateSystemPrompt(prompt: String) {
         val current = dao.getSettings() ?: SettingsEntity()
         dao.update(current.copy(systemPrompt = prompt, lastModified = System.currentTimeMillis()))
+    }
+
+    suspend fun getUserName(): String {
+        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
+        return current.userName
+    }
+
+    suspend fun updateUserName(name: String) {
+        val current = dao.getSettings() ?: SettingsEntity()
+        dao.update(current.copy(userName = name, lastModified = System.currentTimeMillis()))
     }
 
     private fun encodeBackendMap(map: Map<String, String>): String {
@@ -264,5 +318,53 @@ class SettingsRepository(
         val e4b = normalizeBackend(map[MODEL_E4B] ?: BACKEND_CPU)
         val imported = normalizeBackend(map[MODEL_IMPORTED] ?: BACKEND_CPU)
         return "$MODEL_E2B=$e2b;$MODEL_E4B=$e4b;$MODEL_IMPORTED=$imported"
+    }
+
+    private fun parseContextWindowMap(raw: String): LinkedHashMap<String, Int> {
+        val map = linkedMapOf(
+            MODEL_E2B to 4096,
+            MODEL_E4B to 4096,
+            MODEL_IMPORTED to 4096
+        )
+        if (raw.trim().isEmpty()) {
+            return map
+        }
+        raw.trim().split(';')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .forEach { entry ->
+                val pair = entry.split('=', limit = 2)
+                if (pair.size != 2) return@forEach
+                val key = pair[0].trim().uppercase()
+                val value = try {
+                    pair[1].trim().toInt().coerceIn(512, 32768)
+                } catch (e: Exception) {
+                    4096
+                }
+                when (key) {
+                    MODEL_E2B, MODEL_E4B, MODEL_IMPORTED -> map[key] = value
+                }
+            }
+        return map
+    }
+
+    private fun encodeContextWindowMap(map: Map<String, Int>): String {
+        val e2b = map[MODEL_E2B]?.coerceIn(512, 32768) ?: 4096
+        val e4b = map[MODEL_E4B]?.coerceIn(512, 32768) ?: 4096
+        val imported = map[MODEL_IMPORTED]?.coerceIn(512, 32768) ?: 4096
+        return "$MODEL_E2B=$e2b;$MODEL_E4B=$e4b;$MODEL_IMPORTED=$imported"
+    }
+
+    suspend fun updateContextWindowForModel(model: String, contextWindow: Int) {
+        val current = dao.getSettings() ?: SettingsEntity()
+        val map = parseContextWindowMap(current.contextWindowMap).toMutableMap()
+        val key = modelToBackendKey(model)
+        map[key] = contextWindow.coerceIn(512, 32768)
+        dao.update(
+            current.copy(
+                contextWindowMap = encodeContextWindowMap(map),
+                lastModified = System.currentTimeMillis()
+            )
+        )
     }
 }

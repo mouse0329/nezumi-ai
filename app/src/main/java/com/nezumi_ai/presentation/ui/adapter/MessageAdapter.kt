@@ -13,6 +13,7 @@ import android.widget.Toast
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.R
 import com.nezumi_ai.databinding.ItemMessageUserBinding
 import com.nezumi_ai.databinding.ItemMessageAiBinding
@@ -83,7 +84,9 @@ class MessageAdapter(
         private var mediaPlayer: MediaPlayer? = null
         
         fun bind(message: MessageEntity) {
-            Log.d("MessageAdapter", "BIND_USER_MESSAGE: id=${message.id} content='${message.content}'")
+            if (BuildConfig.DEBUG) {
+                Log.d("MessageAdapter", "BIND_USER_MESSAGE: id=${message.id} content='${message.content}'")
+            }
             binding.apply {
                 userMessageText.text = message.content
                 userMessageTime.text = MessageAdapter.formatTime(message.timestamp)
@@ -170,7 +173,12 @@ class MessageAdapter(
         }
 
         fun bind(message: MessageEntity) {
-            Log.d("MessageAdapter", "BIND_AI_MESSAGE: id=${message.id} content='${message.content.take(50)}'...")
+            if (BuildConfig.DEBUG) {
+                Log.d(
+                    "MessageAdapter",
+                    "BIND_AI_MESSAGE: id=${message.id} content='${message.content.take(50)}'..."
+                )
+            }
             binding.apply {
                 val thinking = message.thinkingContent
                 if (!thinking.isNullOrBlank()) {
@@ -298,11 +306,18 @@ class MessageAdapter(
     }
     
     class MessageDiffCallback : DiffUtil.ItemCallback<MessageEntity>() {
-        override fun areItemsTheSame(oldItem: MessageEntity, newItem: MessageEntity) =
+        override fun areItemsTheSame(oldItem: MessageEntity, newItem: MessageEntity): Boolean =
             oldItem.id == newItem.id
         
-        override fun areContentsTheSame(oldItem: MessageEntity, newItem: MessageEntity) =
-            oldItem == newItem
+        override fun areContentsTheSame(oldItem: MessageEntity, newItem: MessageEntity): Boolean {
+            // content と thinkingContent の変更のみをチェック（timestamp 変更は無視）
+            // これにより、ストリーミング中の incremental update を正確に検出
+            return oldItem.content == newItem.content &&
+                oldItem.thinkingContent == newItem.thinkingContent &&
+                oldItem.role == newItem.role &&
+                oldItem.imageUri == newItem.imageUri &&
+                oldItem.audioUri == newItem.audioUri
+        }
     }
 
 }

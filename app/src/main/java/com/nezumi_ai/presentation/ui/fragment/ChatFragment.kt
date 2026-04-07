@@ -31,6 +31,7 @@ import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.SimpleItemAnimator
+import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.R
 import com.nezumi_ai.databinding.FragmentChatBinding
 import com.nezumi_ai.data.database.NezumiAiDatabase
@@ -60,12 +61,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private val args: ChatFragmentArgs by navArgs()
     private var modelOptions: List<ModelOption> = emptyList()
     private var responseTypingAnimationJob: Job? = null
-    private var usageMonitorJob: Job? = null
     private lateinit var settingsRepository: SettingsRepository
-    private val cpuUsageSampler = CpuUsageSampler()
     private var isGenerating = false
     private var isModelLoadingNow = false
-    private var resourceMonitorEnabled = false
     private var currentBackendType = "CPU"
     private var currentModelKey = "E2B"
     private var isCompressingNow = false
@@ -90,7 +88,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private val cameraLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) {
             val extras = result.data?.extras
-            val bitmap = extras?.get("data") as? android.graphics.Bitmap
+            @Suppress("DEPRECATION")
+            val bitmap = extras?.getParcelable<android.graphics.Bitmap>("data")
             
             if (bitmap != null) {
                 try {
@@ -138,6 +137,23 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             updateMediaPreview()
         }
     }
+    
+    // 権限リクエストランチャー
+    private val cameraPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        if (isGranted) {
+            launchCameraInternal()
+        } else {
+            Toast.makeText(requireContext(), "カメラの権限が必要です", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    private val recordPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        if (isGranted) {
+            startAudioRecording()
+        } else {
+            Toast.makeText(requireContext(), "マイクの権限が必要です", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     private fun updateMediaPreview() {
         // メディアプレビュー機能は削除されました
@@ -181,7 +197,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         )
         viewModel = ViewModelProvider(this, factory).get(ChatViewModel::class.java)
         setupModelDropdown()
-        refreshResourceMonitorSetting()
         
         // RecyclerView設定
         adapter = MessageAdapter { message ->
@@ -217,6 +232,44 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         binding.compressContextButton.setOnClickListener {
             viewModel.compressContextManually()
         }
+
+        binding.chatNoThinkingToggle.isCheckable = true
+        var syncingChatThinkingToggle = false
+        fun updateChatNoThinkingToggleLabel(isDisabled: Boolean) {
+            binding.chatNoThinkingToggle.text = if (isDisabled) {
+                getString(R.string.chat_thinking_off_for_session)
+            } else {
+                getString(R.string.chat_thinking_follow_settings)
+            }
+        }
+        binding.chatNoThinkingToggle.addOnCheckedChangeListener { _, isChecked ->
+            if (syncingChatThinkingToggle) return@addOnCheckedChangeListener
+            // isChecked = true → 「このチャットでシンキング OFF」にチェック → disabled = true
+            updateChatNoThinkingToggleLabel(isChecked)
+            viewModel.setChatSessionDisableThinking(isChecked)
+        }
+        
+        // シンキングトグルの表示/非表示制御（Gemma4のみ表示）
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.selectedModel.collect { model ->
+                val isGemma4 = settingsRepository.modelSupportsGemmaThinking(model)
+                binding.chatNoThinkingToggle.visibility = if (isGemma4) {
+                    android.view.View.VISIBLE
+                } else {
+                    android.view.View.GONE
+                }
+            }
+        }
+        
+        // シンキングトグルの状態を同期
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.chatSessionDisableThinking.collect { disabled ->
+                syncingChatThinkingToggle = true
+                binding.chatNoThinkingToggle.isChecked = disabled
+                updateChatNoThinkingToggleLabel(disabled)
+                syncingChatThinkingToggle = false
+            }
+        }
         
         // メッセージの監視（プレビューメディアを含む）
         viewLifecycleOwner.lifecycleScope.launch {
@@ -230,7 +283,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     messages
                 }
             }.collect { displayMessages ->
-                android.util.Log.d("ChatFragment", "DISPLAY_MESSAGES: count=${displayMessages.size} messages=${displayMessages.map { "${it.role}:${it.content}" }}")
+                if (BuildConfig.DEBUG) {
+                    android.util.Log.d(
+                        "ChatFragment",
+                        "DISPLAY_MESSAGES: count=${displayMessages.size} messages=${displayMessages.map { "${it.role}:${it.content}" }}"
+                    )
+                }
                 val wasAtBottom = isAtBottom()
                 adapter.submitList(displayMessages) {
                     if (displayMessages.isNotEmpty() && wasAtBottom) {
@@ -310,6 +368,15 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.chatSessionDisableThinking.collect { disabled ->
+                syncingChatThinkingToggle = true
+                binding.chatNoThinkingToggle.isChecked = disabled
+                updateChatNoThinkingToggleLabel(disabled)
+                syncingChatThinkingToggle = false
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
             viewModel.isCompressing.collect { compressing ->
                 isCompressingNow = compressing
                 renderCompressButtonState()
@@ -325,6 +392,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             viewModel.selectedModel.collect { model ->
                 currentModelKey = model
                 refreshCurrentBackendType()
+                val showThinkingToggle = settingsRepository.modelSupportsGemmaThinking(model)
+                binding.chatNoThinkingToggle.visibility =
+                    if (showThinkingToggle) View.VISIBLE else View.GONE
+                renderCompressButtonState()
                 val selected = modelOptions.firstOrNull { it.key == model } ?: return@collect
                 if (binding.modelDropdown.text?.toString() != selected.label) {
                     binding.modelDropdown.setText(selected.label, false)
@@ -359,8 +430,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.contextUsageChars.collect { used ->
-                val max = ChatViewModel.CONTEXT_WINDOW_CHARS
+            combine(
+                viewModel.contextUsageChars,
+                viewModel.contextWindowSize
+            ) { used, max ->
+                Pair(used, max)
+            }.collect { (used, max) ->
                 binding.contextMeterText.text =
                     getString(R.string.context_meter_format, used, max)
                 binding.contextMeterProgress.progress =
@@ -392,17 +467,15 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     override fun onResume() {
         super.onResume()
         setupModelDropdown()
-        refreshResourceMonitorSetting()
         refreshCurrentBackendType()
     }
 
     override fun onStop() {
         super.onStop()
-        stopUsageMonitor()
-        if (isGenerating) {
-            viewModel.stopGeneration()
-            stopResponseTypingAnimation()
-        }
+        // バックグラウンドでも推論を続ける - LiteRtLmEngine の会話終了処理により
+        // セッション遷移時や明示的な停止時に completeness 検証が行われる
+        // onStop でのキャンセルはKVキャッシュを不完全な状態で残し、
+        // 次セッションで DYNAMIC_UPDATE_SLICE エラーを引き起こすため削除
     }
 
     private fun applyStatusBarInset() {
@@ -511,21 +584,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         binding.compressContextButton.text =
             if (isCompressingNow) getString(R.string.compress_context_busy)
             else getString(R.string.compress_context)
-    }
-
-    private fun refreshResourceMonitorSetting() {
-        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            val enabled = settingsRepository.isResourceMonitorEnabled()
-            withContext(Dispatchers.Main) {
-                resourceMonitorEnabled = enabled
-                binding.resourceUsageText.visibility = if (enabled) View.VISIBLE else View.GONE
-                if (enabled) {
-                    startUsageMonitor()
-                } else {
-                    stopUsageMonitor()
-                }
-            }
-        }
+        binding.chatNoThinkingToggle.isEnabled =
+            enabled && binding.chatNoThinkingToggle.visibility == View.VISIBLE
     }
 
     private fun refreshCurrentBackendType() {
@@ -533,44 +593,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             val backend = settingsRepository.getBackendForModel(currentModelKey)
             withContext(Dispatchers.Main) {
                 currentBackendType = backend.uppercase()
-                if (resourceMonitorEnabled) {
-                    updateResourceUsageText(
-                        cpuPercent = 0,
-                        gpuPercent = if (isGenerating && currentBackendType == "GPU") 100 else 0,
-                        npuPercent = if (isGenerating && currentBackendType == "NPU") 100 else 0
-                    )
-                }
             }
         }
-    }
-
-    private fun startUsageMonitor() {
-        if (usageMonitorJob?.isActive == true) return
-        usageMonitorJob = viewLifecycleOwner.lifecycleScope.launch {
-            while (isActive && resourceMonitorEnabled) {
-                val cpu = withContext(Dispatchers.IO) {
-                    cpuUsageSampler.sampleProcessCpuPercent()
-                }
-                val gpu = if (isGenerating && currentBackendType == "GPU") 100 else 0
-                val npu = if (isGenerating && currentBackendType == "NPU") 100 else 0
-                updateResourceUsageText(cpu, gpu, npu)
-                delay(1000L)
-            }
-        }
-    }
-
-    private fun stopUsageMonitor() {
-        usageMonitorJob?.cancel()
-        usageMonitorJob = null
-    }
-
-    private fun updateResourceUsageText(cpuPercent: Int, gpuPercent: Int, npuPercent: Int) {
-        binding.resourceUsageText.text = getString(
-            R.string.resource_usage_format,
-            cpuPercent.coerceIn(0, 100),
-            gpuPercent.coerceIn(0, 100),
-            npuPercent.coerceIn(0, 100)
-        )
     }
 
     private fun startResponseTypingAnimation() {
@@ -613,7 +637,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             stopAudioRecording()
         }
         
-        stopUsageMonitor()
         super.onDestroyView()
         _binding = null
     }
@@ -622,10 +645,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            Toast.makeText(requireContext(), "カメラの権限が必要です", Toast.LENGTH_SHORT).show()
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
             return
         }
-        
+        launchCameraInternal()
+    }
+    
+    private fun launchCameraInternal() {
         val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
         try {
             cameraLauncher.launch(cameraIntent)
@@ -710,7 +736,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            Toast.makeText(requireContext(), "マイクの権限が必要です", Toast.LENGTH_SHORT).show()
+            recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
         
@@ -857,6 +883,17 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
     }
 
+    /**
+     * 生成を停止します。スクリーンがオフになった場合に外部から呼ばれます。
+     */
+    fun stopGeneration() {
+        try {
+            viewModel.stopGeneration()
+            Log.d("ChatFragment", "Generation stopped on screen off")
+        } catch (e: Exception) {
+            Log.w("ChatFragment", "Failed to stop generation", e)
+        }
+    }
 
     private class CpuUsageSampler {
         private var lastProcJiffies: Long? = null

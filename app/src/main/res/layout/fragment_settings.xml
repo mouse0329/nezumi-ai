@@ -38,7 +38,12 @@
 
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/inference_title" android:textColor="@color/text_primary" android:textSize="16sp" android:textStyle="bold" />
 
-                <TextView android:id="@+id/context_window_text" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="@string/context_window_fixed" android:textColor="@color/text_secondary" android:textSize="13sp" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="horizontal" android:gravity="center_vertical">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/context_window_label" android:textColor="@color/text_primary" android:textSize="13sp" />
+                    <EditText android:id="@+id/context_window_input" android:layout_width="60dp" android:layout_height="40dp" android:layout_marginStart="8dp" android:inputType="number" android:text="4096" android:textColor="@color/text_primary" android:textSize="13sp" android:padding="8dp" />
+                </LinearLayout>
+
+                <TextView android:id="@+id/context_window_info" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="@string/context_window_hint" android:textColor="@color/text_secondary" android:textSize="11sp" />
 
                 <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/context_compression_switch" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="@string/context_compression_label" />
 
@@ -57,10 +62,6 @@
                     <com.google.android.material.button.MaterialButton android:id="@+id/backend_npu_button" style="@style/Widget.Nezumiai.Button.Toggle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:minWidth="84dp" android:text="@string/backend_npu" />
                 </com.google.android.material.button.MaterialButtonToggleGroup>
 
-                <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/resource_monitor_switch" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="@string/resource_monitor_label" />
-
-                <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/gemma_thinking_switch" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="@string/gemma_thinking_switch_label" />
-
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="@string/temperature_label" android:textColor="@color/text_primary" android:textSize="13sp" android:textStyle="bold" />
 
                 <EditText android:id="@+id/temperature_input" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:hint="@string/temperature_hint" android:inputType="numberDecimal" />
@@ -72,6 +73,10 @@
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="@string/max_tokens_label" android:textColor="@color/text_primary" android:textSize="13sp" android:textStyle="bold" />
 
                 <EditText android:id="@+id/max_tokens_input" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:hint="@string/max_tokens_hint" android:inputType="number" />
+
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="@string/user_name_label" android:textColor="@color/text_primary" android:textSize="13sp" android:textStyle="bold" />
+
+                <EditText android:id="@+id/user_name_input" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:hint="@string/user_name_hint" android:inputType="text" />
 
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="@string/system_prompt_label" android:textColor="@color/text_primary" android:textSize="13sp" android:textStyle="bold" />
 

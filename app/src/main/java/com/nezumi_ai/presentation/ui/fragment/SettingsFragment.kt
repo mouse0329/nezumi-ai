@@ -158,6 +158,11 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             Toast.makeText(requireContext(), "ログアウトしました", Toast.LENGTH_SHORT).show()
         }
 
+        // TODO: Add Gemma3n UI elements to fragment_settings.xml with IDs:
+        // - download_gemma3n_2b_button, delete_gemma3n_2b_button, gemma3n_2b_access_button, gemma3n_2b_status, gemma3n_2b_download_progress, gemma3n_2b_download_text
+        // - download_gemma3n_4b_button, delete_gemma3n_4b_button, gemma3n_4b_access_button, gemma3n_4b_status, gemma3n_4b_download_progress, gemma3n_4b_download_text
+        // For now, Gemma3n models fall back to Gemma4_2B UI if download is initiated programmatically
+
         // Gemma 4 2B
         binding.downloadGemma42bButton.setOnClickListener {
             val model = ModelFileManager.LocalModel.GEMMA4_2B
@@ -214,6 +219,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
         })
 
+        observeDownloadWork(ModelFileManager.LocalModel.GEMMA3N_2B)
+        observeDownloadWork(ModelFileManager.LocalModel.GEMMA3N_4B)
         observeDownloadWork(ModelFileManager.LocalModel.GEMMA4_2B)
         observeDownloadWork(ModelFileManager.LocalModel.GEMMA4_4B)
         refreshStatus()
@@ -225,7 +232,18 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         viewLifecycleOwner.lifecycleScope.launch {
             val config = settingsRepository.getInferenceConfig()
             val systemPrompt = settingsRepository.getSystemPrompt()
-            binding.contextWindowText.text = getString(R.string.context_window_fixed)
+            val userName = settingsRepository.getUserName()
+            val selectedModel = settingsRepository.getSelectedModel()
+            val contextWindow = settingsRepository.getContextWindowForModel(selectedModel)
+            
+            // コンテキストウィンドウ表示（モデル別最大値を表示）
+            val maxWindow = when {
+                selectedModel.equals("Gemma4-2B", ignoreCase = true) || selectedModel.equals("Gemma4-4B", ignoreCase = true) -> 8192
+                else -> 4096
+            }
+            binding.contextWindowInput.setText(contextWindow.toString())
+            binding.contextWindowInfo.text = getString(R.string.context_window_hint) + " (最大: $maxWindow)"
+            
             binding.contextCompressionSwitch.isChecked = config.contextCompressionEnabled
             binding.contextCompressionThresholdSeek.progress =
                 seekProgressFromThreshold(config.contextCompressionThresholdPercent)
@@ -237,6 +255,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             binding.temperatureInput.setText(String.format(Locale.US, "%.2f", config.temperature))
             binding.topkInput.setText(config.maxTopK.toString())
             binding.maxTokensInput.setText(config.maxTokens.toString())
+            binding.userNameInput.setText(userName)
             binding.systemPromptInput.setText(systemPrompt)
             when (config.backendType.uppercase()) {
                 "GPU" -> binding.backendToggleGroup.check(binding.backendGpuButton.id)
@@ -245,8 +264,6 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                     binding.backendToggleGroup.check(binding.backendCpuButton.id)
                 }
             }
-            binding.resourceMonitorSwitch.isChecked = settingsRepository.isResourceMonitorEnabled()
-            binding.gemmaThinkingSwitch.isChecked = settingsRepository.isGemmaThinkingEnabled()
         }
     }
 
@@ -265,12 +282,14 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         val temperature = binding.temperatureInput.text.toString().toFloatOrNull()
         val topK = binding.topkInput.text.toString().toIntOrNull()
         val maxTokens = binding.maxTokensInput.text.toString().toIntOrNull()
+        val contextWindow = binding.contextWindowInput.text.toString().toIntOrNull()
         val backendType = selectedBackendType()
-        if (temperature == null || topK == null || maxTokens == null) {
+        if (temperature == null || topK == null || maxTokens == null || contextWindow == null) {
             Toast.makeText(requireContext(), "推論設定の入力値が不正です", Toast.LENGTH_SHORT).show()
             return
         }
         val systemPrompt = binding.systemPromptInput.text.toString().trim()
+        val userName = binding.userNameInput.text.toString().trim()
         viewLifecycleOwner.lifecycleScope.launch {
             settingsRepository.updateInferenceConfig(
                 contextCompressionEnabled = contextCompressionEnabled,
@@ -278,12 +297,12 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 temperature = temperature,
                 maxTopK = topK,
                 maxTokens = maxTokens,
+                contextWindow = contextWindow,
                 backendType = backendType,
                 backendTargetModel = "ALL"
             )
-            settingsRepository.updateResourceMonitorEnabled(binding.resourceMonitorSwitch.isChecked)
-            settingsRepository.updateGemmaThinkingEnabled(binding.gemmaThinkingSwitch.isChecked)
             settingsRepository.updateSystemPrompt(systemPrompt)
+            settingsRepository.updateUserName(userName)
             loadInferenceSettings()
             Toast.makeText(requireContext(), "推論設定を保存しました", Toast.LENGTH_SHORT).show()
         }
@@ -465,6 +484,10 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun setModelButtonsEnabled(model: ModelFileManager.LocalModel, enabled: Boolean) {
         when (model) {
+            ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> {
+                binding.downloadGemma42bButton.isEnabled = enabled
+                binding.deleteGemma42bButton.isEnabled = enabled
+            }
             ModelFileManager.LocalModel.GEMMA4_2B -> {
                 binding.downloadGemma42bButton.isEnabled = enabled
                 binding.deleteGemma42bButton.isEnabled = enabled
@@ -478,6 +501,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun setCancelMode(model: ModelFileManager.LocalModel, isCancelMode: Boolean) {
         val button = when (model) {
+            ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.downloadGemma42bButton
             ModelFileManager.LocalModel.GEMMA4_2B -> binding.downloadGemma42bButton
             ModelFileManager.LocalModel.GEMMA4_4B -> binding.downloadGemma44bButton
         }
@@ -493,6 +517,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun showProgress(model: ModelFileManager.LocalModel, visible: Boolean) {
         val (progressBar, text) = when (model) {
+            ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
             ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
             ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bDownloadProgress to binding.gemma44bDownloadText
         }
@@ -507,6 +532,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun updateProgress(model: ModelFileManager.LocalModel, downloaded: Long, total: Long, speedMbps: Double = 0.0, remainingSec: Double = 0.0) {
         val (progressBar, text) = when (model) {
+            ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText  // Fallback to Gemma4_2B UI for now
             ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
             ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bDownloadProgress to binding.gemma44bDownloadText
         }
@@ -621,6 +647,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                     setStatus(model, "キャンセル処理中...")
                     showProgress(model, true)
                     val (progressBar, text) = when (model) {
+                        ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText  // Fallback to Gemma4_2B UI for now
                         ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
                         ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bDownloadProgress to binding.gemma44bDownloadText
                     }
@@ -653,6 +680,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                             // 検証フェーズ中は進捗更新が止まりやすいので、短時間だけ状態をポーリングしてUIを追従させる
                             startVerifyPolling(model)
                             val text = when (model) {
+                                ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.gemma42bDownloadText  // Fallback to Gemma4_2B UI
                                 ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bDownloadText
                                 ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bDownloadText
                             }
@@ -749,6 +777,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         showProgress(model, true)
         setStatus(model, "キャンセル処理中...")
         val (progressBar, text) = when (model) {
+            ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
             ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
             ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bDownloadProgress to binding.gemma44bDownloadText
         }
@@ -806,6 +835,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun setStatus(model: ModelFileManager.LocalModel, text: String) {
         when (model) {
+            ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.gemma42bStatus.text = text  // Fallback to Gemma4_2B UI
             ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bStatus.text = text
             ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bStatus.text = text
         }
@@ -813,6 +843,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun setAccessButtonVisible(model: ModelFileManager.LocalModel, visible: Boolean) {
         when (model) {
+            ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.gemma42bAccessButton.visibility = if (visible) View.VISIBLE else View.GONE  // Fallback to Gemma4_2B UI
             ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bAccessButton.visibility = if (visible) View.VISIBLE else View.GONE
             ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bAccessButton.visibility = if (visible) View.VISIBLE else View.GONE
         }

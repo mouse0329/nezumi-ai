@@ -28,6 +28,8 @@
     <string name="response_compressing">圧縮中</string>
     <string name="compress_context">圧縮</string>
     <string name="compress_context_busy">圧縮中</string>
+    <string name="chat_thinking_follow_settings">シンキング:ON</string>
+    <string name="chat_thinking_off_for_session">シンキング:OFF</string>
     <string name="scroll_to_bottom">一番下へ</string>
     <string name="scroll_to_bottom_icon">↓</string>
     <string name="revoke_prompt">取り消し</string>
@@ -43,6 +45,8 @@
     <string name="stop_icon">■</string>
     <string name="inference_title">推論パラメータ</string>
     <string name="context_window_fixed">コンテキスト: 4096 (固定)</string>
+    <string name="context_window_label">コンテキスト</string>
+    <string name="context_window_hint">コンテキスト (512 - 8192)</string>
     <string name="context_compression_label">コンテキスト圧縮（標準OFF）</string>
     <string name="context_compression_threshold_format">自動圧縮しきい値: %1$d%%</string>
     <string name="temperature_label">温度</string>
@@ -51,20 +55,19 @@
     <string name="topk_hint">Top-K (1 - 128)</string>
     <string name="max_tokens_label">Max Tokens</string>
     <string name="max_tokens_hint">Max Tokens (64 - 4096)</string>
+    <string name="user_name_label">ユーザー名</string>
+    <string name="user_name_hint">あなたの名前（オプション）</string>
     <string name="save_inference">推論設定を保存</string>
     <string name="system_prompt_label">システムプロンプト</string>
     <string name="system_prompt_hint">AIアシスタントへの指示を記述</string>
     <string name="backend_label">バックエンド</string>
     <string name="backend_cpu">CPU</string>
     <string name="backend_gpu">GPU</string>
-    <string name="backend_npu">NPU</string>
-    <string name="resource_monitor_label">チャット欄にCPU/GPU/NPU使用率を表示</string>
-    <string name="gemma_thinking_switch_label">Gemma 4 シンキング（内部推理の表示と &lt;|think|&gt; による有効化）</string>
-    <string name="gemma_show_thinking">推理を表示</string>
-    <string name="gemma_hide_thinking">推理を隠す</string>
-    <string name="gemma_thinking_section_title">内部推理（シンキング）</string>
+    <string name="backend_npu">GPU+CPU</string>
+    <string name="gemma_show_thinking">推論を表示</string>
+    <string name="gemma_hide_thinking">推論を隠す</string>
+    <string name="gemma_thinking_section_title">内部推論（シンキング）</string>
     <string name="gemma_answer_generating_hint">（回答を生成中…）</string>
-    <string name="resource_usage_format">CPU %1$d%% | GPU %2$d%%(推定) | NPU %3$d%%(推定)</string>
     <string name="import_task_model">モデルファイルを追加 (.task / .litertlm)</string>
     <string name="import_task_loading">モデルファイルを読み込み中...</string>
     <string name="open_hf_approval_page">ページで承認</string>
@@ -73,6 +76,85 @@
     <string name="open_license_page">License</string>
     <string name="license_title">License</string>
     <string name="license_body">This app includes open-source software.\n\nThis application uses multiple open-source libraries and models. Please review the license terms below before distribution.</string>
+
+    <!-- License items -->
+    <string name="license_project_title">Project Repository</string>
+    <string name="license_project_url">https://github.com/mouse0329/nezumi-ai</string>
+    <string name="license_project_desc">Source code and release notes for this app.</string>
+
+    <string name="license_androidx_title">AndroidX and Material Components</string>
+    <string name="license_androidx_url">https://github.com/androidx</string>
+    <string name="license_androidx_desc">Apache License 2.0\n\nComprehensive suite of libraries that provide modern Android development patterns and Material Design components.</string>
+
+    <string name="license_constraintlayout_title">AndroidX ConstraintLayout</string>
+    <string name="license_constraintlayout_url">https://github.com/androidx/constraintlayout</string>
+    <string name="license_constraintlayout_desc">Apache License 2.0\n\nLayout management library for building responsive and complex UI layouts efficiently. Version 2.1.4</string>
+
+    <string name="license_navigation_title">AndroidX Navigation</string>
+    <string name="license_navigation_url">https://github.com/androidx/navigation</string>
+    <string name="license_navigation_desc">Apache License 2.0\n\nFramework for managing navigation between fragments in your app. Version 2.6.0</string>
+
+    <string name="license_room_title">AndroidX Room Database</string>
+    <string name="license_room_url">https://github.com/androidx/room</string>
+    <string name="license_room_desc">Apache License 2.0\n\nAbstraction layer over SQLite providing type-safe database access. Version 2.7.0</string>
+
+    <string name="license_workmanager_title">AndroidX WorkManager</string>
+    <string name="license_workmanager_url">https://github.com/androidx/work</string>
+    <string name="license_workmanager_desc">Apache License 2.0\n\nLibrary for scheduling and managing deferrable asynchronous tasks. Version 2.9.0</string>
+
+    <string name="license_lifecycle_title">AndroidX Lifecycle &amp; ViewModel</string>
+    <string name="license_lifecycle_url">https://github.com/androidx/lifecycle</string>
+    <string name="license_lifecycle_desc">Apache License 2.0\n\nLifecycle-aware component management and UI state persistence. Version 2.7.0</string>
+
+    <string name="license_kotlin_title">Kotlin Standard Library</string>
+    <string name="license_kotlin_url">https://github.com/JetBrains/kotlin</string>
+    <string name="license_kotlin_desc">Apache License 2.0\n\nKotlin programming language and its standard library, including coroutines for asynchronous operations.</string>
+
+    <string name="license_mediapipe_title">MediaPipe Tasks</string>
+    <string name="license_mediapipe_url">https://github.com/google/mediapipe</string>
+    <string name="license_mediapipe_desc">Apache License 2.0\n\nGoogle MediaPipe framework providing ready-to-use ML solutions for computer vision, audio, and text tasks.</string>
+
+    <string name="license_mediapipe_genai_title">MediaPipe Tasks-GenAI</string>
+    <string name="license_mediapipe_genai_url">https://github.com/google/mediapipe/tree/master/mediapipe/tasks/cc</string>
+    <string name="license_mediapipe_genai_desc">Apache License 2.0\n\nMediaPipe GenAI task for on-device LLM inference, providing Gemma model support with optimized runtime performance.</string>
+
+    <string name="license_litertlm_title">Google AI Edge LiteRT-LM</string>
+    <string name="license_litertlm_url">https://ai.google.dev/edge</string>
+    <string name="license_litertlm_desc">Apache License 2.0\n\nGoogle AI Edge on-device LLM execution engine (v0.10.0). Provides local inference for Gemma models with optimized performance.</string>
+
+    <string name="license_tflite_title">TensorFlow Lite Play Services</string>
+    <string name="license_tflite_url">https://developer.android.com/ml-kit</string>
+    <string name="license_tflite_desc">Apache License 2.0\n\nTensorFlow Lite on-device inference library (v16.4.0) with CPU and GPU acceleration support via Google Play Services.</string>
+
+    <string name="license_huggingface_title">Hugging Face Models</string>
+    <string name="license_huggingface_url">https://huggingface.co</string>
+    <string name="license_huggingface_desc">Model Hub and distribution page\n\nGemma を含むモデルの配布ページ確認に使用しています。モデル規約の一次情報は各モデル提供元の条項を確認してください。</string>
+
+    <string name="license_gemma_title">Gemma Model</string>
+    <string name="license_gemma_url">https://ai.google.dev/gemma</string>
+    <string name="license_gemma_desc">Gemma Terms of Use\n\nGemma モデルの利用条件は Gemma Terms を確認してください。実運用時の規約確認はこの条項を優先してください。</string>
+
+    <string name="license_gemma4_title">Gemma 4 Framework &amp; Tools</string>
+    <string name="license_gemma4_url">https://ai.google.dev/gemma</string>
+    <string name="license_gemma4_desc">Apache License 2.0\n\nGemma 4 multi-turn conversation framework, channel API (thinking capability), and related tools. Applied to the inference engine components executed via LiteRT-LM.</string>
+
+    <string name="license_appauth_title">AppAuth for Android</string>
+    <string name="license_appauth_url">https://github.com/openid/AppAuth-Android</string>
+    <string name="license_appauth_desc">Apache License 2.0\n\nHugging Face OAuth 認証フローに使用しています。</string>
+
+    <string name="license_markwon_title">Markwon</string>
+    <string name="license_markwon_url">https://github.com/noties/Markwon</string>
+    <string name="license_markwon_desc">Apache License 2.0\n\nMarkdown rendering library with table support extensions. Version 4.6.2</string>
+
+    <string name="license_junit_title">JUnit</string>
+    <string name="license_junit_url">https://github.com/junit-team/junit</string>
+    <string name="license_junit_desc">Eclipse Public License (EPL) 1.0\n\nUnit testing framework for Java. Version 4.13.2</string>
+
+    <string name="license_androidtest_title">AndroidX Test (JUnit, Espresso)</string>
+    <string name="license_androidtest_url">https://github.com/androidx/androidx</string>
+    <string name="license_androidtest_desc">Apache License 2.0\n\nUI testing and instrumented testing libraries for Android apps. Versions: JUnit 1.1.5, Espresso 3.5.1</string>
+
+    <string name="license_open_url">View License</string>
 
     <!-- Fragments for navigation -->
     <string name="first_fragment_label">First Fragment</string>

@@ -1,5 +1,7 @@
 package com.nezumi_ai.data.inference
 
+import com.nezumi_ai.BuildConfig
+
 /**
  * Gemma 4 のシンキング出力を分解する。
  * vLLM / transformers 系のオフライン実装（[gemma4_utils](https://github.com/vllm-project/vllm/blob/main/vllm/reasoning/gemma4_utils.py)）と同じ区切りを想定。
@@ -129,6 +131,7 @@ object Gemma4ThinkingParser {
     fun sanitizeVisibleText(text: String): String {
         var t = text.trim()
         if (t.isEmpty()) return ""
+        val original = t
         for (i in 0 until 64) {
             val before = t
             for (seq in STRIP_TOKEN_SEQUENCES) {
@@ -137,6 +140,10 @@ object Gemma4ThinkingParser {
             t = t.replace(Regex("^[ \t]+$", RegexOption.MULTILINE), "")
             if (t == before) break
         }
-        return t.replace(Regex("\n{3,}"), "\n\n").trim()
+        val final = t.replace(Regex("\n{3,}"), "\n\n").trim()
+        if (BuildConfig.DEBUG && original.length != final.length) {
+            android.util.Log.d("Gemma4ThinkingParser", "SANITIZE: ${original.length} -> ${final.length} chars removed")
+        }
+        return final
     }
 }

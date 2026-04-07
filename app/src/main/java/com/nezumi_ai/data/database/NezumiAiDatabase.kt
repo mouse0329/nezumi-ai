@@ -13,7 +13,7 @@ import com.nezumi_ai.data.database.entity.SettingsEntity
 
 @Database(
     entities = [ChatSessionEntity::class, MessageEntity::class, SettingsEntity::class],
-    version = 8,
+    version = 10,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {

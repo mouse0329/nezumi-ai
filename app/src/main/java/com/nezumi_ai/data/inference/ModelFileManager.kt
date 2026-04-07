@@ -23,11 +23,15 @@ import kotlin.coroutines.coroutineContext
 object ModelFileManager {
 
     enum class LocalModel {
+        GEMMA3N_2B,
+        GEMMA3N_4B,
         GEMMA4_2B,
         GEMMA4_4B
     }
 
     private const val TAG = "ModelFileManager"
+    private const val GEMMA3N_2B_FILENAME = "gemma-3n-2b.task"
+    private const val GEMMA3N_4B_FILENAME = "gemma-3n-4b.task"
     private const val GEMMA4_2B_FILENAME = "gemma-4-2b.litertlm"
     private const val GEMMA4_4B_FILENAME = "gemma-4-4b.litertlm"
     
@@ -70,7 +74,8 @@ object ModelFileManager {
 
     fun resolveModelName(modelName: String): LocalModel {
         return when (modelName.lowercase()) {
-            "gemma3n-4b", "gemma-3n-4b", "gemma3n_4b", "3n:4b", "gemma3n-2b", "gemma-3n-2b", "gemma3n_2b", "3n:2b" -> LocalModel.GEMMA4_2B  // backward compat: map old Gemma3n to Gemma4-2B
+            "gemma3n-4b", "gemma-3n-4b", "gemma3n_4b", "3n:4b" -> LocalModel.GEMMA3N_4B
+            "gemma3n-2b", "gemma-3n-2b", "gemma3n_2b", "3n:2b" -> LocalModel.GEMMA3N_2B
             "gemma4-2b", "gemma-4-2b", "gemma4_2b", "4:2b" -> LocalModel.GEMMA4_2B
             "gemma4-4b", "gemma-4-4b", "gemma4_4b", "4:4b" -> LocalModel.GEMMA4_4B
             else -> LocalModel.GEMMA4_2B  // default
@@ -83,6 +88,8 @@ object ModelFileManager {
             dir.mkdirs()
         }
         val filename = when (model) {
+            LocalModel.GEMMA3N_2B -> GEMMA3N_2B_FILENAME
+            LocalModel.GEMMA3N_4B -> GEMMA3N_4B_FILENAME
             LocalModel.GEMMA4_2B -> GEMMA4_2B_FILENAME
             LocalModel.GEMMA4_4B -> GEMMA4_4B_FILENAME
         }
@@ -433,6 +440,8 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
 
     fun previewTreeUrl(model: LocalModel): String {
         return when (model) {
+            LocalModel.GEMMA3N_2B -> "https://huggingface.co/google/gemma-3n-E2B-it-litert-preview"
+            LocalModel.GEMMA3N_4B -> "https://huggingface.co/google/gemma-3n-E4B-it-litert-preview"
             LocalModel.GEMMA4_2B -> "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/tree/main"
             LocalModel.GEMMA4_4B -> "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/tree/main"
         }
@@ -493,6 +502,8 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
             }
 
             val url = when (model) {
+                LocalModel.GEMMA3N_2B -> GEMMA3N_2B_HF_URL
+                LocalModel.GEMMA3N_4B -> GEMMA3N_4B_HF_URL
                 LocalModel.GEMMA4_2B -> GEMMA4_2B_HF_URL
                 LocalModel.GEMMA4_4B -> GEMMA4_4B_HF_URL
             }
@@ -889,6 +900,8 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
 
     private fun legacyLiteRtLmFilename(model: LocalModel): String {
         return when (model) {
+            LocalModel.GEMMA3N_2B -> E2B_LEGACY_LITERTLM_FILENAME
+            LocalModel.GEMMA3N_4B -> E4B_LEGACY_LITERTLM_FILENAME
             LocalModel.GEMMA4_2B -> E2B_LEGACY_LITERTLM_FILENAME
             LocalModel.GEMMA4_4B -> E4B_LEGACY_LITERTLM_FILENAME
         }

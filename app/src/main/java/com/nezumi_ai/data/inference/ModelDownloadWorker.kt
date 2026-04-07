@@ -334,6 +334,8 @@ class ModelDownloadWorker(
         )
 
         val modelLabel = when (model) {
+            ModelFileManager.LocalModel.GEMMA3N_2B -> "Gemma 3N 2B"
+            ModelFileManager.LocalModel.GEMMA3N_4B -> "Gemma 3N 4B"
             ModelFileManager.LocalModel.GEMMA4_2B -> "Gemma 4 2B"
             ModelFileManager.LocalModel.GEMMA4_4B -> "Gemma 4 4B"
         }
@@ -377,6 +379,8 @@ class ModelDownloadWorker(
         )
 
         val modelLabel = when (model) {
+            ModelFileManager.LocalModel.GEMMA3N_2B -> "Gemma 3N 2B"
+            ModelFileManager.LocalModel.GEMMA3N_4B -> "Gemma 3N 4B"
             ModelFileManager.LocalModel.GEMMA4_2B -> "Gemma 4 2B"
             ModelFileManager.LocalModel.GEMMA4_4B -> "Gemma 4 4B"
         }
