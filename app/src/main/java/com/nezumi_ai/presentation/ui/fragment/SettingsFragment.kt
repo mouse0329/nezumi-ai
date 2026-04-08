@@ -20,6 +20,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.work.WorkInfo
@@ -51,6 +52,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     private val binding get() = _binding!!
     private var authService: AuthorizationService? = null
     private val notifiedDownloadResults = mutableSetOf<String>()
+    private val lastObservedWorkIdByModel = mutableMapOf<ModelFileManager.LocalModel, UUID>()
+    private val lastObservedStateByModel = mutableMapOf<ModelFileManager.LocalModel, WorkInfo.State>()
     private val lastProgressByModel = mutableMapOf<ModelFileManager.LocalModel, DownloadProgressSnapshot>()
     private val activeWorkIdByModel = mutableMapOf<ModelFileManager.LocalModel, UUID>()
     private val activeRunAttemptByModel = mutableMapOf<ModelFileManager.LocalModel, Int>()
@@ -58,6 +61,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     private val observedDownloadModels = mutableSetOf<ModelFileManager.LocalModel>()
     private var pendingDownloadPermissionModel: ModelFileManager.LocalModel? = null
     private val verifyPollingJobByModel = mutableMapOf<ModelFileManager.LocalModel, Job>()
+    private val cancelWatchdogJobByModel = mutableMapOf<ModelFileManager.LocalModel, Job>()
     private lateinit var settingsRepository: SettingsRepository
 
     private val authLauncher =
@@ -491,6 +495,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             val ok = withContext(Dispatchers.IO) {
                 ModelFileManager.deleteModel(requireContext(), model)
             }
+            if (!isAdded || _binding == null) return@launch
             Toast.makeText(
                 requireContext(),
                 if (ok) "削除しました" else "削除に失敗しました",
@@ -522,14 +527,15 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     }
 
     private fun refreshStatus() {
+        val safeContext = context ?: return
         listOf(
             ModelFileManager.LocalModel.GEMMA3N_2B,
             ModelFileManager.LocalModel.GEMMA3N_4B,
             ModelFileManager.LocalModel.GEMMA4_2B,
             ModelFileManager.LocalModel.GEMMA4_4B
         ).forEach { model ->
-            val file = ModelFileManager.modelFile(requireContext(), model)
-            val downloaded = ModelFileManager.isDownloaded(requireContext(), model)
+            val file = ModelFileManager.modelFile(safeContext, model)
+            val downloaded = ModelFileManager.isDownloaded(safeContext, model)
             setStatus(model, statusText(downloaded, file.length()))
         }
     }
@@ -639,6 +645,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         WorkManager.getInstance(requireContext())
             .getWorkInfosForUniqueWorkLiveData(ModelDownloadWorker.modelWorkName(model))
             .observe(viewLifecycleOwner) { infos ->
+                if (!isAdded || _binding == null) return@observe
                 renderDownloadState(model, pickLatestRelevantWorkInfo(infos))
             }
     }
@@ -691,7 +698,11 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     }
 
     private fun renderDownloadState(model: ModelFileManager.LocalModel, workInfo: WorkInfo?) {
+        if (!isAdded || _binding == null) return
+        val safeContext = context ?: return
         if (workInfo == null) {
+            lastObservedWorkIdByModel.remove(model)
+            lastObservedStateByModel.remove(model)
             stopVerifyPolling(model)
             clearCancelInProgress(model)
             clearProgressTracking(model)
@@ -701,6 +712,16 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             refreshStatus()
             return
         }
+
+        val previousWorkId = lastObservedWorkIdByModel[model]
+        val previousState = lastObservedStateByModel[model]
+        lastObservedWorkIdByModel[model] = workInfo.id
+        lastObservedStateByModel[model] = workInfo.state
+        val shouldNotifyTerminalTransition =
+            previousWorkId == workInfo.id &&
+                previousState != null &&
+                previousState != workInfo.state &&
+                (workInfo.state == WorkInfo.State.SUCCEEDED || workInfo.state == WorkInfo.State.FAILED)
 
         when (workInfo.state) {
             WorkInfo.State.ENQUEUED,
@@ -715,7 +736,8 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                     setStatus(model, "キャンセル処理中...")
                     showProgress(model, true)
                     val (progressBar, text) = when (model) {
-                        ModelFileManager.LocalModel.GEMMA3N_2B, ModelFileManager.LocalModel.GEMMA3N_4B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText  // Fallback to Gemma4_2B UI for now
+                        ModelFileManager.LocalModel.GEMMA3N_2B -> binding.e2bDownloadProgress to binding.e2bDownloadText
+                        ModelFileManager.LocalModel.GEMMA3N_4B -> binding.e4bDownloadProgress to binding.e4bDownloadText
                         ModelFileManager.LocalModel.GEMMA4_2B -> binding.gemma42bDownloadProgress to binding.gemma42bDownloadText
                         ModelFileManager.LocalModel.GEMMA4_4B -> binding.gemma44bDownloadProgress to binding.gemma44bDownloadText
                     }
@@ -776,7 +798,9 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 setCancelMode(model, false)
                 showProgress(model, false)
                 refreshStatus()
-                notifyOnce(model, workInfo, "ダウンロード完了")
+                if (shouldNotifyTerminalTransition) {
+                    notifyOnce(model, workInfo, "ダウンロード完了")
+                }
             }
             WorkInfo.State.FAILED -> {
                 stopVerifyPolling(model)
@@ -790,7 +814,9 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                     ?: "ダウンロードに失敗しました"
                 setStatus(model, "失敗: $error")
                 setAccessButtonVisible(model, shouldOpenHfAccessPage(error))
-                notifyOnce(model, workInfo, error)
+                if (shouldNotifyTerminalTransition) {
+                    notifyOnce(model, workInfo, error)
+                }
             }
             WorkInfo.State.CANCELLED -> {
                 stopVerifyPolling(model)
@@ -801,7 +827,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 setCancelMode(model, false)
                 showProgress(model, false)
                 refreshStatus()
-                if (!ModelFileManager.isDownloaded(requireContext(), model)) {
+                if (!ModelFileManager.isDownloaded(safeContext, model)) {
                     setStatus(model, "未ダウンロード")
                 }
             }
@@ -821,6 +847,9 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                     null
                 }
             } ?: return@launch
+            if (!isAdded || _binding == null || !viewLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.INITIALIZED)) {
+                return@launch
+            }
             renderDownloadState(model, pickLatestRelevantWorkInfo(infos))
         }
     }
@@ -841,6 +870,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun showCancelInProgress(model: ModelFileManager.LocalModel) {
         cancelRequestedByModel[model] = true
+        startCancelWatchdog(model)
         setCancelMode(model, false)
         setModelButtonsEnabled(model, false)
         showProgress(model, true)
@@ -857,6 +887,53 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
     private fun clearCancelInProgress(model: ModelFileManager.LocalModel) {
         cancelRequestedByModel.remove(model)
+        stopCancelWatchdog(model)
+    }
+
+    private fun startCancelWatchdog(model: ModelFileManager.LocalModel) {
+        if (cancelWatchdogJobByModel[model]?.isActive == true) return
+        cancelWatchdogJobByModel[model] = viewLifecycleOwner.lifecycleScope.launch {
+            repeat(15) {
+                kotlinx.coroutines.delay(1000)
+                if (!isAdded || _binding == null) return@launch
+                val safeContext = context ?: return@launch
+                val infos = withContext(Dispatchers.IO) {
+                    runCatching {
+                        WorkManager.getInstance(safeContext)
+                            .getWorkInfosForUniqueWork(ModelDownloadWorker.modelWorkName(model))
+                            .get(2, TimeUnit.SECONDS)
+                    }.getOrNull()
+                } ?: return@repeat
+
+                val hasActive = infos.any {
+                    it.state == WorkInfo.State.RUNNING ||
+                        it.state == WorkInfo.State.ENQUEUED ||
+                        it.state == WorkInfo.State.BLOCKED
+                }
+                if (!hasActive) {
+                    renderDownloadState(model, pickLatestRelevantWorkInfo(infos))
+                    return@launch
+                }
+            }
+
+            if (!isAdded || _binding == null) return@launch
+            val safeContext = context ?: return@launch
+            // WorkInfo更新の取りこぼし時の最終復旧: キャンセルUIを強制解除する
+            clearCancelInProgress(model)
+            clearProgressTracking(model)
+            setAccessButtonVisible(model, false)
+            setModelButtonsEnabled(model, true)
+            setCancelMode(model, false)
+            showProgress(model, false)
+            refreshStatus()
+            if (!ModelFileManager.isDownloaded(safeContext, model)) {
+                setStatus(model, "未ダウンロード")
+            }
+        }
+    }
+
+    private fun stopCancelWatchdog(model: ModelFileManager.LocalModel) {
+        cancelWatchdogJobByModel.remove(model)?.cancel()
     }
 
     private fun monotonicProgress(
@@ -924,7 +1001,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     private fun notifyOnce(model: ModelFileManager.LocalModel, workInfo: WorkInfo, message: String): Boolean {
         val key = "${model.name}:${workInfo.id}:${workInfo.state}"
         if (notifiedDownloadResults.add(key)) {
-            Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+            context?.let { Toast.makeText(it, message, Toast.LENGTH_SHORT).show() }
             return true
         }
         return false
@@ -984,8 +1061,12 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         authService?.dispose()
         authService = null
         observedDownloadModels.clear()
+        lastObservedWorkIdByModel.clear()
+        lastObservedStateByModel.clear()
         verifyPollingJobByModel.values.forEach { it.cancel() }
         verifyPollingJobByModel.clear()
+        cancelWatchdogJobByModel.values.forEach { it.cancel() }
+        cancelWatchdogJobByModel.clear()
         super.onDestroyView()
         _binding = null
     }
