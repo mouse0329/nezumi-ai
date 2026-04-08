@@ -297,6 +297,8 @@ class ModelDownloadWorker(
 
         private fun modelFromName(name: String): ModelFileManager.LocalModel? {
             return when (name.uppercase()) {
+                ModelFileManager.LocalModel.GEMMA3N_2B.name -> ModelFileManager.LocalModel.GEMMA3N_2B
+                ModelFileManager.LocalModel.GEMMA3N_4B.name -> ModelFileManager.LocalModel.GEMMA3N_4B
                 ModelFileManager.LocalModel.GEMMA4_2B.name -> ModelFileManager.LocalModel.GEMMA4_2B
                 ModelFileManager.LocalModel.GEMMA4_4B.name -> ModelFileManager.LocalModel.GEMMA4_4B
                 else -> null
