@@ -255,7 +255,15 @@ class LiteRtLmEngine(
             }
             for (clip in audioClips) {
                 if (clip.isNotEmpty()) {
-                    contents.add(Content.AudioBytes(clip))
+                    val normalized =
+                        LlmMultimodalAudioHelper.toMono16Bit16kHzWav(appContext, clip)
+                    if (normalized != null && normalized.isNotEmpty()) {
+                        contents.add(Content.AudioBytes(normalized))
+                    } else {
+                        // 変換失敗時は従来どおり生バイトをフォールバックとして送る
+                        Log.w(TAG, "Audio normalization failed; sending raw audio bytes")
+                        contents.add(Content.AudioBytes(clip))
+                    }
                 }
             }
             if (prompt.trim().isNotEmpty()) {

@@ -12,13 +12,32 @@ data class InferenceConfig(
     val enableThinking: Boolean = false,
     val backendType: String = "CPU"
 ) {
+    companion object {
+        const val MIN_CONTEXT_WINDOW = 512
+        const val MAX_CONTEXT_WINDOW = 8192
+        const val MIN_COMPRESSION_THRESHOLD = 50
+        const val MAX_COMPRESSION_THRESHOLD = 95
+        const val MIN_TEMPERATURE = 0.0f
+        const val MAX_TEMPERATURE = 2.0f
+        const val MIN_TOP_K = 1
+        const val MAX_TOP_K = 128
+        const val MIN_MAX_TOKENS = 64
+        const val MAX_MAX_TOKENS = 4096
+        const val MIN_TOP_P = 0.0f
+        const val MAX_TOP_P = 1.0f
+    }
+
     fun normalized(): InferenceConfig {
-        val normalizedContext = contextWindow.coerceIn(512, 32768)
-        val normalizedCompressionThreshold = contextCompressionThresholdPercent.coerceIn(50, 95)
-        val normalizedTemp = temperature.coerceIn(0.0f, 2.0f)
-        val normalizedTopK = maxTopK.coerceIn(1, 128)
-        val normalizedMaxTokens = maxTokens.coerceIn(64, 2096)
-        val normalizedTopP = topP.coerceIn(0.0f, 1.0f)
+        val normalizedContext = contextWindow.coerceIn(MIN_CONTEXT_WINDOW, MAX_CONTEXT_WINDOW)
+        val normalizedCompressionThreshold =
+            contextCompressionThresholdPercent.coerceIn(
+                MIN_COMPRESSION_THRESHOLD,
+                MAX_COMPRESSION_THRESHOLD
+            )
+        val normalizedTemp = temperature.coerceIn(MIN_TEMPERATURE, MAX_TEMPERATURE)
+        val normalizedTopK = maxTopK.coerceIn(MIN_TOP_K, MAX_TOP_K)
+        val normalizedMaxTokens = maxTokens.coerceIn(MIN_MAX_TOKENS, MAX_MAX_TOKENS)
+        val normalizedTopP = topP.coerceIn(MIN_TOP_P, MAX_TOP_P)
         val normalizedBackend = when (backendType.uppercase()) {
             "GPU" -> "GPU"
             "NPU" -> "NPU"

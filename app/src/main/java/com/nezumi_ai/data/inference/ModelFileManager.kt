@@ -235,7 +235,7 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
 
     fun isModelAvailable(context: Context, modelName: String): Boolean {
         val lowered = modelName.lowercase()
-        if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && modelName.startsWith("/")) {
+        if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && File(modelName).isAbsolute) {
             return validateImportedTaskFile(File(modelName)).isSuccess
         }
         return isDownloaded(context, resolveModelName(modelName))

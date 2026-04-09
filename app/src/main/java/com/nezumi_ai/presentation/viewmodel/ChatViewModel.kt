@@ -200,7 +200,8 @@ class ChatViewModel(
     
     fun setCurrentSession(sessionId: Long) {
         _currentSessionId.value = sessionId
-        _chatSessionDisableThinking.value = true
+        // デフォルトは「設定に従う（= シンキングOFFを強制しない）」
+        _chatSessionDisableThinking.value = false
         
         // セッション遷移時に前の推論をキャンセルし、KVキャッシュを確実にクリア
         stopGeneration()
@@ -230,7 +231,9 @@ class ChatViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             // セッション遷移時に圧縮コンテキストキャッシュをクリア
             clearCompressedContextCache(sessionId)
-            loadModelForSessionIfAvailable(sessionId)
+            // チャット画面表示時にはモデルをロードしない。
+            // 実ロードは送信時(generateAIResponse)に遅延させる。
+            _selectedModel.value = normalizeModel(settingsRepository.getSelectedModel())
         }
     }
     
@@ -341,6 +344,12 @@ class ChatViewModel(
 
     fun compressContextManually() {
         val sessionId = _currentSessionId.value ?: return
+        if (_isLoading.value) {
+            viewModelScope.launch {
+                _uiMessage.emit("生成中は圧縮できません")
+            }
+            return
+        }
         if (_isCompressing.value) {
             viewModelScope.launch {
                 _uiMessage.emit("圧縮処理中です")
@@ -371,13 +380,17 @@ class ChatViewModel(
 
                 val messages = messageRepository.getMessagesForSessionOnce(sessionId)
                     .filterNot { it.role == "assistant" && it.isStreaming }
-                if (messages.size <= COMPRESSION_RECENT_MESSAGE_COUNT) {
-                    _uiMessage.emit("圧縮対象の履歴がまだ少ないです")
+                if (messages.isEmpty()) {
+                    _uiMessage.emit("圧縮対象のコンテキストがありません")
                     return@launch
                 }
 
-                val olderMessages = messages.dropLast(COMPRESSION_RECENT_MESSAGE_COUNT)
-                val signature = olderMessages.fold(17) { acc, msg ->
+                val compressionTarget = if (messages.size > COMPRESSION_RECENT_MESSAGE_COUNT) {
+                    messages.dropLast(COMPRESSION_RECENT_MESSAGE_COUNT)
+                } else {
+                    messages
+                }
+                val signature = compressionTarget.fold(17) { acc, msg ->
                     ((acc * 31) + msg.role.hashCode()) * 31 + msg.content.hashCode()
                 }
                 
@@ -395,7 +408,7 @@ class ChatViewModel(
                     requestCompressedContextSummary(
                         sessionId = sessionId,
                         manager = manager,
-                        messages = olderMessages,
+                        messages = compressionTarget,
                         config = config
                     )
                 } finally {
@@ -935,18 +948,6 @@ class ChatViewModel(
             
             // Release WakeLock when generation completes
             releaseScreenWakeLock()
-        }
-    }
-
-    private suspend fun loadModelForSessionIfAvailable(sessionId: Long) {
-        requireModelManager()
-        sessionRepository.getSessionById(sessionId) ?: return
-        val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
-        _selectedModel.value = selectedModel
-        val config = chatInferenceConfigForModel(selectedModel)
-        val result = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = true)
-        if (result.isFailure) {
-            Log.e(TAG, "Failed to load model for session $sessionId", result.exceptionOrNull())
         }
     }
 

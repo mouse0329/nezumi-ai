@@ -19,6 +19,30 @@ import android.widget.AdapterView
 import android.widget.PopupMenu
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -42,6 +66,7 @@ import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.presentation.viewmodel.ChatViewModel
 import com.nezumi_ai.presentation.viewmodel.ChatViewModelFactory
 import com.nezumi_ai.presentation.ui.adapter.MessageAdapter
+import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -67,9 +92,28 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var currentBackendType = "CPU"
     private var currentModelKey = "E2B"
     private var isCompressingNow = false
+    private var responseTypingVisible by mutableStateOf(false)
+    private var responseTypingText by mutableStateOf("")
+    private var modelLoadingOverlayVisible by mutableStateOf(false)
+    private var modelLoadingText by mutableStateOf("")
+    private var contextMeterText by mutableStateOf("")
+    private var contextMeterProgress by mutableStateOf(0f)
+    private var contextUsageCharsNow by mutableStateOf(0)
+    private var scrollToBottomVisible by mutableStateOf(false)
+    private var compressButtonVisible by mutableStateOf(true)
+    private var compressButtonEnabled by mutableStateOf(true)
+    private var compressButtonText by mutableStateOf("")
+    private var contextCompressionEnabled by mutableStateOf(false)
+    private var thinkingToggleVisible by mutableStateOf(false)
+    private var thinkingToggleEnabled by mutableStateOf(false)
+    private var thinkingToggleChecked by mutableStateOf(false)
+    private var thinkingToggleText by mutableStateOf("")
+    private var gemmaThinkingGloballyEnabled = false
     private var selectedImageUri: String? = null
     private var selectedAudioUri: String? = null
     private var cameraImageUri: Uri? = null
+    private var imageInputEnabled = true
+    private var audioInputEnabled = true
     
     // 音声録音関連
     private var mediaRecorder: MediaRecorder? = null
@@ -78,6 +122,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var recordingFile: java.io.File? = null
     
     private val imagePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (!imageInputEnabled) {
+            Toast.makeText(requireContext(), "このモデルでは画像入力は無効です", Toast.LENGTH_SHORT).show()
+            return@registerForActivityResult
+        }
         if (uri != null) {
             selectedImageUri = uri.toString()
             Toast.makeText(requireContext(), "画像を選択しました", Toast.LENGTH_SHORT).show()
@@ -131,6 +179,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
     
     private val audioPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (!audioInputEnabled) {
+            Toast.makeText(requireContext(), "このモデルでは音声入力は無効です", Toast.LENGTH_SHORT).show()
+            return@registerForActivityResult
+        }
         if (uri != null) {
             selectedAudioUri = uri.toString()
             Toast.makeText(requireContext(), "音声を選択しました", Toast.LENGTH_SHORT).show()
@@ -183,6 +235,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         applyStatusBarInset()
+        responseTypingText = getString(R.string.response_generating)
+        modelLoadingText = getString(R.string.model_loading)
+        contextMeterText = getString(R.string.context_meter_format, 0, 4096)
+        compressButtonText = getString(R.string.compress_context)
+        thinkingToggleText = getString(R.string.chat_thinking_follow_settings)
+        setupComposeIndicators()
         
         // ViewModel初期化
         val database = NezumiAiDatabase.getInstance(requireContext())
@@ -214,10 +272,14 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 }
             })
         }
-        binding.scrollToBottomButton.setOnClickListener {
-            val lastIndex = adapter.itemCount - 1
-            if (lastIndex >= 0) {
-                scrollToBottom(lastIndex)
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            settingsRepository.getSettings().collect { settings ->
+                gemmaThinkingGloballyEnabled = settings?.gemmaThinkingEnabled == true
+                contextCompressionEnabled = settings?.contextCompressionEnabled == true
+                adapter.setThinkingVisible(gemmaThinkingGloballyEnabled)
+                updateThinkingToggleVisibility()
+                renderCompressButtonState()
             }
         }
         
@@ -228,47 +290,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         // 戻るボタン
         binding.backButton.setOnClickListener {
             findNavController().navigateUp()
-        }
-        binding.compressContextButton.setOnClickListener {
-            viewModel.compressContextManually()
-        }
-
-        binding.chatNoThinkingToggle.isCheckable = true
-        var syncingChatThinkingToggle = false
-        fun updateChatNoThinkingToggleLabel(isDisabled: Boolean) {
-            binding.chatNoThinkingToggle.text = if (isDisabled) {
-                getString(R.string.chat_thinking_off_for_session)
-            } else {
-                getString(R.string.chat_thinking_follow_settings)
-            }
-        }
-        binding.chatNoThinkingToggle.addOnCheckedChangeListener { _, isChecked ->
-            if (syncingChatThinkingToggle) return@addOnCheckedChangeListener
-            // isChecked = true → 「このチャットでシンキング OFF」にチェック → disabled = true
-            updateChatNoThinkingToggleLabel(isChecked)
-            viewModel.setChatSessionDisableThinking(isChecked)
-        }
-        
-        // シンキングトグルの表示/非表示制御（Gemma4のみ表示）
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.selectedModel.collect { model ->
-                val isGemma4 = settingsRepository.modelSupportsGemmaThinking(model)
-                binding.chatNoThinkingToggle.visibility = if (isGemma4) {
-                    android.view.View.VISIBLE
-                } else {
-                    android.view.View.GONE
-                }
-            }
-        }
-        
-        // シンキングトグルの状態を同期
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.chatSessionDisableThinking.collect { disabled ->
-                syncingChatThinkingToggle = true
-                binding.chatNoThinkingToggle.isChecked = disabled
-                updateChatNoThinkingToggleLabel(disabled)
-                syncingChatThinkingToggle = false
-            }
         }
         
         // メッセージの監視（プレビューメディアを含む）
@@ -307,7 +328,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
             val message = binding.messageInput.text.toString().trim()
             if (message.isNotEmpty()) {
-                viewModel.sendMessageWithMedia(message, selectedImageUri, selectedAudioUri)
+                val imageToSend = if (imageInputEnabled) selectedImageUri else null
+                val audioToSend = if (audioInputEnabled) selectedAudioUri else null
+                viewModel.sendMessageWithMedia(message, imageToSend, audioToSend)
                 binding.messageInput.text?.clear()
                 selectedImageUri = null
                 selectedAudioUri = null
@@ -323,8 +346,21 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         // メディアメニューボタン
         binding.mediaMenuButton.setOnClickListener { view ->
+            if (!imageInputEnabled && !audioInputEnabled) {
+                Toast.makeText(requireContext(), "このモデルは画像・音声入力に対応していません", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
             val popupMenu = PopupMenu(requireContext(), view)
             popupMenu.menuInflater.inflate(R.menu.menu_media_select, popupMenu.menu)
+            if (!imageInputEnabled) {
+                popupMenu.menu.findItem(R.id.menu_select_image)?.isVisible = false
+                popupMenu.menu.findItem(R.id.menu_camera)?.isVisible = false
+                popupMenu.menu.findItem(R.id.menu_clipboard_paste)?.isVisible = false
+            }
+            if (!audioInputEnabled) {
+                popupMenu.menu.findItem(R.id.menu_select_audio)?.isVisible = false
+                popupMenu.menu.findItem(R.id.menu_record_audio)?.isVisible = false
+            }
             popupMenu.setOnMenuItemClickListener { menuItem ->
                 when (menuItem.itemId) {
                     R.id.menu_select_image -> {
@@ -369,10 +405,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.chatSessionDisableThinking.collect { disabled ->
-                syncingChatThinkingToggle = true
-                binding.chatNoThinkingToggle.isChecked = disabled
-                updateChatNoThinkingToggleLabel(disabled)
-                syncingChatThinkingToggle = false
+                thinkingToggleChecked = disabled
+                thinkingToggleText = if (disabled) {
+                    getString(R.string.chat_thinking_off_for_session)
+                } else {
+                    getString(R.string.chat_thinking_follow_settings)
+                }
             }
         }
 
@@ -381,7 +419,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 isCompressingNow = compressing
                 renderCompressButtonState()
                 if (isGenerating) {
-                    binding.responseTypingText.text =
+                    responseTypingText =
                         if (isCompressingNow) getString(R.string.response_compressing)
                         else getString(R.string.response_generating)
                 }
@@ -392,10 +430,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             viewModel.selectedModel.collect { model ->
                 currentModelKey = model
                 refreshCurrentBackendType()
-                val showThinkingToggle = settingsRepository.modelSupportsGemmaThinking(model)
-                binding.chatNoThinkingToggle.visibility =
-                    if (showThinkingToggle) View.VISIBLE else View.GONE
-                renderCompressButtonState()
+                updateMediaAvailability(model)
+                updateThinkingToggleVisibility()
                 val selected = modelOptions.firstOrNull { it.key == model } ?: return@collect
                 if (binding.modelDropdown.text?.toString() != selected.label) {
                     binding.modelDropdown.setText(selected.label, false)
@@ -436,17 +472,18 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             ) { used, max ->
                 Pair(used, max)
             }.collect { (used, max) ->
-                binding.contextMeterText.text =
-                    getString(R.string.context_meter_format, used, max)
-                binding.contextMeterProgress.progress =
-                    ((used.toLong() * 1000L) / max.toLong()).toInt().coerceIn(0, 1000)
+                contextUsageCharsNow = used
+                contextMeterText = getString(R.string.context_meter_format, used, max)
+                contextMeterProgress =
+                    (((used.toLong() * 1000L) / max.toLong()).toInt().coerceIn(0, 1000) / 1000f)
+                renderCompressButtonState()
             }
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.isModelLoading.collect { loading ->
                 isModelLoadingNow = loading
-                binding.modelLoadingOverlay.visibility = if (loading) View.VISIBLE else View.GONE
+                modelLoadingOverlayVisible = loading
                 binding.backButton.isEnabled = !loading
                 renderModelDropdownState()
                 renderSendButtonState()
@@ -458,7 +495,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.modelLoadingStatus.collect { status ->
                 if (status.isNotEmpty()) {
-                    binding.modelLoadingText.text = status
+                    modelLoadingText = status
                 }
             }
         }
@@ -468,6 +505,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         super.onResume()
         setupModelDropdown()
         refreshCurrentBackendType()
+        updateMediaAvailability(currentModelKey)
     }
 
     override fun onStop() {
@@ -509,7 +547,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun updateScrollToBottomButtonVisibility() {
-        binding.scrollToBottomButton.visibility = if (isAtBottom()) View.GONE else View.VISIBLE
+        scrollToBottomVisible = !isAtBottom()
     }
 
     private fun setupModelDropdown() {
@@ -571,6 +609,23 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         binding.sendButton.isEnabled = !isModelLoadingNow
     }
 
+    private fun updateMediaAvailability(modelKey: String) {
+        val caps = ImportedModelCapabilityStore.resolveForModel(requireContext(), modelKey)
+        imageInputEnabled = caps.imageEnabled
+        audioInputEnabled = caps.audioEnabled
+
+        // 非対応メディアは選択状態を破棄し、送信対象から除外
+        if (!imageInputEnabled) {
+            selectedImageUri = null
+        }
+        if (!audioInputEnabled) {
+            selectedAudioUri = null
+        }
+        updateMediaPreview()
+        binding.mediaMenuButton.visibility =
+            if (imageInputEnabled || audioInputEnabled) View.VISIBLE else View.GONE
+    }
+
     private fun renderModelDropdownState() {
         val enabled = !isModelLoadingNow && !isGenerating && modelOptions.isNotEmpty()
         binding.modelDropdown.isEnabled = enabled
@@ -578,14 +633,20 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun renderCompressButtonState() {
-        val enabled = !isModelLoadingNow && !isGenerating
-        binding.compressContextButton.visibility = if (isCompressingNow) View.GONE else View.VISIBLE
-        binding.compressContextButton.isEnabled = enabled
-        binding.compressContextButton.text =
+        val enabled = !isModelLoadingNow && !isGenerating && contextUsageCharsNow > 0
+        compressButtonVisible = contextCompressionEnabled && !isCompressingNow
+        compressButtonEnabled = enabled
+        compressButtonText =
             if (isCompressingNow) getString(R.string.compress_context_busy)
             else getString(R.string.compress_context)
-        binding.chatNoThinkingToggle.isEnabled =
-            enabled && binding.chatNoThinkingToggle.visibility == View.VISIBLE
+        // シンキングON/OFFはチャット生成中でも切り替え可能にする（次回送信から反映）
+        thinkingToggleEnabled = !isModelLoadingNow && thinkingToggleVisible
+    }
+
+    private fun updateThinkingToggleVisibility() {
+        val modelSupportsThinking = settingsRepository.modelSupportsGemmaThinking(currentModelKey)
+        thinkingToggleVisible = modelSupportsThinking && gemmaThinkingGloballyEnabled
+        renderCompressButtonState()
     }
 
     private fun refreshCurrentBackendType() {
@@ -599,7 +660,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private fun startResponseTypingAnimation() {
         if (responseTypingAnimationJob?.isActive == true) return
-        binding.responseTypingIndicator.visibility = View.VISIBLE
+        responseTypingVisible = true
         responseTypingAnimationJob = viewLifecycleOwner.lifecycleScope.launch {
             var dotCount = 0
             while (true) {
@@ -609,7 +670,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 } else {
                     getString(R.string.response_generating)
                 }
-                binding.responseTypingText.text = base + dots
+                responseTypingText = base + dots
                 dotCount = (dotCount + 1) % 4
                 delay(350)
             }
@@ -619,8 +680,169 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private fun stopResponseTypingAnimation() {
         responseTypingAnimationJob?.cancel()
         responseTypingAnimationJob = null
-        binding.responseTypingIndicator.visibility = View.GONE
-        binding.responseTypingText.text = getString(R.string.response_generating)
+        responseTypingVisible = false
+        responseTypingText = getString(R.string.response_generating)
+    }
+
+    private fun setupComposeIndicators() {
+        binding.responseTypingCompose.setViewCompositionStrategy(
+            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+        )
+        binding.responseTypingCompose.setContent {
+            ResponseTypingIndicator()
+        }
+
+        binding.modelLoadingComposeOverlay.setViewCompositionStrategy(
+            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+        )
+        binding.modelLoadingComposeOverlay.setContent {
+            ModelLoadingOverlay()
+        }
+
+        binding.contextMeterCompose.setViewCompositionStrategy(
+            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+        )
+        binding.contextMeterCompose.setContent {
+            ContextMeterSection()
+        }
+
+        binding.scrollToBottomCompose.setViewCompositionStrategy(
+            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+        )
+        binding.scrollToBottomCompose.setContent {
+            ScrollToBottomSection()
+        }
+
+        binding.headerActionsCompose.setViewCompositionStrategy(
+            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+        )
+        binding.headerActionsCompose.setContent {
+            HeaderActionsSection()
+        }
+    }
+
+    @Composable
+    private fun ResponseTypingIndicator() {
+        if (!responseTypingVisible) return
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Start
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.padding(end = 8.dp),
+                color = colorResource(id = R.color.primary)
+            )
+            Text(
+                text = responseTypingText,
+                color = colorResource(id = R.color.text_secondary),
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+
+    @Composable
+    private fun ModelLoadingOverlay() {
+        if (!modelLoadingOverlayVisible) return
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(colorResource(id = R.color.loading_overlay)),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularProgressIndicator(color = colorResource(id = R.color.primary))
+                Text(
+                    text = modelLoadingText,
+                    color = colorResource(id = R.color.text_primary),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun ContextMeterSection() {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(colorResource(id = R.color.surface_card))
+                .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                text = contextMeterText,
+                color = colorResource(id = R.color.text_secondary),
+                style = MaterialTheme.typography.bodySmall
+            )
+            LinearProgressIndicator(
+                progress = { contextMeterProgress },
+                modifier = Modifier.fillMaxWidth(),
+                color = colorResource(id = R.color.primary),
+                trackColor = colorResource(id = R.color.context_meter_track)
+            )
+        }
+    }
+
+    @Composable
+    private fun ScrollToBottomSection() {
+        if (!scrollToBottomVisible) return
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 12.dp, bottom = 6.dp),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            TextButton(onClick = {
+                val lastIndex = adapter.itemCount - 1
+                if (lastIndex >= 0) {
+                    scrollToBottom(lastIndex)
+                }
+            }) {
+                Text(text = getString(R.string.scroll_to_bottom_icon))
+            }
+        }
+    }
+
+    @Composable
+    private fun HeaderActionsSection() {
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            if (compressButtonVisible) {
+                OutlinedButton(
+                    onClick = { viewModel.compressContextManually() },
+                    enabled = compressButtonEnabled
+                ) {
+                    Text(text = compressButtonText)
+                }
+            }
+            if (thinkingToggleVisible) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "シンキング",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Switch(
+                        checked = !thinkingToggleChecked,
+                        onCheckedChange = { checked ->
+                            viewModel.setChatSessionDisableThinking(!checked)
+                        },
+                        enabled = thinkingToggleEnabled
+                    )
+                }
+            }
+        }
     }
     
     override fun onDestroyView() {
@@ -642,6 +864,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun launchCamera() {
+        if (!imageInputEnabled) {
+            Toast.makeText(requireContext(), "このモデルでは画像入力は無効です", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED
         ) {
@@ -662,6 +888,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun pasteFromClipboard() {
+        if (!imageInputEnabled) {
+            Toast.makeText(requireContext(), "このモデルでは画像入力は無効です", Toast.LENGTH_SHORT).show()
+            return
+        }
         try {
             val clipboard = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
             val primaryClip = clipboard.primaryClip
@@ -733,6 +963,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun launchAudioRecording() {
+        if (!audioInputEnabled) {
+            Toast.makeText(requireContext(), "このモデルでは音声入力は無効です", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
@@ -812,7 +1046,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     }
                     val message = binding.messageInput.text.toString().trim()
                     if (message.isNotEmpty()) {
-                        viewModel.sendMessageWithMedia(message, selectedImageUri, selectedAudioUri)
+                        val imageToSend = if (imageInputEnabled) selectedImageUri else null
+                        val audioToSend = if (audioInputEnabled) selectedAudioUri else null
+                        viewModel.sendMessageWithMedia(message, imageToSend, audioToSend)
                         binding.messageInput.text?.clear()
                         selectedImageUri = null
                         selectedAudioUri = null

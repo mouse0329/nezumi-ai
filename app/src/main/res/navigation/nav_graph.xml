@@ -9,7 +9,7 @@
         <action android:id="@+id/action_sessionListFragment_to_settingsFragment" app:destination="@id/settingsFragment" />
     </fragment>
 
-    <fragment android:id="@+id/settingsFragment" android:name="com.nezumi_ai.presentation.ui.fragment.SettingsFragment" android:label="@string/action_settings" tools:layout="@layout/fragment_settings">
+    <fragment android:id="@+id/settingsFragment" android:name="com.nezumi_ai.presentation.ui.fragment.SettingsComposeFragment" android:label="@string/action_settings" tools:layout="@layout/fragment_settings">
         <action android:id="@+id/action_settingsFragment_to_licenseFragment" app:destination="@id/licenseFragment" />
     </fragment>
 

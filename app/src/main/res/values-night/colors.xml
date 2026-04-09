@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Primary Colors -->
-    <color name="primary">#64748B</color>
-    <color name="primary_light">#1F2937</color>
-    <color name="accent">#94A3B8</color>
-    <color name="nezumi_primary">#4B5563</color>
+    <color name="primary">#0284C7</color>
+    <color name="primary_light">#525252</color>
+    <color name="accent">#38BDF8</color>
+    <color name="nezumi_primary">#0284C7</color>
     <color name="nezumi_on_primary">#FFFFFFFF</color>
-    <color name="nezumi_primary_container">#374151</color>
-    <color name="nezumi_on_primary_container">#F9FAFB</color>
+    <color name="nezumi_primary_container">#525252</color>
+    <color name="nezumi_on_primary_container">#E0F2FE</color>
 
     <!-- Text Colors -->
     <color name="text_primary">#F3F4F6</color>

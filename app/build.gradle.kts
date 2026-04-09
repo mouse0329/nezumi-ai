@@ -4,6 +4,7 @@ import java.io.FileInputStream
 plugins {
     id("com.android.application") version "8.5.2"
     kotlin("android") version "2.2.0"
+    id("org.jetbrains.kotlin.plugin.compose") version "2.2.0"
     kotlin("kapt") version "2.2.0"
     id("androidx.navigation.safeargs.kotlin") version "2.6.0"
 }
@@ -70,6 +71,7 @@ android {
     }
     
     buildFeatures {
+        compose = true
         viewBinding = true
         buildConfig = true
     }
@@ -84,6 +86,13 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.10.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+    implementation("androidx.activity:activity-compose:1.9.2")
+    implementation(platform("androidx.compose:compose-bom:2024.09.00"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
     
     // Navigation
     implementation("androidx.navigation:navigation-fragment-ktx:2.6.0")
@@ -121,4 +130,6 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2024.09.00"))
+    debugImplementation("androidx.compose.ui:ui-tooling")
 }

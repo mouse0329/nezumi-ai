@@ -31,6 +31,7 @@ class MessageAdapter(
 
     /** ユーザーが明示的に折りたたんだメッセージ ID（Gallery: 完了後も開いたままがデフォルト） */
     private val thinkingCollapsedByMessageId = mutableSetOf<Long>()
+    private var thinkingVisible = true
     
     companion object {
         private const val VIEW_TYPE_USER = 0
@@ -73,6 +74,12 @@ class MessageAdapter(
             is UserMessageViewHolder -> holder.bind(getItem(position))
             is AiMessageViewHolder -> holder.bind(getItem(position))
         }
+    }
+
+    fun setThinkingVisible(visible: Boolean) {
+        if (thinkingVisible == visible) return
+        thinkingVisible = visible
+        notifyDataSetChanged()
     }
     
     class UserMessageViewHolder(
@@ -181,7 +188,7 @@ class MessageAdapter(
             }
             binding.apply {
                 val thinking = message.thinkingContent
-                if (!thinking.isNullOrBlank()) {
+                if (thinkingVisible && !thinking.isNullOrBlank()) {
                     aiThinkingBlock.visibility = View.VISIBLE
                     markwon.setMarkdown(aiThinkingText, thinking)
                 } else {
@@ -189,7 +196,7 @@ class MessageAdapter(
                     aiThinkingBlock.visibility = View.GONE
                 }
 
-                val hasThinking = !thinking.isNullOrBlank()
+                val hasThinking = thinkingVisible && !thinking.isNullOrBlank()
                 val streamThinking = message.isStreaming && hasThinking
                 val expanded = streamThinking || message.id !in thinkingCollapsedByMessageId
                 if (hasThinking) {
@@ -263,7 +270,7 @@ class MessageAdapter(
                 }
                 
                 copyMessageButton.setOnClickListener {
-                    val text = if (!message.thinkingContent.isNullOrBlank()) {
+                    val text = if (thinkingVisible && !message.thinkingContent.isNullOrBlank()) {
                         "【${binding.root.context.getString(R.string.gemma_thinking_section_title)}】\n${message.thinkingContent}\n\n【回答】\n${message.content}"
                     } else {
                         message.content
@@ -321,4 +328,3 @@ class MessageAdapter(
     }
 
 }
-

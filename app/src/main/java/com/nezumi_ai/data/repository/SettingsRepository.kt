@@ -337,7 +337,10 @@ class SettingsRepository(
                 if (pair.size != 2) return@forEach
                 val key = pair[0].trim().uppercase()
                 val value = try {
-                    pair[1].trim().toInt().coerceIn(512, 32768)
+                    pair[1].trim().toInt().coerceIn(
+                        InferenceConfig.MIN_CONTEXT_WINDOW,
+                        InferenceConfig.MAX_CONTEXT_WINDOW
+                    )
                 } catch (e: Exception) {
                     4096
                 }
@@ -349,9 +352,18 @@ class SettingsRepository(
     }
 
     private fun encodeContextWindowMap(map: Map<String, Int>): String {
-        val e2b = map[MODEL_E2B]?.coerceIn(512, 32768) ?: 4096
-        val e4b = map[MODEL_E4B]?.coerceIn(512, 32768) ?: 4096
-        val imported = map[MODEL_IMPORTED]?.coerceIn(512, 32768) ?: 4096
+        val e2b = map[MODEL_E2B]?.coerceIn(
+            InferenceConfig.MIN_CONTEXT_WINDOW,
+            InferenceConfig.MAX_CONTEXT_WINDOW
+        ) ?: 4096
+        val e4b = map[MODEL_E4B]?.coerceIn(
+            InferenceConfig.MIN_CONTEXT_WINDOW,
+            InferenceConfig.MAX_CONTEXT_WINDOW
+        ) ?: 4096
+        val imported = map[MODEL_IMPORTED]?.coerceIn(
+            InferenceConfig.MIN_CONTEXT_WINDOW,
+            InferenceConfig.MAX_CONTEXT_WINDOW
+        ) ?: 4096
         return "$MODEL_E2B=$e2b;$MODEL_E4B=$e4b;$MODEL_IMPORTED=$imported"
     }
 
@@ -359,7 +371,10 @@ class SettingsRepository(
         val current = dao.getSettings() ?: SettingsEntity()
         val map = parseContextWindowMap(current.contextWindowMap).toMutableMap()
         val key = modelToBackendKey(model)
-        map[key] = contextWindow.coerceIn(512, 32768)
+        map[key] = contextWindow.coerceIn(
+            InferenceConfig.MIN_CONTEXT_WINDOW,
+            InferenceConfig.MAX_CONTEXT_WINDOW
+        )
         dao.update(
             current.copy(
                 contextWindowMap = encodeContextWindowMap(map),

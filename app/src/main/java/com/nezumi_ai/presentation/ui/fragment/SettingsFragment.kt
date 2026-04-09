@@ -15,6 +15,11 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -27,6 +32,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.HfAuthManager
+import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.inference.HfOAuthManager
 import com.nezumi_ai.data.inference.ProjectConfig
@@ -34,6 +40,8 @@ import com.nezumi_ai.R
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.databinding.FragmentSettingsBinding
+import com.nezumi_ai.presentation.ui.screen.ThemeModeCard
+import com.nezumi_ai.utils.PreferencesHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -279,6 +287,21 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
             override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
         })
+        binding.themeModeComposeView.setViewCompositionStrategy(
+            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+        )
+        binding.themeModeComposeView.setContent {
+            var selectedMode by rememberSaveable { mutableStateOf(PreferencesHelper.getThemeMode(requireContext())) }
+            ThemeModeCard(
+                currentMode = selectedMode,
+                onModeSelected = { mode ->
+                    if (mode == selectedMode) return@ThemeModeCard
+                    selectedMode = mode
+                    PreferencesHelper.setThemeMode(requireContext(), mode)
+                    PreferencesHelper.applyThemeMode(requireContext())
+                }
+            )
+        }
 
         observeDownloadWork(ModelFileManager.LocalModel.GEMMA3N_2B)
         observeDownloadWork(ModelFileManager.LocalModel.GEMMA3N_4B)
@@ -347,6 +370,38 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         val backendType = selectedBackendType()
         if (temperature == null || topK == null || maxTokens == null || contextWindow == null) {
             Toast.makeText(requireContext(), "推論設定の入力値が不正です", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (temperature !in InferenceConfig.MIN_TEMPERATURE..InferenceConfig.MAX_TEMPERATURE) {
+            Toast.makeText(
+                requireContext(),
+                "温度は ${InferenceConfig.MIN_TEMPERATURE} - ${InferenceConfig.MAX_TEMPERATURE} の範囲で入力してください",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        if (topK !in InferenceConfig.MIN_TOP_K..InferenceConfig.MAX_TOP_K) {
+            Toast.makeText(
+                requireContext(),
+                "Top-K は ${InferenceConfig.MIN_TOP_K} - ${InferenceConfig.MAX_TOP_K} の範囲で入力してください",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        if (maxTokens !in InferenceConfig.MIN_MAX_TOKENS..InferenceConfig.MAX_MAX_TOKENS) {
+            Toast.makeText(
+                requireContext(),
+                "Max Tokens は ${InferenceConfig.MIN_MAX_TOKENS} - ${InferenceConfig.MAX_MAX_TOKENS} の範囲で入力してください",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        if (contextWindow !in 512..8192) {
+            Toast.makeText(
+                requireContext(),
+                "コンテキストは 512 - 8192 の範囲で入力してください",
+                Toast.LENGTH_SHORT
+            ).show()
             return
         }
         val systemPrompt = binding.systemPromptInput.text.toString().trim()

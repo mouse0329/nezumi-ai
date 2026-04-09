@@ -68,7 +68,7 @@
     <string name="context_window_fixed">コンテキスト: 4096 (固定)</string>
     <string name="context_window_label">コンテキスト</string>
     <string name="context_window_hint">コンテキスト (512 - 8192)</string>
-    <string name="context_compression_label">コンテキスト圧縮（標準OFF）</string>
+    <string name="context_compression_label">コンテキスト圧縮ベータ版（標準OFF）</string>
     <string name="context_compression_threshold_format">自動圧縮しきい値: %1$d%%</string>
     <string name="temperature_label">温度</string>
     <string name="temperature_hint">温度 (0.0 - 2.0)</string>
@@ -82,6 +82,10 @@
     <string name="system_prompt_label">システムプロンプト</string>
     <string name="system_prompt_hint">AIアシスタントへの指示を記述</string>
     <string name="backend_label">バックエンド</string>
+    <string name="theme_mode_label">表示モード</string>
+    <string name="theme_mode_system">システム</string>
+    <string name="theme_mode_light">ライト</string>
+    <string name="theme_mode_dark">ダーク</string>
     <string name="backend_cpu">CPU</string>
     <string name="backend_gpu">GPU</string>
     <string name="backend_npu">GPU+CPU</string>
