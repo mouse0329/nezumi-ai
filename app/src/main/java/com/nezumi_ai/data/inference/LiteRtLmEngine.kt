@@ -12,15 +12,20 @@ import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.ExperimentalApi
 import com.google.ai.edge.litertlm.ExperimentalFlags
-import com.google.ai.edge.litertlm.MessageCallback
+import com.google.ai.edge.litertlm.Message
+import com.google.ai.edge.litertlm.ToolCall
 import com.google.ai.edge.litertlm.SamplerConfig
+import com.nezumi_ai.data.database.NezumiAiDatabase
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -52,10 +57,13 @@ class LiteRtLmEngine(
     private var loadedConfig: InferenceConfig? = null
     private val modelMutex = Mutex()
     private val inferenceMutex = Mutex()
+    private val inferenceMutexHeld = AtomicBoolean(false)
+    private val alarmDao by lazy { NezumiAiDatabase.getInstance(appContext).alarmDao() }
+    private val toolExecutor by lazy { NezumiLiteRtToolExecutor(appContext, alarmDao) }
 
     /** Engine は同時に 1 セッションのみ。コールバックスレッドと awaitClose の競合もここで直列化する */
     private val activeConversationLock = Any()
-    @Volatile
+    /** activeConversationLock で保護。@Volatile 不要（全アクセスが synchronized 内） */
     private var activeLiteRtConversation: Conversation? = null
     
     /** セッション遷移検出用 */
@@ -92,6 +100,19 @@ class LiteRtLmEngine(
                 Log.w(TAG, "Failed to close conversation", t)
             }
             Log.i(TAG, "Active conversation closed and reset")
+        }
+    }
+
+    private suspend fun acquireInferenceMutex() {
+        inferenceMutex.lock()
+        inferenceMutexHeld.set(true)
+    }
+
+    private fun releaseInferenceMutex() {
+        if (inferenceMutexHeld.compareAndSet(true, false)) {
+            inferenceMutex.unlock()
+        } else {
+            Log.w(TAG, "releaseInferenceMutex called but mutex was not held (double-release guard)")
         }
     }
 
@@ -189,13 +210,7 @@ class LiteRtLmEngine(
         audioClips: List<ByteArray>,
         config: InferenceConfig
     ): Flow<String> = callbackFlow {
-        inferenceMutex.lock()
-        val mutexReleased = AtomicBoolean(false)  // Thread-safe flag to prevent double-unlock
-        fun releaseInferenceMutex() {
-            if (mutexReleased.compareAndSet(false, true)) {
-                inferenceMutex.unlock()
-            }
-        }
+        acquireInferenceMutex()
 
         val eng = modelMutex.withLock { engine }
         if (eng == null) {
@@ -232,9 +247,9 @@ class LiteRtLmEngine(
             }
             val conv = eng.createConversation(
                 ConversationConfig(
+                    tools = buildEnabledToolProviders(appContext, alarmDao),
                     samplerConfig = samplerConfig,
-                    systemInstruction = null,
-                    tools = emptyList()
+                    automaticToolCalling = false
                 )
             )
             ExperimentalFlags.enableConversationConstrainedDecoding = false
@@ -274,75 +289,84 @@ class LiteRtLmEngine(
                 if (normalized.enableThinking) mapOf("enable_thinking" to "true") else emptyMap()
 
             val answerAccum = StringBuilder()
-
-            conv.sendMessageAsync(
-                Contents.of(contents),
-                object : MessageCallback {
-                    @Volatile
-                    var completed = false
-
-                    override fun onMessage(message: com.google.ai.edge.litertlm.Message) {
-                        if (completed) return
-                        val thought = message.channels[THOUGHT_CHANNEL]
-                        if (!thought.isNullOrEmpty()) {
-                            trySend(InferenceStreamProtocol.encodeThinkChunk(thought)).isSuccess
+            val generationJob = launch(Dispatchers.IO) {
+                try {
+                    var firstRequest = true
+                    var pendingToolResponseMessage: Message? = null
+                    while (true) {
+                        var toolCallsInTurn: List<ToolCall> = emptyList()
+                        val messageFlow = if (firstRequest) {
+                            firstRequest = false
+                            conv.sendMessageAsync(Contents.of(contents), extraContext)
+                        } else {
+                            conv.sendMessageAsync(
+                                pendingToolResponseMessage
+                                    ?: throw IllegalStateException("Tool response message missing"),
+                                extraContext
+                            )
                         }
-                        val text = message.toString()
-                        if (shouldEmitPartialText(text)) {
-                            answerAccum.append(text)
-                            trySend(text).isSuccess
+                        messageFlow.collect { message ->
+                            val calls = message.toolCalls
+                            if (calls.isNotEmpty()) {
+                                toolCallsInTurn = calls
+                                trySend(
+                                    InferenceStreamProtocol.encodeToolCallChunk(
+                                        calls.map { it.name }
+                                    )
+                                ).isSuccess
+                            }
+                            val thought = message.channels[THOUGHT_CHANNEL]
+                            if (!thought.isNullOrEmpty()) {
+                                trySend(InferenceStreamProtocol.encodeThinkChunk(thought)).isSuccess
+                            }
+                            if (calls.isNotEmpty()) return@collect
+                            val text = message.toString()
+                            if (shouldEmitPartialText(text)) {
+                                answerAccum.append(text)
+                                trySend(text).isSuccess
+                            }
                         }
+
+                        if (toolCallsInTurn.isEmpty()) {
+                            break
+                        }
+                        val toolResponses = mutableListOf<Content>()
+                        for (toolCall in toolCallsInTurn) {
+                            val result = toolExecutor.execute(toolCall)
+                            val status = if (result.success) "success" else "error"
+                            trySend(
+                                InferenceStreamProtocol.encodeToolResultChunk(
+                                    toolCall.name,
+                                    status
+                                )
+                            ).isSuccess
+                            toolResponses.add(Content.ToolResponse(toolCall.name, result.payload))
+                        }
+                        pendingToolResponseMessage = Message.Companion.tool(Contents.of(toolResponses))
                     }
 
-                    override fun onDone() {
-                        if (completed) return
-                        completed = true
-                        
-                        Log.d(TAG, "Inference onDone: sending final message session=$sessionId")
+                    val finalResult = InferenceStreamProtocol.encodeFinal(answerAccum.toString())
+                    trySend(finalResult).isSuccess
+                    close()
+                } catch (t: Throwable) {
+                    if (t is CancellationException) {
                         val finalResult = InferenceStreamProtocol.encodeFinal(answerAccum.toString())
-                        val sendResult = trySend(finalResult)
-                        Log.d(TAG, "Inference final send result: ${sendResult.isSuccess} session=$sessionId")
-                        if (!sendResult.isSuccess) {
-                            Log.e(TAG, "Final trySend failed (channel closed/full); collector may miss FINAL")
-                        }
-                        // cancelProcess/Conversation.close がブロックすると close() が遅れ、
-                        // Kotlin 側の collect が終わらず「応答中」のままになる。先に Flow を閉じる。
-                        Log.d(TAG, "Inference completed session=$sessionId, closing flow")
+                        trySend(finalResult).isSuccess
                         close()
-                        // Gallery: onDone では shutdownActiveLiteRtConversation を呼ばない。
-                        // 正常終了時に cancelProcess は不要で、awaitClose で確実にクリアされるため重複呼び出しを避ける。
-                        releaseInferenceMutex()
+                    } else {
+                        Log.e(TAG, "Inference error session=$sessionId", t)
+                        close(if (t is Exception) t else RuntimeException(t))
                     }
-
-                    override fun onError(throwable: Throwable) {
-                        if (completed) return
-                        completed = true
-                        
-                        if (throwable is CancellationException) {
-                            Log.i(TAG, "Inference cancelled session=$sessionId")
-                            val finalResult = InferenceStreamProtocol.encodeFinal(answerAccum.toString())
-                            trySend(finalResult)
-                        } else {
-                            Log.e(TAG, "Inference error session=$sessionId", throwable)
-                        }
-                        if (throwable is CancellationException) {
-                            close()
-                        } else {
-                            close(if (throwable is Exception) throwable else RuntimeException(throwable))
-                        }
-                        // Gallery方式：エラー時は cancel のみ（Flow が既に閉じているため close は不要）
-                        cancelActiveConversation()
-                        releaseInferenceMutex()
-                    }
-                },
-                extraContext
-            )
+                } finally {
+                    releaseInferenceMutex()
+                }
+            }
 
             awaitClose {
-                Log.d(TAG, "awaitClose: cleaning up session=$sessionId")
-                // onDone/onError で既に処理済み。ここは Flow collector 離脱時のクリーンアップのみ。
-                // cancel/close は呼ばない（Conversation を保持してセッション遷移まで再利用）
-                releaseInferenceMutex()
+                Log.d(TAG, "awaitClose: cancelling session=$sessionId")
+                generationJob.cancel()
+                cancelActiveConversation()
+                closeAndResetActiveConversation()
             }
         } catch (t: Throwable) {
             // 例外時は cancel のみ（close は呼ばず）

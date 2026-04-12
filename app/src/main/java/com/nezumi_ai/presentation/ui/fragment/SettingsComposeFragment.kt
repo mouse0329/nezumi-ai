@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -59,13 +60,18 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.nezumi_ai.R
 import com.nezumi_ai.data.database.NezumiAiDatabase
+import com.nezumi_ai.data.database.dao.AlarmDao
+import com.nezumi_ai.data.database.entity.AlarmEntity
 import com.nezumi_ai.data.inference.HfAuthManager
 import com.nezumi_ai.data.inference.HfOAuthManager
 import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.inference.ModelFileManager
+import com.nezumi_ai.data.inference.NezumiTool
+import com.nezumi_ai.data.inference.ToolPreferences
 import com.nezumi_ai.data.inference.ProjectConfig
 import com.nezumi_ai.data.repository.SettingsRepository
+import com.nezumi_ai.data.tools.ToolSystemController
 import com.nezumi_ai.presentation.ui.screen.ThemeModeCard
 import com.nezumi_ai.utils.ImportedModelCapabilities
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
@@ -76,10 +82,14 @@ import kotlinx.coroutines.withContext
 import net.openid.appauth.AuthorizationException
 import net.openid.appauth.AuthorizationResponse
 import net.openid.appauth.AuthorizationService
+import java.util.Locale
+import kotlinx.coroutines.flow.collect
 import kotlin.math.roundToInt
 
 class SettingsComposeFragment : Fragment() {
     private lateinit var settingsRepository: SettingsRepository
+    private lateinit var alarmDao: AlarmDao
+    private lateinit var toolPreferences: ToolPreferences
     private var authService: AuthorizationService? = null
     private var pendingDownloadPermissionModel: ModelFileManager.LocalModel? = null
 
@@ -96,6 +106,8 @@ class SettingsComposeFragment : Fragment() {
     private var gemmaThinkingEnabled by mutableStateOf(false)
     private var themeMode by mutableStateOf(PreferencesHelper.THEME_SYSTEM)
     private var importedTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
+    private var managedAlarms by mutableStateOf<List<AlarmEntity>>(emptyList())
+    private var toolEnabled by mutableStateOf<Map<NezumiTool, Boolean>>(emptyMap())
     private var isImportingModel by mutableStateOf(false)
     private var capabilityDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
     private var capabilityDialogImageEnabled by mutableStateOf(false)
@@ -154,6 +166,8 @@ class SettingsComposeFragment : Fragment() {
         super.onCreate(savedInstanceState)
         val db = NezumiAiDatabase.getInstance(requireContext())
         settingsRepository = SettingsRepository(db.settingsDao(), db.chatSessionDao())
+        alarmDao = db.alarmDao()
+        toolPreferences = ToolPreferences(requireContext())
         authService = AuthorizationService(requireContext())
         ModelFileManager.LocalModel.entries.forEach { modelStates[it] = ModelUiState(titleFor(it)) }
     }
@@ -175,6 +189,8 @@ class SettingsComposeFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         renderHfTokenState()
         loadInferenceSettings()
+        loadToolSettings()
+        observeManagedAlarms()
         refreshImportedTasks()
         refreshModelStatus()
         observeDownloadWork()
@@ -232,6 +248,8 @@ class SettingsComposeFragment : Fragment() {
             }
             item { HfCard() }
             item { InferenceCard() }
+            item { ToolSettingsCard() }
+            item { AlarmSettingsCard() }
             items(ModelFileManager.LocalModel.entries.toList(), key = { it.name }) { model ->
                 ModelCard(model)
             }
@@ -471,6 +489,89 @@ class SettingsComposeFragment : Fragment() {
     }
 
     @Composable
+    private fun ToolSettingsCard() {
+        val setAlarmEnabled = toolEnabled[NezumiTool.SET_ALARM] ?: false
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(text = "ツール設定", fontWeight = FontWeight.Bold)
+                NezumiTool.entries.forEach { tool ->
+                    val enabled = toolEnabled[tool] ?: (tool == NezumiTool.GET_TIME)
+                    val canToggle = tool != NezumiTool.LIST_ALARMS || setAlarmEnabled
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = tool.displayName, color = colorResource(id = R.color.text_primary))
+                        Switch(
+                            checked = enabled,
+                            enabled = canToggle,
+                            onCheckedChange = { checked -> updateToolEnabled(tool, checked) }
+                        )
+                    }
+                    if (tool == NezumiTool.LIST_ALARMS && !setAlarmEnabled) {
+                        Text(
+                            text = "「アラームセット」が有効な場合のみ使用できます",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorResource(id = R.color.text_secondary)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun AlarmSettingsCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(text = "アラーム管理", fontWeight = FontWeight.Bold)
+                if (managedAlarms.isEmpty()) {
+                    Text("登録されたアラームはありません", color = colorResource(id = R.color.text_secondary))
+                } else {
+                    managedAlarms.forEach { alarm ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = String.format(
+                                    Locale.US,
+                                    "%02d:%02d %s",
+                                    alarm.hour,
+                                    alarm.minute,
+                                    alarm.label
+                                ),
+                                color = colorResource(id = R.color.text_primary)
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Switch(
+                                    checked = alarm.enabled,
+                                    onCheckedChange = { checked ->
+                                        viewLifecycleOwner.lifecycleScope.launch {
+                                            alarmDao.setEnabled(alarm.id, checked)
+                                        }
+                                    }
+                                )
+                                TextButton(onClick = { dismissAndDeleteAlarm(alarm) }) {
+                                    Text(stringResource(id = R.string.delete))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
     private fun ModelCard(model: ModelFileManager.LocalModel) {
         val state = modelStates[model] ?: return
         Card(
@@ -605,6 +706,49 @@ class SettingsComposeFragment : Fragment() {
             systemPromptInput = systemPrompt
             backendType = config.backendType
             gemmaThinkingEnabled = thinkingEnabled
+        }
+    }
+
+    private fun loadToolSettings() {
+        val loaded = NezumiTool.entries.associateWith { toolPreferences.isEnabled(it) }
+        toolEnabled = loaded
+    }
+
+    private fun updateToolEnabled(tool: NezumiTool, enabled: Boolean) {
+        Log.d("SettingsCompose", "updateToolEnabled: tool=$tool, enabled=$enabled")
+        if (tool == NezumiTool.LIST_ALARMS && !(toolEnabled[NezumiTool.SET_ALARM] ?: true) && enabled) {
+            toast("「アラームセット」を有効化してください")
+            return
+        }
+        
+        // SET_ALARMは権限チェックなしで直接有効化
+        // (SET_ALARM は system-level 権限で checkSelfPermission でチェック不可)
+        toolPreferences.setEnabled(tool, enabled)
+        if (tool == NezumiTool.SET_ALARM && !enabled) {
+            toolPreferences.setEnabled(NezumiTool.LIST_ALARMS, false)
+        }
+        loadToolSettings()
+        
+        if (enabled) {
+            Log.d("SettingsCompose", "Tool enabled: $tool")
+            if (tool == NezumiTool.SET_ALARM) {
+                toast("アラームセットが有効になりました")
+            }
+        }
+    }
+
+    private fun observeManagedAlarms() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            alarmDao.observeAll().collect { rows ->
+                managedAlarms = rows
+            }
+        }
+    }
+
+    private fun dismissAndDeleteAlarm(alarm: AlarmEntity) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            ToolSystemController.dismissAlarm(requireContext(), alarm.hour, alarm.minute)
+            alarmDao.deleteById(alarm.id)
         }
     }
 

@@ -4,16 +4,18 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import com.nezumi_ai.data.database.dao.AlarmDao
 import com.nezumi_ai.data.database.dao.ChatSessionDao
 import com.nezumi_ai.data.database.dao.MessageDao
 import com.nezumi_ai.data.database.dao.SettingsDao
+import com.nezumi_ai.data.database.entity.AlarmEntity
 import com.nezumi_ai.data.database.entity.ChatSessionEntity
 import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.database.entity.SettingsEntity
 
 @Database(
-    entities = [ChatSessionEntity::class, MessageEntity::class, SettingsEntity::class],
-    version = 10,
+    entities = [ChatSessionEntity::class, MessageEntity::class, SettingsEntity::class, AlarmEntity::class],
+    version = 11,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
@@ -21,6 +23,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
     abstract fun chatSessionDao(): ChatSessionDao
     abstract fun messageDao(): MessageDao
     abstract fun settingsDao(): SettingsDao
+    abstract fun alarmDao(): AlarmDao
     
     companion object {
         @Volatile

@@ -16,7 +16,7 @@ data class SettingsEntity(
     val contextCompressionThresholdPercent: Int = 70,
     val temperature: Float = 0.7f,
     val maxTopK: Int = 40,
-    val maxTokens: Int = 1024,
+    val maxTokens: Int = 2048,
     val resourceMonitorEnabled: Boolean = false,
     /** Gemma 4 向け: プロンプト先頭に `<|think|>` を付与してシンキング生成を有効化。デフォルトはオフ */
     val gemmaThinkingEnabled: Boolean = false,

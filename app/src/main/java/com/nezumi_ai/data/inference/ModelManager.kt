@@ -3,7 +3,9 @@ package com.nezumi_ai.data.inference
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.sync.Mutex
@@ -37,6 +39,41 @@ class ModelManager(
     private var currentConfig: InferenceConfig? = null
     private val loadMutex = Mutex()
     private val inferenceMutex = Mutex()
+
+    private fun isCompiledModelInvokeFailure(t: Throwable): Boolean {
+        var cur: Throwable? = t
+        repeat(8) {
+            val msg = cur?.message.orEmpty()
+            if (
+                msg.contains("Status Code: 13", ignoreCase = true) ||
+                msg.contains("Failed to invoke the compiled model", ignoreCase = true)
+            ) {
+                return true
+            }
+            cur = cur?.cause
+        }
+        return false
+    }
+
+    private suspend fun recoverFromInvokeFailure(config: InferenceConfig): Boolean {
+        val modelName = currentModelName ?: return false
+        val normalized = config.normalized()
+        Log.w(
+            TAG,
+            "Compiled-model invoke failure detected. Reloading engine and retrying once: model=$modelName backend=${normalized.backendType}"
+        )
+
+        runCatching { inferenceEngine.unloadModel() }
+            .onFailure { Log.w(TAG, "Engine unload during recovery failed", it) }
+
+        val reloaded = inferenceEngine.loadModel(modelName, normalized)
+        if (reloaded.isSuccess) {
+            currentConfig = normalized
+            return true
+        }
+        Log.e(TAG, "Engine reload during recovery failed", reloaded.exceptionOrNull())
+        return false
+    }
     
     /**
      * メモリ使用率をチェック（外部からアクセス可能）
@@ -147,7 +184,23 @@ class ModelManager(
         config: InferenceConfig
     ): Flow<String> = flow {
         inferenceMutex.withLock {
-            emitAll(inferenceEngine.inference(sessionId, prompt, config))
+            var emitted = false
+            try {
+                inferenceEngine.inference(sessionId, prompt, config).collect { chunk ->
+                    emitted = true
+                    emit(chunk)
+                }
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                if (!emitted && isCompiledModelInvokeFailure(t) && recoverFromInvokeFailure(config)) {
+                    Log.i(TAG, "Retrying inference once after recovery")
+                    inferenceEngine.inference(sessionId, prompt, config).collect { chunk ->
+                        emit(chunk)
+                    }
+                } else {
+                    throw t
+                }
+            }
         }
     }
 /**
@@ -161,7 +214,25 @@ suspend fun runInferenceWithMedia(
     config: InferenceConfig
 ): Flow<String> = flow {
     inferenceMutex.withLock {
-        emitAll(inferenceEngine.inferenceWithMedia(sessionId, prompt, images, audioClips, config))
+        var emitted = false
+        try {
+            inferenceEngine.inferenceWithMedia(sessionId, prompt, images, audioClips, config)
+                .collect { chunk ->
+                    emitted = true
+                    emit(chunk)
+                }
+        } catch (t: Throwable) {
+            if (t is CancellationException) throw t
+            if (!emitted && isCompiledModelInvokeFailure(t) && recoverFromInvokeFailure(config)) {
+                Log.i(TAG, "Retrying multimodal inference once after recovery")
+                inferenceEngine.inferenceWithMedia(sessionId, prompt, images, audioClips, config)
+                    .collect { chunk ->
+                        emit(chunk)
+                    }
+            } else {
+                throw t
+            }
+        }
     }
 }
     

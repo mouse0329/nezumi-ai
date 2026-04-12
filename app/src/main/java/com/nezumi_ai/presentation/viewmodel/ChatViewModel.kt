@@ -379,7 +379,7 @@ class ChatViewModel(
                 }
 
                 val messages = messageRepository.getMessagesForSessionOnce(sessionId)
-                    .filterNot { it.role == "assistant" && it.isStreaming }
+                    .filterNot { shouldExcludeFromModelContext(it) }
                 if (messages.isEmpty()) {
                     _uiMessage.emit("圧縮対象のコンテキストがありません")
                     return@launch
@@ -647,6 +647,8 @@ class ChatViewModel(
                                 lastChunkAt.set(SystemClock.elapsedRealtime())
                                 val finalFromModel = InferenceStreamProtocol.decodeFinal(chunk)
                                 val thinkDelta = InferenceStreamProtocol.decodeThinkChunk(chunk)
+                                val toolCallChunk = InferenceStreamProtocol.decodeToolCallChunk(chunk)
+                                val toolResultChunk = InferenceStreamProtocol.decodeToolResultChunk(chunk)
                                 if (finalFromModel != null) {
                                     Log.d(TAG, "FINAL received: length=${finalFromModel.length}")
                                     answerBuilder.clear()
@@ -666,6 +668,10 @@ class ChatViewModel(
                                             )
                                         }
                                     }
+                                } else if (toolCallChunk != null) {
+                                    _uiMessage.emit("ツール実行: $toolCallChunk")
+                                } else if (toolResultChunk != null) {
+                                    _uiMessage.emit("ツール結果: $toolResultChunk")
                                 } else {
                                     if (chunk.isNotEmpty()) {
                                         val currentContent = answerBuilder.toString()
@@ -1100,7 +1106,7 @@ class ChatViewModel(
             return trimPromptToWindow(fullPrompt, config.contextWindow)
         }
 
-        val validMessages = messages.filterNot { it.role == "assistant" && it.isStreaming }
+        val validMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
         if (validMessages.size <= COMPRESSION_RECENT_MESSAGE_COUNT) {
             return trimPromptToWindow(fullPrompt, config.contextWindow)
         }
@@ -1205,9 +1211,13 @@ class ChatViewModel(
             val builder = StringBuilder()
             flow.collect { chunk ->
                 val final = InferenceStreamProtocol.decodeFinal(chunk)
+                val toolCallChunk = InferenceStreamProtocol.decodeToolCallChunk(chunk)
+                val toolResultChunk = InferenceStreamProtocol.decodeToolResultChunk(chunk)
                 if (final != null) {
                     builder.clear()
                     builder.append(final)
+                } else if (toolCallChunk != null || toolResultChunk != null) {
+                    // 圧縮用途ではツールイベントを本文として扱わない
                 } else if (chunk.isNotEmpty()) {
                     val currentContent = builder.toString()
                     val merged = mergeStreamingChunk(currentContent, chunk)
@@ -1273,6 +1283,24 @@ class ChatViewModel(
         return buildPromptFromMessages(messages).length.coerceAtMost(MAX_CONTEXT_CHARS)
     }
 
+    private fun isAssistantErrorLikeMessage(content: String): Boolean {
+        val t = content.trim()
+        if (t.isEmpty()) return false
+        if (t.startsWith("エラー:", ignoreCase = true)) return true
+        return t.contains("Status Code:", ignoreCase = true) ||
+            t.contains("Failed to invoke the compiled model", ignoreCase = true) ||
+            t.contains("モデルがロードされていません", ignoreCase = true) ||
+            t.contains("応答開始がタイムアウト", ignoreCase = true) ||
+            t.contains("生成を停止しました", ignoreCase = true) ||
+            t.contains("応答を生成できませんでした", ignoreCase = true)
+    }
+
+    private fun shouldExcludeFromModelContext(msg: MessageEntity): Boolean {
+        if (msg.role != "assistant") return false
+        if (msg.isStreaming) return true
+        return isAssistantErrorLikeMessage(msg.content)
+    }
+
     private suspend fun buildPromptFromMessages(messages: List<MessageEntity>): String {
         if (messages.isEmpty()) return ""
         val contextBuilder = StringBuilder()
@@ -1285,7 +1313,7 @@ class ChatViewModel(
             contextBuilder.append("\n\n")
         }
         for (msg in messages) {
-            if (msg.role == "assistant" && msg.isStreaming) continue
+            if (shouldExcludeFromModelContext(msg)) continue
             val role = if (msg.role == "assistant") "Assistant" else "User"
             contextBuilder.append(role)
                 .append(": ")
