@@ -21,30 +21,22 @@
                 </com.google.android.material.textfield.TextInputLayout>
             </LinearLayout>
 
-            <androidx.compose.ui.platform.ComposeView
-                android:id="@+id/header_actions_compose"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp" />
+            <androidx.compose.ui.platform.ComposeView android:id="@+id/header_actions_compose" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" />
         </LinearLayout>
 
-        <androidx.compose.ui.platform.ComposeView
-            android:id="@+id/context_meter_compose"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content" />
+        <androidx.compose.ui.platform.ComposeView android:id="@+id/context_meter_compose" android:layout_width="match_parent" android:layout_height="wrap_content" />
 
         <!-- Messages RecyclerView -->
         <androidx.recyclerview.widget.RecyclerView android:id="@+id/messages_recycler_view" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingTop="12dp" android:paddingBottom="12dp" android:clipToPadding="false" />
 
-        <androidx.compose.ui.platform.ComposeView
-            android:id="@+id/response_typing_compose"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content" />
+        <androidx.compose.ui.platform.ComposeView android:id="@+id/response_typing_compose" android:layout_width="match_parent" android:layout_height="wrap_content" />
 
-        <androidx.compose.ui.platform.ComposeView
-            android:id="@+id/scroll_to_bottom_compose"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content" />
+        <androidx.compose.ui.platform.ComposeView android:id="@+id/tool_call_progress_compose" android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <androidx.compose.ui.platform.ComposeView android:id="@+id/scroll_to_bottom_compose" android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <!-- Media Preview Bar -->
+        <androidx.compose.ui.platform.ComposeView android:id="@+id/media_preview_compose" android:layout_width="match_parent" android:layout_height="wrap_content" android:background="@color/surface_card" />
 
         <!-- Input Bar -->
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="10dp" android:gravity="center_vertical" android:background="@color/surface_card">
@@ -58,8 +50,5 @@
         </LinearLayout>
     </LinearLayout>
 
-    <androidx.compose.ui.platform.ComposeView
-        android:id="@+id/model_loading_compose_overlay"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+    <androidx.compose.ui.platform.ComposeView android:id="@+id/model_loading_compose_overlay" android:layout_width="match_parent" android:layout_height="match_parent" />
 </FrameLayout>

@@ -9,7 +9,10 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.Toast
+import androidx.cardview.widget.CardView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
@@ -29,8 +32,8 @@ class MessageAdapter(
     private val onUserPromptRevoke: (MessageEntity) -> Unit = {}
 ) : ListAdapter<MessageEntity, RecyclerView.ViewHolder>(MessageDiffCallback()) {
 
-    /** ユーザーが明示的に折りたたんだメッセージ ID（Gallery: 完了後も開いたままがデフォルト） */
-    private val thinkingCollapsedByMessageId = mutableSetOf<Long>()
+    /** ユーザーが明示的に展開したメッセージ ID（生成中は常に自動展開） */
+    private val thinkingExpandedByMessageId = mutableSetOf<Long>()
     private var thinkingVisible = true
     
     companion object {
@@ -52,6 +55,108 @@ class MessageAdapter(
                     Toast.LENGTH_SHORT
                 ).show()
             }
+        }
+
+        // Phase 11: 複数画像プレビュー用ヘルパー関数（送信前と統一）
+        // Phase 14: file:// URI に対応して画像読み込み
+        fun setupMultipleImagePreview(imageUris: List<String>, container: LinearLayout, context: Context) {
+            container.removeAllViews()
+            for (uri in imageUris) {
+                // CardView を使用して角丸・ボーダー実現
+                val cardView = androidx.cardview.widget.CardView(context).apply {
+                    layoutParams = LinearLayout.LayoutParams(250, 250).apply {
+                        setMargins(8, 8, 8, 8)  // 16dp spacing (両側8dp)
+                    }
+                    radius = 12f  // 角丸
+                    cardElevation = 4f  // 影
+                    setCardBackgroundColor(android.graphics.Color.WHITE)
+                }
+                
+                val imageView = ImageView(context).apply {
+                    layoutParams = android.view.ViewGroup.LayoutParams(250, 250)
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    contentDescription = context.getString(R.string.message_image)
+                }
+                
+                // Phase 14: file:// と content:// 両対応
+                try {
+                    val loadUri = MessageMediaStore.toUri(uri)
+                    if (loadUri.scheme == "file") {
+                        // file:// スキーム：直接ファイルから読み込み
+                        val path = loadUri.path
+                        if (path != null && java.io.File(path).exists()) {
+                            val bitmap = android.graphics.BitmapFactory.decodeFile(path)
+                            if (bitmap != null) {
+                                imageView.setImageBitmap(bitmap)
+                            } else {
+                                imageView.setImageResource(android.R.drawable.ic_menu_gallery)
+                            }
+                        } else {
+                            imageView.setImageResource(android.R.drawable.ic_menu_gallery)
+                        }
+                    } else {
+                        // content:// スキーム：contentResolver で読み込み
+                        imageView.setImageURI(loadUri)
+                    }
+                } catch (e: Exception) {
+                    imageView.setImageResource(android.R.drawable.ic_menu_gallery)
+                }
+                
+                // タップしてモーダルで大きく表示
+                imageView.setOnClickListener {
+                    showImageModal(context, uri)
+                }
+                
+                cardView.addView(imageView)
+                container.addView(cardView)
+            }
+        }
+        
+        // モーダルで画像をフルスクリーン表示
+        // Phase 14: file:// URI に対応
+        private fun showImageModal(context: Context, imageUri: String) {
+            val imageView = ImageView(context).apply {
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                )
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                setBackgroundColor(android.graphics.Color.BLACK)
+                contentDescription = context.getString(R.string.message_image)
+            }
+            try {
+                val loadUri = MessageMediaStore.toUri(imageUri)
+                if (loadUri.scheme == "file") {
+                    // file:// スキーム：直接ファイルから読み込み
+                    val path = loadUri.path
+                    if (path != null && java.io.File(path).exists()) {
+                        val bitmap = android.graphics.BitmapFactory.decodeFile(path)
+                        if (bitmap != null) {
+                            imageView.setImageBitmap(bitmap)
+                        } else {
+                            imageView.setImageResource(android.R.drawable.ic_menu_gallery)
+                        }
+                    } else {
+                        imageView.setImageResource(android.R.drawable.ic_menu_gallery)
+                    }
+                } else {
+                    // content:// スキーム：contentResolver で読み込み
+                    imageView.setImageURI(loadUri)
+                }
+            } catch (e: Exception) {
+                imageView.setImageResource(android.R.drawable.ic_menu_gallery)
+            }
+            
+            androidx.appcompat.app.AlertDialog.Builder(context)
+                .setView(imageView)
+                .setNegativeButton("閉じる") { dialog, _ -> dialog.dismiss() }
+                .show()
+                .apply {
+                    window?.setLayout(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                }
         }
     }
     
@@ -103,21 +208,33 @@ class MessageAdapter(
                     mediaContainer.visibility = View.VISIBLE
                     
                     if (!message.imageUri.isNullOrEmpty()) {
-                        // Show image
-                        userImagePreview.visibility = View.VISIBLE
-                        audioPlaybackContainer.visibility = View.GONE
-                        try {
-                            userImagePreview.setImageURI(
-                                MessageMediaStore.toUri(message.imageUri!!)
-                            )
-                        } catch (e: Exception) {
-                            userImagePreview.setImageResource(android.R.drawable.ic_menu_gallery)
+                        // Phase 11: 複数画像対応
+                        val imageUris = message.imageUri!!.split(",").filter { it.isNotBlank() }
+                        if (imageUris.size > 1) {
+                            // 複数画像：HorizontalScrollView で表示
+                            imageScrollView.visibility = View.VISIBLE
+                            singleImageContainer.visibility = View.GONE
+                            audioPlaybackContainer.visibility = View.GONE
+                            setupMultipleImagePreview(imageUris, imageContainer, binding.root.context)
+                        } else {
+                            // 単一画像：従来通り表示
+                            imageScrollView.visibility = View.GONE
+                            singleImageContainer.visibility = View.VISIBLE
+                            audioPlaybackContainer.visibility = View.GONE
+                            try {
+                                userImagePreview.setImageURI(
+                                    MessageMediaStore.toUri(message.imageUri!!)
+                                )
+                            } catch (e: Exception) {
+                                userImagePreview.setImageResource(android.R.drawable.ic_menu_gallery)
+                            }
                         }
                     }
                     
                     if (!message.audioUri.isNullOrEmpty()) {
                         // Show audio player
-                        userImagePreview.visibility = View.GONE
+                        imageScrollView.visibility = View.GONE
+                        singleImageContainer.visibility = View.GONE
                         audioPlaybackContainer.visibility = View.VISIBLE
                         setupAudioPlayback(message.audioUri, userAudioPlayButton, userAudioDuration)
                     }
@@ -192,13 +309,13 @@ class MessageAdapter(
                     aiThinkingBlock.visibility = View.VISIBLE
                     markwon.setMarkdown(aiThinkingText, thinking)
                 } else {
-                    thinkingCollapsedByMessageId.remove(message.id)
+                    thinkingExpandedByMessageId.remove(message.id)
                     aiThinkingBlock.visibility = View.GONE
                 }
 
                 val hasThinking = thinkingVisible && !thinking.isNullOrBlank()
                 val streamThinking = message.isStreaming && hasThinking
-                val expanded = streamThinking || message.id !in thinkingCollapsedByMessageId
+                val expanded = streamThinking || message.id in thinkingExpandedByMessageId
                 if (hasThinking) {
                     aiThinkingBody.visibility = if (expanded) View.VISIBLE else View.GONE
                     aiThinkingChevron.text = if (expanded) "▲" else "▼"
@@ -212,14 +329,14 @@ class MessageAdapter(
                         if (message.isStreaming && hasThinking) return@setOnClickListener
                         val nowOpen = aiThinkingBody.visibility == View.VISIBLE
                         if (nowOpen) {
-                            thinkingCollapsedByMessageId.add(message.id)
+                            thinkingExpandedByMessageId.remove(message.id)
                             aiThinkingBody.visibility = View.GONE
                             aiThinkingChevron.text = "▼"
                             aiThinkingToggleLabel.setText(R.string.gemma_show_thinking)
                             aiThinkingToggleRow.contentDescription =
                                 root.context.getString(R.string.gemma_show_thinking)
                         } else {
-                            thinkingCollapsedByMessageId.remove(message.id)
+                            thinkingExpandedByMessageId.add(message.id)
                             aiThinkingBody.visibility = View.VISIBLE
                             aiThinkingChevron.text = "▲"
                             aiThinkingToggleLabel.setText(R.string.gemma_hide_thinking)
@@ -247,26 +364,63 @@ class MessageAdapter(
                     mediaContainer.visibility = View.VISIBLE
                     
                     if (!message.imageUri.isNullOrEmpty()) {
-                        // Show image
-                        aiImagePreview.visibility = View.VISIBLE
-                        audioPlaybackContainer.visibility = View.GONE
-                        try {
-                            aiImagePreview.setImageURI(
-                                MessageMediaStore.toUri(message.imageUri!!)
-                            )
-                        } catch (e: Exception) {
-                            aiImagePreview.setImageResource(android.R.drawable.ic_menu_gallery)
+                        // Phase 11: 複数画像対応
+                        val imageUris = message.imageUri!!.split(",").filter { it.isNotBlank() }
+                        if (imageUris.size > 1) {
+                            // 複数画像：HorizontalScrollView で表示
+                            imageScrollView.visibility = View.VISIBLE
+                            singleImageContainer.visibility = View.GONE
+                            audioPlaybackContainer.visibility = View.GONE
+                            setupMultipleImagePreview(imageUris, imageContainer, binding.root.context)
+                        } else {
+                            // 単一画像：従来通り表示
+                            imageScrollView.visibility = View.GONE
+                            singleImageContainer.visibility = View.VISIBLE
+                            audioPlaybackContainer.visibility = View.GONE
+                            try {
+                                aiImagePreview.setImageURI(
+                                    MessageMediaStore.toUri(message.imageUri!!)
+                                )
+                            } catch (e: Exception) {
+                                aiImagePreview.setImageResource(android.R.drawable.ic_menu_gallery)
+                            }
                         }
                     }
                     
                     if (!message.audioUri.isNullOrEmpty()) {
                         // Show audio player
-                        aiImagePreview.visibility = View.GONE
+                        imageScrollView.visibility = View.GONE
+                        singleImageContainer.visibility = View.GONE
                         audioPlaybackContainer.visibility = View.VISIBLE
                         setupAudioPlayback(message.audioUri, aiAudioPlayButton, aiAudioDuration)
                     }
                 } else {
                     mediaContainer.visibility = View.GONE
+                }
+                
+                // Tool Results
+                toolResultsContainer.removeAllViews()
+                if (!message.toolResultsJson.isNullOrEmpty()) {
+                    val cards = com.nezumi_ai.data.inference.ToolResultCard.listFromJsonArray(message.toolResultsJson)
+                    if (cards.isNotEmpty()) {
+                        toolResultsContainer.visibility = View.VISIBLE
+                        for (card in cards) {
+                            val cardView = com.nezumi_ai.presentation.ui.component.ToolResultCardView(binding.root.context)
+                            cardView.bind(card)
+                            val params = LinearLayout.LayoutParams(
+                                LinearLayout.LayoutParams.MATCH_PARENT,
+                                LinearLayout.LayoutParams.WRAP_CONTENT
+                            ).apply {
+                                setMargins(0, 0, 0, 8) // bottom margin
+                            }
+                            cardView.layoutParams = params
+                            toolResultsContainer.addView(cardView)
+                        }
+                    } else {
+                        toolResultsContainer.visibility = View.GONE
+                    }
+                } else {
+                    toolResultsContainer.visibility = View.GONE
                 }
                 
                 copyMessageButton.setOnClickListener {
@@ -321,6 +475,7 @@ class MessageAdapter(
             // これにより、ストリーミング中の incremental update を正確に検出
             return oldItem.content == newItem.content &&
                 oldItem.thinkingContent == newItem.thinkingContent &&
+                oldItem.isStreaming == newItem.isStreaming &&
                 oldItem.role == newItem.role &&
                 oldItem.imageUri == newItem.imageUri &&
                 oldItem.audioUri == newItem.audioUri

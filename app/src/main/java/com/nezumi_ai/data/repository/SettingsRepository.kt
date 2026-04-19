@@ -20,19 +20,29 @@ class SettingsRepository(
         private const val BACKEND_NPU = "NPU"
         private const val MODEL_E2B = "E2B"
         private const val MODEL_E4B = "E4B"
+        private const val MODEL_GEMMA4_2B = "GEMMA4_2B"
+        private const val MODEL_GEMMA4_4B = "GEMMA4_4B"
         private const val MODEL_IMPORTED = "IMPORTED"
         private const val MODEL_ALL = "ALL"
     }
     
     fun getSettings(): Flow<SettingsEntity?> = dao.getSettingsFlow()
+
+    private suspend fun currentSettings(): SettingsEntity {
+        val existing = dao.getSettings()
+        if (existing != null) return existing
+        val initial = SettingsEntity()
+        dao.insert(initial)
+        return initial
+    }
     
     suspend fun updateModel(model: String) {
-        val current = dao.getSettings() ?: SettingsEntity()
+        val current = currentSettings()
         dao.update(current.copy(selectedModel = model))
     }
     
     suspend fun updateBackend(backend: String) {
-        val current = dao.getSettings() ?: SettingsEntity()
+        val current = currentSettings()
         val normalizedBackend = normalizeBackend(backend)
         dao.update(
             current.copy(
@@ -40,6 +50,8 @@ class SettingsRepository(
                     linkedMapOf(
                         MODEL_E2B to normalizedBackend,
                         MODEL_E4B to normalizedBackend,
+                        MODEL_GEMMA4_2B to normalizedBackend,
+                        MODEL_GEMMA4_4B to normalizedBackend,
                         MODEL_IMPORTED to normalizedBackend
                     )
                 )
@@ -48,7 +60,7 @@ class SettingsRepository(
     }
     
     suspend fun updateAutoFallback(enabled: Boolean) {
-        val current = dao.getSettings() ?: SettingsEntity()
+        val current = currentSettings()
         dao.update(current.copy(autoFallback = enabled))
     }
     
@@ -76,22 +88,22 @@ class SettingsRepository(
     }
 
     suspend fun getSelectedModel(): String {
-        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
+        val current = currentSettings()
         return current.selectedModel
     }
 
     suspend fun isResourceMonitorEnabled(): Boolean {
-        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
+        val current = currentSettings()
         return current.resourceMonitorEnabled
     }
 
     suspend fun updateResourceMonitorEnabled(enabled: Boolean) {
-        val current = dao.getSettings() ?: SettingsEntity()
+        val current = currentSettings()
         dao.update(current.copy(resourceMonitorEnabled = enabled))
     }
 
     suspend fun getInferenceConfig(): InferenceConfig {
-        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
+        val current = currentSettings()
         val backendForSelected = parseBackendMap(current.backendType)[modelToBackendKey(current.selectedModel)]
             ?: BACKEND_CPU
         val contextWindowForSelected = parseContextWindowMap(current.contextWindowMap)[modelToBackendKey(current.selectedModel)]
@@ -106,35 +118,51 @@ class SettingsRepository(
             maxTopK = current.maxTopK,
             maxTokens = current.maxTokens,
             enableThinking = enableThinking,
+            enableSpeculativeDecoding = current.speculativeDecodingEnabled,
             backendType = backendForSelected
         ).normalized()
     }
 
     suspend fun getInferenceConfigForModel(model: String): InferenceConfig {
-        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
+        val current = currentSettings()
         val backend = getBackendForModel(model)
         val contextWindow = getContextWindowForModel(model)
         val isGemma4 = isBuiltinGemma4Model(model)
         val enableThinking = current.gemmaThinkingEnabled && isGemma4
         val base = getInferenceConfig()
-        Log.d("SettingsRepository", "getInferenceConfigForModel: model=$model, isGemma4=$isGemma4, gemmaThinkingEnabled=${current.gemmaThinkingEnabled}, enableThinking=$enableThinking")
+        Log.d("SettingsRepository", "getInferenceConfigForModel: model=$model, isGemma4=$isGemma4, gemmaThinkingEnabled=${current.gemmaThinkingEnabled}, enableThinking=$enableThinking, speculativeDecoding=${current.speculativeDecodingEnabled}")
         return base.copy(
             backendType = backend,
             contextWindow = contextWindow,
-            enableThinking = enableThinking
+            enableThinking = enableThinking,
+            enableSpeculativeDecoding = current.speculativeDecodingEnabled
         ).normalized()
     }
 
     suspend fun getBackendForModel(model: String): String {
-        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
+        val current = currentSettings()
         val parsed = parseBackendMap(current.backendType)
-        return parsed[modelToBackendKey(model)] ?: BACKEND_CPU
+        val key = modelToBackendKey(model)
+        return parsed[key]
+            ?: when (key) {
+                MODEL_GEMMA4_2B -> parsed[MODEL_E2B]
+                MODEL_GEMMA4_4B -> parsed[MODEL_E4B]
+                else -> null
+            }
+            ?: BACKEND_CPU
     }
 
     suspend fun getContextWindowForModel(model: String): Int {
-        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
+        val current = currentSettings()
         val parsed = parseContextWindowMap(current.contextWindowMap)
-        val stored = parsed[modelToBackendKey(model)] ?: 4096
+        val key = modelToBackendKey(model)
+        val stored = parsed[key]
+            ?: when (key) {
+                MODEL_GEMMA4_2B -> parsed[MODEL_E2B]
+                MODEL_GEMMA4_4B -> parsed[MODEL_E4B]
+                else -> null
+            }
+            ?: 4096
         
         // モデル別の最大値を制約
         val maxWindow = when {
@@ -155,15 +183,15 @@ class SettingsRepository(
         backendType: String,
         backendTargetModel: String = MODEL_E2B
     ) {
-        val current = dao.getSettings() ?: SettingsEntity()
+        val current = currentSettings()
         val backendMap = parseBackendMap(current.backendType)
         val contextWindowMap = parseContextWindowMap(current.contextWindowMap).toMutableMap()
         val normalizedBackend = normalizeBackend(backendType)
         val target = modelToBackendKey(backendTargetModel)
         
         // モデル別の最大コンテキスト窓を適用
-        fun getMaxContextWindow(key: String): Int = when {
-            key.contains("Gemma4", ignoreCase = true) -> 8192
+        fun getMaxContextWindow(key: String): Int = when (key.uppercase()) {
+            MODEL_GEMMA4_2B, MODEL_GEMMA4_4B -> 8192
             else -> 4096  // Gemma3n (E2B, E4B) や IMPORTED
         }
         
@@ -172,9 +200,13 @@ class SettingsRepository(
         if (target == MODEL_ALL) {
             backendMap[MODEL_E2B] = normalizedBackend
             backendMap[MODEL_E4B] = normalizedBackend
+            backendMap[MODEL_GEMMA4_2B] = normalizedBackend
+            backendMap[MODEL_GEMMA4_4B] = normalizedBackend
             backendMap[MODEL_IMPORTED] = normalizedBackend
             contextWindowMap[MODEL_E2B] = contextWindow.coerceIn(512, getMaxContextWindow(MODEL_E2B))
             contextWindowMap[MODEL_E4B] = contextWindow.coerceIn(512, getMaxContextWindow(MODEL_E4B))
+            contextWindowMap[MODEL_GEMMA4_2B] = contextWindow.coerceIn(512, getMaxContextWindow(MODEL_GEMMA4_2B))
+            contextWindowMap[MODEL_GEMMA4_4B] = contextWindow.coerceIn(512, getMaxContextWindow(MODEL_GEMMA4_4B))
             contextWindowMap[MODEL_IMPORTED] = contextWindow.coerceIn(512, getMaxContextWindow(MODEL_IMPORTED))
         } else {
             backendMap[target] = normalizedBackend
@@ -220,6 +252,8 @@ class SettingsRepository(
             (lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && File(trimmed).isAbsolute
         return when {
             trimmed.equals(MODEL_ALL, ignoreCase = true) -> MODEL_ALL
+            trimmed.equals("Gemma4-2B", ignoreCase = true) -> MODEL_GEMMA4_2B
+            trimmed.equals("Gemma4-4B", ignoreCase = true) -> MODEL_GEMMA4_4B
             trimmed.equals(MODEL_E4B, ignoreCase = true) -> MODEL_E4B
             trimmed.equals(MODEL_IMPORTED, ignoreCase = true) -> MODEL_IMPORTED
             isImported -> MODEL_IMPORTED
@@ -239,6 +273,8 @@ class SettingsRepository(
             return linkedMapOf(
                 MODEL_E2B to allValue,
                 MODEL_E4B to allValue,
+                MODEL_GEMMA4_2B to allValue,
+                MODEL_GEMMA4_4B to allValue,
                 MODEL_IMPORTED to allValue
             )
         }
@@ -246,6 +282,8 @@ class SettingsRepository(
         val map = linkedMapOf(
             MODEL_E2B to BACKEND_CPU,
             MODEL_E4B to BACKEND_CPU,
+            MODEL_GEMMA4_2B to BACKEND_CPU,
+            MODEL_GEMMA4_4B to BACKEND_CPU,
             MODEL_IMPORTED to BACKEND_CPU
         )
         normalizedRaw.split(';')
@@ -257,27 +295,42 @@ class SettingsRepository(
                 val key = pair[0].trim().uppercase()
                 val value = normalizeBackend(pair[1].trim())
                 when (key) {
-                    MODEL_E2B, MODEL_E4B, MODEL_IMPORTED -> map[key] = value
+                    MODEL_E2B, MODEL_E4B, MODEL_GEMMA4_2B, MODEL_GEMMA4_4B, MODEL_IMPORTED -> map[key] = value
                 }
             }
         return map
     }
 
     suspend fun getSystemPrompt(): String {
-        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
+        val current = currentSettings()
         return current.systemPrompt
     }
 
     suspend fun isGemmaThinkingEnabled(): Boolean {
-        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
+        val current = currentSettings()
         return current.gemmaThinkingEnabled
     }
 
     suspend fun updateGemmaThinkingEnabled(enabled: Boolean) {
-        val current = dao.getSettings() ?: SettingsEntity()
+        val current = currentSettings()
         dao.update(
             current.copy(
                 gemmaThinkingEnabled = enabled,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun isSpeculativeDecodingEnabled(): Boolean {
+        val current = currentSettings()
+        return current.speculativeDecodingEnabled
+    }
+
+    suspend fun updateSpeculativeDecodingEnabled(enabled: Boolean) {
+        val current = currentSettings()
+        dao.update(
+            current.copy(
+                speculativeDecodingEnabled = enabled,
                 lastModified = System.currentTimeMillis()
             )
         )
@@ -299,31 +352,35 @@ class SettingsRepository(
     fun modelSupportsGemmaThinking(model: String): Boolean = isBuiltinGemma4Model(model)
 
     suspend fun updateSystemPrompt(prompt: String) {
-        val current = dao.getSettings() ?: SettingsEntity()
+        val current = currentSettings()
         dao.update(current.copy(systemPrompt = prompt, lastModified = System.currentTimeMillis()))
     }
 
     suspend fun getUserName(): String {
-        val current = dao.getSettings() ?: SettingsEntity().also { dao.insert(it) }
+        val current = currentSettings()
         return current.userName
     }
 
     suspend fun updateUserName(name: String) {
-        val current = dao.getSettings() ?: SettingsEntity()
+        val current = currentSettings()
         dao.update(current.copy(userName = name, lastModified = System.currentTimeMillis()))
     }
 
     private fun encodeBackendMap(map: Map<String, String>): String {
         val e2b = normalizeBackend(map[MODEL_E2B] ?: BACKEND_CPU)
         val e4b = normalizeBackend(map[MODEL_E4B] ?: BACKEND_CPU)
+        val gemma42b = normalizeBackend(map[MODEL_GEMMA4_2B] ?: e2b)
+        val gemma44b = normalizeBackend(map[MODEL_GEMMA4_4B] ?: e4b)
         val imported = normalizeBackend(map[MODEL_IMPORTED] ?: BACKEND_CPU)
-        return "$MODEL_E2B=$e2b;$MODEL_E4B=$e4b;$MODEL_IMPORTED=$imported"
+        return "$MODEL_E2B=$e2b;$MODEL_E4B=$e4b;$MODEL_GEMMA4_2B=$gemma42b;$MODEL_GEMMA4_4B=$gemma44b;$MODEL_IMPORTED=$imported"
     }
 
     private fun parseContextWindowMap(raw: String): LinkedHashMap<String, Int> {
         val map = linkedMapOf(
             MODEL_E2B to 4096,
             MODEL_E4B to 4096,
+            MODEL_GEMMA4_2B to 8192,
+            MODEL_GEMMA4_4B to 8192,
             MODEL_IMPORTED to 4096
         )
         if (raw.trim().isEmpty()) {
@@ -345,7 +402,11 @@ class SettingsRepository(
                     4096
                 }
                 when (key) {
-                    MODEL_E2B, MODEL_E4B, MODEL_IMPORTED -> map[key] = value
+                    MODEL_E2B -> map[key] = value.coerceIn(512, 4096)
+                    MODEL_E4B -> map[key] = value.coerceIn(512, 4096)
+                    MODEL_GEMMA4_2B -> map[key] = value.coerceIn(512, 8192)
+                    MODEL_GEMMA4_4B -> map[key] = value.coerceIn(512, 8192)
+                    MODEL_IMPORTED -> map[key] = value.coerceIn(512, 4096)
                 }
             }
         return map
@@ -360,15 +421,23 @@ class SettingsRepository(
             InferenceConfig.MIN_CONTEXT_WINDOW,
             InferenceConfig.MAX_CONTEXT_WINDOW
         ) ?: 4096
+        val gemma42b = map[MODEL_GEMMA4_2B]?.coerceIn(
+            InferenceConfig.MIN_CONTEXT_WINDOW,
+            8192
+        ) ?: 8192
+        val gemma44b = map[MODEL_GEMMA4_4B]?.coerceIn(
+            InferenceConfig.MIN_CONTEXT_WINDOW,
+            8192
+        ) ?: 8192
         val imported = map[MODEL_IMPORTED]?.coerceIn(
             InferenceConfig.MIN_CONTEXT_WINDOW,
             InferenceConfig.MAX_CONTEXT_WINDOW
         ) ?: 4096
-        return "$MODEL_E2B=$e2b;$MODEL_E4B=$e4b;$MODEL_IMPORTED=$imported"
+        return "$MODEL_E2B=$e2b;$MODEL_E4B=$e4b;$MODEL_GEMMA4_2B=$gemma42b;$MODEL_GEMMA4_4B=$gemma44b;$MODEL_IMPORTED=$imported"
     }
 
     suspend fun updateContextWindowForModel(model: String, contextWindow: Int) {
-        val current = dao.getSettings() ?: SettingsEntity()
+        val current = currentSettings()
         val map = parseContextWindowMap(current.contextWindowMap).toMutableMap()
         val key = modelToBackendKey(model)
         map[key] = contextWindow.coerceIn(

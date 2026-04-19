@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.os.BatteryManager
@@ -15,9 +16,119 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.nezumi_ai.data.alarm.AlarmReceiver
 import java.util.Calendar
+import java.util.Timer
+import kotlin.concurrent.timer
 
 object ToolSystemController {
     private const val TAG = "ToolSystemController"
+    private fun alarmRequestCode(hour: Int, minute: Int): Int = hour * 100 + minute
+
+    // ===== Timer Management (Session-only, In-Memory) =====
+    object TimerManager {
+        private data class TimerEntry(
+            val id: String,
+            val name: String,
+            val durationSeconds: Long,
+            val startTimeMs: Long,
+            val timerInstance: Timer
+        )
+
+        private val timers = mutableMapOf<String, TimerEntry>()
+        private var nextTimerId = 1
+
+        fun startTimer(durationSeconds: Long, label: String = ""): Map<String, Any> {
+            return synchronized(timers) {
+                val timerId = "timer_${nextTimerId++}"
+                val name = label.takeIf { it.isNotBlank() } ?: "Timer ${timers.size + 1}"
+                val startTime = System.currentTimeMillis()
+
+                // 各タイマーに独立した Timer インスタンスを作成
+                val timerInstance = kotlin.concurrent.timer(
+                    initialDelay = durationSeconds * 1000,
+                    period = 0  // 1回限り（period=0で無視される）
+                ) {
+                    Log.d(TAG, "Timer $timerId ($name) finished")
+                    // タイマー完了時の処理（通知はシステムレベルで処理）
+                    synchronized(timers) {
+                        timers.remove(timerId)
+                    }
+                }
+
+                timers[timerId] = TimerEntry(timerId, name, durationSeconds, startTime, timerInstance)
+                Log.d(TAG, "Timer started: $timerId, duration: $durationSeconds seconds")
+
+                mapOf(
+                    "success" to true,
+                    // canonical (UI/Schema)
+                    "timerId" to timerId,
+                    "label" to name,
+                    "durationSeconds" to durationSeconds,
+                    // backward compatible keys (older code)
+                    "timer_id" to timerId,
+                    "name" to name,
+                    "duration_seconds" to durationSeconds
+                )
+            }
+        }
+
+        fun stopTimer(timerId: String): Map<String, Any> {
+            return synchronized(timers) {
+                val timer = timers.remove(timerId)
+                if (timer != null) {
+                    timer.timerInstance.cancel()  // Timer インスタンス自体をキャンセル
+                    Log.d(TAG, "Timer stopped: $timerId")
+                    val elapsedSeconds = ((System.currentTimeMillis() - timer.startTimeMs) / 1000)
+                    mapOf(
+                        "success" to true,
+                        // canonical (UI/Schema)
+                        "timerId" to timerId,
+                        "elapsedSeconds" to elapsedSeconds,
+                        // backward compatible keys
+                        "timer_id" to timerId,
+                        "elapsed_seconds" to elapsedSeconds
+                    )
+                } else {
+                    mapOf(
+                        "success" to false,
+                        "error" to "timer_not_found",
+                        // canonical
+                        "timerId" to timerId,
+                        // backward compatible
+                        "timer_id" to timerId
+                    )
+                }
+            }
+        }
+
+        fun listTimers(): Map<String, Any> {
+            return synchronized(timers) {
+                val timerList = timers.values.map { t ->
+                    val elapsedSeconds = (System.currentTimeMillis() - t.startTimeMs) / 1000
+                    val remainingSeconds = maxOf(0, t.durationSeconds - elapsedSeconds)
+                    mapOf(
+                        // canonical (UI/Schema)
+                        "timerId" to t.id,
+                        "label" to t.name,
+                        "durationSeconds" to t.durationSeconds,
+                        "elapsedSeconds" to elapsedSeconds,
+                        "remainingSeconds" to remainingSeconds,
+                        // backward compatible
+                        "timer_id" to t.id,
+                        "name" to t.name,
+                        "duration_seconds" to t.durationSeconds,
+                        "elapsed_seconds" to elapsedSeconds,
+                        "remaining_seconds" to remainingSeconds
+                    )
+                }
+                mapOf(
+                    "success" to true,
+                    "count" to timerList.size,
+                    "timers" to timerList
+                )
+            }
+        }
+    }
+    // ===== End Timer Management =====
 
     fun setAlarm(
         context: Context,
@@ -29,59 +140,85 @@ object ToolSystemController {
         return runCatching {
             Log.d(TAG, "setAlarm: hour=$hour, minute=$minute, label=$label")
             
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            
-            // カレンダーを用意して、指定時刻に設定
-            val calendar = Calendar.getInstance().apply {
-                set(Calendar.HOUR_OF_DAY, hour)
-                set(Calendar.MINUTE, minute)
-                set(Calendar.SECOND, 0)
-                
-                // 既に過ぎた時刻なら次の日に設定
-                if (before(Calendar.getInstance())) {
-                    add(Calendar.DAY_OF_MONTH, 1)
-                }
+            // システムの時計アプリにアラーム設定
+            // ACTION_SET_ALARM Intent で時計アプリのUIに表示される
+            val intent = Intent("android.intent.action.SET_ALARM").apply {
+                putExtra("android.intent.extra.alarm.HOUR", hour)
+                putExtra("android.intent.extra.alarm.MINUTES", minute)
+                putExtra("android.intent.extra.alarm.LABEL", label)
+                putExtra("android.intent.extra.alarm.MESSAGE", label)
             }
             
-            val intent = Intent(context, AlarmReceiver::class.java).apply {
-                putExtra("alarm_id", label.hashCode().toLong())
-                putExtra("label", label)
-                action = "com.nezumi_ai.ALARM_ACTION_${label.hashCode()}"
+            try {
+                context.startActivity(intent)
+                Log.d(TAG, "Alarm intent sent to system clock app: $hour:${minute.toString().padStart(2, '0')} - $label")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to start clock app intent, falling back to AlarmManager", e)
+                // フォールバック：時計アプリが無い場合はAlarmManagerで直接設定
+                setAlarmViaAlarmManager(context, hour, minute, label)
             }
-            
-            val requestCode = label.hashCode()
-            val pendingIntent = PendingIntent.getBroadcast(
-                context,
-                requestCode,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            
-            // SCHEDULE_EXACT_ALARM 権限があれば exactAndAllowWhileIdle を使用
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.SCHEDULE_EXACT_ALARM
-                ) == PackageManager.PERMISSION_GRANTED
-            ) {
-                Log.d(TAG, "Using setExactAndAllowWhileIdle")
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    calendar.timeInMillis,
-                    pendingIntent
-                )
-            } else {
-                // 権限がない場合は通常のセット（精密性は低下）
-                Log.d(TAG, "Using setAndAllowWhileIdle")
-                alarmManager.setAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    calendar.timeInMillis,
-                    pendingIntent
-                )
-            }
-            
-            Log.d(TAG, "Alarm set successfully: $calendar")
         }
+    }
+
+    private fun setAlarmViaAlarmManager(
+        context: Context,
+        hour: Int,
+        minute: Int,
+        label: String
+    ) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        
+        // カレンダーを用意して、指定時刻に設定
+        val calendar = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, hour)
+            set(Calendar.MINUTE, minute)
+            set(Calendar.SECOND, 0)
+            
+            // 既に過ぎた時刻なら次の日に設定
+            if (before(Calendar.getInstance())) {
+                add(Calendar.DAY_OF_MONTH, 1)
+            }
+        }
+        
+        val intent = Intent(context, AlarmReceiver::class.java).apply {
+            putExtra("alarm_id", label.hashCode().toLong())
+            putExtra("label", label)
+            action = "com.nezumi_ai.ALARM_ACTION_${alarmRequestCode(hour, minute)}"
+        }
+        
+        // hour/minute をキーにして set/dismiss で一致させる
+        val requestCode = alarmRequestCode(hour, minute)
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        
+        // SCHEDULE_EXACT_ALARM 権限があれば exactAndAllowWhileIdle を使用
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.SCHEDULE_EXACT_ALARM
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.d(TAG, "Using setExactAndAllowWhileIdle")
+            alarmManager.setExactAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                calendar.timeInMillis,
+                pendingIntent
+            )
+        } else {
+            // 権限がない場合は通常のセット（精密性は低下）
+            Log.d(TAG, "Using setAndAllowWhileIdle")
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                calendar.timeInMillis,
+                pendingIntent
+            )
+        }
+        
+        Log.d(TAG, "Alarm set via AlarmManager: $calendar")
     }
 
     fun dismissAlarm(context: Context, hour: Int, minute: Int): Result<Unit> {
@@ -90,9 +227,7 @@ object ToolSystemController {
             
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             
-            // label が必要だが、ここでは使用できないため、hour:minute の組み合わせをキーに
-            val label = "$hour:$minute"
-            val requestCode = label.hashCode()
+            val requestCode = alarmRequestCode(hour, minute)
             
             val intent = Intent(context, AlarmReceiver::class.java)
             val pendingIntent = PendingIntent.getBroadcast(
@@ -105,18 +240,59 @@ object ToolSystemController {
             alarmManager.cancel(pendingIntent)
             pendingIntent.cancel()
             
-            Log.d(TAG, "Alarm dismissed: $label")
+            Log.d(TAG, "Alarm dismissed: ${hour}:${minute.toString().padStart(2, '0')} rc=$requestCode")
         }
     }
 
     fun toggleFlashlight(context: Context, on: Boolean): Result<Unit> {
         return runCatching {
+            Log.d(TAG, "toggleFlashlight: on=$on")
             val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-            val cameraId = manager.cameraIdList.firstOrNull { id ->
-                val chars = manager.getCameraCharacteristics(id)
-                chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
-            } ?: throw IllegalStateException("flashlight_unavailable")
-            manager.setTorchMode(cameraId, on)
+            val cameraIdList = manager.cameraIdList
+            
+            if (cameraIdList.isEmpty()) {
+                throw IllegalStateException("No cameras available on this device")
+            }
+            
+            // フラッシュライト機能を持つカメラを探す
+            var flashCameraId: String? = null
+            for (id in cameraIdList) {
+                try {
+                    val chars = manager.getCameraCharacteristics(id)
+                    val hasFlash = chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) ?: false
+                    val facing = chars.get(CameraCharacteristics.LENS_FACING) ?: CameraCharacteristics.LENS_FACING_BACK
+                    
+                    Log.d(TAG, "Camera $id: facing=$facing, hasFlash=$hasFlash")
+                    
+                    // バックカメラでフラッシュを持つものを優先
+                    if (hasFlash && facing == CameraCharacteristics.LENS_FACING_BACK) {
+                        flashCameraId = id
+                        break
+                    }
+                    // フロントカメラも候補にする
+                    if (hasFlash && flashCameraId == null) {
+                        flashCameraId = id
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error checking camera $id: ${e.message}")
+                }
+            }
+            
+            if (flashCameraId == null) {
+                throw IllegalStateException("No camera with flashlight capability found")
+            }
+            
+            Log.d(TAG, "Using flashlight on camera: $flashCameraId, turning ${if (on) "ON" else "OFF"}")
+            try {
+                manager.setTorchMode(flashCameraId, on)
+                Log.d(TAG, "Flashlight ${if (on) "turned on" else "turned off"} successfully")
+            } catch (e: CameraAccessException) {
+                Log.e(TAG, "Camera access exception: ${e.message}")
+                throw IllegalStateException("Camera access denied or in use by another app")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to set torch mode: ${e.message}", e)
+                throw e
+            }
         }
     }
 
@@ -146,7 +322,12 @@ object ToolSystemController {
             context,
             "android.permission.FLASHLIGHT"
         ) == PackageManager.PERMISSION_GRANTED
-        return cameraGranted && flashlightGranted
+        
+        Log.d(TAG, "hasFlashlightPermission: CAMERA=$cameraGranted, FLASHLIGHT=$flashlightGranted")
+        
+        // FLASHLIGHT権限は自動付与されることもあるため、CAMERAのみをチェック
+        // （実際のデバイスではFLASHLIGHTは単なるハードウェア機能）
+        return cameraGranted
     }
 
     fun getBatteryLevel(context: Context): Result<Map<String, Any>> {
@@ -190,6 +371,9 @@ object ToolSystemController {
                 Log.d(TAG, "Battery: $percentage%, Status: $statusStr, Health: $healthStr, Plugged: $isPlugged")
                 
                 mapOf(
+                    // canonical (UI expects "level")
+                    "level" to percentage,
+                    // richer fields
                     "percentage" to percentage,
                     "temperature_celsius" to (temp / 10),
                     "voltage_mv" to voltage,

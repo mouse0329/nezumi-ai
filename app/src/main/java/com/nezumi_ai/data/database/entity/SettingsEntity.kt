@@ -20,6 +20,8 @@ data class SettingsEntity(
     val resourceMonitorEnabled: Boolean = false,
     /** Gemma 4 向け: プロンプト先頭に `<|think|>` を付与してシンキング生成を有効化。デフォルトはオフ */
     val gemmaThinkingEnabled: Boolean = false,
+    /** LiteRT-LM 投機的デコーディング有効化（推論高速化。デフォルトはオフ） */
+    val speculativeDecodingEnabled: Boolean = false,
     val systemPrompt: String = "",
     val userName: String = "",
     val lastModified: Long = System.currentTimeMillis()

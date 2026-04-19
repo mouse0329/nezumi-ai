@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -303,6 +304,13 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             )
         }
 
+        binding.speculativeDecodingSwitch.setOnCheckedChangeListener { _, enabled ->
+            viewLifecycleOwner.lifecycleScope.launch {
+                settingsRepository.updateSpeculativeDecodingEnabled(enabled)
+                Log.d("SettingsFragment", "投機的デコーディング: ${if (enabled) "有効" else "無効"}")
+            }
+        }
+
         observeDownloadWork(ModelFileManager.LocalModel.GEMMA3N_2B)
         observeDownloadWork(ModelFileManager.LocalModel.GEMMA3N_4B)
         observeDownloadWork(ModelFileManager.LocalModel.GEMMA4_2B)
@@ -318,6 +326,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             val systemPrompt = settingsRepository.getSystemPrompt()
             val userName = settingsRepository.getUserName()
             val selectedModel = settingsRepository.getSelectedModel()
+            val speculativeDecodingEnabled = settingsRepository.isSpeculativeDecodingEnabled()
             val contextWindow = settingsRepository.getContextWindowForModel(selectedModel)
             
             // コンテキストウィンドウ表示（モデル別最大値を表示）
@@ -341,6 +350,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             binding.maxTokensInput.setText(config.maxTokens.toString())
             binding.userNameInput.setText(userName)
             binding.systemPromptInput.setText(systemPrompt)
+            binding.speculativeDecodingSwitch.isChecked = speculativeDecodingEnabled
             when (config.backendType.uppercase()) {
                 "GPU" -> binding.backendToggleGroup.check(binding.backendGpuButton.id)
                 "NPU" -> binding.backendToggleGroup.check(binding.backendNpuButton.id)

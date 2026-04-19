@@ -37,14 +37,14 @@ object ImportedModelCapabilityStore {
         prefs(context).edit()
             .putBoolean(imageKey(modelPath), capabilities.imageEnabled)
             .putBoolean(audioKey(modelPath), capabilities.audioEnabled)
-            .apply()
+            .commit()
     }
 
     fun clear(context: Context, modelPath: String) {
         prefs(context).edit()
             .remove(imageKey(modelPath))
             .remove(audioKey(modelPath))
-            .apply()
+            .commit()
     }
 
     fun resolveForModel(context: Context, modelKey: String): ImportedModelCapabilities {

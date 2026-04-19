@@ -10,6 +10,8 @@ data class InferenceConfig(
     val topP: Float = 0.95f,
     /** LiteRT-LM の extraContext enable_thinking（Gemma 4 のみ対応。他モデルでは無視される）。デフォルトはオフ */
     val enableThinking: Boolean = false,
+    /** LiteRT-LM の投機的デコーディング有効化（推論高速化。デフォルトはオフ） */
+    val enableSpeculativeDecoding: Boolean = false,
     val backendType: String = "CPU"
 ) {
     companion object {

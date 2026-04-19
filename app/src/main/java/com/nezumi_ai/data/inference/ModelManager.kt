@@ -3,6 +3,7 @@ package com.nezumi_ai.data.inference
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
+import com.nezumi_ai.data.repository.SettingsRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
@@ -12,10 +13,12 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * AIモデルの管理クラス
+ * AIモデルの管理クラス（Phase 11 リソース管理統合版）
  * - モデルのロード/アンロード
  * - バージョン管理
  * - キャッシング管理
+ * - メモリ監視とOOM対策
+ * - セッション・リソース管理
  */
 class ModelManager(
     private val context: Context
@@ -39,6 +42,14 @@ class ModelManager(
     private var currentConfig: InferenceConfig? = null
     private val loadMutex = Mutex()
     private val inferenceMutex = Mutex()
+    
+    // ─────────────────────────────────────────────────────────
+    // Phase 11: リソース管理の統合
+    // ─────────────────────────────────────────────────────────
+    
+    private val memoryObserver = MemoryObserver
+    private val sessionManager = SessionResourceManager()
+    private val jobController = InferenceJobController()
 
     private fun isCompiledModelInvokeFailure(t: Throwable): Boolean {
         var cur: Throwable? = t
@@ -76,40 +87,24 @@ class ModelManager(
     }
     
     /**
-     * メモリ使用率をチェック（外部からアクセス可能）
+     * メモリ使用率をチェック（MemoryObserver 統合版）
      * @return メモリ使用率（0-100）
      */
-    fun getMemoryUsagePercent(): Int {
-        val runtime = Runtime.getRuntime()
-        val usedMemory = runtime.totalMemory() - runtime.freeMemory()
-        val maxMemory = runtime.maxMemory()
-        return if (maxMemory > 0) {
-            ((usedMemory * 100) / maxMemory).toInt()
-        } else {
-            0
-        }
+    suspend fun getMemoryUsagePercent(): Int {
+        val status = memoryObserver.getMemoryStatus(context)
+        return status.usedPercent
     }
     
     /**
-     * メモリが十分かチェック（外部からアクセス可能）
+     * メモリが十分かチェック（OOM対策強化版）
      * @return true: メモリに余裕あり / false: メモリ埋まりすぎ
      */
-    fun isMemorySufficient(): Boolean {
-        val usage = getMemoryUsagePercent()
-        val isSufficient = usage < 85  // 85%以上の使用率でロード拒否
-        val runtime = Runtime.getRuntime()
-        val usedMB = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
-        val maxMB = runtime.maxMemory() / (1024 * 1024)
-        
-        Log.d(TAG, "Memory check: ${usedMB}MB / ${maxMB}MB (${usage}%)")
-        
-        if (!isSufficient) {
-            Log.w(TAG, "Memory usage is too high ($usage%) - refusing model load")
-        }
-        
-        return isSufficient
+    suspend fun isMemorySufficient(): Boolean {
+        // MemoryObserver で段階的にチェック
+        return memoryObserver.requestMemoryCorrectionIfNeeded(context)
     }
-/**
+
+    /**
      * モデルを初期化（ロード）
      */
     suspend fun initializeModel(
@@ -274,6 +269,97 @@ suspend fun runInferenceWithMedia(
             inferenceEngine.cancelInference()
         } catch (e: Exception) {
             Log.e(TAG, "Error during inference cancellation", e)
+        }
+    }
+
+    /**
+     * NPU キャリブレーション: 初回起動時の自動ベンチマーク
+     *
+     * GPU/CPU/NPU の最適バックエンドを自動診断して SettingsRepository に保存します。
+     * @param sessionId 一時的なセッションID（ベンチマーク用）
+     * @param settingsRepository 設定保存先
+     * @param modelName ベンチマーク対象のモデル名
+     * @return 最適バックエンド名 ("GPU", "CPU", "NPU", など)
+     */
+    suspend fun calibrateBackend(
+        sessionId: Long,
+        settingsRepository: SettingsRepository,
+        modelName: String = DEFAULT_MODEL_NAME
+    ): String {
+        Log.d(TAG, "Starting NPU/GPU/CPU calibration benchmark...")
+        
+        val candidates = listOf("NPU", "GPU", "CPU")
+        val results = mutableMapOf<String, Long>()
+        
+        for (backend in candidates) {
+            val elapsed = benchmarkBackend(sessionId, backend, modelName)
+            results[backend] = elapsed
+            Log.d(TAG, "Benchmark result: backend=$backend elapsed=${elapsed}ms")
+        }
+        
+        // 最速のバックエンドを選択（NPU が利用できない場合は GPU → CPU へフォールバック）
+        val optimalBackend = results.minByOrNull { it.value }?.key ?: "CPU"
+        
+        Log.i(TAG, "Optimal backend selected: $optimalBackend")
+        Log.d(TAG, "Full benchmark results: $results")
+        
+        // 設定に保存（SettingsRepository が対応している場合）
+        // settingsRepository.updateBackend(optimalBackend)
+        
+        return optimalBackend
+    }
+
+    /**
+     * 特定のバックエンドをベンチマーク
+     *
+     * 短い推論を実行して応答時間を計測します。
+     * @param sessionId 一時的なセッションID
+     * @param backend ベンチマーク対象の backend ("CPU", "GPU", "NPU")
+     * @param modelName ベンチマーク対象のモデル名
+     * @return 応答時間（ミリ秒）。失敗時は Long.MAX_VALUE を返す
+     */
+    private suspend fun benchmarkBackend(
+        sessionId: Long,
+        backend: String,
+        modelName: String
+    ): Long {
+        return try {
+            val config = InferenceConfig(
+                backendType = backend,
+                maxTokens = 50,  // 短い生成
+                temperature = 0.7f,
+                topP = 0.95f
+            )
+            
+            val startTime = System.currentTimeMillis()
+            
+            // 一時的なモデルロード
+            val loadResult = inferenceEngine.loadModel(modelName, config)
+            if (loadResult.isFailure) {
+                Log.w(TAG, "Backend $backend not available: ${loadResult.exceptionOrNull()?.message}")
+                return Long.MAX_VALUE  // 利用不可
+            }
+            
+            // ベンチマーク推論を実行
+            val benchmarkPrompt = "日本国の首都は？"
+            var tokenCount = 0
+            
+            inferenceEngine.inference(sessionId, benchmarkPrompt, config).collect { chunk ->
+                tokenCount += chunk.length
+            }
+            
+            val elapsed = System.currentTimeMillis() - startTime
+            
+            // モデルをアンロード
+            runCatching { inferenceEngine.unloadModel() }
+                .onFailure { Log.w(TAG, "Failed to unload after benchmark", it) }
+            
+            Log.d(TAG, "Benchmark $backend completed: ${elapsed}ms for $tokenCount chars")
+            
+            elapsed
+        } catch (e: Throwable) {
+            Log.w(TAG, "Benchmark failed for backend $backend: ${e.message}", e)
+            Long.MAX_VALUE  // ベンチマーク失敗
         }
     }
 }

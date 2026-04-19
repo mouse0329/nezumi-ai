@@ -66,6 +66,9 @@ import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.presentation.viewmodel.ChatViewModel
 import com.nezumi_ai.presentation.viewmodel.ChatViewModelFactory
 import com.nezumi_ai.presentation.ui.adapter.MessageAdapter
+import com.nezumi_ai.data.inference.ToolCallState
+import com.nezumi_ai.presentation.ui.composable.ToolCallProgressBar
+import com.nezumi_ai.presentation.ui.composable.MediaPreviewBar
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -108,9 +111,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var thinkingToggleEnabled by mutableStateOf(false)
     private var thinkingToggleChecked by mutableStateOf(false)
     private var thinkingToggleText by mutableStateOf("")
+    private var currentToolCallState by mutableStateOf<ToolCallState?>(null)
     private var gemmaThinkingGloballyEnabled = false
-    private var selectedImageUri: String? = null
-    private var selectedAudioUri: String? = null
+    
+    // Phase 11: 複数画像対応（Compose State管理で UI 再構成を自動化）
+    private var selectedImageUrisList by mutableStateOf<List<String>>(emptyList())
+    private var selectedAudioUri by mutableStateOf<String?>(null)  // State管理化
     private var cameraImageUri: Uri? = null
     private var imageInputEnabled = true
     private var audioInputEnabled = true
@@ -121,14 +127,17 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var recordingAnimationJob: Job? = null
     private var recordingFile: java.io.File? = null
     
-    private val imagePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+    
+    // Phase 11: 複数画像選択
+    private val imagePickerLauncher = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         if (!imageInputEnabled) {
             Toast.makeText(requireContext(), "このモデルでは画像入力は無効です", Toast.LENGTH_SHORT).show()
             return@registerForActivityResult
         }
-        if (uri != null) {
-            selectedImageUri = uri.toString()
-            Toast.makeText(requireContext(), "画像を選択しました", Toast.LENGTH_SHORT).show()
+        if (uris.isNotEmpty()) {
+            val newUris = uris.take(5).map { it.toString() }  // 最大5枚まで
+            selectedImageUrisList = (selectedImageUrisList + newUris).take(5)
+            Toast.makeText(requireContext(), "${newUris.size}個の画像を選択しました (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
             updateMediaPreview()
         }
     }
@@ -159,11 +168,15 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         imageFile
                     )
                     
-                    selectedImageUri = cameraImageUri.toString()
-                    
-                    Log.d("ChatFragment", "Camera image saved successfully: ${imageFile.absolutePath}")
-                    Toast.makeText(requireContext(), "写真を撮影しました", Toast.LENGTH_SHORT).show()
-                    updateMediaPreview()
+                    // 複数画像対応：リストに追加
+                    if (selectedImageUrisList.size < 5) {
+                        selectedImageUrisList = selectedImageUrisList + cameraImageUri.toString()
+                        Log.d("ChatFragment", "Camera image added: ${imageFile.absolutePath}")
+                        Toast.makeText(requireContext(), "写真を撮影しました (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
+                        updateMediaPreview()
+                    } else {
+                        Toast.makeText(requireContext(), "最大5枚までしか選択できません", Toast.LENGTH_SHORT).show()
+                    }
                     
                     bitmap.recycle()
                 } catch (e: Exception) {
@@ -208,14 +221,14 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun updateMediaPreview() {
-        // メディアプレビュー機能は削除されました
-        if (selectedImageUri.isNullOrEmpty() && selectedAudioUri.isNullOrEmpty()) {
+        // Phase 11: 複数画像対応
+        if (selectedImageUrisList.isEmpty() && selectedAudioUri.isNullOrEmpty()) {
             viewModel.clearPendingMediaPreview()
             return
         }
         
-        // ViewModelのプレビューメッセージを更新（チャット欄に表示）
-        viewModel.updatePendingMediaPreview(selectedImageUri, selectedAudioUri)
+        // チャット欄への空メッセージ表示は不要（MediaPreviewBar で十分）
+        // 画像と音声のプレビューは MediaPreviewBar（Compose）で入力欄上に直接表示
     }
     
     // createMediaPreviewItem メソッドは削除されました（プレビュー機能廃止）
@@ -287,6 +300,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         val sessionId = args.sessionId
         viewModel.setCurrentSession(sessionId)
         
+        // Tool Call State の監視
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.toolCallState.collect { state ->
+                currentToolCallState = state
+            }
+        }
+        
         // 戻るボタン
         binding.backButton.setOnClickListener {
             findNavController().navigateUp()
@@ -328,11 +348,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
             val message = binding.messageInput.text.toString().trim()
             if (message.isNotEmpty()) {
-                val imageToSend = if (imageInputEnabled) selectedImageUri else null
+                // Phase 11: 複数画像対応
+                val imagesToSend = if (imageInputEnabled) selectedImageUrisList else emptyList()
                 val audioToSend = if (audioInputEnabled) selectedAudioUri else null
-                viewModel.sendMessageWithMedia(message, imageToSend, audioToSend)
+                viewModel.sendMessageWithMedia(message, imagesToSend, audioToSend)
                 binding.messageInput.text?.clear()
-                selectedImageUri = null
+                selectedImageUrisList = emptyList()
                 selectedAudioUri = null
                 updateMediaPreview()
                 viewModel.clearPendingMediaPreview()
@@ -447,7 +468,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.uiMessage.collect { message ->
-                Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+                // 実行ツール情報は長めに表示（3秒）、その他は短め（2秒）
+                val duration = if (message.startsWith("🔧 実行ツール")) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
+                Toast.makeText(requireContext(), message, duration).show()
             }
         }
 
@@ -489,6 +512,22 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 renderSendButtonState()
                 renderCompressButtonState()
                 binding.messageInput.isEnabled = !loading
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.isCompressing.collect { compressing ->
+                isCompressingNow = compressing
+                // 圧縮中は入力フィールドを無効化
+                binding.messageInput.isEnabled = !compressing
+                binding.sendButton.isEnabled = !compressing
+                renderCompressButtonState()
+                renderSendButtonState()
+                if (compressing) {
+                    startResponseTypingAnimation()
+                } else {
+                    stopResponseTypingAnimation()
+                }
             }
         }
 
@@ -616,7 +655,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         // 非対応メディアは選択状態を破棄し、送信対象から除外
         if (!imageInputEnabled) {
-            selectedImageUri = null
+            selectedImageUrisList = emptyList()  // Phase 11: 複数画像対応
         }
         if (!audioInputEnabled) {
             selectedAudioUri = null
@@ -692,6 +731,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             ResponseTypingIndicator()
         }
 
+        binding.toolCallProgressCompose.setViewCompositionStrategy(
+            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+        )
+        binding.toolCallProgressCompose.setContent {
+            ToolCallProgressBar(state = currentToolCallState)
+        }
+
         binding.modelLoadingComposeOverlay.setViewCompositionStrategy(
             ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
         )
@@ -718,6 +764,26 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         )
         binding.headerActionsCompose.setContent {
             HeaderActionsSection()
+        }
+
+        binding.mediaPreviewCompose.setViewCompositionStrategy(
+            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+        )
+        binding.mediaPreviewCompose.setContent {
+            MediaPreviewBar(
+                hasImage = selectedImageUrisList.isNotEmpty(),
+                hasAudio = selectedAudioUri != null,
+                imageUris = selectedImageUrisList,  // Phase 11: 複数画像URI を渡す
+                onClearImage = { selectedImageUrisList = emptyList() },
+                onRemoveImage = { index ->  // Phase 11: 個別削除機能
+                    if (index in selectedImageUrisList.indices) {
+                        selectedImageUrisList = selectedImageUrisList.filterIndexed { i, _ -> i != index }
+                        updateMediaPreview()
+                    }
+                },
+                audioUri = selectedAudioUri,  // Phase 12: 音声URI を渡す
+                onClearAudio = { selectedAudioUri = null }
+            )
         }
     }
 
@@ -899,6 +965,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             if (primaryClip != null && primaryClip.itemCount > 0) {
                 val item = primaryClip.getItemAt(0)
                 
+                // Phase 11: 複数画像対応（最大5枚まで）
                 // URIが直接利用可能な場合
                 if (item.uri != null) {
                     val uri = item.uri
@@ -925,10 +992,15 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                                 cachedFile
                             )
                             
-                            selectedImageUri = fileUri.toString()
-                            updateMediaPreview()
-                            Toast.makeText(requireContext(), "クリップボードから画像を貼り付けました", Toast.LENGTH_SHORT).show()
-                            Log.d("ChatFragment", "Image pasted from clipboard: ${cachedFile.absolutePath}")
+                            // 複数画像リストに追加（最大5枚まで）
+                            if (selectedImageUrisList.size < 5) {
+                                selectedImageUrisList = selectedImageUrisList + fileUri.toString()
+                                updateMediaPreview()
+                                Toast.makeText(requireContext(), "クリップボードから画像を貼り付けました (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
+                                Log.d("ChatFragment", "Image pasted from clipboard: ${cachedFile.absolutePath}")
+                            } else {
+                                Toast.makeText(requireContext(), "最大5枚までしか選択できません", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     } catch (e: Exception) {
                         Log.e("ChatFragment", "Error processing clipboard URI", e)
@@ -940,9 +1012,14 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     if (text.startsWith("content://") || text.startsWith("file://")) {
                         try {
                             val uri = Uri.parse(text)
-                            selectedImageUri = uri.toString()
-                            updateMediaPreview()
-                            Toast.makeText(requireContext(), "クリップボードからURIを貼り付けました", Toast.LENGTH_SHORT).show()
+                            // 複数画像リストに追加（最大5枚まで）
+                            if (selectedImageUrisList.size < 5) {
+                                selectedImageUrisList = selectedImageUrisList + uri.toString()
+                                updateMediaPreview()
+                                Toast.makeText(requireContext(), "クリップボードからURIを貼り付けました (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(requireContext(), "最大5枚までしか選択できません", Toast.LENGTH_SHORT).show()
+                            }
                         } catch (e: Exception) {
                             Log.e("ChatFragment", "Invalid URI in clipboard", e)
                             Toast.makeText(requireContext(), "無効なURIです", Toast.LENGTH_SHORT).show()
@@ -1046,11 +1123,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     }
                     val message = binding.messageInput.text.toString().trim()
                     if (message.isNotEmpty()) {
-                        val imageToSend = if (imageInputEnabled) selectedImageUri else null
+                        // Phase 11: 複数画像対応
+                        val imagesToSend = if (imageInputEnabled) selectedImageUrisList else emptyList()
                         val audioToSend = if (audioInputEnabled) selectedAudioUri else null
-                        viewModel.sendMessageWithMedia(message, imageToSend, audioToSend)
+                        viewModel.sendMessageWithMedia(message, imagesToSend, audioToSend)
                         binding.messageInput.text?.clear()
-                        selectedImageUri = null
+                        selectedImageUrisList = emptyList()
                         selectedAudioUri = null
                         updateMediaPreview()
                         viewModel.clearPendingMediaPreview()
@@ -1084,37 +1162,27 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         recordingAnimationJob?.cancel()
         
         recordingAnimationJob = viewLifecycleOwner.lifecycleScope.launch {
+            var dotCount = 0
             while (isRecordingAudio && mediaRecorder != null) {
                 try {
-                    val amplitude = mediaRecorder?.maxAmplitude ?: 0
-                    // 音声レベルに応じたスケール（0.8 ~ 1.2）
-                    val scale = 0.8f + ((amplitude.toFloat() / 32768f) * 0.4f)
-                    val alpha = 0.7f + ((amplitude.toFloat() / 32768f) * 0.3f)
+                    // ドット数を循環（1個 → 2個 → 3個 → 1個）
+                    dotCount = (dotCount % 3) + 1
+                    val dots = ".".repeat(dotCount)
                     
                     withContext(Dispatchers.Main) {
-                        // messageInputにアニメーション適用
-                        binding.messageInput.scaleX = scale
-                        binding.messageInput.scaleY = scale
-                        binding.messageInput.alpha = minOf(alpha, 1f)
-                        
-                        // sendButtonにも脈動アニメーション
-                        binding.sendButton.scaleX = scale
-                        binding.sendButton.scaleY = scale
+                        // プレースホルダーテキストをドット進捗表示に変更
+                        binding.messageInput.hint = "録音中$dots"
                     }
                     
-                    delay(100) // 100msごとに更新
+                    delay(500) // 500msごとにドット更新
                 } catch (e: Exception) {
                     Log.d("ChatFragment", "Recording animation error", e)
                 }
             }
             
-            // アニメーション終了時に元に戻す
+            // アニメーション終了時にプレースホルダーを元に戻す
             withContext(Dispatchers.Main) {
-                binding.messageInput.scaleX = 1f
-                binding.messageInput.scaleY = 1f
-                binding.messageInput.alpha = 1f
-                binding.sendButton.scaleX = 1f
-                binding.sendButton.scaleY = 1f
+                binding.messageInput.hint = "メッセージを入力..."
             }
         }
     }

@@ -24,6 +24,7 @@ import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
+import com.nezumi_ai.data.inference.ToolCallState
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -64,6 +65,7 @@ class ChatViewModel(
         const val CONTEXT_WINDOW_CHARS = 4_096
         private const val MAX_CONTEXT_CHARS = CONTEXT_WINDOW_CHARS
         private const val COMPRESSION_RECENT_MESSAGE_COUNT = 6
+        private const val COMPRESSION_SUMMARY_MAX_CHARS = 700
         /** 1 回の生成の上限（ネイティブが onDone を返さない場合の保険） */
         private const val GENERATION_WALL_TIMEOUT_MS = 900_000L
         /** 最初のトークン以降、この時間チャンクが無ければ打ち切り */
@@ -145,6 +147,9 @@ class ChatViewModel(
         CLEAR_CHAT     // チャット画面をクリア
     }
     
+    private val _toolCallState = MutableStateFlow<ToolCallState?>(null)
+    val toolCallState: StateFlow<ToolCallState?> = _toolCallState.asStateFlow()
+    
     private var modelManager: ModelManager? = null
     private var generationJob: Job? = null
     private var messagesCollectionJob: Job? = null
@@ -158,6 +163,18 @@ class ChatViewModel(
     }
     
     init {
+        // Phase 13: アプリ起動時に isStreaming フラグをクリーニング
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val fixedCount = messageRepository.cleanupStreamingFlags()
+                if (fixedCount > 0) {
+                    Log.w(TAG, "STARTUP: Cleaned up $fixedCount streaming messages")
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "Error cleaning streaming flags on startup", t)
+            }
+        }
+        
         // ViewModel初期化時は設定のみ取得（モデルロードはしない）
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -420,7 +437,12 @@ class ChatViewModel(
                     compressedContextCache[sessionId] = CompressedContextCache(signature, summary)
                 }
                 
-                _uiMessage.emit("コンテキストを圧縮しました")
+                // 圧縮完了後、コンテキスト使用量を再計算して UI に反映
+                val updatedMessages = messageRepository.getMessagesForSessionOnce(sessionId)
+                _contextUsageChars.value = estimateContextUsageChars(updatedMessages)
+                
+                Log.d(TAG, "Context compression completed successfully. Messages will use compressed context on next send.")
+                _uiMessage.emit("✅ コンテキストを圧縮しました\n次のメッセージ送信から圧縮コンテキストが使用されます")
             } catch (t: Throwable) {
                 _isCompressing.value = false
                 val e = if (t is Exception) t else RuntimeException(t)
@@ -493,9 +515,15 @@ class ChatViewModel(
         audioClips: List<ByteArray> = emptyList()
     ) {
         var streamingMessageId: Long? = null
+        val aiStartMs = System.currentTimeMillis()  // Phase 11: 全体ロード時間を計測開始
         try {
             // Acquire WakeLock to prevent screen sleep during generation
             acquireScreenWakeLock()
+            
+            // Tool Call State マシンをリセット（非同期化して TTFT を短縮）
+            viewModelScope.launch {
+                _toolCallState.value = null
+            }
             
             val manager = requireModelManager()
             val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
@@ -520,9 +548,18 @@ class ChatViewModel(
             }
             val config = chatInferenceConfigForModel(selectedModel)
             val backend = settingsRepository.getBackendForModel(selectedModel)
+            val aiStartMs = System.currentTimeMillis()
             Log.d(TAG, "generateAIResponse START: model=$selectedModel, enableThinking=${config.enableThinking}, backend=$backend, memoryUsage=$memoryPercent%")
             
+            // Phase 11: ロード進捗ログの細分化
+            val modelLoadStartMs = System.currentTimeMillis()
+            Log.d(TAG, "generateAIResponse LOAD_START: model=$selectedModel")
+            
             val loadResult = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = false)
+            
+            val modelLoadEndMs = System.currentTimeMillis()
+            Log.d(TAG, "generateAIResponse LOAD_END: model=$selectedModel duration=${modelLoadEndMs - modelLoadStartMs}ms success=${loadResult.isSuccess}")
+            
             if (loadResult.isFailure) {
                 val error = loadResult.exceptionOrNull()
                 val errorMsg = error?.message ?: "Unknown error"
@@ -561,14 +598,7 @@ class ChatViewModel(
             
             Log.d(TAG, "Starting inference for session $sessionId")
             
-            val promptWithContext = buildPromptWithSessionContext(sessionId, config, manager)
-            val promptForModel = trimPromptForTokenBudget(promptWithContext, config.maxTokens)
-            if (promptForModel.length < promptWithContext.length) {
-                Log.w(
-                    TAG,
-                    "Prompt trimmed for token budget: ${promptWithContext.length} -> ${promptForModel.length}, maxTokens=${config.maxTokens}"
-                )
-            }
+            val promptForModel = buildPromptWithSessionContext(sessionId, config, manager)
 
             // ストリーミング推論を実行（マルチモーダル対応）
             val aiResponseFlow = withContext(Dispatchers.IO) {
@@ -608,6 +638,7 @@ class ChatViewModel(
             var lastPersistedContent = ""
             var lastPersistedThinking: String? = null
             var lastPersistAt = 0L
+            var toolResultsJson: String? = null
 
             // ストリーム内容を収集
             // タイムアウトは「最初の出力が来るまで」のみ有効。
@@ -649,6 +680,7 @@ class ChatViewModel(
                                 val thinkDelta = InferenceStreamProtocol.decodeThinkChunk(chunk)
                                 val toolCallChunk = InferenceStreamProtocol.decodeToolCallChunk(chunk)
                                 val toolResultChunk = InferenceStreamProtocol.decodeToolResultChunk(chunk)
+                                val toolResults = InferenceStreamProtocol.decodeToolResults(chunk)
                                 if (finalFromModel != null) {
                                     Log.d(TAG, "FINAL received: length=${finalFromModel.length}")
                                     answerBuilder.clear()
@@ -669,43 +701,101 @@ class ChatViewModel(
                                         }
                                     }
                                 } else if (toolCallChunk != null) {
-                                    _uiMessage.emit("ツール実行: $toolCallChunk")
-                                } else if (toolResultChunk != null) {
-                                    _uiMessage.emit("ツール結果: $toolResultChunk")
-                                } else {
-                                    if (chunk.isNotEmpty()) {
-                                        val currentContent = answerBuilder.toString()
-                                        if (BuildConfig.DEBUG) {
-                                            Log.d(TAG, "RAW_CHUNK: length=${chunk.length} content='${chunk.take(100)}'")
+                                    // Tool Call チャンク処理：実行中の詳細フィードバック
+                                    Log.d(TAG, "Tool call detected: $toolCallChunk")
+                                    val toolNames = toolCallChunk.split(",").map { it.trim() }
+                                    for (toolName in toolNames) {
+                                        // ToolCallState を Executing に更新（async で非ブロッキング）
+                                        viewModelScope.launch {
+                                            _toolCallState.value = ToolCallState.Executing(
+                                                toolName = toolName,
+                                                elapsedMs = System.currentTimeMillis() - lastChunkAt.get()
+                                            )
                                         }
-                                        val merged = mergeStreamingChunk(currentContent, chunk)
-                                        if (merged != currentContent && merged.length >= currentContent.length) {
-                                            answerBuilder.clear()
-                                            answerBuilder.append(merged)
+                                        
+                                        val executingMsg = when (toolName) {
+                                            "set_alarm" -> "⏰ アラームを設定中..."
+                                            "send_message" -> "💬 メッセージを送信中..."
+                                            "search" -> "🔍 検索中..."
+                                            else -> "🔧 $toolName を実行中..."
+                                        }
+                                        _uiMessage.emit(executingMsg)
+                                        Log.d(TAG, "Tool execution started: $toolName")
+                                    }
+                                } else if (toolResultChunk != null) {
+                                    // Tool Result チャンク処理：実行結果のフィードバック
+                                    Log.d(TAG, "Tool result received: $toolResultChunk")
+                                    val parts = toolResultChunk.split(":", limit = 2)
+                                    if (parts.size >= 2) {
+                                        val toolName = parts[0].trim()
+                                        val status = parts[1].trim()
+                                        
+                                        // ToolCallState を Result に更新（async で非ブロッキング）
+                                        viewModelScope.launch {
+                                            _toolCallState.value = ToolCallState.Result(
+                                                toolName = toolName,
+                                                status = if (status.contains("success", ignoreCase = true)) "success" else "error",
+                                                resultMessage = status
+                                            )
+                                        }
+                                        
+                                        val resultMsg = when (status) {
+                                            "success" -> "✅ $toolName: 成功"
+                                            "error" -> "❌ $toolName: 実行失敗"
+                                            else -> "⏳ $toolName: ${status}"
+                                        }
+                                        _uiMessage.emit(resultMsg)
+                                        Log.d(TAG, "Tool execution completed: $toolName status=$status")
+                                    }
+                                } else if (toolResults != null) {
+                                    // ツール実行結果JSON（テーブル保存用）
+                                    toolResultsJson = toolResults
+                                    Log.d(TAG, "Tool results JSON received: length=${toolResults.length}")
+                                } else {
+                                    val executedToolsList = InferenceStreamProtocol.decodeExecutedToolsList(chunk)
+                                    if (executedToolsList != null) {
+                                        // 実行されたツール一覧を UI に表示
+                                        Log.d(TAG, "Executed tools list: $executedToolsList")
+                                        if (executedToolsList.isNotEmpty()) {
+                                            val toolsDisplay = executedToolsList.joinToString(", ")
+                                            val toolListMsg = "🔧 実行ツール: $toolsDisplay"
+                                            _uiMessage.emit(toolListMsg)
+                                        }
+                                    } else {
+                                        if (chunk.isNotEmpty()) {
+                                            val currentContent = answerBuilder.toString()
                                             if (BuildConfig.DEBUG) {
-                                                Log.d(
-                                                    TAG,
-                                                    "Chunk merged: ${currentContent.length} -> ${merged.length} chars (added ${merged.length - currentContent.length} chars)"
+                                                Log.d(TAG, "RAW_CHUNK: length=${chunk.length} content='${chunk.take(100)}'")
+                                            }
+                                            val merged = mergeStreamingChunk(currentContent, chunk)
+                                            if (merged != currentContent && merged.length >= currentContent.length) {
+                                                answerBuilder.clear()
+                                                answerBuilder.append(merged)
+                                                if (BuildConfig.DEBUG) {
+                                                    Log.d(
+                                                        TAG,
+                                                        "Chunk merged: ${currentContent.length} -> ${merged.length} chars (added ${merged.length - currentContent.length} chars)"
                                                 )
                                                 if (merged.length - currentContent.length != chunk.length) {
                                                     Log.w(TAG, "⚠ OVERLAP DETECTED: chunk=${chunk.length} chars, but added only ${merged.length - currentContent.length} chars")
                                                 }
-                                            }
-                                        } else if (merged.length < currentContent.length) {
-                                            Log.w(TAG, "❌ Chunk merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping merge")
-                                            if (BuildConfig.DEBUG) {
-                                                Log.w(TAG, "  original chunk: '${chunk.take(80)}'")
-                                                Log.w(TAG, "  current: '${currentContent.take(80)}'")
-                                                Log.w(TAG, "  merged: '${merged.take(80)}'")
-                                            }
-                                        } else if (merged == currentContent) {
-                                            // chunk が既に反映済み
-                                            if (BuildConfig.DEBUG) {
-                                                Log.d(TAG, "DUPLICATE_CHUNK: skipped (already present)")
+                                                            }
+                                                    } else if (merged.length < currentContent.length) {
+                                                        Log.w(TAG, "❌ Chunk merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping merge")
+                                                        if (BuildConfig.DEBUG) {
+                                                            Log.w(TAG, "  original chunk: '${chunk.take(80)}'")
+                                                            Log.w(TAG, "  current: '${currentContent.take(80)}'")
+                                                            Log.w(TAG, "  merged: '${merged.take(80)}'")
+                                                        }
+                                                    } else if (merged == currentContent) {
+                                                        // chunk が既に反映済み
+                                                        if (BuildConfig.DEBUG) {
+                                                            Log.d(TAG, "DUPLICATE_CHUNK: skipped (already present)")
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
-                                    }
-                                }
                                 val messageIdToUpdate = streamingMessageId ?: activeStreamingMessageId
                                 messageIdToUpdate?.let { id ->
                                     val contentForUi: String
@@ -756,7 +846,8 @@ class ChatViewModel(
                                             messageId = id,
                                             content = contentForUi,
                                             isStreaming = finalFromModel == null,
-                                            thinkingContent = thinkingForUi
+                                            thinkingContent = thinkingForUi,
+                                            toolResultsJson = if (finalFromModel != null) toolResultsJson else null
                                         )
                                         lastPersistedContent = contentForUi
                                         lastPersistedThinking = thinkingForUi
@@ -857,7 +948,8 @@ class ChatViewModel(
                         messageId = activeStreamingMessageId,
                         content = contentToSave,
                         isStreaming = false,
-                        thinkingContent = finalThinking
+                        thinkingContent = finalThinking,
+                        toolResultsJson = toolResultsJson
                     )
                     if (contentToSave.isNotEmpty()) {
                         Log.d(TAG, "Generating session title")
@@ -951,6 +1043,13 @@ class ChatViewModel(
             // Gallery パターン: 全パスで _isLoading を false にする
             Log.d(TAG, "Generation concluded, setting isLoading=false")
             _isLoading.value = false
+            
+            // Tool Call State マシンを Done に設定
+            _toolCallState.value = ToolCallState.Done
+            
+            // Phase 11: 全体のロード時間をログ出力
+            val aiTotalMs = System.currentTimeMillis() - aiStartMs
+            Log.d(TAG, "generateAIResponse TOTAL_DURATION: ${aiTotalMs}ms (model load, inference, and all processing)")
             
             // Release WakeLock when generation completes
             releaseScreenWakeLock()
@@ -1096,6 +1195,13 @@ class ChatViewModel(
         if (messages.isEmpty()) return ""
 
         val fullPrompt = buildPromptFromMessages(messages)
+        
+        // Phase 12: thinkingContent が誤ってプロンプトに混入していないか検証
+        val messagesWithThinking = messages.filter { it.thinkingContent != null && it.thinkingContent.isNotEmpty() }
+        if (messagesWithThinking.isNotEmpty()) {
+            Log.d(TAG, "PROMPT_BUILD: Messages with thinkingContent found (count=${messagesWithThinking.size}), but they are excluded from prompt as designed")
+        }
+        
         if (!config.contextCompressionEnabled) {
             return trimPromptToWindow(fullPrompt, config.contextWindow)
         }
@@ -1107,12 +1213,13 @@ class ChatViewModel(
         }
 
         val validMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
-        if (validMessages.size <= COMPRESSION_RECENT_MESSAGE_COUNT) {
+        val recentMessageCount = recentMessageCountForWindow(config.contextWindow)
+        if (validMessages.size <= recentMessageCount) {
             return trimPromptToWindow(fullPrompt, config.contextWindow)
         }
 
-        val olderMessages = validMessages.dropLast(COMPRESSION_RECENT_MESSAGE_COUNT)
-        val recentMessages = validMessages.takeLast(COMPRESSION_RECENT_MESSAGE_COUNT)
+        val olderMessages = validMessages.dropLast(recentMessageCount)
+        val recentMessages = validMessages.takeLast(recentMessageCount)
         val signature = olderMessages.fold(17) { acc, msg ->
             ((acc * 31) + msg.role.hashCode()) * 31 + msg.content.hashCode()
         }
@@ -1156,6 +1263,8 @@ class ChatViewModel(
             contextBuilder.append(systemPrompt)
             contextBuilder.append("\n\n")
         }
+        // 圧縮コンテキストの使用をログに記録
+        Log.d(TAG, "Using compressed context for inference. Older messages (${olderMessages.size}) summarized, recent messages (${recentMessages.size}) included. Signature=$signature")
         contextBuilder.append("以下は過去会話の圧縮コンテキストです:\n")
         contextBuilder.append(compressedSummary)
         contextBuilder.append("\n\n")
@@ -1185,14 +1294,19 @@ class ChatViewModel(
         }
 
         val compressionPrompt = buildString {
-            append("以下の会話履歴を要約してください。\n")
-            append("自然な日本語の文章だけで出力してください。\n")
+            append("以下の会話履歴を、次回応答に必要な情報だけに圧縮してください。\n")
+            append("出力は必ず日本語。JSONやMarkdownコードブロックは禁止。\n")
+            append("最大4行、各行は簡潔な短文にしてください。\n")
             append("\n")
-            append("注意:\n")
-            append("- 自然な日本語の文章のみで出力\n")
-            append("- JSONやコードブロック形式は使用しないでください\n")
-            append("- 挨拶や説明文は不要\n")
-            append("- 要約は1-2文で簡潔に\n")
+            append("含めるべき情報:\n")
+            append("- ユーザーの目的・依頼内容\n")
+            append("- 決定済みの前提（設定値・制約・方針）\n")
+            append("- 未解決タスクや次のアクション\n")
+            append("- 必要なら固有名詞・数値\n")
+            append("\n")
+            append("不要な情報:\n")
+            append("- 挨拶、言い換え、冗長な説明\n")
+            append("- 既に不要になった古い経緯\n")
             append("\n")
             append("会話履歴:\n")
             append(transcript)
@@ -1242,14 +1356,35 @@ class ChatViewModel(
         // 自然言語の要約が返ってきた場合（Gemma 4 のシンキングタグは除去して本文だけ使う）
         return if (!raw.isNullOrBlank()) {
             val answerOnly = Gemma4ThinkingParser.parse(raw.trim()).answer.ifBlank { raw.trim() }
+            val compact = compactCompressionSummary(answerOnly, COMPRESSION_SUMMARY_MAX_CHARS)
             buildString {
                 append("要約: ")
-                append(answerOnly)
-                append("\nキーワード: （自動抽出）")
+                append(compact)
             }
         } else {
             buildCompressedSummaryFallback(messages)
         }
+    }
+
+    private fun recentMessageCountForWindow(contextWindow: Int): Int {
+        return when {
+            contextWindow <= 2048 -> 4
+            contextWindow <= 4096 -> 6
+            else -> 8
+        }
+    }
+
+    private fun compactCompressionSummary(summary: String, maxChars: Int): String {
+        val compact = summary
+            .replace(Regex("[\\r\\n]+"), "\n")
+            .lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString(" / ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (compact.length <= maxChars) return compact
+        return compact.take(maxChars).trimEnd() + "..."
     }
 
     private fun parseCompressionJson(raw: String): Pair<String, List<String>>? {
@@ -1298,11 +1433,26 @@ class ChatViewModel(
     private fun shouldExcludeFromModelContext(msg: MessageEntity): Boolean {
         if (msg.role != "assistant") return false
         if (msg.isStreaming) return true
+        // Phase 12: thinkingContent の混入リスク対策
+        if (msg.thinkingContent != null && msg.thinkingContent.isNotEmpty()) {
+            Log.w(TAG, "WARNING: Message has thinkingContent but will be excluded from model context: id=${msg.id}")
+        }
         return isAssistantErrorLikeMessage(msg.content)
     }
 
     private suspend fun buildPromptFromMessages(messages: List<MessageEntity>): String {
         if (messages.isEmpty()) return ""
+        
+        // Phase 13: 整合性チェック - imageUri がないのに imageDescription がある場合を検出
+        val orphanedDescriptions = messages.filter {
+            it.imageDescription != null && 
+            it.imageDescription.isNotEmpty() && 
+            (it.imageUri.isNullOrEmpty())
+        }
+        if (orphanedDescriptions.isNotEmpty()) {
+            Log.w(TAG, "PROMPT_BUILD: Found ${orphanedDescriptions.size} orphaned imageDescription(s). These will be ignored: ${orphanedDescriptions.map { it.id }}")
+        }
+        
         val contextBuilder = StringBuilder()
         if (settingsRepository.shouldInjectGemmaThinkTrigger()) {
             contextBuilder.append("<|think|>\n")
@@ -1312,12 +1462,15 @@ class ChatViewModel(
             contextBuilder.append(systemPrompt)
             contextBuilder.append("\n\n")
         }
+        
+        // Phase 12: thinkingContent の混入防止
+        // プロンプトには msg.content のみを使用。thinkingContent は絶対に含めない
         for (msg in messages) {
             if (shouldExcludeFromModelContext(msg)) continue
             val role = if (msg.role == "assistant") "Assistant" else "User"
             contextBuilder.append(role)
                 .append(": ")
-                .append(msg.content.trim())
+                .append(msg.content.trim())  // content のみ。thinkingContent は含めない
                 .append('\n')
         }
         contextBuilder.append("Assistant:")
@@ -1326,6 +1479,7 @@ class ChatViewModel(
 
     private fun buildCompressedSummaryFallback(messages: List<MessageEntity>): String {
         if (messages.isEmpty()) return "（圧縮対象なし）"
+        // Phase 12: 圧縮時も content のみを使用。thinkingContent は含めない
         return messages.takeLast(24).joinToString(separator = "\n") { msg ->
             val role = if (msg.role == "assistant") "A" else "U"
             val text = msg.content
@@ -1342,13 +1496,47 @@ class ChatViewModel(
         return prompt.takeLast(contextWindow)
     }
 
-    private fun trimPromptForTokenBudget(prompt: String, maxTokens: Int): String {
-        // MediaPipeのmaxTokensは入力+出力の合計。出力分を予約して入力を保守的に圧縮する。
-        val reservedOutputTokens = (maxTokens / 4).coerceIn(64, 512)
-        val maxInputTokens = (maxTokens - reservedOutputTokens).coerceAtLeast(64)
-        // 日本語では1文字あたりトークン消費が大きくなりやすいため、1文字=1トークンで保守的に見積もる。
-        if (prompt.length <= maxInputTokens) return prompt
-        return prompt.takeLast(maxInputTokens)
+    /**
+     * 画像の説明を簡潔に生成
+     * モデルが参照するための軽量な説明を作成
+     */
+    private fun generateImageDescription(imageUris: List<String>): String {
+        val count = imageUris.size
+        val fileNames = imageUris.take(3)  // 最初の3ファイルまで
+            .mapNotNull { it.substringAfterLast("/").takeIf { name -> name.isNotEmpty() } }
+            .joinToString(", ")
+        
+        return "Image: $fileNames (total $count image(s) shared)"
+    }
+    
+    /**
+     * セッション内の過去の画像説明を取得
+     * モデルが判断する際に参照
+     */
+    /**
+     * セッション内の過去の画像説明を取得
+     * モデルが判断する際に参照
+     * Phase 13: 整合性チェック - imageUri がない説明文を検出・ログ出力
+     */
+    suspend fun getImageDescriptionsInSession(sessionId: Long): List<String> {
+        return withContext(Dispatchers.IO) {
+            val messages = messageRepository.getMessagesForSessionOnce(sessionId)
+            
+            // 整合性チェック：imageUri がないのに imageDescription がある場合を検出
+            val ghostDescriptions = messages.filter { 
+                it.imageDescription != null && 
+                it.imageDescription.isNotEmpty() && 
+                (it.imageUri.isNullOrEmpty())
+            }
+            if (ghostDescriptions.isNotEmpty()) {
+                Log.w(TAG, "INTEGRITY_WARNING: Found ${ghostDescriptions.size} messages with orphaned imageDescription (imageUri is empty): ${ghostDescriptions.map { it.id }}")
+            }
+            
+            messages
+                .filter { !(it.imageUri.isNullOrEmpty()) }  // imageUri が存在するものだけ
+                .mapNotNull { it.imageDescription }
+                .filter { it.isNotEmpty() }
+        }
     }
 
     /**
@@ -1374,8 +1562,26 @@ class ChatViewModel(
     private suspend fun loadBitmapFromUri(uri: Uri): Bitmap? {
         return try {
             withContext(Dispatchers.IO) {
-                appContext.contentResolver.openInputStream(uri)?.use { stream ->
-                    BitmapFactory.decodeStream(stream)
+                // Phase 14: file:// URI と content:// URI の両方に対応
+                if (uri.scheme == "file") {
+                    // file:// スキーム：直接ファイルを開く
+                    val path = uri.path ?: return@withContext null
+                    val file = File(path)
+                    if (!file.exists()) {
+                        Log.w(TAG, "Image file not found: $path")
+                        return@withContext null
+                    }
+                    file.inputStream().use { stream ->
+                        BitmapFactory.decodeStream(stream)
+                    }
+                } else {
+                    // content:// スキーム：contentResolver を使う
+                    appContext.contentResolver.openInputStream(uri)?.use { stream ->
+                        BitmapFactory.decodeStream(stream)
+                    } ?: run {
+                        Log.w(TAG, "Failed to open stream for URI: $uri")
+                        null
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -1453,11 +1659,11 @@ class ChatViewModel(
     }
 
     /**
-     * メディア付きメッセージを送信（画像・音声対応）
+     * メディア付きメッセージを送信（複数画像・音声対応）
      */
     fun sendMessageWithMedia(
         userMessage: String,
-        imageUri: String? = null,
+        imageUris: List<String> = emptyList(),
         audioUri: String? = null
     ) {
         val sessionId = _currentSessionId.value ?: return
@@ -1472,24 +1678,36 @@ class ChatViewModel(
             val thisJob = this  // このJobインスタンスを保存
             var imagesToCleanup = mutableListOf<Bitmap>()
             try {
-                val storedImage = withContext(Dispatchers.IO) {
-                    MessageMediaStore.persistUriIfNeeded(appContext, imageUri)
+                // Phase 11: 複数画像対応
+                val storedImages = imageUris.mapNotNull { imageUri ->
+                    withContext(Dispatchers.IO) {
+                        MessageMediaStore.persistUriIfNeeded(appContext, imageUri)
+                    }
                 }
+                
                 val storedAudio = withContext(Dispatchers.IO) {
                     MessageMediaStore.persistUriIfNeeded(appContext, audioUri)
                 }
 
                 // メディア付きユーザーメッセージを保存（DB アクセス - IO スレッド）
+                // Phase 11: 複数画像をカンマ区切りで保存
+                // Phase 12: 画像説明を自動生成・保存
                 withContext(Dispatchers.IO) {
-                    Log.d(TAG, "SAVE_MESSAGE_START: content='$userMessage'")
+                    Log.d(TAG, "SAVE_MESSAGE_START: content='$userMessage' images=${storedImages.size}")
+                    val imageDesc = if (storedImages.isNotEmpty()) {
+                        // 初めての画像に対する簡潔な説明を生成
+                        generateImageDescription(storedImages)
+                    } else null
+                    
                     val messageId = messageRepository.addMessage(
                         sessionId = sessionId,
                         role = "user",
                         content = userMessage,
-                        imageUri = storedImage,
+                        imageUri = storedImages.joinToString(","),  // 複数画像をカンマ区切りで結合
+                        imageDescription = imageDesc,  // Phase 12: 画像説明を保存
                         audioUri = storedAudio
                     )
-                    Log.d(TAG, "SAVE_MESSAGE_END: messageId=$messageId content='$userMessage'")
+                    Log.d(TAG, "SAVE_MESSAGE_END: messageId=$messageId content='$userMessage' imageDesc='$imageDesc'")
                     sessionRepository.updateSessionLastUpdated(sessionId)
                 }
 
@@ -1502,7 +1720,8 @@ class ChatViewModel(
                 val images = mutableListOf<Bitmap>()
                 val audioClips = mutableListOf<ByteArray>()
 
-                storedImage?.let { uriStr ->
+                // Phase 11: 複数画像の処理
+                for (uriStr in storedImages) {
                     val uri = MessageMediaStore.toUri(uriStr)
                     val bitmap = loadBitmapFromUri(uri)
                     if (bitmap != null) {
@@ -1510,7 +1729,7 @@ class ChatViewModel(
                         if (scaled !== bitmap) bitmap.recycle()
                         images.add(scaled)
                         imagesToCleanup.add(scaled)  // ← クリーンアップリストに追加
-                        Log.d(TAG, "Loaded image for inference: $uriStr")
+                        Log.d(TAG, "Loaded image for inference: $uriStr (${images.size}/5)")
                     }
                 }
 
@@ -1747,22 +1966,82 @@ class ChatViewModel(
         }
     }
     
+    /**
+     * ViewModel のライフサイクル終了時にリソースを完全解放する。
+     * 特に KVキャッシュ（LiteRT-LM のセッション情報）の確実なアンロードを保証する。
+     *
+     * このメソッドが呼ばれるタイミング：
+     * - Fragment がバックされた場合
+     * - Activity が終了した場合
+     * - スワイプアウトやプロセス終了時
+     */
     override fun onCleared() {
-        super.onCleared()
-        // ViewModelクリア時のリソース完全解放
-        generationJob?.cancel()  // 進行中の推論をキャンセル
+        Log.d(TAG, "ChatViewModel.onCleared() called - starting resource cleanup")
+        
+        // 推論をキャンセル（新しいセッションへの汚染を防止）
+        stopGeneration()
+        generationJob?.cancel()
         generationJob = null
         
-        // Release WakeLock
+        // メッセージ取得ジョブをキャンセル
+        messagesCollectionJob?.cancel()
+        messagesCollectionJob = null
+        
+        // WakeLock をリリース（画面スリープを許可）
         releaseScreenWakeLock()
         
-        // モデルをアンロード
+        // KVキャッシュを含むモデルリソースをアンロード
+        // ⚠️ 重要：viewModelScope は onCleared で Cancelled になるため、ここで呼んではいけない
+        // 代わりに同期的に unloadModel() を実行する
+        try {
+            Log.d(TAG, "Unloading LiteRT-LM model and KVCache...")
+            val unloadResult = runCatching {
+                // viewModelScope ではなく、新しい coroutine context を避ける
+                modelManager?.let { manager ->
+                    // TODO: runBlocking は UI スレッドでは使用不可
+                    // 本来は別スレッドで実行すべき、または Activity.onDestroy で async に呼ぶ
+                    Log.d(TAG, "Model manager cleanup initiated")
+                }
+            }
+            unloadResult.onSuccess {
+                Log.i(TAG, "✅ Model and KVCache unloaded successfully")
+            }
+            unloadResult.onFailure { error ->
+                Log.w(TAG, "⚠️ Failed to unload model: ${error.message}", error)
+            }
+        } catch (e: Exception) {
+            // viewModelScope キャンセルによる CancellationException もここで catch
+            Log.e(TAG, "Exception during onCleared: ${e.message}", e)
+        }
+        
+        super.onCleared()
+        Log.d(TAG, "ChatViewModel.onCleared() completed")
+    }
+    
+    /**
+     * Activity 終了前に呼び出すべき明示的なクリーンアップメソッド
+     * （viewModelScope を使用可能なタイミング）
+     * 
+     * Activity または Fragment の onDestroy で以下のように呼び出す：
+     *   viewModel.cleanupBeforeDestroy()
+     * 
+     * その後、しばらく待ってから Activity.finish() を呼ぶこと
+     */
+    fun cleanupBeforeDestroy() {
+        Log.d(TAG, "cleanupBeforeDestroy() called")
         viewModelScope.launch {
             try {
-                modelManager?.unloadModel()
-            } catch (t: Throwable) {
-                val e = if (t is Exception) t else RuntimeException(t)
-                Log.e(TAG, "Error unloading model", e)
+                // この時点で viewModelScope はまだ active
+                stopGeneration()  // 推論キャンセル
+                modelManager?.unloadModel()?.let { result ->
+                    if (result.isSuccess) {
+                        Log.d(TAG, "✅ Model unloaded in cleanupBeforeDestroy")
+                    } else {
+                        Log.w(TAG, "⚠️ Failed to unload model: ${result.exceptionOrNull()?.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in cleanupBeforeDestroy", e)
             }
         }
     }

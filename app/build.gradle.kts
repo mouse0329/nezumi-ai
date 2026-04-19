@@ -4,6 +4,7 @@ import java.io.FileInputStream
 plugins {
     id("com.android.application") version "8.5.2"
     kotlin("android") version "2.2.0"
+    kotlin("plugin.serialization") version "2.2.0"
     id("org.jetbrains.kotlin.plugin.compose") version "2.2.0"
     kotlin("kapt") version "2.2.0"
     id("androidx.navigation.safeargs.kotlin") version "2.6.0"
@@ -114,6 +115,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
+    // Serialization
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
+
     // On-device LLM（AI Edge Gallery と同じ LiteRT-LM + TFLite Play Services）
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.0")
     implementation("com.google.android.gms:play-services-tflite-java:16.4.0")
@@ -125,6 +129,9 @@ dependencies {
     // Markdown rendering
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:ext-tables:4.6.2")
+    
+    // Image loading (Coil)
+    implementation("io.coil-kt:coil-compose:2.6.0")
     
     // Testing
     testImplementation("junit:junit:4.13.2")

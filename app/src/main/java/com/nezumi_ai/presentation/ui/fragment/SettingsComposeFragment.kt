@@ -196,6 +196,13 @@ class SettingsComposeFragment : Fragment() {
         observeDownloadWork()
     }
 
+    override fun onResume() {
+        super.onResume()
+        renderHfTokenState()
+        loadInferenceSettings()
+        refreshImportedTasks()
+    }
+
     @Composable
     private fun SettingsScreen() {
         if (isImportingModel) {
@@ -357,6 +364,7 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             )
                             capabilityDialogModel = null
+                            refreshImportedTasks()
                             toast("モデル機能設定を保存しました")
                         }) {
                             Text("保存")

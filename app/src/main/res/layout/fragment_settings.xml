@@ -87,6 +87,10 @@
 
                 <EditText android:id="@+id/system_prompt_input" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:hint="@string/system_prompt_hint" android:inputType="textMultiLine" android:minLines="3" android:maxLines="6" />
 
+                <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/speculative_decoding_switch" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="投機的デコーディング（高速化）" />
+
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="推論の高速化を有効にします（実験的機能）" android:textColor="@color/text_secondary" android:textSize="11sp" />
+
                 <com.google.android.material.button.MaterialButton android:id="@+id/save_inference_button" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="@string/save_inference" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

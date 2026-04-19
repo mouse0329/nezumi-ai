@@ -16,31 +16,85 @@ object CacheManager {
      * キャッシュディレクトリの使用量をチェックし、必要に応じてクリーンアップ
      * currentModelBaseName: 現在読み込むモデルのベース名（例: "gemma-3n-e4b"）
      *                       このモデルのキャッシュファイルは保護される
+     * cacheDir: XNNPackが使用するキャッシュディレクトリ（指定がない場合は context.cacheDir）
      * forceScan: true の場合、recentCacheFiles を再スキャンする（デフォルト: true）
      *            false の場合、スキャンをスキップ（モデル読込完了後の呼び出し用）
      */
-    fun cleanupCacheIfNeeded(context: Context, currentModelBaseName: String = "", forceScan: Boolean = true) {
+    fun cleanupCacheIfNeeded(
+        context: Context,
+        currentModelBaseName: String = "",
+        cacheDir: File? = null,
+        forceScan: Boolean = true
+    ) {
         try {
             if (currentModelBaseName.isNotEmpty()) {
                 lastLoadedModelName = currentModelBaseName
                 // 現在のセッションの開始時にキャッシュ一覧を記録
                 if (forceScan) {
-                    recentCacheFiles = context.cacheDir.listFiles()?.map { it.name }?.toSet() ?: emptySet()
+                    recentCacheFiles = (cacheDir ?: context.cacheDir).listFiles()?.map { it.name }?.toSet() ?: emptySet()
                 }
             }
             
-            val cacheDir = context.cacheDir
-            val cacheSizeMB = getCacheSize(cacheDir) / (1024 * 1024)
+            val targetCacheDir = cacheDir ?: context.cacheDir
+            val cacheSizeMB = getCacheSize(targetCacheDir) / (1024 * 1024)
             
             if (cacheSizeMB > CLEANUP_THRESHOLD_MB) {
                 Log.d(TAG, "Cache size ($cacheSizeMB MB) exceeds threshold. Cleaning up old files (protecting model: $lastLoadedModelName)...")
-                cleanOldCacheFiles(cacheDir, lastLoadedModelName)
+                cleanOldCacheFiles(targetCacheDir, lastLoadedModelName)
                 
-                val newSizeMB = getCacheSize(cacheDir) / (1024 * 1024)
+                val newSizeMB = getCacheSize(targetCacheDir) / (1024 * 1024)
                 Log.d(TAG, "Cache cleaned: $cacheSizeMB MB → $newSizeMB MB")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error during cache cleanup", e)
+        }
+    }
+
+    /**
+     * Phase 11: XNNPackキャッシュ検証 - 破損検出と自動削除
+     * Engine.initialize() 前に呼び出して、壊れたキャッシュを事前削除
+     */
+    fun validateAndRepairCacheIfNeeded(cacheDirPath: String?): Boolean {
+        if (cacheDirPath.isNullOrBlank()) return true
+        
+        return try {
+            val cacheDir = File(cacheDirPath)
+            if (!cacheDir.exists() || !cacheDir.isDirectory) {
+                Log.d(TAG, "Cache directory does not exist: $cacheDirPath")
+                return true
+            }
+            
+            // XNNPackキャッシュファイルをスキャン（*.bin, *.ckpt など）
+            val cacheFiles = cacheDir.listFiles { file ->
+                file.isFile && (file.name.endsWith(".bin") || 
+                               file.name.endsWith(".ckpt") ||
+                               file.name.contains("xnnpack", ignoreCase = true))
+            } ?: emptyArray()
+            
+            if (cacheFiles.isEmpty()) {
+                Log.d(TAG, "No XNNPack cache files found in $cacheDirPath")
+                return true
+            }
+            
+            // 破損しているように見えるファイルを検出（サイズが異常に小さい等）
+            val suspiciousFiles = cacheFiles.filter { file ->
+                file.length() < 1024  // 1KB未満は疑わしい
+            }
+            
+            if (suspiciousFiles.isNotEmpty()) {
+                Log.w(TAG, "Detected ${suspiciousFiles.size} suspicious cache files (likely corrupted). Deleting...")
+                suspiciousFiles.forEach { file ->
+                    val deleted = file.delete()
+                    Log.d(TAG, "Deleted suspicious cache file: ${file.name} (success=$deleted)")
+                }
+                return true  // 削除成功 - Engine 初期化前に清潔な状態
+            }
+            
+            Log.d(TAG, "Cache validation passed: ${cacheFiles.size} files OK")
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Error validating cache (will proceed anyway)", e)
+            true  // エラーでも初期化は続行
         }
     }
     

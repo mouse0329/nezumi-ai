@@ -223,4 +223,29 @@
         libero vel nunc consequat, quis tincidunt nisl eleifend. Cras bibendum enim a justo luctus
         vestibulum. Fusce dictum libero quis erat maximus, vitae volutpat diam dignissim.
     </string>
+
+    <!-- Tool Result Card Strings -->
+    <string name="tool_result_icon">Tool result icon</string>
+    <string name="tool_result_alarm">アラーム</string>
+    <string name="tool_result_alarm_failed">設定に失敗しました</string>
+    <string name="tool_result_dismiss_alarm">アラーム解除</string>
+    <string name="tool_result_dismiss_alarm_failed">解除に失敗しました</string>
+    <string name="tool_result_list_alarms">アラーム一覧</string>
+    <string name="tool_result_list_alarms_failed">取得に失敗しました</string>
+    <string name="tool_result_alarms_count">%1$d件</string>
+    <string name="tool_result_timer">タイマー</string>
+    <string name="tool_result_timer_start_failed">開始に失敗しました</string>
+    <string name="tool_result_stop_timer">タイマー停止</string>
+    <string name="tool_result_timer_stopped">停止しました</string>
+    <string name="tool_result_timer_stop_failed">停止に失敗しました</string>
+    <string name="tool_result_list_timers">タイマー一覧</string>
+    <string name="tool_result_list_timers_failed">取得に失敗しました</string>
+    <string name="tool_result_timers_running">%1$d件 実行中</string>
+    <string name="tool_result_battery">バッテリー</string>
+    <string name="tool_result_battery_failed">取得に失敗しました</string>
+    <string name="tool_result_current_time">現在時刻</string>
+    <string name="tool_result_current_time_failed">取得に失敗しました</string>
+    <string name="tool_result_flashlight">フラッシュライト</string>
+    <string name="tool_result_flashlight_failed">操作に失敗しました</string>
+
 </resources>

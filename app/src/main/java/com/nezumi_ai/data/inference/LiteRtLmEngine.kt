@@ -28,6 +28,12 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Gemma / LiteRT-LM 推論（[com.google.ai.edge.litertlm]）。
@@ -55,6 +61,7 @@ class LiteRtLmEngine(
     private var engine: Engine? = null
     private var loadedModelPath: String? = null
     private var loadedConfig: InferenceConfig? = null
+    private var loadedBackend: String? = null  // Phase 11: GPU/CPU/NPU バックエンド追跡（キャッシュ無効化用）
     private val modelMutex = Mutex()
     private val inferenceMutex = Mutex()
     private val inferenceMutexHeld = AtomicBoolean(false)
@@ -69,6 +76,25 @@ class LiteRtLmEngine(
     /** セッション遷移検出用 */
     @Volatile
     private var lastSessionId: Long? = null
+    
+    // ─────────────────────────────────────────────────────────
+    // Phase 11: リソース管理の統合
+    // ─────────────────────────────────────────────────────────
+    
+    /** メモリ監視 */
+    private val memoryObserver = MemoryObserver
+    
+    /** Bitmap メモリプール */
+    private val bitmapPool = BitmapMemoryPool()
+    
+    /** セッションリソース管理 */
+    private val sessionManager = SessionResourceManager()
+    
+    /** Coroutine/Job 管理 */
+    private val jobController = InferenceJobController()
+    
+    /** バックエンドリソース管理 */
+    private val backendResourceManager = BackendResourceManager()
 
     /**
      * AI Edge Gallery 方式：推論キャンセル時は cancelProcess() だけ。
@@ -103,6 +129,58 @@ class LiteRtLmEngine(
         }
     }
 
+    /**
+     * セッションIDに基づいて Conversation を取得または新規作成する。
+     * 同一セッション内では Conversation と KVキャッシュを再利用し、レスポンス速度を向上させる。
+     *
+     * @param sessionId 現在のセッションID
+     * @param eng 初期化済みの Engine インスタンス
+     * @param config 推論設定（サンプラーパラメータなど）
+     * @return Conversation インスタンス
+     */
+    private suspend fun getOrCreateConversation(
+        sessionId: Long,
+        eng: Engine,
+        config: InferenceConfig
+    ): Conversation {
+        synchronized(activeConversationLock) {
+            // セッションが変わった場合、または Conversation が未作成の場合はリセット
+            if (lastSessionId != sessionId || activeLiteRtConversation == null) {
+                Log.i(TAG, "Session change or no conversation. Creating new: lastSessionId=$lastSessionId, newSessionId=$sessionId")
+                closeAndResetActiveConversation()
+
+                val normalized = config.normalized()
+                ExperimentalFlags.enableConversationConstrainedDecoding = false
+                val samplerConfig = if (normalized.backendType == "NPU") {
+                    null
+                } else {
+                    SamplerConfig(
+                        topK = normalized.maxTopK,
+                        topP = normalized.topP.toDouble(),
+                        temperature = normalized.temperature.toDouble()
+                    )
+                }
+
+                val conv = eng.createConversation(
+                    ConversationConfig(
+                        tools = buildEnabledToolProviders(appContext, alarmDao),
+                        samplerConfig = samplerConfig,
+                        automaticToolCalling = false
+                    )
+                )
+                // 投機的デコーディング設定を適用
+                ExperimentalFlags.enableSpeculativeDecoding = normalized.enableSpeculativeDecoding
+                ExperimentalFlags.enableConversationConstrainedDecoding = false
+                activeLiteRtConversation = conv
+                lastSessionId = sessionId
+                Log.d(TAG, "New conversation created for session=$sessionId, KVCache initialized")
+            } else {
+                Log.d(TAG, "Conversation reused for session=$sessionId, KVCache preserved")
+            }
+            return activeLiteRtConversation!!
+        }
+    }
+
     private suspend fun acquireInferenceMutex() {
         inferenceMutex.lock()
         inferenceMutexHeld.set(true)
@@ -120,43 +198,75 @@ class LiteRtLmEngine(
         return try {
             modelMutex.withLock {
                 val normalizedConfig = config.normalized()
+                Log.d(TAG, "loadModel START: modelName=$modelName backend=${normalizedConfig.backendType}")
+                val modelStartTimeMs = System.currentTimeMillis()
+                
                 val modelFile = resolveLocalModelFile(modelName)
+                val resolveTimeMs = System.currentTimeMillis()
+                Log.d(TAG, "loadModel RESOLVE: file=$modelFile duration=${resolveTimeMs - modelStartTimeMs}ms")
+                
                 if (modelFile == null || !modelFile.exists()) {
                     return Result.failure(IllegalStateException("Model file is not available"))
                 }
                 val modelPath = modelFile.absolutePath
                 val needsReload = loadedModelPath != modelPath ||
                     loadedConfig != normalizedConfig ||
+                    loadedBackend != normalizedConfig.backendType ||  // Phase 11: バックエンド変更時も再ロード
                     engine == null
 
                 if (!needsReload) {
-                    Log.d(TAG, "Model already loaded: $modelPath")
+                    Log.d(TAG, "Model already loaded: $modelPath backend=${normalizedConfig.backendType}")
                     return Result.success(Unit)
+                }
+
+                val preferredBackend = backendForConfig(normalizedConfig.backendType)
+                val cacheDirPath = appContext.getExternalFilesDir(null)?.absolutePath
+                val cacheDir = cacheDirPath?.let { File(it) }
+                
+                // Phase 11: バックエンド変更時はキャッシュを削除（互換性がないため）
+                if (loadedBackend != null && loadedBackend != normalizedConfig.backendType) {
+                    Log.i(TAG, "Backend changed from $loadedBackend to ${normalizedConfig.backendType}. Clearing cache...")
+                    clearBackendSpecificCache(cacheDirPath)
                 }
 
                 runCatching { engine?.close() }
                 engine = null
                 loadedModelPath = null
                 loadedConfig = null
+                loadedBackend = null
+                
+                // Phase 11: キャッシュ検証・破損検出・自動削除
+                Log.d(TAG, "loadModel CACHE_VALIDATE: path=$cacheDirPath")
+                CacheManager.validateAndRepairCacheIfNeeded(cacheDirPath)
+                CacheManager.cleanupCacheIfNeeded(appContext, modelName, cacheDir)
+                val validateTimeMs = System.currentTimeMillis()
+                Log.d(TAG, "loadModel CACHE_VALIDATE: duration=${validateTimeMs - resolveTimeMs}ms")
 
-                val preferredBackend = backendForConfig(normalizedConfig.backendType)
-                val cacheDir = appContext.getExternalFilesDir(null)?.absolutePath
-
-                fun tryCreate(withVisionAudio: Boolean, backend: Backend): Engine {
+                suspend fun tryCreate(withVisionAudio: Boolean, backend: Backend): Engine {
                     val ec = EngineConfig(
                         modelPath = modelPath,
                         backend = backend,
                         visionBackend = if (withVisionAudio) Backend.GPU() else null,
                         audioBackend = if (withVisionAudio) Backend.CPU() else null,
                         maxNumTokens = normalizedConfig.maxTokens,
-                        cacheDir = cacheDir
+                        cacheDir = cacheDirPath
                     )
                     val eng = Engine(ec)
-                    eng.initialize()
+                    // GPU シェーダーコンパイルはメインスレッドをブロックするため、
+                    // Default ディスパッチャー（CPU バウンドコンテキスト）で実行
+                    Log.d(TAG, "loadModel ENGINE_INIT: START - backend=${backend.javaClass.simpleName}")
+                    val initStartMs = System.currentTimeMillis()
+                    
+                    withContext(Dispatchers.Default) {
+                        eng.initialize()
+                    }
+                    
+                    val initEndMs = System.currentTimeMillis()
+                    Log.d(TAG, "loadModel ENGINE_INIT: END - duration=${initEndMs - initStartMs}ms backend=${backend.javaClass.simpleName}")
                     return eng
                 }
 
-                fun loadWithBackend(backend: Backend): Engine {
+                suspend fun loadWithBackend(backend: Backend): Engine {
                     return runCatching { tryCreate(withVisionAudio = true, backend) }
                         .getOrElse { first ->
                             Log.w(TAG, "Engine init with vision/audio failed, retrying text-only", first)
@@ -179,7 +289,9 @@ class LiteRtLmEngine(
                 engine = eng
                 loadedModelPath = modelPath
                 loadedConfig = normalizedConfig
-                Log.d(TAG, "LiteRT-LM engine loaded: $modelPath backend=${normalizedConfig.backendType}")
+                loadedBackend = normalizedConfig.backendType  // Phase 11: バックエンド変更を追跡
+                val totalTimeMs = System.currentTimeMillis() - modelStartTimeMs
+                Log.d(TAG, "loadModel SUCCESS: $modelPath backend=${normalizedConfig.backendType} totalDuration=${totalTimeMs}ms")
                 Result.success(Unit)
             }
         } catch (t: Throwable) {
@@ -194,6 +306,41 @@ class LiteRtLmEngine(
             "GPU" -> Backend.GPU()
             "NPU" -> Backend.NPU(nativeLibraryDir = appContext.applicationInfo.nativeLibraryDir)
             else -> Backend.CPU()
+        }
+    }
+
+    /**
+     * Phase 11: バックエンド変更時のキャッシュクリア
+     * GPU → CPU または CPU → GPU など、バックエンド切り替え時にキャッシュを削除する。
+     * 異なるバックエンド間ではキャッシュ形式が互換でない可能性があるため。
+     */
+    private fun clearBackendSpecificCache(cacheDirPath: String?) {
+        if (cacheDirPath.isNullOrBlank()) return
+        
+        try {
+            val cacheDir = File(cacheDirPath)
+            if (!cacheDir.exists() || !cacheDir.isDirectory) return
+            
+            // XNNPack / GPU キャッシュファイルを削除
+            val cacheFiles = cacheDir.listFiles { file ->
+                file.isFile && (
+                    file.name.endsWith(".bin") ||
+                    file.name.endsWith(".ckpt") ||
+                    file.name.contains("gpu", ignoreCase = true) ||
+                    file.name.contains("xnnpack", ignoreCase = true)
+                )
+            } ?: emptyArray()
+            
+            cacheFiles.forEach { file ->
+                val deleted = file.delete()
+                Log.d(TAG, "Cleared backend-specific cache: ${file.name} (deleted=$deleted)")
+            }
+            
+            if (cacheFiles.isNotEmpty()) {
+                Log.i(TAG, "Cleared ${cacheFiles.size} backend-specific cache files due to backend change")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error clearing backend-specific cache", e)
         }
     }
 
@@ -224,38 +371,8 @@ class LiteRtLmEngine(
         try {
             Log.d(TAG, "LiteRT inference session=$sessionId images=${images.size} audio=${audioClips.size} enableThinking=${normalized.enableThinking}")
 
-            // セッション遷移を検出したら前の Conversation をクリア
-            if (lastSessionId != null && lastSessionId != sessionId) {
-                Log.i(TAG, "Session transition detected: $lastSessionId -> $sessionId, resetting conversation")
-                closeAndResetActiveConversation()
-            }
-            lastSessionId = sessionId
-            
-            // Stability 優先：毎回新しい Conversation を作成（KV cache 破損を防ぐ）
-            Log.d(TAG, "Creating new conversation for fresh inference")
-            closeAndResetActiveConversation()  // 前回の Conversation をクリアしてから新規作成
-            
-            ExperimentalFlags.enableConversationConstrainedDecoding = false
-            val samplerConfig = if (normalized.backendType == "NPU") {
-                null
-            } else {
-                SamplerConfig(
-                    topK = normalized.maxTopK,
-                    topP = normalized.topP.toDouble(),
-                    temperature = normalized.temperature.toDouble()
-                )
-            }
-            val conv = eng.createConversation(
-                ConversationConfig(
-                    tools = buildEnabledToolProviders(appContext, alarmDao),
-                    samplerConfig = samplerConfig,
-                    automaticToolCalling = false
-                )
-            )
-            ExperimentalFlags.enableConversationConstrainedDecoding = false
-            synchronized(activeConversationLock) {
-                activeLiteRtConversation = conv
-            }
+            // getOrCreateConversation() で自動的にセッション管理と KVCache 再利用を処理
+            val conv = getOrCreateConversation(sessionId, eng, normalized)
 
             val contents = mutableListOf<Content>()
             for (bitmap in images.take(MAX_VISION_IMAGES)) {
@@ -263,8 +380,11 @@ class LiteRtLmEngine(
                 try {
                     contents.add(Content.ImageBytes(scaled.toPngByteArray()))
                 } finally {
+                    // 参照が異なる場合のみ recycle する
+                    // (scaleBitmapForVision がサイズ内に収まる場合、元の bitmap を返す)
                     if (scaled !== bitmap) {
                         scaled.recycle()
+                        Log.d(TAG, "Scaled bitmap recycled (original ${bitmap.width}x${bitmap.height} -> ${scaled.width}x${scaled.height})")
                     }
                 }
             }
@@ -289,6 +409,7 @@ class LiteRtLmEngine(
                 if (normalized.enableThinking) mapOf("enable_thinking" to "true") else emptyMap()
 
             val answerAccum = StringBuilder()
+            val toolResultCards = mutableListOf<ToolResultCard>()
             val generationJob = launch(Dispatchers.IO) {
                 try {
                     var firstRequest = true
@@ -331,18 +452,66 @@ class LiteRtLmEngine(
                             break
                         }
                         val toolResponses = mutableListOf<Content>()
-                        for (toolCall in toolCallsInTurn) {
-                            val result = toolExecutor.execute(toolCall)
-                            val status = if (result.success) "success" else "error"
-                            trySend(
-                                InferenceStreamProtocol.encodeToolResultChunk(
-                                    toolCall.name,
-                                    status
-                                )
-                            ).isSuccess
-                            toolResponses.add(Content.ToolResponse(toolCall.name, result.payload))
+                        // 複数ツール実行を並列化（非ブロッキング）
+                        val toolJobs = toolCallsInTurn.map { toolCall ->
+                            launch(Dispatchers.IO) {
+                                try {
+                                    val result = toolExecutor.execute(toolCall)
+                                    val status = if (result.success) "success" else "error"
+                                    trySend(
+                                        InferenceStreamProtocol.encodeToolResultChunk(
+                                            toolCall.name,
+                                            status
+                                        )
+                                    ).isSuccess
+                                    synchronized(toolResponses) {
+                                        toolResponses.add(Content.ToolResponse(toolCall.name, result.payload))
+                                    }
+                                    // ToolResultCard を蓄積（UI表示用）
+                                    synchronized(toolResultCards) {
+                                        val jsonPayload = result.payload.mapValues { (_, v) ->
+                                            anyToJsonElement(v)
+                                        }
+                                        toolResultCards.add(
+                                            ToolResultCard(
+                                                toolName = toolCall.name.lowercase(),
+                                                success = result.success,
+                                                payload = jsonPayload
+                                            )
+                                        )
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Tool execution error: ${toolCall.name}", e)
+                                    trySend(
+                                        InferenceStreamProtocol.encodeToolResultChunk(
+                                            toolCall.name,
+                                            "error"
+                                        )
+                                    ).isSuccess
+                                }
+                            }
                         }
+                        // すべてのツール実行が完了するまで待機
+                        toolJobs.forEach { it.join() }
                         pendingToolResponseMessage = Message.Companion.tool(Contents.of(toolResponses))
+                    }
+
+                    // toolResultCards をJSON化して toolResultsJson として送出
+                    val toolResultsJson = if (toolResultCards.isNotEmpty()) {
+                        ToolResultCard.listToJsonArray(toolResultCards)
+                    } else {
+                        null
+                    }
+                    trySend(
+                        InferenceStreamProtocol.encodeToolResults(toolResultsJson)
+                    ).isSuccess
+
+                    // 実行されたツール一覧を送出（UI表示用）
+                    val executedToolNames = toolResultCards.map { it.toolName }.distinct()
+                    if (executedToolNames.isNotEmpty()) {
+                        trySend(
+                            InferenceStreamProtocol.encodeExecutedToolsList(executedToolNames)
+                        ).isSuccess
                     }
 
                     val finalResult = InferenceStreamProtocol.encodeFinal(answerAccum.toString())
@@ -385,25 +554,45 @@ class LiteRtLmEngine(
     override suspend fun unloadModel(): Result<Unit> {
         return try {
             modelMutex.withLock {
-                Log.d(TAG, "Unloading LiteRT-LM engine")
-                // App 終了時は cancel + close 両方
+                Log.d(TAG, "Unloading LiteRT-LM engine with resource cleanup")
+                
+                // 1. 推論をキャンセル
                 cancelActiveConversation()
                 closeAndResetActiveConversation()
+                
+                // 2. Engine をクローズ
                 runCatching { engine?.close() }
                 engine = null
                 loadedModelPath = null
                 loadedConfig = null
+                loadedBackend = null  // Phase 11: バックエンド状態をリセット
+                
+                // 3. Bitmap メモリプールをクリア
+                bitmapPool.clear()
+                
+                // 4. バックエンドリソースをクリーンアップ
+                backendResourceManager.cleanupAll()
+                
+                // 5. キャッシュをクリーンアップ
+                CacheManager.cleanupCacheIfNeeded(appContext)
+                
+                Log.d(TAG, "LiteRT-LM engine unloaded with full resource cleanup")
                 Result.success(Unit)
             }
         } catch (t: Throwable) {
             val e = if (t is Exception) t else RuntimeException(t)
-            Log.e(TAG, "Failed to unload", e)
+            Log.e(TAG, "Failed to unload model", e)
             Result.failure(e)
         }
     }
 
     override suspend fun cancelInference() {
         Log.d(TAG, "Cancelling active inference (cancelProcess only, KV cache preserved)")
+        
+        // メモリ状態をチェック（キャンセル前に状態ログ出力）
+        val memStatus = memoryObserver.getMemoryStatus(appContext)
+        Log.d(TAG, "Memory status at cancel: ${memStatus.usedPercent}% (${memStatus.usedMB}MB/${memStatus.maxMB}MB)")
+        
         cancelActiveConversation()
     }
 
@@ -415,24 +604,53 @@ class LiteRtLmEngine(
         return stream.toByteArray()
     }
 
-    private fun scaleBitmapForVision(bitmap: Bitmap): Bitmap {
-        val w = bitmap.width
-        val h = bitmap.height
-        if (w <= MAX_BITMAP_EDGE && h <= MAX_BITMAP_EDGE) return bitmap
-        val scale = minOf(MAX_BITMAP_EDGE.toFloat() / w, MAX_BITMAP_EDGE.toFloat() / h)
-        val nw = (w * scale).toInt().coerceAtLeast(1)
-        val nh = (h * scale).toInt().coerceAtLeast(1)
-        return try {
-            Bitmap.createScaledBitmap(bitmap, nw, nh, true)
-        } catch (e: OutOfMemoryError) {
-            Log.w(TAG, "OOM scaling bitmap", e)
-            Bitmap.createScaledBitmap(
-                bitmap,
-                (w * scale * 0.75f).toInt().coerceAtLeast(1),
-                (h * scale * 0.75f).toInt().coerceAtLeast(1),
-                true
-            )
+    private fun anyToJsonElement(value: Any?): JsonElement {
+        return when (value) {
+            null -> JsonNull
+            is JsonElement -> value
+            is Boolean -> JsonPrimitive(value)
+            is Number -> JsonPrimitive(value)
+            is String -> JsonPrimitive(value)
+            is Map<*, *> -> {
+                val obj = value.entries.associate { (k, v) ->
+                    (k?.toString() ?: "null") to anyToJsonElement(v)
+                }
+                JsonObject(obj)
+            }
+            is List<*> -> JsonArray(value.map { anyToJsonElement(it) })
+            else -> JsonPrimitive(value.toString())
         }
+    }
+
+    /**
+     * ビジョン推論用に Bitmap をスケーリングする（メモリ管理強化版）。
+     *
+     * 実装上の特徴：
+     * - MAX_BITMAP_EDGE (1024px) 以下の場合、元の bitmap をそのまま返す（recycle 不要）
+     * - MAX_BITMAP_EDGE を超える場合、新しい Bitmap インスタンスを作成してスケーリング
+     * - OutOfMemoryError 発生時は、段階的に品質を下げて再試行
+     * - BitmapRecycleHelper による安全なスケーリング
+     *
+     * 呼び出し側で `if (scaled !== bitmap)` チェックを行い、新しいインスタンスの場合のみ recycle すること。
+     *
+     * @param bitmap スケーリング対象の Bitmap
+     * @return スケーリング済みの Bitmap（元の bitmap または新規作成された Bitmap）
+     */
+    private suspend fun scaleBitmapForVision(bitmap: Bitmap): Bitmap {
+        // メモリ監視：スケーリング前のメモリ状態をチェック
+        val memoryOk = memoryObserver.requestMemoryCorrectionIfNeeded(appContext)
+        if (!memoryOk) {
+            Log.w(TAG, "Memory insufficient for bitmap scaling, returning original")
+            return bitmap
+        }
+        
+        // BitmapRecycleHelper を使用した安全なスケーリング
+        return BitmapRecycleHelper.safeScaleBitmap(
+            bitmap,
+            maxWidth = MAX_BITMAP_EDGE,
+            maxHeight = MAX_BITMAP_EDGE,
+            initialQuality = 100
+        )
     }
 
     private fun resolveModelPath(modelName: String): String {
