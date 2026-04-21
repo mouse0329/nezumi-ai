@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs grep *)",
+      "Bash(./gradlew clean *)",
+      "Bash(./gradlew assembleDebug)",
+      "Bash(grep -E \"\\\\.\\(kt|xml\\)$\")"
+    ]
+  }
+}

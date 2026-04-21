@@ -147,8 +147,8 @@ private fun SessionListHeader(
         )
         IconButton(onClick = onOpenSettings) {
             Icon(
-                painter = painterResource(id = R.drawable.settings_24),
-                contentDescription = stringResource(id = R.string.action_settings),
+                painter = painterResource(id = R.drawable.ic_menu),
+                contentDescription = "メニュー",
                 tint = colorResource(id = R.color.text_primary)
             )
         }

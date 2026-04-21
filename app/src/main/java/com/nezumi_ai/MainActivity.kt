@@ -2,6 +2,7 @@ package com.nezumi_ai
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.GravityCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.findNavController
 import android.util.Log
@@ -41,19 +42,62 @@ class MainActivity : AppCompatActivity() {
             binding.toolbar.visibility = android.view.View.GONE
             binding.fab.hide()
 
+            // Setup drawer navigation
+            try {
+                val navController = findNavController(R.id.nav_host_fragment_content_main)
+                binding.navView.setNavigationItemSelectedListener { menuItem ->
+                    binding.drawerLayout.closeDrawer(GravityCompat.START)
+                    when (menuItem.itemId) {
+                        R.id.sessionListFragment -> {
+                            navController.popBackStack(R.id.sessionListFragment, false)
+                        }
+                        R.id.modelSettingsFragment -> {
+                            navController.popBackStack(R.id.sessionListFragment, false)
+                            navController.navigate(R.id.modelSettingsFragment)
+                        }
+                        R.id.toolsSettingsFragment -> {
+                            navController.popBackStack(R.id.sessionListFragment, false)
+                            navController.navigate(R.id.toolsSettingsFragment)
+                        }
+                        R.id.settingsFragment -> {
+                            navController.popBackStack(R.id.sessionListFragment, false)
+                            navController.navigate(R.id.settingsFragment)
+                        }
+                    }
+                    true
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to setup drawer navigation", e)
+            }
+
             // 初回起動時にウェルカムダイアログを表示
             if (PreferencesHelper.isFirstLaunch(this)) {
                 try {
                     val navController = findNavController(R.id.nav_host_fragment_content_main)
                     WelcomeDialog.show(this, navController)
                 } catch (e: Exception) {
-                    // ナビゲーションコントローラが取得できない場合はダイアログのみ表示
                     WelcomeDialog.show(this)
                 }
             }
         } catch (t: Throwable) {
             Log.e(TAG, "Fatal error in onCreate", t)
             throw t
+        }
+    }
+
+    fun openDrawer() {
+        binding.drawerLayout.openDrawer(GravityCompat.START)
+    }
+
+    fun closeDrawer() {
+        binding.drawerLayout.closeDrawer(GravityCompat.START)
+    }
+
+    override fun onBackPressed() {
+        if (binding.drawerLayout.isDrawerOpen(GravityCompat.START)) {
+            binding.drawerLayout.closeDrawer(GravityCompat.START)
+        } else {
+            super.onBackPressed()
         }
     }
 

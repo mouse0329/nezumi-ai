@@ -15,9 +15,12 @@ import java.io.IOException
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.nio.channels.FileLock
 import java.security.MessageDigest
 import java.util.zip.ZipFile
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.coroutines.coroutineContext
 
 object ModelFileManager {
@@ -65,6 +68,20 @@ object ModelFileManager {
     data class ImportedTaskModel(
         val name: String,
         val path: String
+    )
+
+    data class HfModelSearchResult(
+        val id: String,
+        val downloads: Long,
+        val likes: Long,
+        val lastModified: String?,
+        val privateModel: Boolean
+    )
+
+    data class HfModelFile(
+        val path: String,
+        val sizeBytes: Long?,
+        val lastModified: String?
     )
 
     private data class ModelMetadata(
@@ -144,7 +161,13 @@ object ModelFileManager {
         if (!dir.exists()) return emptyList()
         return dir.listFiles()
             ?.asSequence()
-            ?.filter { it.isFile && (it.name.lowercase().endsWith(".task") || it.name.lowercase().endsWith(".litertlm")) }
+            ?.filter {
+                it.isFile && (
+                    it.name.lowercase().endsWith(".task") ||
+                        it.name.lowercase().endsWith(".litertlm") ||
+                        it.name.lowercase().endsWith(".gguf")
+                    )
+            }
             ?.filter { validateImportedTaskFile(it).isSuccess }
             ?.sortedByDescending { it.lastModified() }
             ?.map { ImportedTaskModel(name = it.nameWithoutExtension, path = it.absolutePath) }
@@ -152,11 +175,139 @@ object ModelFileManager {
             ?: emptyList()
     }
 
+    suspend fun searchHuggingFaceModels(
+        context: Context,
+        query: String,
+        limit: Int = 20
+    ): Result<List<HfModelSearchResult>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val normalized = query.trim()
+            if (normalized.isBlank()) return@runCatching emptyList()
+
+            val encodedQuery = URLEncoder.encode(normalized, "UTF-8")
+            val safeLimit = limit.coerceIn(1, 50)
+            val url =
+                "https://huggingface.co/api/models?search=$encodedQuery&sort=downloads&direction=-1&limit=$safeLimit&full=true"
+            val response = httpGetText(context, url)
+            val array = JSONArray(response)
+            buildList {
+                for (i in 0 until array.length()) {
+                    val item = array.optJSONObject(i) ?: continue
+                    val id = item.optString("id").ifBlank { continue }
+                    add(
+                        HfModelSearchResult(
+                            id = id,
+                            downloads = item.optLong("downloads", 0L),
+                            likes = item.optLong("likes", 0L),
+                            lastModified = item.optString("lastModified").ifBlank { null },
+                            privateModel = item.optBoolean("private", false)
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    suspend fun listHuggingFaceDownloadableFiles(
+        context: Context,
+        modelId: String
+    ): Result<List<HfModelFile>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val normalized = modelId.trim()
+            if (normalized.isBlank()) return@runCatching emptyList()
+
+            val repoPath = encodeRepoPath(normalized)
+            val url = "https://huggingface.co/api/models/$repoPath/tree/main?recursive=1&expand=1"
+            val response = httpGetText(context, url)
+            val siblings = JSONArray(response)
+            buildList {
+                for (i in 0 until siblings.length()) {
+                    val sibling = siblings.optJSONObject(i) ?: continue
+                    val type = sibling.optString("type")
+                    if (type.isNotBlank() && type != "file") continue
+                    val path = sibling.optString("path").ifBlank {
+                        sibling.optString("rfilename")
+                    }.ifBlank { continue }
+                    if (!isDownloadableModelFile(path)) continue
+                    val size =
+                        if (sibling.has("size")) sibling.optLong("size", -1L).takeIf { it >= 0L } else null
+                    add(
+                        HfModelFile(
+                            path = path,
+                            sizeBytes = size,
+                            lastModified = sibling.optString("lastModified").ifBlank { null }
+                        )
+                    )
+                }
+            }.sortedBy { it.path.lowercase() }
+        }
+    }
+
+    suspend fun downloadHuggingFaceModelFile(
+        context: Context,
+        modelId: String,
+        filePath: String,
+        onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null
+    ): Result<File> = withContext(Dispatchers.IO) {
+        runCatching {
+            val normalizedModelId = modelId.trim()
+            val normalizedFilePath = filePath.trim()
+            if (normalizedModelId.isBlank() || normalizedFilePath.isBlank()) {
+                throw IllegalArgumentException("modelId / filePath が空です")
+            }
+            if (!isDownloadableModelFile(normalizedFilePath)) {
+                throw IllegalArgumentException("ダウンロード対象外の拡張子です: $normalizedFilePath")
+            }
+
+            val importedDir = File(context.filesDir, "models/imported")
+            if (!importedDir.exists()) {
+                importedDir.mkdirs()
+            }
+
+            val finalName =
+                "${normalizedModelId.replace('/', '_')}__${normalizedFilePath.replace('/', '_')}"
+                    .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            val outFile = File(importedDir, finalName)
+
+            val encodedModel = encodeRepoPath(normalizedModelId)
+            val encodedPath = normalizedFilePath.split('/').joinToString("/") {
+                URLEncoder.encode(it, "UTF-8").replace("+", "%20")
+            }
+            val url = "https://huggingface.co/$encodedModel/resolve/main/$encodedPath?download=true"
+            runCatching {
+                downloadFileWithRetry(context, url, outFile, onProgress)
+            }.onFailure {
+                runCatching { File("${outFile.absolutePath}.download").delete() }
+                runCatching { outFile.delete() }
+                runCatching { metadataFile(outFile).delete() }
+                throw it
+            }
+            validateImportedTaskFile(outFile).getOrElse { reason ->
+                outFile.delete()
+                throw IllegalStateException("ダウンロードしたモデルを読み込めません: ${reason.message}")
+            }
+            outFile
+        }
+    }
+
+    fun huggingFaceImportedFile(context: Context, modelId: String, filePath: String): File {
+        val normalizedModelId = modelId.trim()
+        val normalizedFilePath = filePath.trim()
+        val importedDir = File(context.filesDir, "models/imported")
+        if (!importedDir.exists()) {
+            importedDir.mkdirs()
+        }
+        val finalName =
+            "${normalizedModelId.replace('/', '_')}__${normalizedFilePath.replace('/', '_')}"
+                .replace(Regex("[^A-Za-z0-9._-]"), "_")
+        return File(importedDir, finalName)
+    }
+
     fun importTaskFromUri(context: Context, uri: Uri): Result<File> = runCatching {
         val displayName = queryDisplayName(context, uri) ?: "custom_model.task"
         val lower = displayName.lowercase()
-        if (!lower.endsWith(".task") && !lower.endsWith(".litertlm")) {
-            throw IllegalArgumentException(".task または .litertlm ファイルのみ追加できます")
+        if (!lower.endsWith(".task") && !lower.endsWith(".litertlm") && !lower.endsWith(".gguf")) {
+            throw IllegalArgumentException(".task / .litertlm / .gguf ファイルのみ追加できます")
         }
         val importedDir = File(context.filesDir, "models/imported")
         if (!importedDir.exists()) {
@@ -165,13 +316,10 @@ object ModelFileManager {
         val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_")
         var outFile = File(importedDir, safeName)
         if (outFile.exists()) {
-            // .task と .litertlm の両方を正しく処理
-            val base = if (lower.endsWith(".task")) {
-                safeName.removeSuffix(".task")
-            } else {
-                safeName.removeSuffix(".litertlm")
-            }
-            outFile = File(importedDir, "${base}_${System.currentTimeMillis()}.task")
+            val base = safeName.substringBeforeLast('.')
+            val extension = safeName.substringAfterLast('.', "")
+            val suffix = if (extension.isBlank()) "" else ".$extension"
+            outFile = File(importedDir, "${base}_${System.currentTimeMillis()}$suffix")
         }
         
         // ファイルコピー（バッファサイズを大きくして効率化＆同期化を確実に）
@@ -223,8 +371,8 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
 
         // ファイル形式の厳密なチェック
         val lower = target.name.lowercase()
-        if (!target.isFile || (!lower.endsWith(".task") && !lower.endsWith(".litertlm"))) {
-            throw IllegalArgumentException(".task または .litertlm ファイルのみ削除できます")
+        if (!target.isFile || (!lower.endsWith(".task") && !lower.endsWith(".litertlm") && !lower.endsWith(".gguf"))) {
+            throw IllegalArgumentException(".task / .litertlm / .gguf ファイルのみ削除できます")
         }
 
         // 削除実行
@@ -234,15 +382,20 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
     }
 
     fun isModelAvailable(context: Context, modelName: String): Boolean {
-        val lowered = modelName.lowercase()
-        if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && File(modelName).isAbsolute) {
-            return validateImportedTaskFile(File(modelName)).isSuccess
+        val trimmed = modelName.trim()
+        val lowered = trimmed.lowercase()
+        if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && File(trimmed).isAbsolute) {
+            return validateImportedTaskFile(File(trimmed)).isSuccess
+        }
+        if (lowered.endsWith(".gguf") && File(trimmed).isAbsolute) {
+            val file = File(trimmed)
+            return file.exists() && file.isFile && file.canRead() && file.length() > 0L
         }
         return isDownloaded(context, resolveModelName(modelName))
     }
 
 /**
-     * インポートされた .task/.litertlm ファイルの基本的なバリデーション
+     * インポートされた .task/.litertlm/.gguf ファイルの基本的なバリデーション
      * 
      * MediaPipe LiteRT の .task ファイルはバイナリフォーマット（ZIP ではない）
      * したがって、ファイルサイズとアクセス権限のみ検証する
@@ -287,6 +440,23 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
             } catch (e: Exception) {
                 Log.e(TAG, "Error reading model file header: ${e.message}", e)
                 // ヘッダ読み込みエラーでもファイルは受け入れる（実運用時のエラーで詳細が分かる）
+            }
+        }
+
+        if (lower.endsWith(".gguf")) {
+            try {
+                val header = ByteArray(4)
+                file.inputStream().use { stream -> stream.read(header) }
+                val isGguf =
+                    header[0] == 'G'.code.toByte() &&
+                        header[1] == 'G'.code.toByte() &&
+                        header[2] == 'U'.code.toByte() &&
+                        header[3] == 'F'.code.toByte()
+                if (!isGguf) {
+                    Log.w(TAG, "GGUF magic header not found: ${file.absolutePath}")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error reading GGUF header: ${e.message}", e)
             }
         }
         
@@ -821,6 +991,46 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
             .removePrefix("sha256:")
             .lowercase()
         return if (cleaned.matches(Regex("^[a-f0-9]{64}$"))) cleaned else null
+    }
+
+    private fun encodeRepoPath(repoId: String): String {
+        return repoId.split('/')
+            .filter { it.isNotBlank() }
+            .joinToString("/") {
+                URLEncoder.encode(it, "UTF-8").replace("+", "%20")
+            }
+    }
+
+    private fun isDownloadableModelFile(path: String): Boolean {
+        val lowered = path.lowercase()
+        return lowered.endsWith(".gguf") ||
+            lowered.endsWith(".task") ||
+            lowered.endsWith(".litertlm")
+    }
+
+    private fun httpGetText(context: Context, urlString: String): String {
+        val token = HfAuthManager.getToken(context)
+        val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 20_000
+            readTimeout = 30_000
+            requestMethod = "GET"
+            setRequestProperty("User-Agent", "nezumi-ai/1.0")
+            if (token.isNotBlank()) {
+                setRequestProperty("Authorization", "Bearer $token")
+            }
+        }
+        try {
+            connection.connect()
+            val code = connection.responseCode
+            val input = if (code in 200..299) connection.inputStream else connection.errorStream
+            val body = input?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) {
+                throw IllegalStateException("Hugging Face API error (HTTP $code): $body")
+            }
+            return body
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun hasEnoughSpace(file: File, requiredBytes: Long): Boolean {

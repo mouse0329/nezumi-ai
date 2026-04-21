@@ -58,7 +58,7 @@ class SessionListFragment : Fragment() {
                 SessionListRoute(
                     viewModel = viewModel,
                     onOpenSettings = {
-                        findNavController().navigate(R.id.action_sessionListFragment_to_settingsFragment)
+                        (requireActivity() as com.nezumi_ai.MainActivity).openDrawer()
                     },
                     onCreateSession = {
                         viewModel.createNewSession("新しいチャット")

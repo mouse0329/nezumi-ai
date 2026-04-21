@@ -51,6 +51,11 @@ class LiteRtLmEngine(
         private const val MAX_BITMAP_EDGE = 1024
         private const val THOUGHT_CHANNEL = "thought"
 
+        /**
+         * モデル初期化はネイティブ側が重い。メイン・Default 共有プールを避け、1 本の IO ワーカーに直列化する。
+         */
+        private val modelLoadDispatcher = Dispatchers.IO.limitedParallelism(1)
+
         private fun shouldEmitPartialText(partial: String): Boolean {
             if (partial.isEmpty()) return false
             val t = partial.trimStart()
@@ -194,105 +199,37 @@ class LiteRtLmEngine(
         }
     }
 
+    /**
+     * LiteRT dispatch はディレクトリ内の `.so` を走査する。
+     * 端末によっては [ApplicationInfo.nativeLibraryDir] が `.../lib/arm64` で空だが、
+     * 兄弟の `arm64-v8a` にのみ展開されていることがあるため、実在するパスを返す。
+     */
+    private fun resolveNativeLibraryDirForLitert(): String {
+        val fromApplication = appContext.applicationInfo.nativeLibraryDir
+        if (fromApplication.isNullOrBlank()) return ""
+        val base = File(fromApplication)
+        val baseHasSo = base.isDirectory &&
+            base.listFiles()?.any { it.isFile && it.name.endsWith(".so") } == true
+        if (baseHasSo) return base.absolutePath
+        val parent = base.parentFile
+        if (parent != null && parent.isDirectory) {
+            val v8a = File(parent, "arm64-v8a")
+            val v8aHasSo = v8a.isDirectory &&
+                v8a.listFiles()?.any { it.isFile && it.name.endsWith(".so") } == true
+            if (v8aHasSo) {
+                Log.i(TAG, "LiteRT native lib dir: using arm64-v8a (${v8a.absolutePath})")
+                return v8a.absolutePath
+            }
+        }
+        return fromApplication
+    }
+
     override suspend fun loadModel(modelName: String, config: InferenceConfig): Result<Unit> {
         return try {
-            modelMutex.withLock {
-                val normalizedConfig = config.normalized()
-                Log.d(TAG, "loadModel START: modelName=$modelName backend=${normalizedConfig.backendType}")
-                val modelStartTimeMs = System.currentTimeMillis()
-                
-                val modelFile = resolveLocalModelFile(modelName)
-                val resolveTimeMs = System.currentTimeMillis()
-                Log.d(TAG, "loadModel RESOLVE: file=$modelFile duration=${resolveTimeMs - modelStartTimeMs}ms")
-                
-                if (modelFile == null || !modelFile.exists()) {
-                    return Result.failure(IllegalStateException("Model file is not available"))
+            withContext(modelLoadDispatcher) {
+                modelMutex.withLock {
+                    loadModelLocked(modelName, config)
                 }
-                val modelPath = modelFile.absolutePath
-                val needsReload = loadedModelPath != modelPath ||
-                    loadedConfig != normalizedConfig ||
-                    loadedBackend != normalizedConfig.backendType ||  // Phase 11: バックエンド変更時も再ロード
-                    engine == null
-
-                if (!needsReload) {
-                    Log.d(TAG, "Model already loaded: $modelPath backend=${normalizedConfig.backendType}")
-                    return Result.success(Unit)
-                }
-
-                val preferredBackend = backendForConfig(normalizedConfig.backendType)
-                val cacheDirPath = appContext.getExternalFilesDir(null)?.absolutePath
-                val cacheDir = cacheDirPath?.let { File(it) }
-                
-                // Phase 11: バックエンド変更時はキャッシュを削除（互換性がないため）
-                if (loadedBackend != null && loadedBackend != normalizedConfig.backendType) {
-                    Log.i(TAG, "Backend changed from $loadedBackend to ${normalizedConfig.backendType}. Clearing cache...")
-                    clearBackendSpecificCache(cacheDirPath)
-                }
-
-                runCatching { engine?.close() }
-                engine = null
-                loadedModelPath = null
-                loadedConfig = null
-                loadedBackend = null
-                
-                // Phase 11: キャッシュ検証・破損検出・自動削除
-                Log.d(TAG, "loadModel CACHE_VALIDATE: path=$cacheDirPath")
-                CacheManager.validateAndRepairCacheIfNeeded(cacheDirPath)
-                CacheManager.cleanupCacheIfNeeded(appContext, modelName, cacheDir)
-                val validateTimeMs = System.currentTimeMillis()
-                Log.d(TAG, "loadModel CACHE_VALIDATE: duration=${validateTimeMs - resolveTimeMs}ms")
-
-                suspend fun tryCreate(withVisionAudio: Boolean, backend: Backend): Engine {
-                    val ec = EngineConfig(
-                        modelPath = modelPath,
-                        backend = backend,
-                        visionBackend = if (withVisionAudio) Backend.GPU() else null,
-                        audioBackend = if (withVisionAudio) Backend.CPU() else null,
-                        maxNumTokens = normalizedConfig.maxTokens,
-                        cacheDir = cacheDirPath
-                    )
-                    val eng = Engine(ec)
-                    // GPU シェーダーコンパイルはメインスレッドをブロックするため、
-                    // Default ディスパッチャー（CPU バウンドコンテキスト）で実行
-                    Log.d(TAG, "loadModel ENGINE_INIT: START - backend=${backend.javaClass.simpleName}")
-                    val initStartMs = System.currentTimeMillis()
-                    
-                    withContext(Dispatchers.Default) {
-                        eng.initialize()
-                    }
-                    
-                    val initEndMs = System.currentTimeMillis()
-                    Log.d(TAG, "loadModel ENGINE_INIT: END - duration=${initEndMs - initStartMs}ms backend=${backend.javaClass.simpleName}")
-                    return eng
-                }
-
-                suspend fun loadWithBackend(backend: Backend): Engine {
-                    return runCatching { tryCreate(withVisionAudio = true, backend) }
-                        .getOrElse { first ->
-                            Log.w(TAG, "Engine init with vision/audio failed, retrying text-only", first)
-                            tryCreate(withVisionAudio = false, backend)
-                        }
-                }
-
-                val eng = try {
-                    loadWithBackend(preferredBackend)
-                } catch (e: Throwable) {
-                    if (normalizedConfig.backendType.uppercase() == "CPU") throw e
-                    Log.w(
-                        TAG,
-                        "Engine init failed on backend=${normalizedConfig.backendType}, falling back to CPU",
-                        e
-                    )
-                    loadWithBackend(Backend.CPU())
-                }
-
-                engine = eng
-                loadedModelPath = modelPath
-                loadedConfig = normalizedConfig
-                loadedBackend = normalizedConfig.backendType  // Phase 11: バックエンド変更を追跡
-                val totalTimeMs = System.currentTimeMillis() - modelStartTimeMs
-                Log.d(TAG, "loadModel SUCCESS: $modelPath backend=${normalizedConfig.backendType} totalDuration=${totalTimeMs}ms")
-                Result.success(Unit)
             }
         } catch (t: Throwable) {
             val e = if (t is Exception) t else RuntimeException(t)
@@ -301,10 +238,137 @@ class LiteRtLmEngine(
         }
     }
 
+    /**
+     * [loadModel] の本体。[withContext] / [Mutex.withLock] の crossinline 内では return が使えないため分離。
+     */
+    private suspend fun loadModelLocked(modelName: String, config: InferenceConfig): Result<Unit> {
+        val normalizedConfig = config.normalized()
+        Log.d(TAG, "loadModel START: modelName=$modelName backend=${normalizedConfig.backendType}")
+        val modelStartTimeMs = System.currentTimeMillis()
+
+        val modelFile = resolveLocalModelFile(modelName)
+        val resolveTimeMs = System.currentTimeMillis()
+        Log.d(TAG, "loadModel RESOLVE: file=$modelFile duration=${resolveTimeMs - modelStartTimeMs}ms")
+
+        if (modelFile == null || !modelFile.exists()) {
+            return Result.failure(IllegalStateException("Model file is not available"))
+        }
+        val modelPath = modelFile.absolutePath
+        val needsReload = loadedModelPath != modelPath ||
+            loadedConfig != normalizedConfig ||
+            loadedBackend != normalizedConfig.backendType ||
+            engine == null
+
+        if (!needsReload) {
+            Log.d(TAG, "Model already loaded: $modelPath backend=${normalizedConfig.backendType}")
+            return Result.success(Unit)
+        }
+
+        val preferredBackend = backendForConfig(normalizedConfig.backendType)
+        val cacheDirPath = appContext.getExternalFilesDir(null)?.absolutePath
+        val cacheDir = cacheDirPath?.let { File(it) }
+
+        if (loadedBackend != null && loadedBackend != normalizedConfig.backendType) {
+            Log.i(TAG, "Backend changed from $loadedBackend to ${normalizedConfig.backendType}. Clearing cache...")
+            clearBackendSpecificCache(cacheDirPath)
+        }
+
+        runCatching { engine?.close() }
+        engine = null
+        loadedModelPath = null
+        loadedConfig = null
+        loadedBackend = null
+
+        Log.d(TAG, "loadModel CACHE_VALIDATE: path=$cacheDirPath")
+        CacheManager.validateAndRepairCacheIfNeeded(cacheDirPath)
+        CacheManager.cleanupCacheIfNeeded(appContext, modelName, cacheDir)
+        val validateTimeMs = System.currentTimeMillis()
+        Log.d(TAG, "loadModel CACHE_VALIDATE: duration=${validateTimeMs - resolveTimeMs}ms")
+
+        suspend fun tryCreate(withVisionAudio: Boolean, backend: Backend): Engine {
+            val ec = EngineConfig(
+                modelPath = modelPath,
+                backend = backend,
+                visionBackend = if (withVisionAudio) Backend.GPU() else null,
+                audioBackend = if (withVisionAudio) Backend.CPU() else null,
+                maxNumTokens = normalizedConfig.maxTokens,
+                cacheDir = cacheDirPath
+            )
+            val eng = Engine(ec)
+            Log.d(TAG, "loadModel ENGINE_INIT: START - backend=${backend.javaClass.simpleName}")
+            val initStartMs = System.currentTimeMillis()
+            eng.initialize()
+            val initEndMs = System.currentTimeMillis()
+            Log.d(TAG, "loadModel ENGINE_INIT: END - duration=${initEndMs - initStartMs}ms backend=${backend.javaClass.simpleName}")
+            return eng
+        }
+
+        suspend fun loadWithBackend(backend: Backend): Engine {
+            return runCatching { tryCreate(withVisionAudio = true, backend) }
+                .getOrElse { first ->
+                    Log.w(TAG, "Engine init with vision/audio failed, retrying text-only", first)
+                    tryCreate(withVisionAudio = false, backend)
+                }
+        }
+
+        suspend fun getBackendFallbackChain(preferred: Backend): List<Backend> {
+            val npuLibDir = resolveNativeLibraryDirForLitert()
+            return when (preferred) {
+                is Backend.NPU -> listOf(
+                    Backend.NPU(nativeLibraryDir = npuLibDir),
+                    Backend.GPU(),
+                    Backend.CPU()
+                )
+                is Backend.GPU -> listOf(Backend.GPU(), Backend.CPU())
+                else -> listOf(Backend.CPU())
+            }
+        }
+
+        suspend fun tryBackendChain(backends: List<Backend>): Engine {
+            var lastError: Throwable? = null
+
+            for ((index, backend) in backends.withIndex()) {
+                try {
+                    Log.i(TAG, "Attempting to load with ${backend.javaClass.simpleName} (${index + 1}/${backends.size})")
+                    val start = System.currentTimeMillis()
+                    val eng = loadWithBackend(backend)
+                    val duration = System.currentTimeMillis() - start
+                    Log.i(TAG, "Successfully loaded with ${backend.javaClass.simpleName} in ${duration}ms")
+                    return eng
+                } catch (e: Throwable) {
+                    lastError = e
+                    Log.w(
+                        TAG,
+                        "Backend ${backend.javaClass.simpleName} (${index + 1}/${backends.size}) initialization failed: ${e.message}",
+                        e
+                    )
+                    if (index < backends.size - 1) {
+                        Log.i(TAG, "Trying next backend in fallback chain...")
+                    }
+                }
+            }
+
+            throw lastError ?: RuntimeException("All backends failed to initialize")
+        }
+
+        val fallbackChain = getBackendFallbackChain(preferredBackend)
+        Log.d(TAG, "Backend fallback chain: ${fallbackChain.map { it.javaClass.simpleName }}")
+
+        val eng = tryBackendChain(fallbackChain)
+
+        engine = eng
+        loadedModelPath = modelPath
+        loadedConfig = normalizedConfig
+        loadedBackend = normalizedConfig.backendType
+        val totalTimeMs = System.currentTimeMillis() - modelStartTimeMs
+        Log.d(TAG, "loadModel SUCCESS: $modelPath backend=${normalizedConfig.backendType} totalDuration=${totalTimeMs}ms")
+        return Result.success(Unit)
+    }
+
     private fun backendForConfig(backendType: String): Backend {
         return when (backendType.uppercase()) {
             "GPU" -> Backend.GPU()
-            "NPU" -> Backend.NPU(nativeLibraryDir = appContext.applicationInfo.nativeLibraryDir)
+            "NPU" -> Backend.NPU(nativeLibraryDir = resolveNativeLibraryDirForLitert())
             else -> Backend.CPU()
         }
     }

@@ -209,10 +209,10 @@ class LlmMultimodalAudioHelper {
         dstBuffer.flip()
         
         // ShortBuffer を ByteArray に変換
-        val byteBuffer = dstBuffer.asReadOnlyBuffer()
-        val result = ByteArray(byteBuffer.limit() * 2)  // Short は 2 bytes
-        for (i in 0 until byteBuffer.limit()) {
-            val short = byteBuffer.get(i)
+        val result = ByteArray(dstBuffer.limit() * 2)  // Short は 2 bytes
+        val limit = dstBuffer.limit()
+        for (i in 0 until limit) {
+            val short = dstBuffer.get()
             result[i * 2] = (short.toInt() and 0xFF).toByte()
             result[i * 2 + 1] = ((short.toInt() shr 8) and 0xFF).toByte()
         }

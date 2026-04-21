@@ -22,6 +22,7 @@ import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
+import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.ToolCallState
@@ -62,8 +63,8 @@ class ChatViewModel(
         private const val STREAM_PERSIST_INTERVAL_MS = 100L
         private const val STREAM_PERSIST_INTERVAL_TABLE_MS = 50L
         private const val DEFAULT_SESSION_TITLE = "新しいチャット"
-        const val CONTEXT_WINDOW_CHARS = 4_096
-        private const val MAX_CONTEXT_CHARS = CONTEXT_WINDOW_CHARS
+        /** Phase 14: トークン数と文字数の変換比率（1トークン ≈ 3.5～4文字）*/
+        private const val TOKEN_TO_CHAR_RATIO = 4
         private const val COMPRESSION_RECENT_MESSAGE_COUNT = 6
         private const val COMPRESSION_SUMMARY_MAX_CHARS = 700
         /** 1 回の生成の上限（ネイティブが onDone を返さない場合の保険） */
@@ -155,6 +156,10 @@ class ChatViewModel(
     private var messagesCollectionJob: Job? = null
     private val compressedContextCache = mutableMapOf<Long, CompressedContextCache>()
     private var currentBackendType = "CPU"  // GPU時はキャッシュを無効化するためのフラグ
+    private val userTurnMarkerRegex = Regex("(?i)(?:^|[\\s\\n\\r])(?:User|ユーザー)\\s*[:：]")
+    private val assistantTurnMarkerRegex = Regex("(?i)(?:^|[\\s\\n\\r])(?:Assistant|アシスタント)\\s*[:：]")
+    private val roleTurnMarkerRegex =
+        Regex("(?i)(?:^|[\\s\\n\\r])(?:User|Assistant|ユーザー|アシスタント)\\s*[:：]")
     
     // WakeLock管理
     private var screenWakeLock: PowerManager.WakeLock? = null
@@ -172,6 +177,19 @@ class ChatViewModel(
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "Error cleaning streaming flags on startup", t)
+            }
+        }
+        
+        // Phase 14: アプリ起動時のメモリ確認ログ出力
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val detailedMem = MemoryObserver.getDetailedMemoryInfo(appContext)
+                Log.d(TAG, "STARTUP_MEMORY_INFO:\n$detailedMem")
+                
+                val memStatus = MemoryObserver.getMemoryStatus(appContext)
+                Log.d(TAG, "STARTUP_MEMORY_STATUS: level=${memStatus.level} used=${memStatus.usedMB}MB max=${memStatus.maxMB}MB percent=${memStatus.usedPercent}% device_low=${memStatus.isLowMemory}")
+            } catch (t: Throwable) {
+                Log.e(TAG, "Error logging startup memory info", t)
             }
         }
         
@@ -195,6 +213,7 @@ class ChatViewModel(
                     }
                 }
             } catch (t: Throwable) {
+                if (t is CancellationException) throw t
                 val e = if (t is Exception) t else RuntimeException(t)
                 Log.e(TAG, "Error monitoring settings changes", e)
             }
@@ -209,6 +228,7 @@ class ChatViewModel(
                     Log.d(TAG, "Context window updated for model=$model: $contextWindow")
                 }
             } catch (t: Throwable) {
+                if (t is CancellationException) throw t
                 val e = if (t is Exception) t else RuntimeException(t)
                 Log.e(TAG, "Error monitoring model changes", e)
             }
@@ -802,7 +822,10 @@ class ChatViewModel(
                                     val thinkingForUi: String?
                                     if (nativeThinkingStream) {
                                         contentForUi =
-                                            Gemma4ThinkingParser.sanitizeVisibleText(answerBuilder.toString())
+                                            sanitizeAssistantOutputForModel(
+                                                engineModelName = engineModelName,
+                                                text = Gemma4ThinkingParser.sanitizeVisibleText(answerBuilder.toString())
+                                            )
                                         thinkingForUi =
                                             Gemma4ThinkingParser.sanitizeVisibleText(thinkingBuilder.toString())
                                                 .ifBlank { null }
@@ -812,7 +835,11 @@ class ChatViewModel(
                                     } else {
                                         val parsedStream =
                                             Gemma4ThinkingParser.parseStreaming(answerBuilder.toString())
-                                        contentForUi = parsedStream.answer
+                                        contentForUi =
+                                            sanitizeAssistantOutputForModel(
+                                                engineModelName = engineModelName,
+                                                text = parsedStream.answer
+                                            )
                                         thinkingForUi = parsedStream.thinking
                                     }
                                     val now = SystemClock.elapsedRealtime()
@@ -920,12 +947,19 @@ class ChatViewModel(
             val finalThinking: String?
             if (nativeThinkingStream) {
                 completeResponse =
-                    Gemma4ThinkingParser.sanitizeVisibleText(answerBuilder.toString())
+                    sanitizeAssistantOutputForModel(
+                        engineModelName = engineModelName,
+                        text = Gemma4ThinkingParser.sanitizeVisibleText(answerBuilder.toString())
+                    )
                 finalThinking =
                     Gemma4ThinkingParser.sanitizeVisibleText(thinkingBuilder.toString()).ifBlank { null }
             } else {
                 val finalParsed = Gemma4ThinkingParser.parse(answerBuilder.toString())
-                completeResponse = finalParsed.answer
+                completeResponse =
+                    sanitizeAssistantOutputForModel(
+                        engineModelName = engineModelName,
+                        text = finalParsed.answer
+                    )
                 finalThinking = finalParsed.thinking
             }
             val note = streamAbortNote
@@ -1072,7 +1106,8 @@ class ChatViewModel(
         val trimmed = model.trim()
         val lowered = trimmed.lowercase()
         val isLocalTaskPath =
-            (lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && File(trimmed).isAbsolute
+            (lowered.endsWith(".task") || lowered.endsWith(".litertlm") || lowered.endsWith(".gguf")) &&
+                File(trimmed).isAbsolute
         
         return when {
             trimmed.equals("Gemma4-4B", ignoreCase = true) -> "Gemma4-4B"
@@ -1091,7 +1126,9 @@ class ChatViewModel(
             normalized.equals("Gemma4-2B", ignoreCase = true) -> "gemma4-2b"
             normalized.equals("E4B", ignoreCase = true) -> "gemma-3n-4b"  // Gemma3n 4B
             normalized.equals("E2B", ignoreCase = true) -> "gemma-3n-2b"  // Gemma3n 2B
-            (normalized.endsWith(".task") || normalized.endsWith(".litertlm")) && normalized.startsWith("/") -> normalized
+            (normalized.endsWith(".task") ||
+                normalized.endsWith(".litertlm") ||
+                normalized.endsWith(".gguf")) && normalized.startsWith("/") -> normalized
             else -> "gemma4-2b"  // デフォルト
         }
     }
@@ -1125,6 +1162,61 @@ class ChatViewModel(
             .replace(Regex("\\s+"), " ")
         val maxLen = 28
         return if (cleaned.length <= maxLen) cleaned else cleaned.take(maxLen).trimEnd() + "..."
+    }
+
+    private fun stripSyntheticRoleLoopTail(text: String): String {
+        val normalized = text.trim()
+        if (normalized.isEmpty()) return ""
+
+        val markers = roleTurnMarkerRegex.findAll(normalized).take(16).toList()
+        if (markers.size < 2) return normalized
+
+        val first = markers.first()
+        val cutIndex = if (first.range.first <= 2) {
+            markers.getOrNull(1)?.range?.first ?: return normalized
+        } else {
+            first.range.first
+        }
+        if (cutIndex <= 0) return normalized
+
+        val tail = normalized.substring(cutIndex)
+        val hasUserTurn = userTurnMarkerRegex.containsMatchIn(tail)
+        val hasAssistantTurn = assistantTurnMarkerRegex.containsMatchIn(tail)
+        if (!hasUserTurn && !hasAssistantTurn) return normalized
+
+        val clipped = normalized.substring(0, cutIndex).trimEnd().trimEnd(':', '：')
+        if (clipped.isEmpty()) return normalized
+
+        if (BuildConfig.DEBUG) {
+            Log.w(
+                TAG,
+                "SELF_DIALOGUE_TRUNCATED: original=${normalized.length} clipped=${clipped.length}"
+            )
+        }
+        return clipped
+    }
+
+    private fun sanitizeAssistantOutputForModel(engineModelName: String, text: String): String {
+        val normalized = text.trim()
+        if (normalized.isEmpty()) return ""
+        if (!engineModelName.lowercase().endsWith(".gguf")) return normalized
+        val noLoop = stripSyntheticRoleLoopTail(normalized)
+        return noLoop.replace(
+            Regex("^(?i)(?:Assistant|アシスタント)\\s*[:：]\\s*"),
+            ""
+        ).trim()
+    }
+
+    private fun sanitizeMessageContentForPrompt(msg: MessageEntity): String {
+        val normalized = msg.content.trim()
+        if (normalized.isEmpty()) return ""
+        return if (msg.role == "assistant") {
+            stripSyntheticRoleLoopTail(normalized)
+                .replace(Regex("^(?i)(?:Assistant|アシスタント)\\s*[:：]\\s*"), "")
+                .trim()
+        } else {
+            normalized
+        }
     }
 
     private fun mergeStreamingChunk(current: String, chunk: String): String {
@@ -1206,6 +1298,7 @@ class ChatViewModel(
             return trimPromptToWindow(fullPrompt, config.contextWindow)
         }
 
+        // Phase 14: contextWindow はトークン数。閾値計算も「トークン数 × パーセント」
         val thresholdChars =
             ((config.contextWindow * config.contextCompressionThresholdPercent) / 100).coerceAtLeast(1)
         if (fullPrompt.length < thresholdChars) {
@@ -1269,10 +1362,12 @@ class ChatViewModel(
         contextBuilder.append(compressedSummary)
         contextBuilder.append("\n\n")
         for (msg in recentMessages) {
+            val content = sanitizeMessageContentForPrompt(msg)
+            if (content.isBlank()) continue
             val role = if (msg.role == "assistant") "Assistant" else "User"
             contextBuilder.append(role)
                 .append(": ")
-                .append(msg.content.trim())
+                .append(content)
                 .append('\n')
         }
         contextBuilder.append("Assistant:")
@@ -1288,10 +1383,12 @@ class ChatViewModel(
     ): String {
         if (messages.isEmpty()) return "要約: （圧縮対象なし）\nキーワード: なし"
 
-        val transcript = messages.joinToString(separator = "\n") { msg ->
+        val transcript = messages.mapNotNull { msg ->
+            val content = sanitizeMessageContentForPrompt(msg)
+            if (content.isBlank()) return@mapNotNull null
             val role = if (msg.role == "assistant") "assistant" else "user"
-            "$role: ${msg.content.trim()}"
-        }
+            "$role: $content"
+        }.joinToString(separator = "\n")
 
         val compressionPrompt = buildString {
             append("以下の会話履歴を、次回応答に必要な情報だけに圧縮してください。\n")
@@ -1366,11 +1463,15 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Phase 14: コンテキストウィンドウ（トークン数）から取得すべき最近メッセージ数を計算
+     * contextWindow はトークン数で表現される（例：4096 tokens）
+     */
     private fun recentMessageCountForWindow(contextWindow: Int): Int {
         return when {
-            contextWindow <= 2048 -> 4
-            contextWindow <= 4096 -> 6
-            else -> 8
+            contextWindow <= 2048 -> 4    // トークン2048以下：最近4メッセージ取得
+            contextWindow <= 4096 -> 6    // トークン4096以下：最近6メッセージ取得
+            else -> 8                      // トークン4096以上：最近8メッセージ取得
         }
     }
 
@@ -1415,7 +1516,9 @@ class ChatViewModel(
     }
 
     private suspend fun estimateContextUsageChars(messages: List<MessageEntity>): Int {
-        return buildPromptFromMessages(messages).length.coerceAtMost(MAX_CONTEXT_CHARS)
+        // Phase 14: プロンプトの現在の文字数を推定（実際の制限は config.contextWindow（トークン数）に依存）
+        // trimPromptToWindow で contextWindow トークン × TOKEN_TO_CHAR_RATIO で文字数に変換される
+        return buildPromptFromMessages(messages).length
     }
 
     private fun isAssistantErrorLikeMessage(content: String): Boolean {
@@ -1467,10 +1570,12 @@ class ChatViewModel(
         // プロンプトには msg.content のみを使用。thinkingContent は絶対に含めない
         for (msg in messages) {
             if (shouldExcludeFromModelContext(msg)) continue
+            val content = sanitizeMessageContentForPrompt(msg)
+            if (content.isBlank()) continue
             val role = if (msg.role == "assistant") "Assistant" else "User"
             contextBuilder.append(role)
                 .append(": ")
-                .append(msg.content.trim())  // content のみ。thinkingContent は含めない
+                .append(content)  // content のみ。thinkingContent は含めない
                 .append('\n')
         }
         contextBuilder.append("Assistant:")
@@ -1480,20 +1585,26 @@ class ChatViewModel(
     private fun buildCompressedSummaryFallback(messages: List<MessageEntity>): String {
         if (messages.isEmpty()) return "（圧縮対象なし）"
         // Phase 12: 圧縮時も content のみを使用。thinkingContent は含めない
-        return messages.takeLast(24).joinToString(separator = "\n") { msg ->
+        return messages.takeLast(24).mapNotNull { msg ->
             val role = if (msg.role == "assistant") "A" else "U"
-            val text = msg.content
-                .trim()
+            val text = sanitizeMessageContentForPrompt(msg)
                 .replace("\n", " ")
                 .replace(Regex("\\s+"), " ")
                 .let { if (it.length > 80) it.take(80).trimEnd() + "..." else it }
+            if (text.isBlank()) return@mapNotNull null
             "[$role] $text"
-        }
+        }.joinToString(separator = "\n")
     }
 
-    private fun trimPromptToWindow(prompt: String, contextWindow: Int): String {
-        if (prompt.length <= contextWindow) return prompt
-        return prompt.takeLast(contextWindow)
+    private fun trimPromptToWindow(prompt: String, contextWindowTokens: Int): String {
+        // Phase 14: トークン数を文字数に変換して制限
+        // contextWindow はモデルのコンテキストウィンドウ（トークン数）
+        // 実際のプロンプト長制限は文字数で行う（1トークン ≈ 4文字）
+        val maxChars = contextWindowTokens * TOKEN_TO_CHAR_RATIO
+        if (prompt.length <= maxChars) return prompt
+        val trimmed = prompt.takeLast(maxChars)
+        Log.d(TAG, "TRIM_PROMPT: contextWindow=$contextWindowTokens tokens (~${maxChars} chars) | original=${prompt.length} -> trimmed=${trimmed.length} chars")
+        return trimmed
     }
 
     /**
@@ -1625,13 +1736,35 @@ class ChatViewModel(
                 "GEMMA4-4B" -> "Gemma4-4B"
                 else -> "カスタム"
             }
+            
+            // Phase 14: モデルロード前にメモリ確認
+            _modelLoadingStatus.value = "[$displayModel] メモリを確認中..."
+            Log.d(TAG, "loadModelWithOverlay: PRE_LOAD_MEMORY_CHECK model=$model backend=${config.backendType}")
+            
+            // 詳細なメモリ情報をログ出力
+            val detailedMemInfo = MemoryObserver.getDetailedMemoryInfo(appContext)
+            Log.d(TAG, "PRE_LOAD_MEMORY:\n$detailedMemInfo")
+            
+            val memoryStatus = MemoryObserver.getMemoryStatus(appContext)
+            Log.d(TAG, "loadModelWithOverlay: MEMORY_STATUS level=${memoryStatus.level} used=${memoryStatus.usedMB}MB max=${memoryStatus.maxMB}MB percent=${memoryStatus.usedPercent}% device_low_memory=${memoryStatus.isLowMemory}")
+            
+            // メモリ不足チェック
+            if (!manager.isMemorySufficient()) {
+                val errorMsg = "メモリ不足: ${memoryStatus.usedPercent}% (${memoryStatus.usedMB}/${memoryStatus.maxMB}MB) - ${displayModel}をロードできません"
+                Log.e(TAG, "loadModelWithOverlay: MEMORY_INSUFFICIENT $errorMsg")
+                _uiMessage.emit(errorMsg)
+                return Result.failure(RuntimeException(errorMsg))
+            }
+            
             _modelLoadingStatus.value = "[$displayModel] エンジンを初期化中..."
             Log.d(TAG, "loadModelWithOverlay: model=$model, engineName=$engineModelName, enableThinking=${config.enableThinking}, backend=${config.backendType}, contextWindow=${config.contextWindow}")
             
-            val result = if (onlyIfAvailable) {
-                manager.initializeModelIfAvailable(engineModelName, config)
-            } else {
-                manager.initializeModel(engineModelName, config)
+            val result = withContext(Dispatchers.IO) {
+                if (onlyIfAvailable) {
+                    manager.initializeModelIfAvailable(engineModelName, config)
+                } else {
+                    manager.initializeModel(engineModelName, config)
+                }
             }
             
             if (result.isSuccess) {
@@ -1644,8 +1777,10 @@ class ChatViewModel(
                 // メモリ不足エラーを検出
                 if (error?.message?.contains("memory") == true || 
                     error?.message?.contains("Memory") == true) {
-                    Log.w(TAG, "loadModelWithOverlay: Out of memory detected")
-                    _uiMessage.emit("メモリが不足しています。ホームスクリーンに戻ります...")
+                    Log.w(TAG, "loadModelWithOverlay: Out of memory detected during initialization")
+                    val postLoadMemStatus = MemoryObserver.getMemoryStatus(appContext)
+                    val errorMsg = "メモリが不足しています (${postLoadMemStatus.usedPercent}%)。ホームスクリーンに戻ります..."
+                    _uiMessage.emit(errorMsg)
                     viewModelScope.launch {
                         _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
                     }

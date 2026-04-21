@@ -12,7 +12,14 @@ data class InferenceConfig(
     val enableThinking: Boolean = false,
     /** LiteRT-LM の投機的デコーディング有効化（推論高速化。デフォルトはオフ） */
     val enableSpeculativeDecoding: Boolean = false,
-    val backendType: String = "CPU"
+    val backendType: String = "CPU",
+    // llama.cpp settings
+    val llamaCppThreads: Int = 4,
+    val llamaCppGpuLayers: Int = 0,
+    val llamaCppBatchSize: Int = 512,
+    val llamaCppNKeep: Int = 0,
+    val llamaCppRopeFreqBase: Float = 0.0f,
+    val llamaCppRopeFreqScale: Float = 1.0f
 ) {
     companion object {
         const val MIN_CONTEXT_WINDOW = 512

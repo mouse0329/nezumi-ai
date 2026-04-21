@@ -1,47 +1,13 @@
 package com.nezumi_ai.presentation.ui.fragment
 
-import android.Manifest
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
@@ -51,49 +17,22 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
-import androidx.work.WorkInfo
-import androidx.work.WorkManager
 import com.nezumi_ai.R
 import com.nezumi_ai.data.database.NezumiAiDatabase
-import com.nezumi_ai.data.database.dao.AlarmDao
-import com.nezumi_ai.data.database.entity.AlarmEntity
-import com.nezumi_ai.data.inference.HfAuthManager
-import com.nezumi_ai.data.inference.HfOAuthManager
 import com.nezumi_ai.data.inference.InferenceConfig
-import com.nezumi_ai.data.inference.ModelDownloadWorker
-import com.nezumi_ai.data.inference.ModelFileManager
-import com.nezumi_ai.data.inference.NezumiTool
-import com.nezumi_ai.data.inference.ToolPreferences
-import com.nezumi_ai.data.inference.ProjectConfig
 import com.nezumi_ai.data.repository.SettingsRepository
-import com.nezumi_ai.data.tools.ToolSystemController
 import com.nezumi_ai.presentation.ui.screen.ThemeModeCard
-import com.nezumi_ai.utils.ImportedModelCapabilities
-import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import com.nezumi_ai.utils.PreferencesHelper
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import net.openid.appauth.AuthorizationException
-import net.openid.appauth.AuthorizationResponse
-import net.openid.appauth.AuthorizationService
-import java.util.Locale
-import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 class SettingsComposeFragment : Fragment() {
     private lateinit var settingsRepository: SettingsRepository
-    private lateinit var alarmDao: AlarmDao
-    private lateinit var toolPreferences: ToolPreferences
-    private var authService: AuthorizationService? = null
-    private var pendingDownloadPermissionModel: ModelFileManager.LocalModel? = null
 
-    private var hfLinked by mutableStateOf(false)
     private var contextWindowInput by mutableStateOf("4096")
     private var temperatureInput by mutableStateOf("0.7")
     private var topkInput by mutableStateOf("40")
@@ -105,71 +44,18 @@ class SettingsComposeFragment : Fragment() {
     private var backendType by mutableStateOf("CPU")
     private var gemmaThinkingEnabled by mutableStateOf(false)
     private var themeMode by mutableStateOf(PreferencesHelper.THEME_SYSTEM)
-    private var importedTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
-    private var managedAlarms by mutableStateOf<List<AlarmEntity>>(emptyList())
-    private var toolEnabled by mutableStateOf<Map<NezumiTool, Boolean>>(emptyMap())
-    private var isImportingModel by mutableStateOf(false)
-    private var capabilityDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
-    private var capabilityDialogImageEnabled by mutableStateOf(false)
-    private var capabilityDialogAudioEnabled by mutableStateOf(false)
-
-    private val modelStates = mutableStateMapOf<ModelFileManager.LocalModel, ModelUiState>()
-
-    private val authLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            val data = result.data ?: return@registerForActivityResult
-            val authResponse = AuthorizationResponse.fromIntent(data)
-            val authError = AuthorizationException.fromIntent(data)
-            if (authError != null) {
-                toast("OAuth失敗: ${authError.errorDescription}")
-                return@registerForActivityResult
-            }
-            if (authResponse == null) {
-                toast("OAuthレスポンスが取得できませんでした")
-                return@registerForActivityResult
-            }
-            exchangeToken(authResponse)
-        }
-
-    private val importTaskLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri == null) return@registerForActivityResult
-            isImportingModel = true
-            viewLifecycleOwner.lifecycleScope.launch {
-                val result = withContext(Dispatchers.IO) {
-                    ModelFileManager.importTaskFromUri(requireContext(), uri)
-                }
-                result.onSuccess {
-                    toast("モデルを追加しました: ${it.name}")
-                    refreshImportedTasks()
-                    val imported = ModelFileManager.ImportedTaskModel(
-                        name = it.nameWithoutExtension,
-                        path = it.absolutePath
-                    )
-                    capabilityDialogModel = imported
-                    capabilityDialogImageEnabled = false
-                    capabilityDialogAudioEnabled = false
-                }.onFailure {
-                    toast("追加失敗: ${it.message}")
-                }
-                isImportingModel = false
-            }
-        }
-
-    private val notificationPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
-            pendingDownloadPermissionModel?.let { runModelDownload(it) }
-            pendingDownloadPermissionModel = null
-        }
+    private var errorDialogMessage by mutableStateOf<String?>(null)
+    private var llamaCppThreads by mutableStateOf(4)
+    private var llamaCppGpuLayers by mutableStateOf(0)
+    private var llamaCppBatchSize by mutableStateOf(512)
+    private var llamaCppNKeep by mutableStateOf(0)
+    private var llamaCppRopeFreqBase by mutableStateOf(0.0f)
+    private var llamaCppRopeFreqScale by mutableStateOf(1.0f)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val db = NezumiAiDatabase.getInstance(requireContext())
         settingsRepository = SettingsRepository(db.settingsDao(), db.chatSessionDao())
-        alarmDao = db.alarmDao()
-        toolPreferences = ToolPreferences(requireContext())
-        authService = AuthorizationService(requireContext())
-        ModelFileManager.LocalModel.entries.forEach { modelStates[it] = ModelUiState(titleFor(it)) }
     }
 
     override fun onCreateView(
@@ -187,30 +73,29 @@ class SettingsComposeFragment : Fragment() {
 
     override fun onViewCreated(view: android.view.View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        renderHfTokenState()
         loadInferenceSettings()
-        loadToolSettings()
-        observeManagedAlarms()
-        refreshImportedTasks()
-        refreshModelStatus()
-        observeDownloadWork()
     }
 
     override fun onResume() {
         super.onResume()
-        renderHfTokenState()
         loadInferenceSettings()
-        refreshImportedTasks()
     }
 
     @Composable
     private fun SettingsScreen() {
-        if (isImportingModel) {
-            ImportingDialog()
+        errorDialogMessage?.let { message ->
+            AlertDialog(
+                onDismissRequest = { errorDialogMessage = null },
+                title = { Text("設定エラー") },
+                text = { Text(message) },
+                confirmButton = {
+                    Button(onClick = { errorDialogMessage = null }) {
+                        Text("OK")
+                    }
+                }
+            )
         }
-        capabilityDialogModel?.let { model ->
-            ImportedCapabilityDialog(model)
-        }
+
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -220,7 +105,7 @@ class SettingsComposeFragment : Fragment() {
         ) {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { findNavController().navigateUp() }) {
+                    IconButton(onClick = { onBackButtonPressed() }) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_back),
                             contentDescription = stringResource(id = R.string.back),
@@ -228,7 +113,7 @@ class SettingsComposeFragment : Fragment() {
                         )
                     }
                     Text(
-                        text = stringResource(id = R.string.action_settings),
+                        text = "設定",
                         style = MaterialTheme.typography.headlineSmall,
                         color = colorResource(id = R.color.text_primary),
                         fontWeight = FontWeight.Bold
@@ -253,21 +138,12 @@ class SettingsComposeFragment : Fragment() {
                     )
                 }
             }
-            item { HfCard() }
-            item { InferenceCard() }
-            item { ToolSettingsCard() }
-            item { AlarmSettingsCard() }
-            items(ModelFileManager.LocalModel.entries.toList(), key = { it.name }) { model ->
-                ModelCard(model)
-            }
-            items(importedTasks, key = { it.path }) { model ->
-                ImportedModelCard(model)
-            }
+            item { BackendCard() }
+            item { InferenceParamsCard() }
+            item { PersonalizationCard() }
+            item { LlamaCppCard() }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { importTaskLauncher.launch(arrayOf("*/*")) }) {
-                        Text(text = stringResource(id = R.string.import_task_model))
-                    }
                     TextButton(onClick = { findNavController().navigate(R.id.action_settingsFragment_to_licenseFragment) }) {
                         Text(text = stringResource(id = R.string.open_license_page))
                     }
@@ -277,181 +153,36 @@ class SettingsComposeFragment : Fragment() {
     }
 
     @Composable
-    private fun ImportingDialog() {
-        Dialog(onDismissRequest = {}) {
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = colorResource(id = R.color.primary_light)
+    private fun BackendCard() {
+        LaunchedEffect(backendType, gemmaThinkingEnabled) {
+            delay(500)
+            viewLifecycleOwner.lifecycleScope.launch {
+                settingsRepository.updateInferenceConfig(
+                    backendType = backendType,
+                    contextCompressionEnabled = contextCompressionEnabled,
+                    contextCompressionThresholdPercent = contextCompressionThresholdPercent,
+                    temperature = temperatureInput.toFloatOrNull() ?: 0.7f,
+                    maxTopK = topkInput.toIntOrNull() ?: 40,
+                    maxTokens = maxTokensInput.toIntOrNull() ?: 1024,
+                    contextWindow = contextWindowInput.toIntOrNull() ?: 4096,
+                    backendTargetModel = "ALL"
                 )
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        color = colorResource(id = R.color.primary)
-                    )
-                    Text(
-                        text = stringResource(id = R.string.import_task_loading),
-                        color = colorResource(id = R.color.text_primary)
-                    )
-                }
+                settingsRepository.updateGemmaThinkingEnabled(gemmaThinkingEnabled)
             }
         }
-    }
 
-    @Composable
-    private fun ImportedCapabilityDialog(model: ModelFileManager.ImportedTaskModel) {
-        Dialog(onDismissRequest = {}) {
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = colorResource(id = R.color.primary_light)
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = "追加モデルの機能設定",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = model.name,
-                        color = colorResource(id = R.color.text_secondary)
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("画像入力を有効化")
-                        Switch(
-                            checked = capabilityDialogImageEnabled,
-                            onCheckedChange = { capabilityDialogImageEnabled = it }
-                        )
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("音声入力を有効化")
-                        Switch(
-                            checked = capabilityDialogAudioEnabled,
-                            onCheckedChange = { capabilityDialogAudioEnabled = it }
-                        )
-                    }
-                    Text(
-                        text = "標準は画像・音声とも無効です",
-                        color = colorResource(id = R.color.text_secondary),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        Button(onClick = {
-                            ImportedModelCapabilityStore.set(
-                                requireContext(),
-                                model.path,
-                                ImportedModelCapabilities(
-                                    imageEnabled = capabilityDialogImageEnabled,
-                                    audioEnabled = capabilityDialogAudioEnabled
-                                )
-                            )
-                            capabilityDialogModel = null
-                            refreshImportedTasks()
-                            toast("モデル機能設定を保存しました")
-                        }) {
-                            Text("保存")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun HfCard() {
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
                 containerColor = colorResource(id = R.color.primary_light)
             )
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = stringResource(id = R.string.hf_token_title), fontWeight = FontWeight.Bold)
-                Text(
-                    text = if (hfLinked) stringResource(id = R.string.hf_auth_linked) else stringResource(id = R.string.hf_auth_not_linked),
-                    color = colorResource(id = R.color.text_secondary)
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { startOAuthLogin() }) { Text(stringResource(id = R.string.hf_oauth_login)) }
-                    TextButton(onClick = { logoutHf() }, enabled = hfLinked) { Text(stringResource(id = R.string.hf_oauth_logout)) }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun InferenceCard() {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = colorResource(id = R.color.primary_light)
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = stringResource(id = R.string.inference_title), fontWeight = FontWeight.Bold)
-                OutlinedTextField(value = contextWindowInput, onValueChange = { contextWindowInput = it }, label = { Text(stringResource(id = R.string.context_window_label)) })
-                OutlinedTextField(value = temperatureInput, onValueChange = { temperatureInput = it }, label = { Text(stringResource(id = R.string.temperature_label)) })
-                OutlinedTextField(value = topkInput, onValueChange = { topkInput = it }, label = { Text(stringResource(id = R.string.topk_label)) })
-                OutlinedTextField(value = maxTokensInput, onValueChange = { maxTokensInput = it }, label = { Text(stringResource(id = R.string.max_tokens_label)) })
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = stringResource(id = R.string.context_compression_label),
-                        color = colorResource(id = R.color.text_primary)
-                    )
-                    Switch(
-                        checked = contextCompressionEnabled,
-                        onCheckedChange = { contextCompressionEnabled = it }
-                    )
-                }
-                Text(
-                    text = stringResource(
-                        id = R.string.context_compression_threshold_format,
-                        contextCompressionThresholdPercent
-                    ),
-                    color = colorResource(id = R.color.text_secondary)
-                )
-                Slider(
-                    value = contextCompressionThresholdPercent.toFloat(),
-                    onValueChange = { value ->
-                        contextCompressionThresholdPercent = value.roundToInt()
-                            .coerceIn(
-                                InferenceConfig.MIN_COMPRESSION_THRESHOLD,
-                                InferenceConfig.MAX_COMPRESSION_THRESHOLD
-                            )
-                    },
-                    valueRange = InferenceConfig.MIN_COMPRESSION_THRESHOLD.toFloat()..
-                        InferenceConfig.MAX_COMPRESSION_THRESHOLD.toFloat(),
-                    steps = InferenceConfig.MAX_COMPRESSION_THRESHOLD -
-                        InferenceConfig.MIN_COMPRESSION_THRESHOLD - 1,
-                    enabled = contextCompressionEnabled
-                )
-                OutlinedTextField(value = userNameInput, onValueChange = { userNameInput = it }, label = { Text(stringResource(id = R.string.user_name_label)) })
-                OutlinedTextField(value = systemPromptInput, onValueChange = { systemPromptInput = it }, label = { Text(stringResource(id = R.string.system_prompt_label)) })
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(text = "バックエンド", fontWeight = FontWeight.Bold)
                 Text(
                     text = "現在のバックエンド: $backendType",
-                    color = colorResource(id = R.color.text_secondary)
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
@@ -467,7 +198,7 @@ class SettingsComposeFragment : Fragment() {
                     FilterChip(
                         selected = backendType == "NPU",
                         onClick = { backendType = "NPU" },
-                        label = { Text("GPU+CPU") }
+                        label = { Text("NPU") }
                     )
                 }
                 Row(
@@ -476,171 +207,32 @@ class SettingsComposeFragment : Fragment() {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "Gemma 4 シンキングを有効化",
+                        text = "Gemma 4 シンキング有効化",
                         color = colorResource(id = R.color.text_primary)
                     )
                     Switch(
                         checked = gemmaThinkingEnabled,
-                        onCheckedChange = {
-                            gemmaThinkingEnabled = it
-                            viewLifecycleOwner.lifecycleScope.launch {
-                                settingsRepository.updateGemmaThinkingEnabled(it)
-                            }
-                        }
+                        onCheckedChange = { gemmaThinkingEnabled = it }
                     )
                 }
-                Button(onClick = { saveInferenceSettings() }) {
-                    Text(stringResource(id = R.string.save_inference))
-                }
             }
         }
     }
 
     @Composable
-    private fun ToolSettingsCard() {
-        val setAlarmEnabled = toolEnabled[NezumiTool.SET_ALARM] ?: false
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
+    private fun InferenceParamsCard() {
+        LaunchedEffect(
+            contextWindowInput,
+            temperatureInput,
+            topkInput,
+            maxTokensInput,
+            contextCompressionEnabled,
+            contextCompressionThresholdPercent
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = "ツール設定", fontWeight = FontWeight.Bold)
-                NezumiTool.entries.forEach { tool ->
-                    val enabled = toolEnabled[tool] ?: (tool == NezumiTool.GET_TIME)
-                    val canToggle = tool != NezumiTool.LIST_ALARMS || setAlarmEnabled
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(text = tool.displayName, color = colorResource(id = R.color.text_primary))
-                        Switch(
-                            checked = enabled,
-                            enabled = canToggle,
-                            onCheckedChange = { checked -> updateToolEnabled(tool, checked) }
-                        )
-                    }
-                    if (tool == NezumiTool.LIST_ALARMS && !setAlarmEnabled) {
-                        Text(
-                            text = "「アラームセット」が有効な場合のみ使用できます",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colorResource(id = R.color.text_secondary)
-                        )
-                    }
-                }
-            }
+            delay(1000)
+            saveInferenceSettings()
         }
-    }
 
-    @Composable
-    private fun AlarmSettingsCard() {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = "アラーム管理", fontWeight = FontWeight.Bold)
-                if (managedAlarms.isEmpty()) {
-                    Text("登録されたアラームはありません", color = colorResource(id = R.color.text_secondary))
-                } else {
-                    managedAlarms.forEach { alarm ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = String.format(
-                                    Locale.US,
-                                    "%02d:%02d %s",
-                                    alarm.hour,
-                                    alarm.minute,
-                                    alarm.label
-                                ),
-                                color = colorResource(id = R.color.text_primary)
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Switch(
-                                    checked = alarm.enabled,
-                                    onCheckedChange = { checked ->
-                                        viewLifecycleOwner.lifecycleScope.launch {
-                                            alarmDao.setEnabled(alarm.id, checked)
-                                        }
-                                    }
-                                )
-                                TextButton(onClick = { dismissAndDeleteAlarm(alarm) }) {
-                                    Text(stringResource(id = R.string.delete))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun ModelCard(model: ModelFileManager.LocalModel) {
-        val state = modelStates[model] ?: return
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = colorResource(id = R.color.primary_light)
-            )
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(text = state.title, fontWeight = FontWeight.Bold)
-                Text(text = state.status, color = colorResource(id = R.color.text_secondary))
-                if (state.isDownloading) {
-                    if (state.progress > 0f) {
-                        LinearProgressIndicator(
-                            progress = { state.progress },
-                            modifier = Modifier.fillMaxWidth(),
-                            color = colorResource(id = R.color.primary),
-                            trackColor = colorResource(id = R.color.context_meter_track)
-                        )
-                    } else {
-                        LinearProgressIndicator(
-                            modifier = Modifier.fillMaxWidth(),
-                            color = colorResource(id = R.color.primary),
-                            trackColor = colorResource(id = R.color.context_meter_track)
-                        )
-                    }
-                    Text(text = state.progressText, color = colorResource(id = R.color.text_secondary))
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (!state.isDownloaded || state.isDownloading) {
-                        Button(onClick = {
-                            if (state.isDownloading) {
-                                ModelDownloadWorker.cancel(requireContext(), model)
-                            } else {
-                                requestNotificationPermissionForDownload(model)
-                            }
-                        }) {
-                            Text(if (state.isDownloading) "キャンセル" else "ダウンロード")
-                        }
-                    }
-                    TextButton(onClick = {
-                        val ok = ModelFileManager.deleteModel(requireContext(), model)
-                        toast(if (ok) "削除しました" else "削除に失敗しました")
-                        refreshModelStatus(model)
-                    }) { Text(stringResource(id = R.string.delete)) }
-                    if (state.showAccessButton) {
-                        TextButton(onClick = { openHfModelAccessPage(model) }) {
-                            Text(stringResource(id = R.string.open_hf_approval_page))
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun ImportedModelCard(model: ModelFileManager.ImportedTaskModel) {
-        val caps = ImportedModelCapabilityStore.get(requireContext(), model.path)
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -648,52 +240,246 @@ class SettingsComposeFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = model.name, fontWeight = FontWeight.Bold)
-                Text(text = "追加済みモデル", color = colorResource(id = R.color.text_secondary))
-                Text(
-                    text = "画像: ${if (caps.imageEnabled) "ON" else "OFF"} / 音声: ${if (caps.audioEnabled) "ON" else "OFF"}",
-                    color = colorResource(id = R.color.text_secondary)
+                Text(text = "推論パラメータ", fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = contextWindowInput,
+                    onValueChange = { contextWindowInput = it },
+                    label = { Text(stringResource(id = R.string.context_window_label)) },
+                    modifier = Modifier.fillMaxWidth()
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = {
-                        capabilityDialogModel = model
-                        capabilityDialogImageEnabled = caps.imageEnabled
-                        capabilityDialogAudioEnabled = caps.audioEnabled
-                    }) {
-                        Text("機能設定")
-                    }
-                    TextButton(onClick = {
-                        val result = ModelFileManager.deleteImportedTask(requireContext(), model.path)
-                        result.onSuccess {
-                            ImportedModelCapabilityStore.clear(requireContext(), model.path)
-                            toast("削除しました")
-                            refreshImportedTasks()
-                        }.onFailure {
-                            toast("削除に失敗しました: ${it.message}")
-                        }
-                    }) {
-                        Text(stringResource(id = R.string.delete))
-                    }
+                OutlinedTextField(
+                    value = temperatureInput,
+                    onValueChange = { temperatureInput = it },
+                    label = { Text(stringResource(id = R.string.temperature_label)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = topkInput,
+                    onValueChange = { topkInput = it },
+                    label = { Text(stringResource(id = R.string.topk_label)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = maxTokensInput,
+                    onValueChange = { maxTokensInput = it },
+                    label = { Text(stringResource(id = R.string.max_tokens_label)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = stringResource(id = R.string.context_compression_label),
+                        color = colorResource(id = R.color.text_primary)
+                    )
+                    Switch(
+                        checked = contextCompressionEnabled,
+                        onCheckedChange = { contextCompressionEnabled = it }
+                    )
+                }
+                if (contextCompressionEnabled) {
+                    Text(
+                        text = stringResource(
+                            id = R.string.context_compression_threshold_format,
+                            contextCompressionThresholdPercent
+                        ),
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Slider(
+                        value = contextCompressionThresholdPercent.toFloat(),
+                        onValueChange = { value ->
+                            contextCompressionThresholdPercent = value.roundToInt()
+                                .coerceIn(
+                                    InferenceConfig.MIN_COMPRESSION_THRESHOLD,
+                                    InferenceConfig.MAX_COMPRESSION_THRESHOLD
+                                )
+                        },
+                        valueRange = InferenceConfig.MIN_COMPRESSION_THRESHOLD.toFloat()..
+                            InferenceConfig.MAX_COMPRESSION_THRESHOLD.toFloat(),
+                        steps = InferenceConfig.MAX_COMPRESSION_THRESHOLD -
+                            InferenceConfig.MIN_COMPRESSION_THRESHOLD - 1
+                    )
                 }
             }
         }
     }
 
-    private fun renderHfTokenState() {
-        val token = HfAuthManager.getToken(requireContext())
-        hfLinked = token.isNotBlank()
-        themeMode = PreferencesHelper.getThemeMode(requireContext())
+    @Composable
+    private fun PersonalizationCard() {
+        LaunchedEffect(userNameInput, systemPromptInput) {
+            delay(800)
+            viewLifecycleOwner.lifecycleScope.launch {
+                settingsRepository.updateSystemPrompt(systemPromptInput)
+                settingsRepository.updateUserName(userNameInput)
+            }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(text = "個人化設定", fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = userNameInput,
+                    onValueChange = { userNameInput = it },
+                    label = { Text(stringResource(id = R.string.user_name_label)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = systemPromptInput,
+                    onValueChange = { systemPromptInput = it },
+                    label = { Text(stringResource(id = R.string.system_prompt_label)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3
+                )
+            }
+        }
     }
 
-    private fun maskToken(token: String): String {
-        if (token.length <= 6) return "******"
-        return token.take(3) + "*".repeat((token.length - 7).coerceAtLeast(6)) + token.takeLast(4)
-    }
+    @Composable
+    private fun LlamaCppCard() {
+        LaunchedEffect(llamaCppThreads, llamaCppGpuLayers, llamaCppBatchSize, llamaCppNKeep, llamaCppRopeFreqBase, llamaCppRopeFreqScale) {
+            delay(600)
+            viewLifecycleOwner.lifecycleScope.launch {
+                settingsRepository.updateLlamaCppThreads(llamaCppThreads)
+                settingsRepository.updateLlamaCppGpuLayers(llamaCppGpuLayers)
+                settingsRepository.updateLlamaCppBatchSize(llamaCppBatchSize)
+                settingsRepository.updateLlamaCppNKeep(llamaCppNKeep)
+                settingsRepository.updateLlamaCppRopeFreqBase(llamaCppRopeFreqBase)
+                settingsRepository.updateLlamaCppRopeFreqScale(llamaCppRopeFreqScale)
+            }
+        }
 
-    private fun logoutHf() {
-        HfAuthManager.clearToken(requireContext())
-        renderHfTokenState()
-        toast("ログアウトしました")
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(text = "llama.cpp 設定", fontWeight = FontWeight.Bold)
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "CPU スレッド数: $llamaCppThreads",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_primary)
+                    )
+                    Slider(
+                        value = llamaCppThreads.toFloat(),
+                        onValueChange = { llamaCppThreads = it.roundToInt() },
+                        valueRange = 1f..32f,
+                        steps = 30,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "GPU レイヤー数: $llamaCppGpuLayers",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_primary)
+                    )
+                    Slider(
+                        value = llamaCppGpuLayers.toFloat(),
+                        onValueChange = { llamaCppGpuLayers = it.roundToInt() },
+                        valueRange = 0f..100f,
+                        steps = 99,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = "0 = GPU オフロード無効",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "バッチサイズ: $llamaCppBatchSize",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_primary)
+                    )
+                    Slider(
+                        value = llamaCppBatchSize.toFloat(),
+                        onValueChange = { llamaCppBatchSize = it.roundToInt().coerceIn(32, 2048) },
+                        valueRange = 32f..2048f,
+                        steps = 2016/32 - 1,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = "32〜2048。大きいほど高速だが メモリ使用量増加",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "保護トークン数（n_keep）: $llamaCppNKeep",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_primary)
+                    )
+                    Slider(
+                        value = llamaCppNKeep.toFloat(),
+                        onValueChange = { llamaCppNKeep = it.roundToInt() },
+                        valueRange = 0f..10000f,
+                        steps = 199,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = "0 = 無効、システムプロンプト保護",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "RoPE周波数基数: ${"%.1f".format(llamaCppRopeFreqBase)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_primary)
+                    )
+                    Slider(
+                        value = llamaCppRopeFreqBase,
+                        onValueChange = { llamaCppRopeFreqBase = it },
+                        valueRange = 0.0f..1000000.0f,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = "0 = 自動設定（推奨）",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "RoPE周波数スケール: ${"%.2f".format(llamaCppRopeFreqScale)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_primary)
+                    )
+                    Slider(
+                        value = llamaCppRopeFreqScale,
+                        onValueChange = { llamaCppRopeFreqScale = it },
+                        valueRange = 0.1f..10.0f,
+                        steps = 98,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = "コンテキスト拡張用。1.0 = デフォルト",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+                }
+            }
+        }
     }
 
     private fun loadInferenceSettings() {
@@ -704,6 +490,12 @@ class SettingsComposeFragment : Fragment() {
             val selectedModel = settingsRepository.getSelectedModel()
             val contextWindow = settingsRepository.getContextWindowForModel(selectedModel)
             val thinkingEnabled = settingsRepository.isGemmaThinkingEnabled()
+            val threads = settingsRepository.getLlamaCppThreads()
+            val gpuLayers = settingsRepository.getLlamaCppGpuLayers()
+            val batchSize = settingsRepository.getLlamaCppBatchSize()
+            val nKeep = settingsRepository.getLlamaCppNKeep()
+            val ropeFreqBase = settingsRepository.getLlamaCppRopeFreqBase()
+            val ropeFreqScale = settingsRepository.getLlamaCppRopeFreqScale()
             contextWindowInput = contextWindow.toString()
             temperatureInput = config.temperature.toString()
             topkInput = config.maxTopK.toString()
@@ -714,50 +506,43 @@ class SettingsComposeFragment : Fragment() {
             systemPromptInput = systemPrompt
             backendType = config.backendType
             gemmaThinkingEnabled = thinkingEnabled
+            themeMode = PreferencesHelper.getThemeMode(requireContext())
+            llamaCppThreads = threads
+            llamaCppGpuLayers = gpuLayers
+            llamaCppBatchSize = batchSize
+            llamaCppNKeep = nKeep
+            llamaCppRopeFreqBase = ropeFreqBase
+            llamaCppRopeFreqScale = ropeFreqScale
         }
     }
 
-    private fun loadToolSettings() {
-        val loaded = NezumiTool.entries.associateWith { toolPreferences.isEnabled(it) }
-        toolEnabled = loaded
-    }
+    private fun validateSettings(): String? {
+        val temperature = temperatureInput.toFloatOrNull()
+        val topK = topkInput.toIntOrNull()
+        val maxTokens = maxTokensInput.toIntOrNull()
+        val contextWindow = contextWindowInput.toIntOrNull()
 
-    private fun updateToolEnabled(tool: NezumiTool, enabled: Boolean) {
-        Log.d("SettingsCompose", "updateToolEnabled: tool=$tool, enabled=$enabled")
-        if (tool == NezumiTool.LIST_ALARMS && !(toolEnabled[NezumiTool.SET_ALARM] ?: true) && enabled) {
-            toast("「アラームセット」を有効化してください")
-            return
+        if (temperature == null || topK == null || maxTokens == null || contextWindow == null) {
+            return "推論設定の入力値が不正です"
         }
-        
-        // SET_ALARMは権限チェックなしで直接有効化
-        // (SET_ALARM は system-level 権限で checkSelfPermission でチェック不可)
-        toolPreferences.setEnabled(tool, enabled)
-        if (tool == NezumiTool.SET_ALARM && !enabled) {
-            toolPreferences.setEnabled(NezumiTool.LIST_ALARMS, false)
+        if (temperature !in InferenceConfig.MIN_TEMPERATURE..InferenceConfig.MAX_TEMPERATURE) {
+            return "温度は ${InferenceConfig.MIN_TEMPERATURE} - ${InferenceConfig.MAX_TEMPERATURE} の範囲で入力してください"
         }
-        loadToolSettings()
-        
-        if (enabled) {
-            Log.d("SettingsCompose", "Tool enabled: $tool")
-            if (tool == NezumiTool.SET_ALARM) {
-                toast("アラームセットが有効になりました")
-            }
+        if (topK !in InferenceConfig.MIN_TOP_K..InferenceConfig.MAX_TOP_K) {
+            return "Top-K は ${InferenceConfig.MIN_TOP_K} - ${InferenceConfig.MAX_TOP_K} の範囲で入力してください"
         }
-    }
-
-    private fun observeManagedAlarms() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            alarmDao.observeAll().collect { rows ->
-                managedAlarms = rows
-            }
+        if (maxTokens !in InferenceConfig.MIN_MAX_TOKENS..InferenceConfig.MAX_MAX_TOKENS) {
+            return "Max Tokens は ${InferenceConfig.MIN_MAX_TOKENS} - ${InferenceConfig.MAX_MAX_TOKENS} の範囲で入力してください"
         }
-    }
-
-    private fun dismissAndDeleteAlarm(alarm: AlarmEntity) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            ToolSystemController.dismissAlarm(requireContext(), alarm.hour, alarm.minute)
-            alarmDao.deleteById(alarm.id)
+        if (contextWindow !in 512..8192) {
+            return "コンテキストは 512 - 8192 の範囲で入力してください"
         }
+        if (contextCompressionThresholdPercent !in
+            InferenceConfig.MIN_COMPRESSION_THRESHOLD..InferenceConfig.MAX_COMPRESSION_THRESHOLD
+        ) {
+            return "圧縮しきい値は ${InferenceConfig.MIN_COMPRESSION_THRESHOLD} - ${InferenceConfig.MAX_COMPRESSION_THRESHOLD} の範囲で入力してください"
+        }
+        return null
     }
 
     private fun saveInferenceSettings() {
@@ -813,173 +598,18 @@ class SettingsComposeFragment : Fragment() {
         }
     }
 
-    private fun refreshImportedTasks() {
-        importedTasks = ModelFileManager.listImportedTaskModels(requireContext())
-    }
-
-    private fun requestNotificationPermissionForDownload(model: ModelFileManager.LocalModel) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val granted = ContextCompat.checkSelfPermission(
-                requireContext(),
-                Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!granted) {
-                pendingDownloadPermissionModel = model
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                return
-            }
-        }
-        runModelDownload(model)
-    }
-
-    private fun runModelDownload(model: ModelFileManager.LocalModel) {
-        val enqueued = ModelDownloadWorker.enqueue(requireContext(), model)
-        if (!enqueued) toast("すでにダウンロード中です")
-    }
-
-    private fun refreshModelStatus(model: ModelFileManager.LocalModel? = null) {
-        val targets = model?.let { listOf(it) } ?: ModelFileManager.LocalModel.entries
-        targets.forEach {
-            val downloaded = ModelFileManager.isDownloaded(requireContext(), it)
-            val state = modelStates[it] ?: return@forEach
-            state.isDownloaded = downloaded
-            state.status = if (downloaded) "ダウンロード済み" else "未ダウンロード"
-            if (!state.isDownloading) {
-                state.progressText = ""
-                state.progress = 0f
-                state.showAccessButton = false
-            }
-        }
-    }
-
-    private fun observeDownloadWork() {
-        ModelFileManager.LocalModel.entries.forEach { model ->
-            WorkManager.getInstance(requireContext())
-                .getWorkInfosForUniqueWorkLiveData(ModelDownloadWorker.modelWorkName(model))
-                .observe(viewLifecycleOwner) { infos ->
-                    val info = infos.maxByOrNull { it.runAttemptCount }
-                    renderDownloadState(model, info)
-                }
-        }
-    }
-
-    private fun renderDownloadState(model: ModelFileManager.LocalModel, workInfo: WorkInfo?) {
-        val state = modelStates[model] ?: return
-        if (workInfo == null) {
-            state.isDownloading = false
-            refreshModelStatus(model)
+    private fun onBackButtonPressed() {
+        val error = validateSettings()
+        if (error != null) {
+            errorDialogMessage = error
             return
         }
-        when (workInfo.state) {
-            WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
-                state.isDownloading = true
-                val downloaded = workInfo.progress.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
-                val total = workInfo.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L)
-                if (total > 0L) {
-                    val percent = ((downloaded * 100L) / total).toInt().coerceIn(0, 100)
-                    state.progress = percent / 100f
-                    state.progressText = "$percent% (${formatGb(downloaded)} / ${formatGb(total)})"
-                    state.status = "ダウンロード中"
-                } else {
-                    state.progressText = "準備中..."
-                    state.status = "ダウンロード待機中"
-                }
-            }
-            WorkInfo.State.SUCCEEDED -> {
-                state.isDownloading = false
-                state.progress = 1f
-                state.progressText = ""
-                state.showAccessButton = false
-                state.isDownloaded = true
-                refreshModelStatus(model)
-            }
-            WorkInfo.State.FAILED -> {
-                state.isDownloading = false
-                state.progressText = ""
-                val error = workInfo.outputData.getString(ModelDownloadWorker.KEY_ERROR_MESSAGE) ?: "ダウンロード失敗"
-                state.status = "失敗: $error"
-                state.showAccessButton = error.contains("HTTP 403", ignoreCase = true)
-            }
-            WorkInfo.State.CANCELLED -> {
-                state.isDownloading = false
-                state.progressText = ""
-                refreshModelStatus(model)
-            }
-        }
-    }
-
-    private fun startOAuthLogin() {
-        if (hfLinked) {
-            toast("すでに連携済みです。切り替える場合は先にログアウトしてください")
-            return
-        }
-        if (ProjectConfig.HF_CLIENT_ID == "REPLACE_WITH_HF_CLIENT_ID") {
-            toast("ProjectConfig.HF_CLIENT_ID を設定してください")
-            return
-        }
-        val request = HfOAuthManager.buildAuthorizationRequest()
-        val intent = authService?.getAuthorizationRequestIntent(request) ?: return
-        authLauncher.launch(intent)
-    }
-
-    private fun exchangeToken(response: AuthorizationResponse) {
-        val tokenRequest = HfOAuthManager.buildTokenRequest(response)
-        val service = authService ?: return
-        HfOAuthManager.performTokenRequest(service, tokenRequest) { accessToken, error ->
-            requireActivity().runOnUiThread {
-                if (accessToken.isNullOrBlank()) {
-                    toast("トークン取得失敗: $error")
-                    return@runOnUiThread
-                }
-                HfAuthManager.setToken(requireContext(), accessToken)
-                renderHfTokenState()
-                toast("OAuthログイン成功")
-            }
-        }
-    }
-
-    private fun openHfModelAccessPage(model: ModelFileManager.LocalModel) {
-        val url = ModelFileManager.previewTreeUrl(model)
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-        if (intent.resolveActivity(requireContext().packageManager) != null) {
-            startActivity(intent)
-        } else {
-            toast("ブラウザを起動できませんでした")
-        }
+        findNavController().navigateUp()
     }
 
     private fun toast(message: String) {
         if (!isAdded) return
         Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
-    }
-
-    private fun formatGb(bytes: Long): String {
-        val gb = bytes / (1024.0 * 1024.0 * 1024.0)
-        return String.format("%.2fGB", gb)
-    }
-
-    private fun titleFor(model: ModelFileManager.LocalModel): String {
-        return when (model) {
-            ModelFileManager.LocalModel.GEMMA3N_2B -> "Gemma 3n E2B"
-            ModelFileManager.LocalModel.GEMMA3N_4B -> "Gemma 3n E4B"
-            ModelFileManager.LocalModel.GEMMA4_2B -> "Gemma 4 2B"
-            ModelFileManager.LocalModel.GEMMA4_4B -> "Gemma 4 4B"
-        }
-    }
-
-    override fun onDestroyView() {
-        authService?.dispose()
-        authService = null
-        super.onDestroyView()
-    }
-
-    private class ModelUiState(val title: String) {
-        var status by mutableStateOf("未ダウンロード")
-        var progress by mutableFloatStateOf(0f)
-        var progressText by mutableStateOf("")
-        var isDownloading by mutableStateOf(false)
-        var showAccessButton by mutableStateOf(false)
-        var isDownloaded by mutableStateOf(false)
     }
 
     @Composable

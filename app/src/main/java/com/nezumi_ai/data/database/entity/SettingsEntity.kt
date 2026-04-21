@@ -24,5 +24,12 @@ data class SettingsEntity(
     val speculativeDecodingEnabled: Boolean = false,
     val systemPrompt: String = "",
     val userName: String = "",
-    val lastModified: Long = System.currentTimeMillis()
+    val lastModified: Long = System.currentTimeMillis(),
+    // llama.cpp settings
+    val llamaCppThreads: Int = 4,
+    val llamaCppGpuLayers: Int = 0,
+    val llamaCppBatchSize: Int = 512,
+    val llamaCppNKeep: Int = 0,
+    val llamaCppRopeFreqBase: Float = 0.0f,
+    val llamaCppRopeFreqScale: Float = 1.0f
 )

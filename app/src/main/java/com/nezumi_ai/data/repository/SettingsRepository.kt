@@ -119,7 +119,13 @@ class SettingsRepository(
             maxTokens = current.maxTokens,
             enableThinking = enableThinking,
             enableSpeculativeDecoding = current.speculativeDecodingEnabled,
-            backendType = backendForSelected
+            backendType = backendForSelected,
+            llamaCppThreads = current.llamaCppThreads,
+            llamaCppGpuLayers = current.llamaCppGpuLayers,
+            llamaCppBatchSize = current.llamaCppBatchSize,
+            llamaCppNKeep = current.llamaCppNKeep,
+            llamaCppRopeFreqBase = current.llamaCppRopeFreqBase,
+            llamaCppRopeFreqScale = current.llamaCppRopeFreqScale
         ).normalized()
     }
 
@@ -249,7 +255,8 @@ class SettingsRepository(
         val trimmed = model.trim()
         val lowered = trimmed.lowercase()
         val isImported =
-            (lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && File(trimmed).isAbsolute
+            (lowered.endsWith(".task") || lowered.endsWith(".litertlm") || lowered.endsWith(".gguf")) &&
+                File(trimmed).isAbsolute
         return when {
             trimmed.equals(MODEL_ALL, ignoreCase = true) -> MODEL_ALL
             trimmed.equals("Gemma4-2B", ignoreCase = true) -> MODEL_GEMMA4_2B
@@ -447,6 +454,96 @@ class SettingsRepository(
         dao.update(
             current.copy(
                 contextWindowMap = encodeContextWindowMap(map),
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun getLlamaCppThreads(): Int {
+        return currentSettings().llamaCppThreads
+    }
+
+    suspend fun updateLlamaCppThreads(threads: Int) {
+        val current = currentSettings()
+        val clamped = threads.coerceIn(1, 32)
+        dao.update(
+            current.copy(
+                llamaCppThreads = clamped,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun getLlamaCppGpuLayers(): Int {
+        return currentSettings().llamaCppGpuLayers
+    }
+
+    suspend fun updateLlamaCppGpuLayers(layers: Int) {
+        val current = currentSettings()
+        val clamped = layers.coerceIn(0, 100)
+        dao.update(
+            current.copy(
+                llamaCppGpuLayers = clamped,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun getLlamaCppBatchSize(): Int {
+        return currentSettings().llamaCppBatchSize
+    }
+
+    suspend fun updateLlamaCppBatchSize(batchSize: Int) {
+        val current = currentSettings()
+        val clamped = batchSize.coerceIn(32, 2048)
+        dao.update(
+            current.copy(
+                llamaCppBatchSize = clamped,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun getLlamaCppNKeep(): Int {
+        return currentSettings().llamaCppNKeep
+    }
+
+    suspend fun updateLlamaCppNKeep(nKeep: Int) {
+        val current = currentSettings()
+        val clamped = nKeep.coerceIn(0, 10000)
+        dao.update(
+            current.copy(
+                llamaCppNKeep = clamped,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun getLlamaCppRopeFreqBase(): Float {
+        return currentSettings().llamaCppRopeFreqBase
+    }
+
+    suspend fun updateLlamaCppRopeFreqBase(ropeFreqBase: Float) {
+        val current = currentSettings()
+        val clamped = ropeFreqBase.coerceIn(0.0f, 1000000.0f)
+        dao.update(
+            current.copy(
+                llamaCppRopeFreqBase = clamped,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun getLlamaCppRopeFreqScale(): Float {
+        return currentSettings().llamaCppRopeFreqScale
+    }
+
+    suspend fun updateLlamaCppRopeFreqScale(ropeFreqScale: Float) {
+        val current = currentSettings()
+        val clamped = ropeFreqScale.coerceIn(0.1f, 10.0f)
+        dao.update(
+            current.copy(
+                llamaCppRopeFreqScale = clamped,
                 lastModified = System.currentTimeMillis()
             )
         )

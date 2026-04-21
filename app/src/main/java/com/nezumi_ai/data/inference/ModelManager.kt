@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.util.Log
 import com.nezumi_ai.data.repository.SettingsRepository
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.emitAll
@@ -37,7 +38,13 @@ class ModelManager(
         }
     }
     
-    private val inferenceEngine: AIInferenceEngine = LiteRtLmEngine(context)
+    // Phase 15: LiteRtLm と GGUF エンジンの両方を搭載（モデルごとに切替）
+    private val liteRtEngine: AIInferenceEngine = LiteRtLmEngine(context)
+    private val ggufEngine: AIInferenceEngine? =
+        if (isGgufAvailable()) GgufInferenceEngine(context) else null
+    @Volatile
+    private var activeEngine: AIInferenceEngine = ggufEngine ?: liteRtEngine
+    
     private var currentModelName: String? = null
     private var currentConfig: InferenceConfig? = null
     private val loadMutex = Mutex()
@@ -50,6 +57,38 @@ class ModelManager(
     private val memoryObserver = MemoryObserver
     private val sessionManager = SessionResourceManager()
     private val jobController = InferenceJobController()
+
+    /**
+     * GGUF エンジンが利用可能かチェック
+     * （llamacpp-kotlin ライブラリの存在確認）
+     */
+    private fun isGgufAvailable(): Boolean {
+        return try {
+            Class.forName("org.nehuatl.llamacpp.LlamaHelper")
+            true
+        } catch (e: ClassNotFoundException) {
+            false
+        }
+    }
+
+    private fun shouldUseGgufEngine(modelName: String): Boolean {
+        val trimmed = modelName.trim()
+        val lowered = trimmed.lowercase()
+        val isAbsoluteGguf = lowered.endsWith(".gguf") && java.io.File(trimmed).isAbsolute
+        return isAbsoluteGguf && ggufEngine != null
+    }
+
+    private fun engineForModel(modelName: String): AIInferenceEngine {
+        return if (shouldUseGgufEngine(modelName)) {
+            ggufEngine ?: liteRtEngine
+        } else {
+            liteRtEngine
+        }
+    }
+
+    private fun currentEngineLabel(engine: AIInferenceEngine): String {
+        return if (engine is GgufInferenceEngine) "GGUF" else "LiteRtLm"
+    }
 
     private fun isCompiledModelInvokeFailure(t: Throwable): Boolean {
         var cur: Throwable? = t
@@ -74,10 +113,11 @@ class ModelManager(
             "Compiled-model invoke failure detected. Reloading engine and retrying once: model=$modelName backend=${normalized.backendType}"
         )
 
-        runCatching { inferenceEngine.unloadModel() }
+        val engine = activeEngine
+        runCatching { engine.unloadModel() }
             .onFailure { Log.w(TAG, "Engine unload during recovery failed", it) }
 
-        val reloaded = inferenceEngine.loadModel(modelName, normalized)
+        val reloaded = engine.loadModel(modelName, normalized)
         if (reloaded.isSuccess) {
             currentConfig = normalized
             return true
@@ -106,6 +146,8 @@ class ModelManager(
 
     /**
      * モデルを初期化（ロード）
+     * Phase 14: モデルロード前にメモリを詳細確認
+     * Phase 15: LiteRtLm / GGUF エンジン自動選択（構築時）
      */
     suspend fun initializeModel(
         modelName: String = DEFAULT_MODEL_NAME,
@@ -114,34 +156,74 @@ class ModelManager(
         return loadMutex.withLock {
             try {
                 val normalizedConfig = config.normalized()
+                
                 // 既に同じモデルがロードされている場合はスキップ
                 val shouldSkip = currentModelName == modelName && 
                     currentConfig == normalizedConfig &&
-                    currentConfig?.backendType == normalizedConfig.backendType
+                    currentConfig?.backendType == normalizedConfig.backendType &&
+                    activeEngine === engineForModel(modelName)
 
                 if (shouldSkip) {
                     Log.d(TAG, "Model $modelName is already loaded with same backend: ${normalizedConfig.backendType}")
                     return Result.success(Unit)
                 }
+                val targetEngine = engineForModel(modelName)
+                
+                // Phase 14: モデルロード前にメモリ状態を詳細ログ出力
+                Log.d(TAG, "INIT_MODEL_PRE_CHECK: modelName=$modelName backend=${normalizedConfig.backendType} engine=${currentEngineLabel(targetEngine)}")
+                val detailedMemInfo = memoryObserver.getDetailedMemoryInfo(context)
+                Log.d(TAG, "INIT_MODEL_PRE_CHECK_MEMORY:\n$detailedMemInfo")
                 
                 // メモリ使用率をチェック
+                val memStatus = memoryObserver.getMemoryStatus(context)
+                Log.d(TAG, "INIT_MODEL_MEMORY_STATUS: level=${memStatus.level} used=${memStatus.usedMB}MB max=${memStatus.maxMB}MB percent=${memStatus.usedPercent}% device_low=${memStatus.isLowMemory}")
+                
                 if (!isMemorySufficient()) {
-                    val errorMsg = "Cannot load model - memory usage is too high (${getMemoryUsagePercent()}%)"
-                    Log.e(TAG, errorMsg)
+                    val errorMsg = "Cannot load model - memory usage is too high (${getMemoryUsagePercent()}% - ${memStatus.usedMB}/${memStatus.maxMB}MB)"
+                    Log.e(TAG, "INIT_MODEL_MEMORY_INSUFFICIENT: $errorMsg")
                     return Result.failure(RuntimeException(errorMsg))
                 }
                 
-                // 前のモデルをアンロード
-                if (currentModelName != null) {
+                // 前のモデルをアンロード（エンジン切替時も明示）
+                if (currentModelName != null || activeEngine !== targetEngine) {
                     Log.d(TAG, "Unloading previous model before loading new one (backend change: ${currentConfig?.backendType} -> ${normalizedConfig.backendType})")
-                    inferenceEngine.unloadModel()
+                    // 推論中断を先に実行してから unload（シームレスな切り替え）
+                    activeEngine.cancelInference()
+                    delay(50)  // 推論キャンセルが処理されるまで短く待機
+                    activeEngine.unloadModel()
+
+                    // エンジン切り替え時は、もう一方のエンジンも明示的に unload
+                    // （GPU/NPU リソースの競合防止）
+                    if (activeEngine !== targetEngine) {
+                        val inactiveEngine = if (activeEngine is GgufInferenceEngine) {
+                            liteRtEngine
+                        } else {
+                            ggufEngine
+                        }
+                        if (inactiveEngine != null) {
+                            Log.i(TAG, "Unloading inactive engine (${currentEngineLabel(inactiveEngine)}) to prevent resource conflicts")
+                            runCatching {
+                                inactiveEngine.cancelInference()
+                                delay(50)
+                                inactiveEngine.unloadModel()
+                            }
+                                .onFailure { Log.w(TAG, "Failed to unload inactive engine", it) }
+                        }
+                    }
+                    
+                    // GPU リソースが確実に解放されるまで待機
+                    // （llama.cpp と LiteRT-LM の GPU メモリ競合防止）
+                    Log.d(TAG, "Waiting for GPU resources to be released...")
+                    delay(500)  // 500ms 待機
+                    Log.d(TAG, "GPU resources released, proceeding with new model load")
                 }
                 
                 // 新しいモデルをロード
-                Log.d(TAG, "Loading model: $modelName with backend: ${normalizedConfig.backendType}")
-                val result = inferenceEngine.loadModel(modelName, normalizedConfig)
+                Log.d(TAG, "Loading model: $modelName with backend: ${normalizedConfig.backendType} engine=${currentEngineLabel(targetEngine)}")
+                val result = targetEngine.loadModel(modelName, normalizedConfig)
                 
                 if (result.isSuccess) {
+                    activeEngine = targetEngine
                     currentModelName = modelName
                     currentConfig = normalizedConfig
                     Log.d(TAG, "Model loaded successfully: $modelName with backend: ${normalizedConfig.backendType}")
@@ -179,9 +261,10 @@ class ModelManager(
         config: InferenceConfig
     ): Flow<String> = flow {
         inferenceMutex.withLock {
+            val engine = activeEngine
             var emitted = false
             try {
-                inferenceEngine.inference(sessionId, prompt, config).collect { chunk ->
+                engine.inference(sessionId, prompt, config).collect { chunk ->
                     emitted = true
                     emit(chunk)
                 }
@@ -189,7 +272,7 @@ class ModelManager(
                 if (t is CancellationException) throw t
                 if (!emitted && isCompiledModelInvokeFailure(t) && recoverFromInvokeFailure(config)) {
                     Log.i(TAG, "Retrying inference once after recovery")
-                    inferenceEngine.inference(sessionId, prompt, config).collect { chunk ->
+                    activeEngine.inference(sessionId, prompt, config).collect { chunk ->
                         emit(chunk)
                     }
                 } else {
@@ -209,9 +292,10 @@ suspend fun runInferenceWithMedia(
     config: InferenceConfig
 ): Flow<String> = flow {
     inferenceMutex.withLock {
+        val engine = activeEngine
         var emitted = false
         try {
-            inferenceEngine.inferenceWithMedia(sessionId, prompt, images, audioClips, config)
+            engine.inferenceWithMedia(sessionId, prompt, images, audioClips, config)
                 .collect { chunk ->
                     emitted = true
                     emit(chunk)
@@ -220,7 +304,7 @@ suspend fun runInferenceWithMedia(
             if (t is CancellationException) throw t
             if (!emitted && isCompiledModelInvokeFailure(t) && recoverFromInvokeFailure(config)) {
                 Log.i(TAG, "Retrying multimodal inference once after recovery")
-                inferenceEngine.inferenceWithMedia(sessionId, prompt, images, audioClips, config)
+                activeEngine.inferenceWithMedia(sessionId, prompt, images, audioClips, config)
                     .collect { chunk ->
                         emit(chunk)
                     }
@@ -235,7 +319,7 @@ suspend fun runInferenceWithMedia(
      * モデルが利用可能かチェック
      */
     suspend fun isModelAvailable(): Boolean {
-        return inferenceEngine.isAvailable()
+        return activeEngine.isAvailable()
     }
     
     /**
@@ -244,7 +328,7 @@ suspend fun runInferenceWithMedia(
     suspend fun unloadModel(): Result<Unit> {
         return loadMutex.withLock {
             try {
-                val result = inferenceEngine.unloadModel()
+                val result = activeEngine.unloadModel()
                 currentModelName = null
                 currentConfig = null
                 result
@@ -266,12 +350,15 @@ suspend fun runInferenceWithMedia(
      */
     suspend fun cancelInference() {
         try {
-            inferenceEngine.cancelInference()
+            activeEngine.cancelInference()
         } catch (e: Exception) {
             Log.e(TAG, "Error during inference cancellation", e)
         }
     }
 
+    /* Phase 15 TODO: calibrateBackend を後で実装
+     * 一時的にコメントアウト（SettingsRepository 統合が必要）
+     
     /**
      * NPU キャリブレーション: 初回起動時の自動ベンチマーク
      *
@@ -362,4 +449,5 @@ suspend fun runInferenceWithMedia(
             Long.MAX_VALUE  // ベンチマーク失敗
         }
     }
+    */
 }

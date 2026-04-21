@@ -31,7 +31,9 @@ import kotlinx.coroutines.withTimeout
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.io.File
 import java.util.concurrent.TimeUnit
+import kotlin.math.absoluteValue
 
 class ModelDownloadWorker(
     appContext: Context,
@@ -40,6 +42,11 @@ class ModelDownloadWorker(
 
     override suspend fun doWork(): Result {
         val startedAt = System.currentTimeMillis()
+        val downloadKind = inputData.getString(KEY_DOWNLOAD_KIND) ?: DOWNLOAD_KIND_BUILTIN
+        if (downloadKind == DOWNLOAD_KIND_HF_CUSTOM) {
+            return doCustomHfWork(startedAt)
+        }
+
         val modelName = inputData.getString(KEY_MODEL_NAME)
             ?: return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "model is missing"))
         val model = modelFromName(modelName)
@@ -171,6 +178,140 @@ class ModelDownloadWorker(
         }
     }
 
+    private suspend fun doCustomHfWork(startedAt: Long): Result {
+        val modelId = inputData.getString(KEY_HF_MODEL_ID)
+            ?: return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "hf model id is missing"))
+        val filePath = inputData.getString(KEY_HF_FILE_PATH)
+            ?: return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "hf file path is missing"))
+
+        val displayName = "$modelId/$filePath"
+        setForeground(createForegroundInfo(displayName, 0L, -1L))
+
+        return try {
+            var lastTime = System.currentTimeMillis()
+            var lastDownloaded = 0L
+            var hasBaseline = false
+            var lastForegroundUpdateTime = 0L
+            var lastProgressUpdateTime = 0L
+            var lastProgressDownloaded = -1L
+            var reachedNearCompletion = false
+
+            val result = withTimeout(MAX_SINGLE_WORK_DURATION_MS) {
+                ModelFileManager.downloadHuggingFaceModelFile(
+                    context = applicationContext,
+                    modelId = modelId,
+                    filePath = filePath
+                ) { downloaded, total ->
+                    if (isStopped) {
+                        throw CancellationException("cancel requested")
+                    }
+                    if (total > 0L && downloaded >= (total * 98L / 100L)) {
+                        reachedNearCompletion = true
+                    }
+                    val currentTime = System.currentTimeMillis()
+                    val timeDeltaMs = currentTime - lastTime
+
+                    if (!hasBaseline) {
+                        hasBaseline = true
+                        lastTime = currentTime
+                        lastDownloaded = downloaded
+                        val data = workDataOf(
+                            KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_HF_CUSTOM,
+                            KEY_HF_MODEL_ID to modelId,
+                            KEY_HF_FILE_PATH to filePath,
+                            KEY_DOWNLOADED_BYTES to downloaded,
+                            KEY_TOTAL_BYTES to total,
+                            KEY_SPEED_MBPS to 0.0,
+                            KEY_ESTIMATED_REMAINING_SEC to 0.0
+                        )
+                        setProgressAsync(data)
+                        setForegroundAsync(createForegroundInfo(displayName, downloaded, total))
+                        lastProgressUpdateTime = currentTime
+                        lastProgressDownloaded = downloaded
+                        lastForegroundUpdateTime = currentTime
+                        return@downloadHuggingFaceModelFile
+                    }
+
+                    val speedMbps = if (timeDeltaMs > 0) {
+                        val bytesDelta = (downloaded - lastDownloaded).coerceAtLeast(0L)
+                        (bytesDelta.toDouble() / (1024.0 * 1024.0)) / (timeDeltaMs.toDouble() / 1000.0)
+                    } else {
+                        0.0
+                    }
+                    val remainingBytes = (total - downloaded).coerceAtLeast(0L)
+                    val estimatedSecRemaining = if (speedMbps > 0) {
+                        (remainingBytes.toDouble() / (1024.0 * 1024.0)) / speedMbps
+                    } else {
+                        0.0
+                    }
+
+                    val reachedEnd = total > 0L && downloaded >= total
+                    val elapsedSinceLastProgress = currentTime - lastProgressUpdateTime
+                    val progressedBytes = (downloaded - lastProgressDownloaded).coerceAtLeast(0L)
+                    val shouldPublishProgress = reachedEnd ||
+                        elapsedSinceLastProgress >= PROGRESS_UPDATE_INTERVAL_MS ||
+                        progressedBytes >= PROGRESS_UPDATE_MIN_BYTES
+
+                    if (shouldPublishProgress) {
+                        val data = workDataOf(
+                            KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_HF_CUSTOM,
+                            KEY_HF_MODEL_ID to modelId,
+                            KEY_HF_FILE_PATH to filePath,
+                            KEY_DOWNLOADED_BYTES to downloaded,
+                            KEY_TOTAL_BYTES to total,
+                            KEY_SPEED_MBPS to speedMbps,
+                            KEY_ESTIMATED_REMAINING_SEC to estimatedSecRemaining
+                        )
+                        setProgressAsync(data)
+                        lastProgressUpdateTime = currentTime
+                        lastProgressDownloaded = downloaded
+                        if (currentTime - lastForegroundUpdateTime >= FOREGROUND_UPDATE_INTERVAL_MS || reachedEnd) {
+                            setForegroundAsync(createForegroundInfo(displayName, downloaded, total))
+                            lastForegroundUpdateTime = currentTime
+                        }
+                    }
+
+                    if (timeDeltaMs > 500) {
+                        lastTime = currentTime
+                        lastDownloaded = downloaded
+                    }
+                }
+            }
+
+            result.fold(
+                onSuccess = {
+                    showCustomDownloadCompletedNotification(modelId, filePath, it.length())
+                    Result.success(
+                        workDataOf(
+                            KEY_HF_MODEL_ID to modelId,
+                            KEY_HF_FILE_PATH to filePath,
+                            KEY_DOWNLOADED_BYTES to it.length(),
+                            KEY_TOTAL_BYTES to it.length(),
+                            KEY_SPEED_MBPS to 0.0
+                        )
+                    )
+                },
+                onFailure = { e ->
+                    if (!reachedNearCompletion && shouldRetry(e, startedAt)) {
+                        Result.retry()
+                    } else {
+                        handleCustomFailure(modelId, filePath, e)
+                    }
+                }
+            )
+        } catch (e: TimeoutCancellationException) {
+            handleCustomFailure(modelId, filePath, IllegalStateException("ダウンロードが一定時間内に完了しなかったため中断しました"))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (shouldRetry(e, startedAt)) {
+                Result.retry()
+            } else {
+                handleCustomFailure(modelId, filePath, e)
+            }
+        }
+    }
+
     private fun shouldRetry(error: Throwable, startedAt: Long): Boolean {
         if (runAttemptCount >= MAX_WORK_RETRY) return false
         if (System.currentTimeMillis() - startedAt >= MAX_SINGLE_WORK_DURATION_MS) return false
@@ -233,11 +374,17 @@ class ModelDownloadWorker(
 
     companion object {
         const val KEY_MODEL_NAME = "model_name"
+        const val KEY_DOWNLOAD_KIND = "download_kind"
+        const val KEY_HF_MODEL_ID = "hf_model_id"
+        const val KEY_HF_FILE_PATH = "hf_file_path"
         const val KEY_DOWNLOADED_BYTES = "downloaded_bytes"
         const val KEY_TOTAL_BYTES = "total_bytes"
         const val KEY_ERROR_MESSAGE = "error_message"
         const val KEY_SPEED_MBPS = "speed_mbps"
         const val KEY_ESTIMATED_REMAINING_SEC = "estimated_remaining_sec"
+        const val DOWNLOAD_KIND_BUILTIN = "builtin"
+        const val DOWNLOAD_KIND_HF_CUSTOM = "hf_custom"
+        const val TAG_HF_CUSTOM_DOWNLOAD = "hf_custom_download"
         private const val NOTIFICATION_CHANNEL_ID = "model_download_channel"
         private const val NOTIFICATION_ID = 2001
         private const val MAX_WORK_RETRY = 2
@@ -272,7 +419,12 @@ class ModelDownloadWorker(
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
             val request = OneTimeWorkRequestBuilder<ModelDownloadWorker>()
-                .setInputData(workDataOf(KEY_MODEL_NAME to model.name))
+                .setInputData(
+                    workDataOf(
+                        KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_BUILTIN,
+                        KEY_MODEL_NAME to model.name
+                    )
+                )
                 .setConstraints(constraints)
                 .setBackoffCriteria(
                     BackoffPolicy.EXPONENTIAL,
@@ -286,6 +438,59 @@ class ModelDownloadWorker(
                 request
             )
             return true
+        }
+
+        fun customWorkName(modelId: String, filePath: String): String {
+            val key = "$modelId|$filePath".lowercase()
+            val hash = key.hashCode().absoluteValue
+            return "hf_custom_download_$hash"
+        }
+
+        fun enqueueCustomHf(context: Context, modelId: String, filePath: String): Boolean {
+            val workName = customWorkName(modelId, filePath)
+            val workManager = WorkManager.getInstance(context)
+            val hasActive = runCatching {
+                workManager.getWorkInfosForUniqueWork(workName)
+                    .get(2, TimeUnit.SECONDS)
+                    .any {
+                        it.state == WorkInfo.State.ENQUEUED ||
+                            it.state == WorkInfo.State.RUNNING ||
+                            it.state == WorkInfo.State.BLOCKED
+                    }
+            }.getOrDefault(false)
+            if (hasActive) return false
+
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+            val request = OneTimeWorkRequestBuilder<ModelDownloadWorker>()
+                .setInputData(
+                    workDataOf(
+                        KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_HF_CUSTOM,
+                        KEY_HF_MODEL_ID to modelId,
+                        KEY_HF_FILE_PATH to filePath
+                    )
+                )
+                .addTag(TAG_HF_CUSTOM_DOWNLOAD)
+                .setConstraints(constraints)
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    15,
+                    TimeUnit.SECONDS
+                )
+                .build()
+            workManager.enqueueUniqueWork(
+                workName,
+                ExistingWorkPolicy.KEEP,
+                request
+            )
+            return true
+        }
+
+        fun cancelCustomHf(context: Context, modelId: String, filePath: String) {
+            WorkManager.getInstance(context).cancelUniqueWork(customWorkName(modelId, filePath))
+            val outFile = ModelFileManager.huggingFaceImportedFile(context, modelId, filePath)
+            runCatching { File("${outFile.absolutePath}.download").delete() }
         }
 
         fun cancel(context: Context, model: ModelFileManager.LocalModel) {
@@ -312,6 +517,23 @@ class ModelDownloadWorker(
         ModelFileManager.deleteTempDownload(applicationContext, model)
         showDownloadFailedNotification(model, message)
         return Result.failure(workDataOf(KEY_ERROR_MESSAGE to message))
+    }
+
+    private fun handleCustomFailure(modelId: String, filePath: String, error: Throwable): Result {
+        val message = error.message ?: "download failed"
+        val outFile = ModelFileManager.huggingFaceImportedFile(applicationContext, modelId, filePath)
+        runCatching { File("${outFile.absolutePath}.download").delete() }
+        runCatching { outFile.delete() }
+        runCatching { File("${outFile.absolutePath}.meta").delete() }
+        showCustomDownloadFailedNotification(modelId, filePath, message)
+        return Result.failure(
+            workDataOf(
+                KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_HF_CUSTOM,
+                KEY_HF_MODEL_ID to modelId,
+                KEY_HF_FILE_PATH to filePath,
+                KEY_ERROR_MESSAGE to message
+            )
+        )
     }
 
     private fun showDownloadCompletedNotification(model: ModelFileManager.LocalModel, sizeBytes: Long) {
@@ -401,6 +623,77 @@ class ModelDownloadWorker(
 
         NotificationManagerCompat.from(applicationContext)
             .notify(2000 + model.ordinal, notification)
+    }
+
+    private fun showCustomDownloadCompletedNotification(modelId: String, filePath: String, sizeBytes: Long) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val hasPermission = ContextCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!hasPermission) return
+        }
+        ensureNotificationChannel()
+        val launchIntent = Intent(applicationContext, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            applicationContext,
+            (modelId + filePath).hashCode(),
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val sizeMb = sizeBytes / (1024.0 * 1024.0)
+        val shortName = filePath.substringAfterLast('/')
+        val notification = NotificationCompat.Builder(applicationContext, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_add)
+            .setContentTitle("モデルのダウンロードが完了しました")
+            .setContentText("$shortName (${String.format("%.1f", sizeMb)} MB)")
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText("$modelId の $filePath をダウンロードしました。")
+            )
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+        NotificationManagerCompat.from(applicationContext)
+            .notify(3000 + (modelId + filePath).hashCode().absoluteValue % 500, notification)
+    }
+
+    private fun showCustomDownloadFailedNotification(modelId: String, filePath: String, reason: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val hasPermission = ContextCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!hasPermission) return
+        }
+        ensureNotificationChannel()
+        val launchIntent = Intent(applicationContext, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            applicationContext,
+            10000 + (modelId + filePath).hashCode().absoluteValue % 500,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val shortName = filePath.substringAfterLast('/')
+        val notification = NotificationCompat.Builder(applicationContext, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle("モデルのダウンロードに失敗しました")
+            .setContentText("$shortName: $reason")
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText("$modelId / $filePath のダウンロードに失敗しました。理由: $reason")
+            )
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+        NotificationManagerCompat.from(applicationContext)
+            .notify(4000 + (modelId + filePath).hashCode().absoluteValue % 500, notification)
     }
 
     private fun ensureNotificationChannel() {

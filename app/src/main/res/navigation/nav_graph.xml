@@ -21,4 +21,11 @@
 
         <action android:id="@+id/action_chatFragment_to_sessionListFragment" app:destination="@id/sessionListFragment" app:popUpTo="@id/sessionListFragment" app:popUpToInclusive="false" app:enterAnim="@android:anim/slide_in_left" app:exitAnim="@android:anim/slide_out_right" app:popEnterAnim="@android:anim/slide_in_left" app:popExitAnim="@android:anim/slide_out_right" />
     </fragment>
+
+    <fragment android:id="@+id/modelSettingsFragment" android:name="com.nezumi_ai.presentation.ui.fragment.ModelSettingsFragment" android:label="@string/model_settings" tools:layout="@layout/fragment_settings">
+        <action android:id="@+id/action_modelSettingsFragment_to_licenseFragment" app:destination="@id/licenseFragment" />
+    </fragment>
+
+    <fragment android:id="@+id/toolsSettingsFragment" android:name="com.nezumi_ai.presentation.ui.fragment.ToolsSettingsFragment" android:label="@string/tools_settings" tools:layout="@layout/fragment_settings" />
+
 </navigation>
