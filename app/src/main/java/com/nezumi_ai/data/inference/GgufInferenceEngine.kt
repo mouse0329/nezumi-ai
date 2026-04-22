@@ -14,11 +14,13 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.nehuatl.llamacpp.LlamaHelper
 import org.nehuatl.llamacpp.LlamaContext
 import org.nehuatl.llamacpp.LlamaAndroid
@@ -233,10 +235,15 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
         Log.d(TAG, "cancelInference called")
         currentInferenceJob?.let { job ->
             Log.d(TAG, "Cancelling ongoing inference job")
-            job.cancel()
+            job.cancel(CancellationException("User cancelled inference"))
             try {
-                job.join()  // キャンセルが完了するまで待機
-                Log.d(TAG, "Inference job cancelled and joined")
+                withTimeoutOrNull(5000L) {  // 5秒でタイムアウト
+                    job.join()  // キャンセルが完了するまで待機
+                    Log.d(TAG, "Inference job cancelled and joined successfully")
+                } ?: run {
+                    Log.w(TAG, "Inference job cancellation timeout after 5s - forcing termination")
+                    job.cancel()  // 強制キャンセル
+                }
             } catch (e: Exception) {
                 Log.d(TAG, "Inference job cancellation completed with exception: ${e.message}")
             }
@@ -291,6 +298,11 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
 
                     // token callback を設定（completion 中にトークンが emit される）
                     ctx.setTokenCallback { token ->
+                        // キャンセルチェック：定期的にキャンセル要求をチェック
+                        if (!isActive) {
+                            Log.d(TAG, "Token callback detected cancellation")
+                            throw CancellationException("Inference cancelled during token generation")
+                        }
                         answerAccum.append(token)
                         trySend(token)
                     }
@@ -314,8 +326,10 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                     close()
                 } catch (t: Throwable) {
                     if (t is CancellationException) {
-                        Log.d(TAG, "GGUF cancelled session=$sessionId")
-                        trySend(InferenceStreamProtocol.encodeFinal(answerAccum.toString()))
+                        Log.d(TAG, "GGUF cancelled session=$sessionId answer_length=${answerAccum.length}")
+                        runCatching {
+                            trySend(InferenceStreamProtocol.encodeFinal(answerAccum.toString()))
+                        }
                         close()
                     } else {
                         Log.e(TAG, "completion error", t)
@@ -334,7 +348,9 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
 
         // キャンセル時のクリーンアップ
         awaitClose {
-            Log.d(TAG, "inference flow closed")
+            Log.d(TAG, "Flow cancelled - awaiting job termination")
+            // フローがキャンセルされたら、推論ジョブもキャンセル
+            currentInferenceJob?.cancel()
         }
     }
 

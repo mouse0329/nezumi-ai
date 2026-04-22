@@ -34,6 +34,13 @@ data class InferenceConfig(
         const val MAX_MAX_TOKENS = 4096
         const val MIN_TOP_P = 0.0f
         const val MAX_TOP_P = 1.0f
+        const val MIN_THREADS = 1
+        const val MAX_THREADS = 16
+
+        fun getDefaultThreadCount(): Int {
+            val availableCores = Runtime.getRuntime().availableProcessors()
+            return availableCores.coerceIn(MIN_THREADS, MAX_THREADS)
+        }
     }
 
     fun normalized(): InferenceConfig {

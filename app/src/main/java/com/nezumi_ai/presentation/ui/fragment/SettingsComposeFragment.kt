@@ -45,7 +45,8 @@ class SettingsComposeFragment : Fragment() {
     private var gemmaThinkingEnabled by mutableStateOf(false)
     private var themeMode by mutableStateOf(PreferencesHelper.THEME_SYSTEM)
     private var errorDialogMessage by mutableStateOf<String?>(null)
-    private var llamaCppThreads by mutableStateOf(4)
+    private var llamaCppThreads by mutableStateOf(InferenceConfig.getDefaultThreadCount())
+    private var maxThreads by mutableStateOf(InferenceConfig.MAX_THREADS)
     private var llamaCppGpuLayers by mutableStateOf(0)
     private var llamaCppBatchSize by mutableStateOf(512)
     private var llamaCppNKeep by mutableStateOf(0)
@@ -374,8 +375,8 @@ class SettingsComposeFragment : Fragment() {
                     Slider(
                         value = llamaCppThreads.toFloat(),
                         onValueChange = { llamaCppThreads = it.roundToInt() },
-                        valueRange = 1f..32f,
-                        steps = 30,
+                        valueRange = 1f..maxThreads.toFloat(),
+                        steps = maxOf(0, maxThreads - 2),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -507,7 +508,8 @@ class SettingsComposeFragment : Fragment() {
             backendType = config.backendType
             gemmaThinkingEnabled = thinkingEnabled
             themeMode = PreferencesHelper.getThemeMode(requireContext())
-            llamaCppThreads = threads
+            maxThreads = InferenceConfig.MAX_THREADS
+            llamaCppThreads = threads.coerceIn(1, maxThreads)
             llamaCppGpuLayers = gpuLayers
             llamaCppBatchSize = batchSize
             llamaCppNKeep = nKeep

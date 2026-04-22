@@ -1,0 +1,146 @@
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:generateDebugResValues
+> Task :app:dataBindingMergeDependencyArtifactsDebug
+> Task :app:generateDebugResources
+> Task :app:packageDebugResources
+> Task :app:mergeDebugResources
+> Task :app:generateDebugBuildConfig
+> Task :app:parseDebugLocalResources
+> Task :app:generateSafeArgsDebug
+> Task :app:dataBindingGenBaseClassesDebug
+> Task :app:mapDebugSourceSetPaths
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:checkDebugAarMetadata
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
+> Task :app:mergeDebugShaders
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:javaPreCompileDebug
+> Task :app:mergeDebugAssets
+> Task :app:compressDebugAssets
+> Task :app:desugarDebugFileDependencies
+> Task :app:processDebugManifestForPackage
+> Task :app:mergeDebugJniLibFolders
+> Task :app:validateSigningDebug
+> Task :app:checkDebugDuplicateClasses
+> Task :app:writeDebugAppMetadata
+> Task :app:writeDebugSigningConfigVersions
+> Task :app:preReleaseBuild UP-TO-DATE
+> Task :app:mergeReleaseJniLibFolders
+> Task :app:mergeLibDexDebug
+> Task :app:checkReleaseDuplicateClasses
+> Task :app:buildKotlinToolingMetadata
+> Task :app:dataBindingMergeDependencyArtifactsRelease
+> Task :app:generateReleaseResValues
+> Task :app:generateReleaseResources
+> Task :app:mergeDebugNativeLibs
+> Task :app:mergeReleaseNativeLibs
+> Task :app:processDebugResources
+> Task :app:mergeReleaseResources
+> Task :app:mergeExtDexDebug
+
+> Task :app:stripDebugDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so, liblitertlm_jni.so, librnllama.so, librnllama_v8.so, librnllama_v8_2.so, librnllama_v8_2_dotprod.so, librnllama_v8_2_dotprod_i8mm.so, librnllama_v8_2_i8mm.so, librnllama_x86_64.so, libtensorflowlite_jni_gms_client.so.
+
+> Task :app:stripReleaseDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so, liblitertlm_jni.so, librnllama.so, librnllama_v8.so, librnllama_v8_2.so, librnllama_v8_2_dotprod.so, librnllama_v8_2_dotprod_i8mm.so, librnllama_v8_2_i8mm.so, librnllama_x86_64.so, libtensorflowlite_jni_gms_client.so.
+
+> Task :app:packageReleaseResources
+> Task :app:generateReleaseBuildConfig
+> Task :app:extractReleaseNativeSymbolTables
+> Task :app:parseReleaseLocalResources
+> Task :app:generateSafeArgsRelease
+> Task :app:mergeReleaseNativeDebugMetadata NO-SOURCE
+> Task :app:dataBindingGenBaseClassesRelease
+> Task :app:mapReleaseSourceSetPaths
+> Task :app:createReleaseCompatibleScreenManifests
+> Task :app:extractDeepLinksRelease
+> Task :app:checkReleaseAarMetadata
+> Task :app:processReleaseMainManifest
+> Task :app:processReleaseManifest
+> Task :app:desugarReleaseFileDependencies
+> Task :app:mergeReleaseStartupProfile
+> Task :app:kaptGenerateStubsDebugKotlin
+> Task :app:javaPreCompileRelease
+> Task :app:mergeReleaseShaders
+> Task :app:compileReleaseShaders NO-SOURCE
+> Task :app:generateReleaseAssets UP-TO-DATE
+> Task :app:mergeReleaseAssets
+> Task :app:mergeReleaseArtProfile
+> Task :app:compressReleaseAssets
+> Task :app:extractReleaseVersionControlInfo
+> Task :app:extractProguardFiles
+> Task :app:collectReleaseDependencies
+> Task :app:sdkReleaseDependencyData
+> Task :app:validateSigningRelease
+> Task :app:writeReleaseAppMetadata
+> Task :app:writeReleaseSigningConfigVersions
+> Task :app:preDebugAndroidTestBuild SKIPPED
+> Task :app:generateDebugAndroidTestResValues
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:preReleaseUnitTestBuild UP-TO-DATE
+> Task :app:processReleaseManifestForPackage
+> Task :app:javaPreCompileDebugUnitTest
+> Task :app:javaPreCompileReleaseUnitTest
+> Task :app:mergeExtDexRelease
+> Task :app:processReleaseResources
+> Task :app:optimizeReleaseResources
+> Task :app:kaptGenerateStubsReleaseKotlin
+> Task :app:kaptDebugKotlin
+> Task :app:kaptReleaseKotlin
+> Task :app:compileDebugKotlin
+> Task :app:compileReleaseKotlin
+w: file:///C:/Users/mouse/AndroidStudioProjects/nezumiai/app/src/main/java/com/nezumi_ai/MainActivity.kt:96:18 This declaration overrides a deprecated member but is not marked as deprecated itself. Add the '@Deprecated' annotation or suppress the diagnostic.
+w: file:///C:/Users/mouse/AndroidStudioProjects/nezumiai/app/src/main/java/com/nezumi_ai/MainActivity.kt:100:19 'fun onBackPressed(): Unit' is deprecated. This method has been deprecated in favor of using the
+      {@link OnBackPressedDispatcher} via {@link #getOnBackPressedDispatcher()}.
+      The OnBackPressedDispatcher controls how back button events are dispatched
+      to one or more {@link OnBackPressedCallback} objects.
+w: file:///C:/Users/mouse/AndroidStudioProjects/nezumiai/app/src/main/java/com/nezumi_ai/data/database/NezumiAiDatabase.kt:40:22 'fun fallbackToDestructiveMigration(): RoomDatabase.Builder<NezumiAiDatabase>' is deprecated. Replace by overloaded version with parameter to indicate if all tables should be dropped or not.
+w: file:///C:/Users/mouse/AndroidStudioProjects/nezumiai/app/src/main/java/com/nezumi_ai/data/inference/BitmapMemoryPool.kt:22:42 The corresponding parameter in the supertype 'LruCache' is named 'value'. This may cause problems when calling this function with named arguments.
+w: file:///C:/Users/mouse/AndroidStudioProjects/nezumiai/app/src/main/java/com/nezumi_ai/data/inference/HfOAuthManager.kt:45:38 This extension is shadowed by a member: 'fun toUri(): Uri' defined in 'net/openid/appauth/AuthorizationRequest'.
+w: file:///C:/Users/mouse/AndroidStudioProjects/nezumiai/app/src/main/java/com/nezumi_ai/presentation/ui/fragment/ChatFragment.kt:1110:29 'constructor(): MediaRecorder' is deprecated. Deprecated in Java.
+w: file:///C:/Users/mouse/AndroidStudioProjects/nezumiai/app/src/main/java/com/nezumi_ai/presentation/viewmodel/ChatViewModel.kt:2173:34 'static field SCREEN_DIM_WAKE_LOCK: Int' is deprecated. Deprecated in Java.
+
+> Task :app:compileDebugKotlin
+w: file:///C:/Users/mouse/AndroidStudioProjects/nezumiai/app/src/main/java/com/nezumi_ai/MainActivity.kt:96:18 This declaration overrides a deprecated member but is not marked as deprecated itself. Add the '@Deprecated' annotation or suppress the diagnostic.
+w: file:///C:/Users/mouse/AndroidStudioProjects/nezumiai/app/src/main/java/com/nezumi_ai/MainActivity.kt:100:19 'fun onBackPressed(): Unit' is deprecated. This method has been deprecated in favor of using the
+      {@link OnBackPressedDispatcher} via {@link #getOnBackPressedDispatcher()}.
+      The OnBackPressedDispatcher controls how back button events are dispatched
+      to one or more {@link OnBackPressedCallback} objects.
+w: file:///C:/Users/mouse/AndroidStudioProjects/nezumiai/app/src/main/java/com/nezumi_ai/data/database/NezumiAiDatabase.kt:40:22 'fun fallbackToDestructiveMigration(): RoomDatabase.Builder<NezumiAiDatabase>' is deprecated. Replace by overloaded version with parameter to indicate if all tables should be dropped or not.
+w: file:///C:/Users/mouse/AndroidStudioProjects/nezumiai/app/src/main/java/com/nezumi_ai/data/inference/BitmapMemoryPool.kt:22:42 The corresponding parameter in the supertype 'LruCache' is named 'value'. This may cause problems when calling this function with named arguments.
+w: file:///C:/Users/mouse/AndroidStudioProjects/nezumiai/app/src/main/java/com/nezumi_ai/data/inference/HfOAuthManager.kt:45:38 This extension is shadowed by a member: 'fun toUri(): Uri' defined in 'net/openid/appauth/AuthorizationRequest'.
+w: file:///C:/Users/mouse/AndroidStudioProjects/nezumiai/app/src/main/java/com/nezumi_ai/presentation/ui/fragment/ChatFragment.kt:1110:29 'constructor(): MediaRecorder' is deprecated. Deprecated in Java.
+w: file:///C:/Users/mouse/AndroidStudioProjects/nezumiai/app/src/main/java/com/nezumi_ai/presentation/viewmodel/ChatViewModel.kt:2173:34 'static field SCREEN_DIM_WAKE_LOCK: Int' is deprecated. Deprecated in Java.
+
+> Task :app:compileDebugJavaWithJavac
+> Task :app:dexBuilderDebug
+> Task :app:mergeDebugGlobalSynthetics
+> Task :app:processDebugJavaRes
+> Task :app:mergeProjectDexDebug
+> Task :app:compileReleaseJavaWithJavac
+> Task :app:mergeDebugJavaResource
+> Task :app:dexBuilderRelease
+> Task :app:packageDebug FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:packageDebug'.
+> Unable to delete directory 'C:\Users\mouse\AndroidStudioProjects\nezumiai\app\build\outputs\apk\debug'
+    Failed to delete some children. This might happen because a process has files open or has its working directory set in the target directory.
+    - C:\Users\mouse\AndroidStudioProjects\nezumiai\app\build\outputs\apk\debug\app-debug.apk
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 5m 53s
+88 actionable tasks: 88 executed

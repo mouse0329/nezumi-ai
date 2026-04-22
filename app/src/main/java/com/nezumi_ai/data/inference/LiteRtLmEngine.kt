@@ -199,29 +199,10 @@ class LiteRtLmEngine(
         }
     }
 
-    /**
-     * LiteRT dispatch はディレクトリ内の `.so` を走査する。
-     * 端末によっては [ApplicationInfo.nativeLibraryDir] が `.../lib/arm64` で空だが、
-     * 兄弟の `arm64-v8a` にのみ展開されていることがあるため、実在するパスを返す。
-     */
     private fun resolveNativeLibraryDirForLitert(): String {
-        val fromApplication = appContext.applicationInfo.nativeLibraryDir
-        if (fromApplication.isNullOrBlank()) return ""
-        val base = File(fromApplication)
-        val baseHasSo = base.isDirectory &&
-            base.listFiles()?.any { it.isFile && it.name.endsWith(".so") } == true
-        if (baseHasSo) return base.absolutePath
-        val parent = base.parentFile
-        if (parent != null && parent.isDirectory) {
-            val v8a = File(parent, "arm64-v8a")
-            val v8aHasSo = v8a.isDirectory &&
-                v8a.listFiles()?.any { it.isFile && it.name.endsWith(".so") } == true
-            if (v8aHasSo) {
-                Log.i(TAG, "LiteRT native lib dir: using arm64-v8a (${v8a.absolutePath})")
-                return v8a.absolutePath
-            }
-        }
-        return fromApplication
+        val nativeLibDir = appContext.applicationInfo.nativeLibraryDir
+        Log.d(TAG, "NPU native library dir: $nativeLibDir")
+        return nativeLibDir ?: ""
     }
 
     override suspend fun loadModel(modelName: String, config: InferenceConfig): Result<Unit> {

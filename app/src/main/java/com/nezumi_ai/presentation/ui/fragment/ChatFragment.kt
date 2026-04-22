@@ -516,6 +516,14 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.memoryWarning.collect { warning ->
+                if (warning != null) {
+                    showMemoryWarningDialog(warning)
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
             viewModel.isCompressing.collect { compressing ->
                 isCompressingNow = compressing
                 // 圧縮中は入力フィールドを無効化
@@ -785,6 +793,38 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 onClearAudio = { selectedAudioUri = null }
             )
         }
+    }
+
+    private fun showMemoryWarningDialog(warning: ChatViewModel.MemoryWarningInfo) {
+        val systemMemInfo = com.nezumi_ai.data.inference.MemoryObserver.getSystemMemoryInfo(requireContext())
+        val alertDialog = androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("⚠️ メモリ警告")
+            .setMessage(
+                "モデル「${warning.modelName}」のロードは高メモリ使用率になる可能性があります。\n\n" +
+                "━━━ デバイスメモリ ━━━\n" +
+                "スマホ本体: ${systemMemInfo.usedMemoryMB}MB / ${systemMemInfo.totalMemoryMB}MB\n" +
+                "使用率: ${systemMemInfo.usedPercent}%\n" +
+                "${if (systemMemInfo.lowMemoryFlag) "⚠️ デバイスがメモリ不足状態です" else "✓ 正常"}\n\n" +
+                "━━━ アプリメモリ ━━━\n" +
+                "現在: ${warning.currentUsageMB}MB / ${warning.maxMB}MB (${warning.currentUsagePercent}%)\n" +
+                "予想: ${warning.predictedUsagePercent}%\n\n" +
+                "ロードを続行しますか？"
+            )
+            .setPositiveButton("続行") { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch {
+                    val config = settingsRepository.getInferenceConfig()
+                    viewModel.proceedWithModelLoad(
+                        viewModel.selectedModel.value,
+                        config
+                    )
+                }
+            }
+            .setNegativeButton("キャンセル") { _, _ ->
+                viewModel.dismissMemoryWarning()
+            }
+            .setCancelable(false)
+            .create()
+        alertDialog.show()
     }
 
     @Composable

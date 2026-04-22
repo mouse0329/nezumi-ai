@@ -4,7 +4,12 @@
       "Bash(xargs grep *)",
       "Bash(./gradlew clean *)",
       "Bash(./gradlew assembleDebug)",
-      "Bash(grep -E \"\\\\.\\(kt|xml\\)$\")"
+      "Bash(grep -E \"\\\\.\\(kt|xml\\)$\")",
+      "Bash(gradle --version)",
+      "Bash(rm -rf app/build)",
+      "Bash(./gradlew assembleDebug --no-daemon)",
+      "PowerShell(Get-Process | Where-Object {$_.Handles -gt 0 -and $_.ProcessName -match \"\\(adb|emulator|studio\\)\" } | Select-Object ProcessName, Handles | Format-Table)",
+      "Bash(./gradlew compileDebugKotlin --no-daemon)"
     ]
   }
 }

@@ -36,6 +36,14 @@ object MemoryObserver {
         val maxMB: Long,
         val isLowMemory: Boolean
     )
+
+    data class SystemMemoryInfo(
+        val totalMemoryMB: Long,
+        val availableMemoryMB: Long,
+        val usedMemoryMB: Long,
+        val usedPercent: Int,
+        val lowMemoryFlag: Boolean
+    )
     
     /**
      * 現在のメモリ状態を取得
@@ -72,13 +80,49 @@ object MemoryObserver {
     }
     
     /**
+     * スマホ本体のシステムメモリ情報を取得
+     */
+    fun getSystemMemoryInfo(context: Context): SystemMemoryInfo {
+        return try {
+            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            if (activityManager == null) {
+                return SystemMemoryInfo(0, 0, 0, 0, false)
+            }
+
+            @Suppress("DEPRECATION")
+            val memInfo = ActivityManager.MemoryInfo()
+            activityManager.getMemoryInfo(memInfo)
+
+            val totalMemoryMB = memInfo.totalMem / (1024 * 1024)
+            val availableMemoryMB = memInfo.availMem / (1024 * 1024)
+            val usedMemoryMB = totalMemoryMB - availableMemoryMB
+            val usedPercent = if (totalMemoryMB > 0) {
+                ((usedMemoryMB * 100) / totalMemoryMB).toInt()
+            } else {
+                0
+            }
+
+            SystemMemoryInfo(
+                totalMemoryMB = totalMemoryMB,
+                availableMemoryMB = availableMemoryMB,
+                usedMemoryMB = usedMemoryMB,
+                usedPercent = usedPercent,
+                lowMemoryFlag = memInfo.lowMemory
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to get system memory info", e)
+            SystemMemoryInfo(0, 0, 0, 0, false)
+        }
+    }
+
+    /**
      * システムがメモリ不足状態にあるかチェック
      */
     private fun isDeviceLowMemory(context: Context): Boolean {
         return try {
             val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
             if (activityManager == null) return false
-            
+
             // MemoryInfo を使用して lowMemory フラグを取得
             @Suppress("DEPRECATION")
             val memInfo = ActivityManager.MemoryInfo()

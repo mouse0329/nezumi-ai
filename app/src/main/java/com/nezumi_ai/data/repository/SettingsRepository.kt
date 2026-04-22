@@ -66,7 +66,12 @@ class SettingsRepository(
     
     suspend fun initializeSettingsIfNeeded(context: Context) {
         if (dao.getSettings() == null) {
-            dao.insert(SettingsEntity())
+            val defaultThreads = InferenceConfig.getDefaultThreadCount()
+            dao.insert(
+                SettingsEntity(
+                    llamaCppThreads = defaultThreads
+                )
+            )
         }
         migrateImportedLiteRtLmStoredPaths(context)
     }

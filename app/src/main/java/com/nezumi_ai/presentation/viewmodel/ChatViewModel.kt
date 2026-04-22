@@ -150,7 +150,53 @@ class ChatViewModel(
     
     private val _toolCallState = MutableStateFlow<ToolCallState?>(null)
     val toolCallState: StateFlow<ToolCallState?> = _toolCallState.asStateFlow()
-    
+
+    data class MemoryWarningInfo(
+        val modelName: String,
+        val predictedUsagePercent: Int,
+        val currentUsagePercent: Int,
+        val currentUsageMB: Long,
+        val maxMB: Long
+    )
+
+    private val _memoryWarning = MutableStateFlow<MemoryWarningInfo?>(null)
+    val memoryWarning: StateFlow<MemoryWarningInfo?> = _memoryWarning.asStateFlow()
+
+    fun dismissMemoryWarning() {
+        _memoryWarning.value = null
+    }
+
+    fun proceedWithModelLoad(model: String, config: InferenceConfig) {
+        viewModelScope.launch {
+            _memoryWarning.value = null
+            _isModelLoading.value = true
+            _modelLoadingStatus.value = "モデルをロード中..."
+            try {
+                val manager = requireModelManager()
+                val engineModelName = toEngineModelName(model)
+                val result = withContext(Dispatchers.IO) {
+                    manager.initializeModel(engineModelName, config)
+                }
+                if (result.isSuccess) {
+                    _modelLoadingStatus.value = "ロード完了"
+                    Log.d(TAG, "proceedWithModelLoad: SUCCESS - model=$model")
+                } else {
+                    val error = result.exceptionOrNull()
+                    Log.e(TAG, "proceedWithModelLoad: FAILED - model=$model, error=${error?.message}", error)
+                    _uiMessage.emit("モデルロードに失敗しました: ${error?.message}")
+                    _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "proceedWithModelLoad: Exception", e)
+                _uiMessage.emit("モデルロード中にエラーが発生しました")
+                _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
+            } finally {
+                _isModelLoading.value = false
+                _modelLoadingStatus.value = ""
+            }
+        }
+    }
+
     private var modelManager: ModelManager? = null
     private var generationJob: Job? = null
     private var messagesCollectionJob: Job? = null
@@ -1740,20 +1786,68 @@ class ChatViewModel(
             // Phase 14: モデルロード前にメモリ確認
             _modelLoadingStatus.value = "[$displayModel] メモリを確認中..."
             Log.d(TAG, "loadModelWithOverlay: PRE_LOAD_MEMORY_CHECK model=$model backend=${config.backendType}")
-            
+
             // 詳細なメモリ情報をログ出力
             val detailedMemInfo = MemoryObserver.getDetailedMemoryInfo(appContext)
             Log.d(TAG, "PRE_LOAD_MEMORY:\n$detailedMemInfo")
-            
+
             val memoryStatus = MemoryObserver.getMemoryStatus(appContext)
             Log.d(TAG, "loadModelWithOverlay: MEMORY_STATUS level=${memoryStatus.level} used=${memoryStatus.usedMB}MB max=${memoryStatus.maxMB}MB percent=${memoryStatus.usedPercent}% device_low_memory=${memoryStatus.isLowMemory}")
-            
+
             // メモリ不足チェック
             if (!manager.isMemorySufficient()) {
                 val errorMsg = "メモリ不足: ${memoryStatus.usedPercent}% (${memoryStatus.usedMB}/${memoryStatus.maxMB}MB) - ${displayModel}をロードできません"
                 Log.e(TAG, "loadModelWithOverlay: MEMORY_INSUFFICIENT $errorMsg")
                 _uiMessage.emit(errorMsg)
                 return Result.failure(RuntimeException(errorMsg))
+            }
+
+            // メモリ予想: モデルサイズを推定
+            val estimatedModelSizeMB = when (model.uppercase()) {
+                "GEMMA4-2B" -> 900   // 2Bモデル: 約900MB (重みサイズ)
+                "GEMMA4-4B" -> 1700  // 4Bモデル: 約1700MB (重みサイズ)
+                else -> 500          // 他のモデル: 保守的に推定
+            }
+
+            // KVキャッシュ: コンテキストウィンドウサイズに応じた計算
+            val kvCacheMB = when {
+                config.contextWindow >= 4096 -> 400  // 4K以上: 400MB
+                config.contextWindow >= 2048 -> 250  // 2K以上: 250MB
+                else -> 150                          // 1K以下: 150MB
+            }
+
+            // 中間テンソル: バッチサイズに応じた計算
+            // バッチサイズが大きいほど中間テンソルメモリが必要
+            val batchSizeMB = when {
+                config.llamaCppBatchSize >= 1024 -> 300  // 大バッチ: 300MB
+                config.llamaCppBatchSize >= 512 -> 150   // 中バッチ: 150MB (デフォルト)
+                config.llamaCppBatchSize >= 256 -> 100   // 小バッチ: 100MB
+                else -> 50                                // 極小: 50MB
+            }
+
+            // その他のオーバーヘッド（アクティベーション、一時バッファ等）
+            val miscOverheadMB = 50
+
+            val totalOverheadMB = kvCacheMB + batchSizeMB + miscOverheadMB
+            val totalPredictedMB = memoryStatus.usedMB + estimatedModelSizeMB + totalOverheadMB
+            val predictedUsagePercent = (totalPredictedMB.toFloat() / memoryStatus.maxMB.toFloat() * 100).toInt()
+
+            Log.d(TAG, "MEMORY_PREDICTION: model=$model modelSize=${estimatedModelSizeMB}MB kvCache=${kvCacheMB}MB batchSize(${config.llamaCppBatchSize})=${batchSizeMB}MB overhead=${totalOverheadMB}MB total=${predictedUsagePercent}% (${totalPredictedMB}/${memoryStatus.maxMB}MB)")
+
+            // メモリがカツカツのときは警告を表示
+            if (predictedUsagePercent >= 75) {
+                Log.w(TAG, "loadModelWithOverlay: MEMORY WARNING - predicted usage ${predictedUsagePercent}%")
+                _modelLoadingStatus.value = "メモリ確認中..."
+                _memoryWarning.value = MemoryWarningInfo(
+                    modelName = displayModel,
+                    predictedUsagePercent = predictedUsagePercent,
+                    currentUsagePercent = memoryStatus.usedPercent,
+                    currentUsageMB = memoryStatus.usedMB,
+                    maxMB = memoryStatus.maxMB
+                )
+                // 警告が表示されるまで待機（ローディング状態を維持）
+                _isModelLoading.value = false  // ここで一度解除（finally でも解除されるため）
+                return Result.failure(RuntimeException("Memory warning shown to user"))
             }
             
             _modelLoadingStatus.value = "[$displayModel] エンジンを初期化中..."
