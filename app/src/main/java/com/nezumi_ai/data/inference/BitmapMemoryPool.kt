@@ -11,7 +11,7 @@ import java.io.ByteArrayOutputStream
  * - OutOfMemoryError の予防
  * - 厳密な recycle() 管理
  */
-class BitmapMemoryPool(maxMemorySizeBytes: Long = 50 * 1024 * 1024) {
+class BitmapMemoryPool(maxMemorySizeBytes: Long = 16 * 1024 * 1024) {  // ★ 50MB → 16MB に削減（Gallery 相当）
     companion object {
         private const val TAG = "BitmapMemoryPool"
     }

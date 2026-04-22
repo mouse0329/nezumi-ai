@@ -20,12 +20,13 @@ private const val BYTES_IN_GB = 1024f * 1024 * 1024
 object MemoryObserver {
     private const val TAG = "MemoryObserver"
 
-    // モデルごとの最小メモリ要件（GB）
+    // モデルごとの最小メモリ要件（GB） - Gallery の allowlist から取得
     private val MODEL_MIN_MEMORY = mapOf(
-        "GEMMA4-2B" to 4.0f,    // 2B: 最小 4GB
-        "GEMMA4-4B" to 8.0f,    // 4B: 最小 8GB
-        "GEMMA3-2B" to 3.0f,
-        "GEMMA3-7B" to 8.0f,
+        "GEMMA4-2B" to 8.0f,    // Gemma-4-E2B-it: 最小 8GB
+        "GEMMA4-4B" to 12.0f,   // Gemma-4-E4B-it: 最小 12GB ★ Gallery と同じ
+        "GEMMA3-2B" to 8.0f,    // Gemma-3n-E2B-it: 最小 8GB
+        "GEMMA3-4B" to 12.0f,   // Gemma-3n-E4B-it: 最小 12GB
+        "GEMMA3-1B" to 6.0f,    // Gemma3-1B-IT: 最小 6GB
     )
     
     // メモリ段階のしきい値（％）

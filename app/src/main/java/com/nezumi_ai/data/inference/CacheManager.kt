@@ -6,8 +6,8 @@ import java.io.File
 
 object CacheManager {
     private const val TAG = "CacheManager"
-    private const val MAX_CACHE_SIZE_MB = 1000  // 最大キャッシュサイズ：1000MB（余裕を持たせる）
-    private const val CLEANUP_THRESHOLD_MB = 800  // クリーンアップ開始：800MB
+    private const val MAX_CACHE_SIZE_MB = 300   // ★ 最大キャッシュサイズ：300MB に削減（Gallery と同様）
+    private const val CLEANUP_THRESHOLD_MB = 200  // ★ クリーンアップ開始：200MB に削減
     
     private var lastLoadedModelName = ""  // 現在読み込まれているモデル名キャッシュ
     private var recentCacheFiles = setOf<String>()  // 最近生成されたキャッシュ（この読み込みセッション中）
