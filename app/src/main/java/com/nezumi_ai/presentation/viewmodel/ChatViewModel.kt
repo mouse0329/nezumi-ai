@@ -169,31 +169,8 @@ class ChatViewModel(
     fun proceedWithModelLoad(model: String, config: InferenceConfig) {
         viewModelScope.launch {
             _memoryWarning.value = null
-            _isModelLoading.value = true
-            _modelLoadingStatus.value = "モデルをロード中..."
-            try {
-                val manager = requireModelManager()
-                val engineModelName = toEngineModelName(model)
-                val result = withContext(Dispatchers.IO) {
-                    manager.initializeModel(engineModelName, config)
-                }
-                if (result.isSuccess) {
-                    _modelLoadingStatus.value = "ロード完了"
-                    Log.d(TAG, "proceedWithModelLoad: SUCCESS - model=$model")
-                } else {
-                    val error = result.exceptionOrNull()
-                    Log.e(TAG, "proceedWithModelLoad: FAILED - model=$model, error=${error?.message}", error)
-                    _uiMessage.emit("モデルロードに失敗しました: ${error?.message}")
-                    // 警告後の再試行なので、ユーザーが戻るまで留まる（自動ナビゲーションしない）
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "proceedWithModelLoad: Exception", e)
-                _uiMessage.emit("モデルロード中にエラーが発生しました")
-                // 警告後の再試行なので、ユーザーが戻るまで留まる（自動ナビゲーションしない）
-            } finally {
-                _isModelLoading.value = false
-                _modelLoadingStatus.value = ""
-            }
+            // メモリ警告をスキップしてロードを続行
+            loadModelWithOverlay(model, config, onlyIfAvailable = false, skipMemoryWarning = true)
         }
     }
 
@@ -1770,7 +1747,8 @@ class ChatViewModel(
     private suspend fun loadModelWithOverlay(
         model: String,
         config: InferenceConfig,
-        onlyIfAvailable: Boolean
+        onlyIfAvailable: Boolean,
+        skipMemoryWarning: Boolean = false
     ): Result<Unit> {
         val manager = requireModelManager()
         val engineModelName = toEngineModelName(model)
@@ -1802,8 +1780,8 @@ class ChatViewModel(
                 return Result.failure(RuntimeException(errorMsg))
             }
 
-            // ★ Gallery アプローチ: 最小メモリ要件をチェック
-            if (MemoryObserver.isMemoryLow(appContext, model)) {
+            // ★ Gallery アプローチ: 最小メモリ要件をチェック（skipMemoryWarning=false の場合のみ）
+            if (!skipMemoryWarning && MemoryObserver.isMemoryLow(appContext, model)) {
                 Log.w(TAG, "loadModelWithOverlay: MEMORY LOW - model=$model does not meet minimum memory requirement")
                 _modelLoadingStatus.value = "メモリ確認中..."
 
@@ -1819,6 +1797,11 @@ class ChatViewModel(
                 // 警告が表示されるまで待機（ローディング状態を維持）
                 _isModelLoading.value = false  // ここで一度解除（finally でも解除されるため）
                 return Result.failure(RuntimeException("Memory warning shown to user"))
+            }
+
+            // skipMemoryWarning=true の場合はメモリ警告をスキップしてロード続行
+            if (skipMemoryWarning && MemoryObserver.isMemoryLow(appContext, model)) {
+                Log.w(TAG, "loadModelWithOverlay: MEMORY LOW but user confirmed - proceeding with load model=$model")
             }
 
             Log.d(TAG, "loadModelWithOverlay: Memory check passed for model=$model")
