@@ -1823,16 +1823,23 @@ class ChatViewModel(
             } else {
                 val error = result.exceptionOrNull()
                 Log.e(TAG, "loadModelWithOverlay: FAILED - model=$model, error=${error?.message}", error)
-                
+
                 // メモリ不足エラーを検出
-                if (error?.message?.contains("memory") == true || 
+                if (error?.message?.contains("memory") == true ||
                     error?.message?.contains("Memory") == true) {
                     Log.w(TAG, "loadModelWithOverlay: Out of memory detected during initialization")
                     val postLoadMemStatus = MemoryObserver.getMemoryStatus(appContext)
-                    val errorMsg = "メモリが不足しています (${postLoadMemStatus.usedPercent}%)。ホームスクリーンに戻ります..."
+                    val errorMsg = "メモリが不足しています (${postLoadMemStatus.usedPercent}%)"
                     _uiMessage.emit(errorMsg)
-                    viewModelScope.launch {
-                        _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
+
+                    // skipMemoryWarning=false（最初の警告チェック時）は自動的にホームに戻す
+                    // skipMemoryWarning=true（ユーザーが続行選択済み）はチャットに留まる
+                    if (!skipMemoryWarning) {
+                        val msgWithNav = "$errorMsg。ホームスクリーンに戻ります..."
+                        _uiMessage.emit(msgWithNav)
+                        viewModelScope.launch {
+                            _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
+                        }
                     }
                 }
             }
