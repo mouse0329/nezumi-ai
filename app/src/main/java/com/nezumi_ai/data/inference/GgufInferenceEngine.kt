@@ -306,8 +306,9 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                         // キャンセルまたは停止フラグをチェック
                         if (!isActive || shouldStop.get()) {
                             Log.d(TAG, "Token callback: stopping inference (isActive=$isActive shouldStop=${shouldStop.get()})")
-                            // ★ callback から throw すると completion が停止する
-                            throw CancellationException("Inference stopped by callback")
+                            // ★ 注意：native code が Java 例外をキャッチできないので throw しない
+                            // callback では単に token を処理せずに戻る（native loop は自動終了）
+                            return@setTokenCallback
                         }
                         answerAccum.append(token)
                         runCatching { trySend(token) }
