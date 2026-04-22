@@ -1829,10 +1829,26 @@ class ChatViewModel(
             val miscOverheadMB = 50
 
             val totalOverheadMB = kvCacheMB + batchSizeMB + miscOverheadMB
-            val totalPredictedMB = memoryStatus.usedMB + estimatedModelSizeMB + totalOverheadMB
-            val predictedUsagePercent = (totalPredictedMB.toFloat() / memoryStatus.maxMB.toFloat() * 100).toInt()
 
-            Log.d(TAG, "MEMORY_PREDICTION: model=$model modelSize=${estimatedModelSizeMB}MB kvCache=${kvCacheMB}MB batchSize(${config.llamaCppBatchSize})=${batchSizeMB}MB overhead=${totalOverheadMB}MB total=${predictedUsagePercent}% (${totalPredictedMB}/${memoryStatus.maxMB}MB)")
+            // ★ デバイスメモリで計算（llama.cppはネイティブメモリを使用）
+            val systemMemInfo = MemoryObserver.getSystemMemoryInfo(appContext)
+
+            // デバイスメモリが 0 の場合は JVM メモリを使用（フォールバック）
+            val (usedMB, maxMB) = if (systemMemInfo.totalMemoryMB > 0) {
+                Pair(systemMemInfo.usedMemoryMB, systemMemInfo.totalMemoryMB)
+            } else {
+                Log.w(TAG, "MEMORY_PREDICTION: Device memory unavailable, falling back to JVM memory")
+                Pair(memoryStatus.usedMB, memoryStatus.maxMB)
+            }
+
+            val totalPredictedMB = usedMB + estimatedModelSizeMB + totalOverheadMB
+            val predictedUsagePercent = if (maxMB > 0) {
+                (totalPredictedMB.toFloat() / maxMB.toFloat() * 100).toInt()
+            } else {
+                0
+            }
+
+            Log.d(TAG, "MEMORY_PREDICTION: model=$model modelSize=${estimatedModelSizeMB}MB kvCache=${kvCacheMB}MB batchSize(${config.llamaCppBatchSize})=${batchSizeMB}MB overhead=${totalOverheadMB}MB total=${predictedUsagePercent}% (${totalPredictedMB}/${maxMB}MB) deviceMemory=${systemMemInfo.usedPercent}% systemMemTotal=${systemMemInfo.totalMemoryMB}MB")
 
             // メモリがカツカツのときは警告を表示
             if (predictedUsagePercent >= 75) {
@@ -1841,9 +1857,9 @@ class ChatViewModel(
                 _memoryWarning.value = MemoryWarningInfo(
                     modelName = displayModel,
                     predictedUsagePercent = predictedUsagePercent,
-                    currentUsagePercent = memoryStatus.usedPercent,
-                    currentUsageMB = memoryStatus.usedMB,
-                    maxMB = memoryStatus.maxMB
+                    currentUsagePercent = (usedMB.toFloat() / maxMB.toFloat() * 100).toInt(),
+                    currentUsageMB = usedMB,
+                    maxMB = maxMB
                 )
                 // 警告が表示されるまで待機（ローディング状態を維持）
                 _isModelLoading.value = false  // ここで一度解除（finally でも解除されるため）

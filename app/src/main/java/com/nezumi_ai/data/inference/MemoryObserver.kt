@@ -102,6 +102,8 @@ object MemoryObserver {
                 0
             }
 
+            Log.d(TAG, "SYSTEM_MEMORY_INFO: totalMem=${memInfo.totalMem}B (${totalMemoryMB}MB) availMem=${memInfo.availMem}B (${availableMemoryMB}MB) usedMemory=${usedMemoryMB}MB usedPercent=${usedPercent}% lowMemory=${memInfo.lowMemory}")
+
             SystemMemoryInfo(
                 totalMemoryMB = totalMemoryMB,
                 availableMemoryMB = availableMemoryMB,
