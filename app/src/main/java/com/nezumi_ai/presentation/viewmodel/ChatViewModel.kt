@@ -184,12 +184,12 @@ class ChatViewModel(
                     val error = result.exceptionOrNull()
                     Log.e(TAG, "proceedWithModelLoad: FAILED - model=$model, error=${error?.message}", error)
                     _uiMessage.emit("モデルロードに失敗しました: ${error?.message}")
-                    _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
+                    // 警告後の再試行なので、ユーザーが戻るまで留まる（自動ナビゲーションしない）
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "proceedWithModelLoad: Exception", e)
                 _uiMessage.emit("モデルロード中にエラーが発生しました")
-                _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
+                // 警告後の再試行なので、ユーザーが戻るまで留まる（自動ナビゲーションしない）
             } finally {
                 _isModelLoading.value = false
                 _modelLoadingStatus.value = ""

@@ -72,6 +72,7 @@ import com.nezumi_ai.presentation.ui.composable.MediaPreviewBar
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -811,12 +812,26 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 "ロードを続行しますか？"
             )
             .setPositiveButton("続行") { _, _ ->
-                viewLifecycleOwner.lifecycleScope.launch {
-                    val config = settingsRepository.getInferenceConfig()
-                    viewModel.proceedWithModelLoad(
-                        viewModel.selectedModel.value,
-                        config
-                    )
+                // Fragment View が存在するなら viewLifecycleOwner を使用、破棄されているなら main dispatcher で実行
+                val scope = if (view != null && isAdded) {
+                    try {
+                        viewLifecycleOwner.lifecycleScope
+                    } catch (e: Exception) {
+                        MainScope()  // Fallback
+                    }
+                } else {
+                    MainScope()
+                }
+                scope.launch {
+                    try {
+                        val config = settingsRepository.getInferenceConfig()
+                        viewModel.proceedWithModelLoad(
+                            viewModel.selectedModel.value,
+                            config
+                        )
+                    } catch (e: Exception) {
+                        Log.e("ChatFragment", "Error in memory warning dialog continue button", e)
+                    }
                 }
             }
             .setNegativeButton("キャンセル") { _, _ ->
