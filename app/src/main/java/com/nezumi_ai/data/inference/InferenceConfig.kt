@@ -13,13 +13,13 @@ data class InferenceConfig(
     /** LiteRT-LM の投機的デコーディング有効化（推論高速化。デフォルトはオフ） */
     val enableSpeculativeDecoding: Boolean = false,
     val backendType: String = "CPU",
-    // llama.cpp settings
-    val llamaCppThreads: Int = 4,
-    val llamaCppGpuLayers: Int = 0,
-    val llamaCppBatchSize: Int = 512,
-    val llamaCppNKeep: Int = 0,
-    val llamaCppRopeFreqBase: Float = 0.0f,
-    val llamaCppRopeFreqScale: Float = 1.0f
+    // llama.cpp settings (最適化版 - Gallery 相準化)
+    val llamaCppThreads: Int = 2,  // ★ スレッド削減：4 → 2（Tensor G3 CPU 最適化）
+    val llamaCppGpuLayers: Int = 0,  // GPU 無効化（Tensor G3 は OpenCL 非対応）
+    val llamaCppBatchSize: Int = 32,  // ★ バッチサイズ削減：512 → 32（メモリ効率重視）
+    val llamaCppNKeep: Int = 0,  // KV キャッシュ無効化
+    val llamaCppRopeFreqBase: Float = 500000.0f,  // 標準値
+    val llamaCppRopeFreqScale: Float = 1.0f  // 標準値
 ) {
     companion object {
         const val MIN_CONTEXT_WINDOW = 512

@@ -126,23 +126,27 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                     val modelFd = pfd.detachFd()
                     Log.d(TAG, "Opened and detached file descriptor: fd=$modelFd for $modelPath")
                     
-                    // ★ model と model_fd の両方を params に渡す
+                    // ★ llama.cpp パラメータ最適化（安定性とパフォーマンスのバランス）
+                    val numCores = Runtime.getRuntime().availableProcessors()
+                    val optimalThreads = (numCores / 2).coerceIn(1, 4)  // スレッド数削減（オーバーヘッド低減）
+                    val optimalBatchSize = 32.coerceAtMost(normalized.llamaCppBatchSize)  // バッチサイズ削減（メモリ効率）
+
                     val params = mapOf<String, Any>(
-                        "model" to modelPath,   // ★ 必須：ファイルパス
-                        "model_fd" to modelFd,  // ★ 必須：ファイルディスクリプタ（Int）
+                        "model" to modelPath,   // 必須：ファイルパス
+                        "model_fd" to modelFd,  // 必須：ファイルディスクリプタ（Int）
                         "embedding" to false,
                         "n_ctx" to normalized.contextWindow,
-                        "n_batch" to normalized.llamaCppBatchSize,
-                        "n_threads" to normalized.llamaCppThreads,
-                        "n_gpu_layers" to normalized.llamaCppGpuLayers,
-                        "n_keep" to normalized.llamaCppNKeep,
-                        "use_mlock" to false,   // メモリロック無効（安定性向上）
-                        "use_mmap" to true,
+                        "n_batch" to optimalBatchSize,  // ★ メモリ効率重視：最大32に制限
+                        "n_threads" to optimalThreads,  // ★ CPU スレッド削減：numCores/2 に制限
+                        "n_gpu_layers" to 0,  // ★ GPU 無効化（Tensor G3 は OpenCL 非対応 - Gallery と同じ）
+                        "n_keep" to 0,  // KV キャッシュ機能無効
+                        "use_mlock" to false,   // メモリロック無効（安定性優先）
+                        "use_mmap" to true,     // メモリマップ有効（メモリ効率）
                         "vocab_only" to false,
                         "lora" to "",
                         "lora_scaled" to 1.0,
-                        "rope_freq_base" to normalized.llamaCppRopeFreqBase,
-                        "rope_freq_scale" to normalized.llamaCppRopeFreqScale
+                        "rope_freq_base" to 500000.0f,  // 標準値（調整不要）
+                        "rope_freq_scale" to 1.0f       // 標準値（調整不要）
                     )
 
                     Log.d(TAG, "Creating LlamaContext with model_path=$modelPath model_fd=$modelFd")
@@ -289,6 +293,7 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
         }
 
         val answerAccum = StringBuilder()
+        var shouldStop = AtomicBoolean(false)  // ★ 停止フラグ
 
         // LlamaContext.completion() を呼び出し
         try {
@@ -296,32 +301,43 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                 try {
                     Log.d(TAG, "GGUF started session=$sessionId")
 
-                    // token callback を設定（completion 中にトークンが emit される）
+                    // ★ token callback を設定（毎トークン実行 - キャンセル応答性向上）
                     ctx.setTokenCallback { token ->
-                        // キャンセルチェック：定期的にキャンセル要求をチェック
-                        if (!isActive) {
-                            Log.d(TAG, "Token callback detected cancellation")
-                            throw CancellationException("Inference cancelled during token generation")
+                        // キャンセルまたは停止フラグをチェック
+                        if (!isActive || shouldStop.get()) {
+                            Log.d(TAG, "Token callback: stopping inference (isActive=$isActive shouldStop=${shouldStop.get()})")
+                            // ★ callback から throw すると completion が停止する
+                            throw CancellationException("Inference stopped by callback")
                         }
                         answerAccum.append(token)
-                        trySend(token)
+                        runCatching { trySend(token) }
                     }
 
-                    // 推論実行
+                    // ★ 推論実行（最大 maxTokens 秒でタイムアウト）
                     val normalized = modelMutex.withLock { loadedConfig?.normalized() } ?: config.normalized()
-                    val result = ctx.completion(
-                        mapOf(
-                            "prompt" to prompt,
-                            "n_predict" to normalized.maxTokens,
-                            "temperature" to normalized.temperature.toDouble(),
-                            "top_p" to normalized.topP.toDouble(),
-                            "top_k" to normalized.maxTopK,
-                            "stop" to STOP_SEQUENCES,
-                            "emit_partial_completion" to true
-                        )
-                    )
+                    val timeoutSeconds = (normalized.maxTokens / 10).coerceIn(30, 300)  // Token数から推定
 
-                    Log.d(TAG, "GGUF done session=$sessionId answer_length=${answerAccum.length}")
+                    Log.d(TAG, "Completion starting with timeout=${timeoutSeconds}s")
+                    val result = withTimeoutOrNull(timeoutSeconds * 1000L) {
+                        ctx.completion(
+                            mapOf(
+                                "prompt" to prompt,
+                                "n_predict" to normalized.maxTokens,
+                                "temperature" to normalized.temperature.toDouble(),
+                                "top_p" to normalized.topP.toDouble(),
+                                "top_k" to normalized.maxTopK,
+                                "stop" to STOP_SEQUENCES,
+                                "emit_partial_completion" to true
+                            )
+                        )
+                    }
+
+                    if (result == null) {
+                        Log.w(TAG, "GGUF timeout session=$sessionId")
+                    } else {
+                        Log.d(TAG, "GGUF done session=$sessionId answer_length=${answerAccum.length}")
+                    }
+
                     trySend(InferenceStreamProtocol.encodeFinal(answerAccum.toString()))
                     close()
                 } catch (t: Throwable) {
@@ -346,11 +362,14 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
             close(if (t is Exception) t else RuntimeException(t))
         }
 
-        // キャンセル時のクリーンアップ
+        // ★ キャンセル時のクリーンアップ
         awaitClose {
-            Log.d(TAG, "Flow cancelled - awaiting job termination")
-            // フローがキャンセルされたら、推論ジョブもキャンセル
-            currentInferenceJob?.cancel()
+            Log.d(TAG, "Flow cancelled - stopping inference")
+            shouldStop.set(true)  // ★ 停止フラグを設定
+            currentInferenceJob?.let { job ->
+                runCatching { job.cancel() }
+                Log.d(TAG, "Inference job cancelled")
+            }
         }
     }
 
