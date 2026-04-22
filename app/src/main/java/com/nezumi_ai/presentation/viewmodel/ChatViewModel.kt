@@ -1802,69 +1802,26 @@ class ChatViewModel(
                 return Result.failure(RuntimeException(errorMsg))
             }
 
-            // メモリ予想: モデルサイズを推定
-            val estimatedModelSizeMB = when (model.uppercase()) {
-                "GEMMA4-2B" -> 900   // 2Bモデル: 約900MB (重みサイズ)
-                "GEMMA4-4B" -> 1700  // 4Bモデル: 約1700MB (重みサイズ)
-                else -> 500          // 他のモデル: 保守的に推定
-            }
-
-            // KVキャッシュ: コンテキストウィンドウサイズに応じた計算
-            val kvCacheMB = when {
-                config.contextWindow >= 4096 -> 400  // 4K以上: 400MB
-                config.contextWindow >= 2048 -> 250  // 2K以上: 250MB
-                else -> 150                          // 1K以下: 150MB
-            }
-
-            // 中間テンソル: バッチサイズに応じた計算
-            // バッチサイズが大きいほど中間テンソルメモリが必要
-            val batchSizeMB = when {
-                config.llamaCppBatchSize >= 1024 -> 300  // 大バッチ: 300MB
-                config.llamaCppBatchSize >= 512 -> 150   // 中バッチ: 150MB (デフォルト)
-                config.llamaCppBatchSize >= 256 -> 100   // 小バッチ: 100MB
-                else -> 50                                // 極小: 50MB
-            }
-
-            // その他のオーバーヘッド（アクティベーション、一時バッファ等）
-            val miscOverheadMB = 50
-
-            val totalOverheadMB = kvCacheMB + batchSizeMB + miscOverheadMB
-
-            // ★ デバイスメモリで計算（llama.cppはネイティブメモリを使用）
-            val systemMemInfo = MemoryObserver.getSystemMemoryInfo(appContext)
-
-            // デバイスメモリが 0 の場合は JVM メモリを使用（フォールバック）
-            val (usedMB, maxMB) = if (systemMemInfo.totalMemoryMB > 0) {
-                Pair(systemMemInfo.usedMemoryMB, systemMemInfo.totalMemoryMB)
-            } else {
-                Log.w(TAG, "MEMORY_PREDICTION: Device memory unavailable, falling back to JVM memory")
-                Pair(memoryStatus.usedMB, memoryStatus.maxMB)
-            }
-
-            val totalPredictedMB = usedMB + estimatedModelSizeMB + totalOverheadMB
-            val predictedUsagePercent = if (maxMB > 0) {
-                (totalPredictedMB.toFloat() / maxMB.toFloat() * 100).toInt()
-            } else {
-                0
-            }
-
-            Log.d(TAG, "MEMORY_PREDICTION: model=$model modelSize=${estimatedModelSizeMB}MB kvCache=${kvCacheMB}MB batchSize(${config.llamaCppBatchSize})=${batchSizeMB}MB overhead=${totalOverheadMB}MB total=${predictedUsagePercent}% (${totalPredictedMB}/${maxMB}MB) deviceMemory=${systemMemInfo.usedPercent}% systemMemTotal=${systemMemInfo.totalMemoryMB}MB")
-
-            // メモリがカツカツのときは警告を表示
-            if (predictedUsagePercent >= 75) {
-                Log.w(TAG, "loadModelWithOverlay: MEMORY WARNING - predicted usage ${predictedUsagePercent}%")
+            // ★ Gallery アプローチ: 最小メモリ要件をチェック
+            if (MemoryObserver.isMemoryLow(appContext, model)) {
+                Log.w(TAG, "loadModelWithOverlay: MEMORY LOW - model=$model does not meet minimum memory requirement")
                 _modelLoadingStatus.value = "メモリ確認中..."
+
+                // 警告情報を取得
+                val systemMemInfo = MemoryObserver.getSystemMemoryInfo(appContext)
                 _memoryWarning.value = MemoryWarningInfo(
                     modelName = displayModel,
-                    predictedUsagePercent = predictedUsagePercent,
-                    currentUsagePercent = (usedMB.toFloat() / maxMB.toFloat() * 100).toInt(),
-                    currentUsageMB = usedMB,
-                    maxMB = maxMB
+                    predictedUsagePercent = systemMemInfo.usedPercent,  // 現在の使用率
+                    currentUsagePercent = systemMemInfo.usedPercent,
+                    currentUsageMB = systemMemInfo.usedMemoryMB,
+                    maxMB = systemMemInfo.totalMemoryMB
                 )
                 // 警告が表示されるまで待機（ローディング状態を維持）
                 _isModelLoading.value = false  // ここで一度解除（finally でも解除されるため）
                 return Result.failure(RuntimeException("Memory warning shown to user"))
             }
+
+            Log.d(TAG, "loadModelWithOverlay: Memory check passed for model=$model")
             
             _modelLoadingStatus.value = "[$displayModel] エンジンを初期化中..."
             Log.d(TAG, "loadModelWithOverlay: model=$model, engineName=$engineModelName, enableThinking=${config.enableThinking}, backend=${config.backendType}, contextWindow=${config.contextWindow}")

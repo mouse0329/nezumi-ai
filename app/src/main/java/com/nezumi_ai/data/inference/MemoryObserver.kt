@@ -7,14 +7,26 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+private const val BYTES_IN_GB = 1024f * 1024 * 1024
+
 /**
  * メモリ使用状況をリアルタイムで監視し、段階的に対応するクラス。
  * - 85%: 警告、gc() 促進
  * - 90%: キャッシュ削減提案
  * - 95%+: 推論中断、エラー返却
+ *
+ * また、モデルロード前に必要なデバイスメモリをチェック（Gallery アプローチ）
  */
 object MemoryObserver {
     private const val TAG = "MemoryObserver"
+
+    // モデルごとの最小メモリ要件（GB）
+    private val MODEL_MIN_MEMORY = mapOf(
+        "GEMMA4-2B" to 4.0f,    // 2B: 最小 4GB
+        "GEMMA4-4B" to 8.0f,    // 4B: 最小 8GB
+        "GEMMA3-2B" to 3.0f,
+        "GEMMA3-7B" to 8.0f,
+    )
     
     // メモリ段階のしきい値（％）
     private const val MEMORY_LEVEL_WARNING = 85
@@ -222,7 +234,7 @@ object MemoryObserver {
             val free = runtime.freeMemory() / (1024 * 1024)
             val max = runtime.maxMemory() / (1024 * 1024)
             val used = total - free
-            
+
             """
             JVM Memory:
               Total: ${total}MB
@@ -231,6 +243,36 @@ object MemoryObserver {
               Max: ${max}MB
               Usage: ${if (max > 0) ((used * 100) / max) else 0}%
             """.trimIndent()
+        }
+    }
+
+    /**
+     * デバイスメモリがモデルの最小要件を満たしているか判定（Gallery アプローチ）
+     * @return true: メモリが不足している / false: メモリが十分
+     */
+    fun isMemoryLow(context: Context, modelName: String): Boolean {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val minDeviceMemoryInGb = MODEL_MIN_MEMORY[modelName.uppercase()]
+
+        return if (activityManager != null && minDeviceMemoryInGb != null) {
+            val memInfo = ActivityManager.MemoryInfo()
+            activityManager.getMemoryInfo(memInfo)
+
+            // API 34+ では advertisedMem を使用（Gallery と同じ）
+            var deviceMemInGb = memInfo.totalMem / BYTES_IN_GB
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                deviceMemInGb = memInfo.advertisedMem / BYTES_IN_GB
+            }
+
+            Log.d(
+                TAG,
+                "isMemoryLow check: model=$modelName deviceMemGb=$deviceMemInGb minRequired=$minDeviceMemoryInGb"
+            )
+
+            deviceMemInGb < minDeviceMemoryInGb
+        } else {
+            Log.w(TAG, "isMemoryLow: Unable to determine - activityManager=$activityManager minMemory=$minDeviceMemoryInGb")
+            false  // 判定不可の場合は進める
         }
     }
 }
