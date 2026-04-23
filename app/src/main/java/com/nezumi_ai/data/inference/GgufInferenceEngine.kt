@@ -89,6 +89,7 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
     @Volatile private var lastSessionId: Long? = null
     @Volatile private var llamaAndroid: LlamaAndroid? = null  // ★ LlamaAndroid インスタンス
     @Volatile private var currentInferenceJob: Job? = null  // 現在実行中の推論ジョブ
+    @Volatile private var tokenHandler: ((String) -> Unit)? = null  // トークンハンドラ（推論ごとに差し替え）
 
     override suspend fun loadModel(modelName: String, config: InferenceConfig): Result<Unit> {
         return modelMutex.withLock {
@@ -172,10 +173,10 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                     
                     Log.d(TAG, "LlamaContext initialized successfully: context=${lc.context}")
                     
-                    // token callback を設定（推論時に使用）
+                    // token callback を設定（loadModel時に一度だけ、tokenHandler 経由で推論ごとにハンドラを差し替え）
                     try {
                         lc.setTokenCallback { token ->
-                            Log.d(TAG, "Token: $token")
+                            tokenHandler?.invoke(token)
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to set token callback", e)
@@ -216,7 +217,7 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
     }
 
     private fun releaseHelper() {
-        llamaHelper?.abort()
+        // LlamaHelper は使わない設計に移行済み
         llamaHelper?.release()
         llamaHelper = null
         llamaFlow = null
@@ -301,22 +302,20 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                 try {
                     Log.d(TAG, "GGUF started session=$sessionId")
 
-                    // ★ token callback を設定（毎トークン実行 - キャンセル応答性向上）
-                    ctx.setTokenCallback { token ->
+                    // ★ トークンハンドラを設定（loadModel時に一度だけ設定された setTokenCallback が使用する）
+                    tokenHandler = handler@{ token ->
                         // キャンセルまたは停止フラグをチェック
                         if (!isActive || shouldStop.get()) {
                             Log.d(TAG, "Token callback: stopping inference (isActive=$isActive shouldStop=${shouldStop.get()})")
-                            // ★ 注意：native code が Java 例外をキャッチできないので throw しない
-                            // callback では単に token を処理せずに戻る（native loop は自動終了）
-                            return@setTokenCallback
+                            return@handler
                         }
                         answerAccum.append(token)
                         runCatching { trySend(token) }
                     }
 
-                    // ★ 推論実行（最大 maxTokens 秒でタイムアウト）
+                    // ★ 推論実行（maxTokens に基づいてタイムアウトを計算）
                     val normalized = modelMutex.withLock { loadedConfig?.normalized() } ?: config.normalized()
-                    val timeoutSeconds = (normalized.maxTokens / 10).coerceIn(30, 300)  // Token数から推定
+                    val timeoutSeconds = (normalized.maxTokens / 10).coerceIn(5, 300)  // 最小5秒、最大300秒
 
                     Log.d(TAG, "Completion starting with timeout=${timeoutSeconds}s")
                     val result = withTimeoutOrNull(timeoutSeconds * 1000L) {
@@ -353,8 +352,9 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                         close(if (t is Exception) t else RuntimeException(t))
                     }
                 } finally {
+                    tokenHandler = null  // ★ ハンドラをクリア
                     currentInferenceJob = null
-                    releaseInferenceMutex()
+                    releaseInferenceMutex()  // ★ 所有権を completionJob.finally に一本化
                 }
             }
             currentInferenceJob = completionJob
@@ -364,13 +364,12 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
         }
 
         // ★ キャンセル時のクリーンアップ
+        // mutex はここで触らない。completionJob.finally() が必ず呼ばれるので所有権を一本化
         awaitClose {
             Log.d(TAG, "Flow cancelled - stopping inference")
-            shouldStop.set(true)  // ★ 停止フラグを設定
-            currentInferenceJob?.let { job ->
-                runCatching { job.cancel() }
-                Log.d(TAG, "Inference job cancelled")
-            }
+            shouldStop.set(true)
+            currentInferenceJob?.cancel()  // CancellationException をトリガー
+            // job.join() はできない（awaitClose はサスペンドできない）
         }
     }
 
