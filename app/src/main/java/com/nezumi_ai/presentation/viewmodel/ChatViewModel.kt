@@ -166,6 +166,13 @@ class ChatViewModel(
         _memoryWarning.value = null
     }
 
+    fun cancelMemoryWarningAndGoHome() {
+        _memoryWarning.value = null
+        viewModelScope.launch {
+            _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
+        }
+    }
+
     fun proceedWithModelLoad(model: String, config: InferenceConfig) {
         viewModelScope.launch {
             _memoryWarning.value = null

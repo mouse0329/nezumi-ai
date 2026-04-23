@@ -835,7 +835,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 }
             }
             .setNegativeButton("キャンセル") { _, _ ->
-                viewModel.dismissMemoryWarning()
+                viewModel.cancelMemoryWarningAndGoHome()
             }
             .setCancelable(false)
             .create()
