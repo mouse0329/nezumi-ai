@@ -334,10 +334,15 @@ class ChatViewModel(
             if (result.isFailure) {
                 val error = result.exceptionOrNull()
                 Log.e(TAG, "Failed to switch model: $normalizedModel", error)
-                
-                // メモリ不足エラーを検出
-                if (error?.message?.contains("memory") == true || 
-                    error?.message?.contains("Memory") == true) {
+
+                // ★ メモリ警告（MEMORY_WARNING_SHOWN）はスキップ（ダイアログで処理済み）
+                if (error?.message == "MEMORY_WARNING_SHOWN") {
+                    Log.d(TAG, "Memory warning shown - waiting for user action")
+                    return@launch
+                }
+
+                // メモリエラーを検出（実際の OOM エラー）
+                if (error?.message?.contains("memory", ignoreCase = true) == true) {
                     _uiMessage.emit("メモリが不足しています。ホームスクリーンに戻ります...")
                     _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
                     return@launch
@@ -614,8 +619,14 @@ class ChatViewModel(
                 val error = loadResult.exceptionOrNull()
                 val errorMsg = error?.message ?: "Unknown error"
                 Log.e(TAG, "Model loading failed for $selectedModel: $errorMsg", error)
-                
-                // メモリ不足エラーを検出
+
+                // ★ メモリ警告（MEMORY_WARNING_SHOWN）はスキップ（ダイアログで処理済み）
+                if (errorMsg == "MEMORY_WARNING_SHOWN") {
+                    Log.d(TAG, "Memory warning shown - waiting for user action")
+                    return
+                }
+
+                // メモリエラーを検出（実際の OOM エラー）
                 if (errorMsg.contains("memory", ignoreCase = true)) {
                     _uiMessage.emit("メモリが不足しています。ホームスクリーンに戻ります...")
                     _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
@@ -1803,7 +1814,7 @@ class ChatViewModel(
                 )
                 // 警告が表示されるまで待機（ローディング状態を維持）
                 _isModelLoading.value = false  // ここで一度解除（finally でも解除されるため）
-                return Result.failure(RuntimeException("Memory warning shown to user"))
+                return Result.failure(RuntimeException("MEMORY_WARNING_SHOWN"))  // ★ "memory"を含まない名前に変更（呼び出し元で区別できるように）
             }
 
             // skipMemoryWarning=true の場合はメモリ警告をスキップしてロード続行
