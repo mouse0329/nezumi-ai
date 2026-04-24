@@ -1,0 +1,202 @@
+name: Nezumi AI CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Create GitHub Release?"
+        required: false
+        default: "false"
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # -- Checkout -----------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -- JDK 21 + Gradle cache ----------------------------
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: gradle
+
+      - name: Cache Gradle build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            .gradle
+            app/build/intermediates
+            app/build/tmp
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # -- Bump versionCode & versionName (+0.1) -----------
+      - name: Bump version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -f "app/build.gradle.kts" ]]; then
+            FILE="app/build.gradle.kts"
+            DSL="kts"
+          elif [[ -f "app/build.gradle" ]]; then
+            FILE="app/build.gradle"
+            DSL="groovy"
+          else
+            echo "app/build.gradle(.kts) not found"
+            exit 1
+          fi
+
+          CURRENT_CODE=$(grep -oP 'versionCode\s*=?\s*\K[0-9]+' "$FILE" | head -1 || true)
+          if [[ -z "${CURRENT_CODE}" ]]; then
+            echo "versionCode not found in $FILE"
+            exit 1
+          fi
+          NEW_CODE=$((CURRENT_CODE + 1))
+
+          if [[ "$DSL" == "kts" ]]; then
+            sed -i -E "0,/versionCode\s*=\s*[0-9]+/s//versionCode = ${NEW_CODE}/" "$FILE"
+          else
+            sed -i -E "0,/versionCode\s+[0-9]+/s//versionCode ${NEW_CODE}/" "$FILE"
+          fi
+
+          CURRENT_NAME=$(grep -oP 'versionName\s*=?\s*"\K[0-9]+\.[0-9]+' "$FILE" | head -1 || true)
+          if [[ -z "${CURRENT_NAME}" ]]; then
+            echo "versionName not found in $FILE"
+            exit 1
+          fi
+          MAJOR=$(echo "$CURRENT_NAME" | cut -d. -f1)
+          MINOR=$(echo "$CURRENT_NAME" | cut -d. -f2)
+          NEW_NAME="${MAJOR}.$((MINOR + 1))"
+          CURRENT_NAME_ESC=${CURRENT_NAME//./\\.}
+
+          if [[ "$DSL" == "kts" ]]; then
+            sed -i -E "0,/versionName\s*=\s*\"${CURRENT_NAME_ESC}\"/s//versionName = \"${NEW_NAME}\"/" "$FILE"
+          else
+            sed -i -E "0,/versionName\s*\"${CURRENT_NAME_ESC}\"/s//versionName \"${NEW_NAME}\"/" "$FILE"
+          fi
+
+          echo "VERSION=$NEW_NAME" >> "$GITHUB_ENV"
+          echo "VERSION_FILE=$FILE" >> "$GITHUB_ENV"
+          echo "Bumped: code $CURRENT_CODE -> $NEW_CODE, name $CURRENT_NAME -> $NEW_NAME ($FILE)"
+
+      - name: Commit version bump
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${VERSION_FILE}"
+          if git diff --cached --quiet; then
+            echo "No version changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: bump version to ${{ env.VERSION }} [skip ci]"
+          git push origin "${GITHUB_REF_NAME}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # -- Build (Release APK) ------------------------------
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --stacktrace
+
+      # -- Instrumented tests on Emulator (manual only) -----
+      - name: Enable KVM (for hardware acceleration)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run instrumented tests
+        if: github.event_name == 'workflow_dispatch'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          script: ./gradlew connectedAndroidTest --stacktrace
+
+      # -- Upload test results (always) ---------------------
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: "**/build/reports/androidTests/"
+          retention-days: 7
+
+      # -- Sign APK -----------------------------------------
+      # Condition: tag push or workflow_dispatch(release=true)
+      - name: Sign APK
+        if: >
+          startsWith(github.ref, 'refs/tags/v') ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true')
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$KEYSTORE_BASE64" | base64 --decode > keystore.jks
+          APK_PATH=$(find . -name "*.apk" -path "*/release/*" | head -1)
+          if [[ -z "${APK_PATH}" ]]; then
+            echo "Release APK not found."
+            exit 1
+          fi
+          SIGNED_APK="nezumi-ai-${{ github.ref_name }}-signed.apk"
+          "${ANDROID_HOME}/build-tools/$(ls "${ANDROID_HOME}/build-tools" | sort -V | tail -1)/apksigner" sign \
+            --ks keystore.jks \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "pass:$STORE_PASSWORD" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --out "$SIGNED_APK" \
+            "$APK_PATH"
+          echo "SIGNED_APK=$SIGNED_APK" >> "$GITHUB_ENV"
+          rm -f keystore.jks
+
+      # -- GitHub Release + APK upload ----------------------
+      - name: Create GitHub Release
+        if: >
+          startsWith(github.ref, 'refs/tags/v') ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "ネズミAI ${{ github.ref_name }}"
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          files: ${{ env.SIGNED_APK }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
