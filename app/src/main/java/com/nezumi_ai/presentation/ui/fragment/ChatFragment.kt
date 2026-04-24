@@ -785,9 +785,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 imageUris = selectedImageUrisList,  // Phase 11: 複数画像URI を渡す
                 onClearImage = { selectedImageUrisList = emptyList() },
                 onRemoveImage = { index ->  // Phase 11: 個別削除機能
+                    // ★ バグ修正: selectedImageUrisList 状態更新のみで十分
+                    // updateMediaPreview() を呼ぶと Recomposition 競合が発生し、画像プレビューがおかしくなる
                     if (index in selectedImageUrisList.indices) {
                         selectedImageUrisList = selectedImageUrisList.filterIndexed { i, _ -> i != index }
-                        updateMediaPreview()
+                        // updateMediaPreview() は呼ばない（状態更新で自動 Recomposition される）
                     }
                 },
                 audioUri = selectedAudioUri,  // Phase 12: 音声URI を渡す
@@ -824,11 +826,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 }
                 scope.launch {
                     try {
-                        val config = settingsRepository.getInferenceConfig()
-                        viewModel.proceedWithModelLoad(
-                            viewModel.selectedModel.value,
-                            config
-                        )
+                        viewModel.proceedWithModelLoad(viewModel.selectedModel.value)
                     } catch (e: Exception) {
                         Log.e("ChatFragment", "Error in memory warning dialog continue button", e)
                     }

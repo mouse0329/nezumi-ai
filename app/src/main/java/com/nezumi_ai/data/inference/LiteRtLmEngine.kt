@@ -67,6 +67,7 @@ class LiteRtLmEngine(
     private var loadedModelPath: String? = null
     private var loadedConfig: InferenceConfig? = null
     private var loadedBackend: String? = null  // Phase 11: GPU/CPU/NPU バックエンド追跡（キャッシュ無効化用）
+    private var disableXnnpackCacheForProcess: Boolean = false
     private val modelMutex = Mutex()
     private val inferenceMutex = Mutex()
     private val inferenceMutexHeld = AtomicBoolean(false)
@@ -159,6 +160,9 @@ class LiteRtLmEngine(
                 val samplerConfig = if (normalized.backendType == "NPU") {
                     null
                 } else {
+                    // Note: LiteRT-LM の SamplerConfig では maxOutputTokens が無いため、
+                    // EngineConfig.maxNumTokens（コンテキストウィンドウ）で全体制限を行う
+                    // 生成トークン数は InferenceConfig.maxTokens で管理
                     SamplerConfig(
                         topK = normalized.maxTopK,
                         topP = normalized.topP.toDouble(),
@@ -205,6 +209,68 @@ class LiteRtLmEngine(
         return nativeLibDir ?: ""
     }
 
+    /**
+     * XNNPack キャッシュ向けに、mmap/remap の失敗を避けるため
+     * 内部ストレージ（/data 配下）のみを候補にする。
+     */
+    private fun resolveWritableXnnpackCacheDir(): File? {
+        if (disableXnnpackCacheForProcess) {
+            Log.w(TAG, "XNNPack cache is disabled for this process due to previous mmap/remap failure.")
+            return null
+        }
+
+        val candidates = listOfNotNull(
+            appContext.codeCacheDir?.let { File(it, "litertlm_xnnpack") },
+            File(appContext.cacheDir, "litertlm_xnnpack")
+        )
+
+        for (dir in candidates) {
+            try {
+                if (!dir.exists() && !dir.mkdirs()) {
+                    Log.w(TAG, "Failed to create XNNPack cache dir: ${dir.absolutePath}")
+                    continue
+                }
+                if (!dir.isDirectory) {
+                    Log.w(TAG, "XNNPack cache candidate is not a directory: ${dir.absolutePath}")
+                    continue
+                }
+                val probe = File(dir, ".rw_probe")
+                probe.writeText("ok")
+                if (!probe.delete()) {
+                    probe.deleteOnExit()
+                }
+                Log.d(TAG, "Using XNNPack cache dir: ${dir.absolutePath}")
+                return dir
+            } catch (e: Exception) {
+                Log.w(TAG, "XNNPack cache dir is not writable: ${dir.absolutePath}", e)
+            }
+        }
+
+        Log.w(TAG, "No writable XNNPack cache directory found. Continuing without cacheDir.")
+        return null
+    }
+
+    /**
+     * XNNPack mmap/re-map 失敗の典型メッセージを判定。
+     * 例: "mmap_handle.cc:173: remap failed: Bad address"
+     */
+    private fun isXnnpackMmapFailure(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            val message = current.message.orEmpty()
+            if (
+                message.contains("mmap_handle.cc", ignoreCase = true) ||
+                message.contains("remap failed", ignoreCase = true) ||
+                message.contains("bad address", ignoreCase = true) ||
+                message.contains("xnnpack", ignoreCase = true)
+            ) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
+    }
+
     override suspend fun loadModel(modelName: String, config: InferenceConfig): Result<Unit> {
         return try {
             withContext(modelLoadDispatcher) {
@@ -246,12 +312,11 @@ class LiteRtLmEngine(
         }
 
         val preferredBackend = backendForConfig(normalizedConfig.backendType)
-        val cacheDirPath = appContext.getExternalFilesDir(null)?.absolutePath
-        val cacheDir = cacheDirPath?.let { File(it) }
-
-        if (loadedBackend != null && loadedBackend != normalizedConfig.backendType) {
+        val cacheDir = resolveWritableXnnpackCacheDir()
+        val cacheDirPath = cacheDir?.absolutePath
+        val backendChanged = loadedBackend != null && loadedBackend != normalizedConfig.backendType
+        if (backendChanged) {
             Log.i(TAG, "Backend changed from $loadedBackend to ${normalizedConfig.backendType}. Clearing cache...")
-            clearBackendSpecificCache(cacheDirPath)
         }
 
         runCatching { engine?.close() }
@@ -260,34 +325,89 @@ class LiteRtLmEngine(
         loadedConfig = null
         loadedBackend = null
 
+        if (backendChanged) {
+            clearBackendSpecificCache(cacheDirPath)
+        }
+
         Log.d(TAG, "loadModel CACHE_VALIDATE: path=$cacheDirPath")
         CacheManager.validateAndRepairCacheIfNeeded(cacheDirPath)
-        CacheManager.cleanupCacheIfNeeded(appContext, modelName, cacheDir)
+        CacheManager.cleanupCacheIfNeeded(appContext, modelFile.name.lowercase(), cacheDir)
         val validateTimeMs = System.currentTimeMillis()
         Log.d(TAG, "loadModel CACHE_VALIDATE: duration=${validateTimeMs - resolveTimeMs}ms")
 
-        suspend fun tryCreate(withVisionAudio: Boolean, backend: Backend): Engine {
+        fun newEngine(withVisionAudio: Boolean, backend: Backend, attemptCacheDir: String?): Engine {
             val ec = EngineConfig(
                 modelPath = modelPath,
                 backend = backend,
                 visionBackend = if (withVisionAudio) Backend.GPU() else null,
                 audioBackend = if (withVisionAudio) Backend.CPU() else null,
-                maxNumTokens = normalizedConfig.maxTokens,
-                cacheDir = cacheDirPath
+                // ★ バグ修正: maxNumTokens はコンテキストウィンドウ全体のサイズ（KVキャッシュ）
+                // maxTokens は「生成トークン数」なので、EngineConfig には contextWindow を指定
+                // 最低でも2000以上必要（システムプロンプト + ツール定義 + コンテキスト + 生成トークン）
+                maxNumTokens = normalizedConfig.contextWindow.coerceAtLeast(2048),
+                cacheDir = attemptCacheDir
             )
-            val eng = Engine(ec)
-            Log.d(TAG, "loadModel ENGINE_INIT: START - backend=${backend.javaClass.simpleName}")
+            return Engine(ec)
+        }
+
+        suspend fun tryCreate(withVisionAudio: Boolean, backend: Backend): Engine {
+            Log.d(
+                TAG,
+                "loadModel ENGINE_INIT: START - backend=${backend.javaClass.simpleName} maxNumTokens=${normalizedConfig.contextWindow} cacheDir=$cacheDirPath"
+            )
+
+            var eng = newEngine(withVisionAudio, backend, cacheDirPath)
             val initStartMs = System.currentTimeMillis()
-            eng.initialize()
-            val initEndMs = System.currentTimeMillis()
-            Log.d(TAG, "loadModel ENGINE_INIT: END - duration=${initEndMs - initStartMs}ms backend=${backend.javaClass.simpleName}")
-            return eng
+            try {
+                eng.initialize()
+                val initEndMs = System.currentTimeMillis()
+                Log.d(
+                    TAG,
+                    "loadModel ENGINE_INIT: END - duration=${initEndMs - initStartMs}ms backend=${backend.javaClass.simpleName} cacheEnabled=${cacheDirPath != null}"
+                )
+                return eng
+            } catch (first: Throwable) {
+                runCatching { eng.close() }
+
+                // XNNPack cache mmap エラー時は cacheDir を無効化して再試行
+                if (cacheDirPath != null && isXnnpackMmapFailure(first)) {
+                    Log.w(
+                        TAG,
+                        "Engine init failed with XNNPack cache. Retrying without cacheDir. cacheDir=$cacheDirPath",
+                        first
+                    )
+                    disableXnnpackCacheForProcess = true
+                    clearBackendSpecificCache(cacheDirPath)
+                    eng = newEngine(withVisionAudio, backend, null)
+                    val retryStartMs = System.currentTimeMillis()
+                    eng.initialize()
+                    val retryEndMs = System.currentTimeMillis()
+                    Log.i(
+                        TAG,
+                        "Engine init recovered by disabling XNNPack cache in ${retryEndMs - retryStartMs}ms backend=${backend.javaClass.simpleName}"
+                    )
+                    return eng
+                }
+
+                throw first
+            }
         }
 
         suspend fun loadWithBackend(backend: Backend): Engine {
-            return runCatching { tryCreate(withVisionAudio = true, backend) }
+            // Phase 16: GPU時の Vision/Audio バックエンド条件付き無効化
+            // GPU は VRAM 限定的（2-4GB）のため、マルチモーダル対応を制限
+            // - GPU: vision/audio 初期化をスキップ（テキストのみモード）
+            // - CPU/NPU: 通常通り vision/audio も初期化を試行
+            val isGpuBackend = backend is Backend.GPU
+            val tryWithVisionAudio = !isGpuBackend
+            
+            if (isGpuBackend) {
+                Log.d(TAG, "GPU backend detected: skipping vision/audio initialization to save VRAM")
+            }
+            
+            return runCatching { tryCreate(withVisionAudio = tryWithVisionAudio, backend) }
                 .getOrElse { first ->
-                    Log.w(TAG, "Engine init with vision/audio failed, retrying text-only", first)
+                    Log.w(TAG, "Engine init with vision/audio=${tryWithVisionAudio} failed, retrying text-only", first)
                     tryCreate(withVisionAudio = false, backend)
                 }
         }
@@ -618,8 +738,12 @@ class LiteRtLmEngine(
                 // 4. バックエンドリソースをクリーンアップ
                 backendResourceManager.cleanupAll()
                 
-                // 5. キャッシュをクリーンアップ
-                CacheManager.cleanupCacheIfNeeded(appContext)
+                // 5. キャッシュをクリーンアップ（XNNPack が使うディレクトリを優先）
+                CacheManager.cleanupCacheIfNeeded(
+                    context = appContext,
+                    cacheDir = resolveWritableXnnpackCacheDir(),
+                    forceScan = false
+                )
                 
                 Log.d(TAG, "LiteRT-LM engine unloaded with full resource cleanup")
                 Result.success(Unit)

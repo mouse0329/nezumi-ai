@@ -76,9 +76,9 @@ object CacheManager {
                 return true
             }
             
-            // 破損しているように見えるファイルを検出（サイズが異常に小さい等）
+            // 破損しているように見えるファイルを検出（サイズ異常・権限不整合）
             val suspiciousFiles = cacheFiles.filter { file ->
-                file.length() < 1024  // 1KB未満は疑わしい
+                file.length() < 1024 || !file.canRead() || !file.canWrite()
             }
             
             if (suspiciousFiles.isNotEmpty()) {

@@ -59,6 +59,7 @@ data class InferenceConfig(
             "NPU" -> "NPU"
             else -> "CPU"
         }
+        
         return copy(
             contextWindow = normalizedContext,
             contextCompressionThresholdPercent = normalizedCompressionThreshold,

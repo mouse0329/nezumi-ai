@@ -145,6 +145,24 @@ class ModelManager(
     }
 
     /**
+     * ★ バグ修正: 指定モデル・設定が既にロード済みかチェック
+     * ChatViewModel.generateAIResponse で毎回ロード処理を呼ぶが、
+     * 既にロード済みなら不要なメモリ警告を避ける目的
+     *
+     * @return true: 既にロード済み / false: 再ロード必要
+     */
+    fun isModelLoaded(modelName: String, config: InferenceConfig): Boolean {
+        val normalizedConfig = config.normalized()
+        val isSameModel = currentModelName == modelName
+        val isSameConfig = currentConfig == normalizedConfig
+        val isSameBackend = currentConfig?.backendType == normalizedConfig.backendType
+        val isLoaded = isSameModel && isSameConfig && isSameBackend && activeEngine !== null
+        
+        Log.d(TAG, "isModelLoaded: model=$modelName | same=${isSameModel} config=${isSameConfig} backend=${isSameBackend} engine=${activeEngine != null} → result=$isLoaded")
+        return isLoaded
+    }
+
+    /**
      * モデルを初期化（ロード）
      * Phase 14: モデルロード前にメモリを詳細確認
      * Phase 15: LiteRtLm / GGUF エンジン自動選択（構築時）
@@ -208,6 +226,27 @@ class ModelManager(
                                 inactiveEngine.unloadModel()
                             }
                                 .onFailure { Log.w(TAG, "Failed to unload inactive engine", it) }
+                        }
+                    }
+                    
+                    // Phase 16: GPU/CPU 切り替え時のメモリ確実解放
+                    // Bitmap プール・キャッシュをクリア
+                    val previousBackend = currentConfig?.backendType
+                    if (previousBackend != normalizedConfig.backendType) {
+                        Log.i(TAG, "Backend change detected (${previousBackend} → ${normalizedConfig.backendType}). Clearing memory pools...")
+                        
+                        // Bitmap メモリプールをクリア（GPU <-> CPU 切り替え時）
+                        try {
+                            // Note: Bitmap pool はエンジン内に保持されているため、unloadModel() で既にクリアされているはず
+                            // だが念のため、System.gc() を呼んで確実にメモリを解放
+                            System.gc()
+                            System.runFinalization()
+                            Log.d(TAG, "System.gc() triggered for backend switch")
+                            
+                            // GC 後の待機（JVM がメモリを確実に解放するまで）
+                            delay(200)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Error during GC on backend switch", e)
                         }
                     }
                     

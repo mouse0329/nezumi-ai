@@ -173,11 +173,18 @@ class ChatViewModel(
         }
     }
 
-    fun proceedWithModelLoad(model: String, config: InferenceConfig) {
+    fun proceedWithModelLoad(model: String) {
         viewModelScope.launch {
             _memoryWarning.value = null
+            val normalizedModel = normalizeModel(model)
+            val config = chatInferenceConfigForModel(normalizedModel)
             // メモリ警告をスキップしてロードを続行
-            loadModelWithOverlay(model, config, onlyIfAvailable = false, skipMemoryWarning = true)
+            loadModelWithOverlay(
+                normalizedModel,
+                config,
+                onlyIfAvailable = false,
+                skipMemoryWarning = true
+            )
         }
     }
 
@@ -610,7 +617,17 @@ class ChatViewModel(
             val modelLoadStartMs = System.currentTimeMillis()
             Log.d(TAG, "generateAIResponse LOAD_START: model=$selectedModel")
             
-            val loadResult = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = false)
+            // ★ バグ修正: ロード済みモデルの場合はメモリ警告をスキップ
+            // generateAIResponse は毎回呼ばれるが、モデルが既にロード済みなら
+            // 不要な警告を避けるため skipMemoryWarning=true
+            val isModelAlreadyLoaded = manager.isModelLoaded(engineModelName, config)
+            val skipMemoryWarning = isModelAlreadyLoaded
+            Log.d(
+                TAG,
+                "generateAIResponse: engineModelName=$engineModelName isModelAlreadyLoaded=$isModelAlreadyLoaded skipMemoryWarning=$skipMemoryWarning"
+            )
+            
+            val loadResult = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = false, skipMemoryWarning = skipMemoryWarning)
             
             val modelLoadEndMs = System.currentTimeMillis()
             Log.d(TAG, "generateAIResponse LOAD_END: model=$selectedModel duration=${modelLoadEndMs - modelLoadStartMs}ms success=${loadResult.isSuccess}")
@@ -1335,7 +1352,11 @@ class ChatViewModel(
             Log.d(TAG, "PROMPT_BUILD: Messages with thinkingContent found (count=${messagesWithThinking.size}), but they are excluded from prompt as designed")
         }
         
-        if (!config.contextCompressionEnabled) {
+        // Phase 16: GPU時のコンテキスト圧縮を無効化（メモリ競合防止）
+        // GPU推論中に別の圧縮推論を走らせるとメモリ OOM リスクが高い
+        val effectiveCompressionEnabled = config.contextCompressionEnabled && config.backendType != "GPU"
+        
+        if (!effectiveCompressionEnabled) {
             return trimPromptToWindow(fullPrompt, config.contextWindow)
         }
 
@@ -1770,6 +1791,8 @@ class ChatViewModel(
     ): Result<Unit> {
         val manager = requireModelManager()
         val engineModelName = toEngineModelName(model)
+        val isModelAlreadyLoaded = manager.isModelLoaded(engineModelName, config)
+        val effectiveSkipMemoryWarning = skipMemoryWarning || isModelAlreadyLoaded
         _isModelLoading.value = true
         _modelLoadingStatus.value = "モデルを準備中..."
         return try {
@@ -1781,7 +1804,10 @@ class ChatViewModel(
             
             // Phase 14: モデルロード前にメモリ確認
             _modelLoadingStatus.value = "[$displayModel] メモリを確認中..."
-            Log.d(TAG, "loadModelWithOverlay: PRE_LOAD_MEMORY_CHECK model=$model backend=${config.backendType}")
+            Log.d(
+                TAG,
+                "loadModelWithOverlay: PRE_LOAD_MEMORY_CHECK model=$model backend=${config.backendType} alreadyLoaded=$isModelAlreadyLoaded skipMemoryWarning=$skipMemoryWarning effectiveSkip=$effectiveSkipMemoryWarning"
+            )
 
             // 詳細なメモリ情報をログ出力
             val detailedMemInfo = MemoryObserver.getDetailedMemoryInfo(appContext)
@@ -1798,8 +1824,9 @@ class ChatViewModel(
                 return Result.failure(RuntimeException(errorMsg))
             }
 
-            // ★ Gallery アプローチ: 最小メモリ要件をチェック（skipMemoryWarning=false の場合のみ）
-            if (!skipMemoryWarning && MemoryObserver.isMemoryLow(appContext, model)) {
+            // 既にロード済みの間はメモリ警告を再表示しない
+            // （同一モデル・同一設定で active な状態が続く限り警告抑制）
+            if (!effectiveSkipMemoryWarning && MemoryObserver.isMemoryLow(appContext, model)) {
                 Log.w(TAG, "loadModelWithOverlay: MEMORY LOW - model=$model does not meet minimum memory requirement")
                 _modelLoadingStatus.value = "メモリ確認中..."
 
@@ -1817,8 +1844,8 @@ class ChatViewModel(
                 return Result.failure(RuntimeException("MEMORY_WARNING_SHOWN"))  // ★ "memory"を含まない名前に変更（呼び出し元で区別できるように）
             }
 
-            // skipMemoryWarning=true の場合はメモリ警告をスキップしてロード続行
-            if (skipMemoryWarning && MemoryObserver.isMemoryLow(appContext, model)) {
+            // effectiveSkipMemoryWarning=true の場合はメモリ警告をスキップしてロード続行
+            if (effectiveSkipMemoryWarning && MemoryObserver.isMemoryLow(appContext, model)) {
                 Log.w(TAG, "loadModelWithOverlay: MEMORY LOW but user confirmed - proceeding with load model=$model")
             }
 

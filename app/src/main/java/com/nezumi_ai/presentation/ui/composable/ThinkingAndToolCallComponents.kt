@@ -309,7 +309,14 @@ fun MediaPreviewBar(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                items(imageUris.size) { index ->
+                // ★ バグ修正: items に key を指定して画像の一意性を保証
+                // key を指定しないと、リスト順序が変わった時に古い Composable が再利用される可能性がある
+                items(
+                    count = imageUris.size,
+                    key = { index -> imageUris.getOrNull(index) ?: index }  // URI を key にする
+                ) { index ->
+                    // 再度 getOrNull() で bounds チェック（index が無効になっている可能性）
+                    val uri = imageUris.getOrNull(index) ?: return@items
                     Box(
                         modifier = Modifier
                             .width(90.dp)
@@ -327,7 +334,7 @@ fun MediaPreviewBar(
                     ) {
                         // Phase 11: 画像サムネイル表示（AsyncImage で遅延ロード）
                         AsyncImageWithDelete(
-                            uri = imageUris[index],
+                            uri = uri,
                             onDelete = { onRemoveImage(index) }
                         )
                     }

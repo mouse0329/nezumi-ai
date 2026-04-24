@@ -27,7 +27,6 @@ import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.presentation.ui.screen.ThemeModeCard
 import com.nezumi_ai.utils.PreferencesHelper
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 class SettingsComposeFragment : Fragment() {
@@ -155,23 +154,6 @@ class SettingsComposeFragment : Fragment() {
 
     @Composable
     private fun BackendCard() {
-        LaunchedEffect(backendType, gemmaThinkingEnabled) {
-            delay(500)
-            viewLifecycleOwner.lifecycleScope.launch {
-                settingsRepository.updateInferenceConfig(
-                    backendType = backendType,
-                    contextCompressionEnabled = contextCompressionEnabled,
-                    contextCompressionThresholdPercent = contextCompressionThresholdPercent,
-                    temperature = temperatureInput.toFloatOrNull() ?: 0.7f,
-                    maxTopK = topkInput.toIntOrNull() ?: 40,
-                    maxTokens = maxTokensInput.toIntOrNull() ?: 1024,
-                    contextWindow = contextWindowInput.toIntOrNull() ?: 4096,
-                    backendTargetModel = "ALL"
-                )
-                settingsRepository.updateGemmaThinkingEnabled(gemmaThinkingEnabled)
-            }
-        }
-
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -222,18 +204,6 @@ class SettingsComposeFragment : Fragment() {
 
     @Composable
     private fun InferenceParamsCard() {
-        LaunchedEffect(
-            contextWindowInput,
-            temperatureInput,
-            topkInput,
-            maxTokensInput,
-            contextCompressionEnabled,
-            contextCompressionThresholdPercent
-        ) {
-            delay(1000)
-            saveInferenceSettings()
-        }
-
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -310,14 +280,6 @@ class SettingsComposeFragment : Fragment() {
 
     @Composable
     private fun PersonalizationCard() {
-        LaunchedEffect(userNameInput, systemPromptInput) {
-            delay(800)
-            viewLifecycleOwner.lifecycleScope.launch {
-                settingsRepository.updateSystemPrompt(systemPromptInput)
-                settingsRepository.updateUserName(userNameInput)
-            }
-        }
-
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -345,18 +307,6 @@ class SettingsComposeFragment : Fragment() {
 
     @Composable
     private fun LlamaCppCard() {
-        LaunchedEffect(llamaCppThreads, llamaCppGpuLayers, llamaCppBatchSize, llamaCppNKeep, llamaCppRopeFreqBase, llamaCppRopeFreqScale) {
-            delay(600)
-            viewLifecycleOwner.lifecycleScope.launch {
-                settingsRepository.updateLlamaCppThreads(llamaCppThreads)
-                settingsRepository.updateLlamaCppGpuLayers(llamaCppGpuLayers)
-                settingsRepository.updateLlamaCppBatchSize(llamaCppBatchSize)
-                settingsRepository.updateLlamaCppNKeep(llamaCppNKeep)
-                settingsRepository.updateLlamaCppRopeFreqBase(llamaCppRopeFreqBase)
-                settingsRepository.updateLlamaCppRopeFreqScale(llamaCppRopeFreqScale)
-            }
-        }
-
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -547,57 +497,31 @@ class SettingsComposeFragment : Fragment() {
         return null
     }
 
-    private fun saveInferenceSettings() {
-        val temperature = temperatureInput.toFloatOrNull()
-        val topK = topkInput.toIntOrNull()
-        val maxTokens = maxTokensInput.toIntOrNull()
-        val contextWindow = contextWindowInput.toIntOrNull()
-        if (temperature == null || topK == null || maxTokens == null || contextWindow == null) {
-            toast("推論設定の入力値が不正です")
-            return
-        }
-        if (temperature !in InferenceConfig.MIN_TEMPERATURE..InferenceConfig.MAX_TEMPERATURE) {
-            toast("温度は ${InferenceConfig.MIN_TEMPERATURE} - ${InferenceConfig.MAX_TEMPERATURE} の範囲で入力してください")
-            return
-        }
-        if (topK !in InferenceConfig.MIN_TOP_K..InferenceConfig.MAX_TOP_K) {
-            toast("Top-K は ${InferenceConfig.MIN_TOP_K} - ${InferenceConfig.MAX_TOP_K} の範囲で入力してください")
-            return
-        }
-        if (maxTokens !in InferenceConfig.MIN_MAX_TOKENS..InferenceConfig.MAX_MAX_TOKENS) {
-            toast("Max Tokens は ${InferenceConfig.MIN_MAX_TOKENS} - ${InferenceConfig.MAX_MAX_TOKENS} の範囲で入力してください")
-            return
-        }
-        if (contextWindow !in 512..8192) {
-            toast("コンテキストは 512 - 8192 の範囲で入力してください")
-            return
-        }
-        if (contextCompressionThresholdPercent !in
-            InferenceConfig.MIN_COMPRESSION_THRESHOLD..InferenceConfig.MAX_COMPRESSION_THRESHOLD
-        ) {
-            toast(
-                "圧縮しきい値は ${InferenceConfig.MIN_COMPRESSION_THRESHOLD} - " +
-                    "${InferenceConfig.MAX_COMPRESSION_THRESHOLD} の範囲で入力してください"
-            )
-            return
-        }
-        viewLifecycleOwner.lifecycleScope.launch {
-            settingsRepository.updateInferenceConfig(
-                contextCompressionEnabled = contextCompressionEnabled,
-                contextCompressionThresholdPercent = contextCompressionThresholdPercent,
-                temperature = temperature,
-                maxTopK = topK,
-                maxTokens = maxTokens,
-                contextWindow = contextWindow,
-                backendType = backendType,
-                backendTargetModel = "ALL"
-            )
-            settingsRepository.updateSystemPrompt(systemPromptInput)
-            settingsRepository.updateUserName(userNameInput)
-            settingsRepository.updateGemmaThinkingEnabled(gemmaThinkingEnabled)
-            loadInferenceSettings()
-            toast("推論設定を保存しました")
-        }
+    private suspend fun persistSettings() {
+        val temperature = temperatureInput.toFloat()
+        val topK = topkInput.toInt()
+        val maxTokens = maxTokensInput.toInt()
+        val contextWindow = contextWindowInput.toInt()
+
+        settingsRepository.updateInferenceConfig(
+            contextCompressionEnabled = contextCompressionEnabled,
+            contextCompressionThresholdPercent = contextCompressionThresholdPercent,
+            temperature = temperature,
+            maxTopK = topK,
+            maxTokens = maxTokens,
+            contextWindow = contextWindow,
+            backendType = backendType,
+            backendTargetModel = "ALL"
+        )
+        settingsRepository.updateSystemPrompt(systemPromptInput)
+        settingsRepository.updateUserName(userNameInput)
+        settingsRepository.updateGemmaThinkingEnabled(gemmaThinkingEnabled)
+        settingsRepository.updateLlamaCppThreads(llamaCppThreads)
+        settingsRepository.updateLlamaCppGpuLayers(llamaCppGpuLayers)
+        settingsRepository.updateLlamaCppBatchSize(llamaCppBatchSize)
+        settingsRepository.updateLlamaCppNKeep(llamaCppNKeep)
+        settingsRepository.updateLlamaCppRopeFreqBase(llamaCppRopeFreqBase)
+        settingsRepository.updateLlamaCppRopeFreqScale(llamaCppRopeFreqScale)
     }
 
     private fun onBackButtonPressed() {
@@ -606,7 +530,17 @@ class SettingsComposeFragment : Fragment() {
             errorDialogMessage = error
             return
         }
-        findNavController().navigateUp()
+        viewLifecycleOwner.lifecycleScope.launch {
+            runCatching {
+                persistSettings()
+            }.onSuccess {
+                if (isAdded) {
+                    findNavController().navigateUp()
+                }
+            }.onFailure {
+                toast("設定の保存に失敗しました: ${it.message}")
+            }
+        }
     }
 
     private fun toast(message: String) {
