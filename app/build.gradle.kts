@@ -1,5 +1,6 @@
 import java.util.Properties
 import java.io.FileInputStream
+import java.io.File
 
 plugins {
     id("com.android.application") version "8.9.1"
@@ -15,6 +16,21 @@ val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
     localProperties.load(FileInputStream(localPropertiesFile))
 }
+
+fun envOrLocal(key: String): String? =
+    System.getenv(key)?.takeIf { it.isNotBlank() }
+        ?: localProperties.getProperty(key)?.takeIf { it.isNotBlank() }
+
+val releaseStoreFilePath = envOrLocal("STORE_FILE")
+val releaseStorePassword = envOrLocal("STORE_PASSWORD")
+val releaseKeyAlias = envOrLocal("KEY_ALIAS")
+val releaseKeyPassword = envOrLocal("KEY_PASSWORD")
+
+val hasReleaseSigning = !releaseStoreFilePath.isNullOrBlank() &&
+    File(releaseStoreFilePath).exists() &&
+    !releaseStorePassword.isNullOrBlank() &&
+    !releaseKeyAlias.isNullOrBlank() &&
+    !releaseKeyPassword.isNullOrBlank()
 
 android {
     namespace = "com.nezumi_ai"
@@ -36,11 +52,13 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            storeFile = file(localProperties.getProperty("STORE_FILE", ""))
-            storePassword = localProperties.getProperty("STORE_PASSWORD", "")
-            keyAlias = localProperties.getProperty("KEY_ALIAS", "")
-            keyPassword = localProperties.getProperty("KEY_PASSWORD", "")
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseStoreFilePath!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
         }
     }
 
@@ -49,7 +67,11 @@ android {
             isMinifyEnabled = false
         }
         release {
-            signingConfig = signingConfigs.getByName("release")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            } else {
+                println("Release signing config not found. Building unsigned release APK.")
+            }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
