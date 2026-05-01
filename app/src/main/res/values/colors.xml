@@ -5,13 +5,13 @@
     <color name="white">#FFFFFFFF</color>
 
     <!-- Primary Colors -->
-    <color name="primary">#374151</color>
-    <color name="primary_light">#E5E7EB</color>
-    <color name="accent">#6B7280</color>
-    <color name="nezumi_primary">#374151</color>
-    <color name="nezumi_on_primary">#FFFFFFFF</color>
-    <color name="nezumi_primary_container">#D1D5DB</color>
-    <color name="nezumi_on_primary_container">#111827</color>
+    <color name="primary">#38BDF8</color>
+    <color name="primary_light">#E6F7FF</color>
+    <color name="accent">#0284C7</color>
+    <color name="nezumi_primary">#38BDF8</color>
+    <color name="nezumi_on_primary">#082F49</color>
+    <color name="nezumi_primary_container">#E6F7FF</color>
+    <color name="nezumi_on_primary_container">#0C4A6E</color>
 
     <!-- Text Colors -->
     <color name="text_primary">#111827</color>
@@ -27,4 +27,11 @@
 
     <!-- Border Colors -->
     <color name="border">#B6BDC8</color>
+
+    <!-- Thinking Toggle Button (High Contrast) -->
+    <color name="thinking_toggle_stroke">#374151</color>
+    <color name="thinking_toggle_text">#374151</color>
+    <!-- Incognito Mode -->
+    <color name="incognito_surface">#4B0082</color>
+    <color name="incognito_surface_light">#6A0DAD</color>
 </resources>

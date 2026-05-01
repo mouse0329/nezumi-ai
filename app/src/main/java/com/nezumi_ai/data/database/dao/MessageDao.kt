@@ -37,4 +37,7 @@ interface MessageDao {
 
     @Query("DELETE FROM message WHERE id = :messageId")
     suspend fun deleteById(messageId: Long)
+    
+    @Query("SELECT * FROM message ORDER BY timestamp DESC")
+    suspend fun getAllMessages(): List<MessageEntity>
 }

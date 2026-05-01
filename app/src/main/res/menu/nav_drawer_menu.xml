@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/settingsFragment"
+        android:title="設定"
+        android:icon="@drawable/settings_24" />
+    <item
+        android:id="@+id/modelSettingsFragment"
+        android:title="モデル"
+        android:icon="@drawable/ic_add" />
+    <item
+        android:id="@+id/toolsSettingsFragment"
+        android:title="ツール"
+        android:icon="@drawable/ic_alarm" />
+    <item
+        android:id="@+id/menu_new_chat"
+        android:title="新しいチャット"
+        android:icon="@drawable/ic_add" />
+    <item
+        android:id="@+id/menu_history"
+        android:title="チャット履歴"
+        android:icon="@drawable/ic_access_time">
+        <menu />
+    </item>
+</menu>
