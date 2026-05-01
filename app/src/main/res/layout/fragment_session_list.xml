@@ -9,11 +9,30 @@
 
         <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/app_title_sessions" android:textSize="26sp" android:textStyle="bold" android:textColor="@color/text_primary" />
 
-        <ImageButton android:id="@+id/settings_button" android:layout_width="36dp" android:layout_height="36dp" android:layout_marginEnd="10dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/action_settings" android:src="@drawable/settings_24" android:tint="@color/text_primary" />
+        <ImageButton android:id="@+id/settings_button" android:layout_width="36dp" android:layout_height="36dp" android:layout_marginEnd="10dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/action_settings" android:src="@drawable/settings_24" app:tint="@color/text_primary" />
 
         <com.google.android.material.floatingactionbutton.FloatingActionButton android:id="@+id/new_session_button" android:layout_width="44dp" android:layout_height="44dp" android:contentDescription="@string/new_session" app:fabCustomSize="44dp" app:maxImageSize="22dp" app:srcCompat="@drawable/ic_add" app:backgroundTint="@color/primary" app:tint="@color/white" app:useCompatPadding="false" />
     </LinearLayout>
 
-    <!-- Sessions RecyclerView -->
-    <androidx.recyclerview.widget.RecyclerView android:id="@+id/session_recycler_view" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:paddingHorizontal="8dp" android:paddingVertical="8dp" android:clipToPadding="false" />
+    <!-- Sessions Container -->
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+
+        <!-- Sessions RecyclerView -->
+        <androidx.recyclerview.widget.RecyclerView android:id="@+id/session_recycler_view" android:layout_width="match_parent" android:layout_height="match_parent" android:paddingHorizontal="8dp" android:paddingVertical="8dp" android:clipToPadding="false" />
+
+        <!-- Empty State Message -->
+        <LinearLayout android:id="@+id/empty_state_container" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:gravity="center" android:visibility="gone" android:padding="16dp">
+
+            <ImageView android:layout_width="80dp" android:layout_height="80dp" android:layout_marginBottom="16dp" android:src="@drawable/ic_app_icon_96" android:contentDescription="@string/app_name" android:scaleType="centerInside" android:alpha="0.5" />
+
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/no_sessions_title" android:textSize="18sp" android:textStyle="bold" android:gravity="center" android:layout_marginBottom="16dp" android:textColor="@color/text_primary" />
+
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/no_sessions_message" android:textSize="14sp" android:gravity="center" android:lineSpacingMultiplier="1.5" android:textColor="@color/text_secondary" android:layout_marginBottom="24dp" />
+
+            <com.google.android.material.button.MaterialButton android:id="@+id/create_first_session_button" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/create_first_session" app:cornerRadius="8dp" />
+
+        </LinearLayout>
+
+    </FrameLayout>
+
 </LinearLayout>

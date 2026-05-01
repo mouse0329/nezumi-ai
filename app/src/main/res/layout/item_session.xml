@@ -8,7 +8,7 @@
 
             <TextView android:id="@+id/session_title" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Session Title" android:textSize="15sp" android:textStyle="bold" android:textColor="@color/text_primary" android:ellipsize="end" android:singleLine="true" />
 
-            <ImageButton android:id="@+id/delete_button" android:layout_width="36dp" android:layout_height="36dp" android:padding="6dp" android:scaleType="centerInside" android:src="@drawable/ic_delete" android:tint="@color/text_primary" android:background="@drawable/bg_delete_button" android:contentDescription="@string/delete" />
+            <ImageButton android:id="@+id/delete_button" android:layout_width="36dp" android:layout_height="36dp" android:padding="6dp" android:scaleType="centerInside" android:src="@drawable/ic_delete" app:tint="@color/text_primary" android:background="@drawable/bg_delete_button" android:contentDescription="@string/delete" />
         </LinearLayout>
 
         <TextView android:id="@+id/session_date" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Mar 30, 14:25" android:textSize="11sp" android:textColor="@color/text_secondary" android:layout_marginTop="8dp" android:fontFamily="monospace" />

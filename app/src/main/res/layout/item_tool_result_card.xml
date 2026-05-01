@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingStart="12dp" android:paddingEnd="12dp" android:paddingTop="8dp" android:paddingBottom="8dp" android:background="@drawable/bg_tool_result_card" android:gravity="center_vertical">
+
+    <!-- アイコン -->
+    <ImageView android:id="@+id/toolResultIcon" android:layout_width="24dp" android:layout_height="24dp" android:layout_marginEnd="12dp" android:contentDescription="@string/tool_result_icon" android:tint="?attr/colorOnSurfaceVariant" />
+
+    <!-- テキスト部 -->
+    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+
+        <!-- タイトル行 -->
+        <TextView android:id="@+id/toolResultTitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="14sp" android:textStyle="bold" android:textColor="?attr/colorOnSurface" />
+
+        <!-- サブテキスト行 -->
+        <TextView android:id="@+id/toolResultSubtext" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="12sp" android:textColor="?attr/colorOnSurfaceVariant" android:layout_marginTop="2dp" />
+
+    </LinearLayout>
+
+</LinearLayout>

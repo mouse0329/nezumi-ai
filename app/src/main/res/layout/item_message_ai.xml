@@ -1,28 +1,55 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="start" android:layout_margin="8dp">
+    xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="start" android:layout_margin="8dp">
 
     <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="start">
 
+        <!-- Media Preview Container - 複数画像対応 -->
+        <LinearLayout android:id="@+id/media_container" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="8dp" android:visibility="gone" android:orientation="vertical">
+            <!-- 複数画像用横スクロールビュー（送信前と同じレイアウト） -->
+            <HorizontalScrollView android:id="@+id/image_scroll_view" android:layout_width="400dp" android:layout_height="180dp" android:visibility="gone" android:scrollbars="none" android:background="@android:color/transparent" android:paddingStart="8dp" android:paddingEnd="8dp">
+                <LinearLayout android:id="@+id/image_container" android:layout_width="wrap_content" android:layout_height="match_parent" android:orientation="horizontal" android:gravity="center_vertical" />
+            </HorizontalScrollView>
+            <!-- 単一画像用（後方互換性） -->
+            <FrameLayout android:id="@+id/single_image_container" android:layout_width="200dp" android:layout_height="200dp" android:visibility="gone" android:background="@drawable/bg_message_ai" android:foreground="?attr/selectableItemBackground">
+                <ImageView android:id="@+id/ai_image_preview" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="centerCrop" android:visibility="gone" android:contentDescription="@string/message_image" />
+            </FrameLayout>
+            <!-- Audio Playback Button -->
+            <LinearLayout android:id="@+id/audio_playback_container" android:layout_width="200dp" android:layout_height="200dp" android:layout_marginTop="8dp" android:orientation="vertical" android:gravity="center" android:visibility="gone" android:background="@color/primary">
+                <com.google.android.material.button.MaterialButton android:id="@+id/ai_audio_play_button" style="@style/Widget.MaterialComponents.Button" android:layout_width="56dp" android:layout_height="56dp" android:text="▶" android:textSize="24sp" android:textColor="@color/white" android:insetTop="0dp" android:insetBottom="0dp" />
+                <TextView android:id="@+id/ai_audio_duration" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="0:00" android:textColor="@color/white" android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- AI Edge Gallery の MessageBodyThinking に相当: タップで開閉、ストリーミング中は常に展開 -->
+        <LinearLayout android:id="@+id/ai_thinking_block" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="6dp" android:orientation="vertical" android:visibility="gone" android:background="@drawable/bg_message_ai" android:paddingStart="10dp" android:paddingEnd="10dp" android:paddingTop="8dp" android:paddingBottom="8dp" android:maxWidth="280dp">
+
+            <LinearLayout android:id="@+id/ai_thinking_toggle_row" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingTop="4dp" android:paddingBottom="4dp" android:clickable="true" android:focusable="true" android:foreground="?attr/selectableItemBackground">
+
+                <TextView android:id="@+id/ai_thinking_toggle_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/gemma_show_thinking" android:textColor="@color/text_secondary" android:textSize="14sp" android:textStyle="bold" />
+
+                <TextView android:id="@+id/ai_thinking_chevron" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="4dp" android:text="▼" android:textColor="@color/text_secondary" android:textSize="14sp" android:importantForAccessibility="no" />
+            </LinearLayout>
+
+            <LinearLayout android:id="@+id/ai_thinking_body" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:orientation="horizontal" android:visibility="gone">
+
+                <View android:layout_width="2dp" android:layout_height="match_parent" android:layout_marginEnd="10dp" android:background="@color/text_secondary" android:alpha="0.35" />
+
+                <TextView android:id="@+id/ai_thinking_text" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:textColor="@color/text_secondary" android:textSize="13sp" android:textIsSelectable="true" android:lineSpacingMultiplier="1.05" />
+            </LinearLayout>
+        </LinearLayout>
+
         <TextView android:id="@+id/ai_message_text" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="AI response" android:textSize="14sp" android:textColor="@color/text_primary" android:background="@drawable/bg_message_ai" android:padding="11dp" android:maxWidth="280dp" android:textIsSelectable="true" />
+
+        <androidx.compose.ui.platform.ComposeView android:id="@+id/ai_message_markdown_compose" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone" />
+
+        <LinearLayout android:id="@+id/tool_results_container" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp" android:visibility="gone" />
 
         <TextView android:id="@+id/ai_message_time" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="14:26" android:textSize="11sp" android:textColor="@color/text_secondary" android:layout_marginTop="3dp" android:layout_marginStart="4dp" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/copy_message_button"
-            style="@style/Widget.Nezumiai.Button.Outlined"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/copy_all"
-            android:textSize="11sp"
-            android:minWidth="0dp"
-            android:paddingStart="10dp"
-            android:paddingEnd="10dp"
-            android:minHeight="0dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            app:cornerRadius="12dp" />
+        <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="4dp">
+            <com.google.android.material.button.MaterialButton android:id="@+id/copy_message_button" style="@style/Widget.Nezumiai.Button.Outlined" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/copy_all" android:textSize="11sp" android:minWidth="0dp" android:paddingStart="10dp" android:paddingEnd="10dp" android:minHeight="0dp" android:insetTop="0dp" android:insetBottom="0dp" app:cornerRadius="12dp" />
+            <TextView android:id="@+id/tv_tps" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:textSize="11sp" android:textColor="@color/text_secondary" android:visibility="gone" />
+        </LinearLayout>
     </LinearLayout>
 </LinearLayout>
