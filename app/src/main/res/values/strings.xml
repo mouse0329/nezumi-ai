@@ -94,6 +94,8 @@
     <string name="gemma_hide_thinking">推論を隠す</string>
     <string name="gemma_thinking_section_title">内部推論（シンキング）</string>
     <string name="gemma_answer_generating_hint">（回答を生成中…）</string>
+    <string name="assistant_error_generic_empty">申し訳ありません。応答を生成できませんでした。</string>
+    <string name="assistant_error_gguf_media_empty_with_mmproj">画像・音声を読み込んで推論しましたが、本文が得られませんでした。\n\n単一 GGUF にビジョンが統合されているモデルでは、読み込み時に同じファイルからビジョンを初期化します。LLaVA 等、ベースと別ファイルの mmproj が必要な場合は「モデル設定」で公式ペアの mmproj を指定し、保存のうえモデルを読み込み直してください。\n\nベース GGUF とビジョンの整合、ファイル破損、mmproj パス、設定変更後の再読み込みを確認してください。</string>
     <string name="import_task_model">モデルファイルを追加 (.task / .litertlm)</string>
     <string name="import_task_loading">モデルファイルを読み込み中...</string>
     <string name="open_hf_approval_page">ページで承認</string>

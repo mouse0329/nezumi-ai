@@ -14,12 +14,11 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
-import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.PopupMenu
 import android.widget.Toast
-import android.widget.AdapterView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -97,7 +96,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     
     companion object {
         private const val TAG = "ChatFragment"
+        /** ヘッダー表示は長いパス末尾のみ（モーダルではフル名） */
+        private const val MODEL_NAME_TAIL_CHARS = 16
     }
+
+    private fun modelDisplaySuffix(label: String): String =
+        if (label.length <= MODEL_NAME_TAIL_CHARS) label
+        else label.takeLast(MODEL_NAME_TAIL_CHARS)
     
     private var _binding: FragmentChatBinding? = null
     private val binding get() = _binding!!
@@ -611,8 +616,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 updateMediaAvailability(model)
                 updateThinkingToggleVisibility()
                 val selected = modelOptions.firstOrNull { it.key == model } ?: return@collect
-                if (binding.modelDropdown.text?.toString() != selected.label) {
-                    binding.modelDropdown.setText(selected.label, false)
+                val shown = modelDisplaySuffix(selected.label)
+                if (binding.modelDropdown.text?.toString() != shown) {
+                    binding.modelDropdown.setText(shown)
                 }
             }
         }
@@ -970,26 +976,33 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private fun setupModelDropdown() {
         modelOptions = buildDownloadedModelOptions()
         if (modelOptions.isEmpty()) {
-            binding.modelDropdown.setText(getString(R.string.model_not_downloaded), false)
+            binding.modelDropdown.setText(getString(R.string.model_not_downloaded))
             binding.modelDropdown.isEnabled = false
             binding.modelDropdownLayout.isEnabled = false
             return
         }
 
-        val labels = modelOptions.map { it.label }
-        val spinnerAdapter = ArrayAdapter(
-            requireContext(),
-            android.R.layout.simple_list_item_1,
-            labels
-        )
-        binding.modelDropdown.setAdapter(spinnerAdapter)
         renderModelDropdownState()
         syncSelectedModelLabel()
-        binding.modelDropdown.onItemClickListener =
-            AdapterView.OnItemClickListener { _, _, position, _ ->
-                val selected = modelOptions.getOrNull(position) ?: return@OnItemClickListener
+        val openPicker = View.OnClickListener {
+            if (binding.modelDropdown.isEnabled) showModelPickerDialog()
+        }
+        binding.modelDropdown.setOnClickListener(openPicker)
+        binding.modelDropdownLayout.setOnClickListener(openPicker)
+    }
+
+    private fun showModelPickerDialog() {
+        if (modelOptions.isEmpty()) return
+        val labels = modelOptions.mapIndexed { i, opt ->
+            "${i + 1}. ${opt.label}"
+        }.toTypedArray()
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.model_dropdown_hint)
+            .setItems(labels) { _, which ->
+                val selected = modelOptions.getOrNull(which) ?: return@setItems
                 viewModel.switchModel(selected.key)
             }
+            .show()
     }
 
     private fun buildDownloadedModelOptions(): List<ModelOption> {
@@ -1021,7 +1034,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         val selected = modelOptions.firstOrNull { it.key == viewModel.selectedModel.value }
             ?: modelOptions.firstOrNull()
             ?: return
-        binding.modelDropdown.setText(selected.label, false)
+        binding.modelDropdown.setText(modelDisplaySuffix(selected.label))
     }
 
     private fun renderSendButtonState() {

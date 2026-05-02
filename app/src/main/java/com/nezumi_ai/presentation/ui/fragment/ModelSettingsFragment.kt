@@ -423,7 +423,7 @@ class ModelSettingsFragment : Fragment() {
                             }
                         }
                         Text(
-                            text = "LLaVA等の mmproj .gguf を指定すると画像入力が有効になります",
+                            text = "統合型（単一 GGUF）では未指定時に同じファイルからビジョンを初期化します。LLaVA 等は公式ペアの別 mmproj .gguf を指定してください。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

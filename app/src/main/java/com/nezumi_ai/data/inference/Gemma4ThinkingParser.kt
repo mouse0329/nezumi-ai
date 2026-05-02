@@ -169,6 +169,16 @@ object Gemma4ThinkingParser {
     }
 
     /**
+     * モデルコンテキスト（プロンプト・圧縮入力）用。
+     * DB の assistant [content] に思考タグやチャネルマーカーが残っていても、可視回答のみを返す。
+     */
+    fun answerOnlyForModelContext(assistantContent: String): String {
+        val t = assistantContent.trim()
+        if (t.isEmpty()) return ""
+        return sanitizeVisibleText(parse(t).answer).trim()
+    }
+
+    /**
      * 表示用テキストから Gemma / トークナイザ由来の制御トークンをすべて除去する。
      */
     fun sanitizeVisibleText(text: String): String {

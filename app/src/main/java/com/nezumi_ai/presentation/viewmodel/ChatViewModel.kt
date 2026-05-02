@@ -2,6 +2,7 @@ package com.nezumi_ai.presentation.viewmodel
 
 import android.content.Context
 import com.nezumi_ai.BuildConfig
+import com.nezumi_ai.R
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaCodec
@@ -808,6 +809,8 @@ class ChatViewModel(
                 return
             }
 
+            // GGUF マルチモーダル: JNI が mmproj 未指定時もベース GGUF から clip/mtmd を初期化する（単一ファイル統合型）
+
             // ストリーミング推論を実行（マルチモーダル対応）
             val aiResponseFlow = withContext(Dispatchers.IO) {
                 if (hasMediaInput) {
@@ -1210,10 +1213,11 @@ class ChatViewModel(
                 }
             } else {
                 Log.w(TAG, "No payload generated, saving default message")
+                val emptyExplanation = messageForEmptyInferencePayload(hasMediaInput, engineModelName)
                 withContext(Dispatchers.IO) {
                     messageRepository.updateMessageContent(
                         messageId = activeStreamingMessageId,
-                        content = "申し訳ありません。応答を生成できませんでした。",
+                        content = emptyExplanation,
                         isStreaming = false,
                         thinkingContent = null
                     )
@@ -1351,6 +1355,16 @@ class ChatViewModel(
         return engineModelName.lowercase().endsWith(".gguf")
     }
 
+    /**
+     * 推論結果が空のときに保存する説明文。GGUF＋メディアでは mmproj 未設定／不整合を区別する。
+     */
+    private fun messageForEmptyInferencePayload(hasMediaInput: Boolean, engineModelName: String): String {
+        if (!hasMediaInput || !isGgufEngineModel(engineModelName)) {
+            return appContext.getString(R.string.assistant_error_generic_empty)
+        }
+        return appContext.getString(R.string.assistant_error_gguf_media_empty_with_mmproj)
+    }
+
     private suspend fun syncSessionTitleFromDb(sessionId: Long) {
         val session = sessionRepository.getSessionById(sessionId) ?: return
         _sessionTitle.value = session.name
@@ -1429,7 +1443,9 @@ class ChatViewModel(
         val normalized = msg.content.trim()
         if (msg.role == "assistant") {
             if (normalized.isEmpty()) return ""
-            return stripSyntheticRoleLoopTail(normalized)
+            val visibleOnly = Gemma4ThinkingParser.answerOnlyForModelContext(normalized)
+            if (visibleOnly.isEmpty()) return ""
+            return stripSyntheticRoleLoopTail(visibleOnly)
                 .replace(Regex("^(?i)(?:Assistant|アシスタント)\\s*[:：]\\s*"), "")
                 .trim()
         } else {
@@ -1863,16 +1879,16 @@ class ChatViewModel(
             t.contains("モデルがロードされていません", ignoreCase = true) ||
             t.contains("応答開始がタイムアウト", ignoreCase = true) ||
             t.contains("生成を停止しました", ignoreCase = true) ||
-            t.contains("応答を生成できませんでした", ignoreCase = true)
+            t.contains("応答を生成できませんでした", ignoreCase = true) ||
+            t.contains("マルチモーダル推論を行うには「mmproj」", ignoreCase = true) ||
+            t.contains("指定した mmproj がこのベース GGUF", ignoreCase = true) ||
+            t.contains("本文が得られませんでした", ignoreCase = true) ||
+            t.contains("ビジョンを初期化", ignoreCase = true)
     }
 
     private fun shouldExcludeFromModelContext(msg: MessageEntity): Boolean {
         if (msg.role != "assistant") return false
         if (msg.isStreaming) return true
-        // Phase 12: thinkingContent の混入リスク対策
-        if (msg.thinkingContent != null && msg.thinkingContent.isNotEmpty()) {
-            Log.w(TAG, "WARNING: Message has thinkingContent but will be excluded from model context: id=${msg.id}")
-        }
         return isAssistantErrorLikeMessage(msg.content)
     }
 

@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <android/log.h>
+#include <sys/stat.h>
 #include <string>
 #include <vector>
 #include <atomic>
@@ -9,6 +10,7 @@
 
 #include "rn-llama.h"
 #include "rn-completion.h"
+#include "mtmd.h"
 
 namespace
 {
@@ -28,6 +30,16 @@ namespace
     static std::mutex g_mutex;
     static std::condition_variable g_completion_cv;
     static std::unordered_set<ContextHolder *> g_live_holders;
+
+    static bool filePathExists(const char *path)
+    {
+        if (path == nullptr || path[0] == '\0')
+        {
+            return false;
+        }
+        struct stat st;
+        return stat(path, &st) == 0;
+    }
 
     static std::string sanitizeUtf8Lossy(const std::string &input)
     {
@@ -271,10 +283,36 @@ namespace
     };
 } // namespace
 
+/** clip/mtmd のデフォルトログは stderr のみ（clip-impl.h の fputs）。Android では logcat に出ないため mtmd_log_set で転送する。 */
+static void nezumi_mtmd_log_android(enum lm_ggml_log_level level, const char *text, void * /*user_data*/)
+{
+    int prio = ANDROID_LOG_INFO;
+    switch (level)
+    {
+    case LM_GGML_LOG_LEVEL_ERROR:
+        prio = ANDROID_LOG_ERROR;
+        break;
+    case LM_GGML_LOG_LEVEL_WARN:
+        prio = ANDROID_LOG_WARN;
+        break;
+    case LM_GGML_LOG_LEVEL_INFO:
+        prio = ANDROID_LOG_INFO;
+        break;
+    case LM_GGML_LOG_LEVEL_DEBUG:
+        prio = ANDROID_LOG_DEBUG;
+        break;
+    default:
+        prio = ANDROID_LOG_VERBOSE;
+        break;
+    }
+    __android_log_print(prio, "NEZUMI_MTMD", "%s", text ? text : "");
+}
+
 extern "C" JNIEXPORT jint JNICALL
 JNI_OnLoad(JavaVM *vm, void * /*reserved*/)
 {
     (void)vm;
+    mtmd_log_set(nezumi_mtmd_log_android, nullptr);
     return JNI_VERSION_1_6;
 }
 
@@ -290,7 +328,8 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
     jboolean useMmap,
     jboolean useMlock,
     jfloat ropeFreqBase,
-    jfloat ropeFreqScale)
+    jfloat ropeFreqScale,
+    jstring mmprojPath)
 {
     if (!modelPath)
         return 0;
@@ -351,6 +390,59 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
         delete holder->ctx;
         delete holder;
         return 0;
+    }
+
+    // Multimodal: prefer explicit mmproj from settings; otherwise clip/mtmd can load vision tensors from the
+    // same GGUF path as the text model ("integrated" multimodal single file).
+    std::string mmproj_explicit;
+    if (mmprojPath != nullptr)
+    {
+        const char *mpChars = env->GetStringUTFChars(mmprojPath, nullptr);
+        if (mpChars)
+        {
+            mmproj_explicit.assign(mpChars);
+            env->ReleaseStringUTFChars(mmprojPath, mpChars);
+        }
+    }
+
+    std::string mmproj_effective;
+    if (!mmproj_explicit.empty() && filePathExists(mmproj_explicit.c_str()))
+    {
+        mmproj_effective = std::move(mmproj_explicit);
+        __android_log_print(ANDROID_LOG_INFO, TAG,
+                            "nativeCreateContext: initMultimodal using explicit mmproj path");
+    }
+    else
+    {
+        if (!mmproj_explicit.empty())
+        {
+            __android_log_print(ANDROID_LOG_WARN, TAG,
+                                "nativeCreateContext: explicit mmproj missing or not a readable path; "
+                                "trying base model file for embedded vision (integrated GGUF)");
+        }
+        else
+        {
+            __android_log_print(ANDROID_LOG_INFO, TAG,
+                                "nativeCreateContext: no mmproj path; trying base model file for embedded vision");
+        }
+        mmproj_effective = path;
+    }
+
+    {
+        const bool use_gpu_clip = params.n_gpu_layers > 0;
+        if (!holder->ctx->initMultimodal(mmproj_effective, use_gpu_clip, -1, -1))
+        {
+            __android_log_print(ANDROID_LOG_WARN, TAG,
+                                "nativeCreateContext: initMultimodal failed path='%s' "
+                                "(no vision tensors / mismatch — multimodal disabled for this load)",
+                                mmproj_effective.c_str());
+        }
+        else
+        {
+            __android_log_print(ANDROID_LOG_INFO, TAG,
+                                "nativeCreateContext: multimodal initialized path='%s'",
+                                mmproj_effective.c_str());
+        }
     }
 
     {
@@ -747,9 +839,13 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCompleteWithMedia
             holder->completion->endCompletion();
         }
     }
+    catch (const std::exception &e)
+    {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "nativeCompleteWithMedia: %s", e.what());
+    }
     catch (...)
     {
-        // ignore
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "nativeCompleteWithMedia: unknown exception");
     }
 
     return newSafeJStringUTF(env, out, "native_complete_media_result");
