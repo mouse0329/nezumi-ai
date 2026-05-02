@@ -152,14 +152,21 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                             "rope_freq_base=${normalized.llamaCppRopeFreqBase}, rope_freq_scale=${normalized.llamaCppRopeFreqScale}"
                     )
 
+                    // ★ マルチモーダル初期化: 明示的なmmproj パスがない場合でも、
+                    // 本体 GGUF ファイルから ビジョンテンソルを自動検出するため、JNI 側で
+                    // mmproj_effective = modelPath を使用。Java 側では null を渡す方針を確認。
+                    val mmprojPathFromSettings = ImportedModelCapabilityStore.get(context, modelPath).mmprojPath
+                        ?.takeIf { it.isNotBlank() && java.io.File(it).exists() }
+                    
+                    Log.d(TAG, "Creating RnLlamaContext: modelPath=$modelPath, mmprojPath=${mmprojPathFromSettings ?: "(null -> auto-detect from model)"}")
+                    
                     val lc = RnLlamaContext(
                         modelPath = modelPath,
                         nCtx = normalized.contextWindow,
                         nBatch = appliedBatchSize,
                         nThreads = appliedThreads,
                         nGpuLayers = appliedGpuLayers,
-                        mmprojPath = ImportedModelCapabilityStore.get(context, modelPath).mmprojPath
-                            ?.takeIf { it.isNotBlank() && java.io.File(it).exists() }
+                        mmprojPath = mmprojPathFromSettings
                     )
                     if (!lc.isValid) {
                         throw IllegalStateException("Failed to initialize rnllama context")

@@ -60,15 +60,58 @@ object ModelFileManager {
     private const val BUFFER_SIZE = 32 * 1024 // 32KB buffer
     private const val WARN_SMALL_IMPORTED_TASK_BYTES = 64L * 1024L
 
+    private val UNSAFE_FILENAME_CHARS = Regex("""[/\\:*?"<>|\u0000-\u001f]""")
+
+    private fun sanitizeImportedLeafFileName(leaf: String): String {
+        val cleaned = UNSAFE_FILENAME_CHARS.replace(leaf.trim(), "_").trim()
+        return cleaned.ifBlank { "custom_model.task" }
+    }
+
+    private fun sanitizeImportedStemOnly(raw: String): String {
+        val leaf = raw.trim().substringAfterLast('/').substringAfterLast('\\').trim()
+        val withoutExt = leaf.substringBeforeLast('.', leaf)
+        val cleaned = UNSAFE_FILENAME_CHARS.replace(withoutExt, "_").trim().trimEnd('.')
+        if (cleaned.isBlank()) throw IllegalArgumentException("ファイル名が空です")
+        return cleaned
+    }
+
     private data class RemoteMetadata(
         val contentLength: Long,
         val sha256: String?
     )
 
     data class ImportedTaskModel(
-        val name: String,
-        val path: String
-    )
+        val path: String,
+        /** ファイル名から拡張子を除いた文字列（一意・ストレージ上の名前） */
+        val fileNameStem: String,
+        /** チャットのモデル一覧用の短い表示名（HF は `repo__file` の右側優先） */
+        val shortDisplayName: String,
+        /** HF 由来ファイルのとき左側（所有者_リポジトリ 相当）、それ以外は null */
+        val hfRepoQualifier: String? = null,
+    ) {
+        companion object {
+            fun fromImportedFile(file: File): ImportedTaskModel {
+                val stem = file.nameWithoutExtension
+                val (repo, short) = splitHfImportedStem(stem)
+                return ImportedTaskModel(
+                    path = file.absolutePath,
+                    fileNameStem = stem,
+                    shortDisplayName = short.ifBlank { stem },
+                    hfRepoQualifier = repo,
+                )
+            }
+        }
+    }
+
+    /** HF ダウンロードファイル名 `owner_repo__path_to_file` を分割する */
+    fun splitHfImportedStem(fullStem: String): Pair<String?, String> {
+        val sep = "__"
+        val idx = fullStem.indexOf(sep)
+        if (idx <= 0 || idx + sep.length >= fullStem.length) return null to fullStem
+        val left = fullStem.substring(0, idx)
+        val right = fullStem.substring(idx + sep.length)
+        return left to right
+    }
 
     data class HfModelSearchResult(
         val id: String,
@@ -170,7 +213,7 @@ object ModelFileManager {
             }
             ?.filter { validateImportedTaskFile(it).isSuccess }
             ?.sortedByDescending { it.lastModified() }
-            ?.map { ImportedTaskModel(name = it.nameWithoutExtension, path = it.absolutePath) }
+            ?.map { ImportedTaskModel.fromImportedFile(it) }
             ?.toList()
             ?: emptyList()
     }
@@ -313,7 +356,9 @@ object ModelFileManager {
         if (!importedDir.exists()) {
             importedDir.mkdirs()
         }
-        val safeName = displayName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val leafName = displayName.trim().substringAfterLast('/').substringAfterLast('\\').trim()
+            .ifBlank { displayName.trim() }
+        val safeName = sanitizeImportedLeafFileName(leafName)
         var outFile = File(importedDir, safeName)
         if (outFile.exists()) {
             val base = safeName.substringBeforeLast('.')
@@ -379,6 +424,50 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         if (!target.delete()) {
             throw IllegalStateException("ファイルの削除に失敗しました")
         }
+        runCatching { metadataFile(target).delete() }
+    }
+
+    /**
+     * `models/imported` 内のインポート済みモデルの rename（拡張子は維持）。
+     * メタファイル `.meta` があれば追随する。
+     */
+    fun renameImportedTask(context: Context, oldPath: String, newStemInput: String): Result<File> = runCatching {
+        val importedDir = File(context.filesDir, "models/imported").canonicalFile
+        val oldFile = File(oldPath).canonicalFile
+        val importedPrefix = importedDir.path + File.separator
+        if (!oldFile.path.startsWith(importedPrefix)) {
+            throw IllegalArgumentException("リネーム対象のパスが不正です")
+        }
+        if (!oldFile.exists() || !oldFile.isFile) {
+            throw IllegalStateException("ファイルが見つかりません")
+        }
+        val lower = oldFile.name.lowercase()
+        if (!lower.endsWith(".task") && !lower.endsWith(".litertlm") && !lower.endsWith(".gguf")) {
+            throw IllegalArgumentException(".task / .litertlm / .gguf のみリネームできます")
+        }
+        val ext = oldFile.extension
+        val stem = sanitizeImportedStemOnly(newStemInput)
+        val parent = oldFile.parentFile ?: importedDir
+        var dest = File(parent, "$stem.$ext")
+        if (dest.absolutePath != oldFile.absolutePath && dest.exists()) {
+            dest = File(parent, "${stem}_${System.currentTimeMillis()}.$ext")
+        }
+        val oldMeta = metadataFile(oldFile)
+        if (!oldFile.renameTo(dest)) {
+            throw IllegalStateException("リネームに失敗しました")
+        }
+        val newMeta = metadataFile(dest)
+        if (oldMeta.exists()) {
+            if (newMeta.exists()) newMeta.delete()
+            if (!oldMeta.renameTo(newMeta)) {
+                runCatching {
+                    oldMeta.copyTo(newMeta, overwrite = true)
+                    oldMeta.delete()
+                }.onFailure { Log.w(TAG, "Failed to migrate meta after rename", it) }
+            }
+        }
+        validateImportedTaskFile(dest).getOrThrow()
+        dest
     }
 
     fun isModelAvailable(context: Context, modelName: String): Boolean {

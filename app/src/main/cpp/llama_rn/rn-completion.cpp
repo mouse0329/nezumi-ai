@@ -797,10 +797,18 @@ void llama_rn_context_completion::processMedia(
     const std::string &prompt,
     const std::vector<std::string> &media_paths
 ) {
+    LOG_INFO("[DEBUG] processMedia called: parent_ctx=%p, mtmd_wrapper=%p, has_multimodal=%d, media_paths.size()=%zu",
+             (void*)parent_ctx, (void*)(parent_ctx ? parent_ctx->mtmd_wrapper : nullptr),
+             (parent_ctx ? parent_ctx->has_multimodal : -1), media_paths.size());
+    
     if (!parent_ctx->isMultimodalEnabled()) {
+        LOG_ERROR("[DEBUG] processMedia FAILED: isMultimodalEnabled()=false. mtmd_wrapper=%p",
+                  (void*)(parent_ctx ? parent_ctx->mtmd_wrapper : nullptr));
         throw std::runtime_error("Multimodal is not enabled but image paths are provided");
     }
 
+    LOG_INFO("[DEBUG] processMedia proceeding with mtmd_wrapper->processMedia() call");
+    
     // Delegate to the mtmd_wrapper method
     // For non-parallel mode, use the global bitmap_past_hashes from mtmd_wrapper
     parent_ctx->mtmd_wrapper->processMedia(

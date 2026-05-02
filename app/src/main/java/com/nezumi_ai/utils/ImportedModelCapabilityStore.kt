@@ -31,13 +31,10 @@ object ImportedModelCapabilityStore {
 
     fun get(context: Context, modelPath: String): ImportedModelCapabilities {
         val p = prefs(context)
-        val lowered = modelPath.lowercase()
-        val isImportedGguf =
-            File(modelPath).isAbsolute && lowered.endsWith(".gguf")
-        // 単一 GGUF にビジョン／音声が統合されているモデル（例: unsloth/gemma-4-E2B-it-GGUF）では mmproj 不要。
-        // キー未設定時はマルチモーダル ON を既定にし、モデル設定で明示的にオフにできるようにする。
-        val defaultImage = if (isImportedGguf) true else false
-        val defaultAudio = if (isImportedGguf) true else false
+        // 追加直後は画像・音声ともオフが安全（mmproj 未設定や非マルチモーダル GGUF でノイズ出力を防ぐ）。
+        // 統合型などで使う場合はモデル設定から有効化する。
+        val defaultImage = false
+        val defaultAudio = false
         return ImportedModelCapabilities(
             imageEnabled = p.getBoolean(imageKey(modelPath), defaultImage),
             audioEnabled = p.getBoolean(audioKey(modelPath), defaultAudio),
@@ -67,11 +64,17 @@ object ImportedModelCapabilityStore {
             .commit()
     }
 
+    /** インポート GGUF のファイルリネーム後に設定キーを移す */
+    fun migrateModelPath(context: Context, oldPath: String, newPath: String) {
+        val caps = get(context, oldPath)
+        clear(context, oldPath)
+        set(context, newPath, caps)
+    }
+
     fun resolveForModel(context: Context, modelKey: String): ImportedModelCapabilities {
         val lowered = modelKey.lowercase()
         val isAbsolutePath = File(modelKey).isAbsolute
         if (isAbsolutePath && lowered.endsWith(".gguf")) {
-            // GGUF は get() 側でキー未設定時に画像・音声を既定 ON（統合型 GGUF を想定）。
             return get(context, modelKey)
         }
         val isImported =

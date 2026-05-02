@@ -430,24 +430,30 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
 
     {
         const bool use_gpu_clip = params.n_gpu_layers > 0;
+        __android_log_print(ANDROID_LOG_DEBUG, TAG,
+                            "nativeCreateContext: [DEBUG] attempting initMultimodal: holder=%p, ctx->ctx=%p, mmproj_effective='%s'",
+                            (void*)holder, (void*)holder->ctx->ctx, mmproj_effective.c_str());
         if (!holder->ctx->initMultimodal(mmproj_effective, use_gpu_clip, -1, -1))
         {
             __android_log_print(ANDROID_LOG_WARN, TAG,
-                                "nativeCreateContext: initMultimodal failed path='%s' "
+                                "nativeCreateContext: [DEBUG] initMultimodal FAILED path='%s' "
                                 "(no vision tensors / mismatch — multimodal disabled for this load)",
                                 mmproj_effective.c_str());
         }
         else
         {
             __android_log_print(ANDROID_LOG_INFO, TAG,
-                                "nativeCreateContext: multimodal initialized path='%s'",
-                                mmproj_effective.c_str());
+                                "nativeCreateContext: [DEBUG] multimodal INITIALIZED SUCCESS path='%s', holder=%p",
+                                mmproj_effective.c_str(), (void*)holder);
         }
     }
 
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         g_live_holders.insert(holder);
+        __android_log_print(ANDROID_LOG_DEBUG, TAG,
+                            "nativeCreateContext: [DEBUG] context stored in g_live_holders, holder=%p, total=%zu",
+                            (void*)holder, g_live_holders.size());
     }
 
     return reinterpret_cast<jlong>(holder);

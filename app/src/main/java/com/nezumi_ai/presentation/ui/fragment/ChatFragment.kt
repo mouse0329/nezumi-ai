@@ -96,13 +96,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     
     companion object {
         private const val TAG = "ChatFragment"
-        /** ヘッダー表示は長いパス末尾のみ（モーダルではフル名） */
-        private const val MODEL_NAME_TAIL_CHARS = 16
+        /** ドロップダウン・ヘッダーで長いラベルを省略するときの先頭文字数 */
+        private const val MODEL_NAME_DISPLAY_CHARS = 16
     }
 
     private fun modelDisplaySuffix(label: String): String =
-        if (label.length <= MODEL_NAME_TAIL_CHARS) label
-        else label.takeLast(MODEL_NAME_TAIL_CHARS)
+        if (label.length <= MODEL_NAME_DISPLAY_CHARS) label
+        else label.take(MODEL_NAME_DISPLAY_CHARS).trimEnd() + "…"
     
     private var _binding: FragmentChatBinding? = null
     private val binding get() = _binding!!
@@ -934,11 +934,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun isAtBottom(): Boolean {
-        val rv = binding.messagesRecyclerView
+        val rv = _binding?.messagesRecyclerView ?: return true
         return !rv.canScrollVertically(1)
     }
 
     private fun updateScrollToBottomButtonVisibility() {
+        if (_binding == null || !isAdded) return
         scrollToBottomVisible = !isAtBottom()
     }
 
@@ -1020,7 +1021,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             options += ModelOption("Gemma4-4B", "Gemma 4 4B")
         }
         ModelFileManager.listImportedTaskModels(requireContext()).forEach { imported ->
-            options += ModelOption(imported.path, imported.name)
+            options += ModelOption(imported.path, imported.shortDisplayName)
         }
         return options
     }

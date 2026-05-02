@@ -439,16 +439,22 @@ std::vector<common_adapter_lora_info> llama_rn_context::getLoadedLoraAdapters() 
 
 bool llama_rn_context::initMultimodal(const std::string &mmproj_path, bool use_gpu, int image_min_tokens, int image_max_tokens) {
     try {
+        LOG_INFO("[DEBUG] initMultimodal starting: mmproj_path='%s', use_gpu=%d", mmproj_path.c_str(), use_gpu);
         mtmd_wrapper = new llama_rn_context_mtmd(mmproj_path, use_gpu, model, ctx, params, has_multimodal, params, image_min_tokens, image_max_tokens);
+        LOG_INFO("[DEBUG] initMultimodal SUCCESS: mtmd_wrapper=%p, has_multimodal=%d", (void*)mtmd_wrapper, has_multimodal);
         return true;
     } catch (const std::exception& e) {
         LOG_ERROR("[DEBUG] Failed to initialize multimodal: %s", e.what());
+        mtmd_wrapper = nullptr;
+        has_multimodal = false;
         return false;
     }
 }
 
 bool llama_rn_context::isMultimodalEnabled() const {
-    return mtmd_wrapper != nullptr && mtmd_wrapper->isEnabled(has_multimodal);
+    bool result = mtmd_wrapper != nullptr && mtmd_wrapper->isEnabled(has_multimodal);
+    LOG_INFO("[DEBUG] isMultimodalEnabled(): mtmd_wrapper=%p, has_multimodal=%d, result=%d", (void*)mtmd_wrapper, has_multimodal, result);
+    return result;
 }
 
 bool llama_rn_context::isMultimodalSupportVision() const {
