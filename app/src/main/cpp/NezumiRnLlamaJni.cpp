@@ -432,7 +432,7 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
         const bool use_gpu_clip = params.n_gpu_layers > 0;
         __android_log_print(ANDROID_LOG_DEBUG, TAG,
                             "nativeCreateContext: [DEBUG] attempting initMultimodal: holder=%p, ctx->ctx=%p, mmproj_effective='%s'",
-                            (void*)holder, (void*)holder->ctx->ctx, mmproj_effective.c_str());
+                            (void *)holder, (void *)holder->ctx->ctx, mmproj_effective.c_str());
         if (!holder->ctx->initMultimodal(mmproj_effective, use_gpu_clip, -1, -1))
         {
             __android_log_print(ANDROID_LOG_WARN, TAG,
@@ -444,7 +444,7 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
         {
             __android_log_print(ANDROID_LOG_INFO, TAG,
                                 "nativeCreateContext: [DEBUG] multimodal INITIALIZED SUCCESS path='%s', holder=%p",
-                                mmproj_effective.c_str(), (void*)holder);
+                                mmproj_effective.c_str(), (void *)holder);
         }
     }
 
@@ -453,7 +453,7 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
         g_live_holders.insert(holder);
         __android_log_print(ANDROID_LOG_DEBUG, TAG,
                             "nativeCreateContext: [DEBUG] context stored in g_live_holders, holder=%p, total=%zu",
-                            (void*)holder, g_live_holders.size());
+                            (void *)holder, g_live_holders.size());
     }
 
     return reinterpret_cast<jlong>(holder);
@@ -493,10 +493,13 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeInterrupt(
     jlong ctxPtr)
 {
     auto *holder = fromPtr(ctxPtr);
-    if (!holder) return;
+    if (!holder)
+        return;
     std::lock_guard<std::mutex> lock(g_mutex);
-    if (g_live_holders.find(holder) == g_live_holders.end()) return;
-    if (holder->completion) {
+    if (g_live_holders.find(holder) == g_live_holders.end())
+        return;
+    if (holder->completion)
+    {
         holder->completion->is_interrupted = true;
     }
 }
