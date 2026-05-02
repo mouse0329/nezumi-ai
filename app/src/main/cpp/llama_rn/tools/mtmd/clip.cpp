@@ -1004,8 +1004,35 @@ struct clip_model_loader {
 
         // modalities
         {
+            const int kv_vision_flag = lm_gguf_find_key(ctx_gguf.get(), KEY_HAS_VISION_ENC);
+            const int kv_audio_flag  = lm_gguf_find_key(ctx_gguf.get(), KEY_HAS_AUDIO_ENC);
             get_bool(KEY_HAS_VISION_ENC, has_vision, false);
             get_bool(KEY_HAS_AUDIO_ENC,  has_audio,  false);
+
+            // Exporters such as Unsloth may omit clip.has_*_encoder even when vision/audio tensors exist.
+            // If the KV is absent (not explicit false), infer modalities from tensor name prefixes.
+            if (kv_vision_flag < 0 || kv_audio_flag < 0) {
+                for (int ti = 0; ti < n_tensors; ++ti) {
+                    const char * tname = lm_gguf_get_tensor_name(ctx_gguf.get(), ti);
+                    if (!tname) {
+                        continue;
+                    }
+                    if (kv_vision_flag < 0 && std::strncmp(tname, "vision.", 7) == 0) {
+                        has_vision = true;
+                    }
+                    if (kv_audio_flag < 0 && std::strncmp(tname, "audio.", 6) == 0) {
+                        has_audio = true;
+                    }
+                }
+                if (kv_vision_flag < 0 && has_vision) {
+                    LOG_INF("%s: inferred vision encoder (KV %s missing; found vision.* tensors)\n",
+                            __func__, KEY_HAS_VISION_ENC);
+                }
+                if (kv_audio_flag < 0 && has_audio) {
+                    LOG_INF("%s: inferred audio encoder (KV %s missing; found audio.* tensors)\n",
+                            __func__, KEY_HAS_AUDIO_ENC);
+                }
+            }
 
             if (has_vision) {
                 LOG_INF("%s: has vision encoder\n", __func__);

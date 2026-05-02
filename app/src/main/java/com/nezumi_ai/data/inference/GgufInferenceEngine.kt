@@ -31,7 +31,7 @@ import kotlin.math.absoluteValue
  *
  * ## 制約
  * - GPU オフロードは nGpuLayers=0 固定（Tensor G3 は OpenCL 非対応）
- * - マルチモーダル（画像）は現状テキストのみ（LLaVA mmproj は後回し）
+ * - マルチモーダル: JNI が mmproj 未指定時はベース GGUF から clip/mtmd 初期化（統合型）。別ファイルが必要なら設定で mmproj を渡す
  * - KVキャッシュは LlamaHelper 内部の contextId で管理
  * - セッション変更時も同一コンテキストを使いまわす（完全リセットは unload→load）
  */
@@ -40,6 +40,10 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
     companion object {
         private const val TAG = "GgufInferenceEngine"
         // "User:" 以降に次ターンを自己生成してしまうのを防ぐ
+        /** シンキングON時はストリーム先頭に `<think>` が無いことがあり、終了タグまで本文を送らない */
+        private const val REDACTED_THINK_CLOSE = "</think>"
+        private const val REDACTED_THINK_OPEN = "<think>"
+
         private val STOP_SEQUENCES = listOf(
             "<|im_end|>",
             "<|im_start|>",
@@ -313,11 +317,16 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
             if (remaining.isNotEmpty()) runCatching { trySend(remaining) }
         }
 
-        fun emitLiteRtStyleStreamDeltas() {
-            val parsed = Gemma4ThinkingParser.parseStreaming(answerAccum.toString())
-            val curThinking = parsed.thinking ?: ""
-            val curAnswer = parsed.answer
+        fun stripIncompleteCloseTagSuffix(raw: String, closeTag: String): String {
+            if (raw.endsWith(closeTag)) return raw
+            for (len in closeTag.length - 1 downTo 1) {
+                val pref = closeTag.take(len)
+                if (raw.endsWith(pref)) return raw.dropLast(len)
+            }
+            return raw
+        }
 
+        fun emitThinkingDeltaChunk(curThinking: String) {
             val thinkDelta = when {
                 curThinking.startsWith(emittedThinkingPrefix) ->
                     curThinking.substring(emittedThinkingPrefix.length)
@@ -333,7 +342,9 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
             if (thinkDelta.isNotEmpty()) {
                 runCatching { trySend(InferenceStreamProtocol.encodeThinkChunk(thinkDelta)) }
             }
+        }
 
+        fun emitAnswerDeltaChunk(curAnswer: String) {
             val answerDelta = when {
                 curAnswer.startsWith(emittedAnswerPrefix) ->
                     curAnswer.substring(emittedAnswerPrefix.length)
@@ -355,16 +366,62 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
             }
         }
 
-        fun finalAnswerForProtocol(): String =
-            Gemma4ThinkingParser.parse(answerAccum.toString()).answer
+        /** シンキングOFF: 従来どおり parseStreaming で分割 */
+        fun emitParseStreamingSplit() {
+            val parsed = Gemma4ThinkingParser.parseStreaming(answerAccum.toString())
+            val curThinking = parsed.thinking ?: ""
+            val curAnswer = parsed.answer
+            emitThinkingDeltaChunk(curThinking)
+            emitAnswerDeltaChunk(curAnswer)
+        }
+
+        /**
+         * シンキングON: `</think>` が現れるまで本文を送らず、思考のみストリームする。
+         * 先頭に `<think>` が無い出力でも、閉じタグで思考ブロックを確定する。
+         */
+        fun emitWaitForCloseTagSplit() {
+            val full = answerAccum.toString()
+            val closeIdx = full.indexOf(REDACTED_THINK_CLOSE)
+            if (closeIdx < 0) {
+                val safeThink = stripIncompleteCloseTagSuffix(full, REDACTED_THINK_CLOSE)
+                emitThinkingDeltaChunk(safeThink)
+                return
+            }
+            var thinkBody = full.substring(0, closeIdx)
+            if (thinkBody.startsWith(REDACTED_THINK_OPEN)) {
+                thinkBody = thinkBody.removePrefix(REDACTED_THINK_OPEN).trimStart()
+            }
+            val afterClose = full.substring(closeIdx + REDACTED_THINK_CLOSE.length)
+            emitThinkingDeltaChunk(thinkBody)
+            emitAnswerDeltaChunk(afterClose)
+        }
+
+        fun emitStreamDeltas(enableThinkingMode: Boolean) {
+            if (enableThinkingMode) emitWaitForCloseTagSplit() else emitParseStreamingSplit()
+        }
+
+        fun finalAnswerForProtocol(enableThinkingMode: Boolean): String {
+            val raw = answerAccum.toString()
+            if (!enableThinkingMode) {
+                return Gemma4ThinkingParser.parse(raw).answer
+            }
+            val idx = raw.indexOf(REDACTED_THINK_CLOSE)
+            return if (idx >= 0) {
+                Gemma4ThinkingParser.sanitizeVisibleText(raw.substring(idx + REDACTED_THINK_CLOSE.length))
+            } else {
+                ""
+            }
+        }
 
         try {
             val completionJob = launch(Dispatchers.IO) {
+                var enableThinkingMode = false
                 try {
                     Log.d(TAG, "GGUF started session=$sessionId")
 
                     // ★ 推論実行（maxTokens に基づいてタイムアウトを計算）
                     val normalized = modelMutex.withLock { loadedConfig?.normalized() } ?: config.normalized()
+                    enableThinkingMode = normalized.enableThinking
                     val timeoutSeconds = (normalized.maxTokens / 10).coerceIn(5, 300)  // 最小5秒、最大300秒
                     val effectiveStopSequences = if (normalized.customStopTokens.isEmpty()) {
                         STOP_SEQUENCES
@@ -399,7 +456,7 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                         if (foundStop) {
                             Log.d(TAG, "Stop sequence detected: '$stopSeq'. Stopping generation. accum_len=${answerAccum.length}")
                             shouldStop.set(true)
-                            emitLiteRtStyleStreamDeltas()
+                            emitStreamDeltas(enableThinkingMode)
                             flushAnswerBufferOnly()
                             // ★ token callback を無効化（以降のコールバックを無視）
                             tokenHandlerRef.set(null)
@@ -408,7 +465,7 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                             return@handler
                         }
 
-                        emitLiteRtStyleStreamDeltas()
+                        emitStreamDeltas(enableThinkingMode)
                     })
 
                     Log.d(TAG, "Completion starting with timeout=${timeoutSeconds}s")
@@ -462,14 +519,14 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
 
                     flushAnswerBufferOnly()
 
-                    trySend(InferenceStreamProtocol.encodeFinal(finalAnswerForProtocol()))
+                    trySend(InferenceStreamProtocol.encodeFinal(finalAnswerForProtocol(enableThinkingMode)))
                     close()
                 } catch (t: Throwable) {
                     if (t is CancellationException) {
                         Log.d(TAG, "GGUF cancelled session=$sessionId answer_length=${answerAccum.length}")
                         flushAnswerBufferOnly()
                         runCatching {
-                            trySend(InferenceStreamProtocol.encodeFinal(finalAnswerForProtocol()))
+                            trySend(InferenceStreamProtocol.encodeFinal(finalAnswerForProtocol(enableThinkingMode)))
                         }
                         close()
                     } else {
