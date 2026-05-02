@@ -28,6 +28,8 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import androidx.recyclerview.widget.LinearLayoutManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -48,9 +50,13 @@ class MainActivity : AppCompatActivity() {
     private var isIncognitoModeActive = false
     private var biometricPrompt: BiometricPrompt? = null
     private var authOverlayView: android.view.View? = null
+    private var latestDrawerSessions: List<ChatSessionEntity> = emptyList()
+    private var drawerDateRefreshJob: Job? = null
+    private var lastRenderedDrawerDayStartMillis: Long = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        isIncognitoModeActive = savedInstanceState?.getBoolean("is_incognito_mode_active") ?: false
 
         try {
             binding = ActivityMainBinding.inflate(layoutInflater)
@@ -67,6 +73,16 @@ class MainActivity : AppCompatActivity() {
                 val settingsRepository = SettingsRepository(database.settingsDao(), database.chatSessionDao())
                 val messageRepository = com.nezumi_ai.data.repository.MessageRepository(database.messageDao())
                 sessionRepository = ChatSessionRepository(database.chatSessionDao(), settingsRepository, messageRepository)
+                if (!isIncognitoModeActive) {
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        runCatching {
+                            sessionRepository.deleteAllIncognitoSessions()
+                            Log.d(TAG, "Cleaned up stale incognito sessions on startup")
+                        }.onFailure {
+                            Log.e(TAG, "Failed to cleanup stale incognito sessions on startup", it)
+                        }
+                    }
+                }
                 setupDrawer(navController)
                 observeDrawerHistory()
 
@@ -139,6 +155,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun openChatSession(sessionId: Long) {
+        if (isIncognitoModeActive) {
+            lifecycleScope.launch {
+                runCatching {
+                    leaveIncognitoModeForNormalNavigation()
+                }.onFailure {
+                    Log.e(TAG, "Failed to leave incognito mode before opening normal session", it)
+                }
+                navigateToChatSession(sessionId)
+            }
+            return
+        }
+        navigateToChatSession(sessionId)
+    }
+
+    private fun navigateToChatSession(sessionId: Long) {
         val navController = findNavController(R.id.nav_host_fragment_content_main)
         if (navController.currentDestination?.id == R.id.chatFragment) {
             navController.popBackStack(R.id.chatFragment, true)
@@ -185,6 +216,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        refreshDrawerDateLabels()
         
         // バックグラウンドから復帰時に生体認証を実行
         if (isAppInBackground) {
@@ -400,6 +432,7 @@ class MainActivity : AppCompatActivity() {
         
         // FLAG_SECURE を解除
         window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        PreferencesHelper.applyThemeMode(this)
         Log.d(TAG, "Exited incognito mode - FLAG_SECURE cleared")
         
         // ホームに戻す
@@ -414,6 +447,7 @@ class MainActivity : AppCompatActivity() {
     private fun handleAuthenticationFailed() {
         // FLAG_SECURE を解除してから終了
         window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        PreferencesHelper.applyThemeMode(this)
         // アプリをホーム画面に戻す
         val homeIntent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_HOME)
@@ -428,6 +462,7 @@ class MainActivity : AppCompatActivity() {
         
         // Register screen off receiver to stop generation when screen sleeps
         registerScreenOffReceiver()
+        startDrawerDateRefreshTimer()
         
         // Database 初期化をここで遅延実行（Binder 負荷軽減）
         if (!dbInitialized) {
@@ -449,15 +484,21 @@ class MainActivity : AppCompatActivity() {
         
         // Unregister screen off receiver
         unregisterScreenOffReceiver()
+        stopDrawerDateRefreshTimer()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        if (isChangingConfigurations) {
+            Log.d(TAG, "Skipping incognito cleanup during configuration change")
+            return
+        }
         
         // FLAG_SECURE と authOverlay を完全にクリア
         isIncognitoModeActive = false
         window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         removeAuthOverlay()
+        PreferencesHelper.applyThemeMode(this)
         Log.d(TAG, "Cleared FLAG_SECURE and overlay on app destroy")
         
         // アプリ終了時にシークレットセッションを全て削除
@@ -469,6 +510,11 @@ class MainActivity : AppCompatActivity() {
                 Log.e(TAG, "Failed to cleanup incognito sessions", e)
             }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("is_incognito_mode_active", isIncognitoModeActive)
+        super.onSaveInstanceState(outState)
     }
 
     private fun registerScreenOffReceiver() {
@@ -503,21 +549,71 @@ class MainActivity : AppCompatActivity() {
     private fun observeDrawerHistory() {
         lifecycleScope.launch {
             sessionRepository.getAllSessions().collectLatest { sessions ->
+                latestDrawerSessions = sessions
                 renderDrawerHistory(sessions)
             }
         }
     }
 
+    private fun refreshDrawerDateLabels() {
+        val currentDayStart = localDayStartMillis()
+        if (::drawerHistoryAdapter.isInitialized && currentDayStart != lastRenderedDrawerDayStartMillis) {
+            renderDrawerHistory(latestDrawerSessions)
+        }
+    }
+
+    private fun startDrawerDateRefreshTimer() {
+        if (drawerDateRefreshJob?.isActive == true) return
+        drawerDateRefreshJob = lifecycleScope.launch {
+            while (true) {
+                delay(millisUntilNextLocalDay() + 1_000L)
+                refreshDrawerDateLabels()
+            }
+        }
+    }
+
+    private fun stopDrawerDateRefreshTimer() {
+        drawerDateRefreshJob?.cancel()
+        drawerDateRefreshJob = null
+    }
+
+    private fun millisUntilNextLocalDay(): Long {
+        val now = Calendar.getInstance()
+        val nextDay = Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_YEAR, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        return (nextDay.timeInMillis - now.timeInMillis).coerceAtLeast(1_000L)
+    }
+
     private fun renderDrawerHistory(sessions: List<ChatSessionEntity>) {
+        lastRenderedDrawerDayStartMillis = localDayStartMillis()
         val groupedSessions = groupSessionsByDate(sessions)
         drawerHistoryAdapter.submitList(groupedSessions)
         binding.drawerHistoryEmpty.visibility = if (sessions.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
     }
 
+    private fun localDayStartMillis(): Long {
+        return Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+
     private fun groupSessionsByDate(sessions: List<ChatSessionEntity>): List<DrawerHistoryItem> {
         val result = mutableListOf<DrawerHistoryItem>()
         val calendar = Calendar.getInstance()
-        val today = calendar.apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0) }
+        val today = calendar.apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
         val todayTime = today.timeInMillis
 
         val grouped = mutableMapOf<String, MutableList<ChatSessionEntity>>()
@@ -527,6 +623,7 @@ class MainActivity : AppCompatActivity() {
             sessionCal.set(Calendar.HOUR_OF_DAY, 0)
             sessionCal.set(Calendar.MINUTE, 0)
             sessionCal.set(Calendar.SECOND, 0)
+            sessionCal.set(Calendar.MILLISECOND, 0)
             val sessionTime = sessionCal.timeInMillis
             val daysDiff = ((todayTime - sessionTime) / (1000 * 60 * 60 * 24)).toInt()
 
@@ -591,6 +688,7 @@ class MainActivity : AppCompatActivity() {
     private fun createAndOpenSession() {
         lifecycleScope.launch {
             runCatching {
+                leaveIncognitoModeForNormalNavigation()
                 withContext(Dispatchers.IO) {
                     sessionRepository.createSession("新しいチャット")
                 }
@@ -630,6 +728,17 @@ class MainActivity : AppCompatActivity() {
                 Log.e(TAG, "Failed to create incognito session", it)
             }
         }
+    }
+
+    private suspend fun leaveIncognitoModeForNormalNavigation() {
+        if (!isIncognitoModeActive) return
+        isIncognitoModeActive = false
+        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        PreferencesHelper.applyThemeMode(this)
+        withContext(Dispatchers.IO) {
+            sessionRepository.deleteAllIncognitoSessions()
+        }
+        Log.d(TAG, "Exited incognito mode for normal chat navigation")
     }
 
     private fun showHistoryItemActions(session: ChatSessionEntity) {

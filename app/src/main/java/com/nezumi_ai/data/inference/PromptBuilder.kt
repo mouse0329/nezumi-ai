@@ -58,16 +58,18 @@ object PromptBuilder {
         systemPrompt: String,
         compressedSummary: String? = null,
         format: GgufPromptFormat = GgufPromptFormat.CHATML,
+        enableThinking: Boolean = false,
         sanitizeMessageContent: (MessageEntity) -> String
     ): String = when (format) {
-        GgufPromptFormat.GEMMA_CHAT -> buildForGgufGemma(messages, systemPrompt, compressedSummary, sanitizeMessageContent)
-        GgufPromptFormat.CHATML     -> buildForGgufChatMl(messages, systemPrompt, compressedSummary, sanitizeMessageContent)
+        GgufPromptFormat.GEMMA_CHAT -> buildForGgufGemma(messages, systemPrompt, compressedSummary, enableThinking, sanitizeMessageContent)
+        GgufPromptFormat.CHATML     -> buildForGgufChatMl(messages, systemPrompt, compressedSummary, enableThinking, sanitizeMessageContent)
     }
 
     private fun buildForGgufGemma(
         messages: List<MessageEntity>,
         systemPrompt: String,
         compressedSummary: String?,
+        enableThinking: Boolean,
         sanitizeMessageContent: (MessageEntity) -> String
     ): String {
         val sb = StringBuilder()
@@ -89,6 +91,7 @@ object PromptBuilder {
                 .append(content).append('\n').append("<end_of_turn>\n")
         }
         sb.append("<start_of_turn>model\n")
+        if (enableThinking) sb.append("<think>\n")
         return sb.toString()
     }
 
@@ -96,6 +99,7 @@ object PromptBuilder {
         messages: List<MessageEntity>,
         systemPrompt: String,
         compressedSummary: String?,
+        enableThinking: Boolean,
         sanitizeMessageContent: (MessageEntity) -> String
     ): String {
         val sb = StringBuilder()
@@ -117,6 +121,7 @@ object PromptBuilder {
                 .append(content).append("\n<|im_end|>\n")
         }
         sb.append("<|im_start|>assistant\n")
+        if (enableThinking) sb.append("<think>\n")
         return sb.toString()
     }
 }

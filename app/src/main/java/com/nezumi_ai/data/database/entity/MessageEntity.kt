@@ -35,5 +35,7 @@ data class MessageEntity(
     /** ツール実行結果のJSON配列 e.g. [{"toolName":"setalarm","success":true,"payload":{...}}] */
     val toolResultsJson: String? = null,
     /** 生成速度 (tokens/sec)。生成完了後に保存。null = 未計測 */
-    val generationTps: Float? = null
+    val generationTps: Float? = null,
+    /** 最初のトークン生成後から完了までの生成時間(ms)。null = 未計測 */
+    val generationTimeMs: Long? = null
 )

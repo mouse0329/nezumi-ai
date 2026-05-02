@@ -1,5 +1,7 @@
 package com.nezumi_ai.presentation.ui.helper
 
+import java.io.File
+
 /**
  * Settings UIで共用するヘルパー関数
  */
@@ -16,6 +18,18 @@ object SettingsHelper {
             lowered.endsWith(".task") -> "LiteRT-LM (.task)"
             else -> "Custom"
         }
+    }
+
+    /**
+     * モデルパスから実際に使用されるエンジンを判定
+     * @return "llama.cpp" または "LiteRT-LM"
+     */
+    fun inferenceEngineForModel(path: String): String {
+        val trimmed = path.trim()
+        val lowered = trimmed.lowercase()
+        // .gguf で絶対パスの場合のみ llama.cpp を使用
+        val isAbsoluteGguf = lowered.endsWith(".gguf") && File(trimmed).isAbsolute
+        return if (isAbsoluteGguf) "llama.cpp" else "LiteRT-LM"
     }
 
     /**

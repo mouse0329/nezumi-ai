@@ -17,18 +17,42 @@ object Gemma4ThinkingParser {
     private const val THINKING_END = "<channel|>"
     private const val THOUGHT_LABEL = "thought\n"
 
+    // llama.cpp (GGUF) 系のシンキングタグ
+    private const val THINK_START = "<think>"
+    private const val THINK_END = "</think>"
+
     /** モデルが回答末尾〜文中に連打することがある（旧 cleanAnswer は末尾1回しか剥がさなかった） */
     private val STRIP_TOKEN_SEQUENCES = listOf(
         "<end_of_turn>",
         "<turn|>",
         "<eos>",
         "<|eos|>",
-        "<|eot_id|>"
+        "<|eot_id|>",
+        "<think>",
+        "</think>"
     )
 
     fun parse(rawInput: String): Gemma4ThinkingParseResult {
         val raw = rawInput.trim()
         if (raw.isEmpty()) return Gemma4ThinkingParseResult(null, "")
+
+        // GGUF (<think>...</think>) 形式を優先チェック
+        if (THINK_END in raw) {
+            val parts = raw.split(THINK_END, limit = 2)
+            val thinking = parts[0].removePrefix(THINK_START).trim()
+            val answer = if (parts.size > 1) sanitizeVisibleText(parts[1]) else ""
+            return Gemma4ThinkingParseResult(
+                thinking = thinking.ifBlank { null },
+                answer = answer
+            )
+        }
+        if (raw.startsWith(THINK_START)) {
+            val thinking = raw.removePrefix(THINK_START).trim()
+            return Gemma4ThinkingParseResult(
+                thinking = thinking.ifBlank { null },
+                answer = ""
+            )
+        }
 
         val deduped = dedupeDoubledFullText(raw)
 
@@ -60,6 +84,24 @@ object Gemma4ThinkingParser {
      */
     fun parseStreaming(rawInput: String): Gemma4ThinkingParseResult {
         if (rawInput.isEmpty()) return Gemma4ThinkingParseResult(null, "")
+
+        // GGUF (<think>...</think>) 形式を優先チェック
+        if (THINK_END in rawInput) {
+            val idx = rawInput.indexOf(THINK_END)
+            val thinking = rawInput.substring(0, idx).removePrefix(THINK_START).trim()
+            val answer = sanitizeVisibleText(rawInput.substring(idx + THINK_END.length))
+            return Gemma4ThinkingParseResult(
+                thinking = thinking.ifBlank { null },
+                answer = answer
+            )
+        }
+        if (rawInput.startsWith(THINK_START)) {
+            val thinking = rawInput.removePrefix(THINK_START).trim()
+            return Gemma4ThinkingParseResult(
+                thinking = thinking.ifBlank { null },
+                answer = ""
+            )
+        }
 
         if (THINKING_END in rawInput) {
             val idx = rawInput.indexOf(THINKING_END)

@@ -20,6 +20,7 @@ import android.widget.PopupMenu
 import android.widget.Toast
 import android.widget.AdapterView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -51,6 +52,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -80,6 +82,7 @@ import com.nezumi_ai.data.inference.ToolCallState
 import com.nezumi_ai.presentation.ui.composable.ToolCallProgressBar
 import com.nezumi_ai.presentation.ui.composable.MediaPreviewBar
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
+import com.nezumi_ai.utils.PreferencesHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
@@ -127,7 +130,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var thinkingToggleChecked by mutableStateOf(false)
     private var thinkingToggleText by mutableStateOf("")
     private var currentToolCallState by mutableStateOf<ToolCallState?>(null)
-    private var gemmaThinkingGloballyEnabled = false
     private var messagesIsEmpty by mutableStateOf(true)
     private var isUserAtBottom = true
     private var wasImeVisible = false
@@ -295,7 +297,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         
         // ViewModel初期化
         val database = NezumiAiDatabase.getInstance(requireContext())
-        settingsRepository = SettingsRepository(database.settingsDao(), database.chatSessionDao())
+        settingsRepository = SettingsRepository(database.settingsDao(), database.chatSessionDao(), requireContext().applicationContext)
         val sessionRepository = ChatSessionRepository(database.chatSessionDao(), settingsRepository)
         val messageRepository = MessageRepository(database.messageDao())
         val factory = ChatViewModelFactory(
@@ -368,6 +370,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             override fun onItemRangeChanged(positionStart: Int, itemCount: Int, payload: Any?) = maybeScrollToBottom()
         })
         
+        // nav args から incognito フラグを適用
+        if (args.isIncognito) {
+            viewModel.setIncognitoMode(true)
+        }
+
         // Observe incognito mode and apply security settings
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.isIncognitoMode.collect { isIncognito ->
@@ -376,16 +383,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
         }
 
-        // nav args から incognito フラグを適用
-        if (args.isIncognito) {
-            viewModel.setIncognitoMode(true)
-        }
-
         viewLifecycleOwner.lifecycleScope.launch {
             settingsRepository.getSettings().collect { settings ->
-                gemmaThinkingGloballyEnabled = settings?.gemmaThinkingEnabled == true
                 contextCompressionEnabled = settings?.contextCompressionEnabled == true
-                adapter.setThinkingVisible(gemmaThinkingGloballyEnabled)
+                adapter.setThinkingVisible(true)
                 updateThinkingToggleVisibility()
                 renderCompressButtonState()
             }
@@ -398,17 +399,19 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 try {
                     val savedSessionId = settingsRepository.loadCurrentSessionId()
                     if (savedSessionId > 0) {
-                        Log.d("ChatFragment", "Restoring previous session: $savedSessionId")
-                        // ★ setCurrentSession は suspend 関数に変更されたため、直接 await する
-                        viewModel.setCurrentSession(savedSessionId)
+                        val savedSession = sessionRepository.getSessionById(savedSessionId)
+                        if (savedSession != null && !savedSession.isIncognito) {
+                            Log.d("ChatFragment", "Restoring previous session: $savedSessionId")
+                            // ★ setCurrentSession は suspend 関数に変更されたため、直接 await する
+                            viewModel.setCurrentSession(savedSessionId)
+                        } else {
+                            Log.d("ChatFragment", "Saved session is unavailable or incognito. Creating new session.")
+                            val newSessionId = sessionRepository.createSession("新しいチャット")
+                            settingsRepository.saveCurrentSessionId(newSessionId)
+                            viewModel.setCurrentSession(newSessionId)
+                        }
                     } else {
                         Log.d("ChatFragment", "No saved session found. Creating new session.")
-                        val database = NezumiAiDatabase.getInstance(requireContext())
-                        val sessionRepository = ChatSessionRepository(
-                            database.chatSessionDao(),
-                            settingsRepository,
-                            MessageRepository(database.messageDao())
-                        )
                         val newSessionId = sessionRepository.createSession("新しいチャット")
                         settingsRepository.saveCurrentSessionId(newSessionId)
                         // ★ setCurrentSession は suspend 関数に変更されたため、直接 await する
@@ -424,7 +427,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         } else {
             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    settingsRepository.saveCurrentSessionId(sessionId)
+                    if (!args.isIncognito) {
+                        settingsRepository.saveCurrentSessionId(sessionId)
+                    }
                     // ★ setCurrentSession は suspend 関数に変更されたため、直接 await する
                     viewModel.setCurrentSession(sessionId)
                 } catch (e: Exception) {
@@ -529,6 +534,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 Toast.makeText(requireContext(), "このモデルは画像・音声入力に対応していません", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
+            val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            imm.hideSoftInputFromWindow(view.windowToken, 0)
             val popupMenu = PopupMenu(requireContext(), view)
             popupMenu.menuInflater.inflate(R.menu.menu_media_select, popupMenu.menu)
             if (!imageInputEnabled) {
@@ -638,14 +645,16 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         viewLifecycleOwner.lifecycleScope.launch {
             combine(
                 viewModel.contextUsageChars,
-                viewModel.contextWindowCapacityChars
-            ) { used, maxChars ->
-                Pair(used, maxChars)
-            }.collect { (used, maxChars) ->
-                contextUsageCharsNow = used
-                contextMeterText = getString(R.string.context_meter_format, used, maxChars)
+                viewModel.contextWindowSize
+            ) { usedChars, maxTokens ->
+                Pair(usedChars, maxTokens)
+            }.collect { (usedChars, maxTokens) ->
+                val usedTokens = ((usedChars + 3) / 4).coerceAtLeast(0)
+                val safeMaxTokens = maxTokens.coerceAtLeast(1)
+                contextUsageCharsNow = usedChars
+                contextMeterText = getString(R.string.context_meter_format, usedTokens, safeMaxTokens)
                 contextMeterProgress =
-                    (((used.toLong() * 1000L) / maxChars.toLong()).toInt().coerceIn(0, 1000) / 1000f)
+                    (((usedTokens.toLong() * 1000L) / safeMaxTokens.toLong()).toInt().coerceIn(0, 1000) / 1000f)
                 renderCompressButtonState()
             }
         }
@@ -665,6 +674,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.memoryWarning.collect { warning ->
                 if (warning != null) showMemoryWarningDialog(warning)
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.cpuCompatibilityWarning.collect { warning ->
+                if (warning != null) showCpuCompatibilityWarningDialog(warning)
             }
         }
 
@@ -697,8 +712,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private fun applyIncognitoModeSettings(isIncognito: Boolean) {
         if (isIncognito) {
             requireActivity().window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         } else {
             requireActivity().window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            PreferencesHelper.applyThemeMode(requireContext())
         }
         val headerColor = if (isIncognito)
             androidx.core.content.ContextCompat.getColor(requireContext(), R.color.incognito_surface)
@@ -1051,7 +1068,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private fun updateThinkingToggleVisibility() {
         val modelSupportsThinking = settingsRepository.modelSupportsGemmaThinking(currentModelKey)
-        thinkingToggleVisible = modelSupportsThinking && gemmaThinkingGloballyEnabled
+        thinkingToggleVisible = modelSupportsThinking
         renderCompressButtonState()
     }
 
@@ -1137,22 +1154,21 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
         )
         binding.mediaPreviewCompose.setContent {
-            MediaPreviewBar(
-                hasImage = selectedImageUrisList.isNotEmpty(),
-                hasAudio = selectedAudioUri != null,
-                imageUris = selectedImageUrisList,  // Phase 11: 複数画像URI を渡す
-                onClearImage = { selectedImageUrisList = emptyList() },
-                onRemoveImage = { index ->  // Phase 11: 個別削除機能
-                    // ★ バグ修正: selectedImageUrisList 状態更新のみで十分
-                    // updateMediaPreview() を呼ぶと Recomposition 競合が発生し、画像プレビューがおかしくなる
-                    if (index in selectedImageUrisList.indices) {
-                        selectedImageUrisList = selectedImageUrisList.filterIndexed { i, _ -> i != index }
-                        // updateMediaPreview() は呼ばない（状態更新で自動 Recomposition される）
-                    }
-                },
-                audioUri = selectedAudioUri,  // Phase 12: 音声URI を渡す
-                onClearAudio = { selectedAudioUri = null }
-            )
+            NezumiComposeTheme {
+                MediaPreviewBar(
+                    hasImage = selectedImageUrisList.isNotEmpty(),
+                    hasAudio = selectedAudioUri != null,
+                    imageUris = selectedImageUrisList,
+                    onClearImage = { selectedImageUrisList = emptyList() },
+                    onRemoveImage = { index ->
+                        if (index in selectedImageUrisList.indices) {
+                            selectedImageUrisList = selectedImageUrisList.filterIndexed { i, _ -> i != index }
+                        }
+                    },
+                    audioUri = selectedAudioUri,
+                    onClearAudio = { selectedAudioUri = null }
+                )
+            }
         }
 
         binding.emptyStateCompose.setViewCompositionStrategy(
@@ -1203,6 +1219,71 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             .setCancelable(false)
             .create()
         alertDialog.show()
+    }
+
+    private fun showCpuCompatibilityWarningDialog(warning: ChatViewModel.CpuCompatibilityWarningInfo) {
+        val alertDialog = androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("⚠️ CPU互換性警告")
+            .setMessage(
+                "モデル「${warning.modelName}」のロード前に確認が必要です。\n\n" +
+                    warning.message + "\n\n" +
+                    "ロードを続行しますか？"
+            )
+            .setPositiveButton("続行") { _, _ ->
+                val scope = if (view != null && isAdded) {
+                    try {
+                        viewLifecycleOwner.lifecycleScope
+                    } catch (e: Exception) {
+                        MainScope()
+                    }
+                } else {
+                    MainScope()
+                }
+                scope.launch {
+                    try {
+                        viewModel.proceedWithCpuCompatibilityWarning(viewModel.selectedModel.value)
+                    } catch (e: Exception) {
+                        Log.e("ChatFragment", "Error in CPU compatibility warning continue button", e)
+                    }
+                }
+            }
+            .setNegativeButton("キャンセル") { _, _ ->
+                viewModel.cancelCpuCompatibilityWarning()
+            }
+            .setCancelable(false)
+            .create()
+        alertDialog.show()
+    }
+
+    @Composable
+    private fun NezumiComposeTheme(content: @Composable () -> Unit) {
+        val isDark = androidx.compose.foundation.isSystemInDarkTheme()
+        val primary = colorResource(id = R.color.primary)
+        val onPrimary = colorResource(id = R.color.nezumi_on_primary)
+        val primaryContainer = colorResource(id = R.color.nezumi_primary_container)
+        val onPrimaryContainer = colorResource(id = R.color.nezumi_on_primary_container)
+        val surface = colorResource(id = R.color.surface_card)
+        val onSurface = colorResource(id = R.color.text_primary)
+        val onSurfaceVariant = colorResource(id = R.color.text_secondary)
+        val bg = colorResource(id = R.color.bg_chat)
+        val colorScheme = if (isDark) {
+            androidx.compose.material3.darkColorScheme(
+                primary = primary, onPrimary = onPrimary,
+                primaryContainer = primaryContainer, onPrimaryContainer = onPrimaryContainer,
+                background = bg, onBackground = onSurface,
+                surface = surface, onSurface = onSurface,
+                surfaceVariant = surface, onSurfaceVariant = onSurfaceVariant
+            )
+        } else {
+            androidx.compose.material3.lightColorScheme(
+                primary = primary, onPrimary = onPrimary,
+                primaryContainer = primaryContainer, onPrimaryContainer = onPrimaryContainer,
+                background = bg, onBackground = onSurface,
+                surface = surface, onSurface = onSurface,
+                surfaceVariant = surface, onSurfaceVariant = onSurfaceVariant
+            )
+        }
+        MaterialTheme(colorScheme = colorScheme, content = content)
     }
 
     @Composable

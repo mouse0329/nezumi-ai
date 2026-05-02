@@ -41,7 +41,6 @@ class SettingsComposeFragment : Fragment() {
     private var userNameInput by mutableStateOf("")
     private var systemPromptInput by mutableStateOf("")
     private var backendType by mutableStateOf("CPU")
-    private var gemmaThinkingEnabled by mutableStateOf(false)
     private var themeMode by mutableStateOf(PreferencesHelper.THEME_SYSTEM)
     private var errorDialogMessage by mutableStateOf<String?>(null)
     private var llamaCppThreads by mutableStateOf(InferenceConfig.getDefaultThreadCount())
@@ -190,20 +189,6 @@ class SettingsComposeFragment : Fragment() {
                         selected = backendType == "NPU",
                         onClick = { backendType = "NPU" },
                         label = { Text("NPU") }
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = "Gemma 4 シンキング有効化",
-                        color = colorResource(id = R.color.text_primary)
-                    )
-                    Switch(
-                        checked = gemmaThinkingEnabled,
-                        onCheckedChange = { gemmaThinkingEnabled = it }
                     )
                 }
             }
@@ -499,7 +484,6 @@ class SettingsComposeFragment : Fragment() {
             val userName = settingsRepository.getUserName()
             val selectedModel = settingsRepository.getSelectedModel()
             val contextWindow = settingsRepository.getContextWindowForModel(selectedModel)
-            val thinkingEnabled = settingsRepository.isGemmaThinkingEnabled()
             val threads = settingsRepository.getLlamaCppThreads()
             val gpuLayers = settingsRepository.getLlamaCppGpuLayers()
             val batchSize = settingsRepository.getLlamaCppBatchSize()
@@ -516,7 +500,6 @@ class SettingsComposeFragment : Fragment() {
             userNameInput = userName
             systemPromptInput = systemPrompt
             backendType = config.backendType
-            gemmaThinkingEnabled = thinkingEnabled
             themeMode = PreferencesHelper.getThemeMode(requireContext())
             maxThreads = InferenceConfig.MAX_THREADS
             llamaCppThreads = threads.coerceIn(1, maxThreads)
@@ -576,7 +559,6 @@ class SettingsComposeFragment : Fragment() {
         )
         settingsRepository.updateSystemPrompt(systemPromptInput)
         settingsRepository.updateUserName(userNameInput)
-        settingsRepository.updateGemmaThinkingEnabled(gemmaThinkingEnabled)
         settingsRepository.updateLlamaCppThreads(llamaCppThreads)
         settingsRepository.updateLlamaCppGpuLayers(llamaCppGpuLayers)
         settingsRepository.updateLlamaCppBatchSize(llamaCppBatchSize)

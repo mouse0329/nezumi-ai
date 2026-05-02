@@ -6,10 +6,7 @@ class RnLlamaContext(
     nBatch: Int,
     nThreads: Int,
     nGpuLayers: Int,
-    useMmap: Boolean,
-    useMlock: Boolean,
-    ropeFreqBase: Float,
-    ropeFreqScale: Float
+    mmprojPath: String? = null
 ) {
     private var ptr: Long =
         RnLlamaNative.nativeCreateContext(
@@ -18,10 +15,11 @@ class RnLlamaContext(
             nBatch = nBatch,
             nThreads = nThreads,
             nGpuLayers = nGpuLayers,
-            useMmap = useMmap,
-            useMlock = useMlock,
-            ropeFreqBase = ropeFreqBase,
-            ropeFreqScale = ropeFreqScale
+            useMmap = true,
+            useMlock = false,
+            ropeFreqBase = 0f,
+            ropeFreqScale = 1f,
+            mmprojPath = mmprojPath
         )
 
     val isValid: Boolean get() = ptr != 0L
@@ -42,12 +40,11 @@ class RnLlamaContext(
             RnLlamaNative.nativeSetTokenCallback(ptr, null)
             return
         }
-        RnLlamaNative.nativeSetTokenCallback(
-            ptr,
-            object : RnLlamaNative.TokenCallback {
-                override fun onToken(token: String) = cb(token)
+        RnLlamaNative.nativeSetTokenCallback(ptr, object : RnLlamaNative.TokenCallback {
+            override fun onToken(token: String) {
+                cb(token)
             }
-        )
+        })
     }
 
     fun complete(
@@ -97,6 +94,12 @@ class RnLlamaContext(
             decodeMs = values[2],
             decodeTokens = values[3]
         )
+    }
+
+    fun interrupt() {
+        val p = ptr
+        if (p == 0L) return
+        RnLlamaNative.nativeInterrupt(p)
     }
 
     fun release() {

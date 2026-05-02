@@ -10,5 +10,6 @@ data class ChatSessionEntity(
     val name: String,
     val createDate: Long,
     val lastUpdated: Long,
-    val selectedModel: String = "E2B" // E2B or E4B
+    val selectedModel: String = "E2B", // E2B or E4B
+    val isIncognito: Boolean = false
 )

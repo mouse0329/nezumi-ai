@@ -7,6 +7,7 @@ import androidx.appcompat.app.AppCompatDelegate
 object PreferencesHelper {
     private const val PREF_NAME = "app_prefs"
     private const val KEY_FIRST_LAUNCH = "first_launch"
+    private const val KEY_INITIAL_SETUP_COMPLETED = "initial_setup_completed"
     private const val KEY_THEME_MODE = "theme_mode"
 
     const val THEME_SYSTEM = "SYSTEM"
@@ -55,5 +56,20 @@ object PreferencesHelper {
             else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
         }
         AppCompatDelegate.setDefaultNightMode(nightMode)
+    }
+
+    fun isInitialSetupCompleted(context: Context): Boolean {
+        val prefs = getSharedPreferences(context)
+        return prefs.getBoolean(KEY_INITIAL_SETUP_COMPLETED, false)
+    }
+
+    fun markInitialSetupCompleted(context: Context) {
+        val prefs = getSharedPreferences(context)
+        prefs.edit().putBoolean(KEY_INITIAL_SETUP_COMPLETED, true).apply()
+    }
+
+    fun resetInitialSetupCompleted(context: Context) {
+        val prefs = getSharedPreferences(context)
+        prefs.edit().putBoolean(KEY_INITIAL_SETUP_COMPLETED, false).apply()
     }
 }

@@ -81,13 +81,13 @@ fun ExpandableThinkingBlock(
                 if (isLoading) {
                     // ストリーミング中：パルスアニメーション風テキスト
                     Text(
-                        text = "🧠 思考プロセス生成中...",
+                        text = "思考プロセス生成中...",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 } else {
                     Text(
-                        text = "🧠 思考プロセス",
+                        text = "혁思考プロセス",
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleSmall
                     )
@@ -142,19 +142,19 @@ fun ToolCallProgressBar(
         is ToolCallState.Result -> {
             when (state.status) {
                 "success" -> Triple(
-                    "✅",
+                    "[OK]",
                     Color(0xFF4CAF50),
                     "${state.toolName}: 成功${state.resultMessage?.let { " ($it)" } ?: ""}"
                 )
                 else -> Triple(
-                    "❌",
+                    "[ERROR]",
                     Color(0xFFF44336),
                     "${state.toolName}: 失敗${state.resultMessage?.let { " ($it)" } ?: ""}"
                 )
             }
         }
         ToolCallState.Responding -> {
-            Triple("✍️", Color(0xFF9C27B0), "回答を作成中...")
+            Triple("学", Color(0xFF9C27B0), "回答を作成中...")
         }
         else -> return // Done, その他のケース
     }
@@ -225,10 +225,11 @@ fun MediaPreviewBar(
         // Phase 11: 複数画像のスクロール表示
         if (imageUris.isNotEmpty()) {
             Text(
-                text = "📸 ${imageUris.size}/5 画像",
-                style = MaterialTheme.typography.labelSmall,
+                text = "${imageUris.size}/5 画像",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(bottom = 8.dp),
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.primary
             )
             
             LazyRow(
@@ -236,7 +237,12 @@ fun MediaPreviewBar(
                     .fillMaxWidth()
                     .height(100.dp)
                     .background(
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                        MaterialTheme.colorScheme.surfaceContainerHighest,
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                    )
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
                     )
                     .padding(8.dp),
@@ -282,7 +288,12 @@ fun MediaPreviewBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                        MaterialTheme.colorScheme.surfaceContainerHighest,
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                    )
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
                     )
                     .padding(12.dp),
@@ -301,9 +312,10 @@ fun MediaPreviewBar(
                         .padding(start = 4.dp)
                 ) {
                     Text(
-                        text = "🎙️ 音声",
+                        text = "音声",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
                     )
                     if (audioUri != null) {
                         val fileName = audioUri.substringAfterLast("/")
@@ -408,16 +420,12 @@ fun OldMediaPreviewBar(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "🖼️",
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                    Text(
                         text = "画像",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "✕",
+                        text = "×",
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.clickable { onClearImage() },
                         color = MaterialTheme.colorScheme.error
@@ -437,16 +445,12 @@ fun OldMediaPreviewBar(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "🎵",
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                    Text(
                         text = "音声",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "✕",
+                        text = "×",
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.clickable { onClearAudio() },
                         color = MaterialTheme.colorScheme.error
