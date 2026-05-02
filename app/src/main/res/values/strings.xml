@@ -45,7 +45,7 @@
     <string name="model_e4b_label">Gemma 3n E4B</string>
     <string name="model_not_downloaded">モデル未ダウンロード</string>
     <string name="model_loading">モデルをロード中...</string>
-    <string name="context_meter_format">コンテキスト使用量: %1$d / %2$d</string>
+    <string name="context_meter_format">コンテキスト使用量: %1$d / %2$d tokens</string>
     <string name="response_generating">応答中</string>
     <string name="response_compressing">圧縮中</string>
     <string name="compress_context">圧縮</string>

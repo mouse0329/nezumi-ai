@@ -376,10 +376,10 @@ class ModelManager(
         }
     }
 
-    fun getLastGenerationTps(): Float? {
+    fun getLastGenerationTokenCount(): Float? {
         val engine = activeEngine
         return if (engine is GgufInferenceEngine) {
-            engine.getLastGenerationTps()
+            engine.getLastGenerationTokenCount()
         } else {
             null
         }

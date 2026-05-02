@@ -53,7 +53,8 @@ class MessageRepository(private val dao: MessageDao) {
         isStreaming: Boolean,
         thinkingContent: String? = null,
         toolResultsJson: String? = null,
-        generationTps: Float? = null
+        generationTps: Float? = null,
+        generationTimeMs: Long? = null
     ) {
         val current = dao.getMessageById(messageId) ?: return
         dao.update(
@@ -62,7 +63,8 @@ class MessageRepository(private val dao: MessageDao) {
                 thinkingContent = thinkingContent,
                 isStreaming = isStreaming,
                 toolResultsJson = toolResultsJson ?: current.toolResultsJson,
-                generationTps = generationTps ?: current.generationTps
+                generationTps = generationTps ?: current.generationTps,
+                generationTimeMs = generationTimeMs ?: current.generationTimeMs
             )
         )
     }

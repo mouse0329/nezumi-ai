@@ -110,8 +110,52 @@ class ToolsSettingsFragment : Fragment() {
                     )
                 }
             }
+            item { Gemma4OnlyNoticeCard() }
+            item { BetaNoticeCard() }
             item { ToolSettingsCard() }
             item { AlarmSettingsCard() }
+        }
+    }
+
+    @Composable
+    private fun Gemma4OnlyNoticeCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                Text(text = "ℹ️", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = "ツール機能は Gemma 4 モデルでのみ動作します。他のモデルでは無効になります。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun BetaNoticeCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                Text(text = "⚠️", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = "アラーム・タイマー系のツール（アラームセット・解除・リスト、タイマー開始・停止・一覧）はベータ版です。予期しない動作が発生する場合があります。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
         }
     }
 
@@ -180,10 +224,10 @@ class ToolsSettingsFragment : Fragment() {
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Switch(
-                                    checked = alarm.enabled,
+                                    checked = alarm.isEnabled,
                                     onCheckedChange = { checked ->
                                         viewLifecycleOwner.lifecycleScope.launch {
-                                            alarmDao.setEnabled(alarm.id, checked)
+                                            alarmDao.setAlarmEnabled(alarm.id, checked)
                                         }
                                     }
                                 )

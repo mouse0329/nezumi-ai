@@ -104,6 +104,20 @@ class ModelSettingsFragment : Fragment() {
     private var capabilityDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
     private var capabilityDialogImageEnabled by mutableStateOf(false)
     private var capabilityDialogAudioEnabled by mutableStateOf(false)
+    private var capabilityDialogThinkingEnabled by mutableStateOf(false)
+    private var capabilityDialogMmprojPath by mutableStateOf("")
+
+    private val mmprojPickerLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            viewLifecycleOwner.lifecycleScope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    ModelFileManager.importTaskFromUri(requireContext(), uri)
+                }
+                result.onSuccess { capabilityDialogMmprojPath = it.absolutePath }
+                    .onFailure { toast("mmproj追加失敗: ${it.message}") }
+            }
+        }
     private var stopTokensDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
     private var stopTokensDialogText by mutableStateOf("")
     private var expandedModelKey by mutableStateOf<String?>(null)
@@ -144,6 +158,8 @@ class ModelSettingsFragment : Fragment() {
                     capabilityDialogModel = imported
                     capabilityDialogImageEnabled = false
                     capabilityDialogAudioEnabled = false
+                    capabilityDialogThinkingEnabled = false
+                    capabilityDialogMmprojPath = ""
                 }.onFailure {
                     toast("追加失敗: ${it.message}")
                 }
@@ -323,7 +339,7 @@ class ModelSettingsFragment : Fragment() {
         Dialog(onDismissRequest = {}) {
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = colorResource(id = R.color.primary_light)
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                 )
             ) {
                 Column(
@@ -333,18 +349,19 @@ class ModelSettingsFragment : Fragment() {
                     Text(
                         text = "追加モデルの機能設定",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         text = model.name,
-                        color = colorResource(id = R.color.text_secondary)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("画像入力を有効化")
+                        Text("画像入力を有効化", color = MaterialTheme.colorScheme.onSurface)
                         Switch(
                             checked = capabilityDialogImageEnabled,
                             onCheckedChange = { capabilityDialogImageEnabled = it }
@@ -355,17 +372,62 @@ class ModelSettingsFragment : Fragment() {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("音声入力を有効化")
+                        Text("音声入力を有効化", color = MaterialTheme.colorScheme.onSurface)
                         Switch(
                             checked = capabilityDialogAudioEnabled,
                             onCheckedChange = { capabilityDialogAudioEnabled = it }
                         )
                     }
+                    // thinking（GGUFのみ）
+                    if (capabilityDialogModel?.path?.lowercase()?.endsWith(".gguf") == true) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("推論（Thinking）を有効化", color = MaterialTheme.colorScheme.onSurface)
+                            Switch(
+                                checked = capabilityDialogThinkingEnabled,
+                                onCheckedChange = { capabilityDialogThinkingEnabled = it }
+                            )
+                        }
+                    }
                     Text(
                         text = "標準は画像・音声とも無効です",
-                        color = colorResource(id = R.color.text_secondary),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall
                     )
+                    // mmproj設定（GGUFのみ）
+                    if (capabilityDialogModel?.path?.lowercase()?.endsWith(".gguf") == true) {
+                        Text(
+                            text = "mmproj（マルチモーダル）",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        if (capabilityDialogMmprojPath.isNotBlank()) {
+                            Text(
+                                text = java.io.File(capabilityDialogMmprojPath).name,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { mmprojPickerLauncher.launch(arrayOf("*/*")) }) {
+                                Text(if (capabilityDialogMmprojPath.isBlank()) "mmprojを選択" else "変更")
+                            }
+                            if (capabilityDialogMmprojPath.isNotBlank()) {
+                                TextButton(onClick = { capabilityDialogMmprojPath = "" }) {
+                                    Text("解除")
+                                }
+                            }
+                        }
+                        Text(
+                            text = "LLaVA等の mmproj .gguf を指定すると画像入力が有効になります",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End
@@ -376,7 +438,9 @@ class ModelSettingsFragment : Fragment() {
                                 model.path,
                                 ImportedModelCapabilities(
                                     imageEnabled = capabilityDialogImageEnabled,
-                                    audioEnabled = capabilityDialogAudioEnabled
+                                    audioEnabled = capabilityDialogAudioEnabled,
+                                    mmprojPath = capabilityDialogMmprojPath.ifBlank { null },
+                                    thinkingEnabled = capabilityDialogThinkingEnabled
                                 )
                             )
                             capabilityDialogModel = null
@@ -396,7 +460,7 @@ class ModelSettingsFragment : Fragment() {
         Dialog(onDismissRequest = { stopTokensDialogModel = null }) {
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = colorResource(id = R.color.primary_light)
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                 )
             ) {
                 Column(
@@ -406,11 +470,12 @@ class ModelSettingsFragment : Fragment() {
                     Text(
                         text = "ストップトークン",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         text = model.name,
-                        color = colorResource(id = R.color.text_secondary)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     OutlinedTextField(
                         modifier = Modifier.fillMaxWidth(),
@@ -422,7 +487,7 @@ class ModelSettingsFragment : Fragment() {
                     )
                     Text(
                         text = "カンマ区切りで複数指定できます。デフォルトのストップトークンに追加されます。",
-                        color = colorResource(id = R.color.text_secondary),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall
                     )
                     Row(
@@ -838,7 +903,18 @@ class ModelSettingsFragment : Fragment() {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(text = title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = title, fontWeight = FontWeight.SemiBold)
+                        // 組み込みモデルはすべて LiteRT-LM を使用
+                        if (!isExpanded) {
+                            Text(
+                                text = "🚀 LiteRT-LM",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorResource(id = R.color.primary),
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                    }
                     if (!isExpanded && isDownloaded && !isDownloading) {
                         Text(
                             text = "✓ ダウンロード済み",
@@ -856,6 +932,14 @@ class ModelSettingsFragment : Fragment() {
                     }
                 }
                 if (isExpanded) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    // 展開時にエンジン情報を表示
+                    Text(
+                        text = "🚀 LiteRT-LM",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colorResource(id = R.color.primary),
+                        fontWeight = FontWeight.SemiBold
+                    )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(text = status, style = MaterialTheme.typography.bodySmall, color = colorResource(id = R.color.text_secondary))
                     if (isDownloading && progressText.isNotEmpty()) {
@@ -920,7 +1004,18 @@ class ModelSettingsFragment : Fragment() {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(text = name, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = name, fontWeight = FontWeight.SemiBold)
+                        // エンジン情報を表示
+                        if (!isExpanded) {
+                            Text(
+                                text = "🚀 " + SettingsHelper.inferenceEngineForModel(path),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorResource(id = R.color.primary),
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                    }
                     if (!isExpanded) {
                         Text(
                             text = "✓ インポート済み",
@@ -931,6 +1026,28 @@ class ModelSettingsFragment : Fragment() {
                     }
                 }
                 if (isExpanded) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    // エンジン情報と種別を展開時に表示
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(colorResource(id = R.color.bg_session_list))
+                            .padding(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "🚀 " + SettingsHelper.inferenceEngineForModel(path),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colorResource(id = R.color.primary),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "(" + SettingsHelper.importedModelKindLabel(path) + ")",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colorResource(id = R.color.text_secondary)
+                        )
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(text = "追加済みモデル", style = MaterialTheme.typography.bodySmall, color = colorResource(id = R.color.text_secondary))
                     Spacer(modifier = Modifier.height(8.dp))
@@ -943,6 +1060,8 @@ class ModelSettingsFragment : Fragment() {
                                 val caps = ImportedModelCapabilityStore.get(requireContext(), path)
                                 capabilityDialogImageEnabled = caps.imageEnabled
                                 capabilityDialogAudioEnabled = caps.audioEnabled
+                                capabilityDialogThinkingEnabled = caps.thinkingEnabled
+                                capabilityDialogMmprojPath = caps.mmprojPath ?: ""
                                 capabilityDialogModel = ModelFileManager.ImportedTaskModel(name, path)
                             },
                             modifier = Modifier.weight(1f)

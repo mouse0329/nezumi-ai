@@ -18,7 +18,7 @@ import androidx.core.content.ContextCompat
 import com.nezumi_ai.data.alarm.AlarmReceiver
 import java.util.Calendar
 import java.util.Timer
-import kotlin.concurrent.timer
+import java.util.TimerTask
 
 object ToolSystemController {
     private const val TAG = "ToolSystemController"
@@ -64,13 +64,13 @@ object ToolSystemController {
                     Log.w(TAG, "Failed to register system timer", e)
                 }
 
-                val timerInstance = kotlin.concurrent.timer(
-                    initialDelay = durationSeconds * 1000,
-                    period = 0
-                ) {
-                    Log.d(TAG, "Timer $timerId ($name) finished")
-                    synchronized(timers) { timers.remove(timerId) }
-                }
+                val timerInstance = Timer()
+                timerInstance.schedule(object : TimerTask() {
+                    override fun run() {
+                        Log.d(TAG, "Timer $timerId ($name) finished")
+                        synchronized(timers) { timers.remove(timerId) }
+                    }
+                }, durationSeconds * 1000)
 
                 timers[timerId] = TimerEntry(timerId, name, durationSeconds, startTime, timerInstance)
                 Log.d(TAG, "Timer started: $timerId, duration: $durationSeconds seconds")

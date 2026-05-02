@@ -2,6 +2,7 @@ package com.nezumi_ai.data.database.dao
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import com.nezumi_ai.data.database.entity.SettingsEntity
@@ -10,8 +11,8 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface SettingsDao {
     
-    @Insert
-    suspend fun insert(settings: SettingsEntity)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(settings: SettingsEntity): Long
     
     @Update
     suspend fun update(settings: SettingsEntity)

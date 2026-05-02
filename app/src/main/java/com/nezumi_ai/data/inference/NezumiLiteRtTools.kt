@@ -294,7 +294,15 @@ internal class NezumiLiteRtToolExecutor(
             )
         }
         withContext(Dispatchers.IO) {
-            alarmDao.insert(AlarmEntity(hour = hour, minute = minute, label = label, enabled = true))
+            val now = System.currentTimeMillis()
+            alarmDao.insert(AlarmEntity(
+                title = label,
+                hour = hour,
+                minute = minute,
+                label = label,
+                triggerTime = now,
+                isEnabled = true
+            ))
         }
         return ToolExecutionResult(
             success = true,
@@ -316,7 +324,10 @@ internal class NezumiLiteRtToolExecutor(
             )
         }
         withContext(Dispatchers.IO) {
-            alarmDao.delete(hour, minute)
+            val alarm = alarmDao.getAllAlarms().find { it.hour == hour && it.minute == minute }
+            if (alarm != null) {
+                alarmDao.deleteById(alarm.id)
+            }
         }
         return ToolExecutionResult(
             success = true,
@@ -325,14 +336,14 @@ internal class NezumiLiteRtToolExecutor(
     }
 
     private suspend fun executeListAlarms(): ToolExecutionResult {
-        val alarms = withContext(Dispatchers.IO) { alarmDao.getAll() }
+        val alarms = withContext(Dispatchers.IO) { alarmDao.getAllAlarms() }
         val rows = alarms.map {
             mapOf(
                 "id" to it.id,
                 "hour" to it.hour,
                 "minute" to it.minute,
                 "label" to it.label,
-                "enabled" to it.enabled
+                "enabled" to it.isEnabled
             )
         }
         return ToolExecutionResult(

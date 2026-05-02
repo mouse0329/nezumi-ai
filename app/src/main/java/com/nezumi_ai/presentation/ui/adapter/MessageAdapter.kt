@@ -112,9 +112,9 @@ class MessageAdapter(
                 // Phase 14: file:// と content:// 両対応
                 try {
                     val loadUri = MessageMediaStore.toUri(uri)
-                    if (loadUri.scheme == "file") {
+                    if (loadUri?.scheme == "file") {
                         // file:// スキーム：直接ファイルから読み込み
-                        val path = loadUri.path
+                        val path = loadUri?.path
                         if (path != null && java.io.File(path).exists()) {
                             val bitmap = android.graphics.BitmapFactory.decodeFile(path)
                             if (bitmap != null) {
@@ -125,7 +125,7 @@ class MessageAdapter(
                         } else {
                             imageView.setImageResource(android.R.drawable.ic_menu_gallery)
                         }
-                    } else {
+                    } else if (loadUri != null) {
                         // content:// スキーム：contentResolver で読み込み
                         imageView.setImageURI(loadUri)
                     }
@@ -157,9 +157,9 @@ class MessageAdapter(
             }
             try {
                 val loadUri = MessageMediaStore.toUri(imageUri)
-                if (loadUri.scheme == "file") {
+                if (loadUri?.scheme == "file") {
                     // file:// スキーム：直接ファイルから読み込み
-                    val path = loadUri.path
+                    val path = loadUri?.path
                     if (path != null && java.io.File(path).exists()) {
                         val bitmap = android.graphics.BitmapFactory.decodeFile(path)
                         if (bitmap != null) {
@@ -297,11 +297,12 @@ class MessageAdapter(
         
         private fun setupAudioPlayback(audioUri: String, playButton: View, durationText: View) {
             try {
+                val audioUriObj = MessageMediaStore.toUri(audioUri) ?: return
                 mediaPlayer?.release()
                 mediaPlayer = MediaPlayer().apply {
                     setDataSource(
                         binding.root.context,
-                        MessageMediaStore.toUri(audioUri)
+                        audioUriObj
                     )
                     setOnPreparedListener { mp ->
                         val duration = mp.duration / 1000
@@ -517,9 +518,13 @@ class MessageAdapter(
                 }
 
                 val tps = message.generationTps
-                if (!message.isStreaming && tps != null && tps > 0f) {
+                val generationTimeMs = message.generationTimeMs
+                if (!message.isStreaming && ((tps != null && tps > 0f) || (generationTimeMs != null && generationTimeMs > 0L))) {
                     tvTps.visibility = View.VISIBLE
-                    tvTps.text = String.format("%.1f t/s", tps)
+                    tvTps.text = listOfNotNull(
+                        tps?.takeIf { it > 0f }?.let { String.format("%.1f t/s", it) },
+                        generationTimeMs?.takeIf { it > 0L }?.let { formatGenerationTime(it) }
+                    ).joinToString("  ·  ")
                 } else {
                     tvTps.visibility = View.GONE
                 }
@@ -544,6 +549,17 @@ class MessageAdapter(
             binding.aiMessageMarkdownCompose.visibility = View.GONE
             lastRenderedContent = text
             lastRenderedContentMode = ContentRenderMode.Placeholder
+        }
+
+        private fun formatGenerationTime(ms: Long): String {
+            return if (ms < 60_000L) {
+                String.format("生成 %.1fs", ms / 1000f)
+            } else {
+                val totalSeconds = ms / 1000
+                val minutes = totalSeconds / 60
+                val seconds = totalSeconds % 60
+                String.format("生成 %d:%02d", minutes, seconds)
+            }
         }
 
         private fun renderMarkdown(content: String) {
@@ -597,11 +613,12 @@ class MessageAdapter(
         
         private fun setupAudioPlayback(audioUri: String, playButton: View, durationText: View) {
             try {
+                val audioUriObj = MessageMediaStore.toUri(audioUri) ?: return
                 mediaPlayer?.release()
                 mediaPlayer = MediaPlayer().apply {
                     setDataSource(
                         binding.root.context,
-                        MessageMediaStore.toUri(audioUri)
+                        audioUriObj
                     )
                     setOnPreparedListener { mp ->
                         val duration = mp.duration / 1000
@@ -640,7 +657,8 @@ class MessageAdapter(
                 oldItem.role == newItem.role &&
                 oldItem.imageUri == newItem.imageUri &&
                 oldItem.audioUri == newItem.audioUri &&
-                oldItem.generationTps == newItem.generationTps
+                oldItem.generationTps == newItem.generationTps &&
+                oldItem.generationTimeMs == newItem.generationTimeMs
         }
     }
 

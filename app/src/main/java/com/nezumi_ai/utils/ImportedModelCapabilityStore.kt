@@ -5,7 +5,9 @@ import java.io.File
 
 data class ImportedModelCapabilities(
     val imageEnabled: Boolean = false,
-    val audioEnabled: Boolean = false
+    val audioEnabled: Boolean = false,
+    val mmprojPath: String? = null,
+    val thinkingEnabled: Boolean = false
 )
 
 object ImportedModelCapabilityStore {
@@ -24,12 +26,16 @@ object ImportedModelCapabilityStore {
 
     private fun imageKey(path: String) = "${normalizeKey(path)}#image"
     private fun audioKey(path: String) = "${normalizeKey(path)}#audio"
+    private fun mmprojKey(path: String) = "${normalizeKey(path)}#mmproj"
+    private fun thinkingKey(path: String) = "${normalizeKey(path)}#thinking"
 
     fun get(context: Context, modelPath: String): ImportedModelCapabilities {
         val p = prefs(context)
         return ImportedModelCapabilities(
             imageEnabled = p.getBoolean(imageKey(modelPath), false),
-            audioEnabled = p.getBoolean(audioKey(modelPath), false)
+            audioEnabled = p.getBoolean(audioKey(modelPath), false),
+            mmprojPath = p.getString(mmprojKey(modelPath), null),
+            thinkingEnabled = p.getBoolean(thinkingKey(modelPath), false)
         )
     }
 
@@ -37,6 +43,11 @@ object ImportedModelCapabilityStore {
         prefs(context).edit()
             .putBoolean(imageKey(modelPath), capabilities.imageEnabled)
             .putBoolean(audioKey(modelPath), capabilities.audioEnabled)
+            .putBoolean(thinkingKey(modelPath), capabilities.thinkingEnabled)
+            .apply {
+                if (capabilities.mmprojPath != null) putString(mmprojKey(modelPath), capabilities.mmprojPath)
+                else remove(mmprojKey(modelPath))
+            }
             .commit()
     }
 
@@ -44,6 +55,8 @@ object ImportedModelCapabilityStore {
         prefs(context).edit()
             .remove(imageKey(modelPath))
             .remove(audioKey(modelPath))
+            .remove(mmprojKey(modelPath))
+            .remove(thinkingKey(modelPath))
             .commit()
     }
 

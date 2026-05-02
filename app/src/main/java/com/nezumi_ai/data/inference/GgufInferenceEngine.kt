@@ -17,6 +17,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import com.nezumi_ai.data.inference.rnllama.RnLlamaContext
+import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import java.io.File
 import java.util.Random
 import java.util.concurrent.atomic.AtomicBoolean
@@ -104,10 +105,6 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                     ?: return@withLock Result.failure(
                         IllegalStateException("GGUF model file not found: $modelName")
                     )
-                // validateModelCompatibility(modelFile)?.let { incompatibilityReason ->
-                //     Log.e(TAG, incompatibilityReason)
-                //     return@withLock Result.failure(IllegalStateException(incompatibilityReason))
-                // }
                 val modelPath = modelFile.absolutePath
 
                 if (isModelLoaded &&
@@ -157,10 +154,8 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                         nBatch = appliedBatchSize,
                         nThreads = appliedThreads,
                         nGpuLayers = appliedGpuLayers,
-                        useMmap = false,
-                        useMlock = false,
-                        ropeFreqBase = normalized.llamaCppRopeFreqBase,
-                        ropeFreqScale = normalized.llamaCppRopeFreqScale
+                        mmprojPath = ImportedModelCapabilityStore.get(context, modelPath).mmprojPath
+                            ?.takeIf { it.isNotBlank() && java.io.File(it).exists() }
                     )
                     if (!lc.isValid) {
                         throw IllegalStateException("Failed to initialize rnllama context")
@@ -249,17 +244,15 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
         Log.d(TAG, "cancelInference called")
         currentInferenceJob?.let { job ->
             Log.d(TAG, "Cancelling ongoing inference job")
+            // Signal native side to stop the completion loop immediately
+            modelMutex.withLock { llamaContext }?.interrupt()
             job.cancel(CancellationException("User cancelled inference"))
             try {
-                // ★ ネイティブ層の completion() が確実に終了するまで待つ
-                // タイムアウトは必要だが、無理矢理リソース開放はしない
-                withTimeoutOrNull(10000L) {  // 10秒（ネイティブ処理用に長めに設定）
-                    job.join()  // キャンセルが完全に完了するまで待機
+                withTimeoutOrNull(10000L) {
+                    job.join()
                     Log.d(TAG, "Inference job cancelled and joined successfully")
                 } ?: run {
                     Log.w(TAG, "Inference job cancellation timeout after 10s - job may still be running")
-                    // ★ ここで強制リソース解放はしない（Race Condition を避ける）
-                    // 呼び出し元（unloadModel など）が責任を持って、cancellation の完全終了を待つべき
                 }
             } catch (e: Exception) {
                 Log.d(TAG, "Inference job cancellation completed with exception: ${e.message}")
@@ -310,12 +303,62 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
         var shouldStop = AtomicBoolean(false)
         val BUFFER_FLUSH_CHARS = 8
         val jobDeferred = kotlinx.coroutines.CompletableDeferred<Job>()
+        /** LiteRT-LM と同じく思考は encodeThinkChunk、本文はプレーン chunks（FINAL は本文のみ） */
+        var emittedThinkingPrefix = ""
+        var emittedAnswerPrefix = ""
+
+        fun flushAnswerBufferOnly() {
+            val remaining = tokenBuffer.toString()
+            tokenBuffer.clear()
+            if (remaining.isNotEmpty()) runCatching { trySend(remaining) }
+        }
+
+        fun emitLiteRtStyleStreamDeltas() {
+            val parsed = Gemma4ThinkingParser.parseStreaming(answerAccum.toString())
+            val curThinking = parsed.thinking ?: ""
+            val curAnswer = parsed.answer
+
+            val thinkDelta = when {
+                curThinking.startsWith(emittedThinkingPrefix) ->
+                    curThinking.substring(emittedThinkingPrefix.length)
+                else -> {
+                    if (curThinking.length < emittedThinkingPrefix.length) {
+                        Log.w(TAG, "Thinking stream prefix shrank; resetting bridge state")
+                    }
+                    emittedThinkingPrefix = ""
+                    curThinking
+                }
+            }
+            emittedThinkingPrefix = curThinking
+            if (thinkDelta.isNotEmpty()) {
+                runCatching { trySend(InferenceStreamProtocol.encodeThinkChunk(thinkDelta)) }
+            }
+
+            val answerDelta = when {
+                curAnswer.startsWith(emittedAnswerPrefix) ->
+                    curAnswer.substring(emittedAnswerPrefix.length)
+                else -> {
+                    if (curAnswer.length < emittedAnswerPrefix.length) {
+                        Log.w(TAG, "Answer stream prefix shrank; resetting bridge state")
+                    }
+                    emittedAnswerPrefix = ""
+                    curAnswer
+                }
+            }
+            emittedAnswerPrefix = curAnswer
+            if (answerDelta.isEmpty()) return
+            tokenBuffer.append(answerDelta)
+            if (tokenBuffer.length >= BUFFER_FLUSH_CHARS) {
+                val chunk = tokenBuffer.toString()
+                tokenBuffer.clear()
+                runCatching { trySend(chunk) }
+            }
+        }
+
+        fun finalAnswerForProtocol(): String =
+            Gemma4ThinkingParser.parse(answerAccum.toString()).answer
 
         try {
-            // ★ currentInferenceJob を launch 前に事前設定（TOCTOU と finally のレース対策）
-            // CompletableDeferred を使うことで、launch と代入のタイミングずれを回避
-            val jobDeferred = kotlinx.coroutines.CompletableDeferred<Job>()
-            
             val completionJob = launch(Dispatchers.IO) {
                 try {
                     Log.d(TAG, "GGUF started session=$sessionId")
@@ -338,7 +381,6 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                         }
 
                         // ★ トークンを answerAccum に追加してから stop sequence をチェック
-                        val beforeLen = answerAccum.length
                         answerAccum.append(token)
 
                         // ★ Stop sequences を手動で検出（llamacpp-kotlin が実装していない可能性対策）
@@ -357,10 +399,8 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                         if (foundStop) {
                             Log.d(TAG, "Stop sequence detected: '$stopSeq'. Stopping generation. accum_len=${answerAccum.length}")
                             shouldStop.set(true)
-                            // バッファに残ったテキストをフラッシュ
-                            val remaining = tokenBuffer.toString()
-                            tokenBuffer.clear()
-                            if (remaining.isNotEmpty()) runCatching { trySend(remaining) }
+                            emitLiteRtStyleStreamDeltas()
+                            flushAnswerBufferOnly()
                             // ★ token callback を無効化（以降のコールバックを無視）
                             tokenHandlerRef.set(null)
                             // ★ ctx.completion() はブロッキング呼び出しなので、コルーチンをキャンセルして unblock
@@ -368,13 +408,7 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                             return@handler
                         }
 
-                        // バッファに追加し、一定文字数に達したらまとめて送信（Binder パケット削減）
-                        tokenBuffer.append(token)
-                        if (tokenBuffer.length >= BUFFER_FLUSH_CHARS) {
-                            val chunk = tokenBuffer.toString()
-                            tokenBuffer.clear()
-                            runCatching { trySend(chunk) }
-                        }
+                        emitLiteRtStyleStreamDeltas()
                     })
 
                     Log.d(TAG, "Completion starting with timeout=${timeoutSeconds}s")
@@ -426,21 +460,16 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                         }
                     }
 
-                    // バッファに残ったトークンをフラッシュ
-                    val remaining = tokenBuffer.toString()
-                    tokenBuffer.clear()
-                    if (remaining.isNotEmpty()) runCatching { trySend(remaining) }
+                    flushAnswerBufferOnly()
 
-                    trySend(InferenceStreamProtocol.encodeFinal(answerAccum.toString()))
+                    trySend(InferenceStreamProtocol.encodeFinal(finalAnswerForProtocol()))
                     close()
                 } catch (t: Throwable) {
                     if (t is CancellationException) {
                         Log.d(TAG, "GGUF cancelled session=$sessionId answer_length=${answerAccum.length}")
-                        val remaining = tokenBuffer.toString()
-                        tokenBuffer.clear()
-                        if (remaining.isNotEmpty()) runCatching { trySend(remaining) }
+                        flushAnswerBufferOnly()
                         runCatching {
-                            trySend(InferenceStreamProtocol.encodeFinal(answerAccum.toString()))
+                            trySend(InferenceStreamProtocol.encodeFinal(finalAnswerForProtocol()))
                         }
                         close()
                     } else {
@@ -478,9 +507,7 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
 
     override suspend fun isAvailable(): Boolean = isModelLoaded
 
-    fun getLastGenerationTps(): Float? {
-        return llamaContext?.getLastTimings()?.decodeTokensPerSecond
-    }
+    fun getLastGenerationTokenCount(): Float? = llamaContext?.getLastTimings()?.decodeTokens
 
     private fun releaseInferenceMutex() {
         if (inferenceMutexHeld.compareAndSet(true, false)) {
@@ -501,21 +528,6 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
             return if (f.exists() && f.canRead()) f else null
         }
         Log.w(TAG, "resolveModelFile: unsupported format: $modelName")
-        return null
-    }
-
-    /**
-     * 既知で失敗が多い量子化をロード前に弾き、原因を明示する。
-     *
-     * NOTE:
-     * - 現状のネイティブ層エラーは "unable to load model: <fd>" としか出ず原因特定が難しい。
-     * - 既知で再現率が高い Q1_0 を事前検知して、ユーザー向けに回避策を提示する。
-     */
-    private fun validateModelCompatibility(modelFile: File): String? {
-        val lowerName = modelFile.name.lowercase()
-        if ("q1_0" in lowerName) {
-            return "このGGUF(${modelFile.name})は Q1_0 量子化のため、Android でのロード失敗が多いです。まず Q4_0 または Q6_K 版で動作確認してください。"
-        }
         return null
     }
 

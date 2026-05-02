@@ -20,16 +20,19 @@ interface ChatSessionDao {
     @Delete
     suspend fun delete(session: ChatSessionEntity)
     
-    @Query("SELECT * FROM chat_session ORDER BY lastUpdated DESC")
+    @Query("SELECT * FROM chat_session WHERE isIncognito = 0 ORDER BY lastUpdated DESC")
     fun getAllSessionsFlow(): Flow<List<ChatSessionEntity>>
 
-    @Query("SELECT * FROM chat_session ORDER BY lastUpdated DESC")
+    @Query("SELECT * FROM chat_session WHERE isIncognito = 0 ORDER BY lastUpdated DESC")
     suspend fun getAllSessions(): List<ChatSessionEntity>
+
+    @Query("SELECT * FROM chat_session ORDER BY lastUpdated DESC")
+    suspend fun getAllSessionsIncludingIncognito(): List<ChatSessionEntity>
     
     @Query("SELECT * FROM chat_session WHERE id = :sessionId")
     suspend fun getSessionById(sessionId: Long): ChatSessionEntity?
 
-    @Query("SELECT * FROM chat_session ORDER BY lastUpdated DESC LIMIT 1")
+    @Query("SELECT * FROM chat_session WHERE isIncognito = 0 ORDER BY lastUpdated DESC LIMIT 1")
     suspend fun getLatestSession(): ChatSessionEntity?
     
     @Query("DELETE FROM chat_session WHERE id = :sessionId")

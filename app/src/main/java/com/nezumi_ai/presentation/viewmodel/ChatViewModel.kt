@@ -18,6 +18,7 @@ import com.nezumi_ai.data.repository.ChatSessionRepository
 import com.nezumi_ai.data.repository.MessageRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.data.database.entity.MessageEntity
+import com.nezumi_ai.data.inference.CpuCompatibility
 import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.nezumi_ai.data.inference.ModelFileManager
@@ -198,8 +199,16 @@ class ChatViewModel(
         val maxMB: Long
     )
 
+    data class CpuCompatibilityWarningInfo(
+        val modelName: String,
+        val message: String
+    )
+
     private val _memoryWarning = MutableStateFlow<MemoryWarningInfo?>(null)
     val memoryWarning: StateFlow<MemoryWarningInfo?> = _memoryWarning.asStateFlow()
+
+    private val _cpuCompatibilityWarning = MutableStateFlow<CpuCompatibilityWarningInfo?>(null)
+    val cpuCompatibilityWarning: StateFlow<CpuCompatibilityWarningInfo?> = _cpuCompatibilityWarning.asStateFlow()
 
     fun dismissMemoryWarning() {
         _memoryWarning.value = null
@@ -224,6 +233,27 @@ class ChatViewModel(
                 onlyIfAvailable = false,
                 skipMemoryWarning = true
             )
+        }
+    }
+
+    fun proceedWithCpuCompatibilityWarning(model: String) {
+        viewModelScope.launch {
+            _cpuCompatibilityWarning.value = null
+            val normalizedModel = normalizeModel(model)
+            val config = chatInferenceConfigForModel(normalizedModel)
+            loadModelWithOverlay(
+                normalizedModel,
+                config,
+                onlyIfAvailable = false,
+                skipCpuCompatibilityWarning = true
+            )
+        }
+    }
+
+    fun cancelCpuCompatibilityWarning() {
+        _cpuCompatibilityWarning.value = null
+        viewModelScope.launch {
+            _uiMessage.emit("モデルロードをキャンセルしました")
         }
     }
 
@@ -286,6 +316,7 @@ class ChatViewModel(
                     if (settings != null) {
                         val currentBackend = settingsRepository.getBackendForModel(_selectedModel.value)
                         setBackendType(currentBackend)
+                        refreshContextWindowForSelectedModel()
                     }
                 }
             } catch (t: Throwable) {
@@ -299,10 +330,7 @@ class ChatViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 _selectedModel.collect { model ->
-                    val contextWindow = settingsRepository.getContextWindowForModel(model)
-                    _contextWindowSize.value = contextWindow
-                    _contextWindowCapacityChars.value = contextWindow * TOKEN_TO_CHAR_RATIO
-                    Log.d(TAG, "Context window updated for model=$model: $contextWindow")
+                    refreshContextWindowForModel(model)
                 }
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
@@ -310,6 +338,17 @@ class ChatViewModel(
                 Log.e(TAG, "Error monitoring model changes", e)
             }
         }
+    }
+
+    private suspend fun refreshContextWindowForSelectedModel() {
+        refreshContextWindowForModel(_selectedModel.value)
+    }
+
+    private suspend fun refreshContextWindowForModel(model: String) {
+        val contextWindow = settingsRepository.getContextWindowForModel(model)
+        _contextWindowSize.value = contextWindow
+        _contextWindowCapacityChars.value = contextWindow * TOKEN_TO_CHAR_RATIO
+        Log.d(TAG, "Context window updated for model=$model: $contextWindow")
     }
     
     suspend fun setCurrentSession(sessionId: Long) {
@@ -403,9 +442,9 @@ class ChatViewModel(
                 val error = result.exceptionOrNull()
                 Log.e(TAG, "Failed to switch model: $normalizedModel", error)
 
-                // ★ メモリ警告（MEMORY_WARNING_SHOWN）はスキップ（ダイアログで処理済み）
-                if (error?.message == "MEMORY_WARNING_SHOWN") {
-                    Log.d(TAG, "Memory warning shown - waiting for user action")
+                // ★ 警告ダイアログ表示中はユーザー操作を待つ
+                if (error?.message == "MEMORY_WARNING_SHOWN" || error?.message == "CPU_COMPAT_WARNING_SHOWN") {
+                    Log.d(TAG, "Model warning shown - waiting for user action: ${error.message}")
                     return@launch
                 }
 
@@ -514,6 +553,10 @@ class ChatViewModel(
                     val error = loadResult.exceptionOrNull()
                     val errorMsg = error?.message ?: "Unknown error"
                     Log.e(TAG, "Compression model load failed: $errorMsg", error)
+                    if (errorMsg == "MEMORY_WARNING_SHOWN" || errorMsg == "CPU_COMPAT_WARNING_SHOWN") {
+                        Log.d(TAG, "Model warning shown during compression - waiting for user action: $errorMsg")
+                        return@launch
+                    }
                     _uiMessage.emit("圧縮用モデルのロードに失敗しました：$errorMsg")
                     return@launch
                 }
@@ -707,9 +750,9 @@ class ChatViewModel(
                 val errorMsg = error?.message ?: "Unknown error"
                 Log.e(TAG, "Model loading failed for $selectedModel: $errorMsg", error)
 
-                // ★ メモリ警告（MEMORY_WARNING_SHOWN）はスキップ（ダイアログで処理済み）
-                if (errorMsg == "MEMORY_WARNING_SHOWN") {
-                    Log.d(TAG, "Memory warning shown - waiting for user action")
+                // ★ 警告ダイアログ表示中はユーザー操作を待つ
+                if (errorMsg == "MEMORY_WARNING_SHOWN" || errorMsg == "CPU_COMPAT_WARNING_SHOWN") {
+                    Log.d(TAG, "Model warning shown - waiting for user action: $errorMsg")
                     return
                 }
 
@@ -754,13 +797,14 @@ class ChatViewModel(
             )
 
             if ((images.isNotEmpty() || audioClips.isNotEmpty()) &&
-                engineModelName.endsWith(".gguf", ignoreCase = true)
+                engineModelName.endsWith(".gguf", ignoreCase = true) &&
+                !com.nezumi_ai.utils.ImportedModelCapabilityStore.get(appContext, engineModelName).imageEnabled
             ) {
                 Log.w(
                     TAG,
-                    "Multimodal input requested for GGUF model. images=${images.size} audio=${audioClips.size}"
+                    "Multimodal input requested for GGUF model without imageEnabled. images=${images.size} audio=${audioClips.size}"
                 )
-                _uiMessage.emit("このGGUFモデルは画像・音声入力にまだ対応していません")
+                _uiMessage.emit("このGGUFモデルは画像・音声入力に対応していません。モデル設定の機能設定で有効化してください。")
                 return
             }
 
@@ -803,7 +847,8 @@ class ChatViewModel(
             var lastPersistedThinking: String? = null
             var lastPersistAt = 0L
             var toolResultsJson: String? = null
-            val inferenceStartMs = System.currentTimeMillis()
+            var firstOutputAtMs: Long? = null
+            var generationEndAtMs: Long? = null
 
             // ストリーム内容を収集
             // タイムアウトは「最初の出力が来るまで」のみ有効。
@@ -839,6 +884,7 @@ class ChatViewModel(
                                 }
                                 if (!firstTokenSeen.getAndSet(true)) {
                                     firstTokenTimeoutJob.cancel()
+                                    firstOutputAtMs = SystemClock.elapsedRealtime()
                                 }
                                 lastChunkAt.set(SystemClock.elapsedRealtime())
                                 val finalFromModel = InferenceStreamProtocol.decodeFinal(chunk)
@@ -1051,6 +1097,7 @@ class ChatViewModel(
                                 if (BuildConfig.DEBUG) Log.d(TAG, "Received chunk: $chunk")
                             }
                         } finally {
+                            generationEndAtMs = SystemClock.elapsedRealtime()
                             firstTokenTimeoutJob.cancel()
                             stallWatchJob.cancel()
                             Log.d(TAG, "Flow collection completed")
@@ -1118,20 +1165,27 @@ class ChatViewModel(
             val hasPayload =
                 contentToSave.isNotEmpty() || !finalThinking.isNullOrEmpty()
 
-            val tps = if (isGgufEngineModel(engineModelName)) {
-                manager.getLastGenerationTps()
-            } else {
-                // 非 GGUF エンジンは native timings がないため既存の概算を維持
-                val inferenceElapsedSec = (System.currentTimeMillis() - inferenceStartMs) / 1000f
-                val estimatedTokens = completeResponse.length / 2f
-                if (inferenceElapsedSec > 0.5f && estimatedTokens > 1f) {
-                    estimatedTokens / inferenceElapsedSec
+            val generationTimeMs = firstOutputAtMs?.let { first ->
+                val end = generationEndAtMs ?: SystemClock.elapsedRealtime()
+                (end - first).coerceAtLeast(0L)
+            }
+            val tps = if (generationTimeMs != null && generationTimeMs > 0L) {
+                val tokensAfterFirst = if (isGgufEngineModel(engineModelName)) {
+                    val nativeTokens = manager.getLastGenerationTokenCount()
+                    nativeTokens?.minus(1f)?.coerceAtLeast(0f)
+                } else {
+                    (completeResponse.length / 2f - 1f).coerceAtLeast(0f)
+                }
+                if (tokensAfterFirst != null && tokensAfterFirst > 0f) {
+                    tokensAfterFirst * 1000f / generationTimeMs
                 } else {
                     null
                 }
+            } else {
+                null
             }
 
-            Log.d(TAG, "Inference collection completed: hasPayload=$hasPayload, completeResponse.length=${completeResponse.length}, finalThinking=${!finalThinking.isNullOrEmpty()}")
+            Log.d(TAG, "Inference collection completed: hasPayload=$hasPayload, completeResponse.length=${completeResponse.length}, finalThinking=${!finalThinking.isNullOrEmpty()}, generationTimeMs=$generationTimeMs, tps=$tps")
 
             if (hasPayload) {
                 withContext(Dispatchers.IO) {
@@ -1142,7 +1196,8 @@ class ChatViewModel(
                         isStreaming = false,
                         thinkingContent = finalThinking,
                         toolResultsJson = toolResultsJson,
-                        generationTps = tps
+                        generationTps = tps,
+                        generationTimeMs = generationTimeMs
                     )
                     if (contentToSave.isNotEmpty()) {
                         Log.d(TAG, "Generating session title")
@@ -1465,7 +1520,7 @@ class ChatViewModel(
         if (messages.isEmpty()) return ""
 
         val isGgufEngine = isGgufEngineModel(engineModelName)
-        val fullPrompt = buildPromptFromMessages(messages, isGgufEngine, engineModelName)
+        val fullPrompt = buildPromptFromMessages(messages, isGgufEngine, engineModelName, config.enableThinking)
         
         // Phase 12: thinkingContent が誤ってプロンプトに混入していないか検証
         val messagesWithThinking = messages.filter { it.thinkingContent != null && it.thinkingContent.isNotEmpty() }
@@ -1513,7 +1568,8 @@ class ChatViewModel(
                 isGgufEngine = isGgufEngine,
                 engineModelName = engineModelName,
                 recentMessages = recentMessages,
-                compressedSummary = cached.summary
+                compressedSummary = cached.summary,
+                enableThinking = config.enableThinking
             )
             return trimPromptToWindow(prompt, config.contextWindow)
         }
@@ -1553,7 +1609,8 @@ class ChatViewModel(
             isGgufEngine = isGgufEngine,
             engineModelName = engineModelName,
             recentMessages = recentMessages,
-            compressedSummary = compressedSummary
+            compressedSummary = compressedSummary,
+            enableThinking = config.enableThinking
         )
 
         return trimPromptToWindow(prompt, config.contextWindow)
@@ -1706,7 +1763,7 @@ class ChatViewModel(
         val engineModelName = toEngineModelName(selectedModel)
         val isGgufEngine = isGgufEngineModel(engineModelName)
         val config = settingsRepository.getInferenceConfigForModel(selectedModel)
-        val basePrompt = buildPromptFromMessages(messages, isGgufEngine, engineModelName)
+        val basePrompt = buildPromptFromMessages(messages, isGgufEngine, engineModelName, config.enableThinking)
         
         // ★ 常に trimPromptToWindow で実際に使用される文字数を計算
         val maxChars = config.contextWindow * TOKEN_TO_CHAR_RATIO
@@ -1751,7 +1808,8 @@ class ChatViewModel(
                 isGgufEngine = isGgufEngine,
                 engineModelName = engineModelName,
                 recentMessages = recentMessages,
-                compressedSummary = cached.summary
+                compressedSummary = cached.summary,
+                enableThinking = config.enableThinking
             )
             val compressedSize = trimPromptToWindow(compressedPrompt, config.contextWindow).length
             Log.d(TAG, "CONTEXT_METER: Using cached compression | original=${basePromptSize}ch -> compressed=${compressedSize}ch")
@@ -1768,7 +1826,8 @@ class ChatViewModel(
         isGgufEngine: Boolean,
         engineModelName: String,
         recentMessages: List<MessageEntity>,
-        compressedSummary: String
+        compressedSummary: String,
+        enableThinking: Boolean = false
     ): String {
         var systemPrompt = settingsRepository.getSystemPrompt()
         val userName = settingsRepository.getUserName()
@@ -1781,6 +1840,7 @@ class ChatViewModel(
                 systemPrompt = systemPrompt,
                 compressedSummary = compressedSummary,
                 format = PromptBuilder.detectGgufFormat(engineModelName),
+                enableThinking = enableThinking,
                 sanitizeMessageContent = ::sanitizeMessageContentForPrompt
             )
         } else {
@@ -1819,7 +1879,8 @@ class ChatViewModel(
     private suspend fun buildPromptFromMessages(
         messages: List<MessageEntity>,
         isGgufEngine: Boolean,
-        engineModelName: String = ""
+        engineModelName: String = "",
+        enableThinking: Boolean = false
     ): String {
         if (messages.isEmpty()) return ""
         
@@ -1841,6 +1902,7 @@ class ChatViewModel(
                 messages = filteredMessages,
                 systemPrompt = systemPrompt,
                 format = PromptBuilder.detectGgufFormat(engineModelName),
+                enableThinking = enableThinking,
                 sanitizeMessageContent = ::sanitizeMessageContentForPrompt
             )
         } else {
@@ -1996,7 +2058,8 @@ class ChatViewModel(
         model: String,
         config: InferenceConfig,
         onlyIfAvailable: Boolean,
-        skipMemoryWarning: Boolean = false
+        skipMemoryWarning: Boolean = false,
+        skipCpuCompatibilityWarning: Boolean = false
     ): Result<Unit> {
         val manager = requireModelManager()
         val engineModelName = toEngineModelName(model)
@@ -2017,6 +2080,18 @@ class ChatViewModel(
                 TAG,
                 "loadModelWithOverlay: PRE_LOAD_MEMORY_CHECK model=$model backend=${config.backendType} alreadyLoaded=$isModelAlreadyLoaded skipMemoryWarning=$skipMemoryWarning effectiveSkip=$effectiveSkipMemoryWarning"
             )
+
+            if (!skipCpuCompatibilityWarning && !isModelAlreadyLoaded && isGgufEngineModel(engineModelName)) {
+                CpuCompatibility.armV82aWarningOrNull()?.let { warning ->
+                    Log.w(TAG, "loadModelWithOverlay: ${warning.logMessage}")
+                    _cpuCompatibilityWarning.value = CpuCompatibilityWarningInfo(
+                        modelName = displayModel,
+                        message = warning.userMessage
+                    )
+                    _isModelLoading.value = false
+                    return Result.failure(RuntimeException("CPU_COMPAT_WARNING_SHOWN"))
+                }
+            }
 
             // 詳細なメモリ情報をログ出力
             val detailedMemInfo = MemoryObserver.getDetailedMemoryInfo(appContext)
@@ -2174,7 +2249,7 @@ class ChatViewModel(
 
                 // Phase 11: 複数画像の処理
                 for (uriStr in storedImages) {
-                    val uri = MessageMediaStore.toUri(uriStr)
+                    val uri = MessageMediaStore.toUri(uriStr) ?: continue
                     val bitmap = loadBitmapFromUri(uri)
                     if (bitmap != null) {
                         val scaled = scaleBitmapTo1024(bitmap)
@@ -2187,10 +2262,12 @@ class ChatViewModel(
 
                 storedAudio?.let { uriStr ->
                     val uri = MessageMediaStore.toUri(uriStr)
-                    val audioBytes = loadAudioBytesFromUri(uri)
-                    if (audioBytes != null) {
-                        audioClips.add(audioBytes)
-                        Log.d(TAG, "Loaded audio for inference: $uriStr")
+                    if (uri != null) {
+                        val audioBytes = loadAudioBytesFromUri(uri)
+                        if (audioBytes != null) {
+                            audioClips.add(audioBytes)
+                            Log.d(TAG, "Loaded audio for inference: $uriStr")
+                        }
                     }
                 }
 

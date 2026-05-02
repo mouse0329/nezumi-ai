@@ -7,12 +7,14 @@ import com.nezumi_ai.data.database.dao.SettingsDao
 import com.nezumi_ai.data.database.entity.SettingsEntity
 import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.inference.ModelFileManager
+import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import java.io.File
 import kotlinx.coroutines.flow.Flow
 
 class SettingsRepository(
     private val dao: SettingsDao,
-    private val chatSessionDao: ChatSessionDao
+    private val chatSessionDao: ChatSessionDao,
+    private val context: android.content.Context? = null
 ) {
     companion object {
         private const val BACKEND_CPU = "CPU"
@@ -33,7 +35,7 @@ class SettingsRepository(
         if (existing != null) return existing
         val initial = SettingsEntity()
         dao.insert(initial)
-        return initial
+        return dao.getSettings() ?: initial
     }
     
     suspend fun updateModel(model: String) {
@@ -114,7 +116,7 @@ class SettingsRepository(
         val contextWindowForSelected = parseContextWindowMap(current.contextWindowMap)[modelToBackendKey(current.selectedModel)]
             ?: 4096
         val enableThinking =
-            current.gemmaThinkingEnabled && isBuiltinGemma4Model(current.selectedModel)
+            isBuiltinGemma4Model(current.selectedModel)
         return InferenceConfig(
             contextWindow = contextWindowForSelected,
             contextCompressionEnabled = current.contextCompressionEnabled,
@@ -139,7 +141,10 @@ class SettingsRepository(
         val backend = getBackendForModel(model)
         val contextWindow = getContextWindowForModel(model)
         val isGemma4 = isBuiltinGemma4Model(model)
-        val enableThinking = current.gemmaThinkingEnabled && isGemma4
+        val isGguf = isGgufModel(model)
+        val ggufThinking = isGguf && context != null &&
+            ImportedModelCapabilityStore.get(context, model).thinkingEnabled
+        val enableThinking = isGemma4 || ggufThinking
         val base = getInferenceConfig()
         val customStopTokens = if (model.endsWith(".gguf", ignoreCase = true)) {
             getStopTokensForModel(model)
@@ -322,10 +327,7 @@ class SettingsRepository(
         return current.systemPrompt
     }
 
-    suspend fun isGemmaThinkingEnabled(): Boolean {
-        val current = currentSettings()
-        return current.gemmaThinkingEnabled
-    }
+    suspend fun isGemmaThinkingEnabled(): Boolean = true
 
     suspend fun updateGemmaThinkingEnabled(enabled: Boolean) {
         val current = currentSettings()
@@ -374,8 +376,14 @@ class SettingsRepository(
             t.equals("Gemma4-4B", ignoreCase = true)
     }
 
-    /** チャット画面の「このチャットでシンキングOFF」トグルを出すか（Gemma 4 のみ。Gemma 3n は非対応） */
-    fun modelSupportsGemmaThinking(model: String): Boolean = isBuiltinGemma4Model(model)
+    private fun isGgufModel(model: String): Boolean {
+        val t = model.trim()
+        return t.lowercase().endsWith(".gguf") && java.io.File(t).isAbsolute
+    }
+
+    /** チャット画面の「このチャットでシンキングOFF」トグルを出すか */
+    fun modelSupportsGemmaThinking(model: String): Boolean =
+        isBuiltinGemma4Model(model) || isGgufModel(model)
 
     suspend fun updateSystemPrompt(prompt: String) {
         val current = currentSettings()

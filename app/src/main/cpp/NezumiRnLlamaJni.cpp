@@ -198,7 +198,25 @@ namespace
                     env->DeleteLocalRef(jTok);
                 }
             }
+            else
+            {
+                __android_log_print(
+                    ANDROID_LOG_ERROR,
+                    TAG,
+                    "token_callback: GetMethodID failed for onToken - callback class may not implement TokenCallback interface");
+                if (env->ExceptionCheck())
+                {
+                    env->ExceptionClear();
+                }
+            }
             env->DeleteLocalRef(cbCls);
+        }
+        else
+        {
+            __android_log_print(
+                ANDROID_LOG_ERROR,
+                TAG,
+                "token_callback: GetObjectClass failed for callback");
         }
         env->DeleteLocalRef(callback);
 
@@ -367,6 +385,21 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeSetTokenCallback(
     if (callback)
     {
         holder->token_callback = env->NewGlobalRef(callback);
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeInterrupt(
+    JNIEnv * /*env*/,
+    jclass /*clazz*/,
+    jlong ctxPtr)
+{
+    auto *holder = fromPtr(ctxPtr);
+    if (!holder) return;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_live_holders.find(holder) == g_live_holders.end()) return;
+    if (holder->completion) {
+        holder->completion->is_interrupted = true;
     }
 }
 
