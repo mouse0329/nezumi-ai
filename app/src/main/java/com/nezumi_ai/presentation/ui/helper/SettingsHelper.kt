@@ -6,16 +6,24 @@ import java.io.File
  * Settings UIで共用するヘルパー関数
  */
 object SettingsHelper {
+    private fun modelFileName(path: String): String =
+        runCatching { File(path.trim()).name }
+            .getOrDefault(path.trim())
+            .lowercase()
+
+    private fun isAbsoluteModelPath(path: String): Boolean {
+        val trimmed = path.trim()
+        return File(trimmed).isAbsolute || trimmed.startsWith("/")
+    }
     
     /**
      * インポートされたモデルのファイル種別をラベル化
      */
     fun importedModelKindLabel(path: String): String {
-        val lowered = path.lowercase()
-        return when {
-            lowered.endsWith(".gguf") -> "GGUF / llama.cpp"
-            lowered.endsWith(".litertlm") -> "LiteRT-LM (.litertlm)"
-            lowered.endsWith(".task") -> "LiteRT-LM (.task)"
+        return when (modelFileName(path).substringAfterLast('.', missingDelimiterValue = "")) {
+            "gguf" -> "GGUF / llama.cpp"
+            "litertlm" -> "LiteRT-LM (.litertlm)"
+            "task" -> "LiteRT-LM (.task)"
             else -> "Custom"
         }
     }
@@ -26,10 +34,10 @@ object SettingsHelper {
      */
     fun inferenceEngineForModel(path: String): String {
         val trimmed = path.trim()
-        val lowered = trimmed.lowercase()
-        // .gguf で絶対パスの場合のみ llama.cpp を使用
-        val isAbsoluteGguf = lowered.endsWith(".gguf") && File(trimmed).isAbsolute
-        return if (isAbsoluteGguf) "llama.cpp" else "LiteRT-LM"
+        val extension = modelFileName(trimmed).substringAfterLast('.', missingDelimiterValue = "")
+        // 追加モデルでは実ファイル名が .gguf のものだけ llama.cpp を使用する。
+        // ★ バグ修正: 拡張子が .gguf のみ llama.cpp、それ以外は LiteRT-LM
+        return if (extension == "gguf") "llama.cpp" else "LiteRT-LM"
     }
 
     /**

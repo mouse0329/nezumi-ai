@@ -25,6 +25,8 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.nezumi_ai.MainActivity
 import com.nezumi_ai.R
+import com.nezumi_ai.utils.ImportedModelCapabilities
+import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import kotlinx.coroutines.CancellationException
 import java.net.SocketException
 import java.net.SocketTimeoutException
@@ -273,14 +275,27 @@ class ModelDownloadWorker(
                 }
 
             result.fold(
-                onSuccess = {
-                    showCustomDownloadCompletedNotification(modelId, filePath, it.length())
+                onSuccess = { file ->
+                    val abs = file.absolutePath
+                    if (abs.lowercase().endsWith(".gguf")) {
+                        ImportedModelCapabilityStore.set(
+                            applicationContext,
+                            abs,
+                            ImportedModelCapabilities(
+                                imageEnabled = false,
+                                audioEnabled = false,
+                                mmprojPath = null,
+                                thinkingEnabled = false
+                            )
+                        )
+                    }
+                    showCustomDownloadCompletedNotification(modelId, filePath, file.length())
                     Result.success(
                         workDataOf(
                             KEY_HF_MODEL_ID to modelId,
                             KEY_HF_FILE_PATH to filePath,
-                            KEY_DOWNLOADED_BYTES to it.length(),
-                            KEY_TOTAL_BYTES to it.length(),
+                            KEY_DOWNLOADED_BYTES to file.length(),
+                            KEY_TOTAL_BYTES to file.length(),
                             KEY_SPEED_MBPS to 0.0
                         )
                     )

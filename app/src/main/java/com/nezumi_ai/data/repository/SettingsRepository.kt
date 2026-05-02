@@ -381,9 +381,40 @@ class SettingsRepository(
         return t.lowercase().endsWith(".gguf") && java.io.File(t).isAbsolute
     }
 
-    /** チャット画面の「このチャットでシンキングOFF」トグルを出すか */
-    fun modelSupportsGemmaThinking(model: String): Boolean =
-        isBuiltinGemma4Model(model) || isGgufModel(model)
+    /** チャット画面の「このチャットでシンキングOFF」トグルを出すか（GGUF は設定で Thinking 有効時のみ） */
+    fun modelSupportsGemmaThinking(model: String): Boolean {
+        if (isBuiltinGemma4Model(model)) return true
+        if (!isGgufModel(model)) return false
+        val ctx = context ?: return false
+        return ImportedModelCapabilityStore.get(ctx, model).thinkingEnabled
+    }
+
+    suspend fun remapImportedModelPath(oldPath: String, newPath: String) {
+        val oldCanon = runCatching { File(oldPath).canonicalPath }.getOrElse { oldPath.trim() }
+        val current = currentSettings()
+        val sel = current.selectedModel.trim()
+        val newSel = runCatching {
+            if (File(sel).canonicalPath == oldCanon) newPath else sel
+        }.getOrElse { sel }
+
+        val stopMap = parseStopTokensMap(current.stopTokensMap).toMutableMap()
+        var tokens = stopMap.remove(oldPath)
+        if (tokens == null) {
+            val matchKey = stopMap.keys.firstOrNull { key ->
+                runCatching { File(key).canonicalPath }.getOrNull() == oldCanon
+            }
+            if (matchKey != null) tokens = stopMap.remove(matchKey)
+        }
+        if (!tokens.isNullOrEmpty()) stopMap[newPath] = tokens
+
+        dao.update(
+            current.copy(
+                selectedModel = newSel,
+                stopTokensMap = encodeStopTokensMap(stopMap),
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
 
     suspend fun updateSystemPrompt(prompt: String) {
         val current = currentSettings()

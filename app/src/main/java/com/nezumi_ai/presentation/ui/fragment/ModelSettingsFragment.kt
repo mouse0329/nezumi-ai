@@ -120,6 +120,8 @@ class ModelSettingsFragment : Fragment() {
         }
     private var stopTokensDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
     private var stopTokensDialogText by mutableStateOf("")
+    private var renameDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
+    private var renameDialogText by mutableStateOf("")
     private var expandedModelKey by mutableStateOf<String?>(null)
 
     private val modelStates = mutableStateMapOf<ModelFileManager.LocalModel, ModelUiState>()
@@ -151,10 +153,7 @@ class ModelSettingsFragment : Fragment() {
                 result.onSuccess {
                     toast("モデルを追加しました: ${it.name}")
                     refreshImportedTasks()
-                    val imported = ModelFileManager.ImportedTaskModel(
-                        name = it.nameWithoutExtension,
-                        path = it.absolutePath
-                    )
+                    val imported = ModelFileManager.ImportedTaskModel.fromImportedFile(it)
                     capabilityDialogModel = imported
                     capabilityDialogImageEnabled = false
                     capabilityDialogAudioEnabled = false
@@ -176,7 +175,7 @@ class ModelSettingsFragment : Fragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val db = NezumiAiDatabase.getInstance(requireContext())
-        settingsRepository = SettingsRepository(db.settingsDao(), db.chatSessionDao())
+        settingsRepository = SettingsRepository(db.settingsDao(), db.chatSessionDao(), requireContext().applicationContext)
         authService = AuthorizationService(requireContext())
         ModelFileManager.LocalModel.entries.forEach { modelStates[it] = ModelUiState(titleFor(it)) }
     }
@@ -222,6 +221,9 @@ class ModelSettingsFragment : Fragment() {
         }
         stopTokensDialogModel?.let { model ->
             StopTokensDialog(model)
+        }
+        renameDialogModel?.let { model ->
+            RenameImportedDialog(model)
         }
         if (hfSearchResultsDialogVisible) {
             HfSearchResultsContent()
@@ -353,9 +355,17 @@ class ModelSettingsFragment : Fragment() {
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = model.name,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = model.shortDisplayName,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.SemiBold
                     )
+                    model.hfRepoQualifier?.let { repo ->
+                        Text(
+                            text = "HF: $repo",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -474,9 +484,17 @@ class ModelSettingsFragment : Fragment() {
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = model.name,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = model.shortDisplayName,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.SemiBold
                     )
+                    model.hfRepoQualifier?.let { repo ->
+                        Text(
+                            text = "HF: $repo",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     OutlinedTextField(
                         modifier = Modifier.fillMaxWidth(),
                         value = stopTokensDialogText,
@@ -853,8 +871,7 @@ class ModelSettingsFragment : Fragment() {
                             val modelKey = "imported_${model.path}"
                             val isExpanded = expandedModelKey == modelKey
                             ImportedModelAccordionItem(
-                                name = model.name,
-                                path = model.path,
+                                model = model,
                                 isExpanded = isExpanded,
                                 onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
                                 onDelete = {
@@ -870,6 +887,81 @@ class ModelSettingsFragment : Fragment() {
                                 }
                             )
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun RenameImportedDialog(model: ModelFileManager.ImportedTaskModel) {
+        Dialog(onDismissRequest = { renameDialogModel = null }) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "モデルファイル名の変更",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "拡張子は変わりません。記号 \\ / : * ? \" < > | は使えません。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = model.shortDisplayName,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    model.hfRepoQualifier?.let { repo ->
+                        Text(
+                            text = "HF: $repo",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    OutlinedTextField(
+                        modifier = Modifier.fillMaxWidth(),
+                        value = renameDialogText,
+                        onValueChange = { renameDialogText = it },
+                        label = { Text("新しい名前（拡張子なし）") },
+                        singleLine = true
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                    ) {
+                        TextButton(onClick = { renameDialogModel = null }) { Text("キャンセル") }
+                        Button(onClick = {
+                            val ctx = requireContext()
+                            val oldPath = model.path
+                            val stem = renameDialogText
+                            viewLifecycleOwner.lifecycleScope.launch {
+                                val renamed = withContext(Dispatchers.IO) {
+                                    ModelFileManager.renameImportedTask(ctx, oldPath, stem)
+                                }
+                                renamed.onSuccess { newFile ->
+                                    withContext(Dispatchers.IO) {
+                                        ImportedModelCapabilityStore.migrateModelPath(ctx, oldPath, newFile.absolutePath)
+                                        settingsRepository.remapImportedModelPath(oldPath, newFile.absolutePath)
+                                    }
+                                    renameDialogModel = null
+                                    expandedModelKey = null
+                                    refreshImportedTasks()
+                                    toast("名前を変更しました")
+                                }.onFailure {
+                                    toast("名前変更に失敗: ${it.message}")
+                                }
+                            }
+                        }) { Text("保存") }
                     }
                 }
             }
@@ -984,11 +1076,10 @@ class ModelSettingsFragment : Fragment() {
 
     @Composable
     private fun ImportedModelAccordionItem(
-        name: String,
-        path: String,
+        model: ModelFileManager.ImportedTaskModel,
         isExpanded: Boolean,
         onToggle: () -> Unit,
-        onDelete: () -> Unit
+        onDelete: () -> Unit,
     ) {
         Card(
             modifier = Modifier
@@ -1005,11 +1096,19 @@ class ModelSettingsFragment : Fragment() {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(text = name, fontWeight = FontWeight.SemiBold)
+                        Text(text = model.shortDisplayName, fontWeight = FontWeight.SemiBold)
+                        model.hfRepoQualifier?.let { repo ->
+                            Text(
+                                text = "HF: $repo",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorResource(id = R.color.text_secondary),
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
                         // エンジン情報を表示
                         if (!isExpanded) {
                             Text(
-                                text = "🚀 " + SettingsHelper.inferenceEngineForModel(path),
+                                text = "🚀 " + SettingsHelper.inferenceEngineForModel(model.path),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colorResource(id = R.color.primary),
                                 modifier = Modifier.padding(top = 2.dp)
@@ -1037,13 +1136,13 @@ class ModelSettingsFragment : Fragment() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "🚀 " + SettingsHelper.inferenceEngineForModel(path),
+                            text = "🚀 " + SettingsHelper.inferenceEngineForModel(model.path),
                             style = MaterialTheme.typography.labelMedium,
                             color = colorResource(id = R.color.primary),
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = "(" + SettingsHelper.importedModelKindLabel(path) + ")",
+                            text = "(" + SettingsHelper.importedModelKindLabel(model.path) + ")",
                             style = MaterialTheme.typography.labelSmall,
                             color = colorResource(id = R.color.text_secondary)
                         )
@@ -1051,42 +1150,61 @@ class ModelSettingsFragment : Fragment() {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(text = "追加済みモデル", style = MaterialTheme.typography.bodySmall, color = colorResource(id = R.color.text_secondary))
                     Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        TextButton(
-                            onClick = {
-                                val caps = ImportedModelCapabilityStore.get(requireContext(), path)
-                                capabilityDialogImageEnabled = caps.imageEnabled
-                                capabilityDialogAudioEnabled = caps.audioEnabled
-                                capabilityDialogThinkingEnabled = caps.thinkingEnabled
-                                capabilityDialogMmprojPath = caps.mmprojPath ?: ""
-                                capabilityDialogModel = ModelFileManager.ImportedTaskModel(name, path)
-                            },
-                            modifier = Modifier.weight(1f)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("機能設定", fontSize = androidx.compose.material3.LocalTextStyle.current.fontSize * 0.8f)
+                            TextButton(
+                                onClick = {
+                                    val caps = ImportedModelCapabilityStore.get(requireContext(), model.path)
+                                    capabilityDialogImageEnabled = caps.imageEnabled
+                                    capabilityDialogAudioEnabled = caps.audioEnabled
+                                    capabilityDialogThinkingEnabled = caps.thinkingEnabled
+                                    capabilityDialogMmprojPath = caps.mmprojPath ?: ""
+                                    capabilityDialogModel = model
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("機能設定", fontSize = androidx.compose.material3.LocalTextStyle.current.fontSize * 0.8f)
+                            }
+                            TextButton(
+                                onClick = {
+                                    renameDialogText = model.fileNameStem
+                                    renameDialogModel = model
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("名前変更", fontSize = androidx.compose.material3.LocalTextStyle.current.fontSize * 0.8f)
+                            }
                         }
-                        TextButton(
-                            onClick = {
-                                viewLifecycleOwner.lifecycleScope.launch {
-                                    val tokens = withContext(Dispatchers.IO) {
-                                        settingsRepository.getStopTokensForModel(path)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    viewLifecycleOwner.lifecycleScope.launch {
+                                        val tokens = withContext(Dispatchers.IO) {
+                                            settingsRepository.getStopTokensForModel(model.path)
+                                        }
+                                        stopTokensDialogText = tokens.joinToString(", ")
+                                        stopTokensDialogModel = model
                                     }
-                                    stopTokensDialogText = tokens.joinToString(", ")
-                                    stopTokensDialogModel = ModelFileManager.ImportedTaskModel(name, path)
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("ストップトークン", fontSize = androidx.compose.material3.LocalTextStyle.current.fontSize * 0.8f)
-                        }
-                        TextButton(
-                            onClick = onDelete,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(stringResource(id = R.string.delete), fontSize = androidx.compose.material3.LocalTextStyle.current.fontSize * 0.8f)
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("ストップトークン", fontSize = androidx.compose.material3.LocalTextStyle.current.fontSize * 0.8f)
+                            }
+                            TextButton(
+                                onClick = onDelete,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(stringResource(id = R.string.delete), fontSize = androidx.compose.material3.LocalTextStyle.current.fontSize * 0.8f)
+                            }
                         }
                     }
                 }
