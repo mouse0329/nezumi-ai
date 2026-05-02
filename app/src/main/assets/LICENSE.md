@@ -7,9 +7,9 @@
 
 ## Project License
 
-- License: Apache License 2.0
+- License: PolyForm Noncommercial License 1.0.0
 - Copyright: 2026 nezumi
-- Full text: [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0)
+- Full text: [PolyForm Noncommercial License](https://polyformproject.org/licenses/noncommercial/1.0.0/)
 - Repository: [mouse0329/nezumi-ai](https://github.com/mouse0329/nezumi-ai)
 
 ---
@@ -36,6 +36,27 @@
 - License: Apache License 2.0
 - Repository: [noties/Markwon](https://github.com/noties/Markwon)
 
+### Jetpack Compose
+- License: Apache License 2.0
+- Repository: [androidx/androidx](https://github.com/androidx/androidx)
+- Includes: compose-bom, compose-ui, compose-foundation, compose-material3, activity-compose
+
+### Halilibo Compose Richtext
+- License: Apache License 2.0
+- Repository: [halilibo/compose-richtext](https://github.com/halilibo/compose-richtext)
+- Note: Markdown rendering for Jetpack Compose (richtext-commonmark, richtext-ui-material3)
+
+### Coil (Image Loading)
+- License: Apache License 2.0
+- Repository: [coil-kt/coil](https://github.com/coil-kt/coil)
+- Note: coil-compose for async image loading in Compose UI
+
+### TensorFlow Lite
+- License: Apache License 2.0
+- Repository: [tensorflow/tensorflow](https://github.com/tensorflow/tensorflow)
+- Includes: play-services-tflite-java, play-services-tflite-gpu
+- Note: Used for on-device model inference and GPU acceleration support
+
 ---
 
 ## Models and Model Hubs
@@ -57,4 +78,4 @@
 
 ---
 
-Last updated: 2026-04-01
+Last updated: 2026-05-02
