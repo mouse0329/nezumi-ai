@@ -126,6 +126,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
     implementation("com.halilibo.compose-richtext:richtext-commonmark:1.0.0-alpha02")
     implementation("com.halilibo.compose-richtext:richtext-ui-material3:1.0.0-alpha02")
+    implementation("ru.noties:jlatexmath-android:0.2.0")
 
     implementation("androidx.navigation:navigation-fragment-ktx:2.6.0")
     implementation("androidx.navigation:navigation-ui-ktx:2.6.0")

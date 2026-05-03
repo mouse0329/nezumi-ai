@@ -1,0 +1,183 @@
+NOTICE
+
+This product includes software developed by the following projects:
+
+================================================================================
+ANDROID FRAMEWORK & CORE LIBRARIES
+================================================================================
+
+* Android Open Source Project
+  License: Apache License 2.0
+  https://android.googlesource.com/
+
+* AndroidX Libraries
+  License: Apache License 2.0
+  https://github.com/androidx/androidx
+  Includes:
+    - androidx.core:core-ktx
+    - androidx.appcompat:appcompat
+    - androidx.constraintlayout:constraintlayout
+    - androidx.activity:activity-compose
+    - androidx.navigation:navigation-fragment-ktx
+    - androidx.navigation:navigation-ui-ktx
+    - androidx.room:room-runtime
+    - androidx.room:room-ktx
+    - androidx.lifecycle:lifecycle-viewmodel-ktx
+    - androidx.lifecycle:lifecycle-runtime-ktx
+    - androidx.lifecycle:lifecycle-livedata-ktx
+    - androidx.lifecycle:lifecycle-process
+    - androidx.work:work-runtime-ktx
+    - androidx.biometric:biometric
+    - androidx.test.ext:junit
+    - androidx.test.espresso:espresso-core
+
+================================================================================
+KOTLIN & JetBrains
+================================================================================
+
+* Kotlin Programming Language
+  License: Apache License 2.0
+  https://github.com/JetBrains/kotlin
+  Includes:
+    - kotlin-stdlib-jdk8
+    - kotlin-stdlib
+    - kotlin-metadata-jvm
+
+* Kotlinx Coroutines
+  License: Apache License 2.0
+  https://github.com/Kotlin/kotlinx.coroutines
+  Includes:
+    - kotlinx-coroutines-core
+    - kotlinx-coroutines-android
+
+* Kotlinx Serialization
+  License: Apache License 2.0
+  https://github.com/Kotlin/kotlinx.serialization
+  Includes:
+    - kotlinx-serialization-json
+
+* Compose
+  License: Apache License 2.0
+  https://github.com/JetBrains/compose-multiplatform
+  Includes:
+    - androidx.compose.ui:ui
+    - androidx.compose.ui:ui-tooling-preview
+    - androidx.compose.foundation:foundation
+    - androidx.compose.material3:material3
+    - androidx.lifecycle:lifecycle-runtime-compose
+
+================================================================================
+GOOGLE MATERIAL DESIGN
+================================================================================
+
+* Google Material Design Components
+  License: Apache License 2.0
+  https://github.com/material-components/material-components-android
+  Includes:
+    - com.google.android.material:material
+
+================================================================================
+GOOGLE AI & MACHINE LEARNING
+================================================================================
+
+* Google AI Edge LiteRTM (MediaPipe)
+  License: Apache License 2.0
+  https://github.com/google-ai-edge/mediapipe
+  Includes:
+    - com.google.ai.edge.litertlm:litertlm-android
+
+* Play Services TensorFlow Lite
+  License: Apache License 2.0
+  https://github.com/tensorflow/tensorflow
+  Includes:
+    - com.google.android.gms:play-services-tflite-java
+    - com.google.android.gms:play-services-tflite-gpu
+
+================================================================================
+UI & TEXT RENDERING
+================================================================================
+
+* Compose Rich Text
+  License: Apache License 2.0
+  https://github.com/halilibo/compose-richtext
+  Includes:
+    - com.halilibo.compose-richtext:richtext-commonmark
+    - com.halilibo.compose-richtext:richtext-ui-material3
+
+* JLatexMath Android
+  License: Apache License 2.0
+  https://github.com/noties/jlatexmath-android
+  Includes:
+    - ru.noties:jlatexmath-android
+
+* Coil (Image Loading)
+  License: Apache License 2.0
+  https://github.com/coil-kt/coil
+  Includes:
+    - io.coil-kt:coil-compose
+
+================================================================================
+AUTHENTICATION & SECURITY
+================================================================================
+
+* AppAuth for Android
+  License: Apache License 2.0
+  https://github.com/openid/AppAuth-Android
+  Includes:
+    - net.openid:appauth
+
+* AndroidX Biometric
+  License: Apache License 2.0
+  https://github.com/androidx/androidx
+  Includes:
+    - androidx.biometric:biometric
+
+================================================================================
+TESTING
+================================================================================
+
+* JUnit
+  License: Eclipse Public License v1.0
+  https://github.com/junit-team/junit4
+  Includes:
+    - junit:junit
+
+* Espresso Testing Framework
+  License: Apache License 2.0
+  https://github.com/android/testing-samples
+  Includes:
+    - androidx.test.espresso:espresso-core
+
+================================================================================
+NATIVE COMPONENTS
+================================================================================
+
+* llama.cpp (via custom JNI bridge)
+  License: MIT License
+  https://github.com/ggerganov/llama.cpp
+
+================================================================================
+BUILD TOOLS & GRADLE
+================================================================================
+
+* Android Gradle Plugin
+  License: Apache License 2.0
+  https://android.googlesource.com/platform/tools/base
+
+* Gradle Build System
+  License: Apache License 2.0
+  https://github.com/gradle/gradle
+
+================================================================================
+ADDITIONAL INFORMATION
+================================================================================
+
+For complete license text and additional information about each dependency,
+please refer to:
+- LICENSE.md at the root of this project
+- Individual library documentation and license files
+- Maven Central Repository (https://central.sonatype.com/)
+
+This product contains code and libraries licensed under various open-source
+licenses. All such licenses are compatible with the terms under which this
+product is distributed.
