@@ -47,6 +47,7 @@ import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.halilibo.richtext.commonmark.Markdown
 import com.halilibo.richtext.ui.material3.RichText
+import com.nezumi_ai.presentation.ui.composable.MarkdownLatexText
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -602,9 +603,7 @@ class MessageAdapter(
                         )
                     ) {
                         MaterialTheme {
-                            RichText {
-                                Markdown(content = content)
-                            }
+                            MarkdownLatexText(text = content, textSize = 40f)
                         }
                     }
                 }
