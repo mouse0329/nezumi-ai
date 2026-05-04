@@ -756,7 +756,8 @@ class LiteRtLmEngine(
                 cancelActiveConversation()
                 closeAndResetActiveConversation()
                 
-                // 2. Engine をクローズ
+                // 2. 現在のモデル名を保持してから Engine をクローズ
+                val unloadingModelName = loadedModelPath?.let { File(it).name.lowercase() } ?: ""
                 runCatching { engine?.close() }
                 engine = null
                 loadedModelPath = null
@@ -770,8 +771,10 @@ class LiteRtLmEngine(
                 backendResourceManager.cleanupAll()
                 
                 // 5. キャッシュをクリーンアップ（XNNPack が使うディレクトリを優先）
+                // アンロードするモデルのキャッシュは保護
                 CacheManager.cleanupCacheIfNeeded(
                     context = appContext,
+                    currentModelBaseName = unloadingModelName,
                     cacheDir = resolveWritableXnnpackCacheDir(),
                     forceScan = false
                 )
@@ -855,7 +858,7 @@ class LiteRtLmEngine(
 
     private fun resolveModelPath(modelName: String): String {
         val lowered = modelName.lowercase()
-        if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && modelName.startsWith("/")) {
+        if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && File(modelName).isAbsolute) {
             return modelName
         }
         return when (ModelFileManager.resolveModelName(modelName)) {
@@ -869,7 +872,7 @@ class LiteRtLmEngine(
     private fun resolveLocalModelFile(modelName: String): File? {
         val resolved = resolveModelPath(modelName)
         val lowered = resolved.lowercase()
-        if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && resolved.startsWith("/")) {
+        if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && File(resolved).isAbsolute) {
             val file = File(resolved)
             val validated = ModelFileManager.validateImportedTaskFile(file)
             if (validated.isFailure) {

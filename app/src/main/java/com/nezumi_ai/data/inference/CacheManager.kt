@@ -12,6 +12,18 @@ object CacheManager {
     private var lastLoadedModelName = ""  // 現在読み込まれているモデル名キャッシュ
     private var recentCacheFiles = setOf<String>()  // 最近生成されたキャッシュ（この読み込みセッション中）
     
+    // SharedPreferencesキー
+    private const val PREF_LAST_LOADED_MODEL = "last_loaded_model_name"
+    
+    /**
+     * CacheManager を初期化（アプリ起動時に呼び出し）
+     */
+    fun initialize(context: Context) {
+        val prefs = context.getSharedPreferences("cache_manager_prefs", Context.MODE_PRIVATE)
+        lastLoadedModelName = prefs.getString(PREF_LAST_LOADED_MODEL, "") ?: ""
+        Log.d(TAG, "CacheManager initialized with lastLoadedModelName: $lastLoadedModelName")
+    }
+    
     /**
      * キャッシュディレクトリの使用量をチェックし、必要に応じてクリーンアップ
      * currentModelBaseName: 現在読み込むモデルのベース名（例: "gemma-3n-e4b"）
@@ -29,6 +41,9 @@ object CacheManager {
         try {
             if (currentModelBaseName.isNotEmpty()) {
                 lastLoadedModelName = currentModelBaseName
+                // SharedPreferencesに保存
+                val prefs = context.getSharedPreferences("cache_manager_prefs", Context.MODE_PRIVATE)
+                prefs.edit().putString(PREF_LAST_LOADED_MODEL, currentModelBaseName).apply()
                 // 現在のセッションの開始時にキャッシュ一覧を記録
                 if (forceScan) {
                     recentCacheFiles = (cacheDir ?: context.cacheDir).listFiles()?.map { it.name }?.toSet() ?: emptySet()
@@ -218,7 +233,8 @@ object CacheManager {
         
         // 保護対象：
         // 1. currentModelBaseName を含むファイル
-        // 2. recentCacheFiles に含まれるファイル（このセッション中に出現したファイル）
+        // 2. lastLoadedModelName を含むファイル（永続化された前回ロードモデル）
+        // 3. recentCacheFiles に含まれるファイル（このセッション中に出現したファイル）
         val protectedFiles = mutableSetOf<String>()
         
         if (currentModelBaseName.isNotEmpty()) {
@@ -226,6 +242,14 @@ object CacheManager {
                 file.name.contains(currentModelBaseName, ignoreCase = true)
             }
             protectedFiles.addAll(modelFiles.map { it.name })
+        }
+        
+        // 前回ロードしたモデルのキャッシュも保護
+        if (lastLoadedModelName.isNotEmpty() && lastLoadedModelName != currentModelBaseName) {
+            val lastModelFiles = files.filter { file ->
+                file.name.contains(lastLoadedModelName, ignoreCase = true)
+            }
+            protectedFiles.addAll(lastModelFiles.map { it.name })
         }
         
         // セッション中に出現したファイルを保護

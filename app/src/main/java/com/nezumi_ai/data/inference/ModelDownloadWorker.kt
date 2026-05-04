@@ -28,6 +28,8 @@ import com.nezumi_ai.R
 import com.nezumi_ai.utils.ImportedModelCapabilities
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -278,13 +280,26 @@ class ModelDownloadWorker(
                 onSuccess = { file ->
                     val abs = file.absolutePath
                     if (abs.lowercase().endsWith(".gguf")) {
+                        // mmproj を検索してダウンロード
+                        val mmprojFile = withContext(Dispatchers.IO) {
+                            val mmprojCandidates = ModelFileManager.findMmprojCandidates(applicationContext, modelId).getOrNull()
+                            mmprojCandidates?.firstOrNull()?.let { candidate ->
+                                ModelFileManager.downloadHuggingFaceModelFile(
+                                    context = applicationContext,
+                                    modelId = modelId,
+                                    filePath = candidate.path,
+                                    onProgress = null // mmproj の進捗は表示しない
+                                ).getOrNull()
+                            }
+                        }
+
                         ImportedModelCapabilityStore.set(
                             applicationContext,
                             abs,
                             ImportedModelCapabilities(
-                                imageEnabled = false,
+                                imageEnabled = mmprojFile != null,
                                 audioEnabled = false,
-                                mmprojPath = null,
+                                mmprojPath = mmprojFile?.absolutePath,
                                 thinkingEnabled = false
                             )
                         )

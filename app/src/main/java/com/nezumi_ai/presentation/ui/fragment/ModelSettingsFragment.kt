@@ -33,11 +33,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -46,9 +51,11 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
@@ -56,8 +63,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.material3.LocalContentColor
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -73,16 +82,20 @@ import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ProjectConfig
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.presentation.ui.helper.SettingsHelper
+import com.nezumi_ai.presentation.ui.composable.MarkdownLatexText
 import com.nezumi_ai.utils.ImportedModelCapabilities
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.openid.appauth.AuthorizationException
+import androidx.compose.material3.ExperimentalMaterial3Api
 import net.openid.appauth.AuthorizationResponse
 import net.openid.appauth.AuthorizationService
+import java.io.File
 import java.util.Locale
 
+@OptIn(ExperimentalMaterial3Api::class)
 class ModelSettingsFragment : Fragment() {
     private lateinit var settingsRepository: SettingsRepository
     private var authService: AuthorizationService? = null
@@ -97,15 +110,23 @@ class ModelSettingsFragment : Fragment() {
     private var hfFilePickerModel by mutableStateOf<ModelFileManager.HfModelSearchResult?>(null)
     private var hfFilePickerLoading by mutableStateOf(false)
     private var hfFilePickerFiles by mutableStateOf<List<ModelFileManager.HfModelFile>>(emptyList())
+    private var hfReadmeText by mutableStateOf<String?>(null)
+    private var hfReadmeLoading by mutableStateOf(false)
+    private var hfReadmeError by mutableStateOf<String?>(null)
+    private var hfReadmePageVisible by mutableStateOf(false)
+    private var hfReadmePageTitle by mutableStateOf("")
     private var hfDownloadingFilePath by mutableStateOf<String?>(null)
     private var hfQueuedDownloads by mutableStateOf<List<HfQueuedDownloadUiState>>(emptyList())
     private var importedTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
+    private var importedMmprojTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
     private var isImportingModel by mutableStateOf(false)
     private var capabilityDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
     private var capabilityDialogImageEnabled by mutableStateOf(false)
     private var capabilityDialogAudioEnabled by mutableStateOf(false)
     private var capabilityDialogThinkingEnabled by mutableStateOf(false)
     private var capabilityDialogMmprojPath by mutableStateOf("")
+    private var capabilityDialogCurrentCapabilities by mutableStateOf<ImportedModelCapabilities?>(null)
+    private var mmprojDropdownExpanded by mutableStateOf(false)
 
     private val mmprojPickerLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -147,20 +168,25 @@ class ModelSettingsFragment : Fragment() {
             if (uri == null) return@registerForActivityResult
             isImportingModel = true
             viewLifecycleOwner.lifecycleScope.launch {
-                val result = withContext(Dispatchers.IO) {
-                    ModelFileManager.importTaskFromUri(requireContext(), uri)
-                }
-                result.onSuccess {
-                    toast("モデルを追加しました: ${it.name}")
+                try {
+                    val modelPath = withContext(Dispatchers.IO) {
+                        ModelFileManager.importTaskFromUri(requireContext(), uri).getOrThrow().absolutePath
+                    }
+                    toast("モデルを追加しました: ${File(modelPath).name}")
                     refreshImportedTasks()
-                    val imported = ModelFileManager.ImportedTaskModel.fromImportedFile(it)
+                    val imported = ModelFileManager.ImportedTaskModel(
+                        path = modelPath,
+                        fileNameStem = File(modelPath).nameWithoutExtension,
+                        shortDisplayName = File(modelPath).nameWithoutExtension,
+                        hfRepoQualifier = null
+                    )
                     capabilityDialogModel = imported
                     capabilityDialogImageEnabled = false
                     capabilityDialogAudioEnabled = false
                     capabilityDialogThinkingEnabled = false
                     capabilityDialogMmprojPath = ""
-                }.onFailure {
-                    toast("追加失敗: ${it.message}")
+                } catch (e: Exception) {
+                    toast("追加失敗: ${e.message}")
                 }
                 isImportingModel = false
             }
@@ -210,6 +236,10 @@ class ModelSettingsFragment : Fragment() {
 
     @Composable
     private fun ModelScreen() {
+        if (hfReadmePageVisible) {
+            HfReadmePage()
+            return
+        }
         if (isImportingModel) {
             ImportingDialog()
         }
@@ -374,7 +404,8 @@ class ModelSettingsFragment : Fragment() {
                         Text("画像入力を有効化", color = MaterialTheme.colorScheme.onSurface)
                         Switch(
                             checked = capabilityDialogImageEnabled,
-                            onCheckedChange = { capabilityDialogImageEnabled = it }
+                            onCheckedChange = { capabilityDialogImageEnabled = it },
+                            enabled = capabilityDialogCurrentCapabilities?.imageEnabled == true
                         )
                     }
                     Row(
@@ -422,13 +453,39 @@ class ModelSettingsFragment : Fragment() {
                                 color = MaterialTheme.colorScheme.primary
                             )
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { mmprojPickerLauncher.launch(arrayOf("*/*")) }) {
-                                Text(if (capabilityDialogMmprojPath.isBlank()) "mmprojを選択" else "変更")
-                            }
-                            if (capabilityDialogMmprojPath.isNotBlank()) {
-                                TextButton(onClick = { capabilityDialogMmprojPath = "" }) {
-                                    Text("解除")
+                        ExposedDropdownMenuBox(
+                            expanded = mmprojDropdownExpanded,
+                            onExpandedChange = { mmprojDropdownExpanded = it }
+                        ) {
+                            OutlinedTextField(
+                                value = if (capabilityDialogMmprojPath.isBlank()) "未選択" else java.io.File(capabilityDialogMmprojPath).name,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("mmprojファイル") },
+                                trailingIcon = {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = mmprojDropdownExpanded)
+                                },
+                                modifier = Modifier.menuAnchor()
+                            )
+                            ExposedDropdownMenu(
+                                expanded = mmprojDropdownExpanded,
+                                onDismissRequest = { mmprojDropdownExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("未選択") },
+                                    onClick = {
+                                        capabilityDialogMmprojPath = ""
+                                        mmprojDropdownExpanded = false
+                                    }
+                                )
+                                importedMmprojTasks.forEach { mmprojModel ->
+                                    DropdownMenuItem(
+                                        text = { Text(mmprojModel.shortDisplayName) },
+                                        onClick = {
+                                            capabilityDialogMmprojPath = mmprojModel.path
+                                            mmprojDropdownExpanded = false
+                                        }
+                                    )
                                 }
                             }
                         }
@@ -649,7 +706,7 @@ class ModelSettingsFragment : Fragment() {
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(hfSearchResults, key = { it.id }) { result ->
-                        Card(
+                                Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(
                                 containerColor = colorResource(id = R.color.primary_light)
@@ -659,7 +716,17 @@ class ModelSettingsFragment : Fragment() {
                                 modifier = Modifier.padding(12.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Text(text = result.id, fontWeight = FontWeight.SemiBold)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "\u2B73",
+                                        color = colorResource(id = R.color.primary),
+                                        fontSize = 18.sp
+                                    )
+                                    Text(text = result.id, fontWeight = FontWeight.SemiBold)
+                                }
                                 Text(
                                     text = "DL: ${result.downloads} / Likes: ${result.likes}",
                                     color = colorResource(id = R.color.text_secondary)
@@ -703,16 +770,35 @@ class ModelSettingsFragment : Fragment() {
             }
         }) {
             Card(
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .heightIn(max = 640.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = colorResource(id = R.color.primary_light)
                 )
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(text = "ダウンロードするファイルを選択", fontWeight = FontWeight.Bold)
                     Text(text = model.id, color = colorResource(id = R.color.text_secondary))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { 
+                            hfReadmePageTitle = model.id
+                            hfReadmePageVisible = true
+                            fetchHfReadme(model.id) 
+                        }) {
+                            Text("README")
+                        }
+                    }
                     if (hfFilePickerLoading) {
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -722,7 +808,7 @@ class ModelSettingsFragment : Fragment() {
                             Text("ファイル一覧を取得中...")
                         }
                     } else if (hfFilePickerFiles.isEmpty()) {
-                        Text("対応ファイル（.gguf / .task / .litertlm）が見つかりません")
+                        Text("対応ファイル（.gguf / .task / .litertlm / .mmproj）が見つかりません")
                     } else {
                         hfFilePickerFiles.forEach { file ->
                             Row(
@@ -886,6 +972,57 @@ class ModelSettingsFragment : Fragment() {
                                     }
                                 }
                             )
+                        }
+                    }
+                }
+
+                // mmprojファイル管理
+                Text(
+                    text = "mmproj ファイル",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colorResource(id = R.color.text_secondary),
+                    modifier = Modifier.padding(top = 12.dp)
+                )
+                Text(
+                    text = "ビジョン・オーディオ処理用の投影ファイル（マルチモーダル）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_secondary),
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                
+                if (importedMmprojTasks.isEmpty()) {
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { mmprojPickerLauncher.launch(arrayOf("*/*")) }
+                    ) {
+                        Text("mmproj ファイルを追加")
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (mmproj in importedMmprojTasks) {
+                            val mmprojKey = "mmproj_${mmproj.path}"
+                            val isExpanded = expandedModelKey == mmprojKey
+                            MmprojAccordionItem(
+                                model = mmproj,
+                                isExpanded = isExpanded,
+                                onToggle = { expandedModelKey = if (isExpanded) null else mmprojKey },
+                                onDelete = {
+                                    val result = ModelFileManager.deleteImportedTask(requireContext(), mmproj.path)
+                                    result.onSuccess {
+                                        toast("mmproj ファイルを削除しました")
+                                        refreshImportedTasks()
+                                        expandedModelKey = null
+                                    }.onFailure {
+                                        toast("削除に失敗しました: ${it.message}")
+                                    }
+                                }
+                            )
+                        }
+                        OutlinedButton(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { mmprojPickerLauncher.launch(arrayOf("*/*")) }
+                        ) {
+                            Text("+ 追加")
                         }
                     }
                 }
@@ -1165,6 +1302,7 @@ class ModelSettingsFragment : Fragment() {
                                     capabilityDialogAudioEnabled = caps.audioEnabled
                                     capabilityDialogThinkingEnabled = caps.thinkingEnabled
                                     capabilityDialogMmprojPath = caps.mmprojPath ?: ""
+                                    capabilityDialogCurrentCapabilities = caps
                                     capabilityDialogModel = model
                                 },
                                 modifier = Modifier.weight(1f)
@@ -1212,6 +1350,89 @@ class ModelSettingsFragment : Fragment() {
         }
     }
 
+    @Composable
+    private fun MmprojAccordionItem(
+        model: ModelFileManager.ImportedTaskModel,
+        isExpanded: Boolean,
+        onToggle: () -> Unit,
+        onDelete: () -> Unit,
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onToggle() },
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.surface_card)
+            )
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = model.shortDisplayName, fontWeight = FontWeight.SemiBold)
+                        model.hfRepoQualifier?.let { repo ->
+                            Text(
+                                text = "HF: $repo",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorResource(id = R.color.text_secondary),
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                    }
+                    if (!isExpanded) {
+                        Text(
+                            text = "✓ mmproj",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colorResource(id = R.color.text_secondary),
+                            modifier = Modifier.padding(start = 8.dp)
+                        )
+                    }
+                }
+                if (isExpanded) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(colorResource(id = R.color.bg_session_list))
+                            .padding(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "mmproj",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colorResource(id = R.color.primary),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "(" + SettingsHelper.importedModelKindLabel(model.path) + ")",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colorResource(id = R.color.text_secondary)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "選択済み mmproj ファイルを表示します。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = onDelete) {
+                            Text(stringResource(id = R.string.delete))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private fun renderHfTokenState() {
         val token = HfAuthManager.getToken(requireContext())
         hfLinked = token.isNotBlank()
@@ -1230,6 +1451,7 @@ class ModelSettingsFragment : Fragment() {
 
     private fun refreshImportedTasks() {
         importedTasks = ModelFileManager.listImportedTaskModels(requireContext())
+        importedMmprojTasks = ModelFileManager.listImportedMmprojModels(requireContext())
     }
 
     private fun searchHfModels() {
@@ -1265,6 +1487,9 @@ class ModelSettingsFragment : Fragment() {
         hfFilePickerModel = result
         hfFilePickerLoading = true
         hfFilePickerFiles = emptyList()
+        hfReadmeText = null
+        hfReadmeError = null
+        hfReadmeLoading = false
         viewLifecycleOwner.lifecycleScope.launch {
             val files = withContext(Dispatchers.IO) {
                 ModelFileManager.listHuggingFaceDownloadableFiles(requireContext(), result.id)
@@ -1276,6 +1501,24 @@ class ModelSettingsFragment : Fragment() {
                 toast("ファイル一覧取得に失敗: ${it.message}")
             }
             hfFilePickerLoading = false
+        }
+        fetchHfReadme(result.id)
+    }
+
+    private fun fetchHfReadme(modelId: String) {
+        hfReadmeText = null
+        hfReadmeError = null
+        hfReadmeLoading = true
+        viewLifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                ModelFileManager.fetchHuggingFaceReadme(requireContext(), modelId)
+            }
+            result.onSuccess {
+                hfReadmeText = it.ifBlank { "README は空です" }
+            }.onFailure {
+                hfReadmeError = "README 取得失敗: ${it.message}"
+            }
+            hfReadmeLoading = false
         }
     }
 
@@ -1618,5 +1861,87 @@ class ModelSettingsFragment : Fragment() {
             typography = MaterialTheme.typography,
             content = content
         )
+    }
+
+    @Composable
+    private fun HfReadmePage() {
+        val isDark = isSystemInDarkTheme()
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(colorResource(id = R.color.bg_session_list))
+        ) {
+            // Header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "README",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        color = if (isDark) Color.White else LocalContentColor.current
+                    )
+                    Text(
+                        text = hfReadmePageTitle,
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                IconButton(
+                    onClick = { hfReadmePageVisible = false }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = if (isDark) Color.White else colorResource(id = R.color.text_primary)
+                    )
+                }
+            }
+
+            // Content
+            if (hfReadmeLoading) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    CircularProgressIndicator()
+                    Text("READMEを読み込み中...", modifier = Modifier.padding(top = 8.dp), color = if (isDark) Color.White else LocalContentColor.current)
+                }
+            } else if (hfReadmeError != null) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text("エラー: ${hfReadmeError}", color = if (isDark) Color.White else colorResource(id = R.color.text_primary))
+                }
+            } else if (hfReadmeText != null) {
+                CompositionLocalProvider(
+                    LocalContentColor provides (if (isDark) androidx.compose.ui.graphics.Color.White else LocalContentColor.current)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .padding(16.dp)
+                    ) {
+                        MarkdownLatexText(
+                            text = hfReadmeText!!,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        }
     }
 }

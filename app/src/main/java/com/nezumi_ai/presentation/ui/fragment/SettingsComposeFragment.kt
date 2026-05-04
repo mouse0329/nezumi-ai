@@ -40,6 +40,7 @@ class SettingsComposeFragment : Fragment() {
     private var contextCompressionThresholdPercent by mutableStateOf(70)
     private var userNameInput by mutableStateOf("")
     private var systemPromptInput by mutableStateOf("")
+    private var selectedModel by mutableStateOf("E2B")
     private var backendType by mutableStateOf("CPU")
     private var themeMode by mutableStateOf(PreferencesHelper.THEME_SYSTEM)
     private var errorDialogMessage by mutableStateOf<String?>(null)
@@ -197,6 +198,14 @@ class SettingsComposeFragment : Fragment() {
 
     @Composable
     private fun InferenceParamsCard() {
+        // モデル別のコンテキスト最大値
+        val maxContextWindow = if (selectedModel.equals("Gemma4-2B", ignoreCase = true) || 
+                                    selectedModel.equals("Gemma4-4B", ignoreCase = true)) {
+            8192
+        } else {
+            4096
+        }
+        
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -205,10 +214,15 @@ class SettingsComposeFragment : Fragment() {
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(text = "推論パラメータ", fontWeight = FontWeight.Bold)
+                Text(
+                    text = "現在のモデル: $selectedModel (最大コンテキスト: $maxContextWindow)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_secondary)
+                )
                 OutlinedTextField(
                     value = contextWindowInput,
                     onValueChange = { contextWindowInput = it },
-                    label = { Text(stringResource(id = R.string.context_window_label)) },
+                    label = { Text("${stringResource(id = R.string.context_window_label)} (512-$maxContextWindow)") },
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
@@ -482,8 +496,9 @@ class SettingsComposeFragment : Fragment() {
             val config = settingsRepository.getInferenceConfig()
             val systemPrompt = settingsRepository.getSystemPrompt()
             val userName = settingsRepository.getUserName()
-            val selectedModel = settingsRepository.getSelectedModel()
-            val contextWindow = settingsRepository.getContextWindowForModel(selectedModel)
+            val model = settingsRepository.getSelectedModel()
+            selectedModel = model
+            val contextWindow = settingsRepository.getContextWindowForModel(model)
             val threads = settingsRepository.getLlamaCppThreads()
             val gpuLayers = settingsRepository.getLlamaCppGpuLayers()
             val batchSize = settingsRepository.getLlamaCppBatchSize()
@@ -530,8 +545,15 @@ class SettingsComposeFragment : Fragment() {
         if (maxTokens !in InferenceConfig.MIN_MAX_TOKENS..InferenceConfig.MAX_MAX_TOKENS) {
             return "Max Tokens は ${InferenceConfig.MIN_MAX_TOKENS} - ${InferenceConfig.MAX_MAX_TOKENS} の範囲で入力してください"
         }
-        if (contextWindow !in 512..8192) {
-            return "コンテキストは 512 - 8192 の範囲で入力してください"
+        // モデル別のコンテキストウィンドウ制限を確認
+        val maxContextWindow = if (selectedModel.equals("Gemma4-2B", ignoreCase = true) || 
+                                    selectedModel.equals("Gemma4-4B", ignoreCase = true)) {
+            8192
+        } else {
+            4096
+        }
+        if (contextWindow !in 512..maxContextWindow) {
+            return "コンテキストは 512 - $maxContextWindow の範囲で入力してください"
         }
         if (contextCompressionThresholdPercent !in
             InferenceConfig.MIN_COMPRESSION_THRESHOLD..InferenceConfig.MAX_COMPRESSION_THRESHOLD

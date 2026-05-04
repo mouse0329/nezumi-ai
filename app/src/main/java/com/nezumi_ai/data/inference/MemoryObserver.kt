@@ -169,8 +169,8 @@ object MemoryObserver {
             MemoryLevel.CRITICAL -> {
                 Log.w(TAG, "Memory: ${status.usedPercent}% - CRITICAL. Cache reduction recommended")
                 triggerGarbageCollection()
-                // キャッシュ削減を要求（呼び出し側で対応）
-                // CacheManager.cleanupCacheIfNeeded() を呼び出させる
+                // キャッシュ削減を実行
+                CacheManager.cleanupCacheIfNeeded(context)
                 true
             }
             MemoryLevel.SEVERE -> {

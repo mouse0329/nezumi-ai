@@ -116,6 +116,25 @@ esac
 
 CLASSPATH="\\\"\\\""
 
+# AGP 8+ androidJdkImage requires jlink. Some IDEs set JAVA_HOME to a JRE without jlink (e.g. VS Code Red Hat Java).
+if [ -n "$JAVA_HOME" ] && [ ! -x "$JAVA_HOME/bin/jlink" ] && [ ! -x "$JAVA_HOME/bin/jlink.exe" ]; then
+    _nezumi_jbr=""
+    for _d in "/c/Program Files/Android/Android Studio/jbr" \
+              "${PROGRAMFILES:-}/Android/Android Studio/jbr" \
+              "${LOCALAPPDATA:-}/Programs/Android/Android Studio/jbr"
+    do
+        [ -z "$_d" ] && continue
+        if [ -x "$_d/bin/jlink" ] || [ -x "$_d/bin/jlink.exe" ]; then
+            _nezumi_jbr="$_d"
+            break
+        fi
+    done
+    if [ -n "$_nezumi_jbr" ]; then
+        JAVA_HOME="$_nezumi_jbr"
+        export JAVA_HOME
+    fi
+    unset _nezumi_jbr _d
+fi
 
 # Determine the Java command to use to start the JVM.
 if [ -n "$JAVA_HOME" ] ; then

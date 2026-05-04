@@ -1032,10 +1032,16 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     )
 
     private fun syncSelectedModelLabel() {
-        val selected = modelOptions.firstOrNull { it.key == viewModel.selectedModel.value }
-            ?: modelOptions.firstOrNull()
-            ?: return
-        binding.modelDropdown.setText(modelDisplaySuffix(selected.label))
+        val currentKey = viewModel.selectedModel.value
+        val selected = modelOptions.firstOrNull { it.key == currentKey }
+        if (selected != null) {
+            binding.modelDropdown.setText(modelDisplaySuffix(selected.label))
+            return
+        }
+
+        val fallback = modelOptions.firstOrNull() ?: return
+        binding.modelDropdown.setText(modelDisplaySuffix(fallback.label))
+        viewModel.setSelectedModelSilently(fallback.key)
     }
 
     private fun renderSendButtonState() {

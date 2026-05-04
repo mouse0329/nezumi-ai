@@ -35,6 +35,17 @@ set APP_HOME=%DIRNAME%
 @rem Resolve any "." and ".." in APP_HOME to make it shorter.
 for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
 
+@rem AGP 8+ androidJdkImage requires jlink. VS Code / Red Hat Java may set JAVA_HOME to a JRE without jlink.exe.
+if defined JAVA_HOME (
+  if not exist "%JAVA_HOME%\bin\jlink.exe" (
+    if exist "%ProgramFiles%\Android\Android Studio\jbr\bin\jlink.exe" (
+      set "JAVA_HOME=%ProgramFiles%\Android\Android Studio\jbr"
+    ) else if exist "%LOCALAPPDATA%\Programs\Android\Android Studio\jbr\bin\jlink.exe" (
+      set "JAVA_HOME=%LOCALAPPDATA%\Programs\Android\Android Studio\jbr"
+    )
+  )
+)
+
 @rem Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
 set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
 
