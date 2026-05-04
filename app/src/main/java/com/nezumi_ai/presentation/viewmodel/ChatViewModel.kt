@@ -522,6 +522,14 @@ class ChatViewModel(
         }
     }
 
+    fun setSelectedModelSilently(model: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val normalizedModel = normalizeModel(model)
+            settingsRepository.updateModel(normalizedModel)
+            _selectedModel.value = normalizedModel
+        }
+    }
+
     fun compressContextManually() {
         val sessionId = _currentSessionId.value ?: return
         if (_isLoading.value) {
@@ -797,16 +805,24 @@ class ChatViewModel(
                 engineModelName = engineModelName
             )
 
-            if ((images.isNotEmpty() || audioClips.isNotEmpty()) &&
-                engineModelName.endsWith(".gguf", ignoreCase = true) &&
-                !com.nezumi_ai.utils.ImportedModelCapabilityStore.get(appContext, engineModelName).imageEnabled
-            ) {
-                Log.w(
-                    TAG,
-                    "Multimodal input requested for GGUF model without imageEnabled. images=${images.size} audio=${audioClips.size}"
-                )
-                _uiMessage.emit("このGGUFモデルは画像・音声入力に対応していません。モデル設定の機能設定で有効化してください。")
-                return
+            if (engineModelName.endsWith(".gguf", ignoreCase = true)) {
+                val caps = com.nezumi_ai.utils.ImportedModelCapabilityStore.get(appContext, engineModelName)
+                if (images.isNotEmpty() && !caps.imageEnabled) {
+                    Log.w(
+                        TAG,
+                        "GGUF: images sent but image capability off. count=${images.size}"
+                    )
+                    _uiMessage.emit("このGGUFモデルでは画像入力がオフです。モデル設定の機能設定で画像を有効にしてください。")
+                    return
+                }
+                if (audioClips.isNotEmpty() && !caps.audioEnabled) {
+                    Log.w(
+                        TAG,
+                        "GGUF: audio sent but audio capability off. count=${audioClips.size}"
+                    )
+                    _uiMessage.emit("このGGUFモデルでは音声入力がオフです。モデル設定の機能設定で音声を有効にしてください。")
+                    return
+                }
             }
 
             // GGUF マルチモーダル: JNI が mmproj 未指定時もベース GGUF から clip/mtmd を初期化する（単一ファイル統合型）
@@ -1346,7 +1362,7 @@ class ChatViewModel(
             normalized.equals("E2B", ignoreCase = true) -> "gemma-3n-2b"  // Gemma3n 2B
             (normalized.endsWith(".task") ||
                 normalized.endsWith(".litertlm") ||
-                normalized.endsWith(".gguf")) && normalized.startsWith("/") -> normalized
+                normalized.endsWith(".gguf")) && File(normalized).isAbsolute -> normalized
             else -> "gemma4-2b"  // デフォルト
         }
     }

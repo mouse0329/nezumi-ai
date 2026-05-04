@@ -132,11 +132,26 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                     val requestedNKeep = normalized.llamaCppNKeep
                     val numCores = Runtime.getRuntime().availableProcessors()
                     val appliedThreads = (numCores / 2).coerceIn(1, 4)  // スレッド数削減（オーバーヘッド低減）
-                    val appliedBatchSize = 32.coerceAtMost(requestedBatchSize)  // バッチサイズ削減（メモリ効率）
+                    // 以前は 32.coerceAtMost(requested) で設定の n_batch（例: 512）が無視され、常に 32 固定になっていた。
+                    // Gemma3/4 等の非因果ビジョン（mtmd_decode_use_non_causal）は画像トークン列を n_batch 幅で分割デコードするため、
+                    // n_batch が極端に小さいとマルチモーダルが失敗する。
+                    val mmCaps = ImportedModelCapabilityStore.resolveForModel(context, modelPath)
+                    val coercedBatch = requestedBatchSize.coerceIn(32, 2048)
+                    val appliedBatchSize = when {
+                        mmCaps.imageEnabled || mmCaps.audioEnabled -> coercedBatch.coerceAtLeast(512)
+                        else -> coercedBatch
+                    }
                     val appliedGpuLayers = 0  // GPU 無効化（Tensor G3 は OpenCL 非対応）
                     val appliedNKeep = 0  // KV キャッシュ無効化
 
                     Log.d(TAG, "Creating rnllama context with model_path=$modelPath")
+                    if ((mmCaps.imageEnabled || mmCaps.audioEnabled) && appliedBatchSize > requestedBatchSize) {
+                        Log.i(
+                            TAG,
+                            "GGUF multimodal: n_batch raised from requested=$requestedBatchSize to applied=$appliedBatchSize " +
+                                "(need sufficient batch for vision/audio decode)"
+                        )
+                    }
                     if (requestedGpuLayers != appliedGpuLayers || requestedNKeep != appliedNKeep) {
                         Log.w(
                             TAG,
@@ -155,18 +170,24 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                     // ★ マルチモーダル初期化: 明示的なmmproj パスがない場合でも、
                     // 本体 GGUF ファイルから ビジョンテンソルを自動検出するため、JNI 側で
                     // mmproj_effective = modelPath を使用。Java 側では null を渡す方針を確認。
-                    val mmprojPathFromSettings = ImportedModelCapabilityStore.get(context, modelPath).mmprojPath
-                        ?.takeIf { it.isNotBlank() && java.io.File(it).exists() }
-                    
-                    Log.d(TAG, "Creating RnLlamaContext: modelPath=$modelPath, mmprojPath=${mmprojPathFromSettings ?: "(null -> auto-detect from model)"}")
-                    
+                    val explicitMmprojPath = mmCaps.mmprojPath
+                    val resolvedMmprojPath = resolveMmprojPath(modelPath, explicitMmprojPath)
+                    if (explicitMmprojPath != null && explicitMmprojPath.isNotBlank() && resolvedMmprojPath == null) {
+                        Log.w(TAG, "Configured mmproj path does not exist or is unreadable: $explicitMmprojPath")
+                    }
+
+                    Log.d(
+                        TAG,
+                        "Creating RnLlamaContext: modelPath=$modelPath, mmprojPath=${resolvedMmprojPath ?: "(null -> auto-detect from model)"}"
+                    )
+
                     val lc = RnLlamaContext(
                         modelPath = modelPath,
                         nCtx = normalized.contextWindow,
                         nBatch = appliedBatchSize,
                         nThreads = appliedThreads,
                         nGpuLayers = appliedGpuLayers,
-                        mmprojPath = mmprojPathFromSettings
+                        mmprojPath = resolvedMmprojPath
                     )
                     if (!lc.isValid) {
                         throw IllegalStateException("Failed to initialize rnllama context")
@@ -587,11 +608,47 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
      * 将来的には ModelFileManager に GGUF エントリを追加して統合する。
      */
     private fun resolveModelFile(modelName: String): File? {
-        if (modelName.endsWith(".gguf", ignoreCase = true) && modelName.startsWith("/")) {
+        if (modelName.endsWith(".gguf", ignoreCase = true) && File(modelName).isAbsolute) {
             val f = File(modelName)
             return if (f.exists() && f.canRead()) f else null
         }
         Log.w(TAG, "resolveModelFile: unsupported format: $modelName")
+        return null
+    }
+
+    private fun resolveMmprojPath(modelPath: String, explicitMmprojPath: String?): String? {
+        explicitMmprojPath?.takeIf { it.isNotBlank() }?.let {
+            val explicitFile = File(it)
+            if (explicitFile.exists() && explicitFile.canRead()) {
+                Log.d(TAG, "Using explicit mmproj path: $it")
+                return it
+            }
+            Log.w(TAG, "Explicit mmproj path is not readable: $it")
+        }
+
+        val modelFile = File(modelPath)
+        val parentDir = modelFile.parentFile ?: return null
+        val baseName = modelFile.nameWithoutExtension
+        val fileName = modelFile.name
+        val candidateNames = listOf(
+            "${baseName}.mmproj.gguf",
+            "${baseName}.mmproj",
+            "${baseName}_mmproj.gguf",
+            "${baseName}_mmproj",
+            "${fileName}.mmproj",
+            "${fileName}.mmproj.gguf",
+            "${fileName}_mmproj",
+            "${fileName}_mmproj.gguf"
+        )
+
+        candidateNames.forEach { candidateName ->
+            val candidateFile = File(parentDir, candidateName)
+            if (candidateFile.exists() && candidateFile.canRead()) {
+                Log.i(TAG, "Auto-detected mmproj companion file: ${candidateFile.absolutePath}")
+                return candidateFile.absolutePath
+            }
+        }
+
         return null
     }
 

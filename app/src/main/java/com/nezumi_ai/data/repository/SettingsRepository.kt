@@ -505,9 +505,14 @@ class SettingsRepository(
         val current = currentSettings()
         val map = parseContextWindowMap(current.contextWindowMap).toMutableMap()
         val key = modelToBackendKey(model)
+        // モデル別の最大コンテキストウィンドウを取得
+        val maxWindow = when {
+            model.equals("Gemma4-2B", ignoreCase = true) || model.equals("Gemma4-4B", ignoreCase = true) -> 8192
+            else -> 4096
+        }
         map[key] = contextWindow.coerceIn(
             InferenceConfig.MIN_CONTEXT_WINDOW,
-            InferenceConfig.MAX_CONTEXT_WINDOW
+            maxWindow
         )
         dao.update(
             current.copy(

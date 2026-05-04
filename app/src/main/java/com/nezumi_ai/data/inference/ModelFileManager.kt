@@ -211,7 +211,23 @@ object ModelFileManager {
                         it.name.lowercase().endsWith(".gguf")
                     )
             }
+            ?.filter { !it.name.lowercase().contains("mmproj") }
             ?.filter { validateImportedTaskFile(it).isSuccess }
+            ?.sortedByDescending { it.lastModified() }
+            ?.map { ImportedTaskModel.fromImportedFile(it) }
+            ?.toList()
+            ?: emptyList()
+    }
+
+    fun listImportedMmprojModels(context: Context): List<ImportedTaskModel> {
+        val dir = File(context.filesDir, "models/imported")
+        if (!dir.exists()) return emptyList()
+        return dir.listFiles()
+            ?.asSequence()
+            ?.filter {
+                val name = it.name.lowercase()
+                it.isFile && name.contains("mmproj") && (name.endsWith(".gguf") || name.endsWith(".mmproj"))
+            }
             ?.sortedByDescending { it.lastModified() }
             ?.map { ImportedTaskModel.fromImportedFile(it) }
             ?.toList()
@@ -286,6 +302,38 @@ object ModelFileManager {
         }
     }
 
+    suspend fun fetchHuggingFaceReadme(
+        context: Context,
+        modelId: String
+    ): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val normalized = modelId.trim()
+            if (normalized.isBlank()) return@runCatching ""
+            val repoPath = encodeRepoPath(normalized)
+            val candidates = listOf("README.md", "README")
+            var lastException: Exception? = null
+            for (candidate in candidates) {
+                try {
+                    val url = "https://huggingface.co/$repoPath/raw/main/$candidate"
+                    return@runCatching httpGetText(context, url)
+                } catch (e: Exception) {
+                    lastException = e
+                }
+            }
+            throw IllegalStateException("README を取得できませんでした", lastException)
+        }
+    }
+
+    suspend fun findMmprojCandidates(
+        context: Context,
+        modelId: String
+    ): Result<List<HfModelFile>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val files = listHuggingFaceDownloadableFiles(context, modelId).getOrThrow()
+            files.filter { it.path.lowercase().endsWith(".mmproj") }
+        }
+    }
+
     suspend fun downloadHuggingFaceModelFile(
         context: Context,
         modelId: String,
@@ -349,8 +397,8 @@ object ModelFileManager {
     fun importTaskFromUri(context: Context, uri: Uri): Result<File> = runCatching {
         val displayName = queryDisplayName(context, uri) ?: "custom_model.task"
         val lower = displayName.lowercase()
-        if (!lower.endsWith(".task") && !lower.endsWith(".litertlm") && !lower.endsWith(".gguf")) {
-            throw IllegalArgumentException(".task / .litertlm / .gguf ファイルのみ追加できます")
+        if (!lower.endsWith(".task") && !lower.endsWith(".litertlm") && !lower.endsWith(".gguf") && !lower.endsWith(".mmproj")) {
+            throw IllegalArgumentException(".task / .litertlm / .gguf / .mmproj ファイルのみ追加できます")
         }
         val importedDir = File(context.filesDir, "models/imported")
         if (!importedDir.exists()) {
@@ -416,8 +464,8 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
 
         // ファイル形式の厳密なチェック
         val lower = target.name.lowercase()
-        if (!target.isFile || (!lower.endsWith(".task") && !lower.endsWith(".litertlm") && !lower.endsWith(".gguf"))) {
-            throw IllegalArgumentException(".task / .litertlm / .gguf ファイルのみ削除できます")
+        if (!target.isFile || (!lower.endsWith(".task") && !lower.endsWith(".litertlm") && !lower.endsWith(".gguf") && !lower.endsWith(".mmproj"))) {
+            throw IllegalArgumentException(".task / .litertlm / .gguf / .mmproj ファイルのみ削除できます")
         }
 
         // 削除実行
@@ -442,8 +490,8 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
             throw IllegalStateException("ファイルが見つかりません")
         }
         val lower = oldFile.name.lowercase()
-        if (!lower.endsWith(".task") && !lower.endsWith(".litertlm") && !lower.endsWith(".gguf")) {
-            throw IllegalArgumentException(".task / .litertlm / .gguf のみリネームできます")
+        if (!lower.endsWith(".task") && !lower.endsWith(".litertlm") && !lower.endsWith(".gguf") && !lower.endsWith(".mmproj")) {
+            throw IllegalArgumentException(".task / .litertlm / .gguf / .mmproj のみリネームできます")
         }
         val ext = oldFile.extension
         val stem = sanitizeImportedStemOnly(newStemInput)
@@ -1094,7 +1142,8 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         val lowered = path.lowercase()
         return lowered.endsWith(".gguf") ||
             lowered.endsWith(".task") ||
-            lowered.endsWith(".litertlm")
+            lowered.endsWith(".litertlm") ||
+            lowered.endsWith(".mmproj")
     }
 
     private fun httpGetText(context: Context, urlString: String): String {

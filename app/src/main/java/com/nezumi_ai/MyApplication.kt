@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import androidx.work.Configuration
 import androidx.work.WorkManager
+import com.nezumi_ai.data.inference.CacheManager
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.nezumi_ai.utils.PreferencesHelper
 import kotlinx.coroutines.CoroutineScope
@@ -21,6 +22,9 @@ class MyApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         PreferencesHelper.applyThemeMode(this)
+        
+        // CacheManager を初期化（前回ロードしたモデル名の復元）
+        CacheManager.initialize(this)
         
         // Manual WorkManager initialization to avoid default initialization
         if (!WorkManager.isInitialized()) {
@@ -50,7 +54,7 @@ class MyApplication : Application() {
                 val currentTime = System.currentTimeMillis()
                 
                 if (mediaDir.exists()) {
-                    val files = mediaDir.listFiles() ?: emptyArray()
+                    val files = mediaDir.listFiles() ?: emptyArray<File>()
                     var deletedCount = 0
                     var totalSize = 0L
                     

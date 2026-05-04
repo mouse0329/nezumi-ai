@@ -75,7 +75,13 @@ object ImportedModelCapabilityStore {
         val lowered = modelKey.lowercase()
         val isAbsolutePath = File(modelKey).isAbsolute
         if (isAbsolutePath && lowered.endsWith(".gguf")) {
-            return get(context, modelKey)
+            val storedCaps = get(context, modelKey)
+            if (!hasStoredCapabilities(context, modelKey) && !hasCompanionMmproj(File(modelKey))) {
+                // Standalone GGUF multimodalモデルは mmproj がないと画像/音声入力が使えないため、
+                // 初回未設定時は無効にしておく。
+                return ImportedModelCapabilities(imageEnabled = false, audioEnabled = false)
+            }
+            return storedCaps
         }
         val isImported =
             isAbsolutePath &&
@@ -86,4 +92,33 @@ object ImportedModelCapabilityStore {
         }
         return get(context, modelKey)
     }
+
+    private fun hasStoredCapabilities(context: Context, modelPath: String): Boolean {
+        val prefs = prefs(context)
+        return prefs.contains(imageKey(modelPath)) ||
+            prefs.contains(audioKey(modelPath)) ||
+            prefs.contains(mmprojKey(modelPath)) ||
+            prefs.contains(thinkingKey(modelPath))
+    }
+
+    private fun hasCompanionMmproj(modelFile: File): Boolean {
+        if (!modelFile.exists() || !modelFile.isFile) return false
+        val parentDir = modelFile.parentFile ?: return false
+        val baseName = modelFile.nameWithoutExtension
+        val fileName = modelFile.name
+        val candidateNames = listOf(
+            "${baseName}.mmproj.gguf",
+            "${baseName}.mmproj",
+            "${baseName}_mmproj.gguf",
+            "${baseName}_mmproj",
+            "${fileName}.mmproj",
+            "${fileName}.mmproj.gguf",
+            "${fileName}_mmproj",
+            "${fileName}_mmproj.gguf"
+        )
+        return candidateNames.any { candidateName ->
+            File(parentDir, candidateName).exists()
+        }
+    }
 }
+

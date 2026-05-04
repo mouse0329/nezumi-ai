@@ -406,9 +406,11 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
     }
 
     std::string mmproj_effective;
+    bool mmprojExplicitUsed = false;
     if (!mmproj_explicit.empty() && filePathExists(mmproj_explicit.c_str()))
     {
         mmproj_effective = std::move(mmproj_explicit);
+        mmprojExplicitUsed = true;
         __android_log_print(ANDROID_LOG_INFO, TAG,
                             "nativeCreateContext: initMultimodal using explicit mmproj path");
     }
@@ -431,14 +433,45 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
     {
         const bool use_gpu_clip = params.n_gpu_layers > 0;
         __android_log_print(ANDROID_LOG_DEBUG, TAG,
-                            "nativeCreateContext: [DEBUG] attempting initMultimodal: holder=%p, ctx->ctx=%p, mmproj_effective='%s'",
-                            (void *)holder, (void *)holder->ctx->ctx, mmproj_effective.c_str());
+                            "nativeCreateContext: [DEBUG] attempting initMultimodal: holder=%p, ctx->ctx=%p, mmproj_effective='%s', use_gpu_clip=%d",
+                            (void *)holder, (void *)holder->ctx->ctx, mmproj_effective.c_str(), use_gpu_clip);
         if (!holder->ctx->initMultimodal(mmproj_effective, use_gpu_clip, -1, -1))
         {
-            __android_log_print(ANDROID_LOG_WARN, TAG,
-                                "nativeCreateContext: [DEBUG] initMultimodal FAILED path='%s' "
-                                "(no vision tensors / mismatch — multimodal disabled for this load)",
-                                mmproj_effective.c_str());
+            if (mmprojExplicitUsed && mmproj_effective != path)
+            {
+                __android_log_print(ANDROID_LOG_INFO, TAG,
+                                    "nativeCreateContext: explicit mmproj failed; attempting integrated base model fallback '%s'",
+                                    path.c_str());
+                if (!holder->ctx->initMultimodal(path, use_gpu_clip, -1, -1))
+                {
+                    __android_log_print(ANDROID_LOG_WARN, TAG,
+                                        "nativeCreateContext: [DEBUG] initMultimodal FAILED path='%s' "
+                                        "(explicit mmproj mismatch and integrated fallback failed). Multimodal disabled for this load.",
+                                        mmproj_effective.c_str());
+                }
+                else
+                {
+                    __android_log_print(ANDROID_LOG_INFO, TAG,
+                                        "nativeCreateContext: [DEBUG] multimodal INITIALIZED SUCCESS via fallback path='%s', holder=%p",
+                                        path.c_str(), (void *)holder);
+                }
+            }
+            else if (mmproj_explicit.empty())
+            {
+                __android_log_print(ANDROID_LOG_WARN, TAG,
+                                    "nativeCreateContext: [DEBUG] initMultimodal FAILED path='%s' "
+                                    "(integrated GGUF did not expose vision tensors / not a mixed model). "
+                                    "Multimodal disabled for this load.",
+                                    mmproj_effective.c_str());
+            }
+            else
+            {
+                __android_log_print(ANDROID_LOG_WARN, TAG,
+                                    "nativeCreateContext: [DEBUG] initMultimodal FAILED path='%s' "
+                                    "(explicit mmproj mismatch or unreadable companion file). "
+                                    "Multimodal disabled for this load.",
+                                    mmproj_effective.c_str());
+            }
         }
         else
         {
