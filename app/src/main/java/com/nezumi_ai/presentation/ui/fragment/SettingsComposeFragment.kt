@@ -52,6 +52,8 @@ class SettingsComposeFragment : Fragment() {
     private var llamaCppRopeFreqBase by mutableStateOf(0.0f)
     private var llamaCppRopeFreqScale by mutableStateOf(1.0f)
     private var chatHistoryLimit by mutableStateOf(30)
+    private var sdSteps by mutableStateOf(8)
+    private var sdCfg by mutableStateOf(7.0f)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -141,6 +143,7 @@ class SettingsComposeFragment : Fragment() {
             }
             item { BackendCard() }
             item { InferenceParamsCard() }
+            item { ImageGenSettingsCard() }
             item { PersonalizationCard() }
             item { ChatHistoryCard() }
             item { LlamaCppCard() }
@@ -307,6 +310,71 @@ class SettingsComposeFragment : Fragment() {
                     label = { Text(stringResource(id = R.string.system_prompt_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun ImageGenSettingsCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(text = "画像生成設定", fontWeight = FontWeight.Bold)
+                Text(
+                    text = "チャット画面からAIが画像生成ツールを呼び出す際のデフォルト設定です",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_secondary)
+                )
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("ステップ数", color = colorResource(id = R.color.text_primary))
+                    Text(
+                        "$sdSteps / 50",
+                        color = colorResource(id = R.color.primary),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+                Slider(
+                    value = sdSteps.toFloat(),
+                    onValueChange = { sdSteps = it.toInt() },
+                    valueRange = 1f..50f,
+                    steps = 48,
+                    colors = SliderDefaults.colors(
+                        thumbColor = colorResource(id = R.color.primary),
+                        activeTrackColor = colorResource(id = R.color.primary)
+                    )
+                )
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("CFG Scale", color = colorResource(id = R.color.text_primary))
+                    Text(
+                        "%.1f".format(sdCfg),
+                        color = colorResource(id = R.color.primary),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+                Slider(
+                    value = sdCfg,
+                    onValueChange = { sdCfg = it },
+                    valueRange = 1f..20f,
+                    steps = 38,
+                    colors = SliderDefaults.colors(
+                        thumbColor = colorResource(id = R.color.primary),
+                        activeTrackColor = colorResource(id = R.color.primary)
+                    )
                 )
             }
         }
@@ -524,6 +592,8 @@ class SettingsComposeFragment : Fragment() {
             llamaCppRopeFreqBase = ropeFreqBase
             llamaCppRopeFreqScale = ropeFreqScale
             chatHistoryLimit = historyLimit
+            sdSteps = PreferencesHelper.getSdSteps(requireContext())
+            sdCfg = PreferencesHelper.getSdCfg(requireContext())
         }
     }
 
@@ -588,6 +658,8 @@ class SettingsComposeFragment : Fragment() {
         settingsRepository.updateLlamaCppRopeFreqBase(llamaCppRopeFreqBase)
         settingsRepository.updateLlamaCppRopeFreqScale(llamaCppRopeFreqScale)
         settingsRepository.updateChatHistoryLimit(chatHistoryLimit)
+        PreferencesHelper.setSdSteps(requireContext(), sdSteps)
+        PreferencesHelper.setSdCfg(requireContext(), sdCfg)
     }
 
     private fun onBackButtonPressed() {

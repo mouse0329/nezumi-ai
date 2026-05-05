@@ -1,10 +1,12 @@
 package com.nezumi_ai.data.media
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Log
 import androidx.core.content.FileProvider
 import java.io.File
+import java.io.FileOutputStream
 import java.util.UUID
 
 object MessageMediaStore {
@@ -21,6 +23,26 @@ object MessageMediaStore {
             dir.mkdirs()
         }
         return dir
+    }
+
+    /**
+     * SD 生成画像などを message_media に PNG で保存し、FileProvider の content URI 文字列を返す。
+     */
+    fun savePngBitmap(context: Context, bitmap: Bitmap, baseName: String = "sd_${UUID.randomUUID()}"): String? {
+        return try {
+            val destFile = File(getMediaDir(context), "$baseName.png")
+            FileOutputStream(destFile).use { out ->
+                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                    Log.e(TAG, "savePngBitmap: compress failed")
+                    return null
+                }
+            }
+            val authority = context.packageName + AUTHORITY_SUFFIX
+            FileProvider.getUriForFile(context, authority, destFile).toString()
+        } catch (e: Exception) {
+            Log.e(TAG, "savePngBitmap failed", e)
+            null
+        }
     }
     
     /**

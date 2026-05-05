@@ -5,22 +5,37 @@ package com.nezumi_ai.data.inference.rnllama
  * Methods correspond to native C/C++ implementations in llama.cpp/rnllama
  */
 object RnLlamaNative {
-    
+
+    @Volatile
+    private var loadAttempted: Boolean = false
+
+    @Volatile
+    private var loadSuccess: Boolean = false
+
+    /**
+     * GGUF 利用時のみロードする（stable-diffusion と ggml 二重ロードを避ける）。
+     */
+    fun loadLibraryIfNeeded(): Boolean {
+        if (loadAttempted) return loadSuccess
+        synchronized(this) {
+            if (loadAttempted) return loadSuccess
+            loadAttempted = true
+            loadSuccess = try {
+                System.loadLibrary("nezumi_rnllama_jni")
+                true
+            } catch (e: UnsatisfiedLinkError) {
+                false
+            }
+            return loadSuccess
+        }
+    }
+
     /**
      * Callback interface for token streaming
      * C++ side expects this to have an onToken method
      */
     interface TokenCallback {
         fun onToken(token: String)
-    }
-    
-    init {
-        // Load the native library
-        try {
-            System.loadLibrary("nezumi_rnllama_jni")
-        } catch (e: UnsatisfiedLinkError) {
-            // Library not yet available or build incomplete
-        }
     }
 
     /**

@@ -118,9 +118,19 @@
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
+            android:layout_marginBottom="8dp"
             android:text="シークレットチャット"
             app:icon="@drawable/ic_menu"
+            app:iconGravity="textStart" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/drawer_image_gen_button"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            android:text="@string/drawer_image_gen_start"
+            app:icon="@android:drawable/ic_menu_gallery"
             app:iconGravity="textStart" />
 
         <TextView

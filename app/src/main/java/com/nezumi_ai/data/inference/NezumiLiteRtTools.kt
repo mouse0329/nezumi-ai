@@ -61,6 +61,10 @@ private val TOOL_NAME_MAP = mapOf(
     "list_timers"        to "listtimers",
     "listTimers"         to "listtimers",
     "listtimers"         to "listtimers",
+    // generate_image
+    "generate_image"     to "generateimage",
+    "generateImage"      to "generateimage",
+    "generateimage"      to "generateimage",
 )
 
 // ─────────────────────────────────────────────
@@ -89,6 +93,9 @@ internal fun buildEnabledToolProviders(context: Context, alarmDao: AlarmDao): Li
             (NezumiTool.START_TIMER in enabled || NezumiTool.STOP_TIMER in enabled)
         ) {
             add(tool(ListTimersSchema()))
+        }
+        if (NezumiTool.GENERATE_IMAGE in enabled) {
+            add(tool(GenerateImageSchema()))
         }
     }
 }
@@ -160,11 +167,21 @@ private class ListTimersSchema : ToolSet {
     fun listTimers(): Map<String, Any?> = emptyMap()
 }
 
+private class GenerateImageSchema : ToolSet {
+    @Tool(description = "Generate an image from a text prompt using Stable Diffusion")
+    fun generateImage(
+        @ToolParam(description = "English image generation prompt, detailed and descriptive") prompt: String,
+        @ToolParam(description = "Things to avoid in the image (optional)") negativePrompt: String?,
+        @ToolParam(description = "256, 512, or 768 (default 512)") width: Int?,
+        @ToolParam(description = "256, 512, or 768 (default 512)") height: Int?
+    ): Map<String, Any?> = emptyMap()
+}
+
 // ─────────────────────────────────────────────
 // 実行エンジン（単一責任・全ロジックここに集約）
 // ─────────────────────────────────────────────
 
-internal data class ToolExecutionResult(
+data class ToolExecutionResult(
     val success: Boolean,
     val payload: Map<String, Any?>
 )
@@ -199,6 +216,7 @@ internal class NezumiLiteRtToolExecutor(
             "starttimer"      -> executeStartTimer(toolCall)
             "stoptimer"       -> executeStopTimer(toolCall)
             "listtimers"      -> executeListTimers()
+            "generateimage"   -> executeGenerateImage(toolCall)
             else -> {
                 Log.w(TOOL_TAG, "Unknown tool: ${toolCall.name}")
                 ToolExecutionResult(
@@ -220,6 +238,7 @@ internal class NezumiLiteRtToolExecutor(
             "starttimer" -> NezumiTool.START_TIMER
             "stoptimer" -> NezumiTool.STOP_TIMER
             "listtimers" -> NezumiTool.LIST_TIMERS
+            "generateimage" -> NezumiTool.GENERATE_IMAGE
             else -> null
         }
     }
@@ -423,6 +442,15 @@ internal class NezumiLiteRtToolExecutor(
             success = result["success"] as? Boolean ?: false,
             payload = result
         )
+    }
+
+    private suspend fun executeGenerateImage(toolCall: ToolCall): ToolExecutionResult {
+        val handler = GenerateImageToolBridge.handler
+            ?: return ToolExecutionResult(
+                success = false,
+                payload = mapOf("success" to false, "error" to "generate_image_handler_missing")
+            )
+        return handler.handle(toolCall)
     }
 }
 

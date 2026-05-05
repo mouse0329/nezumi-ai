@@ -89,8 +89,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
 import kotlin.math.max
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.textfield.TextInputEditText
 
 class ChatFragment : Fragment(R.layout.fragment_chat) {
     
@@ -389,6 +393,30 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.confirmationRequest.filterNotNull().collectLatest { initialPrompt ->
+                withContext(Dispatchers.Main) {
+                    val ctx = requireContext()
+                    val edit = TextInputEditText(ctx).apply {
+                        setText(initialPrompt)
+                        minLines = 3
+                        maxLines = 10
+                    }
+                    MaterialAlertDialogBuilder(ctx)
+                        .setTitle(R.string.image_gen_confirm_title)
+                        .setView(edit)
+                        .setPositiveButton(R.string.image_gen_confirm_yes) { _, _ ->
+                            viewModel.onConfirmGenerateImage(edit.text?.toString() ?: initialPrompt)
+                        }
+                        .setNegativeButton(R.string.image_gen_confirm_no) { _, _ ->
+                            viewModel.onCancelGenerateImage()
+                        }
+                        .setOnCancelListener { viewModel.onCancelGenerateImage() }
+                        .show()
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
             settingsRepository.getSettings().collect { settings ->
                 contextCompressionEnabled = settings?.contextCompressionEnabled == true
                 adapter.setThinkingVisible(true)
@@ -496,7 +524,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 val filteredMessages = displayMessages.map { msg ->
                     msg.copy(content = msg.content.stripGemmaTokens())
                 }
-                messagesIsEmpty = filteredMessages.isEmpty()
+                val empty = filteredMessages.isEmpty()
+                messagesIsEmpty = empty
+                binding.emptyStateCompose.visibility =
+                    if (empty) View.VISIBLE else View.GONE
                 adapter.submitList(filteredMessages) {
                     if (pendingInitialScrollToBottom && filteredMessages.isNotEmpty()) {
                         pendingInitialScrollToBottom = false
@@ -669,6 +700,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             viewModel.isModelLoading.collect { loading ->
                 isModelLoadingNow = loading
                 modelLoadingOverlayVisible = loading
+                // 全画面 ComposeView は非表示時もヒットテストに乗るため、GONE でタッチを下層へ通す
+                binding.modelLoadingComposeOverlay.visibility =
+                    if (loading) View.VISIBLE else View.GONE
                 binding.backButton.isEnabled = !loading
                 renderModelDropdownState()
                 renderSendButtonState()

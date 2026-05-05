@@ -9,6 +9,10 @@ object PreferencesHelper {
     private const val KEY_FIRST_LAUNCH = "first_launch"
     private const val KEY_INITIAL_SETUP_COMPLETED = "initial_setup_completed"
     private const val KEY_THEME_MODE = "theme_mode"
+    private const val KEY_SD_MODEL_PATH = "sd_model_path"
+    private const val KEY_SD_BACKEND = "sd_backend"
+    private const val KEY_SD_STEPS = "sd_steps"
+    private const val KEY_SD_CFG = "sd_cfg"
 
     const val THEME_SYSTEM = "SYSTEM"
     const val THEME_LIGHT = "LIGHT"
@@ -71,5 +75,37 @@ object PreferencesHelper {
     fun resetInitialSetupCompleted(context: Context) {
         val prefs = getSharedPreferences(context)
         prefs.edit().putBoolean(KEY_INITIAL_SETUP_COMPLETED, false).apply()
+    }
+
+    fun getSdModelPath(context: Context): String {
+        return getSharedPreferences(context).getString(KEY_SD_MODEL_PATH, "") ?: ""
+    }
+
+    fun setSdModelPath(context: Context, path: String) {
+        getSharedPreferences(context).edit().putString(KEY_SD_MODEL_PATH, path.trim()).apply()
+    }
+
+    fun getSdBackend(context: Context): String {
+        return getSharedPreferences(context).getString(KEY_SD_BACKEND, "auto") ?: "auto"
+    }
+
+    fun setSdBackend(context: Context, backend: String) {
+        getSharedPreferences(context).edit().putString(KEY_SD_BACKEND, backend).apply()
+    }
+
+    fun getSdSteps(context: Context): Int {
+        return getSharedPreferences(context).getInt(KEY_SD_STEPS, 8)
+    }
+
+    fun setSdSteps(context: Context, steps: Int) {
+        getSharedPreferences(context).edit().putInt(KEY_SD_STEPS, steps.coerceIn(1, 50)).apply()
+    }
+
+    fun getSdCfg(context: Context): Float {
+        return getSharedPreferences(context).getFloat(KEY_SD_CFG, 7.0f)
+    }
+
+    fun setSdCfg(context: Context, cfg: Float) {
+        getSharedPreferences(context).edit().putFloat(KEY_SD_CFG, cfg.coerceIn(1f, 20f)).apply()
     }
 }

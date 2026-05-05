@@ -8,19 +8,26 @@ class RnLlamaContext(
     nGpuLayers: Int,
     mmprojPath: String? = null
 ) {
-    private var ptr: Long =
-        RnLlamaNative.nativeCreateContext(
-            modelPath = modelPath,
-            nCtx = nCtx,
-            nBatch = nBatch,
-            nThreads = nThreads,
-            nGpuLayers = nGpuLayers,
-            useMmap = true,
-            useMlock = false,
-            ropeFreqBase = 0f,
-            ropeFreqScale = 1f,
-            mmprojPath = mmprojPath
-        )
+    private var ptr: Long = 0L
+
+    init {
+        ptr = if (RnLlamaNative.loadLibraryIfNeeded()) {
+            RnLlamaNative.nativeCreateContext(
+                modelPath = modelPath,
+                nCtx = nCtx,
+                nBatch = nBatch,
+                nThreads = nThreads,
+                nGpuLayers = nGpuLayers,
+                useMmap = true,
+                useMlock = false,
+                ropeFreqBase = 0f,
+                ropeFreqScale = 1f,
+                mmprojPath = mmprojPath
+            )
+        } else {
+            0L
+        }
+    }
 
     val isValid: Boolean get() = ptr != 0L
 

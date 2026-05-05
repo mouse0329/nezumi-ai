@@ -373,9 +373,26 @@ object ModelFileManager {
                 runCatching { metadataFile(outFile).delete() }
                 throw it
             }
-            validateImportedTaskFile(outFile).getOrElse { reason ->
-                outFile.delete()
-                throw IllegalStateException("ダウンロードしたモデルを読み込めません: ${reason.message}")
+            val lowerOut = outFile.name.lowercase()
+            when {
+                lowerOut.endsWith(".task") || lowerOut.endsWith(".litertlm") -> {
+                    validateImportedTaskFile(outFile).getOrElse { reason ->
+                        outFile.delete()
+                        throw IllegalStateException("ダウンロードしたモデルを読み込めません: ${reason.message}")
+                    }
+                }
+                lowerOut.endsWith(".gguf") || lowerOut.endsWith(".mmproj") || lowerOut.endsWith(".safetensors") -> {
+                    if (!outFile.isFile || !outFile.canRead() || outFile.length() <= 0L) {
+                        outFile.delete()
+                        throw IllegalStateException("ダウンロードしたファイルが無効です")
+                    }
+                }
+                else -> {
+                    validateImportedTaskFile(outFile).getOrElse { reason ->
+                        outFile.delete()
+                        throw IllegalStateException("ダウンロードしたモデルを読み込めません: ${reason.message}")
+                    }
+                }
             }
             outFile
         }
@@ -397,8 +414,10 @@ object ModelFileManager {
     fun importTaskFromUri(context: Context, uri: Uri): Result<File> = runCatching {
         val displayName = queryDisplayName(context, uri) ?: "custom_model.task"
         val lower = displayName.lowercase()
-        if (!lower.endsWith(".task") && !lower.endsWith(".litertlm") && !lower.endsWith(".gguf") && !lower.endsWith(".mmproj")) {
-            throw IllegalArgumentException(".task / .litertlm / .gguf / .mmproj ファイルのみ追加できます")
+        if (!lower.endsWith(".task") && !lower.endsWith(".litertlm") && !lower.endsWith(".gguf") &&
+            !lower.endsWith(".mmproj") && !lower.endsWith(".safetensors")
+        ) {
+            throw IllegalArgumentException(".task / .litertlm / .gguf / .mmproj / .safetensors ファイルのみ追加できます")
         }
         val importedDir = File(context.filesDir, "models/imported")
         if (!importedDir.exists()) {
@@ -464,8 +483,10 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
 
         // ファイル形式の厳密なチェック
         val lower = target.name.lowercase()
-        if (!target.isFile || (!lower.endsWith(".task") && !lower.endsWith(".litertlm") && !lower.endsWith(".gguf") && !lower.endsWith(".mmproj"))) {
-            throw IllegalArgumentException(".task / .litertlm / .gguf / .mmproj ファイルのみ削除できます")
+        if (!target.isFile || (!lower.endsWith(".task") && !lower.endsWith(".litertlm") && !lower.endsWith(".gguf") &&
+                !lower.endsWith(".mmproj") && !lower.endsWith(".safetensors"))
+        ) {
+            throw IllegalArgumentException(".task / .litertlm / .gguf / .mmproj / .safetensors ファイルのみ削除できます")
         }
 
         // 削除実行
@@ -490,8 +511,10 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
             throw IllegalStateException("ファイルが見つかりません")
         }
         val lower = oldFile.name.lowercase()
-        if (!lower.endsWith(".task") && !lower.endsWith(".litertlm") && !lower.endsWith(".gguf") && !lower.endsWith(".mmproj")) {
-            throw IllegalArgumentException(".task / .litertlm / .gguf / .mmproj のみリネームできます")
+        if (!lower.endsWith(".task") && !lower.endsWith(".litertlm") && !lower.endsWith(".gguf") &&
+            !lower.endsWith(".mmproj") && !lower.endsWith(".safetensors")
+        ) {
+            throw IllegalArgumentException(".task / .litertlm / .gguf / .mmproj / .safetensors のみリネームできます")
         }
         val ext = oldFile.extension
         val stem = sanitizeImportedStemOnly(newStemInput)
@@ -1143,7 +1166,25 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         return lowered.endsWith(".gguf") ||
             lowered.endsWith(".task") ||
             lowered.endsWith(".litertlm") ||
-            lowered.endsWith(".mmproj")
+            lowered.endsWith(".mmproj") ||
+            lowered.endsWith(".safetensors")
+    }
+
+    /**
+     * Hugging Face から落とした重みがチャット用マルチモーダル GGUF ではなく、
+     * Stable Diffusion 系（SDXL / UNet / safetensors 等）の可能性が高いとき true。
+     * この場合は mmproj の自動取得をスキップする。
+     */
+    fun isProbableStableDiffusionWeights(modelId: String, filePath: String): Boolean {
+        val mid = modelId.lowercase()
+        val fp = filePath.lowercase()
+        if (fp.endsWith(".safetensors")) return true
+        if (mid.contains("stable-diffusion") || mid.contains("stablediffusion")) return true
+        if (mid.contains("sdxl") || mid.contains("/flux") || mid.contains("diffusers")) return true
+        if (fp.contains("/unet") || fp.contains("unet.") || fp.contains("diffusion_pytorch")) return true
+        if (fp.contains("/vae") || fp.contains("vae.") || fp.contains("text_encoder")) return true
+        if (fp.contains("sdxl") || fp.contains("sd-") || fp.contains("sd_")) return true
+        return false
     }
 
     private fun httpGetText(context: Context, urlString: String): String {

@@ -13,7 +13,8 @@ enum class NezumiTool(val displayName: String) {
     FLASHLIGHT("ライト"),
     START_TIMER("タイマー開始"),
     STOP_TIMER("タイマー停止"),
-    LIST_TIMERS("タイマー一覧")
+    LIST_TIMERS("タイマー一覧"),
+    GENERATE_IMAGE("画像生成(SD)")
 }
 
 class ToolPreferences(context: Context) {

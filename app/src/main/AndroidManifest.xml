@@ -28,7 +28,8 @@
         android:theme="@style/Theme.Nezumiai"
         android:largeHeap="true"
         android:enableOnBackInvokedCallback="true"
-        android:extractNativeLibs="true">
+        android:extractNativeLibs="true"
+        android:networkSecurityConfig="@xml/network_security_config">
 
         <!-- WorkManager は MyApplication で手動初期化（Binder スレッド負荷軽減） -->
         <service android:name="androidx.work.impl.foreground.SystemForegroundService" android:foregroundServiceType="dataSync" tools:node="merge" />
