@@ -66,33 +66,33 @@ class MainActivity : AppCompatActivity() {
             binding.toolbar.visibility = android.view.View.GONE
             binding.fab.hide()
 
-            // Setup drawer navigation
-            try {
-                val navController = findNavController(R.id.nav_host_fragment_content_main)
-                val database = NezumiAiDatabase.getInstance(this)
-                val settingsRepository = SettingsRepository(database.settingsDao(), database.chatSessionDao())
-                val messageRepository = com.nezumi_ai.data.repository.MessageRepository(database.messageDao())
-                sessionRepository = ChatSessionRepository(database.chatSessionDao(), settingsRepository, messageRepository)
-                if (!isIncognitoModeActive) {
-                    lifecycleScope.launch(Dispatchers.IO) {
-                        runCatching {
-                            sessionRepository.deleteAllIncognitoSessions()
-                            Log.d(TAG, "Cleaned up stale incognito sessions on startup")
-                        }.onFailure {
-                            Log.e(TAG, "Failed to cleanup stale incognito sessions on startup", it)
-                        }
+            // DB / リポジトリは onPause などで必須。NavHost の準備後にドロワーとセットアップ遷移を行う
+            val database = NezumiAiDatabase.getInstance(this)
+            val settingsRepository = SettingsRepository(database.settingsDao(), database.chatSessionDao())
+            val messageRepository = com.nezumi_ai.data.repository.MessageRepository(database.messageDao())
+            sessionRepository = ChatSessionRepository(database.chatSessionDao(), settingsRepository, messageRepository)
+            if (!isIncognitoModeActive) {
+                lifecycleScope.launch(Dispatchers.IO) {
+                    runCatching {
+                        sessionRepository.deleteAllIncognitoSessions()
+                        Log.d(TAG, "Cleaned up stale incognito sessions on startup")
+                    }.onFailure {
+                        Log.e(TAG, "Failed to cleanup stale incognito sessions on startup", it)
                     }
                 }
-                setupDrawer(navController)
-                observeDrawerHistory()
-
-                // ★ セットアップ未完了の場合は SetupWizardFragment に遷移
-                if (!PreferencesHelper.isInitialSetupCompleted(this)) {
-                    Log.d(TAG, "Initial setup not completed - navigating to setup wizard")
-                    navController.navigate(R.id.setupWizardFragment)
+            }
+            binding.root.post {
+                try {
+                    val navController = findNavController(R.id.nav_host_fragment_content_main)
+                    setupDrawer(navController)
+                    observeDrawerHistory()
+                    if (!PreferencesHelper.isInitialSetupCompleted(this@MainActivity)) {
+                        Log.d(TAG, "Initial setup not completed - navigating to setup wizard")
+                        navController.navigate(R.id.setupWizardFragment)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to setup drawer navigation or setup wizard", e)
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to setup drawer navigation", e)
             }
 
             PreferencesHelper.isFirstLaunch(this)
@@ -151,6 +151,12 @@ class MainActivity : AppCompatActivity() {
         binding.drawerIncognitoButton.setOnClickListener {
             closeDrawer()
             createAndOpenIncognitoSession()
+        }
+        binding.drawerImageGenButton.setOnClickListener {
+            closeDrawer()
+            if (navController.currentDestination?.id != R.id.imageGenFragment) {
+                navController.navigate(R.id.imageGenFragment)
+            }
         }
     }
 
@@ -590,6 +596,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderDrawerHistory(sessions: List<ChatSessionEntity>) {
+        if (!::drawerHistoryAdapter.isInitialized) {
+            Log.w(TAG, "renderDrawerHistory called before drawerHistoryAdapter initialization")
+            return
+        }
         lastRenderedDrawerDayStartMillis = localDayStartMillis()
         val groupedSessions = groupSessionsByDate(sessions)
         drawerHistoryAdapter.submitList(groupedSessions)

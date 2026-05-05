@@ -132,7 +132,8 @@ fun ExpandableThinkingBlock(
  */
 @Composable
 fun ToolCallProgressBar(
-    state: ToolCallState?
+    state: ToolCallState?,
+    imageGenProgress: Pair<Int, Int>? = null
 ) {
     if (state == null || state is ToolCallState.Done) {
         return
@@ -163,7 +164,9 @@ fun ToolCallProgressBar(
         modifier = Modifier
             .fillMaxWidth()
             .padding(8.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(
+            containerColor = if (imageGenProgress != null) Color(0xFFFFF3E0) else Color.White
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -179,7 +182,8 @@ fun ToolCallProgressBar(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
                     text = "$icon $message",
@@ -187,6 +191,15 @@ fun ToolCallProgressBar(
                     color = color,
                     fontWeight = FontWeight.SemiBold
                 )
+                
+                if (imageGenProgress != null) {
+                    Text(
+                        text = "${imageGenProgress.first}/${imageGenProgress.second}",
+                        fontSize = 12.sp,
+                        color = Color(0xFFFF6F00),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }

@@ -306,4 +306,39 @@
     <string name="incognito_mode_indicator">🔒 プライベートモード</string>
     <string name="incognito_mode_help">長押し：プライベートモード開始</string>
 
+    <!-- Stable Diffusion / 画像生成 -->
+    <string name="nav_chat">チャット</string>
+    <string name="nav_image_gen">画像生成</string>
+    <string name="drawer_image_gen_start">画像生成を開く</string>
+    <string name="image_gen_confirm_title">画像を生成しますか？</string>
+    <string name="image_gen_confirm_yes">はい</string>
+    <string name="image_gen_confirm_no">いいえ</string>
+    <string name="image_gen_screen_title">画像生成 (SD)</string>
+    <string name="image_gen_prompt_hint">プロンプト</string>
+    <string name="image_gen_neg_hint">ネガティブプロンプト（任意）</string>
+    <string name="image_gen_model_path_hint">SDモデル .gguf の絶対パス</string>
+    <string name="image_gen_generate">生成</string>
+    <string name="image_gen_cancel">キャンセル</string>
+    <string name="image_gen_save_gallery">保存</string>
+    <string name="image_gen_share">共有</string>
+    <string name="image_gen_snackbar_cancelled">キャンセルしました</string>
+    <string name="image_gen_back">戻る</string>
+    <string name="image_gen_model_path_hint_full">SDモデル選択 ※ safetensors は画像生成用モデルとしてサポート</string>
+    <string name="image_gen_err_model_missing">モデルファイルが見つかりません（.gguf / .safetensors の絶対パス）</string>
+    <string name="image_gen_err_prompt_empty">プロンプトを入力してください</string>
+    <string name="image_gen_delete_model">モデル削除</string>
+    <string name="image_gen_delete_model_success">モデルを削除しました</string>
+    <string name="image_gen_delete_model_failure">モデルの削除に失敗しました</string>
+    <string name="image_gen_delete_model_external">このモデルはアプリ外の場所にあります。ファイルマネージャーで削除してください</string>
+
+    <!-- モデル設定: 画像生成 SD を Hugging Face から -->
+    <string name="model_sd_hf_card_title">画像生成モデル（Hugging Face）</string>
+    <string name="model_sd_hf_card_body">上の「Hugging Face モデル検索」でリポジトリを開き、.gguf または .safetensors をダウンロードできます。Stable Diffusion / SDXL 系のリポジトリでは mmproj の自動取得は行いません。</string>
+    <string name="model_sd_hf_preset_stability">stabilityai/stable-diffusion-xl-base-1.0</string>
+    <string name="model_sd_hf_preset_search_sd">stable-diffusion gguf</string>
+    <string name="model_sd_hf_btn_preset_repo">SDXL 公式例を検索欄に入れる</string>
+    <string name="model_sd_hf_btn_preset_keyword">SD+GGUF で検索</string>
+    <string name="model_sd_hf_toast_set_as_image_gen">画像生成のモデルパスに設定しました</string>
+    <string name="model_sd_hf_toast_downloaded">保存しました: %1$s（画像生成画面でパスを確認できます）</string>
+
 </resources>

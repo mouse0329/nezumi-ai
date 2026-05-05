@@ -3,6 +3,7 @@ package com.nezumi_ai.data.inference
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
+import com.nezumi_ai.data.inference.rnllama.RnLlamaNative
 import com.nezumi_ai.data.repository.SettingsRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -40,10 +41,11 @@ class ModelManager(
     
     // Phase 15: LiteRtLm と GGUF エンジンの両方を搭載（モデルごとに切替）
     private val liteRtEngine: AIInferenceEngine = LiteRtLmEngine(context)
-    private val ggufEngine: AIInferenceEngine? =
-        if (isGgufAvailable()) GgufInferenceEngine(context) else null
+    /** GGUF は初回利用時まで遅延初期化し、nezumi_rnllama_jni を起動直後にロードしない（SD ggml と共存しやすくする） */
+    private var ggufEngine: GgufInferenceEngine? = null
+
     @Volatile
-    private var activeEngine: AIInferenceEngine = ggufEngine ?: liteRtEngine
+    private var activeEngine: AIInferenceEngine = liteRtEngine
     
     private var currentModelName: String? = null
     private var currentConfig: InferenceConfig? = null
@@ -57,24 +59,20 @@ class ModelManager(
     private val sessionManager = SessionResourceManager()
     private val jobController = InferenceJobController()
 
-    /**
-     * GGUF エンジンが利用可能かチェック
-     * （rnllama JNI ブリッジがロード可能か確認）
-     */
-    private fun isGgufAvailable(): Boolean {
-        return try {
-            // RnLlamaNative の <clinit> で System.loadLibrary() が走る。
-            // ここでロードに失敗する端末/ABI では GGUF エンジンを無効化して LiteRtLm にフォールバックする。
-            Class.forName("com.nezumi_ai.data.inference.rnllama.RnLlamaNative")
-            true
-        } catch (e: ClassNotFoundException) {
-            false
-        } catch (e: UnsatisfiedLinkError) {
-            Log.w(TAG, "GGUF engine disabled: native library load failed", e)
-            false
-        } catch (e: ExceptionInInitializerError) {
-            Log.w(TAG, "GGUF engine disabled: native init failed", e)
-            false
+    private fun getOrCreateGgufEngine(): GgufInferenceEngine? {
+        ggufEngine?.let { return it }
+        synchronized(this) {
+            ggufEngine?.let { return it }
+            if (!RnLlamaNative.loadLibraryIfNeeded()) {
+                Log.w(TAG, "GGUF native library unavailable")
+                return null
+            }
+            return try {
+                GgufInferenceEngine(context).also { ggufEngine = it }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to construct GgufInferenceEngine", e)
+                null
+            }
         }
     }
 
@@ -82,12 +80,12 @@ class ModelManager(
         val trimmed = modelName.trim()
         val lowered = trimmed.lowercase()
         val isAbsoluteGguf = lowered.endsWith(".gguf") && java.io.File(trimmed).isAbsolute
-        return isAbsoluteGguf && ggufEngine != null
+        return isAbsoluteGguf
     }
 
     private fun engineForModel(modelName: String): AIInferenceEngine {
         return if (shouldUseGgufEngine(modelName)) {
-            ggufEngine ?: liteRtEngine
+            getOrCreateGgufEngine() ?: liteRtEngine
         } else {
             liteRtEngine
         }

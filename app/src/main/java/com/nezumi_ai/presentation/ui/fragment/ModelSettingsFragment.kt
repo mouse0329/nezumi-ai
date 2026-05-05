@@ -48,6 +48,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -57,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
@@ -67,6 +69,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.foundation.layout.width
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -82,6 +86,7 @@ import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ProjectConfig
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.presentation.ui.helper.SettingsHelper
+import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.presentation.ui.composable.MarkdownLatexText
 import com.nezumi_ai.utils.ImportedModelCapabilities
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
@@ -92,11 +97,16 @@ import net.openid.appauth.AuthorizationException
 import androidx.compose.material3.ExperimentalMaterial3Api
 import net.openid.appauth.AuthorizationResponse
 import net.openid.appauth.AuthorizationService
+import android.os.Environment
 import java.io.File
 import java.util.Locale
 
+enum class ModelType {
+    LLM, IMAGE_GENERATION
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
-class ModelSettingsFragment : Fragment() {
+open class ModelSettingsFragment : Fragment() {
     private lateinit var settingsRepository: SettingsRepository
     private var authService: AuthorizationService? = null
     private var pendingDownloadPermissionModel: ModelFileManager.LocalModel? = null
@@ -117,6 +127,8 @@ class ModelSettingsFragment : Fragment() {
     private var hfReadmePageTitle by mutableStateOf("")
     private var hfDownloadingFilePath by mutableStateOf<String?>(null)
     private var hfQueuedDownloads by mutableStateOf<List<HfQueuedDownloadUiState>>(emptyList())
+    private val hfSucceededWorkIds = mutableSetOf<java.util.UUID>()
+    private val imageModelSucceededWorkIds = mutableSetOf<java.util.UUID>()
     private var importedTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
     private var importedMmprojTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
     private var isImportingModel by mutableStateOf(false)
@@ -126,7 +138,16 @@ class ModelSettingsFragment : Fragment() {
     private var capabilityDialogThinkingEnabled by mutableStateOf(false)
     private var capabilityDialogMmprojPath by mutableStateOf("")
     private var capabilityDialogCurrentCapabilities by mutableStateOf<ImportedModelCapabilities?>(null)
+    private var capabilityDialogModelType by mutableStateOf<ModelType>(ModelType.LLM)
     private var mmprojDropdownExpanded by mutableStateOf(false)
+    
+    private var imageModelsLoading by mutableStateOf(false)
+    private var imageModelsError by mutableStateOf<String?>(null)
+    private var availableImageModels by mutableStateOf<List<com.nezumi_ai.data.inference.ImageModel>>(emptyList())
+    private var imageModelsDialogVisible by mutableStateOf(false)
+    private var imageModelSearchQuery by mutableStateOf("")
+    private var downloadingImageModelIds by mutableStateOf<Set<String>>(emptySet())
+    private var imageModelDownloadStates by mutableStateOf<List<ImageModelDownloadUiState>>(emptyList())
 
     private val mmprojPickerLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -144,6 +165,8 @@ class ModelSettingsFragment : Fragment() {
     private var renameDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
     private var renameDialogText by mutableStateOf("")
     private var expandedModelKey by mutableStateOf<String?>(null)
+
+    private var sdModels by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
 
     private val modelStates = mutableStateMapOf<ModelFileManager.LocalModel, ModelUiState>()
 
@@ -185,6 +208,11 @@ class ModelSettingsFragment : Fragment() {
                     capabilityDialogAudioEnabled = false
                     capabilityDialogThinkingEnabled = false
                     capabilityDialogMmprojPath = ""
+                    capabilityDialogModelType = if (modelPath.lowercase().endsWith(".gguf")) {
+                        ModelType.LLM
+                    } else {
+                        ModelType.LLM
+                    }
                 } catch (e: Exception) {
                     toast("追加失敗: ${e.message}")
                 }
@@ -226,6 +254,7 @@ class ModelSettingsFragment : Fragment() {
         refreshModelStatus()
         observeDownloadWork()
         observeCustomHfDownloadWork()
+        observeImageModelDownloadWork()
     }
 
     override fun onResume() {
@@ -257,6 +286,10 @@ class ModelSettingsFragment : Fragment() {
         }
         if (hfSearchResultsDialogVisible) {
             HfSearchResultsContent()
+            return
+        }
+        if (imageModelsDialogVisible) {
+            ImageModelsDialogContent()
             return
         }
 
@@ -308,6 +341,7 @@ class ModelSettingsFragment : Fragment() {
             }
             item { HfCard() }
             item { HfModelSearchCard() }
+            item { SdImageGenFromHfCard() }
             item { ModelListCard() }
             item {
                 Card(
@@ -324,7 +358,7 @@ class ModelSettingsFragment : Fragment() {
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = ".task / .litertlm / .gguf を追加できます",
+                            text = ".task / .litertlm / .gguf / .safetensors を追加できます",
                             style = MaterialTheme.typography.bodySmall,
                             color = colorResource(id = R.color.text_secondary)
                         )
@@ -396,6 +430,41 @@ class ModelSettingsFragment : Fragment() {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    // GGUFファイルの場合、モデルタイプを選択
+                    if (capabilityDialogModel?.path?.lowercase()?.endsWith(".gguf") == true) {
+                        Text(
+                            text = "モデルタイプ",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                androidx.compose.material3.RadioButton(
+                                    selected = capabilityDialogModelType == ModelType.LLM,
+                                    onClick = { capabilityDialogModelType = ModelType.LLM }
+                                )
+                                Text("LLM", color = MaterialTheme.colorScheme.onSurface)
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                androidx.compose.material3.RadioButton(
+                                    selected = capabilityDialogModelType == ModelType.IMAGE_GENERATION,
+                                    onClick = { capabilityDialogModelType = ModelType.IMAGE_GENERATION }
+                                )
+                                Text("画像生成モデル", color = MaterialTheme.colorScheme.onSurface)
+                            }
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -405,7 +474,9 @@ class ModelSettingsFragment : Fragment() {
                         Switch(
                             checked = capabilityDialogImageEnabled,
                             onCheckedChange = { capabilityDialogImageEnabled = it },
-                            enabled = capabilityDialogCurrentCapabilities?.imageEnabled == true
+                            enabled = capabilityDialogCurrentCapabilities?.imageEnabled == true ||
+                                (capabilityDialogModel?.path?.lowercase()?.endsWith(".gguf") == true &&
+                                 capabilityDialogModelType == ModelType.IMAGE_GENERATION)
                         )
                     }
                     Row(
@@ -504,7 +575,11 @@ class ModelSettingsFragment : Fragment() {
                                 requireContext(),
                                 model.path,
                                 ImportedModelCapabilities(
-                                    imageEnabled = capabilityDialogImageEnabled,
+                                    imageEnabled = if (model.path.lowercase().endsWith(".gguf")) {
+                                        capabilityDialogModelType == ModelType.IMAGE_GENERATION
+                                    } else {
+                                        capabilityDialogImageEnabled
+                                    },
                                     audioEnabled = capabilityDialogAudioEnabled,
                                     mmprojPath = capabilityDialogMmprojPath.ifBlank { null },
                                     thinkingEnabled = capabilityDialogThinkingEnabled
@@ -668,6 +743,153 @@ class ModelSettingsFragment : Fragment() {
     }
 
     @Composable
+    private fun SdImageGenFromHfCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "画像生成モデル (MNN/QNN)",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = colorResource(id = R.color.text_primary)
+                )
+                Text(
+                    text = "xororz/sd-mnn (GPU) と xororz/sd-qnn (NPU) から画像生成モデルをダウンロードできます",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_secondary)
+                )
+                Button(
+                    onClick = { loadImageModels() },
+                    enabled = !imageModelsLoading,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (imageModelsLoading) "読込中..." else "モデル一覧を表示")
+                }
+                imageModelsError?.let {
+                    Text(
+                        text = it,
+                        color = colorResource(id = R.color.text_primary),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+    }
+    
+    @Composable
+    private fun ImageModelsDialogContent() {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(colorResource(id = R.color.bg_session_list))
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { imageModelsDialogVisible = false }) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_back),
+                        contentDescription = "戻る",
+                        tint = colorResource(id = R.color.text_primary)
+                    )
+                }
+                Text(
+                    text = "画像生成モデル",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = colorResource(id = R.color.text_primary),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth(),
+                value = imageModelSearchQuery,
+                onValueChange = { imageModelSearchQuery = it },
+                label = { Text("検索") },
+                singleLine = true
+            )
+            
+            if (imageModelsLoading) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("モデル一覧を取得中...")
+                }
+            } else {
+                val filtered = availableImageModels.filter {
+                    imageModelSearchQuery.isBlank() || 
+                    it.displayName.contains(imageModelSearchQuery, ignoreCase = true) ||
+                    it.name.contains(imageModelSearchQuery, ignoreCase = true)
+                }
+                
+                Text(
+                    text = "${filtered.size}件のモデル",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(filtered, key = { it.id }) { model ->
+                        ImageModelCard(model)
+                    }
+                }
+            }
+        }
+    }
+    
+    @Composable
+    private fun ImageModelCard(model: com.nezumi_ai.data.inference.ImageModel) {
+        val isDownloading = downloadingImageModelIds.contains(model.id)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(text = model.displayName, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = "${formatBytes(model.size)} · ${model.backend.uppercase()}",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                model.variant?.let { variant ->
+                    com.nezumi_ai.data.inference.ImageModelBrowser.getVariantLabel(variant)?.let { label ->
+                        Text(
+                            text = label,
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+                Button(
+                    onClick = { downloadImageModel(model) },
+                    enabled = !isDownloading,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (isDownloading) "ダウンロード中..." else "ダウンロード")
+                }
+            }
+        }
+    }
+
+    @Composable
     private fun HfSearchResultsContent() {
         Column(
             modifier = Modifier
@@ -808,7 +1030,7 @@ class ModelSettingsFragment : Fragment() {
                             Text("ファイル一覧を取得中...")
                         }
                     } else if (hfFilePickerFiles.isEmpty()) {
-                        Text("対応ファイル（.gguf / .task / .litertlm / .mmproj）が見つかりません")
+                        Text("対応ファイル（.gguf / .safetensors / .task / .litertlm / .mmproj）が見つかりません")
                     } else {
                         hfFilePickerFiles.forEach { file ->
                             Row(
@@ -911,6 +1133,58 @@ class ModelSettingsFragment : Fragment() {
                         }
                     }
                 }
+                
+                // 画像生成モデル ダウンロード中
+                if (imageModelDownloadStates.isNotEmpty()) {
+                    Text(
+                        text = "画像生成モデル ダウンロード中",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorResource(id = R.color.text_secondary),
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.heightIn(max = 300.dp)) {
+                        items(imageModelDownloadStates, key = { it.modelId }) { item ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = colorResource(id = R.color.surface_card)
+                                )
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(text = item.modelName, fontWeight = FontWeight.SemiBold)
+                                    if (item.totalBytes > 0L) {
+                                        LinearProgressIndicator(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            progress = { item.progress },
+                                            color = colorResource(id = R.color.primary),
+                                            trackColor = colorResource(id = R.color.context_meter_track)
+                                        )
+                                    } else {
+                                        LinearProgressIndicator(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            color = colorResource(id = R.color.primary),
+                                            trackColor = colorResource(id = R.color.context_meter_track)
+                                        )
+                                    }
+                                    Text(text = item.statusText, color = colorResource(id = R.color.text_secondary), style = MaterialTheme.typography.bodySmall)
+                                    if (item.isActive) {
+                                        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                            TextButton(onClick = {
+                                                ModelDownloadWorker.cancelImageModel(
+                                                    requireContext(),
+                                                    item.modelId
+                                                )
+                                            }) { Text("キャンセル") }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // 組み込みモデル
                 Text(
@@ -942,6 +1216,54 @@ class ModelSettingsFragment : Fragment() {
                             progressText = state.progressText
                         )
                     }
+                }
+
+                // SDモデル
+                if (sdModels.isNotEmpty()) {
+                    Text(
+                        text = "画像生成モデル (MNN/QNN)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorResource(id = R.color.text_secondary),
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (model in sdModels) {
+                            val modelKey = "sd_${model.path}"
+                            val isExpanded = expandedModelKey == modelKey
+                            ImageModelAccordionItem(
+                                model = model,
+                                isExpanded = isExpanded,
+                                onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
+                                onDelete = {
+                                    val dir = File(model.path)
+                                    val deleted = dir.deleteRecursively()
+                                    if (deleted) {
+                                        toast("削除しました")
+                                        refreshSdModels()
+                                        expandedModelKey = null
+                                    } else {
+                                        toast("削除に失敗しました")
+                                    }
+                                },
+                                onSetActive = {
+                                    PreferencesHelper.setSdModelPath(requireContext(), model.path)
+                                    toast("アクティブに設定しました")
+                                }
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        text = "画像生成モデル (MNN/QNN)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorResource(id = R.color.text_secondary),
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                    Text(
+                        text = "上記の「画像生成モデル (MNN/QNN)」カードからダウンロードできます",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
                 }
 
                 // インポートされたモデル
@@ -1303,6 +1625,11 @@ class ModelSettingsFragment : Fragment() {
                                     capabilityDialogThinkingEnabled = caps.thinkingEnabled
                                     capabilityDialogMmprojPath = caps.mmprojPath ?: ""
                                     capabilityDialogCurrentCapabilities = caps
+                                    capabilityDialogModelType = if (model.path.lowercase().endsWith(".gguf")) {
+                                        if (caps.imageEnabled) ModelType.IMAGE_GENERATION else ModelType.LLM
+                                    } else {
+                                        ModelType.LLM
+                                    }
                                     capabilityDialogModel = model
                                 },
                                 modifier = Modifier.weight(1f)
@@ -1433,6 +1760,115 @@ class ModelSettingsFragment : Fragment() {
         }
     }
 
+    @Composable
+    private fun ImageModelAccordionItem(
+        model: ModelFileManager.ImportedTaskModel,
+        isExpanded: Boolean,
+        onToggle: () -> Unit,
+        onDelete: () -> Unit,
+        onSetActive: () -> Unit
+    ) {
+        val currentActive = PreferencesHelper.getSdModelPath(requireContext())
+        val isActive = currentActive == model.path
+        
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onToggle() },
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.surface_card)
+            )
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = model.shortDisplayName, fontWeight = FontWeight.SemiBold)
+                        if (!isExpanded) {
+                            val modelDir = File(model.path)
+                            val hasMnn = modelDir.listFiles()?.any { it.name.endsWith(".mnn") } == true
+                            val hasQnn = modelDir.listFiles()?.any { it.name.endsWith(".bin") } == true
+                            val backend = when {
+                                hasQnn -> "QNN (NPU)"
+                                hasMnn -> "MNN (GPU)"
+                                else -> "Unknown"
+                            }
+                            Text(
+                                text = backend,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorResource(id = R.color.primary),
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                    }
+                    if (!isExpanded) {
+                        Text(
+                            text = if (isActive) "✓ アクティブ" else "✓ DL済み",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isActive) colorResource(id = R.color.primary) else colorResource(id = R.color.text_secondary),
+                            modifier = Modifier.padding(start = 8.dp)
+                        )
+                    }
+                }
+                if (isExpanded) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    val modelDir = File(model.path)
+                    val hasMnn = modelDir.listFiles()?.any { it.name.endsWith(".mnn") } == true
+                    val hasQnn = modelDir.listFiles()?.any { it.name.endsWith(".bin") } == true
+                    val backend = when {
+                        hasQnn -> "QNN (NPU)"
+                        hasMnn -> "MNN (GPU)"
+                        else -> "Unknown"
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(colorResource(id = R.color.bg_session_list))
+                            .padding(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = backend,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colorResource(id = R.color.primary),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = if (isActive) "現在アクティブなモデル" else "ダウンロード済み",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (!isActive) {
+                            Button(
+                                onClick = onSetActive,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("アクティブに設定")
+                            }
+                        }
+                        TextButton(
+                            onClick = onDelete,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("削除")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private fun renderHfTokenState() {
         val token = HfAuthManager.getToken(requireContext())
         hfLinked = token.isNotBlank()
@@ -1450,8 +1886,84 @@ class ModelSettingsFragment : Fragment() {
     }
 
     private fun refreshImportedTasks() {
+        Log.d("ModelSettings", "refreshImportedTasks: called")
         importedTasks = ModelFileManager.listImportedTaskModels(requireContext())
         importedMmprojTasks = ModelFileManager.listImportedMmprojModels(requireContext())
+        refreshSdModels()
+        Log.d("ModelSettings", "refreshImportedTasks: completed, sdModels.size=${sdModels.size}")
+    }
+
+    private fun loadImageModels() {
+        imageModelsLoading = true
+        imageModelsError = null
+        viewLifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                com.nezumi_ai.data.inference.ImageModelBrowser.fetchAvailableModels()
+            }
+            result.onSuccess { models ->
+                availableImageModels = models
+                imageModelsDialogVisible = true
+            }.onFailure { e ->
+                imageModelsError = "取得失敗: ${e.message}"
+            }
+            imageModelsLoading = false
+        }
+    }
+    
+    private fun downloadImageModel(model: com.nezumi_ai.data.inference.ImageModel) {
+        val workName = "image_model_download_${model.id}"
+        Log.d("ModelSettings", "downloadImageModel: id=${model.id}, name=${model.name}, displayName=${model.displayName}, url=${model.downloadUrl}")
+        val enqueued = ModelDownloadWorker.enqueueImageModel(requireContext(), model.id, model.downloadUrl, model.fileName, model.id)
+        if (enqueued) {
+            downloadingImageModelIds = downloadingImageModelIds + model.id
+            toast("ダウンロードを開始しました")
+        } else {
+            toast("すでにダウンロード中です")
+        }
+    }
+    
+    private fun refreshSdModels() {
+        val models = mutableListOf<ModelFileManager.ImportedTaskModel>()
+        val sdModelsDir = File(requireContext().filesDir, "sd_models")
+        Log.d("ModelSettings", "refreshSdModels: sdModelsDir=${sdModelsDir.absolutePath}, exists=${sdModelsDir.exists()}")
+        if (sdModelsDir.exists() && sdModelsDir.isDirectory) {
+            val dirs = sdModelsDir.listFiles()
+            Log.d("ModelSettings", "refreshSdModels: found ${dirs?.size ?: 0} items")
+            dirs?.forEach { modelDir ->
+                Log.d("ModelSettings", "refreshSdModels: checking ${modelDir.name}, isDir=${modelDir.isDirectory}")
+                if (!modelDir.isDirectory) return@forEach
+                
+                // Check if files are directly in this directory
+                var targetDir = modelDir
+                var files = modelDir.listFiles()
+                Log.d("ModelSettings", "refreshSdModels: ${modelDir.name} has ${files?.size ?: 0} files")
+                files?.forEach { f -> Log.d("ModelSettings", "  - ${f.name} (isDir=${f.isDirectory})") }
+                
+                // If there's only one subdirectory, use that instead (nested structure)
+                if (files?.size == 1 && files[0].isDirectory) {
+                    Log.d("ModelSettings", "refreshSdModels: detected nested structure, using ${files[0].absolutePath}")
+                    targetDir = files[0]
+                    files = files[0].listFiles()
+                    Log.d("ModelSettings", "refreshSdModels: nested dir has ${files?.size ?: 0} files")
+                    files?.forEach { f -> Log.d("ModelSettings", "  - ${f.name}") }
+                }
+                
+                val hasMnn = files?.any { it.name.endsWith(".mnn") } == true
+                val hasQnn = files?.any { it.name.endsWith(".bin") } == true
+                Log.d("ModelSettings", "refreshSdModels: ${modelDir.name} hasMnn=$hasMnn, hasQnn=$hasQnn")
+                if (hasMnn || hasQnn) {
+                    models.add(ModelFileManager.ImportedTaskModel(
+                        path = targetDir.absolutePath,
+                        fileNameStem = modelDir.name,
+                        shortDisplayName = modelDir.name,
+                        hfRepoQualifier = null
+                    ))
+                    Log.d("ModelSettings", "refreshSdModels: added ${modelDir.name} (path=${targetDir.absolutePath})")
+                }
+            }
+        }
+        Log.d("ModelSettings", "refreshSdModels: total models found = ${models.size}")
+        sdModels = models
     }
 
     private fun searchHfModels() {
@@ -1548,6 +2060,24 @@ class ModelSettingsFragment : Fragment() {
         WorkManager.getInstance(requireContext())
             .getWorkInfosByTagLiveData(ModelDownloadWorker.TAG_HF_CUSTOM_DOWNLOAD)
             .observe(viewLifecycleOwner) { infos ->
+                infos.forEach { info ->
+                    if (info.state != WorkInfo.State.SUCCEEDED) return@forEach
+                    if (!hfSucceededWorkIds.add(info.id)) return@forEach
+                    val outPath = info.outputData.getString(ModelDownloadWorker.KEY_HF_OUTPUT_ABS_PATH)
+                        ?: return@forEach
+                    val lower = outPath.lowercase()
+                    if (!lower.endsWith(".gguf") && !lower.endsWith(".safetensors")) return@forEach
+                    val modelId = info.outputData.getString(ModelDownloadWorker.KEY_HF_MODEL_ID) ?: return@forEach
+                    val filePath = info.outputData.getString(ModelDownloadWorker.KEY_HF_FILE_PATH) ?: return@forEach
+                    if (!ModelFileManager.isProbableStableDiffusionWeights(modelId, filePath)) return@forEach
+                    val ctx = requireContext()
+                    if (PreferencesHelper.getSdModelPath(ctx).isBlank()) {
+                        PreferencesHelper.setSdModelPath(ctx, outPath)
+                        toast(ctx.getString(R.string.model_sd_hf_toast_set_as_image_gen))
+                    } else {
+                        toast(ctx.getString(R.string.model_sd_hf_toast_downloaded, File(outPath).name))
+                    }
+                }
                 val mapped = infos.mapNotNull { info ->
                     val kind = info.progress.getString(ModelDownloadWorker.KEY_DOWNLOAD_KIND)
                         ?: info.outputData.getString(ModelDownloadWorker.KEY_DOWNLOAD_KIND)
@@ -1608,6 +2138,88 @@ class ModelSettingsFragment : Fragment() {
                 if (infos.any { it.state == WorkInfo.State.SUCCEEDED }) {
                     refreshImportedTasks()
                 }
+            }
+    }
+    
+    private fun observeImageModelDownloadWork() {
+        WorkManager.getInstance(requireContext())
+            .getWorkInfosByTagLiveData(ModelDownloadWorker.TAG_IMAGE_MODEL_DOWNLOAD)
+            .observe(viewLifecycleOwner) { infos ->
+                Log.d("ModelSettings", "observeImageModelDownloadWork: ${infos.size} work infos")
+                infos.forEach { info ->
+                    Log.d("ModelSettings", "  work ${info.id}: state=${info.state}")
+                    
+                    // Track succeeded works and refresh models
+                    if (info.state == WorkInfo.State.SUCCEEDED) {
+                        if (imageModelSucceededWorkIds.add(info.id)) {
+                            Log.d("ModelSettings", "  work ${info.id}: NEW SUCCESS, calling refreshSdModels()")
+                            refreshSdModels()
+                        } else {
+                            Log.d("ModelSettings", "  work ${info.id}: already processed")
+                        }
+                    }
+                }
+                
+                val activeIds = infos.filter { info ->
+                    info.state == WorkInfo.State.RUNNING || info.state == WorkInfo.State.ENQUEUED
+                }.mapNotNull { info ->
+                    info.progress.getString(ModelDownloadWorker.KEY_IMAGE_MODEL_ID)
+                        ?: info.outputData.getString(ModelDownloadWorker.KEY_IMAGE_MODEL_ID)
+                }.toSet()
+                
+                Log.d("ModelSettings", "observeImageModelDownloadWork: activeIds=$activeIds")
+                downloadingImageModelIds = activeIds
+                
+                // Build download states list
+                val downloadStates = infos.mapNotNull { info ->
+                    val modelId = info.progress.getString(ModelDownloadWorker.KEY_IMAGE_MODEL_ID)
+                        ?: info.outputData.getString(ModelDownloadWorker.KEY_IMAGE_MODEL_ID)
+                        ?: return@mapNotNull null
+                    val modelName = info.progress.getString(ModelDownloadWorker.KEY_IMAGE_MODEL_NAME)
+                        ?: info.outputData.getString(ModelDownloadWorker.KEY_IMAGE_MODEL_NAME)
+                        ?: modelId
+                    val downloaded = info.progress.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
+                        .takeIf { it > 0L }
+                        ?: info.outputData.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
+                    val total = info.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L)
+                        .takeIf { it > 0L }
+                        ?: info.outputData.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L)
+                    
+                    val status = when (info.state) {
+                        WorkInfo.State.ENQUEUED -> "待機中"
+                        WorkInfo.State.RUNNING -> if (total > 0L) {
+                            val percent = ((downloaded * 100L) / total).toInt().coerceIn(0, 100)
+                            "ダウンロード中 $percent% (${formatBytes(downloaded)} / ${formatBytes(total)})"
+                        } else {
+                            "ダウンロード中"
+                        }
+                        WorkInfo.State.BLOCKED -> "待機中"
+                        WorkInfo.State.SUCCEEDED -> "完了"
+                        WorkInfo.State.CANCELLED -> "キャンセル"
+                        WorkInfo.State.FAILED -> {
+                            val error = info.outputData.getString(ModelDownloadWorker.KEY_ERROR_MESSAGE)
+                            if (error.isNullOrBlank()) "失敗" else "失敗: $error"
+                        }
+                    }
+                    
+                    // 完了またはキャンセルされたダウンロードは追加しない
+                    if (info.state == WorkInfo.State.SUCCEEDED || info.state == WorkInfo.State.FAILED || info.state == WorkInfo.State.CANCELLED) {
+                        return@mapNotNull null
+                    }
+                    
+                    ImageModelDownloadUiState(
+                        modelId = modelId,
+                        modelName = modelName,
+                        downloadedBytes = downloaded,
+                        totalBytes = total,
+                        statusText = status,
+                        isActive = info.state == WorkInfo.State.ENQUEUED ||
+                            info.state == WorkInfo.State.RUNNING ||
+                            info.state == WorkInfo.State.BLOCKED
+                    )
+                }
+                
+                imageModelDownloadStates = downloadStates
             }
     }
 
@@ -1788,6 +2400,22 @@ class ModelSettingsFragment : Fragment() {
     private data class HfQueuedDownloadUiState(
         val modelId: String,
         val filePath: String,
+        val downloadedBytes: Long,
+        val totalBytes: Long,
+        val statusText: String,
+        val isActive: Boolean
+    ) {
+        val progress: Float
+            get() = if (totalBytes > 0L) {
+                (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+            } else {
+                0f
+            }
+    }
+    
+    private data class ImageModelDownloadUiState(
+        val modelId: String,
+        val modelName: String,
         val downloadedBytes: Long,
         val totalBytes: Long,
         val statusText: String,

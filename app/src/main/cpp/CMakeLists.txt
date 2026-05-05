@@ -10,7 +10,8 @@ find_library(LOG_LIB log)
 # --- rnllama sources (vendored from llama.rn 0.12.0-rc.9) ---
 set(RNLLAMA_DIR ${CMAKE_SOURCE_DIR}/llama_rn)
 
-include_directories(
+# llama_rn のヘッダは rnllama ターゲットのみに付与する（stable-diffusion.cpp の ggml と混ざるのを防ぐ）
+set(RNLLAMA_INCLUDE_DIRS
         ${RNLLAMA_DIR}
         ${RNLLAMA_DIR}/common
         ${RNLLAMA_DIR}/common/jinja
@@ -82,6 +83,7 @@ else()
 endif()
 
 add_library(rnllama_core SHARED ${RNLLAMA_SOURCE_FILES} ${RNLLAMA_ARCH_SOURCE_FILES})
+target_include_directories(rnllama_core PRIVATE ${RNLLAMA_INCLUDE_DIRS})
 target_link_libraries(rnllama_core PRIVATE ${LOG_LIB} android)
 target_compile_options(rnllama_core PRIVATE
         -DLM_GGML_USE_CPU
@@ -104,10 +106,36 @@ target_link_options(rnllama_core PRIVATE
 
 # --- Our minimal JNI bridge (no React / no JSI) ---
 add_library(nezumi_rnllama_jni SHARED NezumiRnLlamaJni.cpp)
+target_include_directories(nezumi_rnllama_jni PRIVATE ${RNLLAMA_INCLUDE_DIRS})
 target_link_libraries(nezumi_rnllama_jni PRIVATE rnllama_core ${LOG_LIB} android)
 target_compile_options(nezumi_rnllama_jni PRIVATE -O3 -DNDEBUG -pthread)
 target_link_options(nezumi_rnllama_jni PRIVATE
         -Wl,-z,max-page-size=16384
         -Wl,-z,common-page-size=16384
 )
+
+# --- stable-diffusion.cpp (optional submodule at cpp/stable-diffusion.cpp) ---
+set(NEZUMI_SD_SRC_DIR ${CMAKE_SOURCE_DIR}/stable-diffusion.cpp)
+if (EXISTS "${NEZUMI_SD_SRC_DIR}/CMakeLists.txt")
+    set(SD_BUILD_EXAMPLES OFF CACHE BOOL "sd: examples" FORCE)
+    set(SD_WEBP OFF CACHE BOOL "sd: webp" FORCE)
+    set(SD_WEBM OFF CACHE BOOL "sd: webm" FORCE)
+    set(GGML_OPENMP OFF CACHE BOOL "ggml: openmp" FORCE)
+    # Vulkanオフロードはクロスコンパイル時に問題があるため無効化
+    # set(GGML_VULKAN ON CACHE BOOL "ggml: vulkan" FORCE)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    add_subdirectory(${NEZUMI_SD_SRC_DIR} nezumi_sd_subbuild)
+    add_library(nezumi_sd SHARED sd_jni.cpp)
+    target_include_directories(nezumi_sd PRIVATE ${NEZUMI_SD_SRC_DIR}/include)
+    target_link_libraries(nezumi_sd PRIVATE stable-diffusion ${LOG_LIB} android)
+    target_compile_options(nezumi_sd PRIVATE -O3 -DNDEBUG)
+    target_link_options(nezumi_sd PRIVATE
+            -Wl,-z,max-page-size=16384
+            -Wl,-z,common-page-size=16384
+    )
+else()
+    message(WARNING "stable-diffusion.cpp missing under ${NEZUMI_SD_SRC_DIR}; building nezumi_sd stub only.")
+    add_library(nezumi_sd SHARED sd_jni_stub.cpp)
+    target_link_libraries(nezumi_sd PRIVATE ${LOG_LIB} android)
+endif()
 

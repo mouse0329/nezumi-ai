@@ -63,7 +63,7 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- Model loading full-screen overlay -->
-    <androidx.compose.ui.platform.ComposeView android:id="@+id/model_loading_compose_overlay" android:layout_width="match_parent" android:layout_height="match_parent" />
+    <!-- Model loading full-screen overlay（非ロード時は GONE。Compose が空でも View がタッチを奪うため） -->
+    <androidx.compose.ui.platform.ComposeView android:id="@+id/model_loading_compose_overlay" android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone" />
 
 </FrameLayout>

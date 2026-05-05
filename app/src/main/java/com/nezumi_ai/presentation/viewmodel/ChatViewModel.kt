@@ -26,9 +26,15 @@ import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
+import com.nezumi_ai.data.inference.EngineManager
+import com.nezumi_ai.data.inference.GenerateImageToolBridge
+import com.nezumi_ai.data.inference.GenerateImageToolHandler
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.ToolCallState
+import com.nezumi_ai.data.inference.ToolExecutionResult
 import com.nezumi_ai.data.inference.PromptBuilder
+import com.google.ai.edge.litertlm.ToolCall
+import com.nezumi_ai.utils.PreferencesHelper
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -48,6 +54,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.CancellableContinuation
+import kotlin.coroutines.resume
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -191,6 +200,21 @@ class ChatViewModel(
     
     private val _toolCallState = MutableStateFlow<ToolCallState?>(null)
     val toolCallState: StateFlow<ToolCallState?> = _toolCallState.asStateFlow()
+
+    private val _imageGenProgress = MutableStateFlow<Pair<Int, Int>?>(null)
+    val imageGenProgress: StateFlow<Pair<Int, Int>?> = _imageGenProgress.asStateFlow()
+
+    private val _confirmationRequest = MutableStateFlow<String?>(null)
+    val confirmationRequest: StateFlow<String?> = _confirmationRequest.asStateFlow()
+
+    private var imageGenConfirmCont: CancellableContinuation<String?>? = null
+
+    @Volatile
+    private var streamingAssistantMessageIdForTools: Long? = null
+
+    private val generateImageToolHandler = GenerateImageToolHandler { toolCall ->
+        invokeGenerateImageFromTool(toolCall)
+    }
 
     data class MemoryWarningInfo(
         val modelName: String,
@@ -339,6 +363,8 @@ class ChatViewModel(
                 Log.e(TAG, "Error monitoring model changes", e)
             }
         }
+
+        GenerateImageToolBridge.handler = generateImageToolHandler
     }
 
     private suspend fun refreshContextWindowForSelectedModel() {
@@ -858,6 +884,7 @@ class ChatViewModel(
             )
             val activeStreamingMessageId = streamingMessageId
                 ?: throw IllegalStateException("Failed to create streaming message")
+            streamingAssistantMessageIdForTools = activeStreamingMessageId
 
             val answerBuilder = StringBuilder()
             val thinkingBuilder = StringBuilder()
@@ -1308,6 +1335,7 @@ class ChatViewModel(
                 _uiMessage.emit("❌ " + (e.message?.take(30) ?: "エラーが発生しました"))
             }
         } finally {
+            streamingAssistantMessageIdForTools = null
             // Gallery パターン: 全パスで _isLoading を false にする
             Log.d(TAG, "Generation concluded, setting isLoading=false")
             _isLoading.value = false
@@ -1321,6 +1349,140 @@ class ChatViewModel(
             
             // Release WakeLock when generation completes
             releaseScreenWakeLock()
+        }
+    }
+
+    private suspend fun awaitImageGenerationConfirmation(initialPrompt: String): String? =
+        suspendCancellableCoroutine { cont ->
+            imageGenConfirmCont = cont
+            _confirmationRequest.value = initialPrompt
+            cont.invokeOnCancellation {
+                imageGenConfirmCont = null
+                _confirmationRequest.value = null
+            }
+        }
+
+    fun onConfirmGenerateImage(editedPrompt: String) {
+        _confirmationRequest.value = null
+        val c = imageGenConfirmCont
+        imageGenConfirmCont = null
+        c?.resume(editedPrompt.trim())
+    }
+
+    fun onCancelGenerateImage() {
+        _confirmationRequest.value = null
+        val c = imageGenConfirmCont
+        imageGenConfirmCont = null
+        c?.resume(null)
+    }
+
+    private suspend fun reloadChatModelAfterSd(manager: ModelManager) {
+        val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
+        val engineModelName = toEngineModelName(selectedModel)
+        val baseConfig = chatInferenceConfigForModel(selectedModel)
+        val backend = settingsRepository.getBackendForModel(selectedModel)
+        val config = baseConfig.copy(backendType = backend).normalized()
+        runCatching { manager.initializeModel(engineModelName, config) }
+            .onFailure { Log.e(TAG, "reloadChatModelAfterSd failed", it) }
+    }
+
+    private suspend fun invokeGenerateImageFromTool(toolCall: ToolCall): ToolExecutionResult {
+        val prompt = toolCall.arguments["prompt"]?.toString()?.trim().orEmpty()
+        if (prompt.isEmpty()) {
+            return ToolExecutionResult(
+                success = false,
+                payload = mapOf("success" to false, "error" to "missing_prompt")
+            )
+        }
+        val neg = (
+            toolCall.arguments["negativePrompt"]
+                ?: toolCall.arguments["negative_prompt"]
+        )?.toString()?.trim().orEmpty()
+        var w = (toolCall.arguments["width"] as? Number)?.toInt() ?: 512
+        var h = (toolCall.arguments["height"] as? Number)?.toInt() ?: 512
+        val allowed = listOf(256, 512, 768)
+        w = allowed.minByOrNull { kotlin.math.abs(it - w) } ?: 512
+        h = allowed.minByOrNull { kotlin.math.abs(it - h) } ?: 512
+        val steps = (toolCall.arguments["steps"] as? Number)?.toInt()?.coerceIn(1, 50) ?: PreferencesHelper.getSdSteps(appContext)
+        val cfg = (toolCall.arguments["cfg"] as? Number)?.toFloat()
+            ?: (toolCall.arguments["cfg_scale"] as? Number)?.toFloat()
+            ?: PreferencesHelper.getSdCfg(appContext)
+        val seed = (toolCall.arguments["seed"] as? Number)?.toLong() ?: -1L
+
+        val edited = awaitImageGenerationConfirmation(prompt)
+        if (edited == null) {
+            return ToolExecutionResult(
+                success = true,
+                payload = mapOf("success" to true, "message" to "キャンセルしました")
+            )
+        }
+
+        val sdPath = PreferencesHelper.getSdModelPath(appContext).trim()
+        if (sdPath.isEmpty() || !File(sdPath).isDirectory) {
+            return ToolExecutionResult(
+                success = false,
+                payload = mapOf("success" to false, "error" to "sd_model_path_missing")
+            )
+        }
+
+        val manager = requireModelManager()
+        manager.unloadModel()
+        return try {
+            val localDream = com.nezumi_ai.sd.LocalDreamModule(appContext)
+            val backend = PreferencesHelper.getSdBackend(appContext)
+            val loaded = localDream.loadModel(sdPath, backend)
+            if (!loaded) {
+                return ToolExecutionResult(
+                    success = false,
+                    payload = mapOf("success" to false, "error" to "model_load_failed")
+                )
+            }
+            val bmp = localDream.generateImage(
+                prompt = edited,
+                negativePrompt = neg,
+                width = w,
+                height = h,
+                steps = steps,
+                cfg = cfg,
+                seed = seed,
+                onProgress = { step, totalSteps, _ ->
+                    _imageGenProgress.value = Pair(step, totalSteps)
+                }
+            )
+            _imageGenProgress.value = null
+            localDream.cleanup()
+            if (bmp == null) {
+                ToolExecutionResult(
+                    success = true,
+                    payload = mapOf("success" to false, "message" to "生成失敗")
+                )
+            } else {
+                val msgId = streamingAssistantMessageIdForTools
+                if (msgId != null) {
+                    val uri = MessageMediaStore.savePngBitmap(appContext, bmp, "chat_sd_$msgId")
+                    if (uri != null) {
+                        withContext(Dispatchers.IO) {
+                            messageRepository.updateMessageImageWithDescription(msgId, uri, null)
+                        }
+                    }
+                }
+                ToolExecutionResult(
+                    success = true,
+                    payload = mapOf(
+                        "success" to true,
+                        "message" to "画像を生成しました",
+                        "prompt" to edited
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "invokeGenerateImageFromTool", e)
+            ToolExecutionResult(
+                success = false,
+                payload = mapOf("success" to false, "error" to (e.message ?: "sd_error"))
+            )
+        } finally {
+            reloadChatModelAfterSd(manager)
         }
     }
 
@@ -2537,6 +2699,11 @@ class ChatViewModel(
      */
     override fun onCleared() {
         Log.d(TAG, "ChatViewModel.onCleared() called - starting resource cleanup")
+
+        GenerateImageToolBridge.handler = null
+        imageGenConfirmCont?.cancel(null)
+        imageGenConfirmCont = null
+        _confirmationRequest.value = null
         
         // 推論をキャンセル（新しいセッションへの汚染を防止）
         stopGeneration()

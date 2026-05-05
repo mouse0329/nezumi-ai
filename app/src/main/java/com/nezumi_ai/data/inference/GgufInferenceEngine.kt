@@ -17,6 +17,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import com.nezumi_ai.data.inference.rnllama.RnLlamaContext
+import com.nezumi_ai.data.inference.rnllama.RnLlamaNative
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import java.io.File
 import java.util.Random
@@ -88,6 +89,11 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
     override suspend fun loadModel(modelName: String, config: InferenceConfig): Result<Unit> {
         return modelMutex.withLock {
             try {
+                if (!RnLlamaNative.loadLibraryIfNeeded()) {
+                    return@withLock Result.failure(
+                        IllegalStateException("GGUF native library could not be loaded")
+                    )
+                }
                 // ★ 新しいモデルをロードする前に、実行中の推論が完全に終了したことを確認
                 currentInferenceJob?.let { job ->
                     Log.d(TAG, "loadModel: Waiting for ongoing inference to complete before loading new model")
