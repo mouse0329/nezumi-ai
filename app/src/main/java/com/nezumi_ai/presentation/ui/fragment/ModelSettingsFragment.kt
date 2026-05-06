@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -102,7 +103,7 @@ import java.io.File
 import java.util.Locale
 
 enum class ModelType {
-    LLM, IMAGE_GENERATION
+    LLM, IMAGE_GENERATION, DOWNLOAD_QUEUE
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -167,6 +168,8 @@ open class ModelSettingsFragment : Fragment() {
     private var expandedModelKey by mutableStateOf<String?>(null)
 
     private var sdModels by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
+    
+    private var selectedTab by mutableStateOf(ModelType.LLM)
 
     private val modelStates = mutableStateMapOf<ModelFileManager.LocalModel, ModelUiState>()
 
@@ -317,58 +320,24 @@ open class ModelSettingsFragment : Fragment() {
                     )
                 }
             }
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = "モデル管理",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "組み込みモデルのDL、Hugging Face検索、カスタムモデル追加をここで管理できます。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colorResource(id = R.color.text_secondary)
-                        )
-                    }
+            
+            item { TabSelector() }
+            
+            when (selectedTab) {
+                ModelType.LLM -> {
+                    item { HfCard() }
+                    item { HfModelSearchCard() }
+                    item { BuiltInModelsCard() }
+                    item { CustomModelsCard() }
+                    item { MmprojFilesCard() }
+                    item { LocalModelAddCard() }
                 }
-            }
-            item { HfCard() }
-            item { HfModelSearchCard() }
-            item { SdImageGenFromHfCard() }
-            item { ModelListCard() }
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "ローカルモデル追加",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = ".task / .litertlm / .gguf / .safetensors を追加できます",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colorResource(id = R.color.text_secondary)
-                        )
-                        OutlinedButton(
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = { importTaskLauncher.launch(arrayOf("*/*")) }
-                        ) {
-                            Text(text = stringResource(id = R.string.import_task_model))
-                        }
-                    }
+                ModelType.IMAGE_GENERATION -> {
+                    item { SdImageGenFromHfCard() }
+                    item { DownloadedImageModelsCard() }
+                }
+                ModelType.DOWNLOAD_QUEUE -> {
+                    item { DownloadQueueCard() }
                 }
             }
         }
@@ -430,41 +399,6 @@ open class ModelSettingsFragment : Fragment() {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    // GGUFファイルの場合、モデルタイプを選択
-                    if (capabilityDialogModel?.path?.lowercase()?.endsWith(".gguf") == true) {
-                        Text(
-                            text = "モデルタイプ",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                androidx.compose.material3.RadioButton(
-                                    selected = capabilityDialogModelType == ModelType.LLM,
-                                    onClick = { capabilityDialogModelType = ModelType.LLM }
-                                )
-                                Text("LLM", color = MaterialTheme.colorScheme.onSurface)
-                            }
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                androidx.compose.material3.RadioButton(
-                                    selected = capabilityDialogModelType == ModelType.IMAGE_GENERATION,
-                                    onClick = { capabilityDialogModelType = ModelType.IMAGE_GENERATION }
-                                )
-                                Text("画像生成モデル", color = MaterialTheme.colorScheme.onSurface)
-                            }
-                        }
-                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -473,10 +407,7 @@ open class ModelSettingsFragment : Fragment() {
                         Text("画像入力を有効化", color = MaterialTheme.colorScheme.onSurface)
                         Switch(
                             checked = capabilityDialogImageEnabled,
-                            onCheckedChange = { capabilityDialogImageEnabled = it },
-                            enabled = capabilityDialogCurrentCapabilities?.imageEnabled == true ||
-                                (capabilityDialogModel?.path?.lowercase()?.endsWith(".gguf") == true &&
-                                 capabilityDialogModelType == ModelType.IMAGE_GENERATION)
+                            onCheckedChange = { capabilityDialogImageEnabled = it }
                         )
                     }
                     Row(
@@ -575,11 +506,7 @@ open class ModelSettingsFragment : Fragment() {
                                 requireContext(),
                                 model.path,
                                 ImportedModelCapabilities(
-                                    imageEnabled = if (model.path.lowercase().endsWith(".gguf")) {
-                                        capabilityDialogModelType == ModelType.IMAGE_GENERATION
-                                    } else {
-                                        capabilityDialogImageEnabled
-                                    },
+                                    imageEnabled = capabilityDialogImageEnabled,
                                     audioEnabled = capabilityDialogAudioEnabled,
                                     mmprojPath = capabilityDialogMmprojPath.ifBlank { null },
                                     thinkingEnabled = capabilityDialogThinkingEnabled
@@ -665,7 +592,216 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     @Composable
+    private fun TabSelector() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TabButton(
+                    text = "LLM",
+                    selected = selectedTab == ModelType.LLM,
+                    onClick = { selectedTab = ModelType.LLM },
+                    modifier = Modifier.weight(1f)
+                )
+                TabButton(
+                    text = "画像生成",
+                    selected = selectedTab == ModelType.IMAGE_GENERATION,
+                    onClick = { selectedTab = ModelType.IMAGE_GENERATION },
+                    modifier = Modifier.weight(1f)
+                )
+                TabButton(
+                    text = "DL",
+                    selected = selectedTab == ModelType.DOWNLOAD_QUEUE,
+                    onClick = { selectedTab = ModelType.DOWNLOAD_QUEUE },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+    
+    @Composable
+    private fun TabButton(
+        text: String,
+        selected: Boolean,
+        onClick: () -> Unit,
+        modifier: Modifier = Modifier
+    ) {
+        Card(
+            modifier = modifier
+                .height(40.dp)
+                .clickable(onClick = onClick),
+            colors = CardDefaults.cardColors(
+                containerColor = if (selected) {
+                    colorResource(id = R.color.primary)
+                } else {
+                    colorResource(id = R.color.primary_light)
+                }
+            ),
+            elevation = CardDefaults.cardElevation(
+                defaultElevation = if (selected) 4.dp else 0.dp
+            )
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = text,
+                    color = if (selected) {
+                        colorResource(id = R.color.nezumi_on_primary)
+                    } else {
+                        colorResource(id = R.color.text_secondary)
+                    },
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+    
+    
+    @Composable
+    private fun DownloadQueueCard() {
+        if (hfQueuedDownloads.isNotEmpty()) {
+            Text(
+                text = "追加モデル ダウンロード中",
+                style = MaterialTheme.typography.labelSmall,
+                color = colorResource(id = R.color.text_secondary),
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                hfQueuedDownloads.forEach { item ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = colorResource(id = R.color.surface_card)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(text = item.modelId, fontWeight = FontWeight.SemiBold)
+                            Text(text = item.filePath, color = colorResource(id = R.color.text_secondary), style = MaterialTheme.typography.bodySmall)
+                            if (item.totalBytes > 0L) {
+                                LinearProgressIndicator(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    progress = { item.progress },
+                                    color = colorResource(id = R.color.primary),
+                                    trackColor = colorResource(id = R.color.context_meter_track)
+                                )
+                            } else {
+                                LinearProgressIndicator(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = colorResource(id = R.color.primary),
+                                    trackColor = colorResource(id = R.color.context_meter_track)
+                                )
+                            }
+                            Text(text = item.statusText, color = colorResource(id = R.color.text_secondary), style = MaterialTheme.typography.bodySmall)
+                            if (item.isActive) {
+                                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                    TextButton(onClick = {
+                                        ModelDownloadWorker.cancelCustomHf(
+                                            requireContext(),
+                                            item.modelId,
+                                            item.filePath
+                                        )
+                                    }) { Text("キャンセル") }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (imageModelDownloadStates.isNotEmpty()) {
+            Text(
+                text = "画像生成モデル ダウンロード中",
+                style = MaterialTheme.typography.labelSmall,
+                color = colorResource(id = R.color.text_secondary),
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = if (hfQueuedDownloads.isNotEmpty()) 16.dp else 0.dp)
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                imageModelDownloadStates.forEach { item ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = colorResource(id = R.color.surface_card)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(text = item.modelName, fontWeight = FontWeight.SemiBold)
+                            if (item.totalBytes > 0L) {
+                                LinearProgressIndicator(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    progress = { item.progress },
+                                    color = colorResource(id = R.color.primary),
+                                    trackColor = colorResource(id = R.color.context_meter_track)
+                                )
+                            } else {
+                                LinearProgressIndicator(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = colorResource(id = R.color.primary),
+                                    trackColor = colorResource(id = R.color.context_meter_track)
+                                )
+                            }
+                            Text(text = item.statusText, color = colorResource(id = R.color.text_secondary), style = MaterialTheme.typography.bodySmall)
+                            if (item.isActive) {
+                                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                    TextButton(onClick = {
+                                        ModelDownloadWorker.cancelImageModel(
+                                            requireContext(),
+                                            item.modelId
+                                        )
+                                    }) { Text("キャンセル") }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (hfQueuedDownloads.isEmpty() && imageModelDownloadStates.isEmpty()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = colorResource(id = R.color.primary_light)
+                )
+            ) {
+                Text(
+                    text = "ダウンロード中のモデルはありません",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colorResource(id = R.color.text_secondary),
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+        }
+    }
+
+    @Composable
     private fun HfCard() {
+        Text(
+            text = "Hugging Face 連携",
+            style = MaterialTheme.typography.labelSmall,
+            color = colorResource(id = R.color.text_secondary),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+        )
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -673,14 +809,25 @@ open class ModelSettingsFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = stringResource(id = R.string.hf_token_title), fontWeight = FontWeight.Bold)
-                Text(
-                    text = if (hfLinked) stringResource(id = R.string.hf_auth_linked) else stringResource(id = R.string.hf_auth_not_linked),
-                    color = colorResource(id = R.color.text_secondary)
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { startOAuthLogin() }) { Text(stringResource(id = R.string.hf_oauth_login)) }
-                    TextButton(onClick = { logoutHf() }, enabled = hfLinked) { Text(stringResource(id = R.string.hf_oauth_logout)) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(text = "HF:", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = if (hfLinked) "連携済み" else "未連携",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    Button(
+                        onClick = { if (hfLinked) logoutHf() else startOAuthLogin() },
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Text(if (hfLinked) "ログアウト" else "ログイン 🤗", fontSize = 12.sp)
+                    }
                 }
             }
         }
@@ -694,23 +841,28 @@ open class ModelSettingsFragment : Fragment() {
                 containerColor = colorResource(id = R.color.primary_light)
             )
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = "Hugging Face モデル検索", fontWeight = FontWeight.Bold)
-                OutlinedTextField(
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    value = hfSearchQuery,
-                    onValueChange = { hfSearchQuery = it },
-                    label = { Text("キーワード / repo id") },
-                    singleLine = true
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        modifier = Modifier.weight(1f),
+                        value = hfSearchQuery,
+                        onValueChange = { hfSearchQuery = it },
+                        placeholder = { Text("キーワード / repo id") },
+                        singleLine = true
+                    )
                     Button(
                         enabled = !hfSearchLoading,
-                        onClick = { searchHfModels() }
+                        onClick = { searchHfModels() },
+                        modifier = Modifier.height(56.dp)
                     ) {
                         Text(if (hfSearchLoading) "検索中..." else "検索")
                     }
-                    if (hfSearchResults.isNotEmpty()) {
+                }
+                if (hfSearchResults.isNotEmpty()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(
                             enabled = !hfSearchLoading,
                             onClick = { hfSearchResultsDialogVisible = true }
@@ -730,13 +882,7 @@ open class ModelSettingsFragment : Fragment() {
                     }
                 }
                 hfSearchError?.let {
-                    Text(text = it, color = colorResource(id = R.color.text_primary))
-                }
-                if (hfSearchResults.isNotEmpty() && !hfSearchLoading) {
-                    Text(
-                        text = "検索結果 ${hfSearchResults.size}件（ページで表示）",
-                        color = colorResource(id = R.color.text_secondary)
-                    )
+                    Text(text = it, color = colorResource(id = R.color.text_primary), style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -744,6 +890,13 @@ open class ModelSettingsFragment : Fragment() {
 
     @Composable
     private fun SdImageGenFromHfCard() {
+        Text(
+            text = "リポジトリ",
+            style = MaterialTheme.typography.labelSmall,
+            color = colorResource(id = R.color.text_secondary),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+        )
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -755,13 +908,7 @@ open class ModelSettingsFragment : Fragment() {
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "画像生成モデル (MNN/QNN)",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = colorResource(id = R.color.text_primary)
-                )
-                Text(
-                    text = "xororz/sd-mnn (GPU) と xororz/sd-qnn (NPU) から画像生成モデルをダウンロードできます",
+                    text = "xororz/sd-mnn (GPU) | sd-qnn (NPU)",
                     style = MaterialTheme.typography.bodySmall,
                     color = colorResource(id = R.color.text_secondary)
                 )
@@ -783,6 +930,225 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
     
+    
+    @Composable
+    private fun BuiltInModelsCard() {
+        Text(
+            text = "組み込みモデル",
+            style = MaterialTheme.typography.labelSmall,
+            color = colorResource(id = R.color.text_secondary),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (model in ModelFileManager.LocalModel.entries) {
+                val state = modelStates[model] ?: continue
+                val modelKey = "builtin_${model.name}"
+                val isExpanded = expandedModelKey == modelKey
+                ModelAccordionItem(
+                    title = state.title,
+                    status = state.status,
+                    isExpanded = isExpanded,
+                    onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
+                    onDownload = { requestNotificationPermissionForDownload(model) },
+                    onDelete = {
+                        val ok = ModelFileManager.deleteModel(requireContext(), model)
+                        toast(if (ok) "削除しました" else "削除に失敗しました")
+                        refreshModelStatus(model)
+                        expandedModelKey = null
+                    },
+                    isDownloading = state.isDownloading,
+                    isDownloaded = state.isDownloaded,
+                    progress = state.progress,
+                    progressText = state.progressText
+                )
+            }
+        }
+    }
+    
+    @Composable
+    private fun CustomModelsCard() {
+        if (importedTasks.isEmpty()) return
+        
+        Text(
+            text = "カスタムモデル",
+            style = MaterialTheme.typography.labelSmall,
+            color = colorResource(id = R.color.text_secondary),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = 8.dp)
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (model in importedTasks) {
+                val modelKey = "imported_${model.path}"
+                val isExpanded = expandedModelKey == modelKey
+                ImportedModelAccordionItem(
+                    model = model,
+                    isExpanded = isExpanded,
+                    onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
+                    onDelete = {
+                        val result = ModelFileManager.deleteImportedTask(requireContext(), model.path)
+                        result.onSuccess {
+                            ImportedModelCapabilityStore.clear(requireContext(), model.path)
+                            toast("削除しました")
+                            refreshImportedTasks()
+                            expandedModelKey = null
+                        }.onFailure {
+                            toast("削除に失敗しました: ${it.message}")
+                        }
+                    }
+                )
+            }
+        }
+    }
+    
+    @Composable
+    private fun MmprojFilesCard() {
+        Text(
+            text = "mmproj ファイル",
+            style = MaterialTheme.typography.labelSmall,
+            color = colorResource(id = R.color.text_secondary),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = 8.dp)
+        )
+        
+        if (importedMmprojTasks.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (mmproj in importedMmprojTasks) {
+                    val mmprojKey = "mmproj_${mmproj.path}"
+                    val isExpanded = expandedModelKey == mmprojKey
+                    MmprojAccordionItem(
+                        model = mmproj,
+                        isExpanded = isExpanded,
+                        onToggle = { expandedModelKey = if (isExpanded) null else mmprojKey },
+                        onDelete = {
+                            val result = ModelFileManager.deleteImportedTask(requireContext(), mmproj.path)
+                            result.onSuccess {
+                                toast("mmproj ファイルを削除しました")
+                                refreshImportedTasks()
+                                expandedModelKey = null
+                            }.onFailure {
+                                toast("削除に失敗しました: ${it.message}")
+                            }
+                        }
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+        
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "ビジョン・オーディオ処理用の投影ファイル",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_secondary)
+                )
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { mmprojPickerLauncher.launch(arrayOf("*/*")) }
+                ) {
+                    Text("mmproj を追加")
+                }
+            }
+        }
+    }
+    
+    @Composable
+    private fun LocalModelAddCard() {
+        Text(
+            text = "ローカルモデル追加",
+            style = MaterialTheme.typography.labelSmall,
+            color = colorResource(id = R.color.text_secondary),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = 8.dp)
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = ".task / .litertlm / .gguf 対応",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_secondary)
+                )
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { importTaskLauncher.launch(arrayOf("*/*")) }
+                ) {
+                    Text("モデルファイルを追加")
+                }
+            }
+        }
+    }
+    
+    @Composable
+    private fun DownloadedImageModelsCard() {
+        Text(
+            text = "ダウンロード済みモデル",
+            style = MaterialTheme.typography.labelSmall,
+            color = colorResource(id = R.color.text_secondary),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+        )
+        
+        if (sdModels.isEmpty()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = colorResource(id = R.color.primary_light)
+                )
+            ) {
+                Text(
+                    text = "上記の「リポジトリ」カードからダウンロードできます",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_secondary),
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (model in sdModels) {
+                    val modelKey = "sd_${model.path}"
+                    val isExpanded = expandedModelKey == modelKey
+                    ImageModelAccordionItem(
+                        model = model,
+                        isExpanded = isExpanded,
+                        onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
+                        onDelete = {
+                            val dir = File(model.path)
+                            val deleted = dir.deleteRecursively()
+                            if (deleted) {
+                                toast("削除しました")
+                                refreshSdModels()
+                                expandedModelKey = null
+                            } else {
+                                toast("削除に失敗しました")
+                            }
+                        },
+                        onSetActive = {
+                            PreferencesHelper.setSdModelPath(requireContext(), model.path)
+                            toast("アクティブに設定しました")
+                        }
+                    )
+                }
+            }
+        }
+    }
+
     @Composable
     private fun ImageModelsDialogContent() {
         Column(
@@ -1030,7 +1396,7 @@ open class ModelSettingsFragment : Fragment() {
                             Text("ファイル一覧を取得中...")
                         }
                     } else if (hfFilePickerFiles.isEmpty()) {
-                        Text("対応ファイル（.gguf / .safetensors / .task / .litertlm / .mmproj）が見つかりません")
+                        Text("対応ファイル（.gguf / .task / .litertlm / .mmproj）が見つかりません")
                     } else {
                         hfFilePickerFiles.forEach { file ->
                             Row(
@@ -1625,11 +1991,6 @@ open class ModelSettingsFragment : Fragment() {
                                     capabilityDialogThinkingEnabled = caps.thinkingEnabled
                                     capabilityDialogMmprojPath = caps.mmprojPath ?: ""
                                     capabilityDialogCurrentCapabilities = caps
-                                    capabilityDialogModelType = if (model.path.lowercase().endsWith(".gguf")) {
-                                        if (caps.imageEnabled) ModelType.IMAGE_GENERATION else ModelType.LLM
-                                    } else {
-                                        ModelType.LLM
-                                    }
                                     capabilityDialogModel = model
                                 },
                                 modifier = Modifier.weight(1f)
@@ -1849,17 +2210,9 @@ open class ModelSettingsFragment : Fragment() {
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        if (!isActive) {
-                            Button(
-                                onClick = onSetActive,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("アクティブに設定")
-                            }
-                        }
                         TextButton(
                             onClick = onDelete,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("削除")
                         }

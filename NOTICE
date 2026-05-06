@@ -64,7 +64,15 @@ KOTLIN & JetBrains
     - androidx.compose.ui:ui-tooling-preview
     - androidx.compose.foundation:foundation
     - androidx.compose.material3:material3
+    - androidx.compose.material:material-icons-extended
     - androidx.lifecycle:lifecycle-runtime-compose
+    - androidx.lifecycle:lifecycle-viewmodel-compose
+
+* Kotlinx Serialization
+  License: Apache License 2.0
+  https://github.com/Kotlin/kotlinx.serialization
+  Includes:
+    - kotlinx-serialization-json
 
 ================================================================================
 GOOGLE MATERIAL DESIGN
@@ -155,6 +163,12 @@ NATIVE COMPONENTS
 * llama.cpp (via custom JNI bridge)
   License: MIT License
   https://github.com/ggerganov/llama.cpp
+
+* Stable Diffusion Core (MNN/QNN)
+  License: Apache License 2.0 (MNN), BSD 3-Clause (QNN)
+  https://github.com/alibaba/MNN
+  https://www.qualcomm.com/developer/software/neural-processing-sdk
+  Note: Used for on-device image generation with GPU/NPU acceleration
 
 ================================================================================
 BUILD TOOLS & GRADLE

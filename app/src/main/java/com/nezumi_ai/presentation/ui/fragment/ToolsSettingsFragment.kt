@@ -89,10 +89,11 @@ class ToolsSettingsFragment : Fragment() {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .background(colorResource(id = R.color.bg_session_list))
-                .padding(16.dp),
+                .background(colorResource(id = R.color.bg_session_list)),
+            contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            item { Spacer(modifier = Modifier.statusBarsPadding()) }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { findNavController().navigateUp() }) {

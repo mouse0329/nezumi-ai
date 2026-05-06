@@ -9,14 +9,32 @@ data class GroupedChatSessions(
 )
 
 fun groupSessionsByDate(sessions: List<ChatSessionEntity>): List<GroupedChatSessions> {
+    android.util.Log.d("GroupedChatSessions", "groupSessionsByDate: total sessions=${sessions.size}")
+    sessions.forEach { session ->
+        android.util.Log.d("GroupedChatSessions", "  session: id=${session.id} name=${session.name} isPinned=${session.isPinned}")
+    }
+    
     val result = mutableListOf<GroupedChatSessions>()
     val calendar = Calendar.getInstance()
     val today = calendar.apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0) }
     val todayTime = today.timeInMillis
 
+    // ピン留めセッションと通常セッションを分離
+    val pinnedSessions = sessions.filter { it.isPinned }
+    val unpinnedSessions = sessions.filter { !it.isPinned }
+    
+    android.util.Log.d("GroupedChatSessions", "pinnedSessions=${pinnedSessions.size} unpinnedSessions=${unpinnedSessions.size}")
+
+    // ピン留めセッションを最初に追加（日付ラベルなし）
+    if (pinnedSessions.isNotEmpty()) {
+        result.add(GroupedChatSessions("ピン留め", pinnedSessions))
+        android.util.Log.d("GroupedChatSessions", "Added pinned group with ${pinnedSessions.size} sessions")
+    }
+
+    // 通常セッションを日付でグループ化
     val grouped = mutableMapOf<String, MutableList<ChatSessionEntity>>()
 
-    for (session in sessions) {
+    for (session in unpinnedSessions) {
         val sessionCal = Calendar.getInstance().apply { timeInMillis = session.lastUpdated }
         sessionCal.set(Calendar.HOUR_OF_DAY, 0)
         sessionCal.set(Calendar.MINUTE, 0)

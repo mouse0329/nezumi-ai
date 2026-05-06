@@ -15,7 +15,7 @@ import com.nezumi_ai.data.database.entity.SettingsEntity
 
 @Database(
     entities = [ChatSessionEntity::class, MessageEntity::class, SettingsEntity::class, AlarmEntity::class],
-    version = 17,
+    version = 18,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
@@ -36,10 +36,18 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                     NezumiAiDatabase::class.java,
                     "nezumi_ai.db"
                 )
+                    .addMigrations(MIGRATION_17_18)
                     // 開発中: スキーマ不一致時は再作成して起動クラッシュを回避
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { instance = it }
             }
+        
+        private val MIGRATION_17_18 = object : androidx.room.migration.Migration(17, 18) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // isPinned カラムを追加（デフォルト値: false）
+                database.execSQL("ALTER TABLE chat_session ADD COLUMN isPinned INTEGER NOT NULL DEFAULT 0")
+            }
+        }
     }
 }

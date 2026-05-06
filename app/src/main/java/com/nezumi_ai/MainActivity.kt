@@ -122,7 +122,8 @@ class MainActivity : AppCompatActivity() {
             onListUpdated = {
                 // リスト更新時に一番上にスクロール
                 binding.drawerHistoryRecycler.smoothScrollToPosition(0)
-            }
+            },
+            currentSessionId = getCurrentSessionId()
         )
         binding.drawerHistoryRecycler.layoutManager = LinearLayoutManager(this)
         binding.drawerHistoryRecycler.adapter = drawerHistoryAdapter
@@ -552,11 +553,27 @@ class MainActivity : AppCompatActivity() {
         screenOffReceiver = null
     }
 
+    private fun getCurrentSessionId(): Long? {
+        val prefs = getSharedPreferences("nezumi_ai_prefs", Context.MODE_PRIVATE)
+        return prefs.getLong("current_session_id", -1L).takeIf { it != -1L }
+    }
+
     private fun observeDrawerHistory() {
         lifecycleScope.launch {
             sessionRepository.getAllSessions().collectLatest { sessions ->
                 latestDrawerSessions = sessions
                 renderDrawerHistory(sessions)
+            }
+        }
+        
+        // 現在のセッションIDの変更を監視
+        lifecycleScope.launch {
+            while (true) {
+                delay(500) // 0.5秒ごとにチェック
+                val newSessionId = getCurrentSessionId()
+                if (::drawerHistoryAdapter.isInitialized) {
+                    drawerHistoryAdapter.setCurrentSessionId(newSessionId)
+                }
             }
         }
     }
@@ -601,6 +618,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         lastRenderedDrawerDayStartMillis = localDayStartMillis()
+        drawerHistoryAdapter.setCurrentSessionId(getCurrentSessionId())
         val groupedSessions = groupSessionsByDate(sessions)
         drawerHistoryAdapter.submitList(groupedSessions)
         binding.drawerHistoryEmpty.visibility = if (sessions.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
@@ -626,9 +644,21 @@ class MainActivity : AppCompatActivity() {
         }
         val todayTime = today.timeInMillis
 
+        // ピン留めセッションと通常セッションを分離
+        val pinnedSessions = sessions.filter { it.isPinned }
+        val unpinnedSessions = sessions.filter { !it.isPinned }
+
+        // ピン留めセッションを最初に追加
+        if (pinnedSessions.isNotEmpty()) {
+            result.add(DrawerHistoryItem.Label("ピン留め"))
+            pinnedSessions.forEach { session ->
+                result.add(DrawerHistoryItem.Session(session))
+            }
+        }
+
         val grouped = mutableMapOf<String, MutableList<ChatSessionEntity>>()
 
-        for (session in sessions) {
+        for (session in unpinnedSessions) {
             val sessionCal = Calendar.getInstance().apply { timeInMillis = session.lastUpdated }
             sessionCal.set(Calendar.HOUR_OF_DAY, 0)
             sessionCal.set(Calendar.MINUTE, 0)
@@ -752,16 +782,33 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showHistoryItemActions(session: ChatSessionEntity) {
-        val labels = arrayOf("リネーム", "削除")
+        val labels = if (session.isPinned) {
+            arrayOf("ピン留め解除", "リネーム", "削除")
+        } else {
+            arrayOf("ピン留め", "リネーム", "削除")
+        }
         MaterialAlertDialogBuilder(this)
             .setTitle(session.name.ifBlank { "無題のチャット" })
             .setItems(labels) { _, which ->
                 when (which) {
-                    0 -> showRenameSessionDialog(session)
-                    1 -> showDeleteSessionDialog(session)
+                    0 -> togglePinSession(session)
+                    1 -> showRenameSessionDialog(session)
+                    2 -> showDeleteSessionDialog(session)
                 }
             }
             .show()
+    }
+
+    private fun togglePinSession(session: ChatSessionEntity) {
+        lifecycleScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    sessionRepository.togglePinSession(session.id)
+                }
+            }.onFailure {
+                Log.e(TAG, "Failed to toggle pin session", it)
+            }
+        }
     }
 
     private fun showRenameSessionDialog(session: ChatSessionEntity) {

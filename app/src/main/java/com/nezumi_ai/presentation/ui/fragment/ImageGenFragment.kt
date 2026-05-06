@@ -11,6 +11,8 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -188,9 +190,10 @@ private fun ImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
     Column(
         Modifier
             .fillMaxSize()
-            .padding(16.dp)
     ) {
-        Row(
+        Spacer(modifier = Modifier.statusBarsPadding())
+        Column(Modifier.padding(16.dp)) {
+            Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -330,6 +333,7 @@ private fun ImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
                     }
                 }
             }
+        }
         }
     }
 }
