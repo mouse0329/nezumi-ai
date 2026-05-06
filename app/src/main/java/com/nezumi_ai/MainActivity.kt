@@ -9,11 +9,17 @@ import androidx.navigation.navOptions
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
+import android.view.Gravity
+import android.view.View
+import android.graphics.drawable.ColorDrawable
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.text.InputType
+import android.widget.LinearLayout
+import android.widget.PopupWindow
+import android.widget.TextView
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import com.nezumi_ai.data.database.NezumiAiDatabase
@@ -116,8 +122,8 @@ class MainActivity : AppCompatActivity() {
                 closeDrawer()
                 openChatSession(session.id)
             },
-            onLongClick = { session ->
-                showHistoryItemActions(session)
+            onMenuClick = { session, anchorView ->
+                showHistoryItemActions(session, anchorView)
             },
             onListUpdated = {
                 // リスト更新時に一番上にスクロール
@@ -781,23 +787,73 @@ class MainActivity : AppCompatActivity() {
         Log.d(TAG, "Exited incognito mode for normal chat navigation")
     }
 
-    private fun showHistoryItemActions(session: ChatSessionEntity) {
-        val labels = if (session.isPinned) {
-            arrayOf("ピン留め解除", "リネーム", "削除")
-        } else {
-            arrayOf("ピン留め", "リネーム", "削除")
+    private fun showHistoryItemActions(session: ChatSessionEntity, anchorView: View) {
+        val pinTitle = if (session.isPinned) "固定を解除" else "固定"
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundResource(R.drawable.bg_input_field)
+            elevation = 12f
+            setPadding(0, 4.dp(), 0, 4.dp())
         }
-        MaterialAlertDialogBuilder(this)
-            .setTitle(session.name.ifBlank { "無題のチャット" })
-            .setItems(labels) { _, which ->
-                when (which) {
-                    0 -> togglePinSession(session)
-                    1 -> showRenameSessionDialog(session)
-                    2 -> showDeleteSessionDialog(session)
+
+        lateinit var popupWindow: PopupWindow
+        val dismiss: () -> Unit = { popupWindow.dismiss() }
+
+        fun addActionItem(label: String, onClick: () -> Unit) {
+            val itemView = TextView(this).apply {
+                text = label
+                textSize = 15f
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
+                setPadding(16.dp(), 10.dp(), 16.dp(), 10.dp())
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    onClick()
+                    dismiss()
                 }
             }
-            .show()
+            container.addView(
+                itemView,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
+
+        addActionItem(pinTitle) { togglePinSession(session) }
+        addActionItem("名前を変更") { showRenameSessionDialog(session) }
+        addActionItem("削除") { showDeleteSessionDialog(session) }
+
+        popupWindow = PopupWindow(
+            container,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            true
+        ).apply {
+            setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+            isOutsideTouchable = true
+            elevation = 12f
+        }
+
+        // アンカー位置を固定計算して表示。表示後に追従させない。
+        anchorView.post {
+            container.measure(
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            )
+
+            val popupWidth = container.measuredWidth
+            val location = IntArray(2)
+            anchorView.getLocationOnScreen(location)
+            val x = (location[0] + anchorView.width - popupWidth).coerceAtLeast(8.dp())
+            val y = location[1] + anchorView.height + 4.dp()
+
+            popupWindow.showAtLocation(binding.drawerLayout, Gravity.TOP or Gravity.START, x, y)
+        }
     }
+
 
     private fun togglePinSession(session: ChatSessionEntity) {
         lifecycleScope.launch {

@@ -1,6 +1,7 @@
 package com.nezumi_ai.presentation.ui.adapter
 
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
@@ -20,7 +21,7 @@ sealed class DrawerHistoryItem {
 
 class DrawerHistoryAdapter(
     private val onClick: (ChatSessionEntity) -> Unit,
-    private val onLongClick: (ChatSessionEntity) -> Unit,
+    private val onMenuClick: (ChatSessionEntity, View) -> Unit,
     private val onListUpdated: (() -> Unit)? = null,
     private var currentSessionId: Long? = null
 ) : ListAdapter<DrawerHistoryItem, RecyclerView.ViewHolder>(DiffCallback()) {
@@ -58,7 +59,7 @@ class DrawerHistoryAdapter(
                     parent,
                     false
                 )
-                SessionViewHolder(binding, onClick, onLongClick)
+                SessionViewHolder(binding, onClick, onMenuClick)
             }
             else -> throw IllegalArgumentException("Unknown view type: $viewType")
         }
@@ -91,9 +92,28 @@ class DrawerHistoryAdapter(
     class SessionViewHolder(
         private val binding: ItemDrawerSessionBinding,
         private val onClick: (ChatSessionEntity) -> Unit,
-        private val onLongClick: (ChatSessionEntity) -> Unit
+        private val onMenuClick: (ChatSessionEntity, View) -> Unit
     ) : RecyclerView.ViewHolder(binding.root) {
+        
+        private var currentSession: ChatSessionEntity? = null
+        
+        init {
+            binding.root.isClickable = true
+            binding.root.isFocusable = true
+            
+            binding.root.setOnClickListener { 
+                android.util.Log.d("DrawerHistoryAdapter", "Click detected on session: ${currentSession?.name}")
+                currentSession?.let { onClick(it) }
+            }
+            binding.menuButton.setOnClickListener {
+                android.util.Log.d("DrawerHistoryAdapter", "Menu click detected on session: ${currentSession?.name}")
+                currentSession?.let { onMenuClick(it, binding.menuButton) }
+            }
+        }
+        
         fun bind(session: ChatSessionEntity, currentSessionId: Long? = null) {
+            currentSession = session
+            
             binding.sessionTitle.text = session.name.ifBlank { "無題のチャット" }
             binding.sessionDate.text = formatTime(session.lastUpdated)
             
@@ -105,12 +125,6 @@ class DrawerHistoryAdapter(
                 binding.sessionContainer.setBackgroundResource(com.nezumi_ai.R.drawable.bg_current_session)
             } else {
                 binding.sessionContainer.setBackgroundResource(com.nezumi_ai.R.drawable.bg_input_field)
-            }
-            
-            binding.root.setOnClickListener { onClick(session) }
-            binding.root.setOnLongClickListener {
-                onLongClick(session)
-                true
             }
         }
 

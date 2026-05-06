@@ -18,7 +18,7 @@ import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.repository.ChatSessionRepository
 import com.nezumi_ai.presentation.viewmodel.ChatSessionListViewModel
 import com.nezumi_ai.presentation.viewmodel.ChatSessionListViewModelFactory
-import com.nezumi_ai.presentation.ui.screen.SessionListRoute
+import com.nezumi_ai.presentation.ui.screen.SessionListScreen
 import kotlinx.coroutines.launch
 
 class SessionListFragment : Fragment() {
@@ -65,27 +65,12 @@ class SessionListFragment : Fragment() {
             setContent {
                 val currentSessionId = currentSessionIdState.longValue.takeIf { it != -1L }
                 
-                SessionListRoute(
+                SessionListScreen(
                     viewModel = viewModel,
                     onOpenSettings = {
                         (requireActivity() as com.nezumi_ai.MainActivity).openDrawer()
                     },
-                    onCreateSession = {
-                        viewModel.createNewSession("新しいチャット")
-                    },
-                    onCreateIncognitoSession = {
-                        android.util.Log.d("SessionListFragment", "Long press detected - creating incognito session")
-                        viewModel.createNewSession("シークレット", onCreated = { sessionId ->
-                            android.util.Log.d("SessionListFragment", "Incognito session created: $sessionId")
-                            val action = SessionListFragmentDirections
-                                .actionSessionListFragmentToChatFragment(sessionId, isIncognito = true)
-                            findNavController().navigate(action)
-                        })
-                    },
                     onSessionClick = ::navigateToChat,
-                    onDeleteSession = ::confirmDeleteSession,
-                    onTogglePin = { sessionId -> viewModel.togglePinSession(sessionId) },
-                    onRenameSession = { sessionId -> showRenameSessionDialog(sessionId) },
                     currentSessionId = currentSessionId
                 )
             }

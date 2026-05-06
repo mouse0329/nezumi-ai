@@ -67,6 +67,7 @@ class LiteRtLmEngine(
     private var loadedModelPath: String? = null
     private var loadedConfig: InferenceConfig? = null
     private var loadedBackend: String? = null  // Phase 11: GPU/CPU/NPU バックエンド追跡（キャッシュ無効化用）
+    @Volatile private var loadedWithVisionAudio: Boolean = false
     private var disableXnnpackCacheForProcess: Boolean = false
     private val modelMutex = Mutex()
     private val inferenceMutex = Mutex()
@@ -304,6 +305,7 @@ class LiteRtLmEngine(
         val needsReload = loadedModelPath != modelPath ||
             loadedConfig != normalizedConfig ||
             loadedBackend != normalizedConfig.backendType ||
+            (normalizedConfig.requireMultimodal && !loadedWithVisionAudio) ||
             engine == null
 
         if (!needsReload) {
@@ -393,7 +395,7 @@ class LiteRtLmEngine(
             }
         }
 
-        suspend fun loadWithBackend(backend: Backend): Engine {
+        suspend fun loadWithBackend(backend: Backend): Pair<Engine, Boolean> {
             val isGpuBackend = backend is Backend.GPU
             val tryWithVisionAudio = normalizedConfig.requireMultimodal || !isGpuBackend
 
@@ -403,10 +405,10 @@ class LiteRtLmEngine(
                 Log.d(TAG, "GPU backend detected: skipping vision/audio initialization to save VRAM")
             }
             
-            return runCatching { tryCreate(withVisionAudio = tryWithVisionAudio, backend) }
+            return runCatching { tryCreate(withVisionAudio = tryWithVisionAudio, backend) to tryWithVisionAudio }
                 .getOrElse { first ->
                     Log.w(TAG, "Engine init with vision/audio=${tryWithVisionAudio} failed, retrying text-only", first)
-                    tryCreate(withVisionAudio = false, backend)
+                    tryCreate(withVisionAudio = false, backend) to false
                 }
         }
 
@@ -423,17 +425,17 @@ class LiteRtLmEngine(
             }
         }
 
-        suspend fun tryBackendChain(backends: List<Backend>): Engine {
+        suspend fun tryBackendChain(backends: List<Backend>): Pair<Engine, Boolean> {
             var lastError: Throwable? = null
 
             for ((index, backend) in backends.withIndex()) {
                 try {
                     Log.i(TAG, "Attempting to load with ${backend.javaClass.simpleName} (${index + 1}/${backends.size})")
                     val start = System.currentTimeMillis()
-                    val eng = loadWithBackend(backend)
+                    val (eng, withVA) = loadWithBackend(backend)
                     val duration = System.currentTimeMillis() - start
-                    Log.i(TAG, "Successfully loaded with ${backend.javaClass.simpleName} in ${duration}ms")
-                    return eng
+                    Log.i(TAG, "Successfully loaded with ${backend.javaClass.simpleName} in ${duration}ms (visionAudio=$withVA)")
+                    return eng to withVA
                 } catch (e: Throwable) {
                     lastError = e
                     Log.w(
@@ -453,12 +455,13 @@ class LiteRtLmEngine(
         val fallbackChain = getBackendFallbackChain(preferredBackend)
         Log.d(TAG, "Backend fallback chain: ${fallbackChain.map { it.javaClass.simpleName }}")
 
-        val eng = tryBackendChain(fallbackChain)
+        val (eng, withVA) = tryBackendChain(fallbackChain)
 
         engine = eng
         loadedModelPath = modelPath
         loadedConfig = normalizedConfig
         loadedBackend = normalizedConfig.backendType
+        loadedWithVisionAudio = withVA
         val totalTimeMs = System.currentTimeMillis() - modelStartTimeMs
         Log.d(TAG, "loadModel SUCCESS: $modelPath backend=${normalizedConfig.backendType} totalDuration=${totalTimeMs}ms")
         return Result.success(Unit)
@@ -530,9 +533,41 @@ class LiteRtLmEngine(
         }
 
         val normalized = modelMutex.withLock { loadedConfig?.normalized() } ?: config.normalized()
+        val visionEnabled = loadedWithVisionAudio
+        val hasMultimodalInput = images.isNotEmpty() || audioClips.isNotEmpty()
+
+        // マルチモーダル入力があるのにvisionが無効な場合、requireMultimodal=trueで再ロード
+        if (hasMultimodalInput && !visionEnabled) {
+            releaseInferenceMutex()
+            Log.i(TAG, "Multimodal input detected but engine loaded without vision/audio. Reloading with requireMultimodal=true...")
+            
+            val reloadConfig = normalized.copy(requireMultimodal = true)
+            val reloadResult = modelMutex.withLock {
+                val currentPath = loadedModelPath
+                if (currentPath != null) {
+                    val modelFile = File(currentPath)
+                    loadModelLocked(modelFile.nameWithoutExtension, reloadConfig)
+                } else {
+                    Result.failure(IllegalStateException("Cannot reload: model path unknown"))
+                }
+            }
+            
+            if (reloadResult.isFailure) {
+                close(reloadResult.exceptionOrNull() ?: RuntimeException("Model reload failed"))
+                return@callbackFlow
+            }
+            
+            Log.i(TAG, "Model reloaded with vision/audio support. Retrying inference...")
+            // 再帰的に自分自身を呼び出して推論を再試行
+            inferenceWithMedia(sessionId, prompt, images, audioClips, config).collect { chunk ->
+                trySend(chunk).isSuccess
+            }
+            close()
+            return@callbackFlow
+        }
 
         try {
-            Log.d(TAG, "LiteRT inference session=$sessionId images=${images.size} audio=${audioClips.size} enableThinking=${normalized.enableThinking}")
+            Log.d(TAG, "LiteRT inference session=$sessionId images=${images.size} audio=${audioClips.size} enableThinking=${normalized.enableThinking} visionEnabled=$visionEnabled")
 
             // getOrCreateConversation() で自動的にセッション管理と KVCache 再利用を処理
             val conv = getOrCreateConversation(sessionId, eng, normalized)
@@ -763,6 +798,7 @@ class LiteRtLmEngine(
                 loadedModelPath = null
                 loadedConfig = null
                 loadedBackend = null  // Phase 11: バックエンド状態をリセット
+                loadedWithVisionAudio = false
                 
                 // 3. Bitmap メモリプールをクリア
                 bitmapPool.clear()
