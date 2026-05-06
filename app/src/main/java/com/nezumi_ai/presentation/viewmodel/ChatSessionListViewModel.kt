@@ -33,4 +33,18 @@ class ChatSessionListViewModel(private val repository: ChatSessionRepository) : 
             repository.deleteSession(sessionId)
         }
     }
+    
+    fun togglePinSession(sessionId: Long) {
+        viewModelScope.launch {
+            repository.togglePinSession(sessionId)
+        }
+    }
+
+    fun renameSession(sessionId: Long, newName: String) {
+        viewModelScope.launch {
+            repository.updateSessionName(sessionId, newName)
+        }
+    }
+
+    suspend fun getSessionById(sessionId: Long) = repository.getSessionById(sessionId)
 }

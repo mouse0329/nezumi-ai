@@ -3,6 +3,7 @@ package com.nezumi_ai.presentation.ui.fragment
 import android.os.Bundle
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,7 +25,7 @@ import com.nezumi_ai.R
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.repository.SettingsRepository
-import com.nezumi_ai.presentation.ui.screen.ThemeModeCard
+
 import com.nezumi_ai.utils.PreferencesHelper
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -102,10 +103,11 @@ class SettingsComposeFragment : Fragment() {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .background(colorResource(id = R.color.bg_session_list))
-                .padding(16.dp),
+                .background(colorResource(id = R.color.bg_session_list)),
+            contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            item { Spacer(modifier = Modifier.statusBarsPadding()) }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { onBackButtonPressed() }) {
@@ -123,30 +125,11 @@ class SettingsComposeFragment : Fragment() {
                     )
                 }
             }
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = colorResource(id = R.color.primary_light)
-                    )
-                ) {
-                    ThemeModeCard(
-                        currentMode = themeMode,
-                        onModeSelected = {
-                            if (it == themeMode) return@ThemeModeCard
-                            themeMode = it
-                            PreferencesHelper.setThemeMode(requireContext(), it)
-                            PreferencesHelper.applyThemeMode(requireContext())
-                        }
-                    )
-                }
-            }
-            item { BackendCard() }
+            item { GeneralSettingsCard() }
+            item { PersonalizationCard() }
             item { InferenceParamsCard() }
             item { ImageGenSettingsCard() }
-            item { PersonalizationCard() }
             item { ChatHistoryCard() }
-            item { LlamaCppCard() }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = {
@@ -157,6 +140,104 @@ class SettingsComposeFragment : Fragment() {
                     }
                     TextButton(onClick = { findNavController().navigate(R.id.action_settingsFragment_to_licenseFragment) }) {
                         Text(text = stringResource(id = R.string.open_license_page))
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun GeneralSettingsCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(text = "全般設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                
+                // Theme Mode Selection
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "テーマ (現在: ${when(themeMode) {
+                            PreferencesHelper.THEME_LIGHT -> "ライト"
+                            PreferencesHelper.THEME_DARK -> "ダーク"
+                            else -> "システム"
+                        }})",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        FilterChip(
+                            selected = themeMode == PreferencesHelper.THEME_SYSTEM,
+                            onClick = {
+                                themeMode = PreferencesHelper.THEME_SYSTEM
+                                PreferencesHelper.setThemeMode(requireContext(), PreferencesHelper.THEME_SYSTEM)
+                                PreferencesHelper.applyThemeMode(requireContext())
+                            },
+                            label = { Text("システム") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = themeMode == PreferencesHelper.THEME_LIGHT,
+                            onClick = {
+                                themeMode = PreferencesHelper.THEME_LIGHT
+                                PreferencesHelper.setThemeMode(requireContext(), PreferencesHelper.THEME_LIGHT)
+                                PreferencesHelper.applyThemeMode(requireContext())
+                            },
+                            label = { Text("ライト") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = themeMode == PreferencesHelper.THEME_DARK,
+                            onClick = {
+                                themeMode = PreferencesHelper.THEME_DARK
+                                PreferencesHelper.setThemeMode(requireContext(), PreferencesHelper.THEME_DARK)
+                                PreferencesHelper.applyThemeMode(requireContext())
+                            },
+                            label = { Text("ダーク") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+                
+                Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+                
+                // Backend Selection
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "バックエンド (現在: $backendType)",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        FilterChip(
+                            selected = backendType == "CPU",
+                            onClick = { backendType = "CPU" },
+                            label = { Text("CPU") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = backendType == "GPU",
+                            onClick = { backendType = "GPU" },
+                            label = { Text("GPU") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = backendType == "NPU",
+                            onClick = { backendType = "NPU" },
+                            label = { Text("NPU") },
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                 }
             }
@@ -215,74 +296,336 @@ class SettingsComposeFragment : Fragment() {
                 containerColor = colorResource(id = R.color.primary_light)
             )
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = "推論パラメータ", fontWeight = FontWeight.Bold)
-                Text(
-                    text = "現在のモデル: $selectedModel (最大コンテキスト: $maxContextWindow)",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colorResource(id = R.color.text_secondary)
-                )
-                OutlinedTextField(
-                    value = contextWindowInput,
-                    onValueChange = { contextWindowInput = it },
-                    label = { Text("${stringResource(id = R.string.context_window_label)} (512-$maxContextWindow)") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = temperatureInput,
-                    onValueChange = { temperatureInput = it },
-                    label = { Text(stringResource(id = R.string.temperature_label)) },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = topkInput,
-                    onValueChange = { topkInput = it },
-                    label = { Text(stringResource(id = R.string.topk_label)) },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = maxTokensInput,
-                    onValueChange = { maxTokensInput = it },
-                    label = { Text(stringResource(id = R.string.max_tokens_label)) },
-                    modifier = Modifier.fillMaxWidth()
-                )
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(text = "推論パラメータ", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                
+                // コンテキストサイズと最大トークン数を2列グリッド
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedTextField(
+                        value = contextWindowInput,
+                        onValueChange = { contextWindowInput = it },
+                        label = { Text("コンテキストサイズ") },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(64.dp),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = maxTokensInput,
+                        onValueChange = { maxTokensInput = it },
+                        label = { Text("最大トークン数") },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(64.dp),
+                        singleLine = true
+                    )
+                }
+                
+                // Temperature Slider
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "温度 (Temperature)",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = temperatureInput,
+                            color = colorResource(id = R.color.primary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                    Slider(
+                        value = temperatureInput.toFloatOrNull() ?: 0.7f,
+                        onValueChange = { temperatureInput = String.format("%.1f", it) },
+                        valueRange = 0f..1.5f,
+                        steps = 14,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                
+                // Top-K Slider
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Top-K",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = topkInput,
+                            color = colorResource(id = R.color.primary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                    Slider(
+                        value = topkInput.toIntOrNull()?.toFloat() ?: 40f,
+                        onValueChange = { topkInput = it.toInt().toString() },
+                        valueRange = 1f..100f,
+                        steps = 98,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                
+                Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+                
+                // Context Compression Toggle and Slider
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        text = stringResource(id = R.string.context_compression_label),
-                        color = colorResource(id = R.color.text_primary)
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "コンテキスト圧縮 (ベータ版)",
+                            color = colorResource(id = R.color.text_primary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                     Switch(
                         checked = contextCompressionEnabled,
                         onCheckedChange = { contextCompressionEnabled = it }
                     )
                 }
+                
                 if (contextCompressionEnabled) {
-                    Text(
-                        text = stringResource(
-                            id = R.string.context_compression_threshold_format,
-                            contextCompressionThresholdPercent
-                        ),
-                        color = colorResource(id = R.color.text_secondary),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Slider(
-                        value = contextCompressionThresholdPercent.toFloat(),
-                        onValueChange = { value ->
-                            contextCompressionThresholdPercent = value.roundToInt()
-                                .coerceIn(
-                                    InferenceConfig.MIN_COMPRESSION_THRESHOLD,
-                                    InferenceConfig.MAX_COMPRESSION_THRESHOLD
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "圧縮しきい値",
+                                color = colorResource(id = R.color.text_secondary),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "${contextCompressionThresholdPercent}%",
+                                color = colorResource(id = R.color.primary),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            )
+                        }
+                        Slider(
+                            value = contextCompressionThresholdPercent.toFloat(),
+                            onValueChange = { value ->
+                                contextCompressionThresholdPercent = value.roundToInt()
+                                    .coerceIn(
+                                        InferenceConfig.MIN_COMPRESSION_THRESHOLD,
+                                        InferenceConfig.MAX_COMPRESSION_THRESHOLD
+                                    )
+                            },
+                            valueRange = InferenceConfig.MIN_COMPRESSION_THRESHOLD.toFloat()..
+                                InferenceConfig.MAX_COMPRESSION_THRESHOLD.toFloat(),
+                            steps = InferenceConfig.MAX_COMPRESSION_THRESHOLD -
+                                InferenceConfig.MIN_COMPRESSION_THRESHOLD - 1,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            text = "メモリ使用量がこの割合を超えると自動圧縮",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                }
+                
+                // Advanced Llama.cpp Settings (Collapsible)
+                var expanded by remember { mutableStateOf(false) }
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { expanded = !expanded }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "高度な Llama.cpp 設定",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (expanded) "▼" else "▶",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    
+                    if (expanded) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            // CPU スレッド数
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "CPU スレッド数",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = llamaCppThreads.toString(),
+                                        color = colorResource(id = R.color.primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                    )
+                                }
+                                Slider(
+                                    value = llamaCppThreads.toFloat(),
+                                    onValueChange = { llamaCppThreads = it.roundToInt() },
+                                    valueRange = 1f..maxThreads.toFloat(),
+                                    steps = maxOf(0, maxThreads - 2),
+                                    modifier = Modifier.fillMaxWidth()
                                 )
-                        },
-                        valueRange = InferenceConfig.MIN_COMPRESSION_THRESHOLD.toFloat()..
-                            InferenceConfig.MAX_COMPRESSION_THRESHOLD.toFloat(),
-                        steps = InferenceConfig.MAX_COMPRESSION_THRESHOLD -
-                            InferenceConfig.MIN_COMPRESSION_THRESHOLD - 1
-                    )
+                            }
+
+                            // GPU レイヤー数
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "GPU レイヤー数 (Offload)",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = llamaCppGpuLayers.toString(),
+                                        color = colorResource(id = R.color.primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                    )
+                                }
+                                Slider(
+                                    value = llamaCppGpuLayers.toFloat(),
+                                    onValueChange = { llamaCppGpuLayers = it.roundToInt() },
+                                    valueRange = 0f..128f,
+                                    steps = 127,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            // バッチサイズ
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "バッチサイズ",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = llamaCppBatchSize.toString(),
+                                        color = colorResource(id = R.color.primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                    )
+                                }
+                                Slider(
+                                    value = llamaCppBatchSize.toFloat(),
+                                    onValueChange = { llamaCppBatchSize = it.roundToInt().coerceIn(32, 2048) },
+                                    valueRange = 32f..2048f,
+                                    steps = 2016/32 - 1,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            // RoPE周波数基数
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = "RoPE周波数基数",
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                OutlinedTextField(
+                                    value = String.format("%.1f", llamaCppRopeFreqBase),
+                                    onValueChange = { newValue ->
+                                        newValue.toFloatOrNull()?.let { llamaCppRopeFreqBase = it }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true
+                                )
+                                Text(
+                                    text = "0 = 自動設定",
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+
+                            // RoPE周波数スケール
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "RoPE周波数スケール",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = String.format("%.2f", llamaCppRopeFreqScale),
+                                        color = colorResource(id = R.color.primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                    )
+                                }
+                                Slider(
+                                    value = llamaCppRopeFreqScale,
+                                    onValueChange = { llamaCppRopeFreqScale = it },
+                                    valueRange = 0.5f..5.0f,
+                                    steps = 44,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Text(
+                                    text = "1.0 = デフォルト",
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -296,21 +639,42 @@ class SettingsComposeFragment : Fragment() {
                 containerColor = colorResource(id = R.color.primary_light)
             )
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = "個人化設定", fontWeight = FontWeight.Bold)
-                OutlinedTextField(
-                    value = userNameInput,
-                    onValueChange = { userNameInput = it },
-                    label = { Text(stringResource(id = R.string.user_name_label)) },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = systemPromptInput,
-                    onValueChange = { systemPromptInput = it },
-                    label = { Text(stringResource(id = R.string.system_prompt_label)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 3
-                )
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(text = "個人化設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "ユーザー名",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    OutlinedTextField(
+                        value = userNameInput,
+                        onValueChange = { userNameInput = it },
+                        placeholder = { Text("ユーザー名") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+                
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "システムプロンプト",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    OutlinedTextField(
+                        value = systemPromptInput,
+                        onValueChange = { systemPromptInput = it },
+                        placeholder = { Text("AIの振る舞いやルールを入力...") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 80.dp),
+                        minLines = 3
+                    )
+                }
             }
         }
     }
@@ -324,58 +688,67 @@ class SettingsComposeFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = "画像生成設定", fontWeight = FontWeight.Bold)
-                Text(
-                    text = "チャット画面からAIが画像生成ツールを呼び出す際のデフォルト設定です",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colorResource(id = R.color.text_secondary)
-                )
+                Text(text = "画像生成設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
                 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("ステップ数", color = colorResource(id = R.color.text_primary))
-                    Text(
-                        "$sdSteps / 50",
-                        color = colorResource(id = R.color.primary),
-                        style = MaterialTheme.typography.titleMedium
+                // ステップ数 Slider
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "ステップ数",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "$sdSteps / 50",
+                            color = colorResource(id = R.color.primary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                    Slider(
+                        value = sdSteps.toFloat(),
+                        onValueChange = { sdSteps = it.toInt() },
+                        valueRange = 1f..50f,
+                        steps = 48,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
-                Slider(
-                    value = sdSteps.toFloat(),
-                    onValueChange = { sdSteps = it.toInt() },
-                    valueRange = 1f..50f,
-                    steps = 48,
-                    colors = SliderDefaults.colors(
-                        thumbColor = colorResource(id = R.color.primary),
-                        activeTrackColor = colorResource(id = R.color.primary)
-                    )
-                )
                 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("CFG Scale", color = colorResource(id = R.color.text_primary))
-                    Text(
-                        "%.1f".format(sdCfg),
-                        color = colorResource(id = R.color.primary),
-                        style = MaterialTheme.typography.titleMedium
+                // CFG Scale Slider
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "CFG スケール",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = String.format("%.1f", sdCfg),
+                            color = colorResource(id = R.color.primary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                    Slider(
+                        value = sdCfg,
+                        onValueChange = { sdCfg = it },
+                        valueRange = 1f..20f,
+                        steps = 38,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
-                Slider(
-                    value = sdCfg,
-                    onValueChange = { sdCfg = it },
-                    valueRange = 1f..20f,
-                    steps = 38,
-                    colors = SliderDefaults.colors(
-                        thumbColor = colorResource(id = R.color.primary),
-                        activeTrackColor = colorResource(id = R.color.primary)
-                    )
-                )
             }
         }
     }
@@ -388,12 +761,14 @@ class SettingsComposeFragment : Fragment() {
                 containerColor = colorResource(id = R.color.primary_light)
             )
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = "チャット履歴設定", fontWeight = FontWeight.Bold)
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(text = "チャット履歴管理", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
                 
                 Text(
-                    text = "履歴の保存件数",
-                    color = colorResource(id = R.color.text_primary)
+                    text = "履歴保存件数",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold
                 )
                 
                 Row(
@@ -403,161 +778,33 @@ class SettingsComposeFragment : Fragment() {
                     FilterChip(
                         selected = chatHistoryLimit == 10,
                         onClick = { chatHistoryLimit = 10 },
-                        label = { Text("10件") }
+                        label = { Text("10") },
+                        modifier = Modifier.weight(1f)
                     )
                     FilterChip(
                         selected = chatHistoryLimit == 30,
                         onClick = { chatHistoryLimit = 30 },
-                        label = { Text("30件") }
+                        label = { Text("30") },
+                        modifier = Modifier.weight(1f)
                     )
                     FilterChip(
                         selected = chatHistoryLimit == 50,
                         onClick = { chatHistoryLimit = 50 },
-                        label = { Text("50件") }
+                        label = { Text("50") },
+                        modifier = Modifier.weight(1f)
                     )
                     FilterChip(
                         selected = chatHistoryLimit == -1,
                         onClick = { chatHistoryLimit = -1 },
-                        label = { Text("無制限") }
-                    )
-                }
-                
-                Text(
-                    text = "古いものから自動的に削除されます",
-                    color = colorResource(id = R.color.text_secondary),
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-        }
-    }
-
-    @Composable
-    private fun LlamaCppCard() {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = colorResource(id = R.color.primary_light)
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = "llama.cpp 設定", fontWeight = FontWeight.Bold)
-
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "CPU スレッド数: $llamaCppThreads",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorResource(id = R.color.text_primary)
-                    )
-                    Slider(
-                        value = llamaCppThreads.toFloat(),
-                        onValueChange = { llamaCppThreads = it.roundToInt() },
-                        valueRange = 1f..maxThreads.toFloat(),
-                        steps = maxOf(0, maxThreads - 2),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "GPU レイヤー数: $llamaCppGpuLayers",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorResource(id = R.color.text_primary)
-                    )
-                    Slider(
-                        value = llamaCppGpuLayers.toFloat(),
-                        onValueChange = { llamaCppGpuLayers = it.roundToInt() },
-                        valueRange = 0f..100f,
-                        steps = 99,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Text(
-                        text = "0 = GPU オフロード無効",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colorResource(id = R.color.text_secondary)
-                    )
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "バッチサイズ: $llamaCppBatchSize",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorResource(id = R.color.text_primary)
-                    )
-                    Slider(
-                        value = llamaCppBatchSize.toFloat(),
-                        onValueChange = { llamaCppBatchSize = it.roundToInt().coerceIn(32, 2048) },
-                        valueRange = 32f..2048f,
-                        steps = 2016/32 - 1,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Text(
-                        text = "32〜2048。大きいほど高速だが メモリ使用量増加",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colorResource(id = R.color.text_secondary)
-                    )
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "保護トークン数（n_keep）: $llamaCppNKeep",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorResource(id = R.color.text_primary)
-                    )
-                    Slider(
-                        value = llamaCppNKeep.toFloat(),
-                        onValueChange = { llamaCppNKeep = it.roundToInt() },
-                        valueRange = 0f..10000f,
-                        steps = 199,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Text(
-                        text = "0 = 無効、システムプロンプト保護",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colorResource(id = R.color.text_secondary)
-                    )
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "RoPE周波数基数: ${"%.1f".format(llamaCppRopeFreqBase)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorResource(id = R.color.text_primary)
-                    )
-                    Slider(
-                        value = llamaCppRopeFreqBase,
-                        onValueChange = { llamaCppRopeFreqBase = it },
-                        valueRange = 0.0f..1000000.0f,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Text(
-                        text = "0 = 自動設定（推奨）",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colorResource(id = R.color.text_secondary)
-                    )
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "RoPE周波数スケール: ${"%.2f".format(llamaCppRopeFreqScale)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorResource(id = R.color.text_primary)
-                    )
-                    Slider(
-                        value = llamaCppRopeFreqScale,
-                        onValueChange = { llamaCppRopeFreqScale = it },
-                        valueRange = 0.1f..10.0f,
-                        steps = 98,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Text(
-                        text = "コンテキスト拡張用。1.0 = デフォルト",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colorResource(id = R.color.text_secondary)
+                        label = { Text("無制限") },
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
         }
     }
+
+
 
     private fun loadInferenceSettings() {
         viewLifecycleOwner.lifecycleScope.launch {

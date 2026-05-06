@@ -46,6 +46,13 @@ class ChatSessionRepository(
         dao.update(session.copy(name = name, lastUpdated = System.currentTimeMillis()))
     }
 
+    suspend fun togglePinSession(sessionId: Long) {
+        val session = dao.getSessionById(sessionId) ?: return
+        val newPinState = !session.isPinned
+        dao.update(session.copy(isPinned = newPinState))
+        android.util.Log.d("ChatSessionRepository", "togglePinSession: sessionId=$sessionId isPinned=$newPinState")
+    }
+
     suspend fun getLatestSession(): ChatSessionEntity? {
         val sessions = dao.getAllSessions()
         return sessions.maxByOrNull { it.lastUpdated }

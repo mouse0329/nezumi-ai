@@ -462,6 +462,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 try {
                     if (!args.isIncognito) {
                         settingsRepository.saveCurrentSessionId(sessionId)
+                        // SharedPreferencesにも保存（SessionListFragmentで参照）
+                        val prefs = requireContext().getSharedPreferences("nezumi_ai_prefs", android.content.Context.MODE_PRIVATE)
+                        prefs.edit().putLong("current_session_id", sessionId).apply()
                     }
                     // ★ setCurrentSession は suspend 関数に変更されたため、直接 await する
                     viewModel.setCurrentSession(sessionId)

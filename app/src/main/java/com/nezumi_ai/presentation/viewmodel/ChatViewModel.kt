@@ -1377,13 +1377,33 @@ class ChatViewModel(
     }
 
     private suspend fun reloadChatModelAfterSd(manager: ModelManager) {
-        val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
-        val engineModelName = toEngineModelName(selectedModel)
-        val baseConfig = chatInferenceConfigForModel(selectedModel)
-        val backend = settingsRepository.getBackendForModel(selectedModel)
-        val config = baseConfig.copy(backendType = backend).normalized()
-        runCatching { manager.initializeModel(engineModelName, config) }
-            .onFailure { Log.e(TAG, "reloadChatModelAfterSd failed", it) }
+        try {
+            // SD解放を確実に実行
+            EngineManager.releaseSdKeepNone()
+            Log.d(TAG, "reloadChatModelAfterSd: SD engine released")
+            
+            // メモリ安定化のため少し待機
+            delay(500L)
+            
+            val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
+            val engineModelName = toEngineModelName(selectedModel)
+            val baseConfig = chatInferenceConfigForModel(selectedModel)
+            val backend = settingsRepository.getBackendForModel(selectedModel)
+            val config = baseConfig.copy(backendType = backend).normalized()
+            
+            Log.d(TAG, "reloadChatModelAfterSd: Reloading LLM model=$selectedModel")
+            val result = manager.initializeModel(engineModelName, config)
+            if (result.isSuccess) {
+                EngineManager.markLlmActive()
+                Log.d(TAG, "reloadChatModelAfterSd: LLM model reloaded successfully")
+            } else {
+                Log.e(TAG, "reloadChatModelAfterSd: Failed to reload LLM", result.exceptionOrNull())
+                throw result.exceptionOrNull() ?: IllegalStateException("Failed to reload LLM")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "reloadChatModelAfterSd failed", e)
+            throw e
+        }
     }
 
     private suspend fun invokeGenerateImageFromTool(toolCall: ToolCall): ToolExecutionResult {
@@ -1426,17 +1446,29 @@ class ChatViewModel(
         }
 
         val manager = requireModelManager()
+        
+        // LLMモデルを完全にアンロード
+        Log.d(TAG, "invokeGenerateImageFromTool: Unloading LLM before SD")
         manager.unloadModel()
+        
+        // メモリ安定化のため少し待機
+        delay(300L)
+        
         return try {
             val localDream = com.nezumi_ai.sd.LocalDreamModule(appContext)
             val backend = PreferencesHelper.getSdBackend(appContext)
+            
+            Log.d(TAG, "invokeGenerateImageFromTool: Loading SD model")
             val loaded = localDream.loadModel(sdPath, backend)
             if (!loaded) {
+                Log.e(TAG, "invokeGenerateImageFromTool: SD model load failed")
                 return ToolExecutionResult(
                     success = false,
                     payload = mapOf("success" to false, "error" to "model_load_failed")
                 )
             }
+            
+            Log.d(TAG, "invokeGenerateImageFromTool: Generating image")
             val bmp = localDream.generateImage(
                 prompt = edited,
                 negativePrompt = neg,
@@ -1450,8 +1482,16 @@ class ChatViewModel(
                 }
             )
             _imageGenProgress.value = null
+            
+            Log.d(TAG, "invokeGenerateImageFromTool: Cleaning up SD")
             localDream.cleanup()
+            
+            // SD完全解放を確実に実行
+            EngineManager.releaseSdKeepNone()
+            delay(500L)  // メモリ安定化待機
+            
             if (bmp == null) {
+                Log.w(TAG, "invokeGenerateImageFromTool: Image generation returned null")
                 ToolExecutionResult(
                     success = true,
                     payload = mapOf("success" to false, "message" to "生成失敗")
@@ -1466,6 +1506,7 @@ class ChatViewModel(
                         }
                     }
                 }
+                Log.d(TAG, "invokeGenerateImageFromTool: Image generated successfully")
                 ToolExecutionResult(
                     success = true,
                     payload = mapOf(
@@ -1476,13 +1517,29 @@ class ChatViewModel(
                 )
             }
         } catch (e: Exception) {
-            Log.e(TAG, "invokeGenerateImageFromTool", e)
+            Log.e(TAG, "invokeGenerateImageFromTool: Exception during SD generation", e)
+            // エラー時もSD解放を試みる
+            try {
+                EngineManager.releaseSdKeepNone()
+            } catch (cleanupError: Exception) {
+                Log.e(TAG, "invokeGenerateImageFromTool: Cleanup failed", cleanupError)
+            }
             ToolExecutionResult(
                 success = false,
                 payload = mapOf("success" to false, "error" to (e.message ?: "sd_error"))
             )
         } finally {
-            reloadChatModelAfterSd(manager)
+            // LLMモデルを再ロード
+            try {
+                Log.d(TAG, "invokeGenerateImageFromTool: Reloading LLM in finally")
+                reloadChatModelAfterSd(manager)
+            } catch (reloadError: Exception) {
+                Log.e(TAG, "invokeGenerateImageFromTool: LLM reload failed in finally", reloadError)
+                // UI通知
+                withContext(Dispatchers.Main) {
+                    _uiMessage.emit("⚠️ LLMモデルの再ロードに失敗しました。チャットを再起動してください。")
+                }
+            }
         }
     }
 

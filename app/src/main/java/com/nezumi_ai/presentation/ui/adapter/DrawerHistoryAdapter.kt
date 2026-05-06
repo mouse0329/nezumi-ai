@@ -21,12 +21,18 @@ sealed class DrawerHistoryItem {
 class DrawerHistoryAdapter(
     private val onClick: (ChatSessionEntity) -> Unit,
     private val onLongClick: (ChatSessionEntity) -> Unit,
-    private val onListUpdated: (() -> Unit)? = null
+    private val onListUpdated: (() -> Unit)? = null,
+    private var currentSessionId: Long? = null
 ) : ListAdapter<DrawerHistoryItem, RecyclerView.ViewHolder>(DiffCallback()) {
 
     companion object {
         private const val TYPE_LABEL = 0
         private const val TYPE_SESSION = 1
+    }
+
+    fun setCurrentSessionId(sessionId: Long?) {
+        currentSessionId = sessionId
+        notifyDataSetChanged()
     }
 
     override fun getItemViewType(position: Int): Int {
@@ -64,7 +70,7 @@ class DrawerHistoryAdapter(
                 (holder as LabelViewHolder).bind(item.label)
             }
             is DrawerHistoryItem.Session -> {
-                (holder as SessionViewHolder).bind(item.session)
+                (holder as SessionViewHolder).bind(item.session, currentSessionId)
             }
         }
     }
@@ -87,9 +93,20 @@ class DrawerHistoryAdapter(
         private val onClick: (ChatSessionEntity) -> Unit,
         private val onLongClick: (ChatSessionEntity) -> Unit
     ) : RecyclerView.ViewHolder(binding.root) {
-        fun bind(session: ChatSessionEntity) {
+        fun bind(session: ChatSessionEntity, currentSessionId: Long? = null) {
             binding.sessionTitle.text = session.name.ifBlank { "無題のチャット" }
             binding.sessionDate.text = formatTime(session.lastUpdated)
+            
+            // ピン留めアイコン表示
+            binding.pinIcon.visibility = if (session.isPinned) android.view.View.VISIBLE else android.view.View.GONE
+            
+            // 現在のセッションに青枠表示
+            if (session.id == currentSessionId) {
+                binding.sessionContainer.setBackgroundResource(com.nezumi_ai.R.drawable.bg_current_session)
+            } else {
+                binding.sessionContainer.setBackgroundResource(com.nezumi_ai.R.drawable.bg_input_field)
+            }
+            
             binding.root.setOnClickListener { onClick(session) }
             binding.root.setOnLongClickListener {
                 onLongClick(session)

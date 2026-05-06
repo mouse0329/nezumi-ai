@@ -198,8 +198,8 @@ class LicenseFragment : Fragment() {
             modifier = Modifier
                 .fillMaxSize()
                 .background(colorResource(id = R.color.bg_session_list))
-                .statusBarsPadding()
         ) {
+            androidx.compose.foundation.layout.Spacer(modifier = Modifier.statusBarsPadding())
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

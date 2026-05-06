@@ -36,6 +36,32 @@
 - License: Apache License 2.0
 - Repository: [noties/Markwon](https://github.com/noties/Markwon)
 
+### Compose Material Icons Extended
+- License: Apache License 2.0
+- Repository: [androidx/androidx](https://github.com/androidx/androidx)
+- Note: Extended Material Design icons for Jetpack Compose
+
+### Kotlinx Serialization
+- License: Apache License 2.0
+- Repository: [Kotlin/kotlinx.serialization](https://github.com/Kotlin/kotlinx.serialization)
+- Note: JSON serialization support for Kotlin
+
+### JLatexMath Android
+- License: Apache License 2.0
+- Repository: [noties/jlatexmath-android](https://github.com/noties/jlatexmath-android)
+- Note: LaTeX math rendering support
+
+### Stable Diffusion Core (MNN/QNN)
+- License: Apache License 2.0 (MNN), BSD 3-Clause (QNN)
+- Repository: [alibaba/MNN](https://github.com/alibaba/MNN)
+- Site: [Qualcomm Neural Processing SDK](https://www.qualcomm.com/developer/software/neural-processing-sdk)
+- Note: On-device image generation with GPU/NPU acceleration
+
+### llama.cpp
+- License: MIT License
+- Repository: [ggerganov/llama.cpp](https://github.com/ggerganov/llama.cpp)
+- Note: Custom JNI bridge for LLM inference
+
 ### Jetpack Compose
 - License: Apache License 2.0
 - Repository: [androidx/androidx](https://github.com/androidx/androidx)

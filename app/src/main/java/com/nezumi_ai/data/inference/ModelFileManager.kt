@@ -1166,8 +1166,7 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         return lowered.endsWith(".gguf") ||
             lowered.endsWith(".task") ||
             lowered.endsWith(".litertlm") ||
-            lowered.endsWith(".mmproj") ||
-            lowered.endsWith(".safetensors")
+            lowered.endsWith(".mmproj")
     }
 
     /**

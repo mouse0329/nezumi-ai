@@ -1,6 +1,7 @@
 package com.nezumi_ai.presentation.ui.fragment
 
 import android.os.Bundle
+import android.text.InputType
 import android.util.Log
 import android.view.View
 import android.widget.Toast
@@ -8,14 +9,17 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.textfield.TextInputEditText
 import com.nezumi_ai.R
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.repository.ChatSessionRepository
 import com.nezumi_ai.presentation.viewmodel.ChatSessionListViewModel
 import com.nezumi_ai.presentation.viewmodel.ChatSessionListViewModelFactory
 import com.nezumi_ai.presentation.ui.screen.SessionListRoute
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.launch
 
 class SessionListFragment : Fragment() {
 
@@ -24,6 +28,7 @@ class SessionListFragment : Fragment() {
     }
 
     private lateinit var viewModel: ChatSessionListViewModel
+    private var currentSessionIdState = androidx.compose.runtime.mutableLongStateOf(-1L)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,9 +59,12 @@ class SessionListFragment : Fragment() {
         if (!::viewModel.isInitialized) {
             initViewModel()
         }
+        
         return ComposeView(requireContext()).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
+                val currentSessionId = currentSessionIdState.longValue.takeIf { it != -1L }
+                
                 SessionListRoute(
                     viewModel = viewModel,
                     onOpenSettings = {
@@ -75,10 +83,21 @@ class SessionListFragment : Fragment() {
                         })
                     },
                     onSessionClick = ::navigateToChat,
-                    onDeleteSession = ::confirmDeleteSession
+                    onDeleteSession = ::confirmDeleteSession,
+                    onTogglePin = { sessionId -> viewModel.togglePinSession(sessionId) },
+                    onRenameSession = { sessionId -> showRenameSessionDialog(sessionId) },
+                    currentSessionId = currentSessionId
                 )
             }
         }
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        val prefs = requireContext().getSharedPreferences("nezumi_ai_prefs", android.content.Context.MODE_PRIVATE)
+        val sessionId = prefs.getLong("current_session_id", -1L)
+        currentSessionIdState.longValue = sessionId
+        android.util.Log.d(TAG, "onResume: currentSessionId=$sessionId")
     }
 
     private fun navigateToChat(sessionId: Long) {
@@ -96,5 +115,26 @@ class SessionListFragment : Fragment() {
                 Toast.makeText(requireContext(), "チャットを削除しました", Toast.LENGTH_SHORT).show()
             }
             .show()
+    }
+
+    private fun showRenameSessionDialog(sessionId: Long) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val session = viewModel.getSessionById(sessionId)
+            val input = TextInputEditText(requireContext()).apply {
+                setText(session?.name ?: "")
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                setSelection(text?.length ?: 0)
+            }
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle("チャット名を変更")
+                .setView(input)
+                .setNegativeButton("キャンセル", null)
+                .setPositiveButton("保存") { _, _ ->
+                    val newName = input.text?.toString()?.trim().orEmpty()
+                    if (newName.isBlank()) return@setPositiveButton
+                    viewModel.renameSession(sessionId, newName)
+                }
+                .show()
+        }
     }
 }

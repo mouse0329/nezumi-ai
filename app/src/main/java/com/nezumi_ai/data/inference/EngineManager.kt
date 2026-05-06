@@ -59,32 +59,63 @@ object EngineManager {
     }
 
     suspend fun releaseSdKeepNone() = mutex.withLock {
-        sdEngine?.release()
-        sdEngine = null
-        localDream?.stopServer()
-        localDream = null
-        sdModelPath = null
-        active = ActiveEngine.NONE
-        Log.i(TAG, "SD released")
+        try {
+            sdEngine?.release()
+            sdEngine = null
+            localDream?.stopServer()
+            localDream?.cleanup()
+            localDream = null
+            sdModelPath = null
+            active = ActiveEngine.NONE
+            Log.i(TAG, "SD released and cleaned up")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during SD release", e)
+            // エラーでも状態をリセット
+            sdEngine = null
+            localDream = null
+            sdModelPath = null
+            active = ActiveEngine.NONE
+        }
     }
 
     suspend fun markLlmActive() = mutex.withLock {
-        sdEngine?.release()
-        sdEngine = null
-        localDream?.stopServer()
-        localDream = null
-        sdModelPath = null
-        active = ActiveEngine.LLM
+        try {
+            sdEngine?.release()
+            sdEngine = null
+            localDream?.stopServer()
+            localDream?.cleanup()
+            localDream = null
+            sdModelPath = null
+            active = ActiveEngine.LLM
+            Log.i(TAG, "Marked LLM active, SD resources released")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during markLlmActive", e)
+            // エラーでも状態をリセット
+            sdEngine = null
+            localDream = null
+            sdModelPath = null
+            active = ActiveEngine.LLM
+        }
     }
 
     suspend fun releaseAll() = mutex.withLock {
-        sdEngine?.release()
-        sdEngine = null
-        localDream?.stopServer()
-        localDream?.cleanup()
-        localDream = null
-        sdModelPath = null
-        active = ActiveEngine.NONE
+        try {
+            sdEngine?.release()
+            sdEngine = null
+            localDream?.stopServer()
+            localDream?.cleanup()
+            localDream = null
+            sdModelPath = null
+            active = ActiveEngine.NONE
+            Log.i(TAG, "All engines released")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during releaseAll", e)
+            // エラーでも状態をリセット
+            sdEngine = null
+            localDream = null
+            sdModelPath = null
+            active = ActiveEngine.NONE
+        }
     }
     
     fun isUsingLocalDream(): Boolean = USE_LOCAL_DREAM
