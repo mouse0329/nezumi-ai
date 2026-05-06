@@ -39,11 +39,7 @@ class SessionAdapter(
                 root.setOnClickListener {
                     onSessionClick(session.id)
                 }
-                root.setOnLongClickListener {
-                    onDeleteClick(session.id)
-                    true
-                }
-                deleteButton.setOnClickListener {
+                menuButton.setOnClickListener {
                     onDeleteClick(session.id)
                 }
             }

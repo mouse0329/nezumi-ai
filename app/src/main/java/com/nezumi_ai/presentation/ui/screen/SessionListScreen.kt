@@ -1,37 +1,18 @@
-@file:OptIn(ExperimentalFoundationApi::class)
-
 package com.nezumi_ai.presentation.ui.screen
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -40,62 +21,44 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.foundation.text.selection.DisableSelection
-import androidx.compose.material3.Text
-import androidx.compose.material3.lightColorScheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nezumi_ai.R
 import com.nezumi_ai.data.database.entity.ChatSessionEntity
 import com.nezumi_ai.data.model.GroupedChatSessions
 import com.nezumi_ai.presentation.viewmodel.ChatSessionListViewModel
 import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.*
 
 @Composable
-fun SessionListRoute(
+fun SessionListScreen(
     viewModel: ChatSessionListViewModel,
-    onOpenSettings: () -> Unit,
-    onCreateSession: () -> Unit,
-    onCreateIncognitoSession: () -> Unit,
     onSessionClick: (Long) -> Unit,
-    onDeleteSession: (Long) -> Unit,
-    onTogglePin: (Long) -> Unit,
-    onRenameSession: (Long) -> Unit,
-    currentSessionId: Long? = null
+    onOpenSettings: () -> Unit,
+    currentSessionId: Long?
 ) {
+    val groupedSessions by viewModel.groupedSessions.collectAsState(emptyList())
+
     NezumiSessionTheme {
-        val groupedSessions by viewModel.groupedSessions.collectAsStateWithLifecycle(initialValue = emptyList())
-        SessionListScreen(
+        SessionListContent(
             groupedSessions = groupedSessions,
-            onOpenSettings = onOpenSettings,
-            onCreateSession = onCreateSession,
-            onCreateIncognitoSession = onCreateIncognitoSession,
             onSessionClick = onSessionClick,
-            onDeleteSession = onDeleteSession,
-            onTogglePin = onTogglePin,
-            onRenameSession = onRenameSession,
+            onOpenSettings = onOpenSettings,
+            onCreateSession = { viewModel.createNewSession("新しいチャット") },
+            onCreateIncognitoSession = { viewModel.createNewSession("🕵️ シークレット") },
+            onDeleteSession = { viewModel.deleteSession(it) },
+            onTogglePin = { viewModel.togglePinSession(it) },
+            onRenameSession = { sessionId -> /* TODO: Show rename dialog */ },
             currentSessionId = currentSessionId
         )
     }
 }
 
 @Composable
-private fun SessionListScreen(
+private fun SessionListContent(
     groupedSessions: List<GroupedChatSessions>,
+    onSessionClick: (Long) -> Unit,
     onOpenSettings: () -> Unit,
     onCreateSession: () -> Unit,
     onCreateIncognitoSession: () -> Unit,
-    onSessionClick: (Long) -> Unit,
     onDeleteSession: (Long) -> Unit,
     onTogglePin: (Long) -> Unit,
     onRenameSession: (Long) -> Unit,
@@ -130,7 +93,7 @@ private fun SessionListScreen(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
+                contentPadding = PaddingValues(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 groupedSessions.forEach { group ->
@@ -245,45 +208,43 @@ private fun SessionCard(
 ) {
     var showMenu by remember(session.id) { mutableStateOf(false) }
 
-    Box(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 56.dp)
-            .background(
-                color = colorResource(id = R.color.surface_card),
-                shape = MaterialTheme.shapes.medium
-            )
             .then(
                 if (isCurrentSession) Modifier.border(
                     width = 2.dp,
                     color = colorResource(id = R.color.primary),
                     shape = MaterialTheme.shapes.medium
                 ) else Modifier
-            )
-            .combinedClickable(
-                onClick = { onSessionClick(session.id) },
-                onLongClick = { showMenu = true }
-            )
+            ),
+        shape = MaterialTheme.shapes.medium,
+        color = colorResource(id = R.color.surface_card)
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = { onSessionClick(session.id) })
             ) {
-                if (session.isPinned) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_pin),
-                        contentDescription = "ピン留め",
-                        tint = colorResource(id = R.color.primary),
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.size(8.dp))
-                }
-                DisableSelection {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (session.isPinned) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_pin),
+                            contentDescription = "ピン留め",
+                            tint = colorResource(id = R.color.primary),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.size(8.dp))
+                    }
                     Text(
                         text = session.name,
                         modifier = Modifier.weight(1f),
@@ -293,28 +254,34 @@ private fun SessionCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                IconButton(onClick = { showMenu = true }) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = formatDate(session.lastUpdated),
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+
+            Box(
+                modifier = Modifier.wrapContentSize(Alignment.TopEnd)
+            ) {
+                IconButton(
+                    onClick = { showMenu = true },
+                    modifier = Modifier.size(44.dp)
+                ) {
                     Icon(
-                        painter = painterResource(id = R.drawable.ic_menu),
+                        painter = painterResource(id = R.drawable.ic_more_vert),
                         contentDescription = "メニュー",
-                        tint = colorResource(id = R.color.text_secondary)
+                        tint = colorResource(id = R.color.text_primary),
+                        modifier = Modifier.size(20.dp)
                     )
                 }
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = formatDate(session.lastUpdated),
-                color = colorResource(id = R.color.text_secondary),
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace
-            )
-        }
 
-        DropdownMenu(
-            expanded = showMenu,
-            onDismissRequest = { showMenu = false },
-            modifier = Modifier.align(Alignment.TopEnd)
-        ) {
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false }
+                ) {
             DropdownMenuItem(
                 text = { Text(if (session.isPinned) "ピン留め解除" else "ピン留め") },
                 onClick = {
@@ -348,6 +315,8 @@ private fun SessionCard(
                     )
                 }
             )
+                }
+            }
         }
     }
 }
