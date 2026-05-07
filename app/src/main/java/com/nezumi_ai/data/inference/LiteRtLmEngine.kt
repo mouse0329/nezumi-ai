@@ -536,29 +536,39 @@ class LiteRtLmEngine(
         val visionEnabled = loadedWithVisionAudio
         val hasMultimodalInput = images.isNotEmpty() || audioClips.isNotEmpty()
 
-        // マルチモーダル入力があるのにvisionが無効な場合、requireMultimodal=trueで再ロード
+        // マルチモーダル入力があるのにvisionが無効な場合、requireMultimodal=trueで再ロードを1回だけ試みる
         if (hasMultimodalInput && !visionEnabled) {
             releaseInferenceMutex()
             Log.i(TAG, "Multimodal input detected but engine loaded without vision/audio. Reloading with requireMultimodal=true...")
-            
+
             val reloadConfig = normalized.copy(requireMultimodal = true)
             val reloadResult = modelMutex.withLock {
                 val currentPath = loadedModelPath
                 if (currentPath != null) {
-                    val modelFile = File(currentPath)
-                    loadModelLocked(modelFile.nameWithoutExtension, reloadConfig)
+                    loadModelLocked(File(currentPath).nameWithoutExtension, reloadConfig)
                 } else {
                     Result.failure(IllegalStateException("Cannot reload: model path unknown"))
                 }
             }
-            
+
             if (reloadResult.isFailure) {
                 close(reloadResult.exceptionOrNull() ?: RuntimeException("Model reload failed"))
                 return@callbackFlow
             }
-            
+
+            // リロード後もvisionが有効にならなかった場合（vision encoder の3 signatures非対応等）
+            // 無限ループを防ぐため画像なしのテキスト推論にフォールバックする
+            val reloadedWithVision = modelMutex.withLock { loadedWithVisionAudio }
+            if (!reloadedWithVision) {
+                Log.w(TAG, "Vision encoder unavailable after reload (3-signature encoder not supported by this LiteRT-LM version). Falling back to text-only inference.")
+                inferenceWithMedia(sessionId, prompt, emptyList(), emptyList(), config).collect { chunk ->
+                    trySend(chunk).isSuccess
+                }
+                close()
+                return@callbackFlow
+            }
+
             Log.i(TAG, "Model reloaded with vision/audio support. Retrying inference...")
-            // 再帰的に自分自身を呼び出して推論を再試行
             inferenceWithMedia(sessionId, prompt, images, audioClips, config).collect { chunk ->
                 trySend(chunk).isSuccess
             }
