@@ -40,8 +40,8 @@ android {
         applicationId = "com.nezumi_ai"
         minSdk = 30
         targetSdk = 36
-        versionCode = 12
-        versionName = "1.11"
+        versionCode = 13
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["appAuthRedirectScheme"] = "nezumiai"
