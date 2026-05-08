@@ -436,6 +436,26 @@ class ChatViewModel(
             _isChatReady.value = true
         }
     }
+
+    private suspend fun createAndActivateSession(sessionName: String = DEFAULT_SESSION_TITLE): Long {
+        val newSessionId = sessionRepository.createSession(sessionName)
+        settingsRepository.saveCurrentSessionId(newSessionId)
+        appContext.getSharedPreferences("nezumi_ai_prefs", Context.MODE_PRIVATE)
+            .edit().putLong("current_session_id", newSessionId).apply()
+        setCurrentSession(newSessionId)
+        return newSessionId
+    }
+
+    private suspend fun ensureValidCurrentSession(): Long? {
+        val currentSessionId = _currentSessionId.value
+        if (currentSessionId != null) {
+            if (sessionRepository.getSessionById(currentSessionId) != null) {
+                return currentSessionId
+            }
+        }
+
+        return createAndActivateSession()
+    }
     
     fun updateInputText(text: String) {
         _inputText.value = text
@@ -509,29 +529,30 @@ class ChatViewModel(
     }
     
     fun sendMessage(userMessage: String) {
-        val sessionId = _currentSessionId.value ?: return
         if (_isLoading.value) return
-        
+
         // 前の job をキャンセル
         generationJob?.cancel(CancellationException("Stopped by user"))
         generationJob = null
-        
+
         generationJob = viewModelScope.launch {
             val thisJob = this // このJobインスタンスを保存
             try {
+                val sessionId = ensureValidCurrentSession() ?: return@launch
+
                 // ユーザーメッセージを保存
                 messageRepository.addMessage(
                     sessionId = sessionId,
                     role = "user",
                     content = userMessage
                 )
-                
+
                 // セッションの lastUpdated を更新
                 sessionRepository.updateSessionLastUpdated(sessionId)
-                
+
                 // 入力フィールドをクリア
                 _inputText.value = ""
-                
+
                 // AI応答を生成
                 _isLoading.value = true
                 generateAIResponse(sessionId, userMessage)
@@ -2438,7 +2459,6 @@ class ChatViewModel(
         imageUris: List<String> = emptyList(),
         audioUri: String? = null
     ) {
-        val sessionId = _currentSessionId.value ?: return
         if (_isLoading.value) return
 
         // 前の job をキャンセル
@@ -2448,6 +2468,7 @@ class ChatViewModel(
         // 計算集約的な処理はDefault（CPU 集約的タスク用）で実行
         generationJob = viewModelScope.launch(Dispatchers.Default) {
             val thisJob = this  // このJobインスタンスを保存
+            val sessionId = ensureValidCurrentSession() ?: return@launch
             var imagesToCleanup = mutableListOf<Bitmap>()
             try {
                 // ★ 最初に立てる（二重送信防止＆UI競合防止）
