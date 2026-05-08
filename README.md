@@ -13,6 +13,7 @@ nezumi-aiは、インターネット接続なしで動作するプライベー�
 - **マルチモデル対応**: Gemma 3n E2B (軽量) / E4B (高性能) の選択可能
 - **GPU/CPU自動切り替え**: 端末のハードウェア最適化による高速化
 - **画像入力対応**: カメラ・ギャラリーから画像を取り込んでAIに解析させられる
+- **画像生成機能**: LocalDreamModule（MNN/QNN）による高速画像生成
 - **チャット履歴管理**: Room DBで会話履歴を永続化
 
 ---
@@ -37,10 +38,13 @@ nezumi-aiは、インターネット接続なしで動作するプライベー�
 git clone https://github.com/mouse0329/nezumi-ai.git
 cd nezumi-ai
 
-# 2. local.properties を設定
+# 2. サブモジュールを初期化
+git submodule update --init --recursive
+
+# 3. local.properties を設定
 # (SDK, NDK, 署名情報を設定 - 詳細は下記参照)
 
-# 3. Gradleでビルド
+# 4. Gradleでビルド
 ./gradlew assembleDebug      # Debug APK
 ./gradlew assembleRelease    # Release APK (署名設定必須)
 ```
@@ -71,12 +75,18 @@ KEY_PASSWORD=your_key_password
 - **Gemma 3n E2B**: 軽量・高速（低スペック端末推奨）
 - **Gemma 3n E4B**: 高精度・高性能（ハイエンド端末推奨）
 
-### 3. GPU/CPU バックエンド切り替え
+### 3. 画像生成機能
+- **LocalDreamModule**: MNN/QNNバックエンドによる高速画像生成
+- **NPU対応**: Snapdragon端末でのNPUアクセラレーション
+- **自動バックエンド選択**: QNN（NPU）→ MNN（CPU/OpenCL）の自動フォールバック
+- **AI自動生成**: Gemmaがツールとして画像生成を呼び出し（ユーザー承認制）
+
+### 4. GPU/CPU バックエンド切り替え（LLM）
 - **GPU**: 高速推論（互換性は端末依存）
 - **CPU**: 互換性重視（速度は低い）
 - 自動フォールバック: GPU失敗時にCPUに自動切り替え
 
-### 4. チャット履歴
+### 5. チャット履歴
 - 会話履歴の永続化（Room DB）
 - セッション削除・編集機能
 
@@ -92,6 +102,25 @@ KEY_PASSWORD=your_key_password
 [Repository]
        ↓
 [UseCase / Inference Layer]
+       ↓
+[Engine Layer]
+├── LlmEngine (llama.cpp / LiteRT-LM)
+└── SdEngine (MNN/QNN Stable Diffusion)
+```
+
+---
+
+## 開発状況
+
+- **現在のバージョン**: v0.x (開発中)
+- **ターゲットリリース**: v1.0.0
+- **主要コンポーネント**:
+  - UI/UX: Jetpack Compose
+  - データベース: Room
+  - 推論エンジン: llama.cpp, MNN/QNN
+  - モデル: Gemma 3n, Stable Diffusion 1.5
+
+詳細な開発計画については [DETAILED_PLAN.md](DETAILED_PLAN.md) を参照してください。
        ↓
 [MediaPipe / TensorFlow Lite]
        ↓
@@ -123,6 +152,7 @@ KEY_PASSWORD=your_key_password
 - **MediaPipe Tasks**: オンデバイスML実行
 - **TensorFlow Lite**: 軽量推論エンジン
 - **llama.cpp** (via JNI): LLM推論コア
+- **LocalDreamModule**: MNN/QNNベースの画像生成エンジン
 
 ### UI Components
 - **Halilibo Compose Richtext**: Markdown表示
