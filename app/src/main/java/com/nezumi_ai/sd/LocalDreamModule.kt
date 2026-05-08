@@ -12,6 +12,13 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.TimeUnit
 
+data class ProgressData(
+    val step: Int,
+    val totalSteps: Int,
+    val time: Float,
+    val progress: Float = step.toFloat() / totalSteps.coerceAtLeast(1)
+)
+
 class LocalDreamModule(private val context: Context) {
     
     companion object {

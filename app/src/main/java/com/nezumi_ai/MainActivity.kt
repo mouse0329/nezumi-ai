@@ -49,6 +49,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var sessionRepository: ChatSessionRepository
+    private lateinit var settingsRepository: SettingsRepository
     private lateinit var drawerHistoryAdapter: DrawerHistoryAdapter
     private var dbInitialized = false
     private var screenOffReceiver: BroadcastReceiver? = null
@@ -74,7 +75,7 @@ class MainActivity : AppCompatActivity() {
 
             // DB / リポジトリは onPause などで必須。NavHost の準備後にドロワーとセットアップ遷移を行う
             val database = NezumiAiDatabase.getInstance(this)
-            val settingsRepository = SettingsRepository(database.settingsDao(), database.chatSessionDao())
+            settingsRepository = SettingsRepository(database.settingsDao(), database.chatSessionDao())
             val messageRepository = com.nezumi_ai.data.repository.MessageRepository(database.messageDao())
             sessionRepository = ChatSessionRepository(database.chatSessionDao(), settingsRepository, messageRepository)
             if (!isIncognitoModeActive) {
@@ -95,6 +96,8 @@ class MainActivity : AppCompatActivity() {
                     if (!PreferencesHelper.isInitialSetupCompleted(this@MainActivity)) {
                         Log.d(TAG, "Initial setup not completed - navigating to setup wizard")
                         navController.navigate(R.id.setupWizardFragment)
+                    } else {
+                        ensureCurrentSessionExists()
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to setup drawer navigation or setup wizard", e)
@@ -175,11 +178,59 @@ class MainActivity : AppCompatActivity() {
                 }.onFailure {
                     Log.e(TAG, "Failed to leave incognito mode before opening normal session", it)
                 }
+                saveCurrentSessionId(sessionId)
+                withContext(Dispatchers.IO) {
+                    settingsRepository.saveCurrentSessionId(sessionId)
+                }
                 navigateToChatSession(sessionId)
             }
             return
         }
+        saveCurrentSessionId(sessionId)
+        lifecycleScope.launch(Dispatchers.IO) {
+            settingsRepository.saveCurrentSessionId(sessionId)
+        }
         navigateToChatSession(sessionId)
+    }
+
+    private fun saveCurrentSessionId(sessionId: Long) {
+        val prefs = getSharedPreferences("nezumi_ai_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putLong("current_session_id", sessionId).apply()
+    }
+
+    private fun ensureCurrentSessionExists() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            if (isIncognitoModeActive) return@launch
+
+            val prefs = getSharedPreferences("nezumi_ai_prefs", Context.MODE_PRIVATE)
+            val currentSessionId = prefs.getLong("current_session_id", -1L).takeIf { it != -1L }
+            if (currentSessionId != null) {
+                val currentSession = sessionRepository.getSessionById(currentSessionId)
+                if (currentSession != null && !currentSession.isIncognito) {
+                    return@launch
+                }
+            }
+
+            val savedSessionId = runCatching { settingsRepository.loadCurrentSessionId() }.getOrNull()
+            if (savedSessionId != null && savedSessionId > 0) {
+                val savedSession = sessionRepository.getSessionById(savedSessionId)
+                if (savedSession != null && !savedSession.isIncognito) {
+                    saveCurrentSessionId(savedSessionId)
+                    return@launch
+                }
+            }
+
+            val latestSession = sessionRepository.getLatestSession()
+            if (latestSession != null && !latestSession.isIncognito) {
+                saveCurrentSessionId(latestSession.id)
+                settingsRepository.saveCurrentSessionId(latestSession.id)
+                return@launch
+            }
+
+            val newSessionId = sessionRepository.createSession("新しいチャット")
+            settingsRepository.saveCurrentSessionId(newSessionId)
+            saveCurrentSessionId(newSessionId)
+        }
     }
 
     private fun navigateToChatSession(sessionId: Long) {
@@ -902,6 +953,9 @@ class MainActivity : AppCompatActivity() {
                 lifecycleScope.launch {
                     runCatching {
                         withContext(Dispatchers.IO) {
+                            if (session.id == getCurrentSessionId()) {
+                                clearCurrentSessionId()
+                            }
                             sessionRepository.deleteSession(session.id)
                         }
                     }.onFailure {
@@ -910,6 +964,14 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             .show()
+    }
+
+    private fun clearCurrentSessionId() {
+        val prefs = getSharedPreferences("nezumi_ai_prefs", Context.MODE_PRIVATE)
+        prefs.edit().remove("current_session_id").apply()
+        lifecycleScope.launch(Dispatchers.IO) {
+            settingsRepository.saveCurrentSessionId(-1L)
+        }
     }
 
     private fun stopGenerationOnScreenOff() {
