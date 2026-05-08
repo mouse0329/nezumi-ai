@@ -42,8 +42,16 @@ fun SessionListScreen(
             groupedSessions = groupedSessions,
             onSessionClick = onSessionClick,
             onOpenSettings = onOpenSettings,
-            onCreateSession = { viewModel.createNewSession("新しいチャット") },
-            onCreateIncognitoSession = { viewModel.createNewSession("🕵️ シークレット") },
+            onCreateSession = { 
+                viewModel.createNewSession("新しいチャット") { sessionId ->
+                    onSessionClick(sessionId)
+                }
+            },
+            onCreateIncognitoSession = { 
+                viewModel.createNewSession("🕵️ シークレット") { sessionId ->
+                    onSessionClick(sessionId)
+                }
+            },
             onDeleteSession = { viewModel.deleteSession(it) },
             onTogglePin = { viewModel.togglePinSession(it) },
             onRenameSession = { sessionId -> /* TODO: Show rename dialog */ },

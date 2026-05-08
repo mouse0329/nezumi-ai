@@ -435,18 +435,24 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         val savedSession = sessionRepository.getSessionById(savedSessionId)
                         if (savedSession != null && !savedSession.isIncognito) {
                             Log.d("ChatFragment", "Restoring previous session: $savedSessionId")
+                            val prefs = requireContext().getSharedPreferences("nezumi_ai_prefs", android.content.Context.MODE_PRIVATE)
+                            prefs.edit().putLong("current_session_id", savedSessionId).apply()
                             // ★ setCurrentSession は suspend 関数に変更されたため、直接 await する
                             viewModel.setCurrentSession(savedSessionId)
                         } else {
                             Log.d("ChatFragment", "Saved session is unavailable or incognito. Creating new session.")
                             val newSessionId = sessionRepository.createSession("新しいチャット")
                             settingsRepository.saveCurrentSessionId(newSessionId)
+                            val prefs = requireContext().getSharedPreferences("nezumi_ai_prefs", android.content.Context.MODE_PRIVATE)
+                            prefs.edit().putLong("current_session_id", newSessionId).apply()
                             viewModel.setCurrentSession(newSessionId)
                         }
                     } else {
                         Log.d("ChatFragment", "No saved session found. Creating new session.")
                         val newSessionId = sessionRepository.createSession("新しいチャット")
                         settingsRepository.saveCurrentSessionId(newSessionId)
+                        val prefs = requireContext().getSharedPreferences("nezumi_ai_prefs", android.content.Context.MODE_PRIVATE)
+                        prefs.edit().putLong("current_session_id", newSessionId).apply()
                         // ★ setCurrentSession は suspend 関数に変更されたため、直接 await する
                         viewModel.setCurrentSession(newSessionId)
                     }

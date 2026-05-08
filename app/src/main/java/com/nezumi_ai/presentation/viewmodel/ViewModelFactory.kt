@@ -1,5 +1,6 @@
 package com.nezumi_ai.presentation.viewmodel
 
+import android.app.Application
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -37,5 +38,13 @@ class SettingsViewModelFactory(private val repository: SettingsRepository) :
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         return SettingsViewModel(repository) as T
+    }
+}
+
+class ImageGenViewModelFactory(private val application: Application) :
+    ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        return ImageGenViewModel(application) as T
     }
 }

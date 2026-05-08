@@ -15,7 +15,6 @@ import androidx.lifecycle.viewModelScope
 import com.nezumi_ai.data.inference.EngineManager
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
-import com.nezumi_ai.sd.SdEngine
 import com.nezumi_ai.sd.ProgressData
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.nezumi_ai.data.repository.SettingsRepository
@@ -168,8 +167,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         }
         
         val format = detectModelFormat(path)
-        val backend = if (EngineManager.isUsingLocalDream()) "LocalDream" else "stable-diffusion.cpp"
-        _backendInfo.value = "$format | $backend"
+        _backendInfo.value = "$format | LocalDream"
     }
 
     private val _prompt = MutableStateFlow("")
@@ -203,8 +201,6 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     val snackbar: StateFlow<String?> = _snackbar.asStateFlow()
 
     private var lastSavedInternalUri: String? = null
-    private var activeSd: SdEngine? = null
-    private var activeCtxPtr: Long = 0L  // Workaround for thread-safe cancel
     private var generateJob: Job? = null
 
     fun refreshAvailableModels() {
@@ -268,27 +264,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         }
         isCancelling = true
         Log.i(TAG, "[ImageGen] cancel() called")
-        Log.i(TAG, "[ImageGen] activeSd=$activeSd, activeCtxPtr=$activeCtxPtr, generateJob=$generateJob")
         
-        if (activeSd != null) {
-            Log.i(TAG, "[ImageGen] activeSd exists, calling cancel()")
-            activeSd!!.cancel()
-            Log.i(TAG, "[ImageGen] activeSd.cancel() returned")
-        } else {
-            Log.w(TAG, "[ImageGen] activeSd is null, cannot cancel SD engine")
-        }
-        
-        if (generateJob != null) {
-            Log.i(TAG, "[ImageGen] generateJob exists, cancelling")
-            generateJob!!.cancel()
-            Log.i(TAG, "[ImageGen] generateJob cancelled")
-        } else {
-            Log.w(TAG, "[ImageGen] generateJob is null")
-        }
+        generateJob?.cancel()
+        Log.i(TAG, "[ImageGen] generateJob cancelled")
         
         _currentStep.value = 0
         _progressData.value = null
-        activeCtxPtr = 0L
         Log.i(TAG, "[ImageGen] cancel() completed")
     }
 
@@ -317,59 +298,26 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         var wasCancelled = false
         try {
             runCatching { manager.unloadModel() }
-            Log.i(TAG, "[ImageGen] generate() starting, acquiring engine")
+            Log.i(TAG, "[ImageGen] generate() starting, acquiring LocalDream engine")
             
-            val bmp = if (EngineManager.isUsingLocalDream()) {
-                // MNN/QNNバックエンド使用
-                Log.i(TAG, "[ImageGen] Using LocalDream (MNN/QNN)")
-                val ld = EngineManager.acquireLocalDream(app, path, "auto")
-                
-                _currentStep.value = 0
-                _progressData.value = ProgressData(0, totalSteps, 0.0f)
-                
-                ld.generateImage(
-                    prompt = pr,
-                    negativePrompt = _negativePrompt.value,
-                    width = sz,
-                    height = sz,
-                    steps = totalSteps,
-                    cfg = _cfg.value,
-                    seed = -1L,
-                    onProgress = { step, steps, time ->
-                        _progressData.value = ProgressData(step, steps, time)
-                        _currentStep.value = step.coerceAtMost(totalSteps)
-                    }
-                )
-            } else {
-                // stable-diffusion.cppバックエンド使用
-                Log.i(TAG, "[ImageGen] Using stable-diffusion.cpp")
-                val sd = EngineManager.acquireSd(path, threads)
-                activeSd = sd
-                activeCtxPtr = sd.getCtxPtr()
-                
-                sd.onProgressCallback = { step, steps, time ->
+            val ld = EngineManager.acquireLocalDream(app, path, "auto")
+            
+            _currentStep.value = 0
+            _progressData.value = ProgressData(0, totalSteps, 0.0f)
+            
+            val bmp = ld.generateImage(
+                prompt = pr,
+                negativePrompt = _negativePrompt.value,
+                width = sz,
+                height = sz,
+                steps = totalSteps,
+                cfg = _cfg.value,
+                seed = -1L,
+                onProgress = { step, steps, time ->
                     _progressData.value = ProgressData(step, steps, time)
                     _currentStep.value = step.coerceAtMost(totalSteps)
                 }
-                
-                runCatching {
-                    _currentStep.value = 0
-                    _progressData.value = ProgressData(0, totalSteps, 0.0f)
-                    
-                    sd.generate(
-                        pr,
-                        _negativePrompt.value,
-                        sz,
-                        sz,
-                        totalSteps,
-                        _cfg.value,
-                        -1L
-                    )
-                }.getOrElse { e ->
-                    Log.e(TAG, "[ImageGen] generate failed", e)
-                    null
-                }
-            }
+            )
             
             _currentStep.value = totalSteps
             _progressData.value = ProgressData(totalSteps, totalSteps, _progressData.value?.time ?: 0.0f)
@@ -386,9 +334,6 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             _snackbar.value = e.message ?: "error"
         } finally {
             Log.i(TAG, "[ImageGen] finally block: cleaning up")
-            activeSd?.onProgressCallback = null
-            activeSd = null
-            activeCtxPtr = 0L
             isCancelling = false
             runCatching { EngineManager.releaseSdKeepNone() }
             runCatching { EngineManager.markLlmActive() }
@@ -489,9 +434,55 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
     fun share(context: Context) {
         val bmp = _resultBitmap.value ?: return
+        shareBitmap(context, bmp)
+    }
+
+    fun saveBitmapToGallery(context: Context, bmp: Bitmap) = viewModelScope.launch(Dispatchers.IO) {
+        val name = "nezumi_sd_${System.currentTimeMillis()}.png"
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                    put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/NezumiAI")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        put(MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                }
+                val resolver = context.contentResolver
+                val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                    ?: return@launch
+                resolver.openOutputStream(uri)?.use { out ->
+                    bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    values.clear()
+                    values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                val uri = MediaStore.Images.Media.insertImage(
+                    context.contentResolver,
+                    bmp,
+                    name,
+                    "nezumi-ai SD"
+                )
+                if (uri == null) {
+                    _snackbar.value = "保存に失敗しました"
+                    return@launch
+                }
+            }
+            _snackbar.value = "ギャラリーに保存しました"
+        } catch (e: Exception) {
+            Log.e(TAG, "saveBitmapToGallery", e)
+            _snackbar.value = e.message ?: "save failed"
+        }
+    }
+
+    fun shareBitmap(context: Context, bmp: Bitmap) {
         viewModelScope.launch(Dispatchers.IO) {
-            val uriStr = lastSavedInternalUri
-                ?: MessageMediaStore.savePngBitmap(context.applicationContext, bmp, "share_sd")
+            val uriStr = MessageMediaStore.savePngBitmap(context.applicationContext, bmp, "share_sd")
                 ?: return@launch
             val uri = Uri.parse(uriStr)
             val share = Intent(Intent.ACTION_SEND).apply {
