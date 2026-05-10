@@ -120,7 +120,7 @@ KEY_PASSWORD=your_key_password
   - 推論エンジン: llama.cpp, MNN/QNN
   - モデル: Gemma 3n, Stable Diffusion 1.5
 
-詳細な開発計画については [DETAILED_PLAN.md](DETAILED_PLAN.md) を参照してください。
+詳細な開発計画については [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) を参照してください。
        ↓
 [MediaPipe / TensorFlow Lite]
        ↓
@@ -201,10 +201,13 @@ KEY_PASSWORD=your_key_password
 
 ## ライセンス
 
-このプロジェクトは **PolyForm Noncommercial License 1.0.0** の下で公開されています。
+このプロジェクトは **デュアルライセンス** で公開されています。以下のいずれかを選択して使用できます：
+
+- **Apache License 2.0** - [LICENSE-APACHE](LICENSE-APACHE) または http://www.apache.org/licenses/LICENSE-2.0
+- **GNU General Public License v3.0** - [LICENSE-GPL](LICENSE-GPL) または https://www.gnu.org/licenses/gpl-3.0.html
 
 詳細は以下を参照してください：
-- [LICENSE.md](LICENSE.md) - プロジェクトライセンス（PolyForm Noncommercial）
+- [LICENSE.md](LICENSE.md) - プロジェクトライセンス（Apache 2.0 / GPLv3）
 - [app/src/main/assets/LICENSE.md](app/src/main/assets/LICENSE.md) - 依存ライブラリのライセンス情報
 
 ### 主要な依存ライブラリ

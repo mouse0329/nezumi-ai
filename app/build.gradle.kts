@@ -46,6 +46,9 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["appAuthRedirectScheme"] = "nezumiai"
 
+        buildConfigField("String", "LITERTLM_VERSION", "\"0.11.0\"")
+        buildConfigField("String", "LLAMACPP_VERSION", "\"llamacpp-kotlin 0.4.0 (llama.rn rc.9)\"")
+
         ndk {
             abiFilters.add("arm64-v8a")
         }

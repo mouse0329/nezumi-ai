@@ -22,6 +22,7 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.nezumi_ai.R
+import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.repository.SettingsRepository
@@ -45,6 +46,7 @@ class SettingsComposeFragment : Fragment() {
     private var backendType by mutableStateOf("CPU")
     private var themeMode by mutableStateOf(PreferencesHelper.THEME_SYSTEM)
     private var errorDialogMessage by mutableStateOf<String?>(null)
+    private var versionDialogVisible by mutableStateOf(false)
     private var llamaCppThreads by mutableStateOf(InferenceConfig.getDefaultThreadCount())
     private var maxThreads by mutableStateOf(InferenceConfig.MAX_THREADS)
     private var llamaCppGpuLayers by mutableStateOf(0)
@@ -97,6 +99,12 @@ class SettingsComposeFragment : Fragment() {
                         Text("OK")
                     }
                 }
+            )
+        }
+
+        if (versionDialogVisible) {
+            VersionInfoDialog(
+                onDismiss = { versionDialogVisible = false }
             )
         }
 
@@ -275,6 +283,12 @@ class SettingsComposeFragment : Fragment() {
                         onClick = { backendType = "NPU" },
                         label = { Text("NPU") }
                     )
+                }
+                TextButton(
+                    onClick = { versionDialogVisible = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("llama.cpp / LiteRT-LM バージョンを確認")
                 }
             }
         }
@@ -907,6 +921,30 @@ class SettingsComposeFragment : Fragment() {
         settingsRepository.updateChatHistoryLimit(chatHistoryLimit)
         PreferencesHelper.setSdSteps(requireContext(), sdSteps)
         PreferencesHelper.setSdCfg(requireContext(), sdCfg)
+    }
+
+    @Composable
+    private fun VersionInfoDialog(onDismiss: () -> Unit) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("推論エンジンのバージョン") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("LiteRT-LM: ${BuildConfig.LITERTLM_VERSION}")
+                    Text("llama.cpp: ${BuildConfig.LLAMACPP_VERSION}")
+                    Text(
+                        "※実行時には内部 JNI / モデル対応により挙動が変わる場合があります。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = onDismiss) {
+                    Text("閉じる")
+                }
+            }
+        )
     }
 
     private fun onBackButtonPressed() {

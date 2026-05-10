@@ -6,6 +6,7 @@
 .android-local
 .tmp_aar
 .tmp_aar2
+.kotlin
 .DS_Store
 /build
 /app/build
@@ -14,3 +15,5 @@
 .cxx
 local.properties
 /release/
+*.log
+build.log
