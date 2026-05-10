@@ -2,6 +2,7 @@ package com.nezumi_ai.data.inference
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
 import android.util.Log
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
@@ -210,6 +211,40 @@ class LiteRtLmEngine(
         return nativeLibDir ?: ""
     }
 
+    private fun getOptimalBackendType(requestedBackendType: String): String {
+        val normalizedRequested = requestedBackendType.uppercase()
+        val socModel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Build.SOC_MODEL.lowercase().ifBlank { Build.HARDWARE.lowercase() }
+        } else {
+            Build.HARDWARE.lowercase()
+        }
+        val model = Build.MODEL.lowercase()
+        val device = Build.DEVICE.lowercase()
+        val manufacturer = Build.MANUFACTURER.lowercase()
+
+        Log.d(TAG, "Hardware check: socModel=$socModel model=$model device=$device manufacturer=$manufacturer requestedBackend=$normalizedRequested")
+
+        val isGoogleTensor = socModel.contains("tensor") || socModel.contains("gs") ||
+            model.contains("pixel 8a") || model.contains("pixel 8") || device.contains("gs")
+        val isSupportedQualcommNpu = listOf("sm8550", "sm8650", "sm8750").any { socModel.contains(it) }
+
+        return when {
+            normalizedRequested != "NPU" -> normalizedRequested
+            isGoogleTensor -> {
+                Log.i(TAG, "Google Tensor detected. Forcing CPU/XNNPACK instead of NPU.")
+                "CPU"
+            }
+            isSupportedQualcommNpu -> {
+                Log.i(TAG, "Supported Qualcomm NPU SoC detected. Attempting NPU.")
+                "NPU"
+            }
+            else -> {
+                Log.i(TAG, "Unconfirmed NPU support for SoC. Falling back to CPU/XNNPACK.")
+                "CPU"
+            }
+        }
+    }
+
     /**
      * XNNPack キャッシュ向けに、mmap/remap の失敗を避けるため
      * 内部ストレージ（/data 配下）のみを候補にする。
@@ -313,12 +348,13 @@ class LiteRtLmEngine(
             return Result.success(Unit)
         }
 
-        val preferredBackend = backendForConfig(normalizedConfig.backendType)
+        val effectiveBackendType = getOptimalBackendType(normalizedConfig.backendType)
+        val preferredBackend = backendForConfig(effectiveBackendType)
         val cacheDir = resolveWritableXnnpackCacheDir()
         val cacheDirPath = cacheDir?.absolutePath
-        val backendChanged = loadedBackend != null && loadedBackend != normalizedConfig.backendType
+        val backendChanged = loadedBackend != null && loadedBackend != effectiveBackendType
         if (backendChanged) {
-            Log.i(TAG, "Backend changed from $loadedBackend to ${normalizedConfig.backendType}. Clearing cache...")
+            Log.i(TAG, "Backend changed from $loadedBackend to $effectiveBackendType. Clearing cache...")
         }
 
         runCatching { engine?.close() }
