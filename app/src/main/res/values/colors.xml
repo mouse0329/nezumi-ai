@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Basic -->
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+
+    <!-- Primary Colors -->
+    <color name="primary">#38BDF8</color>
+    <color name="primary_light">#E6F7FF</color>
+    <color name="accent">#0284C7</color>
+    <color name="nezumi_primary">#38BDF8</color>
+    <color name="nezumi_on_primary">#082F49</color>
+    <color name="nezumi_primary_container">#E6F7FF</color>
+    <color name="nezumi_on_primary_container">#0C4A6E</color>
+
+    <!-- Text Colors -->
+    <color name="text_primary">#111827</color>
+    <color name="text_secondary">#4B5563</color>
+
+    <!-- Background Colors -->
+    <color name="bg_session_list">#F5F6F8</color>
+    <color name="bg_chat">#F5F6F8</color>
+    <color name="surface_card">#FFFFFFFF</color>
+    <color name="loading_overlay">#B3FFFFFF</color>
+    <color name="context_meter_progress">#4B5563</color>
+    <color name="context_meter_track">#D1D5DB</color>
+
+    <!-- Border Colors -->
+    <color name="border">#B6BDC8</color>
+
+    <!-- Thinking Toggle Button (High Contrast) -->
+    <color name="thinking_toggle_stroke">#374151</color>
+    <color name="thinking_toggle_text">#374151</color>
+    <!-- Incognito Mode -->
+    <color name="incognito_surface">#4B0082</color>
+    <color name="incognito_surface_light">#6A0DAD</color>
+
+    <!-- Dark Theme Colors (Image Generation) -->
+    <color name="bg_dark">#0f172a</color>
+    <color name="bg_card">#1e293b</color>
+    <color name="accent_blue">#0ea5e9</color>
+    <color name="text_main">#f8fafc</color>
+    <color name="text_sub">#94a3b8</color>
+    <color name="input_border">#334155</color>
+</resources>

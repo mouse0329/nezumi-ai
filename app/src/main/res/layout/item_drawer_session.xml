@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto" android:id="@+id/session_container" android:layout_width="match_parent" android:layout_height="wrap_content" android:background="@drawable/bg_input_field" android:orientation="vertical" android:gravity="center_vertical" android:padding="12dp" android:layout_marginBottom="4dp" android:layout_marginStart="0dp" android:layout_marginEnd="0dp" android:descendantFocusability="afterDescendants">
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+
+        <ImageView android:id="@+id/pin_icon" android:layout_width="14dp" android:layout_height="14dp" android:src="@drawable/ic_pin" android:visibility="gone" android:layout_marginEnd="6dp" android:contentDescription="ピン留め" />
+
+        <TextView android:id="@+id/session_title" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:ellipsize="end" android:maxLines="1" android:textColor="@color/text_primary" android:textSize="14sp" />
+
+        <ImageButton android:id="@+id/menu_button" android:layout_width="36dp" android:layout_height="36dp" android:layout_marginStart="6dp" android:background="@drawable/bg_menu_button" android:contentDescription="メニュー" android:padding="8dp" android:scaleType="fitCenter" android:src="@drawable/ic_more_vert" app:tint="@color/text_primary" />
+
+    </LinearLayout>
+
+    <TextView android:id="@+id/session_date" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:textColor="@color/text_secondary" android:textSize="11sp" />
+
+</LinearLayout>
