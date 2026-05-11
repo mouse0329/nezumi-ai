@@ -1,0 +1,123 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "jp.hiroshiba.voicevoxcore",
+    "module": "voicevoxcore",
+    "version": "0.16.4",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.10.2"
+    }
+  },
+  "variants": [
+    {
+      "name": "apiElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.version": 8,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-api"
+      },
+      "files": [
+        {
+          "name": "voicevoxcore-0.16.4.jar",
+          "url": "voicevoxcore-0.16.4.jar",
+          "size": 9555623,
+          "sha512": "0894545a8306376b9029c5d82f93f25199ad0b96cf84948af6ca24d6e7cca722fa94252285fad62149584af3bc7362e23baf47dc9316477de202d3890d7bee5d",
+          "sha256": "04e7114de664081de058b6a717545ada3d6731cb00498f3a96f4cf2a79f0ffce",
+          "sha1": "89ebddf2fcb2788cb682d6343f56f32e36a5a8cd",
+          "md5": "04014048f43e0a8332e824d45d2efb45"
+        }
+      ]
+    },
+    {
+      "name": "runtimeElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.version": 8,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "com.google.code.gson",
+          "module": "gson",
+          "version": {
+            "requires": "2.10.1"
+          }
+        },
+        {
+          "group": "jakarta.validation",
+          "module": "jakarta.validation-api",
+          "version": {
+            "requires": "3.0.2"
+          }
+        },
+        {
+          "group": "jakarta.annotation",
+          "module": "jakarta.annotation-api",
+          "version": {
+            "requires": "2.1.1"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "voicevoxcore-0.16.4.jar",
+          "url": "voicevoxcore-0.16.4.jar",
+          "size": 9555623,
+          "sha512": "0894545a8306376b9029c5d82f93f25199ad0b96cf84948af6ca24d6e7cca722fa94252285fad62149584af3bc7362e23baf47dc9316477de202d3890d7bee5d",
+          "sha256": "04e7114de664081de058b6a717545ada3d6731cb00498f3a96f4cf2a79f0ffce",
+          "sha1": "89ebddf2fcb2788cb682d6343f56f32e36a5a8cd",
+          "md5": "04014048f43e0a8332e824d45d2efb45"
+        }
+      ]
+    },
+    {
+      "name": "javadocElements",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "javadoc",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "voicevoxcore-0.16.4-javadoc.jar",
+          "url": "voicevoxcore-0.16.4-javadoc.jar",
+          "size": 190122,
+          "sha512": "223cd63562a2263c64f1adf201c52cd18a11051a39d97eb507d38955abd1a6a530ba1eb0079529e3d505a2586cb171f824340b5c9001e37aabd3e054c7cd9ed6",
+          "sha256": "f539e3e41f963ec37205e231c36920813ac030488267e2c1d4e2510617dc6099",
+          "sha1": "d7707215e3f9e2b77f3b6f93cd5e41a263aaad6b",
+          "md5": "977f504e41c4f75b4c6309b6c41546a2"
+        }
+      ]
+    },
+    {
+      "name": "sourcesElements",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "voicevoxcore-0.16.4-sources.jar",
+          "url": "voicevoxcore-0.16.4-sources.jar",
+          "size": 9548854,
+          "sha512": "129d44bf42f81368ab08b61e4266056a091c4b9dbd80e2beed10c8903463a2db8485bd60d979f47fa44a3bdcd16de5449b0947e4f2f815e7f8b082483c0f512e",
+          "sha256": "eebfd6bb732a8546202c51ca954877d3de0292e0ec339cdbe7c59ae73f50da6d",
+          "sha1": "955a9b0b152d0633cbeaa6e6ad4a357d5869ee8e",
+          "md5": "197c52457285f8ebd434ccaf4fedf4ab"
+        }
+      ]
+    }
+  ]
+}
