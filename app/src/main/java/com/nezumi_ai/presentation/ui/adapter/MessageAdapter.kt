@@ -44,6 +44,7 @@ import com.nezumi_ai.R
 import com.nezumi_ai.databinding.ItemMessageUserBinding
 import com.nezumi_ai.databinding.ItemMessageAiBinding
 import com.nezumi_ai.data.database.entity.MessageEntity
+import com.nezumi_ai.data.inference.stripGemmaTokens
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.halilibo.richtext.commonmark.Markdown
 import com.halilibo.richtext.ui.material3.RichText
@@ -55,6 +56,7 @@ import java.util.Locale
 class MessageAdapter(
     private val onUserPromptRevoke: (MessageEntity) -> Unit = {},
     private val onAiMessageLayoutChanged: () -> Unit = {},
+    private val onAiMessageSpeak: (MessageEntity, String) -> Unit = { _, _ -> },
     private val lifecycleOwner: LifecycleOwner? = null,
     private val viewModelStoreOwner: ViewModelStoreOwner? = null
 ) : ListAdapter<MessageEntity, RecyclerView.ViewHolder>(MessageDiffCallback()) {
@@ -62,10 +64,25 @@ class MessageAdapter(
     /** ユーザーが明示的に展開したメッセージ ID（生成中は常に自動展開） */
     private val thinkingExpandedByMessageId = mutableSetOf<Long>()
     private var thinkingVisible = true
+    private var speakingMessageId: Long? = null
 
     private enum class ContentRenderMode {
         Placeholder,
         Markdown
+    }
+
+    fun setSpeakingMessageId(messageId: Long?) {
+        val oldId = speakingMessageId
+        if (oldId == messageId) return
+        speakingMessageId = messageId
+        notifyMessageChanged(oldId)
+        notifyMessageChanged(messageId)
+    }
+
+    private fun notifyMessageChanged(messageId: Long?) {
+        if (messageId == null) return
+        val index = currentList.indexOfFirst { it.id == messageId }
+        if (index >= 0) notifyItemChanged(index)
     }
     
     companion object {
@@ -516,6 +533,18 @@ class MessageAdapter(
                         message.content
                     }
                     copyAllToClipboard(binding.root.context, text)
+                }
+
+                val speakText = message.content.stripGemmaTokens().trim()
+                val canSpeak = !message.isStreaming && speakText.isNotBlank()
+                val isSpeakingThisMessage = speakingMessageId == message.id
+                speakMessageButton.visibility =
+                    if (canSpeak && !isSpeakingThisMessage) View.VISIBLE else View.GONE
+                speakMessageButton.isEnabled = speakingMessageId == null
+                speakMessageProgress.visibility =
+                    if (canSpeak && isSpeakingThisMessage) View.VISIBLE else View.GONE
+                speakMessageButton.setOnClickListener {
+                    onAiMessageSpeak(message, speakText)
                 }
 
                 val tps = message.generationTps

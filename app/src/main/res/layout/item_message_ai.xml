@@ -49,6 +49,8 @@
 
         <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="4dp">
             <com.google.android.material.button.MaterialButton android:id="@+id/copy_message_button" style="@style/Widget.Nezumiai.Button.Outlined" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/copy_all" android:textSize="11sp" android:minWidth="0dp" android:paddingStart="10dp" android:paddingEnd="10dp" android:minHeight="0dp" android:insetTop="0dp" android:insetBottom="0dp" app:cornerRadius="12dp" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/speak_message_button" style="@style/Widget.Nezumiai.Button.Outlined" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="🔊" android:textSize="11sp" android:minWidth="0dp" android:paddingStart="10dp" android:paddingEnd="10dp" android:minHeight="0dp" android:insetTop="0dp" android:insetBottom="0dp" android:contentDescription="読み上げ" app:cornerRadius="12dp" />
+            <ProgressBar android:id="@+id/speak_message_progress" android:layout_width="28dp" android:layout_height="28dp" android:layout_marginStart="6dp" android:indeterminate="true" android:visibility="gone" />
             <TextView android:id="@+id/tv_tps" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:textSize="11sp" android:textColor="@color/text_secondary" android:visibility="gone" />
         </LinearLayout>
     </LinearLayout>

@@ -7,6 +7,7 @@ import androidx.work.WorkManager
 import com.nezumi_ai.data.inference.CacheManager
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.nezumi_ai.utils.PreferencesHelper
+import com.nezumi_ai.voicevox.VoicevoxManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -18,10 +19,15 @@ import java.io.File
  */
 class MyApplication : Application() {
     private val applicationScope = CoroutineScope(Dispatchers.Default)
+    private lateinit var voicevoxManager: VoicevoxManager
     
     override fun onCreate() {
         super.onCreate()
         PreferencesHelper.applyThemeMode(this)
+        
+        // Initialize VOICEVOX
+        voicevoxManager = VoicevoxManager(this)
+        initializeVoicevox()
         
         // CacheManager を初期化（前回ロードしたモデル名の復元）
         CacheManager.initialize(this)
@@ -82,6 +88,19 @@ class MyApplication : Application() {
             }
         }
     }
+
+    private fun initializeVoicevox() {
+        applicationScope.launch {
+            val success = voicevoxManager.initialize()
+            if (success) {
+                Log.i(TAG, "VOICEVOX initialized successfully")
+            } else {
+                Log.e(TAG, "Failed to initialize VOICEVOX")
+            }
+        }
+    }
+    
+    fun getVoicevoxManager(): VoicevoxManager = voicevoxManager
     
     companion object {
         private const val TAG = "MyApplication"

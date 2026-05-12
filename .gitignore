@@ -18,3 +18,8 @@ local.properties
 *.log
 build.log
 voicevox_android_report.md
+
+# VOICEVOX model/dict runtime downloads
+app/src/main/assets/voicevox/**
+!app/src/main/assets/voicevox/licenses/
+!app/src/main/assets/voicevox/licenses/**

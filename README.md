@@ -163,7 +163,7 @@ KEY_PASSWORD=your_key_password
 - **AppAuth**: OAuth 2.0 フロー
 - **Kotlin Coroutines**: 非同期処理
 
-詳細ライセンス情報は [app/src/main/assets/LICENSE.md](app/src/main/assets/LICENSE.md) を参照してください。
+詳細ライセンス情報は [NOTICE](NOTICE) を参照してください。
 
 ---
 
@@ -203,12 +203,12 @@ KEY_PASSWORD=your_key_password
 
 このプロジェクトは **デュアルライセンス** で公開されています。以下のいずれかを選択して使用できます：
 
-- **Apache License 2.0** - [LICENSE-APACHE](LICENSE-APACHE) または http://www.apache.org/licenses/LICENSE-2.0
-- **GNU General Public License v3.0** - [LICENSE-GPL](LICENSE-GPL) または https://www.gnu.org/licenses/gpl-3.0.html
+- **Apache License 2.0** - http://www.apache.org/licenses/LICENSE-2.0
+- **GNU General Public License v3.0** - https://www.gnu.org/licenses/gpl-3.0.html
 
 詳細は以下を参照してください：
 - [LICENSE.md](LICENSE.md) - プロジェクトライセンス（Apache 2.0 / GPLv3）
-- [app/src/main/assets/LICENSE.md](app/src/main/assets/LICENSE.md) - 依存ライブラリのライセンス情報
+- [NOTICE](NOTICE) - 依存ライブラリ、バンドル済みランタイム、モデル関連のライセンス情報
 
 ### 主要な依存ライブラリ
 
