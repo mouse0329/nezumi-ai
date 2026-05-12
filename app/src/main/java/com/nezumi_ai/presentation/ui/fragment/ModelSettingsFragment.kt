@@ -78,6 +78,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.nezumi_ai.MyApplication
 import com.nezumi_ai.R
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.HfAuthManager
@@ -91,6 +92,7 @@ import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.presentation.ui.composable.MarkdownLatexText
 import com.nezumi_ai.utils.ImportedModelCapabilities
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
+import com.nezumi_ai.voicevox.VoicevoxManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -100,10 +102,11 @@ import net.openid.appauth.AuthorizationResponse
 import net.openid.appauth.AuthorizationService
 import android.os.Environment
 import java.io.File
+import java.io.FileOutputStream
 import java.util.Locale
 
 enum class ModelType {
-    LLM, IMAGE_GENERATION, DOWNLOAD_QUEUE
+    LLM, IMAGE_GENERATION, TEXT_TO_SPEECH, DOWNLOAD_QUEUE
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -149,6 +152,15 @@ open class ModelSettingsFragment : Fragment() {
     private var imageModelSearchQuery by mutableStateOf("")
     private var downloadingImageModelIds by mutableStateOf<Set<String>>(emptySet())
     private var imageModelDownloadStates by mutableStateOf<List<ImageModelDownloadUiState>>(emptyList())
+    private var voicevoxState by mutableStateOf(VoicevoxModelUiState())
+    private var voicevoxInitializing by mutableStateOf(false)
+    private var voicevoxDownloading by mutableStateOf(false)
+    private var voicevoxStyleMenuExpanded by mutableStateOf(false)
+    private var voicevoxModelMenuExpanded by mutableStateOf(false)
+    private var voicevoxSelectedCatalogEntry by mutableStateOf(
+        VoicevoxManager.modelCatalog.firstOrNull { it.fileName == "3.vvm" }
+            ?: VoicevoxManager.modelCatalog.first()
+    )
 
     private val mmprojPickerLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -159,6 +171,32 @@ open class ModelSettingsFragment : Fragment() {
                 }
                 result.onSuccess { capabilityDialogMmprojPath = it.absolutePath }
                     .onFailure { toast("mmproj追加失敗: ${it.message}") }
+            }
+        }
+    private val voicevoxModelPickerLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            viewLifecycleOwner.lifecycleScope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val target = voicevoxModelFile()
+                        target.parentFile?.mkdirs()
+                        requireContext().contentResolver.openInputStream(uri).use { input ->
+                            requireNotNull(input) { "入力ファイルを開けませんでした" }
+                            FileOutputStream(target).use { output -> input.copyTo(output) }
+                        }
+                        target
+                    }
+                }
+                result.onSuccess {
+                    (requireContext().applicationContext as MyApplication)
+                        .getVoicevoxManager()
+                        .release()
+                    toast("音声モデルを追加しました")
+                    refreshVoicevoxState()
+                }.onFailure {
+                    toast("音声モデル追加失敗: ${it.message}")
+                }
             }
         }
     private var stopTokensDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
@@ -255,6 +293,7 @@ open class ModelSettingsFragment : Fragment() {
         renderHfTokenState()
         refreshImportedTasks()
         refreshModelStatus()
+        refreshVoicevoxState()
         observeDownloadWork()
         observeCustomHfDownloadWork()
         observeImageModelDownloadWork()
@@ -264,6 +303,7 @@ open class ModelSettingsFragment : Fragment() {
         super.onResume()
         renderHfTokenState()
         refreshImportedTasks()
+        refreshVoicevoxState()
     }
 
     @Composable
@@ -335,6 +375,11 @@ open class ModelSettingsFragment : Fragment() {
                 ModelType.IMAGE_GENERATION -> {
                     item { SdImageGenFromHfCard() }
                     item { DownloadedImageModelsCard() }
+                }
+                ModelType.TEXT_TO_SPEECH -> {
+                    item { VoicevoxSummaryCard() }
+                    item { VoicevoxFilesCard() }
+                    item { VoicevoxRuntimeCard() }
                 }
                 ModelType.DOWNLOAD_QUEUE -> {
                     item { DownloadQueueCard() }
@@ -618,6 +663,12 @@ open class ModelSettingsFragment : Fragment() {
                     modifier = Modifier.weight(1f)
                 )
                 TabButton(
+                    text = "読み上げ",
+                    selected = selectedTab == ModelType.TEXT_TO_SPEECH,
+                    onClick = { selectedTab = ModelType.TEXT_TO_SPEECH },
+                    modifier = Modifier.weight(1f)
+                )
+                TabButton(
                     text = "DL",
                     selected = selectedTab == ModelType.DOWNLOAD_QUEUE,
                     onClick = { selectedTab = ModelType.DOWNLOAD_QUEUE },
@@ -627,6 +678,263 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
     
+    @Composable
+    private fun VoicevoxSummaryCard() {
+        Text(
+            text = "音声読み上げ",
+            style = MaterialTheme.typography.labelSmall,
+            color = colorResource(id = R.color.text_secondary),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.surface_card)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "VOICEVOX",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = colorResource(id = R.color.text_primary)
+                )
+                VoicevoxStatusRow("音声モデル", voicevoxState.modelStatus)
+                VoicevoxStatusRow("OpenJTalk辞書", voicevoxState.dictionaryStatus)
+                VoicevoxStatusRow("ONNX Runtime", voicevoxState.runtimeStatus)
+                VoicevoxStatusRow("話者", voicevoxState.selectedStyleLabel)
+                if (voicevoxState.styles.isNotEmpty()) {
+                    ExposedDropdownMenuBox(
+                        expanded = voicevoxStyleMenuExpanded,
+                        onExpandedChange = { voicevoxStyleMenuExpanded = !voicevoxStyleMenuExpanded }
+                    ) {
+                        OutlinedTextField(
+                            value = voicevoxState.selectedStyleLabel,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("読み上げ話者") },
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = voicevoxStyleMenuExpanded)
+                            },
+                            modifier = Modifier
+                                .menuAnchor()
+                                .fillMaxWidth()
+                        )
+                        ExposedDropdownMenu(
+                            expanded = voicevoxStyleMenuExpanded,
+                            onDismissRequest = { voicevoxStyleMenuExpanded = false }
+                        ) {
+                            voicevoxState.styles.forEach { style ->
+                                DropdownMenuItem(
+                                    text = { Text(style.displayName) },
+                                    onClick = {
+                                        val manager = (requireContext().applicationContext as MyApplication)
+                                            .getVoicevoxManager()
+                                        manager.setSelectedStyleId(style.styleId)
+                                        voicevoxStyleMenuExpanded = false
+                                        refreshVoicevoxState()
+                                    }
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Text(
+                        text = if (voicevoxState.modelExists) {
+                            "話者一覧を読み込めませんでした。初期化後に再表示してください。"
+                        } else {
+                            ".vvm を追加すると話者を選択できます。"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+                }
+                Button(
+                    onClick = { initializeVoicevoxFromSettings() },
+                    enabled = !voicevoxInitializing,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (voicevoxInitializing) "初期化中..." else "ダウンロード/初期化")
+                }
+                voicevoxState.message?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun VoicevoxFilesCard() {
+        Text(
+            text = "モデルファイル",
+            style = MaterialTheme.typography.labelSmall,
+            color = colorResource(id = R.color.text_secondary),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = 8.dp)
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = voicevoxState.modelPath,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_secondary)
+                )
+                Text(
+                    text = voicevoxState.modelDetail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_primary)
+                )
+                ExposedDropdownMenuBox(
+                    expanded = voicevoxModelMenuExpanded,
+                    onExpandedChange = { voicevoxModelMenuExpanded = !voicevoxModelMenuExpanded }
+                ) {
+                    OutlinedTextField(
+                        value = voicevoxSelectedCatalogEntry.displayName,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("ダウンロードするVVM") },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = voicevoxModelMenuExpanded)
+                        },
+                        modifier = Modifier
+                            .menuAnchor()
+                            .fillMaxWidth()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = voicevoxModelMenuExpanded,
+                        onDismissRequest = { voicevoxModelMenuExpanded = false }
+                    ) {
+                        VoicevoxManager.modelCatalog.forEach { entry ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text("${entry.category.label} / ${entry.displayName}")
+                                        Text(
+                                            text = entry.shortDescription,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = colorResource(id = R.color.text_secondary)
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    voicevoxSelectedCatalogEntry = entry
+                                    voicevoxModelMenuExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !voicevoxDownloading && !voicevoxInitializing,
+                    onClick = { downloadSelectedVoicevoxModel() }
+                ) {
+                    Text(if (voicevoxDownloading) "ダウンロード中..." else "選択したVVMをダウンロードして切替")
+                }
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { voicevoxModelPickerLauncher.launch(arrayOf("*/*")) }
+                ) {
+                    Text(".vvm を追加")
+                }
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = voicevoxState.modelExists,
+                    onClick = {
+                        (requireContext().applicationContext as MyApplication)
+                            .getVoicevoxManager()
+                            .release()
+                        val deleted = voicevoxModelFile().delete()
+                        toast(if (deleted) "音声モデルを削除しました" else "音声モデルの削除に失敗しました")
+                        voicevoxStyleMenuExpanded = false
+                        refreshVoicevoxState()
+                    }
+                ) {
+                    Text("音声モデルを削除")
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun VoicevoxRuntimeCard() {
+        Text(
+            text = "ランタイム",
+            style = MaterialTheme.typography.labelSmall,
+            color = colorResource(id = R.color.text_secondary),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = 8.dp)
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                VoicevoxStatusRow("arm64-v8a", voicevoxState.arm64RuntimeDetail)
+                VoicevoxStatusRow("x86_64", voicevoxState.x64RuntimeDetail)
+                VoicevoxStatusRow("辞書", voicevoxState.dictionaryDetail)
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = voicevoxState.dictionaryExists,
+                    onClick = {
+                        val deleted = voicevoxDictionaryDir().deleteRecursively()
+                        toast(if (deleted) "OpenJTalk辞書を削除しました" else "OpenJTalk辞書の削除に失敗しました")
+                        refreshVoicevoxState()
+                    }
+                ) {
+                    Text("辞書を削除")
+                }
+                Text(
+                    text = "16KB非対応のONNX RuntimeではAndroid 15以降の一部端末で読み込みに失敗します。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_secondary)
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun VoicevoxStatusRow(label: String, value: String) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = label,
+                color = colorResource(id = R.color.text_secondary),
+                style = MaterialTheme.typography.bodySmall
+            )
+            Text(
+                text = value,
+                color = colorResource(id = R.color.text_primary),
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+
     @Composable
     private fun TabButton(
         text: String,
@@ -2576,6 +2884,181 @@ open class ModelSettingsFragment : Fragment() {
             }
     }
 
+    private fun initializeVoicevoxFromSettings() {
+        voicevoxInitializing = true
+        viewLifecycleOwner.lifecycleScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                (requireContext().applicationContext as MyApplication)
+                    .getVoicevoxManager()
+                    .initialize()
+            }
+            voicevoxInitializing = false
+            refreshVoicevoxState()
+            toast(if (success) "VOICEVOXを初期化しました" else "VOICEVOXの初期化に失敗しました")
+        }
+    }
+
+    private fun downloadSelectedVoicevoxModel() {
+        val entry = voicevoxSelectedCatalogEntry
+        voicevoxDownloading = true
+        viewLifecycleOwner.lifecycleScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                (requireContext().applicationContext as MyApplication)
+                    .getVoicevoxManager()
+                    .downloadSelectedModel(entry)
+            }
+            voicevoxDownloading = false
+            voicevoxStyleMenuExpanded = false
+            refreshVoicevoxState()
+            toast(if (success) "${entry.fileName} に切り替えました" else "${entry.fileName} のダウンロードに失敗しました")
+        }
+    }
+
+    private fun refreshVoicevoxState() {
+        if (!isAdded) return
+        val model = voicevoxModelFile()
+        val dict = voicevoxDictionaryDir()
+        val arm64Runtime = File(requireContext().applicationInfo.nativeLibraryDir, "libvoicevox_onnxruntime.so")
+
+        val arm64Status = runtimeAlignmentStatus(arm64Runtime)
+        val x64Status = NativeRuntimeStatus("APK対象外", compatible = true)
+
+        val modelExists = model.isFile
+        val dictionaryExists = isValidVoicevoxDictionary(dict)
+        val runtimeExists = arm64Runtime.isFile
+        val runtimeCompatible = arm64Status.compatible
+        val manager = (requireContext().applicationContext as MyApplication).getVoicevoxManager()
+        val savedStyleId = manager.getSavedStyleId()
+        val selectedModelFileName = manager.getSelectedModelFileName()
+        voicevoxSelectedCatalogEntry = VoicevoxManager.modelCatalog.firstOrNull { it.fileName == selectedModelFileName }
+            ?: voicevoxSelectedCatalogEntry
+
+        voicevoxState = VoicevoxModelUiState(
+            modelExists = modelExists,
+            dictionaryExists = dictionaryExists,
+            selectedModelFileName = selectedModelFileName,
+            modelPath = model.absolutePath,
+            modelStatus = if (modelExists) "準備済み" else "未追加",
+            dictionaryStatus = if (dictionaryExists) "準備済み" else "未取得",
+            runtimeStatus = when {
+                !runtimeExists -> "未同梱"
+                runtimeCompatible -> "16KB対応"
+                else -> "16KB非対応"
+            },
+            modelDetail = if (modelExists) {
+                "$selectedModelFileName / ${model.name} / ${formatBytes(model.length())}"
+            } else {
+                "3.vvm などのVOICEVOX .vvmモデルを追加できます"
+            },
+            dictionaryDetail = if (dictionaryExists) {
+                dict.absolutePath
+            } else {
+                "初期化時にOpenJTalk辞書を取得します"
+            },
+            arm64RuntimeDetail = arm64Status.label,
+            x64RuntimeDetail = x64Status.label,
+            selectedStyleLabel = "styleId: $savedStyleId",
+            message = when {
+                !runtimeExists -> "libvoicevox_onnxruntime.so がAPKに含まれていません"
+                !runtimeCompatible -> "現在のONNX Runtimeは16KBページサイズ端末では読み込めません"
+                !modelExists || !dictionaryExists -> "不足ファイルは初期化時に取得されます"
+                else -> "読み上げモデルは利用可能です"
+            }
+        )
+
+        if (modelExists) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                val styles = withContext(Dispatchers.IO) {
+                    manager.getAvailableStyles()
+                }
+                if (!isAdded) return@launch
+                val currentStyleId = manager.getSavedStyleId()
+                val selected = styles.firstOrNull { it.styleId == currentStyleId }
+                    ?: styles.firstOrNull { it.styleId == VoicevoxManager.DEFAULT_STYLE_ID }
+                    ?: styles.firstOrNull()
+                if (selected != null && selected.styleId != currentStyleId) {
+                    manager.setSelectedStyleId(selected.styleId)
+                }
+                voicevoxState = voicevoxState.copy(
+                    styles = styles,
+                    selectedStyleLabel = selected?.displayName ?: "styleId: $currentStyleId"
+                )
+            }
+        }
+    }
+
+    private fun voicevoxModelFile(): File {
+        return File(requireContext().filesDir, "voicevox_model.vvm")
+    }
+
+    private fun voicevoxDictionaryDir(): File {
+        return File(requireContext().filesDir, "open_jtalk_dic_utf_8-1.11")
+    }
+
+    private fun isValidVoicevoxDictionary(dir: File): Boolean {
+        return dir.isDirectory &&
+            File(dir, "sys.dic").isFile &&
+            File(dir, "unk.dic").isFile &&
+            File(dir, "matrix.bin").isFile
+    }
+
+    private fun runtimeAlignmentStatus(file: File): NativeRuntimeStatus {
+        if (!file.isFile) return NativeRuntimeStatus("未同梱", compatible = false)
+        val aligns = readLoadAlignments(file)
+        if (aligns.isEmpty()) return NativeRuntimeStatus("確認不可", compatible = false)
+        val compatible = aligns.all { it >= 0x4000L && it % 0x4000L == 0L }
+        val alignText = aligns.joinToString { "0x${it.toString(16)}" }
+        return NativeRuntimeStatus(
+            label = if (compatible) "16KB対応 ($alignText)" else "16KB非対応 ($alignText)",
+            compatible = compatible
+        )
+    }
+
+    private fun readLoadAlignments(file: File): List<Long> {
+        val bytes = file.readBytes()
+        if (bytes.size < 64 ||
+            bytes[0] != 0x7f.toByte() ||
+            bytes[1] != 0x45.toByte() ||
+            bytes[2] != 0x4c.toByte() ||
+            bytes[3] != 0x46.toByte() ||
+            bytes[4] != 2.toByte() ||
+            bytes[5] != 1.toByte()
+        ) {
+            return emptyList()
+        }
+        val phoff = readU64Le(bytes, 32)
+        val phentsize = readU16Le(bytes, 54)
+        val phnum = readU16Le(bytes, 56)
+        val aligns = mutableListOf<Long>()
+        repeat(phnum) { index ->
+            val offset = (phoff + index * phentsize).toInt()
+            if (offset + 56 <= bytes.size && readU32Le(bytes, offset) == 1L) {
+                aligns += readU64Le(bytes, offset + 48)
+            }
+        }
+        return aligns
+    }
+
+    private fun readU16Le(bytes: ByteArray, offset: Int): Int {
+        return (bytes[offset].toInt() and 0xff) or
+            ((bytes[offset + 1].toInt() and 0xff) shl 8)
+    }
+
+    private fun readU32Le(bytes: ByteArray, offset: Int): Long {
+        return ((bytes[offset].toLong() and 0xffL) or
+            ((bytes[offset + 1].toLong() and 0xffL) shl 8) or
+            ((bytes[offset + 2].toLong() and 0xffL) shl 16) or
+            ((bytes[offset + 3].toLong() and 0xffL) shl 24))
+    }
+
+    private fun readU64Le(bytes: ByteArray, offset: Int): Long {
+        var result = 0L
+        for (i in 0 until 8) {
+            result = result or ((bytes[offset + i].toLong() and 0xffL) shl (8 * i))
+        }
+        return result
+    }
+
     private fun requestNotificationPermissionForDownload(model: ModelFileManager.LocalModel) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val granted = ContextCompat.checkSelfPermission(
@@ -2781,6 +3264,28 @@ open class ModelSettingsFragment : Fragment() {
                 0f
             }
     }
+
+    private data class VoicevoxModelUiState(
+        val modelExists: Boolean = false,
+        val dictionaryExists: Boolean = false,
+        val selectedModelFileName: String = "",
+        val modelPath: String = "",
+        val modelStatus: String = "未確認",
+        val dictionaryStatus: String = "未確認",
+        val runtimeStatus: String = "未確認",
+        val modelDetail: String = "確認中...",
+        val dictionaryDetail: String = "確認中...",
+        val arm64RuntimeDetail: String = "未確認",
+        val x64RuntimeDetail: String = "未確認",
+        val styles: List<VoicevoxManager.VoiceStyle> = emptyList(),
+        val selectedStyleLabel: String = "未選択",
+        val message: String? = null
+    )
+
+    private data class NativeRuntimeStatus(
+        val label: String,
+        val compatible: Boolean
+    )
 
     @Composable
     private fun NezumiComposeTheme(content: @Composable () -> Unit) {

@@ -2,8 +2,8 @@
 
 This project is licensed under your choice of either:
 
-- **Apache License 2.0** ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- **GNU General Public License v3.0** ([LICENSE-GPL](LICENSE-GPL) or https://www.gnu.org/licenses/gpl-3.0.html)
+- **Apache License 2.0** (http://www.apache.org/licenses/LICENSE-2.0)
+- **GNU General Public License v3.0** (https://www.gnu.org/licenses/gpl-3.0.html)
 
 You may use this software under the terms of either license.
 
@@ -27,7 +27,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 
-Full text: [LICENSE-APACHE](LICENSE-APACHE)
+Full text: http://www.apache.org/licenses/LICENSE-2.0
 
 ---
 
@@ -50,11 +50,12 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 ```
 
-Full text: [LICENSE-GPL](LICENSE-GPL)
+Full text: https://www.gnu.org/licenses/gpl-3.0.html
 
 ---
 
 ## Third-Party Dependencies
 
 This project uses various third-party libraries with their own licenses.
-See [app/src/main/assets/LICENSE.md](app/src/main/assets/LICENSE.md) for details.
+See [NOTICE](NOTICE) for third-party notices, bundled runtime notices, and model
+license references.

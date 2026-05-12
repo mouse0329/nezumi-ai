@@ -48,6 +48,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import com.nezumi_ai.MyApplication
+import com.nezumi_ai.voicevox.VoicevoxManager
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -66,6 +68,10 @@ class ChatViewModel(
     private val messageRepository: MessageRepository,
     private val settingsRepository: SettingsRepository
 ) : ViewModel() {
+    
+    private val voicevoxManager: VoicevoxManager by lazy {
+        (appContext.applicationContext as MyApplication).getVoicevoxManager()
+    }
     
     companion object {
         private const val TAG = "ChatViewModel"
@@ -126,6 +132,9 @@ class ChatViewModel(
     
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
+
+    private val _speakingMessageId = MutableStateFlow<Long?>(null)
+    val speakingMessageId: StateFlow<Long?> = _speakingMessageId.asStateFlow()
 
     private val _selectedModel = MutableStateFlow("Gemma4-2B")
     val selectedModel: StateFlow<String> = _selectedModel
@@ -2765,7 +2774,79 @@ class ChatViewModel(
             Log.w(TAG, "Failed to release WakeLock", e)
         }
     }
-    
+
+    fun synthesizeText(messageId: Long, text: String) {
+        if (_speakingMessageId.value != null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                _speakingMessageId.value = messageId
+                val audioData = voicevoxManager.synthesize(text)
+                if (audioData != null) {
+                    Log.d(TAG, "VOICEVOX synthesis succeeded: ${audioData.size} bytes")
+                    // Play audio
+                    playAudio(audioData)
+                } else {
+                    _uiMessage.emit("音声合成に失敗しました")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error synthesizing text", e)
+                _uiMessage.emit("音声合成エラー: ${e.message}")
+            } finally {
+                if (_speakingMessageId.value == messageId) {
+                    _speakingMessageId.value = null
+                }
+            }
+        }
+    }
+
+    private suspend fun playAudio(audioData: ByteArray) {
+        val tempFile = withContext(Dispatchers.IO) {
+            java.io.File.createTempFile("tts", ".wav", appContext.cacheDir).also { file ->
+                file.outputStream().use { it.write(audioData) }
+            }
+        }
+
+        withContext(Dispatchers.Main) {
+            var mediaPlayer: android.media.MediaPlayer? = null
+            var completed = false
+
+            fun cleanup() {
+                if (completed) return
+                completed = true
+                runCatching { mediaPlayer?.release() }
+                mediaPlayer = null
+                tempFile.delete()
+            }
+
+            try {
+                kotlinx.coroutines.suspendCancellableCoroutine<Unit> { continuation ->
+                    val player = android.media.MediaPlayer()
+                    mediaPlayer = player
+                    player.setOnCompletionListener(android.media.MediaPlayer.OnCompletionListener {
+                        cleanup()
+                        if (continuation.isActive) continuation.resume(Unit)
+                    })
+                    player.setOnErrorListener(android.media.MediaPlayer.OnErrorListener { _, what, extra ->
+                        Log.e(TAG, "MediaPlayer error during TTS playback: what=$what extra=$extra")
+                        cleanup()
+                        if (continuation.isActive) continuation.resume(Unit)
+                        true
+                    })
+                    continuation.invokeOnCancellation {
+                        cleanup()
+                    }
+                    player.setDataSource(tempFile.absolutePath)
+                    player.prepare()
+                    player.start()
+                    Log.d(TAG, "VOICEVOX playback started")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error playing audio", e)
+                cleanup()
+            }
+        }
+    }
+
     /**
      * ViewModel のライフサイクル終了時にリソースを完全解放する。
      * 特に KVキャッシュ（LiteRT-LM のセッション情報）の確実なアンロードを保証する。
@@ -2818,7 +2899,7 @@ class ChatViewModel(
             // viewModelScope キャンセルによる CancellationException もここで catch
             Log.e(TAG, "Exception during onCleared: ${e.message}", e)
         }
-        
+
         super.onCleared()
         Log.d(TAG, "ChatViewModel.onCleared() completed")
     }

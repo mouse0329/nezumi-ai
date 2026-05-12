@@ -328,6 +328,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     scheduleAutoScrollToBottom()
                 }
             },
+            onAiMessageSpeak = { message, generatedText ->
+                viewModel.synthesizeText(message.id, generatedText)
+            },
             lifecycleOwner = viewLifecycleOwner,
             viewModelStoreOwner = this
         )
@@ -623,6 +626,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 } else {
                     stopResponseTypingAnimation()
                 }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.speakingMessageId.collect { messageId ->
+                adapter.setSpeakingMessageId(messageId)
             }
         }
 

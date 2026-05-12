@@ -19,6 +19,15 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven {
+            url = uri(file("java_packages"))
+        }
+        flatDir {
+            dirs(file("java_packages"))
+        }
+        flatDir {
+            dirs(file("app/libs"))
+        }
     }
 }
 

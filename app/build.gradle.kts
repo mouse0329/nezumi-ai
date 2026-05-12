@@ -35,6 +35,7 @@ val hasReleaseSigning = !releaseStoreFilePath.isNullOrBlank() &&
 android {
     namespace = "com.nezumi_ai"
     compileSdk = 36
+    ndkVersion = "30.0.14904198"
 
     defaultConfig {
         applicationId = "com.nezumi_ai"
@@ -51,6 +52,12 @@ android {
 
         ndk {
             abiFilters.add("arm64-v8a")
+        }
+
+        externalNativeBuild {
+            cmake {
+                arguments.add("-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON")
+            }
         }
     }
 
@@ -115,12 +122,6 @@ android {
     }
 }
 
-repositories {
-    flatDir {
-        dirs("../../java_packages")
-    }
-}
-
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
@@ -175,7 +176,7 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.6.0")
 
     // VOICEVOX integration
-    implementation("jp.hiroshiba:voicevoxcore-android:0.16.4")
+    implementation(files("libs/voicevoxcore-android-0.16.4.aar"))
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
