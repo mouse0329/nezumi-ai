@@ -203,11 +203,12 @@ KEY_PASSWORD=your_key_password
 
 このプロジェクトは **デュアルライセンス** で公開されています。以下のいずれかを選択して使用できます：
 
-- **Apache License 2.0** - http://www.apache.org/licenses/LICENSE-2.0
-- **GNU General Public License v3.0** - https://www.gnu.org/licenses/gpl-3.0.html
+- **GNU Lesser General Public License v3.0 (LGPL v3)** - https://www.gnu.org/licenses/lgpl-3.0.html
+- **別途商用ライセンス** - mouse0329 に連絡して取得
 
 詳細は以下を参照してください：
-- [LICENSE.md](LICENSE.md) - プロジェクトライセンス（Apache 2.0 / GPLv3）
+- [LICENSE.md](LICENSE.md) - プロジェクトライセンス（LGPL v3 / 商用別ライセンス）
+- [LGPL_LICENSE](LGPL_LICENSE) - LGPL v3 の全文
 - [NOTICE](NOTICE) - 依存ライブラリ、バンドル済みランタイム、モデル関連のライセンス情報
 
 ### 主要な依存ライブラリ
