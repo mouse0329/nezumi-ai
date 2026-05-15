@@ -23,3 +23,9 @@ voicevox_android_report.md
 app/src/main/assets/voicevox/**
 !app/src/main/assets/voicevox/licenses/
 !app/src/main/assets/voicevox/licenses/**
+ 
+# desktop, shared, VSCode config
+desktop/build/
+desktop/bin/
+shared/build/
+.vscode/
