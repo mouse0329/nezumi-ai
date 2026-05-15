@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ネズミAI for Desktop — 計画書</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;700&family=JetBrains+Mono:wght@400;700&family=Bebas+Neue&display=swap');
+
+  :root {
+    --bg: #0a0a0a;
+    --surface: #111111;
+    --surface2: #181818;
+    --border: #222222;
+    --accent: #e8ff47;
+    --accent2: #47ffb8;
+    --accent3: #ff4747;
+    --text: #e8e8e8;
+    --text-dim: #666666;
+    --text-dimmer: #333333;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Sans JP', sans-serif;
+    font-weight: 300;
+    line-height: 1.7;
+    font-size: 14px;
+  }
+
+  /* noise overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  .page {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 80px 40px;
+  }
+
+  /* header */
+  .header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 48px;
+    margin-bottom: 64px;
+    position: relative;
+  }
+
+  .header-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 20px;
+  }
+
+  .header-meta span {
+    color: var(--accent);
+  }
+
+  h1 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(48px, 8vw, 80px);
+    letter-spacing: 0.04em;
+    line-height: 1;
+    color: var(--text);
+  }
+
+  h1 em {
+    color: var(--accent);
+    font-style: normal;
+  }
+
+  .header-sub {
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* section */
+  .section {
+    margin-bottom: 56px;
+  }
+
+  .section-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--accent);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  h2 {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    color: var(--text);
+  }
+
+  h3 {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent2);
+    margin-bottom: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.05em;
+  }
+
+  p {
+    color: #aaaaaa;
+    margin-bottom: 12px;
+    font-size: 13.5px;
+  }
+
+  /* module layout */
+  .module-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    margin-top: 8px;
+  }
+
+  .module-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 20px;
+  }
+
+  .module-card.full {
+    grid-column: 1 / -1;
+  }
+
+  .module-card.highlight {
+    border-color: var(--accent);
+    background: #111a00;
+  }
+
+  .module-badge {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    padding: 2px 7px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  .badge-common { background: var(--accent); color: #000; }
+  .badge-android { background: #3ddc84; color: #000; }
+  .badge-desktop { background: #47b8ff; color: #000; }
+  .badge-shared { background: #aa47ff; color: #fff; }
+
+  .module-card ul {
+    list-style: none;
+    margin-top: 8px;
+  }
+
+  .module-card ul li {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #888;
+    padding: 3px 0;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .module-card ul li:last-child { border-bottom: none; }
+
+  .module-card ul li::before {
+    content: '—';
+    color: var(--text-dimmer);
+    flex-shrink: 0;
+  }
+
+  /* table */
+  .table-wrap {
+    overflow-x: auto;
+    margin-top: 8px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+  }
+
+  th {
+    text-align: left;
+    padding: 10px 14px;
+    background: var(--surface2);
+    color: var(--text-dim);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+  }
+
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    color: #999;
+    vertical-align: top;
+  }
+
+  tr:last-child td { border-bottom: none; }
+
+  td.label { color: var(--text); font-weight: 700; }
+  td.yes { color: var(--accent2); }
+  td.no { color: var(--text-dimmer); }
+  td.warn { color: var(--accent); }
+
+  /* code block */
+  .code-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    padding: 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #ccc;
+    line-height: 1.8;
+    overflow-x: auto;
+    margin-top: 8px;
+  }
+
+  .code-block .comment { color: var(--text-dimmer); }
+  .code-block .keyword { color: var(--accent); }
+  .code-block .type { color: var(--accent2); }
+  .code-block .string { color: #ff9d47; }
+
+  /* phase timeline */
+  .timeline {
+    margin-top: 8px;
+    position: relative;
+  }
+
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 15px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border);
+  }
+
+  .phase {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 32px;
+    position: relative;
+  }
+
+  .phase-dot {
+    width: 31px;
+    height: 31px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 15px;
+    color: var(--accent);
+    position: relative;
+    z-index: 1;
+  }
+
+  .phase.active .phase-dot {
+    background: var(--accent);
+    color: #000;
+    border-color: var(--accent);
+  }
+
+  .phase-content { flex: 1; }
+
+  .phase-title {
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 6px;
+    font-size: 14px;
+  }
+
+  .phase-items {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 2;
+  }
+
+  .phase-tag {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    padding: 1px 6px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    letter-spacing: 0.1em;
+  }
+
+  /* risk */
+  .risk-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 8px;
+  }
+
+  .risk-item {
+    display: grid;
+    grid-template-columns: 120px 1fr 80px;
+    gap: 2px;
+  }
+
+  .risk-cell {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 12px 16px;
+    font-size: 12px;
+  }
+
+  .risk-cell.name { color: var(--text); font-family: 'JetBrains Mono', monospace; }
+  .risk-cell.desc { color: #888; }
+  .risk-cell.level {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .risk-high { color: var(--accent3); border-color: #3a1111; background: #1a0a0a; }
+  .risk-mid { color: var(--accent); border-color: #2a2200; background: #141000; }
+  .risk-low { color: var(--accent2); border-color: #002a1a; background: #0a1410; }
+
+  /* footer */
+  .footer {
+    border-top: 1px solid var(--border);
+    padding-top: 32px;
+    margin-top: 80px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dimmer);
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <div class="header-meta">ネズミソフト / <span>INTERNAL PLANNING DOC</span> / v0.1</div>
+    <h1>ネズミAI<br><em>for Desktop</em></h1>
+    <div class="header-sub">Kotlin Multiplatform + Compose Desktop — 設計・開発計画書</div>
+  </div>
+
+  <!-- 概要 -->
+  <div class="section">
+    <div class="section-label">01 — Overview</div>
+    <p>
+      既存ネズミAI Androidコードベースを Kotlin Multiplatform (KMP) に移行し、
+      Compose Desktop (JVM) でWindows/macOS/Linux向けデスクトップアプリを提供する。
+      コード共有率最大化・推論バックエンド統一・UIロジック共有を原則とする。
+    </p>
+    <p>
+      LiteRT-LM の <code style="font-family:'JetBrains Mono',monospace;color:var(--accent2)">litertlm-jvm</code> パッケージにより、
+      Android/Desktop間でオンデバイス推論コードをほぼ共有できる。
+    </p>
+  </div>
+
+  <!-- モジュール構成 -->
+  <div class="section">
+    <div class="section-label">02 — Module Structure</div>
+
+    <div class="code-block">
+<span class="comment">// プロジェクト構成</span>
+nezumiai/
+├── <span class="type">app/</span>              <span class="comment">// Android thin shell</span>
+├── <span class="type">desktop/</span>          <span class="comment">// Compose Desktop entry point</span>
+└── <span class="type">shared/</span>
+    ├── <span class="type">commonMain/</span>   <span class="comment">// ほぼ全ロジック + UI</span>
+    ├── <span class="type">androidMain/</span>  <span class="comment">// Android固有</span>
+    └── <span class="type">desktopMain/</span>  <span class="comment">// JVM固有</span>
+    </div>
+
+    <br>
+    <div class="module-grid">
+      <div class="module-card highlight full">
+        <span class="module-badge badge-common">commonMain</span>
+        <ul>
+          <li>ViewModel / Repository 全層</li>
+          <li>Anthropic / Gemini / OpenAI APIクライアント</li>
+          <li>SwitchBot HTTP API</li>
+          <li>ツール定義（アラーム除く）</li>
+          <li>チャット履歴 (SQLDelight)</li>
+          <li>コンテキスト圧縮ロジック</li>
+          <li>VOICEVOX HTTP クライアント</li>
+          <li>InferenceBackend 抽象インターフェース</li>
+          <li>Compose UI（大部分）</li>
+        </ul>
+      </div>
+
+      <div class="module-card">
+        <span class="module-badge badge-android">androidMain</span>
+        <ul>
+          <li>litertlm-android</li>
+          <li>アラーム / カレンダー / Gmail</li>
+          <li>NotificationManager</li>
+          <li>Porcupine ウェイクワード</li>
+          <li>sd.cpp JNI (Android ABI)</li>
+          <li>FLAG_SECURE</li>
+        </ul>
+      </div>
+
+      <div class="module-card">
+        <span class="module-badge badge-desktop">desktopMain</span>
+        <ul>
+          <li>litertlm-jvm</li>
+          <li>OS通知 (JVM / AWT)</li>
+          <li>ファイルシステムアクセス</li>
+          <li>sd.cpp JNI (x64/ARM64)</li>
+          <li>ウィンドウ管理</li>
+          <li>ホットキー / トレイアイコン</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 推論バックエンド -->
+  <div class="section">
+    <div class="section-label">03 — Inference Backend</div>
+
+    <div class="code-block">
+<span class="comment">// commonMain</span>
+<span class="keyword">interface</span> <span class="type">InferenceBackend</span> {
+    <span class="keyword">suspend fun</span> generate(prompt: <span class="type">String</span>): Flow&lt;<span class="type">String</span>&gt;
+    <span class="keyword">suspend fun</span> load(modelPath: <span class="type">String</span>)
+    <span class="keyword">fun</span> unload()
+}
+
+<span class="comment">// androidMain + desktopMain — API同一なので抽象クラスで共有</span>
+<span class="keyword">class</span> <span class="type">LiteRTBackend</span>(config: <span class="type">EngineConfig</span>) : <span class="type">InferenceBackend</span> {
+    <span class="comment">// litertlm-android / litertlm-jvm どちらも同一Kotlin API</span>
+}
+
+<span class="keyword">class</span> <span class="type">GGUFBackend</span> : <span class="type">InferenceBackend</span>   <span class="comment">// expect/actual でJNI呼び出し</span>
+<span class="keyword">class</span> <span class="type">ApiBackend</span>  : <span class="type">InferenceBackend</span>   <span class="comment">// commonMain — Anthropic/Gemini</span>
+    </div>
+
+    <p style="margin-top:0.75rem;font-size:0.92rem;line-height:1.55;opacity:0.92;">
+      <strong>実装メモ（Compose Desktop 現行）</strong>：
+      <code style="font-family:'JetBrains Mono',monospace;">DesktopLlmServices.llamaEngine</code>
+      を設定画面とチャットで共有する。<code>LlamaCppEngine</code> を ViewModel ごとに new すると、設定でロードした GGUF がチャット側に届かない。
+      モデルロード前はエラーハンドリングで適切なメッセージを表示し、ユーザーに設定画面からモデルをロードするよう促す。
+    </p>
+
+    <br>
+    <div class="table-wrap">
+      <table>
+        <tr>
+          <th>バックエンド</th>
+          <th>commonMain</th>
+          <th>androidMain</th>
+          <th>desktopMain</th>
+          <th>備考</th>
+        </tr>
+        <tr>
+          <td class="label">LiteRT-LM</td>
+          <td class="yes">抽象 ◎</td>
+          <td class="yes">litertlm-android</td>
+          <td class="yes">litertlm-jvm</td>
+          <td>API完全同一</td>
+        </tr>
+        <tr>
+          <td class="label">GGUF (llama.cpp)</td>
+          <td class="yes">抽象 ◎</td>
+          <td class="yes">JNI</td>
+          <td class="yes">JNI 別ビルド</td>
+          <td>expect/actual</td>
+        </tr>
+        <tr>
+          <td class="label">Anthropic API</td>
+          <td class="yes">◎</td>
+          <td class="no">—</td>
+          <td class="no">—</td>
+          <td>HTTP共通</td>
+        </tr>
+        <tr>
+          <td class="label">Gemini API</td>
+          <td class="yes">◎</td>
+          <td class="no">—</td>
+          <td class="no">—</td>
+          <td>HTTP共通</td>
+        </tr>
+        <tr>
+          <td class="label">sd.cpp</td>
+          <td class="no">—</td>
+          <td class="warn">JNI</td>
+          <td class="warn">JNI 別ビルド</td>
+          <td>画像生成</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- メモリ・パフォーマンス -->
+  <div class="section">
+    <div class="section-label">04 — Performance</div>
+
+    <div class="table-wrap">
+      <table>
+        <tr>
+          <th>項目</th>
+          <th>Android (ART)</th>
+          <th>Desktop (JVM)</th>
+          <th>評価</th>
+        </tr>
+        <tr>
+          <td class="label">推論メモリ (Gemma 4 2B int4)</td>
+          <td>~1.5 GB</td>
+          <td>~1.5 GB</td>
+          <td class="yes">同等</td>
+        </tr>
+        <tr>
+          <td class="label">ランタイムオーバーヘッド</td>
+          <td>~50 MB (ART)</td>
+          <td>~300 MB (JVM)</td>
+          <td class="warn">誤差レベル</td>
+        </tr>
+        <tr>
+          <td class="label">起動時間</td>
+          <td>—</td>
+          <td>JVM+モデルロードで数秒</td>
+          <td class="warn">許容範囲</td>
+        </tr>
+        <tr>
+          <td class="label">配布サイズ</td>
+          <td>APK ~50MB</td>
+          <td>jpackage ~80MB+</td>
+          <td class="warn">jpackage最適化で削減可</td>
+        </tr>
+        <tr>
+          <td class="label">GPU加速 (LiteRT)</td>
+          <td>OpenCL / OpenGL</td>
+          <td>OpenCL / WebGPU</td>
+          <td class="yes">両対応</td>
+        </tr>
+        <tr>
+          <td class="label">Electron比</td>
+          <td>—</td>
+          <td>メモリ1/3以下</td>
+          <td class="yes">圧勝</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- 開発フェーズ -->
+  <div class="section">
+    <div class="section-label">05 — Phases</div>
+    <div class="timeline">
+
+      <div class="phase active">
+        <div class="phase-dot">1</div>
+        <div class="phase-content">
+          <div class="phase-tag">FOUNDATION</div>
+          <div class="phase-title">KMP マルチモジュール化</div>
+          <div class="phase-items">
+            既存Androidプロジェクトをshared/app/desktopに分割<br>
+            build.gradle.kts KMP設定<br>
+            SQLDelight → commonMain移行<br>
+            Kotlinx Coroutines / Serialization 共通化
+          </div>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-dot">2</div>
+        <div class="phase-content">
+          <div class="phase-tag">INFERENCE</div>
+          <div class="phase-title">推論バックエンド抽象化</div>
+          <div class="phase-items">
+            InferenceBackend interface 定義<br>
+            LiteRTBackend commonMain実装<br>
+            ApiBackend (Anthropic/Gemini) 移行<br>
+            desktopMainにlitertlm-jvm接続
+          </div>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-dot">3</div>
+        <div class="phase-content">
+          <div class="phase-tag">UI</div>
+          <div class="phase-title">Compose UI 共通化</div>
+          <div class="phase-items">
+            チャット画面 → commonMain<br>
+            設定画面 → commonMain<br>
+            Desktop用ウィンドウ/トレイ実装<br>
+            Android固有UI分離
+          </div>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-dot">4</div>
+        <div class="phase-content">
+          <div class="phase-tag">TOOLS</div>
+          <div class="phase-title">ツール・エージェント移行</div>
+          <div class="phase-items">
+            ツール定義全体をcommonMainへ<br>
+            アラーム/カレンダー → androidMain expect/actual<br>
+            Desktop向け代替ツール実装<br>
+            VOICEVOX HTTPクライアント共通化
+          </div>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-dot">5</div>
+        <div class="phase-content">
+          <div class="phase-tag">DISTRIBUTION</div>
+          <div class="phase-title">パッケージング・配布</div>
+          <div class="phase-items">
+            jpackage でインストーラ生成<br>
+            JRE最小化 (jlink)<br>
+            Windows (.msi) / macOS (.dmg) / Linux (.deb)<br>
+            GitHub Actions CI
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- リスク -->
+  <div class="section">
+    <div class="section-label">06 — Risks</div>
+    <div class="risk-list">
+      <div class="risk-item">
+        <div class="risk-cell name">JNIビルド</div>
+        <div class="risk-cell desc">sd.cpp / llama.cpp のWindows向けクロスコンパイル。CMake設定が別途必要。</div>
+        <div class="risk-cell level risk-mid">MID</div>
+      </div>
+      <div class="risk-item">
+        <div class="risk-cell name">Compose互換</div>
+        <div class="risk-cell desc">Android Compose APIとDesktop Compose APIの差異。一部コンポーネントがplatform固有。</div>
+        <div class="risk-cell level risk-mid">MID</div>
+      </div>
+      <div class="risk-item">
+        <div class="risk-cell name">アラームツール</div>
+        <div class="risk-cell desc">Desktopでのアラーム実装はOS依存。Windows Task Scheduler or Kotlinタイマー。</div>
+        <div class="risk-cell level risk-low">LOW</div>
+      </div>
+      <div class="risk-item">
+        <div class="risk-cell name">litertlm-jvm GPU</div>
+        <div class="risk-cell desc">WindowsでのOpenCL対応はドライバ依存。フォールバックCPUは確実に動作。</div>
+        <div class="risk-cell level risk-low">LOW</div>
+      </div>
+      <div class="risk-item">
+        <div class="risk-cell name">配布サイズ</div>
+        <div class="risk-cell desc">JRE同梱で肥大化。jlinkで使用モジュールのみに絞ることで緩和可能。</div>
+        <div class="risk-cell level risk-low">LOW</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 依存関係 -->
+  <div class="section">
+    <div class="section-label">07 — Key Dependencies</div>
+    <div class="table-wrap">
+      <table>
+        <tr>
+          <th>ライブラリ</th>
+          <th>用途</th>
+          <th>対象</th>
+        </tr>
+        <tr>
+          <td class="label">litertlm-android</td>
+          <td>LiteRT-LM推論</td>
+          <td>androidMain</td>
+        </tr>
+        <tr>
+          <td class="label">litertlm-jvm</td>
+          <td>LiteRT-LM推論 (Windows/Linux/mac)</td>
+          <td>desktopMain</td>
+        </tr>
+        <tr>
+          <td class="label">SQLDelight</td>
+          <td>チャット履歴DB</td>
+          <td>commonMain</td>
+        </tr>
+        <tr>
+          <td class="label">Ktor Client</td>
+          <td>HTTP (API/VOICEVOX/SwitchBot)</td>
+          <td>commonMain</td>
+        </tr>
+        <tr>
+          <td class="label">Compose Multiplatform</td>
+          <td>UI</td>
+          <td>commonMain</td>
+        </tr>
+        <tr>
+          <td class="label">kotlinx.coroutines</td>
+          <td>非同期処理</td>
+          <td>commonMain</td>
+        </tr>
+        <tr>
+          <td class="label">kotlinx.serialization</td>
+          <td>JSON</td>
+          <td>commonMain</td>
+        </tr>
+        <tr>
+          <td class="label">io.github.ljcamargo:llamacpp-kotlin</td>
+          <td>GGUF推論</td>
+          <td>android/desktop</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>ネズミソフト — 内部ドキュメント</span>
+    <span>ネズミAI for Desktop / KMP計画書 v0.1</span>
+  </div>
+
+</div>
+</body>
+</html>
