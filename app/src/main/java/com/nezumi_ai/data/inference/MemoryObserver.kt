@@ -11,9 +11,9 @@ private const val BYTES_IN_GB = 1024f * 1024 * 1024
 
 /**
  * メモリ使用状況をリアルタイムで監視し、段階的に対応するクラス。
- * - 85%: 警告、gc() 促進
- * - 90%: キャッシュ削減提案
- * - 95%+: 推論中断、エラー返却
+ * - <70%: 正常（緑）
+ * - 70-85%: 注意（黄）、gc() 促進
+ * - 85%+: 危険（赤）、推論中断推奨
  *
  * また、モデルロード前に必要なデバイスメモリをチェック（Gallery アプローチ）
  */
@@ -30,16 +30,14 @@ object MemoryObserver {
     )
     
     // メモリ段階のしきい値（％）
-    private const val MEMORY_LEVEL_WARNING = 85
-    private const val MEMORY_LEVEL_CRITICAL = 90
-    private const val MEMORY_LEVEL_SEVERE = 95
+    private const val MEMORY_LEVEL_WARNING = 70
+    private const val MEMORY_LEVEL_SEVERE = 85
     
     // メモリ段階
     enum class MemoryLevel {
-        NORMAL,      // 0-85%
-        WARNING,     // 85-90%: gc() を促進
-        CRITICAL,    // 90-95%: キャッシュ削減
-        SEVERE       // 95%+: 推論中断
+        NORMAL,      // 0-70%: 正常
+        WARNING,     // 70-85%: 注意、gc() を促進
+        SEVERE       // 85%+: 危険、推論中断推奨
     }
     
     data class MemoryStatus(
@@ -75,7 +73,6 @@ object MemoryObserver {
             
             val level = when {
                 usedPercent >= MEMORY_LEVEL_SEVERE -> MemoryLevel.SEVERE
-                usedPercent >= MEMORY_LEVEL_CRITICAL -> MemoryLevel.CRITICAL
                 usedPercent >= MEMORY_LEVEL_WARNING -> MemoryLevel.WARNING
                 else -> MemoryLevel.NORMAL
             }
@@ -164,13 +161,6 @@ object MemoryObserver {
             MemoryLevel.WARNING -> {
                 Log.w(TAG, "Memory: ${status.usedPercent}% - WARNING. Suggesting gc()")
                 triggerGarbageCollection()
-                true
-            }
-            MemoryLevel.CRITICAL -> {
-                Log.w(TAG, "Memory: ${status.usedPercent}% - CRITICAL. Cache reduction recommended")
-                triggerGarbageCollection()
-                // キャッシュ削減を実行
-                CacheManager.cleanupCacheIfNeeded(context)
                 true
             }
             MemoryLevel.SEVERE -> {
@@ -275,5 +265,38 @@ object MemoryObserver {
             Log.w(TAG, "isMemoryLow: Unable to determine - activityManager=$activityManager minMemory=$minDeviceMemoryInGb")
             false  // 判定不可の場合は進める
         }
+    }
+
+    /**
+     * モデルファイルサイズから必要なメモリを推定してメモリ不足を検知
+     * @param modelFileSizeBytes モデルファイルのサイズ（バイト）
+     * @return true: メモリが不足している / false: メモリが十分
+     */
+    fun isMemoryLowForFileSize(context: Context, modelFileSizeBytes: Long): Boolean {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            ?: return false
+
+        val memInfo = ActivityManager.MemoryInfo()
+        activityManager.getMemoryInfo(memInfo)
+
+        // デバイスの総メモリ（GB）
+        var deviceMemInGb = memInfo.totalMem / BYTES_IN_GB
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            deviceMemInGb = memInfo.advertisedMem / BYTES_IN_GB
+        }
+
+        // モデルファイルサイズから必要メモリを推定
+        // 経験則: モデルファイルサイズの約2.5倍のRAMが必要
+        // （モデルロード + KVキャッシュ + 推論バッファ）
+        val modelFileSizeGb = modelFileSizeBytes / BYTES_IN_GB
+        val estimatedRequiredMemGb = modelFileSizeGb * 2.5f
+
+        Log.d(
+            TAG,
+            "isMemoryLowForFileSize: modelFileSize=${modelFileSizeGb}GB estimatedRequired=${estimatedRequiredMemGb}GB deviceMem=${deviceMemInGb}GB"
+        )
+
+        // 推定必要メモリがデバイスメモリの80%を超える場合は警告
+        return estimatedRequiredMemGb > (deviceMemInGb * 0.8f)
     }
 }
