@@ -27,9 +27,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -53,7 +55,6 @@ import androidx.navigation.fragment.findNavController
 import androidx.navigation.navOptions
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import android.app.AlertDialog
 import android.app.ActivityManager
 import android.content.Context
 import com.nezumi_ai.R
@@ -64,6 +65,7 @@ import com.nezumi_ai.data.repository.ChatSessionRepository
 import com.nezumi_ai.data.repository.MessageRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.utils.PreferencesHelper
+import com.nezumi_ai.data.inference.MemoryObserver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -81,6 +83,22 @@ class SetupWizardFragment : Fragment() {
     private var isCompleting by mutableStateOf(false)
 
     private val modelStates = mutableStateMapOf<ModelFileManager.LocalModel, DownloadUiState>()
+    
+    // ダウンロード警告ダイアログ用
+    private var showDownloadWarning by mutableStateOf(false)
+    private var downloadWarningModelName by mutableStateOf("")
+    private var downloadWarningModel: ModelFileManager.LocalModel? = null
+    private var downloadWarningSystemMemInfo: MemoryObserver.SystemMemoryInfo? = null
+    private var downloadWarningIsMemoryLow by mutableStateOf(false)
+    private var downloadWarningIsStorageLow by mutableStateOf(false)
+    private var downloadWarningAvailableStorageGB by mutableStateOf(0f)
+    private var downloadWarningRequiredStorageGB by mutableStateOf(0f)
+    
+    // チャット開始時メモリ警告ダイアログ用
+    private var showChatMemoryWarning by mutableStateOf(false)
+    private var chatWarningModelName by mutableStateOf("")
+    private var chatWarningSystemMemInfo: MemoryObserver.SystemMemoryInfo? = null
+    private var pendingSkipModelSelection by mutableStateOf(false)
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
@@ -182,6 +200,188 @@ class SetupWizardFragment : Fragment() {
                 }
             }
         }
+        
+        if (showDownloadWarning && downloadWarningModel != null) {
+            DownloadWarningDialog(
+                modelName = downloadWarningModelName,
+                systemMemInfo = downloadWarningSystemMemInfo,
+                isMemoryLow = downloadWarningIsMemoryLow,
+                isStorageLow = downloadWarningIsStorageLow,
+                availableStorageGB = downloadWarningAvailableStorageGB,
+                requiredStorageGB = downloadWarningRequiredStorageGB,
+                onDownload = {
+                    showDownloadWarning = false
+                    val enqueued = ModelDownloadWorker.enqueue(requireContext(), downloadWarningModel!!)
+                    if (!enqueued) {
+                        toast("すでにダウンロード中です")
+                    }
+                },
+                onCancel = {
+                    showDownloadWarning = false
+                }
+            )
+        }
+        
+        if (showChatMemoryWarning && chatWarningSystemMemInfo != null) {
+            ChatMemoryWarningDialog(
+                modelName = chatWarningModelName,
+                systemMemInfo = chatWarningSystemMemInfo!!,
+                onContinue = {
+                    showChatMemoryWarning = false
+                    executeCompleteSetup(pendingSkipModelSelection)
+                },
+                onCancel = {
+                    showChatMemoryWarning = false
+                    isCompleting = false
+                }
+            )
+        }
+    }
+    
+    @Composable
+    private fun ChatMemoryWarningDialog(
+        modelName: String,
+        systemMemInfo: MemoryObserver.SystemMemoryInfo,
+        onContinue: () -> Unit,
+        onCancel: () -> Unit
+    ) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = onCancel,
+            title = {
+                Text("⚠️ メモリ警告")
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("モデル「$modelName」は高メモリ使用率になる可能性があります。")
+                    Divider()
+                    Text(
+                        text = "━━━ デバイスメモリ ━━━",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    Text(
+                        "スマホ本体: ${systemMemInfo.usedMemoryMB}MB / ${systemMemInfo.totalMemoryMB}MB",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        "使用率: ${systemMemInfo.usedPercent}%",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    
+                    // 新しい閾値に基づいて色分け表示
+                    val statusColor = when {
+                        systemMemInfo.usedPercent < 70 -> MaterialTheme.colorScheme.primary  // 緑：正常
+                        systemMemInfo.usedPercent < 85 -> MaterialTheme.colorScheme.secondary  // 黄：注意
+                        else -> MaterialTheme.colorScheme.error  // 赤：危険
+                    }
+                    
+                    val statusText = when {
+                        systemMemInfo.usedPercent < 70 -> "✓ 正常"
+                        systemMemInfo.usedPercent < 85 -> "⚠️ 注意"
+                        else -> "🔴 危険"
+                    }
+                    
+                    Text(
+                        statusText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = statusColor
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = onContinue) {
+                    Text("続行")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onCancel) {
+                    Text("キャンセル")
+                }
+            }
+        )
+    }
+
+    @Composable
+    private fun DownloadWarningDialog(
+        modelName: String,
+        systemMemInfo: MemoryObserver.SystemMemoryInfo?,
+        isMemoryLow: Boolean,
+        isStorageLow: Boolean,
+        availableStorageGB: Float,
+        requiredStorageGB: Float,
+        onDownload: () -> Unit,
+        onCancel: () -> Unit
+    ) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = onCancel,
+            title = {
+                Text("⚠️ ${if (isMemoryLow && isStorageLow) "メモリ・ストレージ警告" else if (isMemoryLow) "メモリ警告" else "ストレージ警告"}")
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (isMemoryLow && isStorageLow) {
+                        Text("モデル「$modelName」のダウンロードは高メモリ使用率になり、ストレージも不足しています。")
+                    } else if (isMemoryLow) {
+                        Text("モデル「$modelName」のダウンロードは高メモリ使用率になる可能性があります。")
+                    } else {
+                        Text("モデル「$modelName」のダウンロードに必要なストレージが不足しています。")
+                    }
+                    
+                    if (isMemoryLow && systemMemInfo != null) {
+                        Divider()
+                        Text(
+                            text = "━━━ デバイスメモリ ━━━",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Text(
+                            "スマホ本体: ${systemMemInfo.usedMemoryMB}MB / ${systemMemInfo.totalMemoryMB}MB",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            "使用率: ${systemMemInfo.usedPercent}%",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            if (systemMemInfo.lowMemoryFlag) "⚠️ デバイスがメモリ不足状態です" else "✓ 正常",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (systemMemInfo.lowMemoryFlag) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    
+                    if (isStorageLow) {
+                        Divider()
+                        Text(
+                            text = "━━━ ストレージ ━━━",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Text(
+                            "利用可能: ${String.format(Locale.US, "%.2f", availableStorageGB)}GB",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            "必要容量: ${String.format(Locale.US, "%.2f", requiredStorageGB)}GB",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = onDownload,
+                    enabled = !isStorageLow
+                ) {
+                    Text(if (isStorageLow) "容量不足" else "ダウンロード")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onCancel) {
+                    Text("キャンセル")
+                }
+            }
+        )
     }
 
     @Composable
@@ -346,6 +546,16 @@ class SetupWizardFragment : Fragment() {
         builtinModelOptions().forEach { option ->
             val state = modelStates[option.model] ?: DownloadUiState()
             val selected = selectedModel == option.settingValue
+            val sizeBytes = getModelSizeBytes(option.model)
+            val isMemoryLow = state.isDownloaded && MemoryObserver.isMemoryLowForFileSize(requireContext(), sizeBytes)
+            
+            val resourceCheck = if (!state.isDownloaded) {
+                ModelFileManager.checkDownloadResources(requireContext(), sizeBytes)
+            } else {
+                ModelFileManager.ResourceCheckResult(false, false, 0f, 0f, null)
+            }
+            val isStorageLow = resourceCheck.isStorageLow
+            
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -381,14 +591,33 @@ class SetupWizardFragment : Fragment() {
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
-                        Text(
-                            text = when {
-                                state.isDownloaded -> "準備OK"
-                                state.isDownloading -> "取得中"
-                                else -> "未取得"
-                            },
-                            color = if (state.isDownloaded) accent else textSecondary
-                        )
+                        Column(
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = when {
+                                    state.isDownloaded -> "準備OK"
+                                    state.isDownloading -> "取得中"
+                                    else -> "未取得"
+                                },
+                                color = if (state.isDownloaded) accent else textSecondary
+                            )
+                            if (isMemoryLow) {
+                                Text(
+                                    text = "⚠️ メモリ不足",
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                            if (isStorageLow) {
+                                Text(
+                                    text = "⚠️ ストレージ不足",
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                        }
                     }
 
                     if (state.isDownloading) {
@@ -407,9 +636,9 @@ class SetupWizardFragment : Fragment() {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(
                                 onClick = { requestNotificationPermissionForDownload(option.model) },
-                                enabled = !state.isDownloading
+                                enabled = !state.isDownloading && !isStorageLow
                             ) {
-                                Text(if (state.isDownloading) "ダウンロード中" else "ダウンロード")
+                                Text(if (state.isDownloading) "ダウンロード中" else if (isStorageLow) "容量不足" else "ダウンロード")
                             }
                             TextButton(onClick = { selectedModel = null }) {
                                 Text("選択解除")
@@ -521,46 +750,28 @@ class SetupWizardFragment : Fragment() {
         val modelName = when (model) {
             ModelFileManager.LocalModel.GEMMA4_2B -> "Gemma 4 2B"
             ModelFileManager.LocalModel.GEMMA4_4B -> "Gemma 4 4B"
-            else -> "モデル"
+            ModelFileManager.LocalModel.GEMMA3N_2B -> "Gemma 3N 2B"
+            ModelFileManager.LocalModel.GEMMA3N_4B -> "Gemma 3N 4B"
         }
         
-        // システムメモリ情報を取得
-        val systemMemInfo = com.nezumi_ai.data.inference.MemoryObserver.getSystemMemoryInfo(requireContext())
+        val sizeBytes = getModelSizeBytes(model)
+        val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), sizeBytes)
         
-        // アプリメモリ情報を取得
-        val runtime = Runtime.getRuntime()
-        val appUsedMemory = runtime.totalMemory() - runtime.freeMemory()
-        val appMaxMemory = runtime.maxMemory()
-        val appUsedMB = appUsedMemory / (1024 * 1024)
-        val appMaxMB = appMaxMemory / (1024 * 1024)
-        val appUsedPercent = if (appMaxMemory > 0) {
-            ((appUsedMemory * 100) / appMaxMemory).toInt()
+        if (resourceCheck.isMemoryLow || resourceCheck.isStorageLow) {
+            downloadWarningModelName = modelName
+            downloadWarningModel = model
+            downloadWarningSystemMemInfo = resourceCheck.systemMemoryInfo
+            downloadWarningIsMemoryLow = resourceCheck.isMemoryLow
+            downloadWarningIsStorageLow = resourceCheck.isStorageLow
+            downloadWarningAvailableStorageGB = resourceCheck.availableStorageGB
+            downloadWarningRequiredStorageGB = resourceCheck.requiredStorageGB
+            showDownloadWarning = true
         } else {
-            0
-        }
-        
-        val alertDialog = androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle("⚠️ メモリ警告")
-            .setMessage(
-                "モデル「$modelName」のダウンロードは高メモリ使用率になる可能性があります。\n\n" +
-                "━━━ デバイスメモリ ━━━\n" +
-                "スマホ本体: ${systemMemInfo.usedMemoryMB}MB / ${systemMemInfo.totalMemoryMB}MB\n" +
-                "使用率: ${systemMemInfo.usedPercent}%\n" +
-                "${if (systemMemInfo.lowMemoryFlag) "⚠️ デバイスがメモリ不足状態です" else "✓ 正常"}\n\n" +
-                "━━━ アプリメモリ ━━━\n" +
-                "現在: ${appUsedMB}MB / ${appMaxMB}MB (${appUsedPercent}%)\n\n" +
-                "ダウンロードを続行しますか？"
-            )
-            .setPositiveButton("ダウンロード") { _, _ ->
-                val enqueued = ModelDownloadWorker.enqueue(requireContext(), model)
-                if (!enqueued) {
-                    toast("すでにダウンロード中です")
-                }
+            val enqueued = ModelDownloadWorker.enqueue(requireContext(), model)
+            if (!enqueued) {
+                toast("すでにダウンロード中です")
             }
-            .setNegativeButton("キャンセル", null)
-            .setCancelable(false)
-            .create()
-        alertDialog.show()
+        }
     }
 
     private fun observeDownloadWork() {
@@ -646,6 +857,35 @@ class SetupWizardFragment : Fragment() {
             return
         }
 
+        val modelToCheck = if (skipModelSelection) {
+            selectedModel?.takeIf { model ->
+                builtinModelOptions().firstOrNull { it.settingValue == model }?.let { option ->
+                    modelStates[option.model]?.isDownloaded == true
+                } == true
+            }
+        } else {
+            selectedModel
+        }
+
+        if (!modelToCheck.isNullOrBlank()) {
+            val option = builtinModelOptions().firstOrNull { it.settingValue == modelToCheck }
+            if (option != null) {
+                val sizeBytes = getModelSizeBytes(option.model)
+                if (MemoryObserver.isMemoryLowForFileSize(requireContext(), sizeBytes)) {
+                    isCompleting = true
+                    chatWarningModelName = modelToCheck
+                    chatWarningSystemMemInfo = MemoryObserver.getSystemMemoryInfo(requireContext())
+                    pendingSkipModelSelection = skipModelSelection
+                    showChatMemoryWarning = true
+                    return
+                }
+            }
+        }
+
+        executeCompleteSetup(skipModelSelection)
+    }
+
+    private fun executeCompleteSetup(skipModelSelection: Boolean) {
         isCompleting = true
         viewLifecycleOwner.lifecycleScope.launch {
             runCatching {
@@ -677,6 +917,15 @@ class SetupWizardFragment : Fragment() {
                 isCompleting = false
                 toast("セットアップ完了処理に失敗しました: ${it.message}")
             }
+        }
+    }
+
+    private fun getModelSizeBytes(model: ModelFileManager.LocalModel): Long {
+        return when (model) {
+            ModelFileManager.LocalModel.GEMMA4_2B -> 2_400_000_000L  // 約 2.4GB
+            ModelFileManager.LocalModel.GEMMA4_4B -> 4_800_000_000L  // 約 4.8GB
+            ModelFileManager.LocalModel.GEMMA3N_2B -> 2_000_000_000L  // 約 2GB
+            ModelFileManager.LocalModel.GEMMA3N_4B -> 4_000_000_000L  // 約 4GB
         }
     }
 

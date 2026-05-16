@@ -83,6 +83,7 @@ import com.nezumi_ai.R
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.HfAuthManager
 import com.nezumi_ai.data.inference.HfOAuthManager
+import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ProjectConfig
@@ -367,8 +368,70 @@ open class ModelSettingsFragment : Fragment() {
                 ModelType.LLM -> {
                     item { HfCard() }
                     item { HfModelSearchCard() }
-                    item { BuiltInModelsCard() }
-                    item { CustomModelsCard() }
+                    item {
+                        Text(
+                            text = "組み込みモデル",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colorResource(id = R.color.text_secondary),
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+                        )
+                    }
+                    items(ModelFileManager.LocalModel.entries) { model ->
+                        val state = modelStates[model]
+                        if (state != null) {
+                            val modelKey = "builtin_${model.name}"
+                            val isExpanded = expandedModelKey == modelKey
+                            ModelAccordionItem(
+                                title = state.title,
+                                status = state.status,
+                                isExpanded = isExpanded,
+                                onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
+                                onDownload = { requestNotificationPermissionForDownload(model) },
+                                onDelete = {
+                                    val ok = ModelFileManager.deleteModel(requireContext(), model)
+                                    toast(if (ok) "削除しました" else "削除に失敗しました")
+                                    refreshModelStatus(model)
+                                    expandedModelKey = null
+                                },
+                                isDownloading = state.isDownloading,
+                                isDownloaded = state.isDownloaded,
+                                progress = state.progress,
+                                progressText = state.progressText
+                            )
+                        }
+                    }
+                    if (importedTasks.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "カスタムモデル",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorResource(id = R.color.text_secondary),
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = 8.dp)
+                            )
+                        }
+                        items(importedTasks) { model ->
+                            val modelKey = "imported_${model.path}"
+                            val isExpanded = expandedModelKey == modelKey
+                            ImportedModelAccordionItem(
+                                model = model,
+                                isExpanded = isExpanded,
+                                onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
+                                onDelete = {
+                                    val result = ModelFileManager.deleteImportedTask(requireContext(), model.path)
+                                    result.onSuccess {
+                                        ImportedModelCapabilityStore.clear(requireContext(), model.path)
+                                        toast("削除しました")
+                                        refreshImportedTasks()
+                                        expandedModelKey = null
+                                    }.onFailure {
+                                        toast("削除に失敗しました: ${it.message}")
+                                    }
+                                }
+                            )
+                        }
+                    }
                     item { MmprojFilesCard() }
                     item { LocalModelAddCard() }
                 }
@@ -1253,6 +1316,11 @@ open class ModelSettingsFragment : Fragment() {
                 val state = modelStates[model] ?: continue
                 val modelKey = "builtin_${model.name}"
                 val isExpanded = expandedModelKey == modelKey
+                
+                // ストレージ判定
+                val sizeBytes = getModelSizeBytes(model)
+                val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), sizeBytes)
+                
                 ModelAccordionItem(
                     title = state.title,
                     status = state.status,
@@ -1268,7 +1336,9 @@ open class ModelSettingsFragment : Fragment() {
                     isDownloading = state.isDownloading,
                     isDownloaded = state.isDownloaded,
                     progress = state.progress,
-                    progressText = state.progressText
+                    progressText = state.progressText,
+                    isMemoryLow = state.memoryWarning != null,
+                    isStorageLow = resourceCheck.isStorageLow
                 )
             }
         }
@@ -1543,6 +1613,14 @@ open class ModelSettingsFragment : Fragment() {
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodySmall
                 )
+                if (MemoryObserver.isMemoryLowForFileSize(requireContext(), model.size)) {
+                    Text(
+                        text = "⚠️ メモリ不足",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
                 model.variant?.let { variant ->
                     com.nezumi_ai.data.inference.ImageModelBrowser.getVariantLabel(variant)?.let { label ->
                         Text(
@@ -1718,9 +1796,25 @@ open class ModelSettingsFragment : Fragment() {
                                         text = file.sizeBytes?.let { formatBytes(it) } ?: "size: unknown",
                                         color = colorResource(id = R.color.text_secondary)
                                     )
+                                    if (file.sizeBytes != null) {
+                                        val isMemoryLow = MemoryObserver.isMemoryLowForFileSize(requireContext(), file.sizeBytes)
+                                        val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), file.sizeBytes)
+                                        if (isMemoryLow || resourceCheck.isStorageLow) {
+                                            Text(
+                                                text = when {
+                                                    isMemoryLow && resourceCheck.isStorageLow -> "⚠️ メモリ・ストレージ不足"
+                                                    isMemoryLow -> "⚠️ メモリ不足"
+                                                    else -> "⚠️ ストレージ不足"
+                                                },
+                                                color = MaterialTheme.colorScheme.error,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                modifier = Modifier.padding(top = 4.dp)
+                                            )
+                                        }
+                                    }
                                 }
                                 Button(
-                                    enabled = hfDownloadingFilePath == null,
+                                    enabled = hfDownloadingFilePath == null && (file.sizeBytes == null || !ModelFileManager.checkDownloadResources(requireContext(), file.sizeBytes).isStorageLow),
                                     onClick = { downloadHfModelFile(model.id, file.path) }
                                 ) {
                                     val isDownloading = hfDownloadingFilePath == file.path
@@ -2112,7 +2206,9 @@ open class ModelSettingsFragment : Fragment() {
         isDownloading: Boolean,
         isDownloaded: Boolean,
         progress: Float = 0f,
-        progressText: String = ""
+        progressText: String = "",
+        isMemoryLow: Boolean = false,
+        isStorageLow: Boolean = false
     ) {
         Card(
             modifier = Modifier
@@ -2130,6 +2226,37 @@ open class ModelSettingsFragment : Fragment() {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(text = title, fontWeight = FontWeight.SemiBold)
+                        // メモリ・ストレージ警告ラベルを名前の下に表示
+                        if (isMemoryLow || isStorageLow) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(top = 4.dp)
+                            ) {
+                                if (isMemoryLow && isStorageLow) {
+                                    Text(
+                                        text = "⚠️ メモリ・ストレージ不足",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = colorResource(id = R.color.nezumi_primary_container),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                } else if (isMemoryLow) {
+                                    Text(
+                                        text = "⚠️ メモリ不足",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = colorResource(id = R.color.nezumi_primary_container),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                } else if (isStorageLow) {
+                                    Text(
+                                        text = "⚠️ ストレージ不足",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
                         // 組み込みモデルはすべて LiteRT-LM を使用
                         if (!isExpanded) {
                             Text(
@@ -2190,9 +2317,10 @@ open class ModelSettingsFragment : Fragment() {
                         if (!isDownloaded || isDownloading) {
                             Button(
                                 onClick = onDownload,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.weight(1f),
+                                enabled = !isStorageLow
                             ) {
-                                Text(if (isDownloading) "キャンセル" else "ダウンロード")
+                                Text(if (isStorageLow) "容量不足" else if (isDownloading) "キャンセル" else "ダウンロード")
                             }
                         }
                         TextButton(
@@ -3060,6 +3188,22 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     private fun requestNotificationPermissionForDownload(model: ModelFileManager.LocalModel) {
+        // ダウンロード前にメモリチェックして警告を設定
+        val modelName = when (model) {
+            ModelFileManager.LocalModel.GEMMA3N_2B -> "GEMMA3-2B"
+            ModelFileManager.LocalModel.GEMMA3N_4B -> "GEMMA3-4B"
+            ModelFileManager.LocalModel.GEMMA4_2B -> "GEMMA4-2B"
+            ModelFileManager.LocalModel.GEMMA4_4B -> "GEMMA4-4B"
+        }
+        
+        if (MemoryObserver.isMemoryLow(requireContext(), modelName)) {
+            val sysMemInfo = MemoryObserver.getSystemMemoryInfo(requireContext())
+            val warning = "このモデルは現在のデバイスメモリ (${sysMemInfo.totalMemoryMB / 1024}GB) では動作が不安定になる可能性があります。ダウンロード後の使用時にクラッシュやフリーズが発生する場合があります。"
+            modelStates[model]?.memoryWarning = warning
+        } else {
+            modelStates[model]?.memoryWarning = null
+        }
+        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val granted = ContextCompat.checkSelfPermission(
                 requireContext(),
@@ -3090,6 +3234,23 @@ open class ModelSettingsFragment : Fragment() {
                 state.progressText = ""
                 state.progress = 0f
                 state.showAccessButton = false
+            }
+            
+            // メモリチェックを実行して警告を設定
+            val modelName = when (it) {
+                ModelFileManager.LocalModel.GEMMA3N_2B -> "GEMMA3-2B"
+                ModelFileManager.LocalModel.GEMMA3N_4B -> "GEMMA3-4B"
+                ModelFileManager.LocalModel.GEMMA4_2B -> "GEMMA4-2B"
+                ModelFileManager.LocalModel.GEMMA4_4B -> "GEMMA4-4B"
+            }
+            
+            if (MemoryObserver.isMemoryLow(requireContext(), modelName)) {
+                val sysMemInfo = MemoryObserver.getSystemMemoryInfo(requireContext())
+                state.memoryWarning = "このモデルは現在のデバイスメモリ (${sysMemInfo.totalMemoryMB / 1024}GB) では動作が不安定になる可能性があります。" + 
+                    if (downloaded) "使用時にクラッシュやフリーズが発生する場合があります。" 
+                    else "ダウンロード後の使用時にクラッシュやフリーズが発生する場合があります。"
+            } else {
+                state.memoryWarning = null
             }
         }
     }
@@ -3133,6 +3294,22 @@ open class ModelSettingsFragment : Fragment() {
                 state.progressText = ""
                 state.showAccessButton = false
                 state.isDownloaded = true
+                
+                // ダウンロード完了後にメモリチェック
+                val modelName = when (model) {
+                    ModelFileManager.LocalModel.GEMMA3N_2B -> "GEMMA3-2B"
+                    ModelFileManager.LocalModel.GEMMA3N_4B -> "GEMMA3-4B"
+                    ModelFileManager.LocalModel.GEMMA4_2B -> "GEMMA4-2B"
+                    ModelFileManager.LocalModel.GEMMA4_4B -> "GEMMA4-4B"
+                }
+                
+                if (MemoryObserver.isMemoryLow(requireContext(), modelName)) {
+                    val sysMemInfo = MemoryObserver.getSystemMemoryInfo(requireContext())
+                    state.memoryWarning = "このモデルは現在のデバイスメモリ (${sysMemInfo.totalMemoryMB / 1024}GB) では動作が不安定になる可能性があります。使用時にクラッシュやフリーズが発生する場合があります。"
+                } else {
+                    state.memoryWarning = null
+                }
+                
                 refreshModelStatus(model)
             }
             WorkInfo.State.FAILED -> {
@@ -3141,10 +3318,12 @@ open class ModelSettingsFragment : Fragment() {
                 val error = workInfo.outputData.getString(ModelDownloadWorker.KEY_ERROR_MESSAGE) ?: "ダウンロード失敗"
                 state.status = "失敗: $error"
                 state.showAccessButton = error.contains("HTTP 403", ignoreCase = true)
+                state.memoryWarning = null
             }
             WorkInfo.State.CANCELLED -> {
                 state.isDownloading = false
                 state.progressText = ""
+                state.memoryWarning = null
                 refreshModelStatus(model)
             }
         }
@@ -3218,6 +3397,15 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
+    private fun getModelSizeBytes(model: ModelFileManager.LocalModel): Long {
+        return when (model) {
+            ModelFileManager.LocalModel.GEMMA4_2B -> 2_400_000_000L  // 約 2.4GB
+            ModelFileManager.LocalModel.GEMMA4_4B -> 4_800_000_000L  // 約 4.8GB
+            ModelFileManager.LocalModel.GEMMA3N_2B -> 2_000_000_000L  // 約 2GB
+            ModelFileManager.LocalModel.GEMMA3N_4B -> 4_000_000_000L  // 約 4GB
+        }
+    }
+
     override fun onDestroyView() {
         authService?.dispose()
         authService = null
@@ -3231,6 +3419,7 @@ open class ModelSettingsFragment : Fragment() {
         var isDownloading by mutableStateOf(false)
         var showAccessButton by mutableStateOf(false)
         var isDownloaded by mutableStateOf(false)
+        var memoryWarning by mutableStateOf<String?>(null)
     }
 
     private data class HfQueuedDownloadUiState(

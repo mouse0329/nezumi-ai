@@ -25,6 +25,49 @@ import kotlin.coroutines.coroutineContext
 
 object ModelFileManager {
 
+    data class ResourceCheckResult(
+        val isMemoryLow: Boolean,
+        val isStorageLow: Boolean,
+        val availableStorageGB: Float,
+        val requiredStorageGB: Float,
+        val systemMemoryInfo: com.nezumi_ai.data.inference.MemoryObserver.SystemMemoryInfo?
+    )
+
+    /**
+     * モデルダウンロード前のリソースチェック（メモリ・ストレージ）
+     */
+    fun checkDownloadResources(context: Context, modelSizeBytes: Long): ResourceCheckResult {
+        val isMemoryLow = com.nezumi_ai.data.inference.MemoryObserver.isMemoryLowForFileSize(context, modelSizeBytes)
+        val systemMemInfo = if (isMemoryLow) {
+            com.nezumi_ai.data.inference.MemoryObserver.getSystemMemoryInfo(context)
+        } else null
+        
+        // ストレージ判定：StatFs を使用してより確実に取得
+        val modelDir = File(context.filesDir, "models")
+        val availableBytes = try {
+            val statFs = StatFs(modelDir.absolutePath)
+            statFs.availableBytes
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to get storage stats, fallback to usableSpace", e)
+            modelDir.usableSpace
+        }
+        
+        val requiredSpace = (modelSizeBytes * 1.2).toLong()
+        val isStorageLow = availableBytes < requiredSpace
+        val availableGB = availableBytes / (1024f * 1024f * 1024f)
+        val requiredGB = requiredSpace / (1024f * 1024f * 1024f)
+        
+        Log.d(TAG, "checkDownloadResources: modelSize=${modelSizeBytes / (1024f * 1024f * 1024f)}GB isMemoryLow=$isMemoryLow isStorageLow=$isStorageLow availableGB=$availableGB requiredGB=$requiredGB")
+        
+        return ResourceCheckResult(
+            isMemoryLow = isMemoryLow,
+            isStorageLow = isStorageLow,
+            availableStorageGB = availableGB,
+            requiredStorageGB = requiredGB,
+            systemMemoryInfo = systemMemInfo
+        )
+    }
+
     enum class LocalModel {
         GEMMA3N_2B,
         GEMMA3N_4B,
@@ -974,10 +1017,11 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         tmpFile.parentFile?.mkdirs()
 
         var resumeFrom = if (tmpFile.exists()) tmpFile.length().coerceAtLeast(0L) else 0L
-        val token = HfAuthManager.getToken(context)
         var restartedFromZero = false
 
         fun openDownloadConnection(rangeStart: Long): HttpURLConnection {
+            // 毎回SharedPreferencesからトークンを読み込む（メモリキャッシュしない）
+            val token = HfAuthManager.getToken(context)
             return (URL(urlString).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 30_000
                 readTimeout = 60_000

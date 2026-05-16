@@ -230,7 +230,11 @@ class ChatViewModel(
         val predictedUsagePercent: Int,
         val currentUsagePercent: Int,
         val currentUsageMB: Long,
-        val maxMB: Long
+        val maxMB: Long,
+        val usedMemoryMB: Long,
+        val totalMemoryMB: Long,
+        val usedPercent: Int,
+        val lowMemoryFlag: Boolean
     )
 
     data class CpuCompatibilityWarningInfo(
@@ -244,12 +248,16 @@ class ChatViewModel(
     private val _cpuCompatibilityWarning = MutableStateFlow<CpuCompatibilityWarningInfo?>(null)
     val cpuCompatibilityWarning: StateFlow<CpuCompatibilityWarningInfo?> = _cpuCompatibilityWarning.asStateFlow()
 
+    private var memoryWarningShownForModel: String? = null
+
     fun dismissMemoryWarning() {
         _memoryWarning.value = null
+        memoryWarningShownForModel = null
     }
 
     fun cancelMemoryWarningAndGoHome() {
         _memoryWarning.value = null
+        memoryWarningShownForModel = null
         viewModelScope.launch {
             _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
         }
@@ -258,6 +266,7 @@ class ChatViewModel(
     fun proceedWithModelLoad(model: String) {
         viewModelScope.launch {
             _memoryWarning.value = null
+            memoryWarningShownForModel = model
             val normalizedModel = normalizeModel(model)
             val config = chatInferenceConfigForModel(normalizedModel)
             // メモリ警告をスキップしてロードを続行
@@ -2391,22 +2400,46 @@ class ChatViewModel(
 
             // 既にロード済みの間はメモリ警告を再表示しない
             // （同一モデル・同一設定で active な状態が続く限り警告抑制）
-            if (!effectiveSkipMemoryWarning && MemoryObserver.isMemoryLow(appContext, model)) {
-                Log.w(TAG, "loadModelWithOverlay: MEMORY LOW - model=$model does not meet minimum memory requirement")
-                _modelLoadingStatus.value = "メモリ確認中..."
+            // ★ バグ修正: 同じモデルで既に警告を表示済みなら再表示しない
+            val shouldShowMemoryWarning = !effectiveSkipMemoryWarning && 
+                memoryWarningShownForModel != model
+            
+            if (shouldShowMemoryWarning) {
+                // ★ 新機能: モデルファイルサイズからもメモリ不足を検知
+                val isMemoryLowByName = MemoryObserver.isMemoryLow(appContext, model)
+                val isMemoryLowByFileSize = if (!isMemoryLowByName && File(engineModelName).exists()) {
+                    val fileSize = File(engineModelName).length()
+                    MemoryObserver.isMemoryLowForFileSize(appContext, fileSize)
+                } else {
+                    false
+                }
+                
+                if (isMemoryLowByName || isMemoryLowByFileSize) {
+                    Log.w(TAG, "loadModelWithOverlay: MEMORY LOW - model=$model byName=$isMemoryLowByName byFileSize=$isMemoryLowByFileSize")
+                    _modelLoadingStatus.value = "メモリ確認中..."
 
-                // 警告情報を取得
-                val systemMemInfo = MemoryObserver.getSystemMemoryInfo(appContext)
-                _memoryWarning.value = MemoryWarningInfo(
-                    modelName = displayModel,
-                    predictedUsagePercent = systemMemInfo.usedPercent,  // 現在の使用率
-                    currentUsagePercent = systemMemInfo.usedPercent,
-                    currentUsageMB = systemMemInfo.usedMemoryMB,
-                    maxMB = systemMemInfo.totalMemoryMB
-                )
-                // 警告が表示されるまで待機（ローディング状態を維持）
-                _isModelLoading.value = false  // ここで一度解除（finally でも解除されるため）
-                return Result.failure(RuntimeException("MEMORY_WARNING_SHOWN"))  // ★ "memory"を含まない名前に変更（呼び出し元で区別できるように）
+                    // 警告情報を取得
+                    val systemMemInfo = MemoryObserver.getSystemMemoryInfo(appContext)
+                    
+                    // ★ バグ修正: 既に警告が表示されている場合はスキップ
+                    if (_memoryWarning.value == null) {
+                        memoryWarningShownForModel = model
+                        _memoryWarning.value = MemoryWarningInfo(
+                            modelName = displayModel,
+                            predictedUsagePercent = systemMemInfo.usedPercent,
+                            currentUsagePercent = systemMemInfo.usedPercent,
+                            currentUsageMB = systemMemInfo.usedMemoryMB,
+                            maxMB = systemMemInfo.totalMemoryMB,
+                            usedMemoryMB = systemMemInfo.usedMemoryMB,
+                            totalMemoryMB = systemMemInfo.totalMemoryMB,
+                            usedPercent = systemMemInfo.usedPercent,
+                            lowMemoryFlag = systemMemInfo.lowMemoryFlag
+                        )
+                        // 警告が表示されるまで待機（ローディング状態を維持）
+                        _isModelLoading.value = false
+                        return Result.failure(RuntimeException("MEMORY_WARNING_SHOWN"))
+                    }
+                }
             }
 
             // effectiveSkipMemoryWarning=true の場合はメモリ警告をスキップしてロード続行

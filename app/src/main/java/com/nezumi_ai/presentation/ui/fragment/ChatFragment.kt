@@ -50,6 +50,7 @@ import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.core.content.ContextCompat
@@ -60,11 +61,14 @@ import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.SimpleItemAnimator
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.R
 import com.nezumi_ai.databinding.FragmentChatBinding
@@ -1252,45 +1256,93 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun showMemoryWarningDialog(warning: ChatViewModel.MemoryWarningInfo) {
-        val systemMemInfo = com.nezumi_ai.data.inference.MemoryObserver.getSystemMemoryInfo(requireContext())
-        val alertDialog = androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle("⚠️ メモリ警告")
-            .setMessage(
-                "モデル「${warning.modelName}」のロードは高メモリ使用率になる可能性があります。\n\n" +
-                "━━━ デバイスメモリ ━━━\n" +
-                "スマホ本体: ${systemMemInfo.usedMemoryMB}MB / ${systemMemInfo.totalMemoryMB}MB\n" +
-                "使用率: ${systemMemInfo.usedPercent}%\n" +
-                "${if (systemMemInfo.lowMemoryFlag) "⚠️ デバイスがメモリ不足状態です" else "✓ 正常"}\n\n" +
-                "━━━ アプリメモリ ━━━\n" +
-                "現在: ${warning.currentUsageMB}MB / ${warning.maxMB}MB (${warning.currentUsagePercent}%)\n" +
-                "予想: ${warning.predictedUsagePercent}%\n\n" +
-                "ロードを続行しますか？"
-            )
-            .setPositiveButton("続行") { _, _ ->
-                // Fragment View が存在するなら viewLifecycleOwner を使用、破棄されているなら main dispatcher で実行
-                val scope = if (view != null && isAdded) {
-                    try {
-                        viewLifecycleOwner.lifecycleScope
-                    } catch (e: Exception) {
-                        MainScope()  // Fallback
-                    }
-                } else {
-                    MainScope()
-                }
-                scope.launch {
-                    try {
-                        viewModel.proceedWithModelLoad(viewModel.selectedModel.value)
-                    } catch (e: Exception) {
-                        Log.e("ChatFragment", "Error in memory warning dialog continue button", e)
-                    }
+        // Compose UIダイアログをDialogでラップして表示
+        val dialog = android.app.Dialog(requireContext())
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setCancelable(false)
+        
+        val composeView = androidx.compose.ui.platform.ComposeView(requireContext()).apply {
+            // ViewTreeLifecycleOwnerを明示的に設定
+            setViewTreeLifecycleOwner(viewLifecycleOwner)
+            setViewTreeViewModelStoreOwner(this@ChatFragment)
+            setViewTreeSavedStateRegistryOwner(this@ChatFragment)
+            
+            setContent {
+                NezumiComposeTheme {
+                    MemoryWarningDialog(
+                        warning = warning,
+                        onConfirm = {
+                            dialog.dismiss()
+                            val scope = if (view != null && isAdded) {
+                                try {
+                                    viewLifecycleOwner.lifecycleScope
+                                } catch (e: Exception) {
+                                    MainScope()
+                                }
+                            } else {
+                                MainScope()
+                            }
+                            scope.launch {
+                                try {
+                                    viewModel.proceedWithModelLoad(viewModel.selectedModel.value)
+                                } catch (e: Exception) {
+                                    Log.e("ChatFragment", "Error in memory warning dialog continue button", e)
+                                }
+                            }
+                        },
+                        onDismiss = {
+                            dialog.dismiss()
+                            viewModel.cancelMemoryWarningAndGoHome()
+                        }
+                    )
                 }
             }
-            .setNegativeButton("キャンセル") { _, _ ->
-                viewModel.cancelMemoryWarningAndGoHome()
+        }
+        
+        dialog.setContentView(composeView)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.show()
+    }
+
+    @Composable
+    private fun MemoryWarningDialog(
+        warning: ChatViewModel.MemoryWarningInfo,
+        onConfirm: () -> Unit,
+        onDismiss: () -> Unit
+    ) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = onDismiss,
+            icon = {
+                Text("⚠️", fontSize = 32.sp)
+            },
+            title = {
+                Text("メモリ警告")
+            },
+            text = {
+                Column {
+                    Text("モデル「${warning.modelName}」のロードは高メモリ使用率になる可能性があります。")
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("スマホ本体: ${warning.usedMemoryMB}MB / ${warning.totalMemoryMB}MB")
+                    Text("使用率: ${warning.usedPercent}%")
+                    Text(
+                        if (warning.lowMemoryFlag) "⚠️ デバイスがメモリ不足状態です" else "✓ 正常",
+                        color = if (warning.lowMemoryFlag) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("ロードを続行しますか？")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = onConfirm) {
+                    Text("続行")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) {
+                    Text("キャンセル")
+                }
             }
-            .setCancelable(false)
-            .create()
-        alertDialog.show()
+        )
     }
 
     private fun showCpuCompatibilityWarningDialog(warning: ChatViewModel.CpuCompatibilityWarningInfo) {
