@@ -42,14 +42,17 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.nezumi_ai.MyApplication
 import com.nezumi_ai.voicevox.VoicevoxManager
+import com.nezumi_ai.voicevox.VoicevoxStreamingTts
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -71,6 +74,10 @@ class ChatViewModel(
     
     private val voicevoxManager: VoicevoxManager by lazy {
         (appContext.applicationContext as MyApplication).getVoicevoxManager()
+    }
+
+    private val voicevoxStreamingTts: VoicevoxStreamingTts by lazy {
+        VoicevoxStreamingTts(voicevoxManager)
     }
     
     companion object {
@@ -201,10 +208,23 @@ class ChatViewModel(
     
     private val _navigationEvent = MutableSharedFlow<NavigationEvent>()
     val navigationEvent: SharedFlow<NavigationEvent> = _navigationEvent
-    
+
     enum class NavigationEvent {
         BACK_TO_HOME,  // ホームスクリーンに戻る
         CLEAR_CHAT     // チャット画面をクリア
+    }
+
+    data class MemoryErrorInfo(
+        val usedPercent: Int,
+        val usedMB: Long,
+        val totalMB: Long
+    )
+
+    private val _memoryError = MutableStateFlow<MemoryErrorInfo?>(null)
+    val memoryError: StateFlow<MemoryErrorInfo?> = _memoryError.asStateFlow()
+
+    fun dismissMemoryError() {
+        _memoryError.value = null
     }
     
     private val _toolCallState = MutableStateFlow<ToolCallState?>(null)
@@ -264,18 +284,32 @@ class ChatViewModel(
     }
 
     fun proceedWithModelLoad(model: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             _memoryWarning.value = null
-            memoryWarningShownForModel = model
             val normalizedModel = normalizeModel(model)
             val config = chatInferenceConfigForModel(normalizedModel)
-            // メモリ警告をスキップしてロードを続行
-            loadModelWithOverlay(
+            val result = loadModelWithOverlay(
                 normalizedModel,
                 config,
                 onlyIfAvailable = false,
                 skipMemoryWarning = true
             )
+            if (result.isSuccess) {
+                // ロード完了後、送信待ちメッセージがあれば推論を再開
+                val sessionId = _currentSessionId.value ?: return@launch
+                val messages = messageRepository.getMessagesForSessionOnce(sessionId)
+                val lastUser = messages.lastOrNull { it.role == "user" } ?: return@launch
+                val lastAssistant = messages.lastOrNull { it.role == "assistant" }
+                // 最後のユーザーメッセージに対応するアシスタント応答がなければ推論実行
+                if (lastAssistant == null || lastAssistant.timestamp < lastUser.timestamp) {
+                    _isLoading.value = true
+                    generateAIResponse(
+                        sessionId = sessionId,
+                        userMessage = lastUser.content,
+                        currentTurnMessageId = lastUser.id
+                    )
+                }
+            }
         }
     }
 
@@ -302,6 +336,7 @@ class ChatViewModel(
 
     private var modelManager: ModelManager? = null
     private var generationJob: Job? = null
+    private val generationControlMutex = Mutex()
     private var messagesCollectionJob: Job? = null
     private val compressedContextCache = mutableMapOf<Long, CompressedContextCache>()
     private var currentBackendType = "CPU"  // GPU時はキャッシュを無効化するためのフラグ
@@ -407,17 +442,7 @@ class ChatViewModel(
             _chatSessionDisableThinking.value = true
         }
         
-        // ★ #12 修正: stopGeneration の完了を await する（generationJob が null になるまで待機）
-        stopGeneration()
-        // stopGeneration() で generationJob が null になるまで最大5秒待機
-        var waitCount = 0
-        while (generationJob != null && waitCount < 50) {
-            delay(100L)
-            waitCount++
-        }
-        if (generationJob != null) {
-            Log.w(TAG, "setCurrentSession: generationJob still not null after waiting")
-        }
+        stopGenerationInternal()
         
         // ★ メーター不正確修正: セッション遷移時に圧縮コンテキストキャッシュをクリア（同期的に実行）
         clearCompressedContextCache(sessionId)
@@ -515,11 +540,15 @@ class ChatViewModel(
 
                 // メモリエラーを検出（実際の OOM エラー）
                 if (error?.message?.contains("memory", ignoreCase = true) == true) {
-                    _uiMessage.emit("メモリが不足しています。ホームスクリーンに戻ります...")
-                    _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
+                    val memStatus = MemoryObserver.getMemoryStatus(appContext)
+                    _memoryError.value = MemoryErrorInfo(
+                        usedPercent = memStatus.usedPercent,
+                        usedMB = memStatus.usedMB,
+                        totalMB = memStatus.maxMB
+                    )
                     return@launch
                 }
-                
+
                 // ファイル読み込みエラーを検出（PATH NOT FOUND など）
                 val errorMsg = error?.message ?: ""
                 if (shouldDeleteLocalModelFileOnLoadError(errorMsg)) {
@@ -549,17 +578,19 @@ class ChatViewModel(
     fun sendMessage(userMessage: String) {
         if (_isLoading.value) return
 
-        // 前の job をキャンセル
-        generationJob?.cancel(CancellationException("Stopped by user"))
-        generationJob = null
+        viewModelScope.launch {
+            val thisJob = coroutineContext[Job] ?: return@launch
 
-        generationJob = viewModelScope.launch {
-            val thisJob = this // このJobインスタンスを保存
+            generationControlMutex.withLock {
+                generationJob?.cancel(CancellationException("Stopped by user"))
+                generationJob = thisJob
+            }
+
             try {
                 val sessionId = ensureValidCurrentSession() ?: return@launch
 
                 // ユーザーメッセージを保存
-                messageRepository.addMessage(
+                val userMessageId = messageRepository.addMessage(
                     sessionId = sessionId,
                     role = "user",
                     content = userMessage
@@ -573,7 +604,7 @@ class ChatViewModel(
 
                 // AI応答を生成
                 _isLoading.value = true
-                generateAIResponse(sessionId, userMessage)
+                generateAIResponse(sessionId, userMessage, currentTurnMessageId = userMessageId)
             } catch (t: Throwable) {
                 val e = if (t is Exception) t else RuntimeException(t)
                 Log.e(TAG, "Error sending message", e)
@@ -693,22 +724,24 @@ class ChatViewModel(
     }
 
     fun stopGeneration() {
-        generationJob?.cancel(CancellationException("Stopped by user"))
-        _isLoading.value = false
-        
-        // ★ #11 修正: cancelInference() の完了を待ってから generationJob = null にする
-        // これにより、generationJob.cancel() と cancelInference() の間に新しい推論が始まるのを防止
         viewModelScope.launch {
-            try {
-                val manager = requireModelManager()
-                // ★ 非同期で cancel を実行するが、最後まで待つ
-                manager.cancelInference()
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to cancel inference", e)
-            } finally {
-                // ★ cancelInference() 完了後に generationJob を null にする
-                generationJob = null
-            }
+            stopGenerationInternal()
+        }
+    }
+
+    private suspend fun stopGenerationInternal() {
+        val currentJob = generationControlMutex.withLock {
+            val job = generationJob ?: return@withLock null
+            generationJob = null
+            _isLoading.value = false
+            job
+        }
+
+        try {
+            val manager = requireModelManager()
+            manager.cancelInference()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to cancel inference", e)
         }
     }
 
@@ -756,7 +789,8 @@ class ChatViewModel(
         sessionId: Long,
         userMessage: String,
         images: List<Bitmap> = emptyList(),
-        audioClips: List<ByteArray> = emptyList()
+        audioClips: List<ByteArray> = emptyList(),
+        currentTurnMessageId: Long? = null
     ) {
         var streamingMessageId: Long? = null
         val aiStartMs = System.currentTimeMillis()  // Phase 11: 全体ロード時間を計測開始
@@ -772,14 +806,8 @@ class ChatViewModel(
             val manager = requireModelManager()
             val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
             
-            // メモリ不足チェック
             val memoryPercent = manager.getMemoryUsagePercent()
-            if (memoryPercent >= 85) {
-                Log.w(TAG, "generateAIResponse: Memory usage too high: $memoryPercent%")
-                _uiMessage.emit("メモリが不足しています。ホームスクリーンに戻ります...")
-                _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
-                return
-            }
+            Log.d(TAG, "generateAIResponse: memoryUsage=$memoryPercent%")
             _selectedModel.value = selectedModel
             val engineModelName = toEngineModelName(selectedModel)
             val hasMediaInput = images.isNotEmpty() || audioClips.isNotEmpty()
@@ -832,8 +860,12 @@ class ChatViewModel(
 
                 // メモリエラーを検出（実際の OOM エラー）
                 if (errorMsg.contains("memory", ignoreCase = true)) {
-                    _uiMessage.emit("メモリが不足しています。ホームスクリーンに戻ります...")
-                    _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
+                    val memStatus = MemoryObserver.getMemoryStatus(appContext)
+                    _memoryError.value = MemoryErrorInfo(
+                        usedPercent = memStatus.usedPercent,
+                        usedMB = memStatus.usedMB,
+                        totalMB = memStatus.maxMB
+                    )
                     return
                 }
                 
@@ -867,7 +899,8 @@ class ChatViewModel(
                 sessionId = sessionId,
                 config = config,
                 manager = manager,
-                engineModelName = engineModelName
+                engineModelName = engineModelName,
+                currentTurnMessageId = currentTurnMessageId
             )
 
             if (engineModelName.endsWith(".gguf", ignoreCase = true)) {
@@ -1604,6 +1637,8 @@ class ChatViewModel(
         return when {
             trimmed.equals("Gemma4-4B", ignoreCase = true) -> "Gemma4-4B"
             trimmed.equals("Gemma4-2B", ignoreCase = true) -> "Gemma4-2B"
+            trimmed.equals("Gemma3n-4B", ignoreCase = true) -> "E4B"
+            trimmed.equals("Gemma3n-2B", ignoreCase = true) -> "E2B"
             trimmed.equals("E4B", ignoreCase = true) -> "E4B"  // Gemma3n 4B (保持)
             trimmed.equals("E2B", ignoreCase = true) -> "E2B"  // Gemma3n 2B (保持)
             isLocalTaskPath -> trimmed
@@ -1713,7 +1748,16 @@ class ChatViewModel(
         ).trim()
     }
 
-    private fun sanitizeMessageContentForPrompt(msg: MessageEntity): String {
+    /**
+     * @param isCurrentTurn when true (= current-turn user message), GGUF embeds <image> token in prompt.
+     *   Past turns use imageDescription as fallback to avoid mismatch between <image> token count and Bitmap list.
+     *   LiteRt passes images via Content.ImageBytes, so no <image> token in prompt string.
+     */
+    private fun sanitizeMessageContentForPrompt(
+        msg: MessageEntity,
+        isGgufEngine: Boolean = false,
+        isCurrentTurn: Boolean = false
+    ): String {
         val normalized = msg.content.trim()
         if (msg.role == "assistant") {
             if (normalized.isEmpty()) return ""
@@ -1728,10 +1772,15 @@ class ChatViewModel(
                 ?.map { it.trim() }
                 ?.count { it.isNotEmpty() }
                 ?: 0
-            val imageTokens = if (imageCount > 0) {
-                List(imageCount) { "<image>" }.joinToString(separator = "\n")
-            } else {
-                ""
+            val imageTokens: String = when {
+                imageCount <= 0 -> ""
+                // GGUF + current turn: embed <image> token (1:1 match with completeWithMedia)
+                isGgufEngine && isCurrentTurn ->
+                    List(imageCount) { "<image>" }.joinToString(separator = "\n")
+                // GGUF past turns or all LiteRt turns: use imageDescription as fallback
+                else ->
+                    msg.imageDescription?.takeIf { it.isNotBlank() }
+                        ?: "(image x$imageCount)"
             }
             return when {
                 imageTokens.isNotEmpty() && normalized.isNotEmpty() -> "$imageTokens\n$normalized"
@@ -1739,6 +1788,18 @@ class ChatViewModel(
                 else -> normalized
             }
         }
+    }
+
+    /** Lambda adapter for sanitizeMessageContentForPrompt (engine type + current-turn pinned version) */
+    private fun makeSanitizer(
+        isGgufEngine: Boolean,
+        currentTurnMessageId: Long?
+    ): (MessageEntity) -> String = { msg ->
+        sanitizeMessageContentForPrompt(
+            msg,
+            isGgufEngine = isGgufEngine,
+            isCurrentTurn = (msg.id == currentTurnMessageId && msg.role == "user")
+        )
     }
 
     private fun mergeStreamingChunk(current: String, chunk: String): String {
@@ -1804,13 +1865,14 @@ class ChatViewModel(
         sessionId: Long,
         config: InferenceConfig,
         manager: ModelManager,
-        engineModelName: String
+        engineModelName: String,
+        currentTurnMessageId: Long? = null
     ): String {
         val messages = messageRepository.getMessagesForSessionOnce(sessionId)
         if (messages.isEmpty()) return ""
 
         val isGgufEngine = isGgufEngineModel(engineModelName)
-        val fullPrompt = buildPromptFromMessages(messages, isGgufEngine, engineModelName, config.enableThinking)
+        val fullPrompt = buildPromptFromMessages(messages, isGgufEngine, engineModelName, config.enableThinking, currentTurnMessageId)
         
         // Phase 12: thinkingContent が誤ってプロンプトに混入していないか検証
         val messagesWithThinking = messages.filter { it.thinkingContent != null && it.thinkingContent.isNotEmpty() }
@@ -2170,7 +2232,8 @@ class ChatViewModel(
         messages: List<MessageEntity>,
         isGgufEngine: Boolean,
         engineModelName: String = "",
-        enableThinking: Boolean = false
+        enableThinking: Boolean = false,
+        currentTurnMessageId: Long? = null
     ): String {
         if (messages.isEmpty()) return ""
         
@@ -2187,20 +2250,22 @@ class ChatViewModel(
         val filteredMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
         val systemPrompt = settingsRepository.getSystemPrompt()
 
+        val sanitizer = makeSanitizer(isGgufEngine, currentTurnMessageId)
+
         return if (isGgufEngine) {
             PromptBuilder.buildForGguf(
                 messages = filteredMessages,
                 systemPrompt = systemPrompt,
                 format = PromptBuilder.detectGgufFormat(engineModelName),
                 enableThinking = enableThinking,
-                sanitizeMessageContent = ::sanitizeMessageContentForPrompt
+                sanitizeMessageContent = sanitizer
             )
         } else {
             PromptBuilder.buildForLiteRt(
                 messages = filteredMessages,
                 systemPrompt = systemPrompt,
                 injectGemmaThinkTrigger = settingsRepository.shouldInjectGemmaThinkTrigger(),
-                sanitizeMessageContent = ::sanitizeMessageContentForPrompt
+                sanitizeMessageContent = sanitizer
             )
         }
     }
@@ -2390,14 +2455,6 @@ class ChatViewModel(
             val memoryStatus = MemoryObserver.getMemoryStatus(appContext)
             Log.d(TAG, "loadModelWithOverlay: MEMORY_STATUS level=${memoryStatus.level} used=${memoryStatus.usedMB}MB max=${memoryStatus.maxMB}MB percent=${memoryStatus.usedPercent}% device_low_memory=${memoryStatus.isLowMemory}")
 
-            // メモリ不足チェック
-            if (!manager.isMemorySufficient()) {
-                val errorMsg = "メモリ不足: ${memoryStatus.usedPercent}% (${memoryStatus.usedMB}/${memoryStatus.maxMB}MB) - ${displayModel}をロードできません"
-                Log.e(TAG, "loadModelWithOverlay: MEMORY_INSUFFICIENT $errorMsg")
-                _uiMessage.emit(errorMsg)
-                return Result.failure(RuntimeException(errorMsg))
-            }
-
             // 既にロード済みの間はメモリ警告を再表示しない
             // （同一モデル・同一設定で active な状態が続く限り警告抑制）
             // ★ バグ修正: 同じモデルで既に警告を表示済みなら再表示しない
@@ -2475,14 +2532,15 @@ class ChatViewModel(
                     val errorMsg = "メモリが不足しています (${postLoadMemStatus.usedPercent}%)"
                     _uiMessage.emit(errorMsg)
 
-                    // skipMemoryWarning=false（最初の警告チェック時）は自動的にホームに戻す
+                    // skipMemoryWarning=false（最初の警告チェック時）はモーダルを表示
                     // skipMemoryWarning=true（ユーザーが続行選択済み）はチャットに留まる
                     if (!skipMemoryWarning) {
-                        val msgWithNav = "$errorMsg。ホームスクリーンに戻ります..."
-                        _uiMessage.emit(msgWithNav)
-                        viewModelScope.launch {
-                            _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
-                        }
+                        val memStatus = MemoryObserver.getMemoryStatus(appContext)
+                        _memoryError.value = MemoryErrorInfo(
+                            usedPercent = memStatus.usedPercent,
+                            usedMB = memStatus.usedMB,
+                            totalMB = memStatus.maxMB
+                        )
                     }
                 }
             }
@@ -2503,13 +2561,13 @@ class ChatViewModel(
     ) {
         if (_isLoading.value) return
 
-        // 前の job をキャンセル
-        generationJob?.cancel(CancellationException("Stopped by user"))
-        generationJob = null
-
         // 計算集約的な処理はDefault（CPU 集約的タスク用）で実行
-        generationJob = viewModelScope.launch(Dispatchers.Default) {
-            val thisJob = this  // このJobインスタンスを保存
+        viewModelScope.launch(Dispatchers.Default) {
+            val thisJob = coroutineContext[Job]  // このJobインスタンスを保存
+            generationControlMutex.withLock {
+                generationJob?.cancel(CancellationException("Stopped by user"))
+                generationJob = thisJob
+            }
             val sessionId = ensureValidCurrentSession() ?: return@launch
             var imagesToCleanup = mutableListOf<Bitmap>()
             try {
@@ -2532,7 +2590,7 @@ class ChatViewModel(
                 // メディア付きユーザーメッセージを保存（DB アクセス - IO スレッド）
                 // Phase 11: 複数画像をカンマ区切りで保存
                 // Phase 12: 画像説明を自動生成・保存
-                withContext(Dispatchers.IO) {
+                val userMessageId = withContext(Dispatchers.IO) {
                     Log.d(TAG, "SAVE_MESSAGE_START: content='$userMessage' images=${storedImages.size}")
                     val imageDesc = if (storedImages.isNotEmpty()) {
                         // 初めての画像に対する簡潔な説明を生成
@@ -2549,6 +2607,7 @@ class ChatViewModel(
                     )
                     Log.d(TAG, "SAVE_MESSAGE_END: messageId=$messageId content='$userMessage' imageDesc='$imageDesc'")
                     sessionRepository.updateSessionLastUpdated(sessionId)
+                    messageId
                 }
 
                 // ★ DB保存後にpendingをクリア（messagesフローが更新済みのタイミング）
@@ -2586,7 +2645,7 @@ class ChatViewModel(
                 }
 
                 // AI 応答を生成（計算集約的 - Default スレッド）
-                generateAIResponse(sessionId, userMessage, images, audioClips)
+                generateAIResponse(sessionId, userMessage, images, audioClips, currentTurnMessageId = userMessageId)
             } catch (t: Throwable) {
                 val e = if (t is Exception) t else RuntimeException(t)
                 Log.e(TAG, "Error sending message with media", e)
@@ -2810,21 +2869,31 @@ class ChatViewModel(
 
     fun synthesizeText(messageId: Long, text: String) {
         if (_speakingMessageId.value != null) return
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                _speakingMessageId.value = messageId
-                val audioData = voicevoxManager.synthesize(text)
-                if (audioData != null) {
-                    Log.d(TAG, "VOICEVOX synthesis succeeded: ${audioData.size} bytes")
-                    // Play audio
-                    playAudio(audioData)
-                } else {
-                    _uiMessage.emit("音声合成に失敗しました")
+        _speakingMessageId.value = messageId
+        voicevoxStreamingTts.stop()
+
+        val job = voicevoxStreamingTts.speakStreaming(
+            scope = viewModelScope,
+            text = text,
+            onChunkStart = { chunk ->
+                Log.d(TAG, "VOICEVOX streaming chunk start: ${chunk.take(32)}")
+            },
+            onError = { error ->
+                viewModelScope.launch {
+                    _uiMessage.emit("音声合成エラー: ${error.message}")
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error synthesizing text", e)
-                _uiMessage.emit("音声合成エラー: ${e.message}")
-            } finally {
+            },
+            onComplete = {
+                viewModelScope.launch {
+                    if (_speakingMessageId.value == messageId) {
+                        _speakingMessageId.value = null
+                    }
+                }
+            }
+        )
+
+        job.invokeOnCompletion {
+            viewModelScope.launch {
                 if (_speakingMessageId.value == messageId) {
                     _speakingMessageId.value = null
                 }
@@ -2887,7 +2956,8 @@ class ChatViewModel(
      * このメソッドが呼ばれるタイミング：
      * - Fragment がバックされた場合
      * - Activity が終了した場合
-     * - スワイプアウトやプロセス終了時
+     * -voicevoxStreamingTts.stop()
+         スワイプアウトやプロセス終了時
      */
     override fun onCleared() {
         Log.d(TAG, "ChatViewModel.onCleared() called - starting resource cleanup")
@@ -2909,28 +2979,22 @@ class ChatViewModel(
         // WakeLock をリリース（画面スリープを許可）
         releaseScreenWakeLock()
         
-        // KVキャッシュを含むモデルリソースをアンロード
-        // ⚠️ 重要：viewModelScope は onCleared で Cancelled になるため、ここで呼んではいけない
-        // 代わりに同期的に unloadModel() を実行する
+        // Unload model resources including KV cache
+        // viewModelScope is Cancelled here; cannot launch new coroutines.
+        // Use GlobalScope + IO for async unload; wait up to 3 seconds.
         try {
             Log.d(TAG, "Unloading LiteRT-LM model and KVCache...")
-            val unloadResult = runCatching {
-                // viewModelScope ではなく、新しい coroutine context を避ける
-                modelManager?.let { manager ->
-                    // TODO: runBlocking は UI スレッドでは使用不可
-                    // 本来は別スレッドで実行すべき、または Activity.onDestroy で async に呼ぶ
-                    Log.d(TAG, "Model manager cleanup initiated")
+            val unloadJob = kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+                modelManager?.unloadModel()
+            }
+            runCatching {
+                kotlinx.coroutines.runBlocking {
+                    withTimeoutOrNull(3000L) { unloadJob.join() }
                 }
             }
-            unloadResult.onSuccess {
-                Log.i(TAG, "✅ Model and KVCache unloaded successfully")
-            }
-            unloadResult.onFailure { error ->
-                Log.w(TAG, "⚠️ Failed to unload model: ${error.message}", error)
-            }
+            Log.i(TAG, "Model and KVCache unloaded successfully")
         } catch (e: Exception) {
-            // viewModelScope キャンセルによる CancellationException もここで catch
-            Log.e(TAG, "Exception during onCleared: ${e.message}", e)
+            Log.w(TAG, "Failed to unload model in onCleared: ${e.message}", e)
         }
 
         super.onCleared()
