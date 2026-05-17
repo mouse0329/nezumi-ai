@@ -1,0 +1,139 @@
+--- a/app/src/main/java/com/nezumi_ai/presentation/ui/fragment/ChatFragment.kt
++++ b/app/src/main/java/com/nezumi_ai/presentation/ui/fragment/ChatFragment.kt
+@@ -197,44 +197,16 @@
+     
+     private val cameraLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+         if (result.resultCode == android.app.Activity.RESULT_OK) {
+-            val extras = result.data?.extras
+-            @Suppress("DEPRECATION")
+-            val bitmap = extras?.getParcelable<android.graphics.Bitmap>("data")
+-            
+-            if (bitmap != null) {
+-                try {
+-                    // Bitmapをファイルに保存
+-                    val cameraDir = java.io.File(requireContext().cacheDir, "camera")
+-                    if (!cameraDir.exists()) {
+-                        cameraDir.mkdirs()
+-                    }
+-                    
+-                    val imageFile = java.io.File(cameraDir, "IMG_${System.currentTimeMillis()}.jpg")
+-                    val fos = java.io.FileOutputStream(imageFile)
+-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, fos)
+-                    fos.close()
+-                    
+-                    // FileProviderでURIを取得
+-                    cameraImageUri = androidx.core.content.FileProvider.getUriForFile(
+-                        requireContext(),
+-                        "com.nezumi_ai.fileprovider",
+-                        imageFile
+-                    )
+-                    
+-                    // 複数画像対応：リストに追加
+-                    if (selectedImageUrisList.size < 5) {
+-                        selectedImageUrisList = selectedImageUrisList + cameraImageUri.toString()
+-                        Log.d("ChatFragment", "Camera image added: ${imageFile.absolutePath}")
+-                        Toast.makeText(requireContext(), "写真を撮影しました (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
+-                        updateMediaPreview()
+-                    } else {
+-                        Toast.makeText(requireContext(), "最大5枚までしか選択できません", Toast.LENGTH_SHORT).show()
+-                    }
+-                    
+-                    bitmap.recycle()
+-                } catch (e: Exception) {
+-                    Log.e("ChatFragment", "Error saving camera bitmap", e)
+-                    Toast.makeText(requireContext(), "画像の保存に失敗しました", Toast.LENGTH_SHORT).show()
++            // #10 fix: full-size image captured via EXTRA_OUTPUT is already saved to cameraImageUri
++            val savedUri = cameraImageUri
++            if (savedUri != null) {
++                if (selectedImageUrisList.size < 5) {
++                    selectedImageUrisList = selectedImageUrisList + savedUri.toString()
++                    Log.d("ChatFragment", "Camera image added (full size): $savedUri")
++                    Toast.makeText(requireContext(), "Photo captured (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
++                    updateMediaPreview()
++                } else {
++                    Toast.makeText(requireContext(), "Max 5 images allowed", Toast.LENGTH_SHORT).show()
+                 }
+             } else {
+                 Toast.makeText(requireContext(), "画像データを取得できませんでした", Toast.LENGTH_SHORT).show()
+@@ -650,15 +622,24 @@
+             }
+         }
+ 
++        // #9 fix: merge duplicate isCompressing collects into one combine block to prevent double animation
+         viewLifecycleOwner.lifecycleScope.launch {
+-            viewModel.isCompressing.collect { compressing ->
++            combine(
++                viewModel.isCompressing,
++                viewModel.isLoading
++            ) { compressing, loading -> Pair(compressing, loading) }
++            .collect { (compressing, _) ->
+                 isCompressingNow = compressing
++                binding.messageInput.isEnabled = !compressing
++                binding.sendButton.isEnabled = !compressing
+                 renderCompressButtonState()
++                renderSendButtonState()
+                 if (isGenerating) {
+                     responseTypingText =
+-                        if (isCompressingNow) getString(R.string.response_compressing)
++                        if (compressing) getString(R.string.response_compressing)
+                         else getString(R.string.response_generating)
+                 }
++                if (compressing) startResponseTypingAnimation() else stopResponseTypingAnimation()
+             }
+         }
+ 
+@@ -745,16 +726,7 @@
+             }
+         }
+ 
+-        viewLifecycleOwner.lifecycleScope.launch {
+-            viewModel.isCompressing.collect { compressing ->
+-                isCompressingNow = compressing
+-                binding.messageInput.isEnabled = !compressing
+-                binding.sendButton.isEnabled = !compressing
+-                renderCompressButtonState()
+-                renderSendButtonState()
+-                if (compressing) startResponseTypingAnimation() else stopResponseTypingAnimation()
+-            }
+-        }
++        // isCompressing handling merged into combine block above
+ 
+         viewLifecycleOwner.lifecycleScope.launch {
+             viewModel.isChatReady.collect { isReady ->
+@@ -1598,6 +1570,17 @@
+     private fun launchCameraInternal() {
+         val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+         try {
++            // #10 fix: ACTION_IMAGE_CAPTURE 'data' extra only returns thumbnail (128-240px).
++            // Use MediaStore.EXTRA_OUTPUT with a URI to capture full-size image.
++            val cameraDir = java.io.File(requireContext().cacheDir, "camera").also { it.mkdirs() }
++            val imageFile = java.io.File(cameraDir, "IMG_${System.currentTimeMillis()}.jpg")
++            val fileUri = androidx.core.content.FileProvider.getUriForFile(
++                requireContext(),
++                "com.nezumi_ai.fileprovider",
++                imageFile
++            )
++            cameraImageUri = fileUri
++            cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, fileUri)
+             cameraLauncher.launch(cameraIntent)
+         } catch (e: Exception) {
+             Log.e("ChatFragment", "Camera app not found", e)
+@@ -1651,7 +1634,7 @@
+                                 Toast.makeText(requireContext(), "クリップボードから画像を貼り付けました (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
+                                 Log.d("ChatFragment", "Image pasted from clipboard: ${cachedFile.absolutePath}")
+                             } else {
+-                                Toast.makeText(requireContext(), "最大5枚までしか選択できません", Toast.LENGTH_SHORT).show()
++                                Toast.makeText(requireContext(), "Max 5 images allowed", Toast.LENGTH_SHORT).show()
+                             }
+                         }
+                     } catch (e: Exception) {
+@@ -1670,7 +1653,7 @@
+                                 updateMediaPreview()
+                                 Toast.makeText(requireContext(), "クリップボードからURIを貼り付けました (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
+                             } else {
+-                                Toast.makeText(requireContext(), "最大5枚までしか選択できません", Toast.LENGTH_SHORT).show()
++                                Toast.makeText(requireContext(), "Max 5 images allowed", Toast.LENGTH_SHORT).show()
+                             }
+                         } catch (e: Exception) {
+                             Log.e("ChatFragment", "Invalid URI in clipboard", e)
+

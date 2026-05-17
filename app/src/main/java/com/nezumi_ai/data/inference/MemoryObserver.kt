@@ -2,7 +2,6 @@ package com.nezumi_ai.data.inference
 
 import android.app.ActivityManager
 import android.content.Context
-import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -57,34 +56,27 @@ object MemoryObserver {
     )
     
     /**
-     * 現在のメモリ状態を取得
+     * Get current memory status.
+     * #6 fix: use ActivityManager.MemoryInfo.availMem (system-wide free memory) instead of JVM heap.
+     * LLM models load into native memory; JVM heap usage does not reflect actual memory pressure.
      */
     suspend fun getMemoryStatus(context: Context): MemoryStatus {
         return withContext(Dispatchers.IO) {
-            val runtime = Runtime.getRuntime()
-            val usedMemory = runtime.totalMemory() - runtime.freeMemory()
-            val maxMemory = runtime.maxMemory()
-            
-            val usedPercent = if (maxMemory > 0) {
-                ((usedMemory * 100) / maxMemory).toInt()
-            } else {
-                0
-            }
-            
+            val sysInfo = getSystemMemoryInfo(context)
+            val usedPercent = sysInfo.usedPercent
+
             val level = when {
                 usedPercent >= MEMORY_LEVEL_SEVERE -> MemoryLevel.SEVERE
                 usedPercent >= MEMORY_LEVEL_WARNING -> MemoryLevel.WARNING
                 else -> MemoryLevel.NORMAL
             }
-            
-            val isLowMemory = isDeviceLowMemory(context)
-            
+
             MemoryStatus(
                 level = level,
                 usedPercent = usedPercent,
-                usedMB = usedMemory / (1024 * 1024),
-                maxMB = maxMemory / (1024 * 1024),
-                isLowMemory = isLowMemory
+                usedMB = sysInfo.usedMemoryMB,
+                maxMB = sysInfo.totalMemoryMB,
+                isLowMemory = sysInfo.lowMemoryFlag
             )
         }
     }
@@ -174,31 +166,28 @@ object MemoryObserver {
      * 異常なメモリ急増を検出（前回比との差分チェック）
      * @return true: メモリ足りている / false: 異常検出またはメモリ危機
      */
-    private var lastCheckedMemoryMB: Long = 0
+    // #35 fix: use AtomicLong to prevent concurrent access from multiple coroutines
+    private val lastCheckedMemoryMB = java.util.concurrent.atomic.AtomicLong(0L)
+
     suspend fun checkMemoryTrend(context: Context): Boolean {
         val status = getMemoryStatus(context)
-        
-        // 初回はチェックをスキップ
-        if (lastCheckedMemoryMB == 0L) {
-            lastCheckedMemoryMB = status.usedMB
+
+        val prev = lastCheckedMemoryMB.get()
+        if (prev == 0L) {
+            lastCheckedMemoryMB.set(status.usedMB)
             return true
         }
-        
-        val delta = status.usedMB - lastCheckedMemoryMB
-        val trendPercent = if (lastCheckedMemoryMB > 0) {
-            ((delta * 100) / lastCheckedMemoryMB).toInt()
-        } else {
-            0
-        }
-        
-        lastCheckedMemoryMB = status.usedMB
-        
-        // 1 回の推論で 30% 以上のメモリ増加は異常
+
+        val delta = status.usedMB - prev
+        val trendPercent = if (prev > 0) ((delta * 100) / prev).toInt() else 0
+
+        lastCheckedMemoryMB.set(status.usedMB)
+
         if (delta > 100 && trendPercent > 30) {
             Log.w(TAG, "Abnormal memory increase detected: +${delta}MB (+$trendPercent%)")
             return status.level != MemoryLevel.SEVERE
         }
-        
+
         return status.level != MemoryLevel.SEVERE
     }
     
@@ -238,31 +227,29 @@ object MemoryObserver {
     }
 
     /**
-     * デバイスメモリがモデルの最小要件を満たしているか判定（Gallery アプローチ）
+     * アンロード後に確保できる空きメモリがモデルの最小要件を満たすか判定。
+     * 現在の空きメモリ（availMem）を基準にするため、アンロード直後に呼ぶこと。
      * @return true: メモリが不足している / false: メモリが十分
      */
     fun isMemoryLow(context: Context, modelName: String): Boolean {
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-        val minDeviceMemoryInGb = MODEL_MIN_MEMORY[modelName.uppercase()]
+        val minRequiredGb = MODEL_MIN_MEMORY[modelName.uppercase()]
 
-        return if (activityManager != null && minDeviceMemoryInGb != null) {
+        return if (activityManager != null && minRequiredGb != null) {
             val memInfo = ActivityManager.MemoryInfo()
             activityManager.getMemoryInfo(memInfo)
 
-            // API 34+ では advertisedMem を使用（Gallery と同じ）
-            var deviceMemInGb = memInfo.totalMem / BYTES_IN_GB
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                deviceMemInGb = memInfo.advertisedMem / BYTES_IN_GB
-            }
+            // 現在の空きメモリ（アンロード後に利用可能な量）
+            val availableGb = memInfo.availMem / BYTES_IN_GB
 
             Log.d(
                 TAG,
-                "isMemoryLow check: model=$modelName deviceMemGb=$deviceMemInGb minRequired=$minDeviceMemoryInGb"
+                "isMemoryLow check: model=$modelName availableGb=$availableGb minRequired=$minRequiredGb"
             )
 
-            deviceMemInGb < minDeviceMemoryInGb
+            availableGb < minRequiredGb
         } else {
-            Log.w(TAG, "isMemoryLow: Unable to determine - activityManager=$activityManager minMemory=$minDeviceMemoryInGb")
+            Log.w(TAG, "isMemoryLow: Unable to determine - activityManager=$activityManager minMemory=$minRequiredGb")
             false  // 判定不可の場合は進める
         }
     }
@@ -279,11 +266,8 @@ object MemoryObserver {
         val memInfo = ActivityManager.MemoryInfo()
         activityManager.getMemoryInfo(memInfo)
 
-        // デバイスの総メモリ（GB）
-        var deviceMemInGb = memInfo.totalMem / BYTES_IN_GB
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            deviceMemInGb = memInfo.advertisedMem / BYTES_IN_GB
-        }
+        // 現在の空きメモリ（GB）
+        val availableGb = memInfo.availMem / BYTES_IN_GB
 
         // モデルファイルサイズから必要メモリを推定
         // 経験則: モデルファイルサイズの約2.5倍のRAMが必要
@@ -293,10 +277,10 @@ object MemoryObserver {
 
         Log.d(
             TAG,
-            "isMemoryLowForFileSize: modelFileSize=${modelFileSizeGb}GB estimatedRequired=${estimatedRequiredMemGb}GB deviceMem=${deviceMemInGb}GB"
+            "isMemoryLowForFileSize: modelFileSize=${modelFileSizeGb}GB estimatedRequired=${estimatedRequiredMemGb}GB availableMem=${availableGb}GB"
         )
 
-        // 推定必要メモリがデバイスメモリの80%を超える場合は警告
-        return estimatedRequiredMemGb > (deviceMemInGb * 0.8f)
+        // 推定必要メモリが空きメモリを超える場合は警告
+        return estimatedRequiredMemGb > availableGb
     }
 }

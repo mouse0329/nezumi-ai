@@ -434,7 +434,7 @@ class SetupWizardFragment : Fragment() {
             horizontalArrangement = Arrangement.Center
         ) {
             Image(
-                painter = painterResource(id = R.drawable.ic_app_icon_96),
+                painter = painterResource(id = R.drawable.ic_nezumi_ai),
                 contentDescription = getString(R.string.app_name),
                 modifier = Modifier.size(84.dp)
             )

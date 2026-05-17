@@ -109,6 +109,8 @@ class LiteRtLmEngine(
      * close() はセッション遷移時のみ。
      */
     private fun cancelActiveConversation() {
+        val resultConv: Conversation
+        val convToAttach: Conversation?
         synchronized(activeConversationLock) {
             val c = activeLiteRtConversation ?: return
             runCatching {
@@ -151,6 +153,7 @@ class LiteRtLmEngine(
         eng: Engine,
         config: InferenceConfig
     ): Conversation {
+        var convToAttach: Conversation? = null
         synchronized(activeConversationLock) {
             // セッションが変わった場合、または Conversation が未作成の場合はリセット
             if (lastSessionId != sessionId || activeLiteRtConversation == null) {
@@ -159,18 +162,20 @@ class LiteRtLmEngine(
 
                 val normalized = config.normalized()
                 ExperimentalFlags.enableConversationConstrainedDecoding = false
-                val samplerConfig = if (normalized.backendType == "NPU") {
+                val samplerConfig = if (normalized.backendType.uppercase() == "NPU") {
                     null
                 } else {
-                    // Note: LiteRT-LM の SamplerConfig では maxOutputTokens が無いため、
-                    // EngineConfig.maxNumTokens（コンテキストウィンドウ）で全体制限を行う
-                    // 生成トークン数は InferenceConfig.maxTokens で管理
                     SamplerConfig(
                         topK = normalized.maxTopK,
                         topP = normalized.topP.toDouble(),
                         temperature = normalized.temperature.toDouble()
                     )
                 }
+
+                // TQ導入: GPU利用時のみ投機的デコーディングを許可（NPUとの競合を防ぐ）
+                val canUseSpeculative = normalized.enableSpeculativeDecoding &&
+                    normalized.backendType.uppercase() == "GPU"
+                ExperimentalFlags.enableSpeculativeDecoding = canUseSpeculative
 
                 val conv = eng.createConversation(
                     ConversationConfig(
@@ -179,17 +184,26 @@ class LiteRtLmEngine(
                         automaticToolCalling = false
                     )
                 )
-                // 投機的デコーディング設定を適用
-                ExperimentalFlags.enableSpeculativeDecoding = normalized.enableSpeculativeDecoding
-                ExperimentalFlags.enableConversationConstrainedDecoding = false
                 activeLiteRtConversation = conv
                 lastSessionId = sessionId
+                convToAttach = conv
                 Log.d(TAG, "New conversation created for session=$sessionId, KVCache initialized")
             } else {
                 Log.d(TAG, "Conversation reused for session=$sessionId, KVCache preserved")
             }
-            return activeLiteRtConversation!!
+            val resultConv = activeLiteRtConversation!!
         }
+
+        // synchronized 範囲外で SessionResourceManager に関連付けを行う
+        convToAttach?.let { convCreated ->
+            try {
+                sessionManager.attachConversation(sessionId, convCreated)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to attach conversation to session manager: $sessionId", e)
+            }
+        }
+
+        return activeLiteRtConversation!!
     }
 
     private suspend fun acquireInferenceMutex() {
@@ -231,8 +245,8 @@ class LiteRtLmEngine(
         return when {
             normalizedRequested != "NPU" -> normalizedRequested
             isGoogleTensor -> {
-                Log.i(TAG, "Google Tensor detected. Forcing CPU/XNNPACK instead of NPU.")
-                "CPU"
+                Log.i(TAG, "Google Tensor detected. TQ演算の相性によりGPUへフォールバック.")
+                "GPU"
             }
             isSupportedQualcommNpu -> {
                 Log.i(TAG, "Supported Qualcomm NPU SoC detected. Attempting NPU.")
@@ -379,9 +393,6 @@ class LiteRtLmEngine(
                 backend = backend,
                 visionBackend = if (withVisionAudio) Backend.GPU() else null,
                 audioBackend = if (withVisionAudio) Backend.CPU() else null,
-                // ★ バグ修正: maxNumTokens はコンテキストウィンドウ全体のサイズ（KVキャッシュ）
-                // maxTokens は「生成トークン数」なので、EngineConfig には contextWindow を指定
-                // 最低でも2000以上必要（システムプロンプト + ツール定義 + コンテキスト + 生成トークン）
                 maxNumTokens = normalizedConfig.contextWindow.coerceAtLeast(2048),
                 cacheDir = attemptCacheDir
             )
@@ -461,7 +472,7 @@ class LiteRtLmEngine(
             }
         }
 
-        suspend fun tryBackendChain(backends: List<Backend>): Pair<Engine, Boolean> {
+        suspend fun tryBackendChain(backends: List<Backend>): Triple<Engine, Boolean, Backend> {
             var lastError: Throwable? = null
 
             for ((index, backend) in backends.withIndex()) {
@@ -471,7 +482,7 @@ class LiteRtLmEngine(
                     val (eng, withVA) = loadWithBackend(backend)
                     val duration = System.currentTimeMillis() - start
                     Log.i(TAG, "Successfully loaded with ${backend.javaClass.simpleName} in ${duration}ms (visionAudio=$withVA)")
-                    return eng to withVA
+                    return Triple(eng, withVA, backend)
                 } catch (e: Throwable) {
                     lastError = e
                     Log.w(
@@ -489,9 +500,20 @@ class LiteRtLmEngine(
         }
 
         val fallbackChain = getBackendFallbackChain(preferredBackend)
+        try {
+            backendResourceManager.prepareBackendSwitch(preferredBackend)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to prepare backend switch", e)
+        }
         Log.d(TAG, "Backend fallback chain: ${fallbackChain.map { it.javaClass.simpleName }}")
 
-        val (eng, withVA) = tryBackendChain(fallbackChain)
+        val (eng, withVA, usedBackend) = tryBackendChain(fallbackChain)
+
+        try {
+            backendResourceManager.registerBackendEngine(eng, usedBackend)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to register backend engine", e)
+        }
 
         engine = eng
         loadedModelPath = modelPath

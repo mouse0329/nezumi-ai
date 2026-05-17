@@ -158,7 +158,7 @@ private fun SessionListHeader(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Image(
-            painter = painterResource(id = R.drawable.ic_app_icon_96),
+            painter = painterResource(id = R.drawable.ic_nezumi_ai),
             contentDescription = stringResource(id = R.string.app_name),
             modifier = Modifier.size(32.dp)
         )
@@ -340,7 +340,7 @@ private fun EmptySessionState(
             modifier = Modifier.padding(horizontal = 20.dp)
         ) {
             Image(
-                painter = painterResource(id = R.drawable.ic_app_icon_96),
+                painter = painterResource(id = R.drawable.ic_nezumi_ai),
                 contentDescription = stringResource(id = R.string.app_name),
                 modifier = Modifier.size(80.dp),
                 alpha = 0.5f

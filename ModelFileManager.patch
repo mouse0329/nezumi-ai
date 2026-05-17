@@ -1,0 +1,146 @@
+--- a/app/src/main/java/com/nezumi_ai/data/inference/ModelFileManager.kt
++++ b/app/src/main/java/com/nezumi_ai/data/inference/ModelFileManager.kt
+@@ -43,13 +43,14 @@
+         } else null
+         
+         // ストレージ判定：StatFs を使用してより確実に取得
+-        val modelDir = File(context.filesDir, "models")
++        // #15 fix: mkdirs() before StatFs to avoid exception when dir missing (would return 0 usableSpace -> false low-storage warning)
++        val modelDir = File(context.filesDir, "models").also { it.mkdirs() }
+         val availableBytes = try {
+             val statFs = StatFs(modelDir.absolutePath)
+             statFs.availableBytes
+         } catch (e: Exception) {
+             Log.w(TAG, "Failed to get storage stats, fallback to usableSpace", e)
+-            modelDir.usableSpace
++            context.filesDir.usableSpace  // filesDir always exists
+         }
+         
+         val requiredSpace = (modelSizeBytes * 1.2).toLong()
+@@ -825,18 +826,20 @@
+         return withModelTryLock(context, model) {
+             val tmpFile = File("${file.absolutePath}.download")
+             val metaFile = metadataFile(file)
+-            val legacyLiteRtLm = File(file.parentFile, legacyLiteRtLmFilename(model))
+-            val legacyLiteRtLmTmp = File("${legacyLiteRtLm.absolutePath}.download")
+-            val legacyLiteRtLmMeta = File("${legacyLiteRtLm.absolutePath}.meta")
++            val legacyFilename = legacyLiteRtLmFilename(model)
++            // skip legacy file operations when legacyLiteRtLmFilename is empty (e.g. Gemma4)
++            val legacyLiteRtLm = if (legacyFilename.isNotEmpty()) File(file.parentFile, legacyFilename) else null
++            val legacyLiteRtLmTmp = legacyLiteRtLm?.let { File("${it.absolutePath}.download") }
++            val legacyLiteRtLmMeta = legacyLiteRtLm?.let { File("${it.absolutePath}.meta") }
+ 
+             cleanupTempFiles(file)
+ 
+             val deletedMain = !file.exists() || file.delete()
+             val deletedTmp = !tmpFile.exists() || tmpFile.delete()
+             val deletedMeta = !metaFile.exists() || metaFile.delete()
+-            val deletedLegacyMain = !legacyLiteRtLm.exists() || legacyLiteRtLm.delete()
+-            val deletedLegacyTmp = !legacyLiteRtLmTmp.exists() || legacyLiteRtLmTmp.delete()
+-            val deletedLegacyMeta = !legacyLiteRtLmMeta.exists() || legacyLiteRtLmMeta.delete()
++            val deletedLegacyMain = legacyLiteRtLm == null || !legacyLiteRtLm.exists() || legacyLiteRtLm.delete()
++            val deletedLegacyTmp = legacyLiteRtLmTmp == null || !legacyLiteRtLmTmp.exists() || legacyLiteRtLmTmp.delete()
++            val deletedLegacyMeta = legacyLiteRtLmMeta == null || !legacyLiteRtLmMeta.exists() || legacyLiteRtLmMeta.delete()
+             deletedMain && deletedTmp && deletedMeta && deletedLegacyMain && deletedLegacyTmp && deletedLegacyMeta
+         } ?: false
+     }
+@@ -883,7 +886,7 @@
+ 
+             try {
+                 val remoteMetadata = getRemoteMetadata(url, HfAuthManager.getToken(context))
+-                if (recoverExistingDownloadedFile(
++                if (remoteMetadata != null && recoverExistingDownloadedFile(
+                         file = file,
+                         remoteContentLength = remoteMetadata.contentLength,
+                         expectedSha256 = remoteMetadata.sha256
+@@ -891,6 +894,8 @@
+                 ) {
+                     Log.d(TAG, "Recovered existing model file without re-download: ${file.absolutePath}")
+                     return@withModelLock Result.success(file)
++                } else if (remoteMetadata == null) {
++                    Log.w(TAG, "Could not fetch remote metadata; skipping storage pre-check and recovery")
+                 }
+ 
+                 // 3) 復旧できない既存ファイルは削除
+@@ -1159,7 +1164,7 @@
+         return restartedFromZero
+     }
+ 
+-    private fun getRemoteMetadata(urlString: String, token: String): RemoteMetadata {
++    private fun getRemoteMetadata(urlString: String, token: String): RemoteMetadata? {
+         return try {
+             val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
+                 connectTimeout = 10_000
+@@ -1176,13 +1181,18 @@
+                 ?: connection.getHeaderField("ETag")
+             connection.disconnect()
+             val normalizedHash = normalizeSha256FromEtag(etag)
++            // #17 fix: return null when Content-Length is unavailable (removes 500MB hardcode)
++            if (length <= 0) {
++                Log.w(TAG, "HEAD request succeeded but no Content-Length returned")
++                return null
++            }
+             RemoteMetadata(
+-                contentLength = if (length > 0) length else 500 * 1024 * 1024,
++                contentLength = length,
+                 sha256 = normalizedHash
+             )
+         } catch (e: Exception) {
+             Log.w(TAG, "Cannot determine content length", e)
+-            RemoteMetadata(contentLength = 500 * 1024 * 1024, sha256 = null)
++            null  // #17 fix: return null on failure; caller skips storage check
+         }
+     }
+ 
+@@ -1279,7 +1289,9 @@
+      */
+     private fun migrateLegacyLiteRtLmToTaskIfNeeded(taskFile: File, model: LocalModel) {
+         val parent = taskFile.parentFile ?: return
+-        val legacy = File(parent, legacyLiteRtLmFilename(model))
++        val legacyFilename = legacyLiteRtLmFilename(model)
++        if (legacyFilename.isEmpty()) return  // Gemma4 etc. have no legacy file
++        val legacy = File(parent, legacyFilename)
+         if (!legacy.isFile) return
+         if (isValidDownloadedFile(taskFile)) return
+ 
+@@ -1316,7 +1328,9 @@
+      */
+     private fun cleanupLegacyLiteRtLmFiles(baseFile: File, model: LocalModel) {
+         try {
+-            val legacy = File(baseFile.parentFile, legacyLiteRtLmFilename(model))
++            val legacyFilename = legacyLiteRtLmFilename(model)
++            if (legacyFilename.isEmpty()) return  // Gemma4 etc. have no legacy file
++            val legacy = File(baseFile.parentFile, legacyFilename)
+             val legacyTmp = File("${legacy.absolutePath}.download")
+             val legacyMeta = File("${legacy.absolutePath}.meta")
+             val taskOk = isValidDownloadedFile(baseFile)
+@@ -1334,8 +1348,9 @@
+         return when (model) {
+             LocalModel.GEMMA3N_2B -> E2B_LEGACY_LITERTLM_FILENAME
+             LocalModel.GEMMA3N_4B -> E4B_LEGACY_LITERTLM_FILENAME
+-            LocalModel.GEMMA4_2B -> E2B_LEGACY_LITERTLM_FILENAME
+-            LocalModel.GEMMA4_4B -> E4B_LEGACY_LITERTLM_FILENAME
++            // Gemma4 has no legacy litertlm file; return empty string to avoid deleting Gemma3n files
++            LocalModel.GEMMA4_2B -> ""
++            LocalModel.GEMMA4_4B -> ""
+         }
+     }
+ 
+@@ -1345,13 +1360,11 @@
+         if (fileLength <= 0L) return false
+ 
+         val metadata = readMetadata(file)
+-        // メタデータがない場合でも、ファイルサイズが十分に大きければダウンロード済みと判定
+-        // (ダウンロード中断の再開や古い形式のモデル、インポート済みモデルの場合)
+         if (metadata == null) {
+-            // モデルファイルは通常 100MB 以上なので、1MB 以上あればOK
+-            return fileLength > 1000000L
++            // #16 fix: 1MB is insufficient to detect incomplete downloads; use MIN_VALID_MODEL_BYTES
++            return fileLength >= MIN_VALID_MODEL_BYTES
+         }
+-        
++
+         // メタデータがある場合はサイズで検証
+         // SHA256検証は読み込み時(validatedModelFileForLoad)で実施
+         return fileLength == metadata.expectedBytes
+

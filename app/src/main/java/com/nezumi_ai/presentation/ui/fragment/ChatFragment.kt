@@ -197,44 +197,16 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     
     private val cameraLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) {
-            val extras = result.data?.extras
-            @Suppress("DEPRECATION")
-            val bitmap = extras?.getParcelable<android.graphics.Bitmap>("data")
-            
-            if (bitmap != null) {
-                try {
-                    // Bitmapをファイルに保存
-                    val cameraDir = java.io.File(requireContext().cacheDir, "camera")
-                    if (!cameraDir.exists()) {
-                        cameraDir.mkdirs()
-                    }
-                    
-                    val imageFile = java.io.File(cameraDir, "IMG_${System.currentTimeMillis()}.jpg")
-                    val fos = java.io.FileOutputStream(imageFile)
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, fos)
-                    fos.close()
-                    
-                    // FileProviderでURIを取得
-                    cameraImageUri = androidx.core.content.FileProvider.getUriForFile(
-                        requireContext(),
-                        "com.nezumi_ai.fileprovider",
-                        imageFile
-                    )
-                    
-                    // 複数画像対応：リストに追加
-                    if (selectedImageUrisList.size < 5) {
-                        selectedImageUrisList = selectedImageUrisList + cameraImageUri.toString()
-                        Log.d("ChatFragment", "Camera image added: ${imageFile.absolutePath}")
-                        Toast.makeText(requireContext(), "写真を撮影しました (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
-                        updateMediaPreview()
-                    } else {
-                        Toast.makeText(requireContext(), "最大5枚までしか選択できません", Toast.LENGTH_SHORT).show()
-                    }
-                    
-                    bitmap.recycle()
-                } catch (e: Exception) {
-                    Log.e("ChatFragment", "Error saving camera bitmap", e)
-                    Toast.makeText(requireContext(), "画像の保存に失敗しました", Toast.LENGTH_SHORT).show()
+            // #10 fix: full-size image captured via EXTRA_OUTPUT is already saved to cameraImageUri
+            val savedUri = cameraImageUri
+            if (savedUri != null) {
+                if (selectedImageUrisList.size < 5) {
+                    selectedImageUrisList = selectedImageUrisList + savedUri.toString()
+                    Log.d("ChatFragment", "Camera image added (full size): $savedUri")
+                    Toast.makeText(requireContext(), "Photo captured (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
+                    updateMediaPreview()
+                } else {
+                    Toast.makeText(requireContext(), "Max 5 images allowed", Toast.LENGTH_SHORT).show()
                 }
             } else {
                 Toast.makeText(requireContext(), "画像データを取得できませんでした", Toast.LENGTH_SHORT).show()
@@ -650,15 +622,24 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
         }
 
+        // #9 fix: merge duplicate isCompressing collects into one combine block to prevent double animation
         viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.isCompressing.collect { compressing ->
+            combine(
+                viewModel.isCompressing,
+                viewModel.isLoading
+            ) { compressing, loading -> Pair(compressing, loading) }
+            .collect { (compressing, _) ->
                 isCompressingNow = compressing
+                binding.messageInput.isEnabled = !compressing
+                binding.sendButton.isEnabled = !compressing
                 renderCompressButtonState()
+                renderSendButtonState()
                 if (isGenerating) {
                     responseTypingText =
-                        if (isCompressingNow) getString(R.string.response_compressing)
+                        if (compressing) getString(R.string.response_compressing)
                         else getString(R.string.response_generating)
                 }
+                if (compressing) startResponseTypingAnimation() else stopResponseTypingAnimation()
             }
         }
 
@@ -734,6 +715,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.memoryError.collect { error ->
+                if (error != null) showMemoryErrorDialog(error)
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
             viewModel.memoryWarning.collect { warning ->
                 if (warning != null) showMemoryWarningDialog(warning)
             }
@@ -745,16 +732,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
         }
 
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.isCompressing.collect { compressing ->
-                isCompressingNow = compressing
-                binding.messageInput.isEnabled = !compressing
-                binding.sendButton.isEnabled = !compressing
-                renderCompressButtonState()
-                renderSendButtonState()
-                if (compressing) startResponseTypingAnimation() else stopResponseTypingAnimation()
-            }
-        }
+        // isCompressing handling merged into combine block above
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.isChatReady.collect { isReady ->
@@ -1255,6 +1233,60 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
     }
 
+    private fun showMemoryErrorDialog(error: ChatViewModel.MemoryErrorInfo) {
+        val dialog = android.app.Dialog(requireContext())
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setCancelable(false)
+
+        val composeView = androidx.compose.ui.platform.ComposeView(requireContext()).apply {
+            setViewTreeLifecycleOwner(viewLifecycleOwner)
+            setViewTreeViewModelStoreOwner(this@ChatFragment)
+            setViewTreeSavedStateRegistryOwner(this@ChatFragment)
+            setContent {
+                NezumiComposeTheme {
+                    MemoryErrorDialog(
+                        error = error,
+                        onDismiss = {
+                            dialog.dismiss()
+                            viewModel.dismissMemoryError()
+                        }
+                    )
+                }
+            }
+        }
+
+        dialog.setContentView(composeView)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.show()
+    }
+
+    @Composable
+    private fun MemoryErrorDialog(
+        error: ChatViewModel.MemoryErrorInfo,
+        onDismiss: () -> Unit
+    ) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = onDismiss,
+            icon = { Text("🚨", fontSize = 32.sp) },
+            title = { Text("メモリ不足") },
+            text = {
+                Column {
+                    Text("メモリ不足のため、処理を続行できませんでした。")
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("使用中: ${error.usedMB}MB / ${error.totalMB}MB (${error.usedPercent}%)")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "他のアプリを閉じてから再試行してください。",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = onDismiss) { Text("閉じる") }
+            }
+        )
+    }
+
     private fun showMemoryWarningDialog(warning: ChatViewModel.MemoryWarningInfo) {
         // Compose UIダイアログをDialogでラップして表示
         val dialog = android.app.Dialog(requireContext())
@@ -1422,7 +1454,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             verticalArrangement = Arrangement.Center
         ) {
             Image(
-                painter = painterResource(id = R.drawable.ic_app_icon_72),
+                painter = painterResource(id = R.drawable.ic_nezumi_ai),
                 contentDescription = "Nezumi AI Logo",
                 modifier = Modifier.size(80.dp)
             )
@@ -1598,6 +1630,17 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private fun launchCameraInternal() {
         val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
         try {
+            // #10 fix: ACTION_IMAGE_CAPTURE 'data' extra only returns thumbnail (128-240px).
+            // Use MediaStore.EXTRA_OUTPUT with a URI to capture full-size image.
+            val cameraDir = java.io.File(requireContext().cacheDir, "camera").also { it.mkdirs() }
+            val imageFile = java.io.File(cameraDir, "IMG_${System.currentTimeMillis()}.jpg")
+            val fileUri = androidx.core.content.FileProvider.getUriForFile(
+                requireContext(),
+                "com.nezumi_ai.fileprovider",
+                imageFile
+            )
+            cameraImageUri = fileUri
+            cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, fileUri)
             cameraLauncher.launch(cameraIntent)
         } catch (e: Exception) {
             Log.e("ChatFragment", "Camera app not found", e)
@@ -1651,7 +1694,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                                 Toast.makeText(requireContext(), "クリップボードから画像を貼り付けました (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
                                 Log.d("ChatFragment", "Image pasted from clipboard: ${cachedFile.absolutePath}")
                             } else {
-                                Toast.makeText(requireContext(), "最大5枚までしか選択できません", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(requireContext(), "Max 5 images allowed", Toast.LENGTH_SHORT).show()
                             }
                         }
                     } catch (e: Exception) {
@@ -1670,7 +1713,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                                 updateMediaPreview()
                                 Toast.makeText(requireContext(), "クリップボードからURIを貼り付けました (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
                             } else {
-                                Toast.makeText(requireContext(), "最大5枚までしか選択できません", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(requireContext(), "Max 5 images allowed", Toast.LENGTH_SHORT).show()
                             }
                         } catch (e: Exception) {
                             Log.e("ChatFragment", "Invalid URI in clipboard", e)
@@ -1731,8 +1774,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
             
             // 送信ボタンを停止ボタンに変更
-            binding.sendButton.text = "停止"
-            binding.sendButton.setOnClickListener {
+            _binding?.sendButton?.text = "停止"
+            _binding?.sendButton?.setOnClickListener {
                 stopAudioRecording()
             }
             
@@ -1768,22 +1811,22 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 recordingAnimationJob = null
                 
                 // hintを元に戻す（cancelするとアニメJob内の後処理が走らないため明示的に戻す）
-                binding.messageInput.hint = "メッセージを入力..."
+                _binding?.messageInput?.hint = "メッセージを入力..."
                 
                 // 送信ボタンを戻す
-                binding.sendButton.text = getString(R.string.send)
-                binding.sendButton.setOnClickListener {
+                _binding?.sendButton?.text = getString(R.string.send)
+                _binding?.sendButton?.setOnClickListener {
                     if (viewModel.isLoading.value) {
                         viewModel.stopGeneration()
                         return@setOnClickListener
                     }
-                    val message = binding.messageInput.text.toString().trim()
+                    val message = _binding?.messageInput?.text.toString().trim()
                     if (message.isNotEmpty()) {
                         // Phase 11: 複数画像対応
                         val imagesToSend = if (imageInputEnabled) selectedImageUrisList else emptyList()
                         val audioToSend = if (audioInputEnabled) selectedAudioUri else null
                         viewModel.sendMessageWithMedia(message, imagesToSend, audioToSend)
-                        binding.messageInput.text?.clear()
+                        _binding?.messageInput?.text?.clear()
                         selectedImageUrisList = emptyList()
                         selectedAudioUri = null
                         updateMediaPreview()
@@ -1824,10 +1867,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     dotCount = (dotCount % 3) + 1
                     val dots = ".".repeat(dotCount)
                     
-                    withContext(Dispatchers.Main) {
-                        // プレースホルダーテキストをドット進捗表示に変更
-                        binding.messageInput.hint = "録音中$dots"
-                    }
+                            withContext(Dispatchers.Main) {
+                                // プレースホルダーテキストをドット進捗表示に変更
+                                _binding?.messageInput?.hint = "録音中$dots"
+                            }
                     
                     delay(500) // 500msごとにドット更新
                 } catch (e: Exception) {
@@ -1837,7 +1880,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             
             // アニメーション終了時にプレースホルダーを元に戻す
             withContext(Dispatchers.Main) {
-                binding.messageInput.hint = "メッセージを入力..."
+                _binding?.messageInput?.hint = "メッセージを入力..."
             }
         }
     }

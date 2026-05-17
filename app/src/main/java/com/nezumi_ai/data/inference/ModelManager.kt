@@ -287,10 +287,13 @@ class ModelManager(
         val engine = activeEngine
         var emitted = false
         try {
-            engine.inference(sessionId, prompt, config).collect { chunk ->
-                emitted = true
-                emit(chunk)
+            val result = jobController.launchInference(sessionId) {
+                engine.inference(sessionId, prompt, config).collect { chunk ->
+                    emitted = true
+                    emit(chunk)
+                }
             }
+            result.getOrThrow()
         } catch (t: Throwable) {
             if (t is CancellationException) throw t
             if (!emitted && isCompiledModelInvokeFailure(t) && recoverFromInvokeFailure(config)) {
@@ -314,11 +317,14 @@ class ModelManager(
         val engine = activeEngine
         var emitted = false
         try {
-            engine.inferenceWithMedia(sessionId, prompt, images, audioClips, config)
-                .collect { chunk ->
-                    emitted = true
-                    emit(chunk)
-                }
+            val result = jobController.launchInference(sessionId) {
+                engine.inferenceWithMedia(sessionId, prompt, images, audioClips, config)
+                    .collect { chunk ->
+                        emitted = true
+                        emit(chunk)
+                    }
+            }
+            result.getOrThrow()
         } catch (t: Throwable) {
             if (t is CancellationException) throw t
             if (!emitted && isCompiledModelInvokeFailure(t) && recoverFromInvokeFailure(config)) {

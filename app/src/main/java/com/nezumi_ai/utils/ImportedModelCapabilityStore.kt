@@ -107,6 +107,7 @@ object ImportedModelCapabilityStore {
         val baseName = modelFile.nameWithoutExtension
         val fileName = modelFile.name
         val candidateNames = listOf(
+            // suffix/infix style (existing)
             "${baseName}.mmproj.gguf",
             "${baseName}.mmproj",
             "${baseName}_mmproj.gguf",
@@ -114,7 +115,13 @@ object ImportedModelCapabilityStore {
             "${fileName}.mmproj",
             "${fileName}.mmproj.gguf",
             "${fileName}_mmproj",
-            "${fileName}_mmproj.gguf"
+            "${fileName}_mmproj.gguf",
+            // #18 fix: prefix-style names (common in HuggingFace/llama.cpp distributions)
+            "mmproj-${baseName}.gguf",
+            "mmproj-${baseName}-f16.gguf",
+            "mmproj-${baseName}-f32.gguf",
+            "mmproj_${baseName}.gguf",
+            "mmproj-${baseName}"
         )
         return candidateNames.any { candidateName ->
             File(parentDir, candidateName).exists()

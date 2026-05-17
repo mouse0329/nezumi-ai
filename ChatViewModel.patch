@@ -1,0 +1,275 @@
+--- a/app/src/main/java/com/nezumi_ai/presentation/viewmodel/ChatViewModel.kt
++++ b/app/src/main/java/com/nezumi_ai/presentation/viewmodel/ChatViewModel.kt
+@@ -559,7 +559,7 @@
+                 val sessionId = ensureValidCurrentSession() ?: return@launch
+ 
+                 // ユーザーメッセージを保存
+-                messageRepository.addMessage(
++                val userMessageId = messageRepository.addMessage(
+                     sessionId = sessionId,
+                     role = "user",
+                     content = userMessage
+@@ -573,7 +573,7 @@
+ 
+                 // AI応答を生成
+                 _isLoading.value = true
+-                generateAIResponse(sessionId, userMessage)
++                generateAIResponse(sessionId, userMessage, currentTurnMessageId = userMessageId)
+             } catch (t: Throwable) {
+                 val e = if (t is Exception) t else RuntimeException(t)
+                 Log.e(TAG, "Error sending message", e)
+@@ -756,7 +756,8 @@
+         sessionId: Long,
+         userMessage: String,
+         images: List<Bitmap> = emptyList(),
+-        audioClips: List<ByteArray> = emptyList()
++        audioClips: List<ByteArray> = emptyList(),
++        currentTurnMessageId: Long? = null
+     ) {
+         var streamingMessageId: Long? = null
+         val aiStartMs = System.currentTimeMillis()  // Phase 11: 全体ロード時間を計測開始
+@@ -867,7 +868,8 @@
+                 sessionId = sessionId,
+                 config = config,
+                 manager = manager,
+-                engineModelName = engineModelName
++                engineModelName = engineModelName,
++                currentTurnMessageId = currentTurnMessageId
+             )
+ 
+             if (engineModelName.endsWith(".gguf", ignoreCase = true)) {
+@@ -1600,10 +1602,13 @@
+         val isLocalTaskPath =
+             (lowered.endsWith(".task") || lowered.endsWith(".litertlm") || lowered.endsWith(".gguf")) &&
+                 File(trimmed).isAbsolute
+-        
++
+         return when {
+             trimmed.equals("Gemma4-4B", ignoreCase = true) -> "Gemma4-4B"
+             trimmed.equals("Gemma4-2B", ignoreCase = true) -> "Gemma4-2B"
++            // #11 fix: handle ModelOption keys 'Gemma3n-2B'/'Gemma3n-4B' from ChatFragment
++            trimmed.equals("Gemma3n-4B", ignoreCase = true) -> "E4B"
++            trimmed.equals("Gemma3n-2B", ignoreCase = true) -> "E2B"
+             trimmed.equals("E4B", ignoreCase = true) -> "E4B"  // Gemma3n 4B (保持)
+             trimmed.equals("E2B", ignoreCase = true) -> "E2B"  // Gemma3n 2B (保持)
+             isLocalTaskPath -> trimmed
+@@ -1713,7 +1718,16 @@
+         ).trim()
+     }
+ 
+-    private fun sanitizeMessageContentForPrompt(msg: MessageEntity): String {
++    /**
++     * @param isCurrentTurn when true (= current-turn user message), GGUF embeds <image> token in prompt.
++     *   Past turns use imageDescription as fallback to avoid mismatch between <image> token count and Bitmap list.
++     *   LiteRt passes images via Content.ImageBytes, so no <image> token in prompt string.
++     */
++    private fun sanitizeMessageContentForPrompt(
++        msg: MessageEntity,
++        isGgufEngine: Boolean = false,
++        isCurrentTurn: Boolean = false
++    ): String {
+         val normalized = msg.content.trim()
+         if (msg.role == "assistant") {
+             if (normalized.isEmpty()) return ""
+@@ -1728,10 +1742,15 @@
+                 ?.map { it.trim() }
+                 ?.count { it.isNotEmpty() }
+                 ?: 0
+-            val imageTokens = if (imageCount > 0) {
+-                List(imageCount) { "<image>" }.joinToString(separator = "\n")
+-            } else {
+-                ""
++            val imageTokens: String = when {
++                imageCount <= 0 -> ""
++                // GGUF + current turn: embed <image> token (1:1 match with completeWithMedia)
++                isGgufEngine && isCurrentTurn ->
++                    List(imageCount) { "<image>" }.joinToString(separator = "\n")
++                // GGUF past turns or all LiteRt turns: use imageDescription as fallback
++                else ->
++                    msg.imageDescription?.takeIf { it.isNotBlank() }
++                        ?: "(image x$imageCount)"
+             }
+             return when {
+                 imageTokens.isNotEmpty() && normalized.isNotEmpty() -> "$imageTokens\n$normalized"
+@@ -1741,6 +1760,18 @@
+         }
+     }
+ 
++    /** Lambda adapter for sanitizeMessageContentForPrompt (engine type + current-turn pinned version) */
++    private fun makeSanitizer(
++        isGgufEngine: Boolean,
++        currentTurnMessageId: Long?
++    ): (MessageEntity) -> String = { msg ->
++        sanitizeMessageContentForPrompt(
++            msg,
++            isGgufEngine = isGgufEngine,
++            isCurrentTurn = (msg.id == currentTurnMessageId && msg.role == "user")
++        )
++    }
++
+     private fun mergeStreamingChunk(current: String, chunk: String): String {
+         if (chunk.isEmpty()) return current
+         if (current.isEmpty()) return chunk
+@@ -1804,32 +1835,30 @@
+         sessionId: Long,
+         config: InferenceConfig,
+         manager: ModelManager,
+-        engineModelName: String
++        engineModelName: String,
++        currentTurnMessageId: Long? = null
+     ): String {
+         val messages = messageRepository.getMessagesForSessionOnce(sessionId)
+         if (messages.isEmpty()) return ""
+ 
+         val isGgufEngine = isGgufEngineModel(engineModelName)
+-        val fullPrompt = buildPromptFromMessages(messages, isGgufEngine, engineModelName, config.enableThinking)
+-        
++        val fullPrompt = buildPromptFromMessages(messages, isGgufEngine, engineModelName, config.enableThinking, currentTurnMessageId)
++
+         // Phase 12: thinkingContent が誤ってプロンプトに混入していないか検証
+         val messagesWithThinking = messages.filter { it.thinkingContent != null && it.thinkingContent.isNotEmpty() }
+         if (messagesWithThinking.isNotEmpty()) {
+             Log.d(TAG, "PROMPT_BUILD: Messages with thinkingContent found (count=${messagesWithThinking.size}), but they are excluded from prompt as designed")
+         }
+-        
++
+         // Phase 16: GPU時のコンテキスト圧縮を無効化（メモリ競合防止）
+-        // GPU推論中に別の圧縮推論を走らせるとメモリ OOM リスクが高い
+         val effectiveCompressionEnabled = config.contextCompressionEnabled && config.backendType != "GPU"
+-        
++
+         if (!effectiveCompressionEnabled) {
+             return trimPromptToWindow(fullPrompt, config.contextWindow)
+         }
+ 
+         val validMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
+         val recentMessageCount = recentMessageCountForWindow(config.contextWindow)
+-        // 件数が少なくても長文であれば圧縮を発火できるようにする。
+-        // ただし直近メッセージを最低2件は保持し、残りを圧縮対象にする。
+         val keepRecentCount = when {
+             validMessages.size <= 2 -> validMessages.size
+             validMessages.size <= recentMessageCount -> validMessages.size - 1
+@@ -2170,22 +2199,27 @@
+         messages: List<MessageEntity>,
+         isGgufEngine: Boolean,
+         engineModelName: String = "",
+-        enableThinking: Boolean = false
++        enableThinking: Boolean = false,
++        currentTurnMessageId: Long? = null
+     ): String {
+         if (messages.isEmpty()) return ""
+-        
++
+         // Phase 13: 整合性チェック - imageUri がないのに imageDescription がある場合を検出
+         val orphanedDescriptions = messages.filter {
+-            it.imageDescription != null && 
+-            it.imageDescription.isNotEmpty() && 
++            it.imageDescription != null &&
++            it.imageDescription.isNotEmpty() &&
+             (it.imageUri.isNullOrEmpty())
+         }
+         if (orphanedDescriptions.isNotEmpty()) {
+             Log.w(TAG, "PROMPT_BUILD: Found ${orphanedDescriptions.size} orphaned imageDescription(s). These will be ignored: ${orphanedDescriptions.map { it.id }}")
+         }
+-        
++
+         val filteredMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
+         val systemPrompt = settingsRepository.getSystemPrompt()
++        // #1/#2: engine-specific sanitizer with current-turn identification
++        // GGUF: <image> token only for current turn; past turns use imageDescription
++        // LiteRt: no <image> token (image passed via Content.ImageBytes)
++        val sanitizer = makeSanitizer(isGgufEngine, currentTurnMessageId)
+ 
+         return if (isGgufEngine) {
+             PromptBuilder.buildForGguf(
+@@ -2193,14 +2227,14 @@
+                 systemPrompt = systemPrompt,
+                 format = PromptBuilder.detectGgufFormat(engineModelName),
+                 enableThinking = enableThinking,
+-                sanitizeMessageContent = ::sanitizeMessageContentForPrompt
++                sanitizeMessageContent = sanitizer
+             )
+         } else {
+             PromptBuilder.buildForLiteRt(
+                 messages = filteredMessages,
+                 systemPrompt = systemPrompt,
+                 injectGemmaThinkTrigger = settingsRepository.shouldInjectGemmaThinkTrigger(),
+-                sanitizeMessageContent = ::sanitizeMessageContentForPrompt
++                sanitizeMessageContent = sanitizer
+             )
+         }
+     }
+@@ -2532,13 +2566,13 @@
+                 // メディア付きユーザーメッセージを保存（DB アクセス - IO スレッド）
+                 // Phase 11: 複数画像をカンマ区切りで保存
+                 // Phase 12: 画像説明を自動生成・保存
+-                withContext(Dispatchers.IO) {
++                val userMessageId = withContext(Dispatchers.IO) {
+                     Log.d(TAG, "SAVE_MESSAGE_START: content='$userMessage' images=${storedImages.size}")
+                     val imageDesc = if (storedImages.isNotEmpty()) {
+                         // 初めての画像に対する簡潔な説明を生成
+                         generateImageDescription(storedImages)
+                     } else null
+-                    
++
+                     val messageId = messageRepository.addMessage(
+                         sessionId = sessionId,
+                         role = "user",
+@@ -2549,6 +2583,7 @@
+                     )
+                     Log.d(TAG, "SAVE_MESSAGE_END: messageId=$messageId content='$userMessage' imageDesc='$imageDesc'")
+                     sessionRepository.updateSessionLastUpdated(sessionId)
++                    messageId
+                 }
+ 
+                 // ★ DB保存後にpendingをクリア（messagesフローが更新済みのタイミング）
+@@ -2586,7 +2621,7 @@
+                 }
+ 
+                 // AI 応答を生成（計算集約的 - Default スレッド）
+-                generateAIResponse(sessionId, userMessage, images, audioClips)
++                generateAIResponse(sessionId, userMessage, images, audioClips, currentTurnMessageId = userMessageId)
+             } catch (t: Throwable) {
+                 val e = if (t is Exception) t else RuntimeException(t)
+                 Log.e(TAG, "Error sending message with media", e)
+@@ -2909,28 +2944,22 @@
+         // WakeLock をリリース（画面スリープを許可）
+         releaseScreenWakeLock()
+         
+-        // KVキャッシュを含むモデルリソースをアンロード
+-        // ⚠️ 重要：viewModelScope は onCleared で Cancelled になるため、ここで呼んではいけない
+-        // 代わりに同期的に unloadModel() を実行する
++        // Unload model resources including KV cache
++        // viewModelScope is Cancelled here; cannot launch new coroutines.
++        // Use GlobalScope + IO for async unload; wait up to 3 seconds.
+         try {
+             Log.d(TAG, "Unloading LiteRT-LM model and KVCache...")
+-            val unloadResult = runCatching {
+-                // viewModelScope ではなく、新しい coroutine context を避ける
+-                modelManager?.let { manager ->
+-                    // TODO: runBlocking は UI スレッドでは使用不可
+-                    // 本来は別スレッドで実行すべき、または Activity.onDestroy で async に呼ぶ
+-                    Log.d(TAG, "Model manager cleanup initiated")
+-                }
++            val unloadJob = kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
++                modelManager?.unloadModel()
+             }
+-            unloadResult.onSuccess {
+-                Log.i(TAG, "✅ Model and KVCache unloaded successfully")
+-            }
+-            unloadResult.onFailure { error ->
+-                Log.w(TAG, "⚠️ Failed to unload model: ${error.message}", error)
++            runCatching {
++                kotlinx.coroutines.runBlocking {
++                    withTimeoutOrNull(3000L) { unloadJob.join() }
++                }
+             }
++            Log.i(TAG, "Model and KVCache unloaded successfully")
+         } catch (e: Exception) {
+-            // viewModelScope キャンセルによる CancellationException もここで catch
+-            Log.e(TAG, "Exception during onCleared: ${e.message}", e)
++            Log.w(TAG, "Failed to unload model in onCleared: ${e.message}", e)
+         }
+ 
+         super.onCleared()
+

@@ -7,6 +7,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
+import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -92,6 +94,7 @@ class InferenceJobController {
                 taskId = taskId,
                 sessionId = sessionId
             )
+            task.job = coroutineContext[Job]
             
             tasks[taskId] = task
             task.state = InferenceState.RUNNING
@@ -138,6 +141,10 @@ class InferenceJobController {
             }
             Log.e(TAG, "Inference task failed: taskId=$taskId", e)
             Result.failure(e)
+        } finally {
+            taskMutex.withLock {
+                tasks.remove(taskId)
+            }
         }
     }
     
