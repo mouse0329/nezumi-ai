@@ -18,9 +18,10 @@ window.modelManager = (() => {
     'gemma4-e4b': {
       name: 'Gemma 4 E4B',
       description: 'より高品質な Gemma 4 モデル',
-      localUrl: './models/gemma-4-E4B-it-int4-Web.task',
-      url: 'https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it-int4-Web.task?download=true',
-      filename: 'gemma-4-E4B-it-int4-Web.task',
+      localUrl: './models/gemma-4-E4B-it-web.task',
+      url: 'https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it-web.task?download=true',
+      filename: 'gemma-4-E4B-it-web.task',
+      legacyFilename: 'gemma-4-E4B-it-int4-Web.task',
       maxTokens: 4096,
       sizeMB: 3000,
     },
