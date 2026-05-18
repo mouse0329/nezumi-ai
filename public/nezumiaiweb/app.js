@@ -356,6 +356,7 @@ async function downloadManagedModel(key) {
     state.model = key;
     dom.modelSelector.value = key;
     localStorage.setItem(STORAGE_KEY_MODEL, key);
+    await refreshModelSelectorOptions();
   } catch (e) {
     modelManagerProgressText.textContent = e.name === 'AbortError' ? 'キャンセルしました' : `エラー: ${e.message}`;
   } finally {
@@ -388,6 +389,7 @@ async function importManagedModel(key) {
     state.model = key;
     dom.modelSelector.value = key;
     localStorage.setItem(STORAGE_KEY_MODEL, key);
+    await refreshModelSelectorOptions();
   } catch (e) {
     modelManagerProgressText.textContent = `エラー: ${e.message}`;
   } finally {
@@ -1043,9 +1045,12 @@ async function init() {
   const savedTheme = localStorage.getItem(STORAGE_KEY_THEME) || 'dark';
   applyTheme(savedTheme);
 
-  const savedModel = localStorage.getItem(STORAGE_KEY_MODEL) || 'gemma4-e2b';
-  state.model = cached[keys.indexOf(savedModel)] ? savedModel : keys[cached.findIndex(Boolean)];
-  dom.modelSelector.value = savedModel;
+  const savedModel = localStorage.getItem(STORAGE_KEY_MODEL);
+  if (savedModel && keys.includes(savedModel) && cached[keys.indexOf(savedModel)]) {
+    state.model = savedModel;
+  } else {
+    state.model = keys[cached.findIndex(Boolean)];
+  }
   dom.modelSelector.value = state.model;
   localStorage.setItem(STORAGE_KEY_MODEL, state.model);
   await refreshModelSelectorOptions();
