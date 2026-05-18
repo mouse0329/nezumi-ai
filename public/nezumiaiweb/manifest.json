@@ -1,0 +1,19 @@
+{
+  "name": "ネズミAIweb",
+  "short_name": "ネズミAIweb",
+  "description": "ネズミAI Web",
+  "id": "/nezumiaiweb/",
+  "start_url": "/nezumiaiweb/index.html",
+  "scope": "/nezumiaiweb/",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "icons": [
+    {
+      "src": "nezumi-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

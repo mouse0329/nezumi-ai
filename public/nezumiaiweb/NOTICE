@@ -1,0 +1,18 @@
+# NOTICE
+
+This project uses third-party libraries, runtimes, and model files that are distributed under their own licenses.
+
+## MediaPipe Tasks GenAI
+
+- Package: @mediapipe/tasks-genai
+- License: Apache License 2.0
+- Source: https://www.npmjs.com/package/@mediapipe/tasks-genai
+
+## Gemma 4 models
+
+- Models: Gemma 4 E2B / Gemma 4 E4B LiteRT task files
+- License: Apache License 2.0
+- Provider: Google / Hugging Face model repositories
+- Reference: https://ai.google.dev/gemma
+
+Model files are downloaded by the application from Hugging Face and are not bundled in this repository.

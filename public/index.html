@@ -1,762 +1,621 @@
 <!DOCTYPE html>
 <html lang="ja">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>nezumi-ai — ローカルAIチャットアプリ</title>
-    <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@300;400;500;700&family=Ubuntu+Mono:wght@400;700&display=swap"
-        rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap" rel="stylesheet">
-    <style>
-        .emoji {
-            font-family: 'Noto Color Emoji', sans-serif;
-            font-style: normal;
-        }
-    </style>
-    <style>
-        :root {
-            --sky: #38BDF8;
-            --sky-dark: #0284C7;
-            --deep: #082F49;
-            --ink: #111827;
-            --muted: #4B5563;
-            --border: #E5E7EB;
-            --surface: #F5F6F8;
-            --white: #FFFFFF;
-            --mono: 'Ubuntu Mono', monospace;
-            --sans: 'Ubuntu', sans-serif;
-        }
-
-        *,
-        *::before,
-        *::after {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        html {
-            scroll-behavior: smooth;
-        }
-
-        body {
-            font-family: var(--sans);
-            background: var(--white);
-            color: var(--ink);
-            line-height: 1.65;
-            font-size: 16px;
-        }
-
-        /* ── NAV ── */
-        nav {
-            position: sticky;
-            top: 0;
-            z-index: 100;
-            background: rgba(255, 255, 255, 0.92);
-            backdrop-filter: blur(12px);
-            border-bottom: 1px solid var(--border);
-        }
-
-        .nav-inner {
-            max-width: 1100px;
-            margin: 0 auto;
-            padding: 0 32px;
-            height: 56px;
-            display: flex;
-            align-items: center;
-            gap: 32px;
-        }
-
-        .nav-logo {
-            font-family: var(--mono);
-            font-weight: 700;
-            font-size: 1.1rem;
-            color: var(--sky-dark);
-            text-decoration: none;
-            letter-spacing: -0.02em;
-            margin-right: auto;
-        }
-
-        .nav-logo span {
-            color: var(--sky);
-        }
-
-        nav a {
-            text-decoration: none;
-            color: var(--muted);
-            font-size: 0.875rem;
-            font-weight: 500;
-            transition: color 0.15s;
-        }
-
-        nav a:hover {
-            color: var(--sky-dark);
-        }
-
-        .nav-cta {
-            background: var(--sky);
-            color: var(--deep) !important;
-            padding: 6px 16px;
-            border-radius: 6px;
-            font-weight: 700 !important;
-            transition: background 0.15s !important;
-        }
-
-        .nav-cta:hover {
-            background: var(--sky-dark) !important;
-            color: var(--white) !important;
-        }
-
-        /* ── HERO ── */
-        .hero {
-            background: linear-gradient(160deg, var(--deep) 0%, #0C4A6E 55%, #075985 100%);
-            color: var(--white);
-            padding: 96px 32px 80px;
-            text-align: center;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .hero::before {
-            content: '';
-            position: absolute;
-            inset: 0;
-            background:
-                radial-gradient(ellipse 60% 40% at 20% 80%, rgba(56, 189, 248, 0.18) 0%, transparent 70%),
-                radial-gradient(ellipse 40% 60% at 80% 20%, rgba(56, 189, 248, 0.12) 0%, transparent 70%);
-            pointer-events: none;
-        }
-
-        .hero-badge {
-            display: inline-block;
-            font-family: var(--mono);
-            font-size: 0.78rem;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            color: var(--sky);
-            border: 1px solid rgba(56, 189, 248, 0.4);
-            border-radius: 100px;
-            padding: 4px 14px;
-            margin-bottom: 24px;
-        }
-
-        .hero h1 {
-            font-family: var(--mono);
-            font-size: clamp(2.8rem, 6vw, 4.5rem);
-            font-weight: 700;
-            letter-spacing: -0.04em;
-            line-height: 1;
-            margin-bottom: 20px;
-        }
-
-        .hero h1 em {
-            font-style: normal;
-            color: var(--sky);
-        }
-
-        .hero-sub {
-            font-size: 1.125rem;
-            color: rgba(255, 255, 255, 0.72);
-            max-width: 540px;
-            margin: 0 auto 40px;
-            font-weight: 300;
-        }
-
-        .hero-actions {
-            display: flex;
-            gap: 12px;
-            justify-content: center;
-            flex-wrap: wrap;
-        }
-
-        .btn-primary {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            background: var(--sky);
-            color: var(--deep);
-            font-family: var(--sans);
-            font-weight: 700;
-            font-size: 0.95rem;
-            padding: 12px 24px;
-            border-radius: 8px;
-            text-decoration: none;
-            transition: background 0.15s, transform 0.1s;
-        }
-
-        .btn-primary:hover {
-            background: #7DD3FC;
-            transform: translateY(-1px);
-        }
-
-        .btn-ghost {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.25);
-            color: rgba(255, 255, 255, 0.85);
-            font-family: var(--sans);
-            font-size: 0.95rem;
-            padding: 12px 24px;
-            border-radius: 8px;
-            text-decoration: none;
-            transition: border-color 0.15s, color 0.15s;
-        }
-
-        .btn-ghost:hover {
-            border-color: var(--sky);
-            color: var(--sky);
-        }
-
-        .hero-note {
-            margin-top: 20px;
-            font-size: 0.8rem;
-            color: rgba(255, 255, 255, 0.4);
-        }
-
-        /* ── MAIN ── */
-        main {
-            max-width: 1100px;
-            margin: 0 auto;
-            padding: 0 32px;
-        }
-
-        section {
-            padding: 72px 0;
-            border-bottom: 1px solid var(--border);
-        }
-
-        section:last-child {
-            border-bottom: none;
-        }
-
-        .section-label {
-            font-family: var(--mono);
-            font-size: 0.72rem;
-            letter-spacing: 0.14em;
-            text-transform: uppercase;
-            color: var(--sky-dark);
-            margin-bottom: 10px;
-        }
-
-        h2 {
-            font-size: 1.85rem;
-            font-weight: 700;
-            letter-spacing: -0.03em;
-            color: var(--ink);
-            margin-bottom: 8px;
-        }
-
-        .section-lead {
-            color: var(--muted);
-            font-size: 1rem;
-            max-width: 560px;
-            margin-bottom: 40px;
-        }
-
-        /* ── OVERVIEW CARDS ── */
-        .cards {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 20px;
-        }
-
-        .card {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 24px;
-            transition: border-color 0.2s, box-shadow 0.2s;
-        }
-
-        .card:hover {
-            border-color: var(--sky);
-            box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.08);
-        }
-
-        .card-icon {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, var(--sky) 0%, var(--sky-dark) 100%);
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 16px;
-            font-size: 18px;
-            color: var(--white);
-        }
-
-        .card h3 {
-            font-size: 1rem;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-
-        .card p,
-        .card ul {
-            font-size: 0.875rem;
-            color: var(--muted);
-            line-height: 1.6;
-        }
-
-        .card ul {
-            padding-left: 16px;
-        }
-
-        .card ul li {
-            margin-bottom: 4px;
-        }
-
-        /* ── REQUIREMENTS TABLE ── */
-        .table-wrap {
-            overflow-x: auto;
-            border: 1px solid var(--border);
-            border-radius: 12px;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.9rem;
-        }
-
-        thead th {
-            background: var(--surface);
-            font-weight: 700;
-            text-align: left;
-            padding: 14px 20px;
-            border-bottom: 1px solid var(--border);
-            color: var(--muted);
-            font-size: 0.78rem;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-        }
-
-        tbody td {
-            padding: 14px 20px;
-            border-bottom: 1px solid var(--border);
-            vertical-align: middle;
-        }
-
-        tbody tr:last-child td {
-            border-bottom: none;
-        }
-
-        tbody tr:hover td {
-            background: var(--surface);
-        }
-
-        .badge {
-            display: inline-block;
-            font-family: var(--mono);
-            font-size: 0.78rem;
-            padding: 2px 8px;
-            border-radius: 4px;
-        }
-
-        .badge-sky {
-            background: rgba(56, 189, 248, 0.12);
-            color: var(--sky-dark);
-        }
-
-        .badge-gray {
-            background: var(--surface);
-            color: var(--muted);
-            border: 1px solid var(--border);
-        }
-
-        /* ── COMPAT NOTE ── */
-        .compat-note {
-            margin-top: 16px;
-            background: rgba(56, 189, 248, 0.07);
-            border: 1px solid rgba(56, 189, 248, 0.25);
-            border-radius: 8px;
-            padding: 14px 18px;
-            font-size: 0.85rem;
-            color: var(--sky-dark);
-            display: flex;
-            gap: 10px;
-            align-items: flex-start;
-        }
-
-        .compat-note strong {
-            font-weight: 700;
-        }
-
-        /* ── ARCHITECTURE ── */
-        .arch-box {
-            background: var(--deep);
-            border-radius: 12px;
-            padding: 32px;
-            overflow-x: auto;
-        }
-
-        .arch-box pre {
-            font-family: var(--mono);
-            font-size: 0.875rem;
-            color: rgba(255, 255, 255, 0.85);
-            line-height: 1.8;
-            margin: 0;
-        }
-
-        .arch-box .c-sky {
-            color: var(--sky);
-        }
-
-        .arch-box .c-dim {
-            color: rgba(255, 255, 255, 0.35);
-        }
-
-        /* ── CODE BLOCK ── */
-        pre.code {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 24px;
-            font-family: var(--mono);
-            font-size: 0.85rem;
-            color: var(--ink);
-            line-height: 1.8;
-            overflow-x: auto;
-        }
-
-        pre.code .c-comment {
-            color: #9CA3AF;
-        }
-
-        pre.code .c-key {
-            color: var(--sky-dark);
-            font-weight: 700;
-        }
-
-        /* ── STATUS BAR ── */
-        .status-bar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 16px;
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 20px 24px;
-        }
-
-        .status-item {
-            font-size: 0.875rem;
-        }
-
-        .status-item span {
-            color: var(--muted);
-        }
-
-        .status-item strong {
-            color: var(--ink);
-        }
-
-        /* ── DOWNLOAD CTA ── */
-        .download-cta {
-            background: linear-gradient(135deg, var(--deep) 0%, #0C4A6E 100%);
-            border-radius: 16px;
-            padding: 48px;
-            text-align: center;
-            color: var(--white);
-        }
-
-        .download-cta h2 {
-            color: var(--white);
-            margin-bottom: 12px;
-        }
-
-        .download-cta p {
-            color: rgba(255, 255, 255, 0.65);
-            margin-bottom: 28px;
-        }
-
-        .download-cta .note {
-            margin-top: 16px;
-            font-size: 0.8rem;
-            color: rgba(255, 255, 255, 0.35);
-        }
-
-        /* ── FOOTER ── */
-        footer {
-            border-top: 1px solid var(--border);
-            padding: 32px;
-            text-align: center;
-            font-size: 0.85rem;
-            color: var(--muted);
-        }
-
-        footer a {
-            color: var(--sky-dark);
-            text-decoration: none;
-        }
-
-        footer a:hover {
-            text-decoration: underline;
-        }
-
-        footer .sep {
-            margin: 0 12px;
-            opacity: 0.4;
-        }
-
-        /* ── MOBILE ── */
-        @media (max-width: 640px) {
-            nav a:not(.nav-cta):not(.nav-logo) {
-                display: none;
-            }
-
-            .hero {
-                padding: 72px 24px 64px;
-            }
-
-            main {
-                padding: 0 20px;
-            }
-
-            .download-cta {
-                padding: 36px 24px;
-            }
-
-            h2 {
-                font-size: 1.5rem;
-            }
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ネズミAI</title>
+  <link rel="icon" href="nezumiaiweb/nezumi-icon.svg" type="image/svg+xml">
+  <link rel="shortcut icon" href="nezumiaiweb/nezumi-icon.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#0d1117">
+  <style>
+    :root {
+      --color-bg: #0d1117;
+      --color-surface: #161b22;
+      --color-surface2: #1c2128;
+      --color-primary: #00bcd4;
+      --color-primary-dark: #0097a7;
+      --color-accent: #ff00cc;
+      --color-button-primary: #7c4dbd;
+      --color-button-primary-hover: #8f5fd0;
+      --color-text: #e6edf3;
+      --color-text-secondary: #8b949e;
+      --color-border: #30363d;
+      --shadow: 0 2px 12px rgba(0,0,0,0.3);
+      --radius: 20px;
+      --radius-sm: 12px;
+      --radius-xs: 8px;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      min-height: 100dvh;
+      background: var(--color-bg);
+      color: var(--color-text);
+      font-family: 'Hiragino Sans', 'Noto Sans JP', system-ui, sans-serif;
+      line-height: 1.7;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .site-shell {
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 12px max(20px, calc((100vw - 1080px) / 2));
+      background: var(--color-surface);
+      border-bottom: 1px solid var(--color-border);
+      box-shadow: var(--shadow);
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      margin-right: auto;
+      color: var(--color-text);
+      text-decoration: none;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .brand img {
+      width: 36px;
+      height: 36px;
+      flex-shrink: 0;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-link,
+    .nav-cta,
+    .btn-primary,
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      padding: 8px 14px;
+      border-radius: var(--radius-xs);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 700;
+      transition: background 0.15s, border-color 0.15s, transform 0.1s;
+      white-space: nowrap;
+    }
+
+    .nav-link {
+      color: var(--color-text-secondary);
+    }
+
+    .nav-link:hover {
+      background: var(--color-surface2);
+      color: var(--color-text);
+    }
+
+    .nav-cta,
+    .btn-primary {
+      border: none;
+      background: var(--color-primary);
+      color: #fff;
+    }
+
+    .nav-cta:hover,
+    .btn-primary:hover {
+      background: var(--color-primary-dark);
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      border: 1.5px solid var(--color-border);
+      background: var(--color-surface);
+      color: var(--color-text);
+    }
+
+    .btn-secondary:hover {
+      background: var(--color-surface2);
+      border-color: var(--color-primary);
+      transform: translateY(-1px);
+    }
+
+    .hero {
+      width: min(1080px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 72px 0 40px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+      gap: 36px;
+      align-items: center;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 18px;
+      padding: 6px 12px;
+      border: 1px solid var(--color-border);
+      border-radius: 999px;
+      background: var(--color-surface);
+      color: var(--color-primary);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+
+    h1 {
+      max-width: 760px;
+      font-size: clamp(42px, 7vw, 76px);
+      line-height: 1.02;
+      letter-spacing: 0;
+      margin-bottom: 20px;
+    }
+
+    .hero-copy {
+      max-width: 620px;
+      color: var(--color-text-secondary);
+      font-size: 17px;
+      margin-bottom: 26px;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .hero-note {
+      color: var(--color-text-secondary);
+      font-size: 13px;
+    }
+
+    .phone-preview {
+      min-height: 520px;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      background: var(--color-surface);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .preview-top {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px;
+      border-bottom: 1px solid var(--color-border);
+      background: var(--color-surface);
+    }
+
+    .preview-top img {
+      width: 36px;
+      height: 36px;
+    }
+
+    .preview-select {
+      flex: 1;
+      min-width: 0;
+      padding: 7px 10px;
+      border: 1.5px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      background: var(--color-surface2);
+    }
+
+    .preview-select span {
+      display: block;
+      color: var(--color-text-secondary);
+      font-size: 10px;
+      line-height: 1;
+      margin-bottom: 3px;
+    }
+
+    .preview-select strong {
+      display: block;
+      font-size: 14px;
+      line-height: 1.2;
+    }
+
+    .preview-context {
+      padding: 6px 12px 8px;
+      border-bottom: 1px solid var(--color-border);
+      color: var(--color-text-secondary);
+      font-size: 11px;
+    }
+
+    .preview-context div {
+      height: 3px;
+      margin-top: 5px;
+      border-radius: 2px;
+      background: var(--color-border);
+      overflow: hidden;
+    }
+
+    .preview-context div::before {
+      content: '';
+      display: block;
+      width: 24%;
+      height: 100%;
+      background: var(--color-primary);
+    }
+
+    .preview-chat {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 14px;
+      padding: 22px;
+      background: var(--color-bg);
+    }
+
+    .preview-empty {
+      display: grid;
+      place-items: center;
+      gap: 10px;
+      color: var(--color-text);
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .preview-empty img {
+      width: 84px;
+      height: 84px;
+    }
+
+    .preview-bubble {
+      max-width: 86%;
+      padding: 12px 15px;
+      border-radius: var(--radius);
+      font-size: 14px;
+    }
+
+    .preview-bubble.ai {
+      align-self: flex-start;
+      border: 1px solid var(--color-border);
+      background: var(--color-surface2);
+      color: var(--color-text);
+      border-bottom-left-radius: 4px;
+    }
+
+    .preview-bubble.user {
+      align-self: flex-end;
+      background: var(--color-primary);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+
+    .preview-input {
+      display: flex;
+      gap: 8px;
+      padding: 12px;
+      border-top: 1px solid var(--color-border);
+      background: var(--color-surface);
+    }
+
+    .preview-input div {
+      flex: 1;
+      height: 42px;
+      border: 1.5px solid var(--color-border);
+      border-radius: 22px;
+      background: var(--color-surface2);
+    }
+
+    .preview-input span {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: var(--color-primary);
+    }
+
+    main {
+      width: min(1080px, calc(100% - 40px));
+      margin: 0 auto;
+      padding-bottom: 56px;
+    }
+
+    section {
+      padding: 42px 0;
+      border-top: 1px solid var(--color-border);
+    }
+
+    .section-label {
+      color: var(--color-primary);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      font-size: clamp(26px, 4vw, 36px);
+      line-height: 1.2;
+      letter-spacing: 0;
+      margin-bottom: 10px;
+    }
+
+    .section-lead {
+      max-width: 660px;
+      color: var(--color-text-secondary);
+      margin-bottom: 22px;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      padding: 18px;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-xs);
+      background: var(--color-surface);
+      box-shadow: var(--shadow);
+    }
+
+    .card h3 {
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+
+    .card p,
+    .card li,
+    .spec-row {
+      color: var(--color-text-secondary);
+      font-size: 14px;
+    }
+
+    .card ul {
+      padding-left: 18px;
+    }
+
+    .spec-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .spec-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 12px 14px;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-xs);
+      background: var(--color-surface);
+    }
+
+    .spec-row strong {
+      color: var(--color-text);
+    }
+
+    .cta-band {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 24px;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      background: var(--color-surface);
+      box-shadow: var(--shadow);
+    }
+
+    .cta-band p {
+      color: var(--color-text-secondary);
+      margin-top: 4px;
+    }
+
+    footer {
+      padding: 28px 20px;
+      border-top: 1px solid var(--color-border);
+      color: var(--color-text-secondary);
+      text-align: center;
+      font-size: 13px;
+    }
+
+    footer a {
+      color: var(--color-primary);
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      text-decoration: underline;
+    }
+
+    @media (max-width: 820px) {
+      .topbar {
+        gap: 10px;
+      }
+
+      .nav-links .nav-link {
+        display: none;
+      }
+
+      .hero {
+        grid-template-columns: 1fr;
+        padding-top: 44px;
+      }
+
+      .phone-preview {
+        min-height: 460px;
+      }
+
+      .cards,
+      .spec-list {
+        grid-template-columns: 1fr;
+      }
+
+      .cta-band {
+        align-items: stretch;
+        flex-direction: column;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .brand span {
+        display: none;
+      }
+
+      .nav-cta {
+        padding-inline: 12px;
+      }
+
+      .hero,
+      main {
+        width: min(100% - 28px, 1080px);
+      }
+
+      .hero-actions a {
+        width: 100%;
+      }
+    }
+  </style>
 </head>
-
 <body>
+  <div class="site-shell">
+    <header class="topbar">
+      <a class="brand" href="#">
+        <img src="nezumiaiweb/nezumi-icon.svg" alt="ネズミAI">
+        <span>ネズミAI</span>
+      </a>
+      <nav class="nav-links" aria-label="メイン">
+        <a class="nav-link" href="details.html">詳細</a>
+        <a class="nav-link" href="#features">機能</a>
+        <a class="nav-link" href="#requirements">動作要件</a>
+        <a class="nav-link" href="https://github.com/mouse0329/nezumi-ai">GitHub</a>
+        <a class="nav-cta" href="nezumiaiweb/index.html">Web版を開く</a>
+      </nav>
+    </header>
 
-    <!-- NAV -->
-    <nav>
-        <div class="nav-inner">
-            <a href="#" class="nav-logo">nezumi<span>-ai</span></a>
-            <a href="#overview">概要</a>
-            <a href="#features">機能</a>
-            <a href="#requirements">必要環境</a>
-            <a href="#installation">インストール</a>
-            <a href="https://github.com/mouse0329/nezumi-ai" class="nav-cta">GitHub →</a>
-        </div>
-    </nav>
-
-    <!-- HERO -->
     <div class="hero">
-        <div class="hero-badge">v0.x — 開発中</div>
-        <h1>nezumi<em>-ai</em></h1>
-        <p class="hero-sub">インターネット不要。完全オンデバイスで動く、プライバシーファーストなAndroid AIアシスタント。</p>
+      <div>
+        <div class="eyebrow">LOCAL AI ASSISTANT</div>
+        <h1>ネズミAI</h1>
+        <p class="hero-copy">
+          Android とブラウザで動く、オンデバイス志向の AI チャットアプリです。
+          Web版はセットアップ後すぐにブラウザ上でチャットを試せます。
+        </p>
         <div class="hero-actions">
-            <a href="https://github.com/mouse0329/nezumi-ai/releases" class="btn-primary">
-                ↓ APKをダウンロード
-            </a>
-            <a href="https://github.com/mouse0329/nezumi-ai" class="btn-ghost">
-                GitHub でコードを見る
-            </a>
+          <a class="btn-primary" href="nezumiaiweb/index.html">Web版を開く</a>
+          <a class="btn-secondary" href="details.html">詳細を見る</a>
+          <a class="btn-secondary" href="https://github.com/mouse0329/nezumi-ai/releases">Android版を入手</a>
+          <a class="btn-secondary" href="https://github.com/mouse0329/nezumi-ai">GitHub</a>
         </div>
-        <p class="hero-note">初回起動時にモデルファイルのダウンロードが必要です</p>
+        <p class="hero-note">Web版は初回利用時にモデルファイルのダウンロードが必要です。</p>
+      </div>
+
+      <aside class="phone-preview" aria-label="ネズミAI Web プレビュー">
+        <div class="preview-top">
+          <img src="nezumiaiweb/nezumi-icon.svg" alt="">
+          <div class="preview-select">
+            <span>モデル</span>
+            <strong>Gemma 4 E2B</strong>
+          </div>
+        </div>
+        <div class="preview-context">
+          コンテキスト使用量: 0 / 4096 tokens
+          <div></div>
+        </div>
+        <div class="preview-chat">
+          <div class="preview-empty">
+            <img src="nezumiaiweb/nezumi-icon.svg" alt="">
+            <span>ネズミAI</span>
+          </div>
+          <div class="preview-bubble ai">こんにちは。ローカルで会話を始められます。</div>
+          <div class="preview-bubble user">Web版を試したい</div>
+        </div>
+        <div class="preview-input">
+          <div></div>
+          <span></span>
+        </div>
+      </aside>
     </div>
 
     <main>
+      <section id="features">
+        <p class="section-label">Features</p>
+        <h2>アプリと同じ感覚で使える Web 版</h2>
+        <p class="section-lead">
+          Web版チャット UI と同じ配色、余白、ボタン感に揃えました。
+          Android版への導線も残しつつ、ブラウザ版を最初に試せる構成です。
+        </p>
+        <div class="cards">
+          <article class="card">
+            <h3>オンデバイス推論</h3>
+            <p>モデルをブラウザ側に保存し、会話をローカルで処理します。</p>
+          </article>
+          <article class="card">
+            <h3>WebGPU / WASM</h3>
+            <p>環境に応じて高速寄り、互換性寄りのバックエンドを選べます。</p>
+          </article>
+          <article class="card">
+            <h3>履歴と設定</h3>
+            <p>チャット履歴、モデル管理、テーマなどを Web 版の設定から扱えます。</p>
+          </article>
+        </div>
+      </section>
 
-        <!-- OVERVIEW -->
-        <section id="overview">
-            <p class="section-label">概要</p>
-            <h2>すべてデバイスの中で完結する</h2>
-            <p class="section-lead">nezumi-aiはサーバーにデータを送信しません。推論からTTSまで、すべてオンデバイスで処理します。</p>
+      <section id="requirements">
+        <p class="section-label">Requirements</p>
+        <h2>動作要件</h2>
+        <p class="section-lead">Web版はモダンブラウザで利用できます。大きなモデルを扱うため、空きストレージとメモリに余裕がある環境を推奨します。</p>
+        <div class="spec-list">
+          <div class="spec-row"><span>Web版</span><strong>Chrome / Edge 推奨</strong></div>
+          <div class="spec-row"><span>バックエンド</span><strong>WebGPU / WASM</strong></div>
+          <div class="spec-row"><span>モデル</span><strong>Gemma 4 E2B / E4B</strong></div>
+          <div class="spec-row"><span>Android版</span><strong>Android 12 以上</strong></div>
+        </div>
+      </section>
 
-            <div class="cards">
-                <div class="card">
-                    <div class="card-icon"><span class="emoji">🚫</span></div>
-                    <h3>完全オフライン動作</h3>
-                    <p>ローカル推論のみ。VPN Kill Switchで通信を遮断しながら使用可能。プライバシーを最優先に設計。</p>
-                </div>
-                <div class="card">
-                    <div class="card-icon"><span class="emoji">⚡</span></div>
-                    <h3>マルチバックエンド</h3>
-                    <ul>
-                        <li><strong>LiteRT-LM</strong>（メイン）— Gemma 4 / Gemma 3n E2B・E4B</li>
-                        <li><strong>llama.cpp</strong> — GGUFモデル</li>
-
-                    </ul>
-                </div>
-                <div class="card">
-                    <div class="card-icon"><span class="emoji">🖼️</span></div>
-                    <h3>画像生成（LocalDream）</h3>
-                    <ul>
-                        <li>Snapdragon NPU: <strong>QNNバックエンド</strong></li>
-                        <li>その他: <strong>MNN（CPU/OpenCL）</strong>へ自動フォールバック</li>
-                        <li>GemmaがツールとしてSDを呼び出し（ユーザー承認制）</li>
-                    </ul>
-                </div>
-                <div class="card">
-                    <div class="card-icon"><span class="emoji">💬</span></div>
-                    <h3>チャット機能</h3>
-                    <ul>
-                        <li>リアルタイムストリーミング表示</li>
-                        <li>テキスト＋画像の複合入力</li>
-                        <li>会話履歴の永続化（Room DB）</li>
-                        <li>セッション分岐・30秒ウォッチドッグ</li>
-                    </ul>
-                </div>
-                <div class="card">
-                    <div class="card-icon"><span class="emoji">🔧</span></div>
-                    <h3>エージェントモード</h3>
-                    <ul>
-                        <li>アラーム / フラッシュライト</li>
-                        <li>Web検索 / 天気</li>
-                        <li style="color: #9CA3AF;">カレンダー / Gmail / SwitchBot（開発中）</li>
-                    </ul>
-                </div>
-                <div class="card">
-                    <div class="card-icon"><span class="emoji">🛡️</span></div>
-                    <h3>GPU/CPU自動切り替え</h3>
-                    <p>GPU推論を優先し、非対応端末ではCPUへ自動フォールバック。LiteRT-LMのKVCacheリセット対応済み。</p>
-                </div>
-            </div>
-        </section>
-
-        <!-- REQUIREMENTS -->
-        <section id="requirements">
-            <p class="section-label">必要環境</p>
-            <h2>動作要件</h2>
-            <p class="section-lead">LiteRT-LMを安定して動かすにはAndroid 13以降を推奨します。</p>
-
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>項目</th>
-                            <th>最小</th>
-                            <th>推奨</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td><strong>Android バージョン</strong></td>
-                            <td><span class="badge badge-gray">12 (API 30)</span></td>
-                            <td><span class="badge badge-sky">14+ (API 34+)</span></td>
-                        </tr>
-                        <tr>
-                            <td><strong>RAM</strong></td>
-                            <td>6 GB</td>
-                            <td>8 GB 以上</td>
-                        </tr>
-                        <tr>
-                            <td><strong>ストレージ空き容量</strong></td>
-                            <td>4 GB</td>
-                            <td>8 GB 以上</td>
-                        </tr>
-                        <tr>
-                            <td><strong>GPU（LLM推論）</strong></td>
-                            <td>任意</td>
-                            <td>Mali / Adreno 推奨</td>
-                        </tr>
-                        <tr>
-                            <td><strong>GPU（画像生成）</strong></td>
-                            <td>OpenCL対応（MNN）</td>
-                            <td>Snapdragon NPU（QNN加速）</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-
-            <div class="compat-note">
-                <span class="emoji">ℹ️</span>
-                <div>
-                    <strong>Tensor G3（Pixel 8 / 8a / 8 Pro）について：</strong>
-                    Mali-G715
-                    GPUはLLM推論はGPUバックエンドで動作しますが、画像生成のQNNバックエンドはSnapdragon専用です。Tensor端末ではMNN（CPU/OpenCL）フォールバックで動作します。
-                </div>
-            </div>
-        </section>
-
-        <!-- FEATURES -->
-        <section id="features">
-            <p class="section-label">アーキテクチャ</p>
-            <h2>技術スタック</h2>
-            <p class="section-lead">Jetpack Composeを中心にClean Architectureで構成。エンジン層は交換可能な設計です。</p>
-
-            <div class="arch-box">
-                <pre>
-<span class="c-sky">[ UI Layer ]</span>          Jetpack Compose / StateFlow
-      <span class="c-dim">↓</span>
-<span class="c-sky">[ ViewModel ]</span>         状態管理 / コルーチン
-      <span class="c-dim">↓</span>
-<span class="c-sky">[ Repository ]</span>        Room DB（チャット履歴）
-      <span class="c-dim">↓</span>
-<span class="c-sky">[ UseCase / Inference Layer ]</span>
-      <span class="c-dim">↓</span>
-<span class="c-sky">[ Engine Layer ]</span>
-  <span class="c-dim">├──</span> LlmEngine      LiteRT-LM（メイン）/ llama.cpp（GGUF）
-  <span class="c-dim">└──</span> SdEngine       MNN / QNN — Stable Diffusion 1.5</pre>
-            </div>
-
-            <div class="status-bar" style="margin-top: 24px;">
-                <div class="status-item"><span>UI/UX: </span><strong>Jetpack Compose</strong></div>
-                <div class="status-item"><span>DB: </span><strong>Room</strong></div>
-                <div class="status-item"><span>LLMエンジン: </span><strong>LiteRT-LM / llama.cpp</strong></div>
-                <div class="status-item"><span>画像生成: </span><strong>MNN / QNN</strong></div>
-                <div class="status-item"><span>モデル: </span><strong>Gemma 4 / Gemma 3n E2B・E4B</strong></div>
-                <div class="status-item"><span>ライセンス: </span><strong>LGPL v3 / 商用別ライセンス</strong></div>
-            </div>
-        </section>
-
-        <!-- INSTALLATION -->
-        <section id="installation">
-            <p class="section-label">インストール</p>
-            <h2>ビルド手順</h2>
-            <p class="section-lead">APKリリースからの直接インストール、またはGradleでセルフビルドが可能です。</p>
-
-            <pre class="code"><span class="c-comment"># 1. リポジトリをクローン</span>
-git clone https://github.com/mouse0329/nezumi-ai.git
-cd nezumi-ai
-
-<span class="c-comment"># 2. サブモジュールを初期化</span>
-git submodule update --init --recursive
-
-<span class="c-comment"># 3. Debug APKをビルド</span>
-./gradlew assembleDebug
-
-<span class="c-comment"># 4. Release APKをビルド（署名設定必須 → local.properties 参照）</span>
-./gradlew assembleRelease</pre>
-
-            <h3 style="margin: 32px 0 12px; font-size: 1rem;">local.properties の設定</h3>
-            <pre class="code"><span class="c-key">sdk.dir</span>=/path/to/Android/sdk
-<span class="c-key">ndk.dir</span>=/path/to/Android/ndk
-
-<span class="c-comment"># リリース署名（オプション）</span>
-<span class="c-key">STORE_FILE</span>=/path/to/keystore.jks
-<span class="c-key">STORE_PASSWORD</span>=your_keystore_password
-<span class="c-key">KEY_ALIAS</span>=key_alias
-<span class="c-key">KEY_PASSWORD</span>=your_key_password</pre>
-        </section>
-
-        <!-- DOWNLOAD CTA -->
-        <section id="download" style="border-bottom: none; padding-bottom: 72px;">
-            <div class="download-cta">
-                <h2>最新版をダウンロード</h2>
-                <p>GitHub Releases から APK を直接インストールできます。</p>
-                <a href="https://github.com/mouse0329/nezumi-ai/releases" class="btn-primary"
-                    style="font-size: 1rem; padding: 14px 28px;">
-                    ↓ GitHub Releases へ
-                </a>
-                <p class="note">初回起動時はモデルファイル（最大4GB）のダウンロードが必要です</p>
-            </div>
-        </section>
-
+      <section id="download">
+        <div class="cta-band">
+          <div>
+            <h2>ブラウザで試す</h2>
+            <p>セットアップ画面でバックエンドとモデルを選ぶと、すぐチャット画面へ進めます。</p>
+          </div>
+          <a class="btn-primary" href="nezumiaiweb/index.html">ネズミAI Webへ</a>
+        </div>
+      </section>
     </main>
 
     <footer>
-        <p>
-            &copy; 2026 nezumi-ai
-            <span class="sep">|</span>
-            <a href="https://github.com/mouse0329/nezumi-ai">GitHub</a>
-            <span class="sep">|</span>
-            <a href="https://github.com/mouse0329/nezumi-ai/blob/main/LICENSE.md">LGPL v3 / 商用別ライセンス</a>
-
+      &copy; 2026 nezumi-ai
+      <span> | </span>
+      <a href="https://github.com/mouse0329/nezumi-ai">GitHub</a>
+      <span> | </span>
+      <a href="details.html">詳細</a>
+      <span> | </span>
+      <a href="nezumiaiweb/index.html">Web版</a>
+    </footer>
+  </div>
+</body>
 </html>
