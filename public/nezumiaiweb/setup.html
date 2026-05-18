@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -26,11 +27,13 @@
     .setup-header {
       padding: 20px 20px 0;
     }
+
     .setup-title {
       font-size: 28px;
       font-weight: 700;
       margin-bottom: 4px;
     }
+
     .setup-step-label {
       font-size: 14px;
       color: var(--color-text-secondary);
@@ -43,6 +46,7 @@
       gap: 8px;
       margin-bottom: 24px;
     }
+
     .step-tab {
       padding: 8px 18px;
       border-radius: 20px;
@@ -54,10 +58,12 @@
       cursor: default;
       transition: background 0.2s, color 0.2s;
     }
+
     .step-tab.active {
       background: var(--color-primary);
       color: #fff;
     }
+
     .step-tab.done {
       background: var(--color-surface2);
       color: var(--color-text-secondary);
@@ -93,14 +99,17 @@
       color: var(--color-text);
       margin-bottom: 16px;
     }
+
     .card-body ol {
       margin: 8px 0 8px 20px;
     }
+
     .card-note {
       font-size: 14px;
       color: var(--color-text-secondary);
       margin-top: 16px;
     }
+
     .card-link {
       color: var(--color-primary);
       text-decoration: none;
@@ -114,6 +123,7 @@
       gap: 12px;
       margin: 16px 0;
     }
+
     .backend-option {
       border: 1.5px solid var(--color-border);
       border-radius: var(--radius-sm);
@@ -122,19 +132,23 @@
       transition: border-color 0.15s, background 0.15s;
       background: var(--color-surface);
     }
+
     .backend-option:hover {
       border-color: var(--color-primary);
       background: var(--color-surface2);
     }
+
     .backend-option.selected {
       border-color: var(--color-primary);
       background: color-mix(in srgb, var(--color-primary) 12%, transparent);
     }
+
     .backend-name {
       font-size: 16px;
       font-weight: 600;
       margin-bottom: 4px;
     }
+
     .backend-desc {
       font-size: 13px;
       color: var(--color-text-secondary);
@@ -147,6 +161,7 @@
       gap: 12px;
       margin: 16px 0;
     }
+
     .model-option {
       border: 1.5px solid var(--color-border);
       border-radius: var(--radius-sm);
@@ -158,38 +173,54 @@
       align-items: center;
       justify-content: space-between;
     }
+
     .model-option:hover {
       border-color: var(--color-primary);
       background: var(--color-surface2);
     }
+
     .model-option.selected {
       border-color: var(--color-primary);
     }
+
     .model-info {}
+
     .model-name {
       font-size: 15px;
       font-weight: 600;
       margin-bottom: 3px;
     }
+
     .model-desc {
       font-size: 13px;
       color: var(--color-text-secondary);
     }
+
     .model-status {
       font-size: 13px;
       font-weight: 500;
       flex-shrink: 0;
       margin-left: 12px;
     }
-    .model-status.ok { color: var(--color-primary); }
-    .model-status.none { color: var(--color-text-secondary); }
+
+    .model-status.ok {
+      color: var(--color-primary);
+    }
+
+    .model-status.none {
+      color: var(--color-text-secondary);
+    }
 
     /* ダウンロード進捗 */
     .dl-progress-wrap {
       margin-top: 12px;
       display: none;
     }
-    .dl-progress-wrap.visible { display: block; }
+
+    .dl-progress-wrap.visible {
+      display: block;
+    }
+
     .dl-progress-bar-wrap {
       height: 4px;
       background: var(--color-context-bar-bg);
@@ -197,6 +228,7 @@
       overflow: hidden;
       margin-bottom: 6px;
     }
+
     .dl-progress-bar {
       height: 100%;
       width: 0%;
@@ -204,10 +236,12 @@
       border-radius: 2px;
       transition: width 0.2s;
     }
+
     .dl-progress-text {
       font-size: 12px;
       color: var(--color-text-secondary);
     }
+
     .dl-btn {
       margin-top: 8px;
       padding: 8px 20px;
@@ -220,8 +254,16 @@
       cursor: pointer;
       transition: background 0.15s;
     }
-    .dl-btn:hover { background: color-mix(in srgb, var(--color-primary) 10%, transparent); }
-    .dl-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .dl-btn:hover {
+      background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+    }
+
+    .dl-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     .dl-cancel-btn {
       margin-left: 8px;
       padding: 8px 16px;
@@ -241,6 +283,7 @@
       justify-content: flex-end;
       gap: 12px;
     }
+
     .setup-footer.has-back {
       justify-content: space-between;
     }
@@ -253,6 +296,7 @@
       cursor: pointer;
       padding: 8px 0;
     }
+
     .btn-skip {
       background: none;
       border: 1.5px solid var(--color-border);
@@ -263,7 +307,11 @@
       cursor: pointer;
       transition: background 0.15s;
     }
-    .btn-skip:hover { background: var(--color-surface2); }
+
+    .btn-skip:hover {
+      background: var(--color-surface2);
+    }
+
     .btn-primary {
       background: var(--color-button-primary);
       border: none;
@@ -275,8 +323,15 @@
       cursor: pointer;
       transition: background 0.15s;
     }
-    .btn-primary:hover { background: var(--color-button-primary-hover); }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-primary:hover {
+      background: var(--color-button-primary-hover);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
 
     /* ストレージ使用量 */
     .storage-note {
@@ -289,14 +344,18 @@
     .manual-dl-dialog {
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.7);
+      background: rgba(0, 0, 0, 0.7);
       display: none;
       align-items: center;
       justify-content: center;
       z-index: 9999;
       padding: 20px;
     }
-    .manual-dl-dialog.visible { display: flex; }
+
+    .manual-dl-dialog.visible {
+      display: flex;
+    }
+
     .manual-dl-content {
       background: var(--color-surface);
       border-radius: var(--radius);
@@ -305,25 +364,40 @@
       width: 100%;
       border: 1px solid var(--color-border);
     }
+
     .manual-dl-title {
       font-size: 20px;
       font-weight: 700;
       margin-bottom: 16px;
     }
+
     .manual-dl-body {
       font-size: 14px;
       line-height: 1.6;
       color: var(--color-text);
       margin-bottom: 20px;
     }
+
     .manual-dl-body ol {
       margin: 8px 0 8px 20px;
     }
+
+    .manual-dl-link {
+      color: var(--color-primary);
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .manual-dl-link:hover {
+      text-decoration: underline;
+    }
+
     .manual-dl-actions {
       display: flex;
       gap: 8px;
       justify-content: flex-end;
     }
+
     .manual-dl-btn {
       padding: 10px 20px;
       border-radius: 20px;
@@ -333,442 +407,501 @@
       border: none;
       transition: background 0.15s;
     }
+
     .manual-dl-btn.primary {
       background: var(--color-button-primary);
       color: #fff;
     }
-    .manual-dl-btn.primary:hover { background: var(--color-button-primary-hover); }
+
+    .manual-dl-btn.primary:hover {
+      background: var(--color-button-primary-hover);
+    }
+
     .manual-dl-btn.secondary {
       background: var(--color-surface2);
       color: var(--color-text);
     }
-    .manual-dl-btn.secondary:hover { background: var(--color-border); }
+
+    .manual-dl-btn.secondary:hover {
+      background: var(--color-border);
+    }
   </style>
 </head>
+
 <body class="dark">
-<div class="android-recommend hidden" id="androidRecommend">
-  <div class="android-recommend-text">
-    <strong>Android版があります</strong>
-    <span>Androidではネイティブ版の Nezumi AI も利用できます。</span>
-  </div>
-  <div class="android-recommend-actions">
-    <a class="android-recommend-link" href="https://github.com/mouse0329/nezumi-ai/releases" target="_blank" rel="noopener noreferrer">Releases</a>
-    <button class="android-recommend-close" id="androidRecommendClose" type="button" aria-label="閉じる">✕</button>
-  </div>
-</div>
-<div class="setup-page" id="setupPage">
-
-  <div class="setup-header">
-    <div class="setup-title">セットアップ</div>
-    <div class="setup-step-label" id="stepLabel">Step 1 / 3</div>
-    <div class="step-tabs" id="stepTabs">
-      <button class="step-tab active" id="tab0">ウェルカム</button>
-      <button class="step-tab" id="tab1">バックエンド</button>
-      <button class="step-tab" id="tab2">モデル</button>
+  <div class="android-recommend hidden" id="androidRecommend">
+    <div class="android-recommend-text">
+      <strong>Android版があります</strong>
+      <span>Androidではネイティブ版の Nezumi AI も利用できます。</span>
+    </div>
+    <div class="android-recommend-actions">
+      <a class="android-recommend-link" href="https://github.com/mouse0329/nezumi-ai/releases" target="_blank"
+        rel="noopener noreferrer">Releases</a>
+      <button class="android-recommend-close" id="androidRecommendClose" type="button" aria-label="閉じる">✕</button>
     </div>
   </div>
+  <div class="setup-page" id="setupPage">
 
-  <!-- ===== Step 1: ウェルカム ===== -->
-  <div class="setup-card" id="step1">
-    <img src="nezumi-icon.svg" alt="ネズミAI" class="card-icon">
-    <div class="card-title">Nezumi AI へようこそ</div>
-    <div class="card-body">
-      最初に 3 ステップだけ設定すると、すぐチャットを始められます。
-      <ol>
-        <li>実行バックエンドを選ぶ</li>
-        <li>使いたいモデルを選ぶ</li>
-        <li>必要ならダウンロードして開始</li>
-      </ol>
-    </div>
-    <div class="card-note">
-      モデルのダウンロードはあとからでも大丈夫です。<br><br>
-      チャット履歴は最大30件まで保存されます。古いものから自動的に削除されます。
-    </div>
-    <div class="setup-footer">
-      <button class="btn-primary" id="btn1">はじめる</button>
-    </div>
-  </div>
-
-  <!-- ===== Step 2: バックエンド選択 ===== -->
-  <div class="setup-card" id="step2" style="display:none">
-    <div class="card-title">バックエンドを選択</div>
-    <div class="card-note" style="margin-bottom:4px">あとから設定画面で変更できます。</div>
-    <div class="backend-list">
-      <div class="backend-option" data-backend="webgpu" id="backendWebgpu">
-        <div class="backend-name">WebGPU</div>
-        <div class="backend-desc">高速寄り。安定して使いやすい選択です。</div>
-      </div>
-      <div class="backend-option" data-backend="wasm" id="backendWasm">
-        <div class="backend-name">WASM / CPU</div>
-        <div class="backend-desc">互換性重視。まず確実に試したいとき向けです。</div>
-      </div>
-    </div>
-    <div class="setup-footer has-back">
-      <button class="btn-back" id="btn2back">戻る</button>
-      <button class="btn-primary" id="btn2next">次へ</button>
-    </div>
-  </div>
-
-  <!-- ===== Step 3: モデル選択 ===== -->
-  <div class="setup-card" id="step3" style="display:none">
-    <div class="card-title">モデルを選択</div>
-    <div class="card-note" style="margin-bottom:4px">
-      ダウンロード済みモデルならそのまま開始できます。<br>
-      未取得ならここでダウンロードできます。
-    </div>
-    <div class="model-list" id="modelList"></div>
-
-    <!-- ダウンロード進捗 -->
-    <div class="dl-progress-wrap" id="dlProgressWrap">
-      <div class="dl-progress-bar-wrap">
-        <div class="dl-progress-bar" id="dlProgressBar"></div>
-      </div>
-      <div class="dl-progress-text" id="dlProgressText">0 MB / -- MB</div>
-      <div style="display:flex;gap:4px;margin-top:8px;flex-wrap:wrap">
-        <button class="dl-btn" id="dlBtn">ダウンロード</button>
-        <button class="dl-cancel-btn" id="dlImportBtn">ファイルから追加</button>
-        <a class="dl-cancel-btn" id="dlSourceLink" href="#" target="_blank" rel="noopener noreferrer" style="text-decoration:none">配布元を開く</a>
-        <button class="dl-cancel-btn" id="dlCancelBtn" style="display:none">キャンセル</button>
+    <div class="setup-header">
+      <div class="setup-title">セットアップ</div>
+      <div class="setup-step-label" id="stepLabel">Step 1 / 3</div>
+      <div class="step-tabs" id="stepTabs">
+        <button class="step-tab active" id="tab0">ウェルカム</button>
+        <button class="step-tab" id="tab1">バックエンド</button>
+        <button class="step-tab" id="tab2">モデル</button>
       </div>
     </div>
 
-    <div class="storage-note" id="storageNote"></div>
+    <!-- ===== Step 1: ウェルカム ===== -->
+    <div class="setup-card" id="step1">
+      <img src="nezumi-icon.svg" alt="ネズミAI" class="card-icon">
+      <div class="card-title">Nezumi AI へようこそ</div>
+      <div class="card-body">
+        最初に 3 ステップだけ設定すると、すぐチャットを始められます。
+        <ol>
+          <li>実行バックエンドを選ぶ</li>
+          <li>使いたいモデルを選ぶ</li>
+          <li>必要ならダウンロードして開始</li>
+        </ol>
+      </div>
+      <div class="card-note">
+        モデルのダウンロードはあとからでも大丈夫です。<br><br>
+        チャット履歴は最大30件まで保存されます。古いものから自動的に削除されます。
+      </div>
+      <div class="setup-footer">
+        <button class="btn-primary" id="btn1">はじめる</button>
+      </div>
+    </div>
 
-    <div class="setup-footer has-back">
-      <button class="btn-back" id="btn3back">戻る</button>
-      <div style="display:flex;gap:8px">
-        <button class="btn-skip" id="btn3skip">スキップ</button>
-        <button class="btn-primary" id="btn3chat" disabled>チャットへ</button>
+    <!-- ===== Step 2: バックエンド選択 ===== -->
+    <div class="setup-card" id="step2" style="display:none">
+      <div class="card-title">バックエンドを選択</div>
+      <div class="card-note" style="margin-bottom:4px">あとから設定画面で変更できます。</div>
+      <div class="backend-list">
+        <div class="backend-option" data-backend="webgpu" id="backendWebgpu">
+          <div class="backend-name">WebGPU</div>
+          <div class="backend-desc">高速寄り。安定して使いやすい選択です。</div>
+        </div>
+        <div class="backend-option" data-backend="wasm" id="backendWasm">
+          <div class="backend-name">WASM / CPU</div>
+          <div class="backend-desc">互換性重視。まず確実に試したいとき向けです。</div>
+        </div>
+      </div>
+      <div class="setup-footer has-back">
+        <button class="btn-back" id="btn2back">戻る</button>
+        <button class="btn-primary" id="btn2next">次へ</button>
+      </div>
+    </div>
+
+    <!-- ===== Step 3: モデル選択 ===== -->
+    <div class="setup-card" id="step3" style="display:none">
+      <div class="card-title">モデルを選択</div>
+      <div class="card-note" style="margin-bottom:4px">
+        ダウンロード済みモデルならそのまま開始できます。<br>
+        未取得ならここでダウンロードできます。
+      </div>
+      <div class="model-list" id="modelList"></div>
+
+      <!-- ダウンロード進捗 -->
+      <div class="dl-progress-wrap" id="dlProgressWrap">
+        <div class="dl-progress-bar-wrap">
+          <div class="dl-progress-bar" id="dlProgressBar"></div>
+        </div>
+        <div class="dl-progress-text" id="dlProgressText">0 MB / -- MB</div>
+        <div style="display:flex;gap:4px;margin-top:8px;flex-wrap:wrap">
+          <button class="dl-btn" id="dlBtn">ダウンロード</button>
+          <button class="dl-cancel-btn" id="dlImportBtn" style="display: none !important">ファイルから追加</button>
+          <a class="dl-cancel-btn" id="dlSourceLink" href="#" target="_blank" rel="noopener noreferrer"
+            style="text-decoration:none">配布元を開く</a>
+          <button class="dl-cancel-btn" id="dlCancelBtn" style="display:none">キャンセル</button>
+        </div>
+      </div>
+
+      <div class="storage-note" id="storageNote"></div>
+
+      <div class="setup-footer has-back">
+        <button class="btn-back" id="btn3back">戻る</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn-skip" id="btn3skip">スキップ</button>
+          <button class="btn-primary" id="btn3chat" disabled>チャットへ</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 手動ダウンロードダイアログ -->
+  <div class="manual-dl-dialog" id="manualDlDialog">
+    <div class="manual-dl-content">
+      <div class="manual-dl-title">ダウンロードに失敗しました</div>
+      <div class="manual-dl-body">
+        自動ダウンロードができませんでした。以下の手順で手動ダウンロードできます：
+        <ol>
+          <li><a class="manual-dl-link" id="manualDlLink" href="#" target="_blank"
+              rel="noopener noreferrer">配布元を開く</a>でモデルファイルをダウンロード</li>
+          <li>「ファイルから追加」ボタンでダウンロードしたファイルを選択</li>
+        </ol>
+      </div>
+      <div class="manual-dl-actions">
+        <button class="manual-dl-btn secondary" id="manualDlClose">閉じる</button>
+        <button class="manual-dl-btn primary" id="manualDlImport">ファイルから追加</button>
       </div>
     </div>
   </div>
 
-</div>
+  <script src="model.js"></script>
+  <script>
+    'use strict';
 
-<!-- 手動ダウンロードダイアログ -->
-<div class="manual-dl-dialog" id="manualDlDialog">
-  <div class="manual-dl-content">
-    <div class="manual-dl-title">ダウンロードに失敗しました</div>
-    <div class="manual-dl-body">
-      自動ダウンロードができませんでした。以下の手順で手動ダウンロードできます：
-      <ol>
-        <li>「配布元を開く」ボタンでモデルファイルをダウンロード</li>
-        <li>「ファイルから追加」ボタンでダウンロードしたファイルを選択</li>
-      </ol>
-    </div>
-    <div class="manual-dl-actions">
-      <button class="manual-dl-btn secondary" id="manualDlClose">閉じる</button>
-      <button class="manual-dl-btn primary" id="manualDlImport">ファイルから追加</button>
-    </div>
-  </div>
-</div>
+    // デバッグ: modelManager の確認
+    if (typeof modelManager === 'undefined') {
+      console.error('modelManager が読み込まれていません');
+      alert('エラー: model.js の読み込みに失敗しました。ページを再読み込みしてください。');
+    }
 
-<script src="model.js"></script>
-<script>
-'use strict';
+    // ===== テーマ =====
+    const savedTheme = localStorage.getItem('nezumi_theme') || 'dark';
+    document.body.classList.toggle('dark', savedTheme === 'dark');
 
-// ===== テーマ =====
-const savedTheme = localStorage.getItem('nezumi_theme') || 'dark';
-document.body.classList.toggle('dark', savedTheme === 'dark');
+    // ===== Android版おすすめ =====
+    const ANDROID_RECOMMEND_KEY = 'nezumi_android_recommend_dismissed';
+    function isAndroid() {
+      const ua = navigator.userAgent || navigator.vendor || '';
+      const uaData = navigator.userAgentData;
+      return /Android/i.test(ua) || uaData?.platform === 'Android';
+    }
+    function initAndroidRecommend() {
+      const banner = document.getElementById('androidRecommend');
+      const closeBtn = document.getElementById('androidRecommendClose');
+      if (!banner || !isAndroid()) return;
+      if (localStorage.getItem(ANDROID_RECOMMEND_KEY) === '1') return;
 
-// ===== Android版おすすめ =====
-const ANDROID_RECOMMEND_KEY = 'nezumi_android_recommend_dismissed';
-function isAndroid() {
-  const ua = navigator.userAgent || navigator.vendor || '';
-  const uaData = navigator.userAgentData;
-  return /Android/i.test(ua) || uaData?.platform === 'Android';
-}
-function initAndroidRecommend() {
-  const banner = document.getElementById('androidRecommend');
-  const closeBtn = document.getElementById('androidRecommendClose');
-  if (!banner || !isAndroid()) return;
-  if (localStorage.getItem(ANDROID_RECOMMEND_KEY) === '1') return;
+      banner.classList.remove('hidden');
+      closeBtn?.addEventListener('click', () => {
+        localStorage.setItem(ANDROID_RECOMMEND_KEY, '1');
+        banner.classList.add('hidden');
+      });
+    }
+    initAndroidRecommend();
 
-  banner.classList.remove('hidden');
-  closeBtn?.addEventListener('click', () => {
-    localStorage.setItem(ANDROID_RECOMMEND_KEY, '1');
-    banner.classList.add('hidden');
-  });
-}
-initAndroidRecommend();
+    // ===== 状態 =====
+    let currentStep = 1;
+    let selectedBackend = 'webgpu';
+    let selectedModel = 'gemma4-e2b';
+    let dlController = null;
+    let isDownloading = false;
 
-// ===== 状態 =====
-let currentStep = 1;
-let selectedBackend = 'webgpu';
-let selectedModel = 'gemma4-e2b';
-let dlController = null;
-let isDownloading = false;
+    // ===== ステップ切替 =====
+    function goStep(n) {
+      currentStep = n;
+      document.getElementById('step1').style.display = n === 1 ? 'block' : 'none';
+      document.getElementById('step2').style.display = n === 2 ? 'block' : 'none';
+      document.getElementById('step3').style.display = n === 3 ? 'block' : 'none';
+      document.getElementById('stepLabel').textContent = `Step ${n} / 3`;
 
-// ===== ステップ切替 =====
-function goStep(n) {
-  currentStep = n;
-  document.getElementById('step1').style.display = n === 1 ? 'block' : 'none';
-  document.getElementById('step2').style.display = n === 2 ? 'block' : 'none';
-  document.getElementById('step3').style.display = n === 3 ? 'block' : 'none';
-  document.getElementById('stepLabel').textContent = `Step ${n} / 3`;
+      ['tab0', 'tab1', 'tab2'].forEach((id, i) => {
+        const tab = document.getElementById(id);
+        tab.className = 'step-tab' + (i === n - 1 ? ' active' : '');
+      });
+    }
 
-  ['tab0','tab1','tab2'].forEach((id, i) => {
-    const tab = document.getElementById(id);
-    tab.className = 'step-tab' + (i === n - 1 ? ' active' : '');
-  });
-}
+    // ===== Step 1 =====
+    document.getElementById('btn1').addEventListener('click', () => goStep(2));
 
-// ===== Step 1 =====
-document.getElementById('btn1').addEventListener('click', () => goStep(2));
+    // ===== Step 2: バックエンド =====
+    function selectBackend(key) {
+      selectedBackend = key;
+      document.querySelectorAll('.backend-option').forEach(el => {
+        el.classList.toggle('selected', el.dataset.backend === key);
+      });
+    }
 
-// ===== Step 2: バックエンド =====
-function selectBackend(key) {
-  selectedBackend = key;
-  document.querySelectorAll('.backend-option').forEach(el => {
-    el.classList.toggle('selected', el.dataset.backend === key);
-  });
-}
+    // WebGPU対応チェック
+    (async () => {
+      if (!navigator.gpu) {
+        const webgpuEl = document.getElementById('backendWebgpu');
+        webgpuEl.style.opacity = '0.4';
+        webgpuEl.style.pointerEvents = 'none';
+        webgpuEl.querySelector('.backend-desc').textContent = 'このブラウザはWebGPU非対応です。';
+        selectBackend('wasm');
+      } else {
+        selectBackend('webgpu');
+      }
+    })();
 
-// WebGPU対応チェック
-(async () => {
-  if (!navigator.gpu) {
-    const webgpuEl = document.getElementById('backendWebgpu');
-    webgpuEl.style.opacity = '0.4';
-    webgpuEl.style.pointerEvents = 'none';
-    webgpuEl.querySelector('.backend-desc').textContent = 'このブラウザはWebGPU非対応です。';
-    selectBackend('wasm');
-  } else {
-    selectBackend('webgpu');
-  }
-})();
+    document.querySelectorAll('.backend-option').forEach(el => {
+      el.addEventListener('click', () => selectBackend(el.dataset.backend));
+    });
 
-document.querySelectorAll('.backend-option').forEach(el => {
-  el.addEventListener('click', () => selectBackend(el.dataset.backend));
-});
+    document.getElementById('btn2back').addEventListener('click', () => goStep(1));
+    document.getElementById('btn2next').addEventListener('click', async () => {
+      localStorage.setItem('nezumi_backend', selectedBackend);
+      await initStep3();
+      goStep(3);
+    });
 
-document.getElementById('btn2back').addEventListener('click', () => goStep(1));
-document.getElementById('btn2next').addEventListener('click', async () => {
-  localStorage.setItem('nezumi_backend', selectedBackend);
-  await initStep3();
-  goStep(3);
-});
+    // ===== Step 3: モデル選択 =====
+    const modelCacheStatus = {};
 
-// ===== Step 3: モデル選択 =====
-const modelCacheStatus = {};
+    async function initStep3() {
+      // modelManager チェック
+      if (!window.modelManager) {
+        console.error('modelManager が利用できません');
+        return;
+      }
 
-async function initStep3() {
-  const list = document.getElementById('modelList');
-  list.innerHTML = '';
+      const list = document.getElementById('modelList');
+      list.innerHTML = '';
 
-  for (const [key, cfg] of Object.entries(modelManager.MODEL_CONFIGS)) {
-    const cached = await modelManager.isModelCached(key);
-    modelCacheStatus[key] = cached;
+      for (const [key, cfg] of Object.entries(window.modelManager.MODEL_CONFIGS)) {
+        const cached = await window.modelManager.isModelCached(key);
+        modelCacheStatus[key] = cached;
 
-    const el = document.createElement('div');
-    el.className = 'model-option' + (key === selectedModel ? ' selected' : '');
-    el.dataset.modelKey = key;
-    el.innerHTML = `
+        const el = document.createElement('div');
+        el.className = 'model-option' + (key === selectedModel ? ' selected' : '');
+        el.dataset.modelKey = key;
+        el.innerHTML = `
       <div class="model-info">
         <div class="model-name">${cfg.name}</div>
         <div class="model-desc">${cfg.description}</div>
       </div>
       <div class="model-status ${cached ? 'ok' : 'none'}">${cached ? '準備OK' : '未取得'}</div>
     `;
-    el.addEventListener('click', () => selectModel(key));
-    list.appendChild(el);
-  }
-
-  selectModel(selectedModel);
-  updateStorageNote();
-}
-
-function selectModel(key) {
-  selectedModel = key;
-  document.querySelectorAll('.model-option').forEach(el => {
-    el.classList.toggle('selected', el.dataset.modelKey === key);
-  });
-
-  const cached = modelCacheStatus[key];
-  const progressWrap = document.getElementById('dlProgressWrap');
-  progressWrap.classList.toggle('visible', !cached);
-  document.getElementById('dlBtn').style.display = cached ? 'none' : 'inline-block';
-  document.getElementById('dlImportBtn').style.display = cached ? 'none' : 'inline-block';
-  document.getElementById('dlSourceLink').style.display = cached ? 'none' : 'inline-block';
-  document.getElementById('dlSourceLink').href = modelManager.MODEL_CONFIGS[key].url;
-  document.getElementById('dlSourceLink').style.pointerEvents = '';
-  document.getElementById('dlSourceLink').style.opacity = '';
-  document.getElementById('dlBtn').disabled = false;
-  document.getElementById('dlImportBtn').disabled = false;
-  document.getElementById('dlCancelBtn').style.display = 'none';
-  document.getElementById('dlProgressBar').style.width = cached ? '100%' : '0%';
-  document.getElementById('dlProgressText').textContent = cached ? '完了' : `0 MB / ${modelManager.MODEL_CONFIGS[key].sizeMB} MB`;
-
-  document.getElementById('btn3chat').disabled = !cached;
-}
-
-async function updateStorageNote() {
-  try {
-    const usage = await modelManager.getStorageUsage();
-    const gb = (usage / 1024 / 1024 / 1024).toFixed(2);
-    document.getElementById('storageNote').textContent = `Total cached: ${gb} GB`;
-  } catch {}
-}
-
-document.getElementById('dlBtn').addEventListener('click', startDownload);
-document.getElementById('dlImportBtn').addEventListener('click', importSelectedModel);
-document.getElementById('dlCancelBtn').addEventListener('click', cancelDownload);
-
-function pickTaskFile() {
-  return new Promise(resolve => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.task,application/octet-stream';
-    input.addEventListener('change', () => resolve(input.files?.[0] || null), { once: true });
-    input.click();
-  });
-}
-
-async function startDownload() {
-  if (isDownloading) return;
-  isDownloading = true;
-  dlController = new AbortController();
-
-  const dlBtn = document.getElementById('dlBtn');
-  const importBtn = document.getElementById('dlImportBtn');
-  const sourceLink = document.getElementById('dlSourceLink');
-  const cancelBtn = document.getElementById('dlCancelBtn');
-  const bar = document.getElementById('dlProgressBar');
-  const text = document.getElementById('dlProgressText');
-
-  dlBtn.disabled = true;
-  importBtn.disabled = true;
-  sourceLink.style.pointerEvents = 'none';
-  sourceLink.style.opacity = '0.5';
-  cancelBtn.style.display = 'inline-block';
-
-  try {
-    await modelManager.downloadModel(selectedModel, (loaded, total, pct) => {
-      bar.style.width = pct + '%';
-      const loadedMB = (loaded / 1024 / 1024).toFixed(0);
-      const totalMB = total ? (total / 1024 / 1024).toFixed(0) : '--';
-      text.textContent = `${loadedMB} MB / ${totalMB} MB`;
-    }, dlController.signal);
-
-    modelCacheStatus[selectedModel] = true;
-    // ステータス更新
-    document.querySelectorAll('.model-option').forEach(el => {
-      if (el.dataset.modelKey === selectedModel) {
-        el.querySelector('.model-status').className = 'model-status ok';
-        el.querySelector('.model-status').textContent = '準備OK';
+        el.addEventListener('click', () => selectModel(key));
+        list.appendChild(el);
       }
-    });
-    text.textContent = '完了';
-    dlBtn.style.display = 'none';
-    importBtn.style.display = 'none';
-    sourceLink.style.display = 'none';
-    cancelBtn.style.display = 'none';
-    document.getElementById('btn3chat').disabled = false;
-    updateStorageNote();
-  } catch (e) {
-    if (e.name === 'AbortError') {
-      text.textContent = 'キャンセルされました';
-      bar.style.width = '0%';
-    } else {
-      text.textContent = `エラー: ${e.message}`;
-      showManualDownloadDialog();
+
+      selectModel(selectedModel);
+      updateStorageNote();
     }
-    dlBtn.disabled = false;
-    importBtn.disabled = false;
-    sourceLink.style.pointerEvents = '';
-    sourceLink.style.opacity = '';
-    cancelBtn.style.display = 'none';
-  } finally {
-    isDownloading = false;
-    dlController = null;
-  }
-}
 
-function showManualDownloadDialog() {
-  document.getElementById('manualDlDialog').classList.add('visible');
-}
-
-function hideManualDownloadDialog() {
-  document.getElementById('manualDlDialog').classList.remove('visible');
-}
-
-document.getElementById('manualDlClose').addEventListener('click', hideManualDownloadDialog);
-document.getElementById('manualDlImport').addEventListener('click', () => {
-  hideManualDownloadDialog();
-  importSelectedModel();
-});
-
-async function importSelectedModel() {
-  if (isDownloading) return;
-  const file = await pickTaskFile();
-  if (!file) return;
-
-  isDownloading = true;
-  const dlBtn = document.getElementById('dlBtn');
-  const importBtn = document.getElementById('dlImportBtn');
-  const sourceLink = document.getElementById('dlSourceLink');
-  const bar = document.getElementById('dlProgressBar');
-  const text = document.getElementById('dlProgressText');
-
-  dlBtn.disabled = true;
-  importBtn.disabled = true;
-  sourceLink.style.pointerEvents = 'none';
-  sourceLink.style.opacity = '0.5';
-  text.textContent = 'ファイルを取り込んでいます...';
-
-  try {
-    await modelManager.importModelFile(selectedModel, file, (loaded, total, pct) => {
-      bar.style.width = pct + '%';
-      const loadedMB = (loaded / 1024 / 1024).toFixed(0);
-      const totalMB = (total / 1024 / 1024).toFixed(0);
-      text.textContent = `${loadedMB} MB / ${totalMB} MB`;
-    });
-
-    modelCacheStatus[selectedModel] = true;
-    document.querySelectorAll('.model-option').forEach(el => {
-      if (el.dataset.modelKey === selectedModel) {
-        el.querySelector('.model-status').className = 'model-status ok';
-        el.querySelector('.model-status').textContent = '準備OK';
-      }
-    });
-    text.textContent = '完了';
-    dlBtn.style.display = 'none';
-    importBtn.style.display = 'none';
-    sourceLink.style.display = 'none';
-    document.getElementById('btn3chat').disabled = false;
-    updateStorageNote();
-  } catch (e) {
-    text.textContent = `エラー: ${e.message}`;
-    dlBtn.disabled = false;
-    importBtn.disabled = false;
-    sourceLink.style.pointerEvents = '';
-    sourceLink.style.opacity = '';
-  } finally {
-    isDownloading = false;
-  }
-}
-
-function cancelDownload() {
-  dlController?.abort();
-}
-
-document.getElementById('btn3back').addEventListener('click', () => goStep(2));
-document.getElementById('btn3skip').addEventListener('click', () => {
-  localStorage.setItem('nezumi_model', selectedModel);
-  window.location.href = 'index.html';
-});
-document.getElementById('btn3chat').addEventListener('click', () => {
-  localStorage.setItem('nezumi_model', selectedModel);
-  window.location.href = 'index.html';
-});
-</script>
-<script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').catch(err => {
-        console.warn('Service Worker registration failed:', err);
+    function selectModel(key) {
+      selectedModel = key;
+      document.querySelectorAll('.model-option').forEach(el => {
+        el.classList.toggle('selected', el.dataset.modelKey === key);
       });
+
+      const cached = modelCacheStatus[key];
+      const progressWrap = document.getElementById('dlProgressWrap');
+      progressWrap.classList.toggle('visible', !cached);
+      document.getElementById('dlBtn').style.display = cached ? 'none' : 'inline-block';
+      document.getElementById('dlSourceLink').style.display = cached ? 'none' : 'inline-block';
+      document.getElementById('dlSourceLink').href = window.modelManager.MODEL_CONFIGS[key].url;
+      document.getElementById('dlSourceLink').style.pointerEvents = '';
+      document.getElementById('dlSourceLink').style.opacity = '';
+      document.getElementById('dlBtn').disabled = false;
+      document.getElementById('dlImportBtn').disabled = false;
+      document.getElementById('dlCancelBtn').style.display = 'none';
+      document.getElementById('dlProgressBar').style.width = cached ? '100%' : '0%';
+      document.getElementById('dlProgressText').textContent = cached ? '完了' : `0 MB / ${window.modelManager.MODEL_CONFIGS[key].sizeMB} MB`;
+
+      document.getElementById('btn3chat').disabled = !cached;
+    }
+
+    async function updateStorageNote() {
+      try {
+        const usage = await window.modelManager.getStorageUsage();
+        const gb = (usage / 1024 / 1024 / 1024).toFixed(2);
+        document.getElementById('storageNote').textContent = `Total cached: ${gb} GB`;
+      } catch { }
+    }
+
+    document.getElementById('dlBtn').addEventListener('click', startDownload);
+    document.getElementById('dlImportBtn').addEventListener('click', importSelectedModel);
+    document.getElementById('dlCancelBtn').addEventListener('click', cancelDownload);
+
+    function pickTaskFile() {
+      return new Promise(resolve => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.task,application/octet-stream';
+        input.addEventListener('change', () => resolve(input.files?.[0] || null), { once: true });
+        input.click();
+      });
+    }
+
+    async function startDownload() {
+      if (isDownloading) return;
+      isDownloading = true;
+      dlController = new AbortController();
+
+      const dlBtn = document.getElementById('dlBtn');
+      const importBtn = document.getElementById('dlImportBtn');
+      const sourceLink = document.getElementById('dlSourceLink');
+      const cancelBtn = document.getElementById('dlCancelBtn');
+      const bar = document.getElementById('dlProgressBar');
+      const text = document.getElementById('dlProgressText');
+
+      dlBtn.disabled = true;
+      importBtn.disabled = true;
+      sourceLink.style.pointerEvents = 'none';
+      sourceLink.style.opacity = '0.5';
+      cancelBtn.style.display = 'inline-block';
+
+      try {
+        await window.modelManager.downloadModel(selectedModel, (loaded, total, pct) => {
+          bar.style.width = pct + '%';
+          const loadedMB = (loaded / 1024 / 1024).toFixed(0);
+          const totalMB = total ? (total / 1024 / 1024).toFixed(0) : '--';
+          text.textContent = `${loadedMB} MB / ${totalMB} MB`;
+        }, dlController.signal);
+
+        modelCacheStatus[selectedModel] = true;
+        // ステータス更新
+        document.querySelectorAll('.model-option').forEach(el => {
+          if (el.dataset.modelKey === selectedModel) {
+            el.querySelector('.model-status').className = 'model-status ok';
+            el.querySelector('.model-status').textContent = '準備OK';
+          }
+        });
+        text.textContent = '完了';
+        dlBtn.style.display = 'none';
+        importBtn.style.display = 'none';
+        sourceLink.style.display = 'none';
+        cancelBtn.style.display = 'none';
+        document.getElementById('btn3chat').disabled = false;
+        updateStorageNote();
+      } catch (e) {
+        if (e.name === 'AbortError') {
+          text.textContent = 'キャンセルされました';
+          bar.style.width = '0%';
+        } else {
+          text.textContent = `エラー: ${e.message}`;
+          showManualDownloadDialog();
+        }
+        dlBtn.disabled = false;
+        importBtn.disabled = false;
+        sourceLink.style.pointerEvents = '';
+        sourceLink.style.opacity = '';
+        cancelBtn.style.display = 'none';
+      } finally {
+        isDownloading = false;
+        dlController = null;
+      }
+    }
+
+    function showManualDownloadDialog() {
+      const dialog = document.getElementById('manualDlDialog');
+      const link = document.getElementById('manualDlLink');
+      link.href = window.modelManager.MODEL_CONFIGS[selectedModel].url;
+      dialog.classList.add('visible');
+    }
+
+    function hideManualDownloadDialog() {
+      document.getElementById('manualDlDialog').classList.remove('visible');
+    }
+
+    document.getElementById('manualDlClose').addEventListener('click', hideManualDownloadDialog);
+    document.getElementById('manualDlImport').addEventListener('click', () => {
+      hideManualDownloadDialog();
+      importSelectedModel();
     });
-  }
-</script>
+
+    async function importSelectedModel() {
+      if (isDownloading) return;
+
+      let manager;
+      try {
+        manager = await ensureModelManager();
+      } catch (e) {
+        alert(`エラー: ${e.message}。ページを再読み込みしてください。`);
+        console.error('modelManager:', window.modelManager, e);
+        return;
+      }
+
+      const file = await pickTaskFile();
+      if (!file) return;
+
+      isDownloading = true;
+      const dlBtn = document.getElementById('dlBtn');
+      const importBtn = document.getElementById('dlImportBtn');
+      const sourceLink = document.getElementById('dlSourceLink');
+      const bar = document.getElementById('dlProgressBar');
+      const text = document.getElementById('dlProgressText');
+
+      dlBtn.disabled = true;
+      importBtn.disabled = true;
+      sourceLink.style.pointerEvents = 'none';
+      sourceLink.style.opacity = '0.5';
+      text.textContent = 'ファイルを取り込んでいます...';
+
+      try {
+        await manager.importModelFile(selectedModel, file, (loaded, total, pct) => {
+          bar.style.width = pct + '%';
+          const loadedMB = (loaded / 1024 / 1024).toFixed(0);
+          const totalMB = (total / 1024 / 1024).toFixed(0);
+          text.textContent = `${loadedMB} MB / ${totalMB} MB`;
+        });
+
+        modelCacheStatus[selectedModel] = true;
+        document.querySelectorAll('.model-option').forEach(el => {
+          if (el.dataset.modelKey === selectedModel) {
+            el.querySelector('.model-status').className = 'model-status ok';
+            el.querySelector('.model-status').textContent = '準備OK';
+          }
+        });
+        text.textContent = '完了';
+        dlBtn.style.display = 'none';
+        importBtn.style.display = 'none';
+        sourceLink.style.display = 'none';
+        document.getElementById('btn3chat').disabled = false;
+        updateStorageNote();
+      } catch (e) {
+        text.textContent = `エラー: ${e.message}`;
+        console.error('Import error:', e);
+        dlBtn.disabled = false;
+        importBtn.disabled = false;
+        sourceLink.style.pointerEvents = '';
+        sourceLink.style.opacity = '';
+      } finally {
+        isDownloading = false;
+      }
+    }
+
+    function ensureModelManager() {
+      if (window.modelManager && typeof window.modelManager.importModelFile === 'function') {
+        return Promise.resolve(window.modelManager);
+      }
+
+      console.warn('modelManager.importModelFile が見つかりません。model.js を再読み込みします。');
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = `model.js?t=${Date.now()}`;
+        script.onload = () => {
+          if (window.modelManager && typeof window.modelManager.importModelFile === 'function') {
+            resolve(window.modelManager);
+          } else {
+            reject(new Error('modelManager.importModelFile が読み込まれませんでした'));
+          }
+        };
+        script.onerror = () => reject(new Error('model.js の再読み込みに失敗しました'));
+        document.body.appendChild(script);
+      });
+    }
+
+    function cancelDownload() {
+      dlController?.abort();
+    }
+
+    document.getElementById('btn3back').addEventListener('click', () => goStep(2));
+    document.getElementById('btn3skip').addEventListener('click', () => {
+      localStorage.setItem('nezumi_model', selectedModel);
+      window.location.href = 'index.html';
+    });
+    document.getElementById('btn3chat').addEventListener('click', () => {
+      localStorage.setItem('nezumi_model', selectedModel);
+      window.location.href = 'index.html';
+    });
+  </script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(err => {
+          console.warn('Service Worker registration failed:', err);
+        });
+      });
+    }
+  </script>
 </body>
+
 </html>

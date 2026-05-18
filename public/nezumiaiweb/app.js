@@ -4,6 +4,27 @@
 if (!window.modelManager) throw new Error('model.js が読み込まれていません');
 if (!window.inference) throw new Error('inference.js が読み込まれていません');
 
+async function resolveModelManager() {
+  if (window.modelManager && typeof window.modelManager.importModelFile === 'function') {
+    return window.modelManager;
+  }
+
+  console.warn('modelManager.importModelFile が見つかりません。model.js を再読み込みします。');
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = `model.js?t=${Date.now()}`;
+    script.onload = () => {
+      if (window.modelManager && typeof window.modelManager.importModelFile === 'function') {
+        resolve(window.modelManager);
+      } else {
+        reject(new Error('modelManager.importModelFile が読み込まれませんでした'));
+      }
+    };
+    script.onerror = () => reject(new Error('model.js の再読み込みに失敗しました'));
+    document.body.appendChild(script);
+  });
+}
+
 // ===== 定数 =====
 const NEZUMI_ICON_SVG = 'nezumi-icon.svg';
 const MAX_TOKENS = 4096;
@@ -356,7 +377,8 @@ async function importManagedModel(key) {
   renderModelManager();
 
   try {
-    await modelManager.importModelFile(key, file, (loaded, total, pct) => {
+    const manager = await resolveModelManager();
+    await manager.importModelFile(key, file, (loaded, total, pct) => {
       modelManagerProgressBar.style.width = `${pct}%`;
       modelManagerProgressText.textContent = `${formatBytes(loaded)} / ${formatBytes(total)}`;
     });
@@ -615,7 +637,7 @@ function finalizeStream(bubble, fullText, stats, thinkText) {
       </div>
       <div class="think-body" style="display:none">${parseMarkdown(thinkText)}</div>
     `;
-    thinkBox.querySelector('.think-header').addEventListener('click', function() {
+    thinkBox.querySelector('.think-header').addEventListener('click', function () {
       const body = thinkBox.querySelector('.think-body');
       const arrow = thinkBox.querySelector('.think-arrow');
       const open = body.style.display !== 'none';
