@@ -1,6 +1,6 @@
 'use strict';
 
-// ===== model.js =====
+// ===== model.js v1.1 =====
 // OPFSにモデルをキャッシュ・管理する
 
 window.modelManager = (() => {
@@ -9,7 +9,7 @@ window.modelManager = (() => {
       name: 'Gemma 4 E2B',
       description: 'Gemma 4 系の軽量モデル',
       localUrl: './models/gemma-4-E2B-it-web.task',
-      url: 'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.task?download=true',
+      url: 'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.task',
       filename: 'gemma-4-E2B-it-web.task',
       legacyFilename: 'gemma-4-E2B-it-int4-Web.task',
       maxTokens: 4096,
@@ -19,7 +19,7 @@ window.modelManager = (() => {
       name: 'Gemma 4 E4B',
       description: 'より高品質な Gemma 4 モデル',
       localUrl: './models/gemma-4-E4B-it-web.task',
-      url: 'https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it-web.task?download=true',
+      url: 'https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it-web.task',
       filename: 'gemma-4-E4B-it-web.task',
       legacyFilename: 'gemma-4-E4B-it-int4-Web.task',
       maxTokens: 4096,
@@ -174,7 +174,7 @@ window.modelManager = (() => {
     getModelInfo,
     getModelReader,
     downloadModel,
-    importModelFile,
+    importModelFile,  // ファイルから手動インポート
     deleteModel,
     getStorageUsage,
   };
