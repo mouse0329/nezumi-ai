@@ -365,8 +365,10 @@
         <div class="dl-progress-bar" id="dlProgressBar"></div>
       </div>
       <div class="dl-progress-text" id="dlProgressText">0 MB / -- MB</div>
-      <div style="display:flex;gap:4px;margin-top:8px">
+      <div style="display:flex;gap:4px;margin-top:8px;flex-wrap:wrap">
         <button class="dl-btn" id="dlBtn">ダウンロード</button>
+        <button class="dl-cancel-btn" id="dlImportBtn">ファイルから追加</button>
+        <a class="dl-cancel-btn" id="dlSourceLink" href="#" target="_blank" rel="noopener noreferrer" style="text-decoration:none">配布元を開く</a>
         <button class="dl-cancel-btn" id="dlCancelBtn" style="display:none">キャンセル</button>
       </div>
     </div>
@@ -508,6 +510,14 @@ function selectModel(key) {
   const progressWrap = document.getElementById('dlProgressWrap');
   progressWrap.classList.toggle('visible', !cached);
   document.getElementById('dlBtn').style.display = cached ? 'none' : 'inline-block';
+  document.getElementById('dlImportBtn').style.display = cached ? 'none' : 'inline-block';
+  document.getElementById('dlSourceLink').style.display = cached ? 'none' : 'inline-block';
+  document.getElementById('dlSourceLink').href = modelManager.MODEL_CONFIGS[key].url;
+  document.getElementById('dlSourceLink').style.pointerEvents = '';
+  document.getElementById('dlSourceLink').style.opacity = '';
+  document.getElementById('dlBtn').disabled = false;
+  document.getElementById('dlImportBtn').disabled = false;
+  document.getElementById('dlCancelBtn').style.display = 'none';
   document.getElementById('dlProgressBar').style.width = cached ? '100%' : '0%';
   document.getElementById('dlProgressText').textContent = cached ? '完了' : `0 MB / ${modelManager.MODEL_CONFIGS[key].sizeMB} MB`;
 
@@ -523,7 +533,18 @@ async function updateStorageNote() {
 }
 
 document.getElementById('dlBtn').addEventListener('click', startDownload);
+document.getElementById('dlImportBtn').addEventListener('click', importSelectedModel);
 document.getElementById('dlCancelBtn').addEventListener('click', cancelDownload);
+
+function pickTaskFile() {
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.task,application/octet-stream';
+    input.addEventListener('change', () => resolve(input.files?.[0] || null), { once: true });
+    input.click();
+  });
+}
 
 async function startDownload() {
   if (isDownloading) return;
@@ -531,11 +552,16 @@ async function startDownload() {
   dlController = new AbortController();
 
   const dlBtn = document.getElementById('dlBtn');
+  const importBtn = document.getElementById('dlImportBtn');
+  const sourceLink = document.getElementById('dlSourceLink');
   const cancelBtn = document.getElementById('dlCancelBtn');
   const bar = document.getElementById('dlProgressBar');
   const text = document.getElementById('dlProgressText');
 
   dlBtn.disabled = true;
+  importBtn.disabled = true;
+  sourceLink.style.pointerEvents = 'none';
+  sourceLink.style.opacity = '0.5';
   cancelBtn.style.display = 'inline-block';
 
   try {
@@ -556,6 +582,8 @@ async function startDownload() {
     });
     text.textContent = '完了';
     dlBtn.style.display = 'none';
+    importBtn.style.display = 'none';
+    sourceLink.style.display = 'none';
     cancelBtn.style.display = 'none';
     document.getElementById('btn3chat').disabled = false;
     updateStorageNote();
@@ -567,10 +595,63 @@ async function startDownload() {
       text.textContent = `エラー: ${e.message}`;
     }
     dlBtn.disabled = false;
+    importBtn.disabled = false;
+    sourceLink.style.pointerEvents = '';
+    sourceLink.style.opacity = '';
     cancelBtn.style.display = 'none';
   } finally {
     isDownloading = false;
     dlController = null;
+  }
+}
+
+async function importSelectedModel() {
+  if (isDownloading) return;
+  const file = await pickTaskFile();
+  if (!file) return;
+
+  isDownloading = true;
+  const dlBtn = document.getElementById('dlBtn');
+  const importBtn = document.getElementById('dlImportBtn');
+  const sourceLink = document.getElementById('dlSourceLink');
+  const bar = document.getElementById('dlProgressBar');
+  const text = document.getElementById('dlProgressText');
+
+  dlBtn.disabled = true;
+  importBtn.disabled = true;
+  sourceLink.style.pointerEvents = 'none';
+  sourceLink.style.opacity = '0.5';
+  text.textContent = 'ファイルを取り込んでいます...';
+
+  try {
+    await modelManager.importModelFile(selectedModel, file, (loaded, total, pct) => {
+      bar.style.width = pct + '%';
+      const loadedMB = (loaded / 1024 / 1024).toFixed(0);
+      const totalMB = (total / 1024 / 1024).toFixed(0);
+      text.textContent = `${loadedMB} MB / ${totalMB} MB`;
+    });
+
+    modelCacheStatus[selectedModel] = true;
+    document.querySelectorAll('.model-option').forEach(el => {
+      if (el.dataset.modelKey === selectedModel) {
+        el.querySelector('.model-status').className = 'model-status ok';
+        el.querySelector('.model-status').textContent = '準備OK';
+      }
+    });
+    text.textContent = '完了';
+    dlBtn.style.display = 'none';
+    importBtn.style.display = 'none';
+    sourceLink.style.display = 'none';
+    document.getElementById('btn3chat').disabled = false;
+    updateStorageNote();
+  } catch (e) {
+    text.textContent = `エラー: ${e.message}`;
+    dlBtn.disabled = false;
+    importBtn.disabled = false;
+    sourceLink.style.pointerEvents = '';
+    sourceLink.style.opacity = '';
+  } finally {
+    isDownloading = false;
   }
 }
 
