@@ -671,6 +671,18 @@
         list.appendChild(el);
       }
 
+      const savedModel = localStorage.getItem('nezumi_model');
+      if (savedModel && window.modelManager.MODEL_CONFIGS[savedModel]) {
+        selectedModel = savedModel;
+      } else if (!window.modelManager.MODEL_CONFIGS[selectedModel]) {
+        selectedModel = Object.keys(window.modelManager.MODEL_CONFIGS)[0] || selectedModel;
+      }
+
+      if (!modelCacheStatus[selectedModel]) {
+        const firstCached = Object.keys(modelCacheStatus).find(key => modelCacheStatus[key]);
+        if (firstCached) selectedModel = firstCached;
+      }
+
       selectModel(selectedModel);
       updateStorageNote();
     }
@@ -747,6 +759,7 @@
         }, dlController.signal);
 
         modelCacheStatus[selectedModel] = true;
+        localStorage.setItem('nezumi_model', selectedModel);
         // ステータス更新
         document.querySelectorAll('.model-option').forEach(el => {
           if (el.dataset.modelKey === selectedModel) {
@@ -834,6 +847,7 @@
         });
 
         modelCacheStatus[selectedModel] = true;
+        localStorage.setItem('nezumi_model', selectedModel);
         document.querySelectorAll('.model-option').forEach(el => {
           if (el.dataset.modelKey === selectedModel) {
             el.querySelector('.model-status').className = 'model-status ok';
