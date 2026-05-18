@@ -902,7 +902,7 @@
 
       console.warn('modelManager.importModelFile が見つかりません。model.js を再読み込みします。');
       if (window.modelManager && typeof window.modelManager.importModelFile !== 'function') {
-        try { delete window.modelManager; } catch {}
+        try { delete window.modelManager; } catch { }
       }
 
       const base = getSetupBaseUrl();
