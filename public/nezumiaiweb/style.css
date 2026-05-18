@@ -1042,12 +1042,17 @@ body { background: var(--color-bg); color: var(--color-text); transition: backgr
   flex-wrap: wrap;
 }
 .model-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 7px 14px;
   border-radius: 18px;
   border: 1.5px solid var(--color-border);
   background: none;
   color: var(--color-text);
   font-size: 13px;
+  line-height: 1.2;
+  text-decoration: none;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }

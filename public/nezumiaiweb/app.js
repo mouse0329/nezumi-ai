@@ -259,6 +259,21 @@ async function renderModelManager() {
       downloadBtn.disabled = Boolean(modelManagerDownloadingKey);
       downloadBtn.addEventListener('click', () => downloadManagedModel(key));
       actions.appendChild(downloadBtn);
+
+      const importBtn = document.createElement('button');
+      importBtn.className = 'model-action-btn';
+      importBtn.textContent = 'ファイルから追加';
+      importBtn.disabled = Boolean(modelManagerDownloadingKey);
+      importBtn.addEventListener('click', () => importManagedModel(key));
+      actions.appendChild(importBtn);
+
+      const sourceLink = document.createElement('a');
+      sourceLink.className = 'model-action-btn';
+      sourceLink.textContent = '配布元を開く';
+      sourceLink.href = cfg.url;
+      sourceLink.target = '_blank';
+      sourceLink.rel = 'noopener noreferrer';
+      actions.appendChild(sourceLink);
     } else {
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'model-action-btn danger';
@@ -268,7 +283,7 @@ async function renderModelManager() {
       actions.appendChild(deleteBtn);
     }
 
-    if (modelManagerDownloadingKey === key) {
+    if (modelManagerDownloadingKey === key && modelManagerDownloadController) {
       const cancelBtn = document.createElement('button');
       cancelBtn.className = 'model-action-btn';
       cancelBtn.textContent = 'キャンセル';
@@ -280,6 +295,16 @@ async function renderModelManager() {
   }
 
   await refreshModelSelectorOptions();
+}
+
+function pickTaskFile() {
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.task,application/octet-stream';
+    input.addEventListener('change', () => resolve(input.files?.[0] || null), { once: true });
+    input.click();
+  });
 }
 
 async function selectManagedModel(key) {
@@ -315,6 +340,36 @@ async function downloadManagedModel(key) {
   } finally {
     modelManagerDownloadingKey = null;
     modelManagerDownloadController = null;
+    renderModelManager();
+  }
+}
+
+async function importManagedModel(key) {
+  if (modelManagerDownloadingKey) return;
+  const file = await pickTaskFile();
+  if (!file) return;
+
+  modelManagerDownloadingKey = key;
+  modelManagerProgress.classList.remove('hidden');
+  modelManagerProgressBar.style.width = '0%';
+  modelManagerProgressText.textContent = 'ファイルを取り込んでいます...';
+  renderModelManager();
+
+  try {
+    await modelManager.importModelFile(key, file, (loaded, total, pct) => {
+      modelManagerProgressBar.style.width = `${pct}%`;
+      modelManagerProgressText.textContent = `${formatBytes(loaded)} / ${formatBytes(total)}`;
+    });
+
+    modelManagerProgressBar.style.width = '100%';
+    modelManagerProgressText.textContent = '取り込み完了';
+    state.model = key;
+    dom.modelSelector.value = key;
+    localStorage.setItem(STORAGE_KEY_MODEL, key);
+  } catch (e) {
+    modelManagerProgressText.textContent = `エラー: ${e.message}`;
+  } finally {
+    modelManagerDownloadingKey = null;
     renderModelManager();
   }
 }
