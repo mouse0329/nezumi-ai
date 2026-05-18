@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ネズミAI</title>
+  <link rel="icon" href="nezumi-icon.svg" type="image/svg+xml">
+  <link rel="shortcut icon" href="nezumi-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="nezumi-icon.svg">
+  <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0d1117">
+</head>
+<body class="dark">
+
+  <div class="android-recommend hidden" id="androidRecommend">
+    <div class="android-recommend-text">
+      <strong>Android版があります</strong>
+      <span>Androidではネイティブ版の Nezumi AI も利用できます。</span>
+    </div>
+    <div class="android-recommend-actions">
+      <a class="android-recommend-link" href="https://github.com/mouse0329/nezumi-ai/releases" target="_blank" rel="noopener noreferrer">Releases</a>
+      <button class="android-recommend-close" id="androidRecommendClose" type="button" aria-label="閉じる">✕</button>
+    </div>
+  </div>
+
+  <!-- ドロワー -->
+  <div class="drawer-overlay" id="drawerOverlay"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-header">
+      <div class="drawer-logo">
+        <img src="nezumi-icon.svg" alt="ネズミ" class="drawer-icon" id="drawerIcon">
+        <span>ネズミAI</span>
+      </div>
+    </div>
+    <div class="drawer-actions">
+      <button class="drawer-action-btn" id="settingsBtn">⚙ 設定</button>
+      <button class="drawer-action-btn" id="modelBtn">◈ モデル</button>
+      <a class="drawer-action-btn" href="../index.html">⌂ トップ</a>
+    </div>
+    <button class="new-session-btn" id="newSessionBtn">＋ 新規セッション</button>
+    <div class="chat-history">
+      <div class="history-label">チャット履歴</div>
+      <div id="historyList"></div>
+    </div>
+  </aside>
+
+  <!-- 設定モーダル -->
+  <div class="modal-overlay hidden" id="settingsOverlay">
+    <div class="modal" id="settingsModal">
+      <div class="modal-header">
+        <span class="modal-title">設定</span>
+        <button class="modal-close" id="settingsClose">✕</button>
+      </div>
+      <div class="modal-body">
+
+        <div class="settings-section">
+          <div class="settings-label">テーマ</div>
+          <div class="settings-row">
+            <span>ダークモード</span>
+            <label class="toggle">
+              <input type="checkbox" id="settingsThemeToggle">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-label">プライバシー</div>
+          <div class="settings-row">
+            <div>
+              <div>シークレットモード</div>
+              <div class="settings-desc">チャット履歴を保存しません</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="settingsSecretToggle">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-label">モデル設定</div>
+          <div class="settings-row">
+            <span>Temperature</span>
+            <div class="settings-slider-wrap">
+              <input type="range" id="settingsTemp" min="0" max="100" value="80" class="settings-slider">
+              <span class="settings-slider-val" id="settingsTempVal">0.8</span>
+            </div>
+          </div>
+          <div class="settings-row">
+            <span>Top-K</span>
+            <div class="settings-slider-wrap">
+              <input type="range" id="settingsTopK" min="1" max="100" value="40" class="settings-slider">
+              <span class="settings-slider-val" id="settingsTopKVal">40</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-label">データ</div>
+          <div class="settings-row">
+            <span>チャット履歴をすべて削除</span>
+            <button class="settings-danger-btn" id="clearHistoryBtn">削除</button>
+          </div>
+          <div class="settings-row">
+            <span>キャッシュ済みモデルを管理</span>
+            <button class="settings-btn" id="manageModelsBtn">開く</button>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-label">システムプロンプト</div>
+          <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px">
+            <textarea id="settingsSystemPrompt" class="settings-system-prompt" placeholder="システムプロンプトを入力..."></textarea>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-label">ライセンス</div>
+          <div class="license-list">
+            <div class="license-item">
+              <div class="license-name">ネズミAI Web</div>
+              <div class="license-desc">
+                LGPL v3 と、ソースコードの公開が不要な別ライセンスのデュアルライセンスです。
+              </div>
+              <div class="license-links">
+                <a href="LGPL_LICENSE" target="_blank" rel="noopener noreferrer">LGPL_LICENSE</a>
+                <a href="NOTICE" target="_blank" rel="noopener noreferrer">NOTICE</a>
+              </div>
+            </div>
+            <div class="license-item">
+              <div class="license-name">別ライセンス</div>
+              <div class="license-desc">
+                ソースコードの公開が不要な別ライセンスを取得したい場合は、mouse0329 に連絡してください。
+              </div>
+              <div class="license-links">
+                <a href="https://github.com/mouse0329/nezumi-ai" target="_blank" rel="noopener noreferrer">GitHub</a>
+                <a href="https://github.com/mouse0329" target="_blank" rel="noopener noreferrer">@mouse0329</a>
+              </div>
+            </div>
+            <div class="license-item">
+              <div class="license-name">MediaPipe Tasks GenAI</div>
+              <div class="license-desc">
+                Apache License 2.0. サードパーティ通知は NOTICE を参照してください。
+              </div>
+              <div class="license-links">
+                <a href="https://www.npmjs.com/package/@mediapipe/tasks-genai" target="_blank" rel="noopener noreferrer">npm</a>
+              </div>
+            </div>
+            <div class="license-item">
+              <div class="license-name">Gemma 4 models</div>
+              <div class="license-desc">
+                Apache License 2.0. モデルファイルは Hugging Face からダウンロードされます。
+              </div>
+              <div class="license-links">
+                <a href="https://ai.google.dev/gemma" target="_blank" rel="noopener noreferrer">Gemma reference</a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-version">ネズミAI Web v0.1</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- モデル管理モーダル -->
+  <div class="modal-overlay hidden" id="modelOverlay">
+    <div class="modal model-modal" id="modelModal">
+      <div class="modal-header">
+        <span class="modal-title">モデル管理</span>
+        <button class="modal-close" id="modelClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="model-manager-summary">
+          <div>
+            <div class="model-manager-label">使用中</div>
+            <div class="model-manager-current" id="modelManagerCurrent">-</div>
+          </div>
+          <div class="model-manager-usage" id="modelManagerUsage">-- GB</div>
+        </div>
+        <div class="model-manager-list" id="modelManagerList"></div>
+        <div class="model-manager-progress hidden" id="modelManagerProgress">
+          <div class="model-manager-progress-bar-wrap">
+            <div class="model-manager-progress-bar" id="modelManagerProgressBar"></div>
+          </div>
+          <div class="model-manager-progress-text" id="modelManagerProgressText">待機中</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- メイン -->
+  <div class="app" id="app">
+
+    <!-- トップバー -->
+    <header class="topbar">
+      <button class="icon-btn" id="menuBtn" aria-label="メニュー">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="3" y1="6" x2="21" y2="6"/>
+          <line x1="3" y1="12" x2="21" y2="12"/>
+          <line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+      </button>
+      <img src="nezumi-icon.svg" alt="ネズミ" class="topbar-icon" id="topbarIcon">
+      <div class="model-selector-wrap">
+        <label class="model-label">モデル</label>
+        <select class="model-selector" id="modelSelector">
+          <option value="gemma4-e2b">Gemma 4 E2B</option>
+          <option value="gemma4-e4b">Gemma 4 E4B</option>
+        </select>
+      </div>
+      <div class="thinking-wrap">
+        <span class="thinking-label">シンキング</span>
+        <label class="toggle">
+          <input type="checkbox" id="thinkingToggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <button class="icon-btn theme-btn" id="themeBtn" aria-label="テーマ切替">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26 5.403 5.403 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z"/>
+        </svg>
+      </button>
+    </header>
+
+    <!-- コンテキストバー -->
+    <div class="context-bar-wrap">
+      <span class="context-label">コンテキスト使用量: <span id="contextUsed">0</span> / <span id="contextMax">4096</span> tokens</span>
+      <div class="context-bar">
+        <div class="context-bar-fill" id="contextBarFill"></div>
+      </div>
+    </div>
+
+    <!-- チャットエリア -->
+    <main class="chat-area" id="chatArea">
+      <div class="empty-state" id="emptyState">
+        <img src="nezumi-icon.svg" alt="ネズミAI" class="empty-icon" id="emptyIcon">
+        <span class="empty-label">ネズミAI</span>
+      </div>
+    </main>
+
+    <!-- 入力エリア -->
+    <footer class="input-area">
+      <button class="input-plus-btn" id="attachBtn" aria-label="添付">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+      </button>
+      <textarea class="input-field" id="inputField" placeholder="メッセージを入力..." rows="1"></textarea>
+      <button class="send-btn" id="sendBtn" aria-label="送信">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <line x1="5" y1="12" x2="19" y2="12"/>
+          <polyline points="12 5 19 12 12 19"/>
+        </svg>
+      </button>
+    </footer>
+
+  </div>
+
+  <!-- モデルロード中オーバーレイ -->
+  <div class="load-overlay hidden" id="loadOverlay">
+    <div class="load-box">
+      <img src="nezumi-icon.svg" alt="ネズミ" class="load-icon" id="loadIcon">
+      <div class="load-title">モデルをロード中</div>
+      <div class="load-bar-wrap">
+        <div class="load-bar" id="loadBar"></div>
+      </div>
+      <div class="load-status" id="loadStatus">初期化中...</div>
+    </div>
+  </div>
+
+  <script src="model.js"></script>
+  <script src="inference.js"></script>
+  <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(err => {
+          console.warn('Service Worker registration failed:', err);
+        });
+      });
+    }
+  </script>
+</body>
+</html>
