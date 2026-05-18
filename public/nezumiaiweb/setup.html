@@ -284,6 +284,65 @@
       color: var(--color-text-secondary);
       margin-top: 12px;
     }
+
+    /* 手動ダウンロードダイアログ */
+    .manual-dl-dialog {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      padding: 20px;
+    }
+    .manual-dl-dialog.visible { display: flex; }
+    .manual-dl-content {
+      background: var(--color-surface);
+      border-radius: var(--radius);
+      padding: 24px;
+      max-width: 500px;
+      width: 100%;
+      border: 1px solid var(--color-border);
+    }
+    .manual-dl-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+    .manual-dl-body {
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--color-text);
+      margin-bottom: 20px;
+    }
+    .manual-dl-body ol {
+      margin: 8px 0 8px 20px;
+    }
+    .manual-dl-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    .manual-dl-btn {
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: background 0.15s;
+    }
+    .manual-dl-btn.primary {
+      background: var(--color-button-primary);
+      color: #fff;
+    }
+    .manual-dl-btn.primary:hover { background: var(--color-button-primary-hover); }
+    .manual-dl-btn.secondary {
+      background: var(--color-surface2);
+      color: var(--color-text);
+    }
+    .manual-dl-btn.secondary:hover { background: var(--color-border); }
   </style>
 </head>
 <body class="dark">
@@ -384,6 +443,24 @@
     </div>
   </div>
 
+</div>
+
+<!-- 手動ダウンロードダイアログ -->
+<div class="manual-dl-dialog" id="manualDlDialog">
+  <div class="manual-dl-content">
+    <div class="manual-dl-title">ダウンロードに失敗しました</div>
+    <div class="manual-dl-body">
+      自動ダウンロードができませんでした。以下の手順で手動ダウンロードできます：
+      <ol>
+        <li>「配布元を開く」ボタンでモデルファイルをダウンロード</li>
+        <li>「ファイルから追加」ボタンでダウンロードしたファイルを選択</li>
+      </ol>
+    </div>
+    <div class="manual-dl-actions">
+      <button class="manual-dl-btn secondary" id="manualDlClose">閉じる</button>
+      <button class="manual-dl-btn primary" id="manualDlImport">ファイルから追加</button>
+    </div>
+  </div>
 </div>
 
 <script src="model.js"></script>
@@ -593,6 +670,7 @@ async function startDownload() {
       bar.style.width = '0%';
     } else {
       text.textContent = `エラー: ${e.message}`;
+      showManualDownloadDialog();
     }
     dlBtn.disabled = false;
     importBtn.disabled = false;
@@ -604,6 +682,20 @@ async function startDownload() {
     dlController = null;
   }
 }
+
+function showManualDownloadDialog() {
+  document.getElementById('manualDlDialog').classList.add('visible');
+}
+
+function hideManualDownloadDialog() {
+  document.getElementById('manualDlDialog').classList.remove('visible');
+}
+
+document.getElementById('manualDlClose').addEventListener('click', hideManualDownloadDialog);
+document.getElementById('manualDlImport').addEventListener('click', () => {
+  hideManualDownloadDialog();
+  importSelectedModel();
+});
 
 async function importSelectedModel() {
   if (isDownloading) return;
