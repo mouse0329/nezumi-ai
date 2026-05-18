@@ -803,7 +803,15 @@
     function showManualDownloadDialog() {
       const dialog = document.getElementById('manualDlDialog');
       const link = document.getElementById('manualDlLink');
-      link.href = window.modelManager.MODEL_CONFIGS[selectedModel].url;
+      const fallback = document.getElementById('dlSourceLink')?.href || '';
+      const url = fallback;
+      try {
+        // prefer explicit modelManager config if available
+        const cfgUrl = window.modelManager?.MODEL_CONFIGS?.[selectedModel]?.url;
+        link.href = cfgUrl || url;
+      } catch {
+        link.href = url;
+      }
       dialog.classList.add('visible');
     }
 
@@ -894,21 +902,51 @@
 
       console.warn('modelManager.importModelFile が見つかりません。model.js を再読み込みします。');
       if (window.modelManager && typeof window.modelManager.importModelFile !== 'function') {
-        delete window.modelManager;
+        try { delete window.modelManager; } catch {}
       }
-      return new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = new URL(`model.js?t=${Date.now()}`, getSetupBaseUrl()).href;
-        script.onload = () => {
-          if (window.modelManager && typeof window.modelManager.importModelFile === 'function') {
-            resolve(window.modelManager);
-          } else {
-            reject(new Error('modelManager.importModelFile が読み込まれませんでした'));
+
+      const base = getSetupBaseUrl();
+      const candidatePaths = [
+        new URL('model.js', base).href,
+        new URL('../model.js', base).href,
+        new URL('model.js', location.origin).href,
+        `${location.origin}/nezumiaiweb/model.js`,
+        `${location.origin}/model.js`,
+      ];
+
+      function tryLoad(url) {
+        return new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = `${url}?t=${Date.now()}`;
+          s.onload = () => {
+            if (window.modelManager && typeof window.modelManager.importModelFile === 'function') {
+              resolve(window.modelManager);
+            } else {
+              // loaded but not providing expected API
+              s.remove();
+              reject(new Error('modelManager.importModelFile が読み込まれませんでした'));
+            }
+          };
+          s.onerror = () => {
+            s.remove();
+            reject(new Error('model.js の再読み込みに失敗しました'));
+          };
+          document.body.appendChild(s);
+        });
+      }
+
+      return (async () => {
+        for (const p of candidatePaths) {
+          try {
+            const mgr = await tryLoad(p);
+            return mgr;
+          } catch (e) {
+            // try next
+            console.warn('model.js load failed:', p, e.message);
           }
-        };
-        script.onerror = () => reject(new Error('model.js の再読み込みに失敗しました'));
-        document.body.appendChild(script);
-      });
+        }
+        throw new Error('model.js の再読み込みに失敗しました (全候補)');
+      })();
     }
 
     function cancelDownload() {
