@@ -44,6 +44,12 @@ self.addEventListener('fetch', e => {
   }
 
   if (request.mode === 'navigate') {
+    const pathname = url.pathname;
+    if (pathname.endsWith('/setup') || pathname.endsWith('/setup/')) {
+      e.respondWith(networkFirst(request, './setup.html'));
+      return;
+    }
+
     e.respondWith(networkFirst(request, './index.html'));
     return;
   }

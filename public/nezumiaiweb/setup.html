@@ -2,6 +2,13 @@
 <html lang="ja">
 
 <head>
+  <script>
+    const currentPath = location.pathname;
+    const appBase = currentPath.replace(/\/setup(?:\.html)?\/?$/, '/') || '/';
+    const base = document.createElement('base');
+    base.href = appBase;
+    document.head.prepend(base);
+  </script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>セットアップ - ネズミAI</title>
@@ -872,15 +879,26 @@
       }
     }
 
+    function getSetupBaseUrl() {
+      const url = new URL(location.href);
+      if (url.pathname.endsWith('/setup') || url.pathname.endsWith('/setup/') || url.pathname.endsWith('/setup.html')) {
+        return new URL('..', url).href;
+      }
+      return new URL('.', url).href;
+    }
+
     function ensureModelManager() {
       if (window.modelManager && typeof window.modelManager.importModelFile === 'function') {
         return Promise.resolve(window.modelManager);
       }
 
       console.warn('modelManager.importModelFile が見つかりません。model.js を再読み込みします。');
+      if (window.modelManager && typeof window.modelManager.importModelFile !== 'function') {
+        delete window.modelManager;
+      }
       return new Promise((resolve, reject) => {
         const script = document.createElement('script');
-        script.src = `model.js?t=${Date.now()}`;
+        script.src = new URL(`model.js?t=${Date.now()}`, getSetupBaseUrl()).href;
         script.onload = () => {
           if (window.modelManager && typeof window.modelManager.importModelFile === 'function') {
             resolve(window.modelManager);
@@ -898,14 +916,13 @@
     }
 
     document.getElementById('btn3back').addEventListener('click', () => goStep(2));
-    document.getElementById('btn3skip').addEventListener('click', () => {
+    function navigateToIndex() {
       localStorage.setItem('nezumi_model', selectedModel);
-      window.location.href = 'index.html';
-    });
-    document.getElementById('btn3chat').addEventListener('click', () => {
-      localStorage.setItem('nezumi_model', selectedModel);
-      window.location.href = 'index.html';
-    });
+      window.location.href = new URL('index.html', getSetupBaseUrl()).href;
+    }
+
+    document.getElementById('btn3skip').addEventListener('click', navigateToIndex);
+    document.getElementById('btn3chat').addEventListener('click', navigateToIndex);
   </script>
   <script>
     if ('serviceWorker' in navigator) {
