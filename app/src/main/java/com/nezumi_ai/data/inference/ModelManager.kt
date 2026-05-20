@@ -168,6 +168,18 @@ class ModelManager(
     }
 
     /**
+     * 同じモデルが現在ロード済みかどうかを判定する。
+     * 設定が異なっていて再ロードが必要でも、モデル自体はメモリ上にあるため
+     * 再表示されるメモリ警告を抑制したいケースで利用する。
+     */
+    fun isSameModelLoaded(modelName: String): Boolean {
+        val isSameModel = currentModelName == modelName
+        val isLoaded = isSameModel && activeEngine !== null
+        Log.d(TAG, "isSameModelLoaded: model=$modelName | same=${isSameModel} engine=${activeEngine != null} → result=$isLoaded")
+        return isLoaded
+    }
+
+    /**
      * モデルを初期化（ロード）
      * Phase 14: モデルロード前にメモリを詳細確認
      * Phase 15: LiteRtLm / GGUF エンジン自動選択（構築時）

@@ -980,7 +980,11 @@ class LiteRtLmEngine(
             val file = File(resolved)
             val validated = ModelFileManager.validateImportedTaskFile(file)
             if (validated.isFailure) {
-                Log.w(TAG, "Imported model validation failed: ${validated.exceptionOrNull()?.message}")
+                val cause = validated.exceptionOrNull()
+                Log.w(TAG, "Imported model validation failed: ${cause?.message}")
+                if (cause?.message?.contains("Web用モデル") == true) {
+                    throw cause
+                }
                 return null
             }
             return validated.getOrNull()

@@ -36,8 +36,8 @@ object ModelFileManager {
     /**
      * モデルダウンロード前のリソースチェック（メモリ・ストレージ）
      */
-    fun checkDownloadResources(context: Context, modelSizeBytes: Long): ResourceCheckResult {
-        val isMemoryLow = com.nezumi_ai.data.inference.MemoryObserver.isMemoryLowForFileSize(context, modelSizeBytes)
+    fun checkDownloadResources(context: Context, modelSizeBytes: Long, thresholdPercent: Int = com.nezumi_ai.data.inference.MemoryObserver.DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT): ResourceCheckResult {
+        val isMemoryLow = com.nezumi_ai.data.inference.MemoryObserver.isMemoryLowForFileSize(context, modelSizeBytes, thresholdPercent, useAvailable = true)
         val systemMemInfo = if (isMemoryLow) {
             com.nezumi_ai.data.inference.MemoryObserver.getSystemMemoryInfo(context)
         } else null
@@ -622,28 +622,35 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         
         val lower = file.name.lowercase()
         
-        // .task / .litertlm は両方ともバイナリフォーマット
-        // ZIP ファイルかどうかの判定で誤った検証を避ける
         if (lower.endsWith(".task") || lower.endsWith(".litertlm")) {
-            // バイナリフォーマットのモデルファイルは、ファイル先頭のマジックナンバーでチェック
             try {
-                val header = ByteArray(4)
+                val header = ByteArray(8)
                 file.inputStream().use { stream ->
                     stream.read(header)
                 }
                 
-                // ZIP の マジックナンバーは 0x50 0x4B 0x03 0x04（"PK..") 
                 val isZip = header[0] == 0x50.toByte() && header[1] == 0x4B.toByte()
                 
-                // もし ZIP マジックナンバーが見つかった場合は警告（誤った形式の可能性）
+                // TFLite FlatBuffer (Web版) のマジックナンバー: バイト4〜7が "TFL3"
+                val isTfliteFlatbuffer = header[4] == 'T'.code.toByte() &&
+                    header[5] == 'F'.code.toByte() &&
+                    header[6] == 'L'.code.toByte() &&
+                    header[7] == '3'.code.toByte()
+                
+                if (isTfliteFlatbuffer) {
+                    Log.e(TAG, "Web用モデル検出: ${file.absolutePath} はTFLite FlatBuffer形式(Web版)です")
+                    throw IllegalStateException("Web用モデル: このファイルはMediaPipe Web用のモデルです。Androidアプリ用の.taskファイル（LiteRT形式）をご利用ください。")
+                }
+                
                 if (isZip) {
                     Log.w(TAG, "Warning: .task file detected as ZIP format. This may not be a valid MediaPipe LiteRT model.")
                 }
                 
                 Log.d(TAG, "Binary model file validated: ${file.absolutePath} (${size} bytes)")
+            } catch (e: IllegalStateException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Error reading model file header: ${e.message}", e)
-                // ヘッダ読み込みエラーでもファイルは受け入れる（実運用時のエラーで詳細が分かる）
             }
         }
 

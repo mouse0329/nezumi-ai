@@ -25,6 +25,7 @@ import com.nezumi_ai.R
 import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.InferenceConfig
+import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.repository.SettingsRepository
 
 import com.nezumi_ai.utils.PreferencesHelper
@@ -40,6 +41,7 @@ class SettingsComposeFragment : Fragment() {
     private var maxTokensInput by mutableStateOf("1024")
     private var contextCompressionEnabled by mutableStateOf(false)
     private var contextCompressionThresholdPercent by mutableStateOf(70)
+    private var preloadMemoryWarningThresholdPercent by mutableStateOf(250)
     private var userNameInput by mutableStateOf("")
     private var systemPromptInput by mutableStateOf("")
     private var selectedModel by mutableStateOf("E2B")
@@ -47,6 +49,7 @@ class SettingsComposeFragment : Fragment() {
     private var themeMode by mutableStateOf(PreferencesHelper.THEME_SYSTEM)
     private var errorDialogMessage by mutableStateOf<String?>(null)
     private var versionDialogVisible by mutableStateOf(false)
+    private var aboutDialogVisible by mutableStateOf(false)
     private var llamaCppThreads by mutableStateOf(InferenceConfig.getDefaultThreadCount())
     private var maxThreads by mutableStateOf(InferenceConfig.MAX_THREADS)
     private var llamaCppGpuLayers by mutableStateOf(0)
@@ -107,6 +110,11 @@ class SettingsComposeFragment : Fragment() {
                 onDismiss = { versionDialogVisible = false }
             )
         }
+        if (aboutDialogVisible) {
+            AboutDialog(
+                onDismiss = { aboutDialogVisible = false }
+            )
+        }
 
         LazyColumn(
             modifier = Modifier
@@ -133,6 +141,7 @@ class SettingsComposeFragment : Fragment() {
                     )
                 }
             }
+            
             item { GeneralSettingsCard() }
             item { PersonalizationCard() }
             item { InferenceParamsCard() }
@@ -140,6 +149,9 @@ class SettingsComposeFragment : Fragment() {
             item { ChatHistoryCard() }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { aboutDialogVisible = true }) {
+                        Text(text = "このアプリについて")
+                    }
                     TextButton(onClick = {
                         PreferencesHelper.resetInitialSetupCompleted(requireContext())
                         findNavController().navigate(R.id.setupWizardFragment)
@@ -462,6 +474,47 @@ class SettingsComposeFragment : Fragment() {
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "プリロードメモリ警告閾値",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "${preloadMemoryWarningThresholdPercent}%",
+                            color = colorResource(id = R.color.primary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                    Slider(
+                        value = preloadMemoryWarningThresholdPercent.toFloat(),
+                        onValueChange = { value ->
+                            preloadMemoryWarningThresholdPercent = value.roundToInt().coerceIn(
+                                MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT,
+                                MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT
+                            )
+                        },
+                        valueRange = MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT.toFloat()..
+                            MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT.toFloat(),
+                        steps = MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT -
+                            MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT - 1,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = "モデルサイズが利用可能な空きメモリのこの割合を超えると警告します",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.labelSmall
+                    )
                 }
                 
                 // Advanced Llama.cpp Settings (Collapsible)
@@ -839,6 +892,7 @@ class SettingsComposeFragment : Fragment() {
             temperatureInput = config.temperature.toString()
             topkInput = config.maxTopK.toString()
             maxTokensInput = config.maxTokens.toString()
+            preloadMemoryWarningThresholdPercent = settingsRepository.getPreloadMemoryWarningThresholdPercent()
             contextCompressionEnabled = config.contextCompressionEnabled
             contextCompressionThresholdPercent = config.contextCompressionThresholdPercent
             userNameInput = userName
@@ -891,6 +945,11 @@ class SettingsComposeFragment : Fragment() {
         ) {
             return "圧縮しきい値は ${InferenceConfig.MIN_COMPRESSION_THRESHOLD} - ${InferenceConfig.MAX_COMPRESSION_THRESHOLD} の範囲で入力してください"
         }
+        if (preloadMemoryWarningThresholdPercent !in
+            MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT..MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT
+        ) {
+            return "プリロードメモリ警告閾値は ${MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT} - ${MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT} の範囲で設定してください"
+        }
         return null
     }
 
@@ -910,6 +969,7 @@ class SettingsComposeFragment : Fragment() {
             backendType = backendType,
             backendTargetModel = "ALL"
         )
+        settingsRepository.updatePreloadMemoryWarningThresholdPercent(preloadMemoryWarningThresholdPercent)
         settingsRepository.updateSystemPrompt(systemPromptInput)
         settingsRepository.updateUserName(userNameInput)
         settingsRepository.updateLlamaCppThreads(llamaCppThreads)
@@ -934,6 +994,31 @@ class SettingsComposeFragment : Fragment() {
                     Text("llama.cpp: ${BuildConfig.LLAMACPP_VERSION}")
                     Text(
                         "※実行時には内部 JNI / モデル対応により挙動が変わる場合があります。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = onDismiss) {
+                    Text("閉じる")
+                }
+            }
+        )
+    }
+
+    @Composable
+    private fun AboutDialog(onDismiss: () -> Unit) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("このアプリについて") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Nezumi AI")
+                    Text("バージョン: ${BuildConfig.VERSION_NAME}")
+                    Text("ビルド: ${BuildConfig.VERSION_CODE}")
+                    Text(
+                        "Nezumi AI は端末上でのAI推論とチャット体験を提供します。",
                         style = MaterialTheme.typography.bodySmall,
                         color = colorResource(id = R.color.text_secondary)
                     )
