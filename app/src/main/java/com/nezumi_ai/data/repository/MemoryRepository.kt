@@ -1,0 +1,142 @@
+package com.nezumi_ai.data.repository
+
+import com.nezumi_ai.data.database.dao.MemoryDao
+import com.nezumi_ai.data.database.entity.MemoryEntity
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import kotlin.math.exp
+import kotlin.math.ln
+import kotlin.math.max
+import kotlin.math.sqrt
+import kotlinx.coroutines.flow.Flow
+
+class MemoryRepository(
+    private val dao: MemoryDao
+) {
+    fun observeMemories(): Flow<List<MemoryEntity>> = dao.observeActive()
+
+    suspend fun saveMemory(
+        content: String,
+        embedding: FloatArray,
+        importance: Float = 0.7f,
+        source: String = MemoryEntity.SOURCE_EXTRACTED,
+        sessionId: String = ""
+    ): Long {
+        val now = System.currentTimeMillis()
+        return dao.insert(
+            MemoryEntity(
+                content = content,
+                embedding = floatArrayToBytes(embedding),
+                norm = l2norm(embedding),
+                importance = importance.coerceIn(0f, 1f),
+                createdAt = now,
+                updatedAt = now,
+                lastAccessedAt = now,
+                source = source,
+                sessionId = sessionId
+            )
+        )
+    }
+
+    suspend fun search(
+        queryEmbedding: FloatArray,
+        topK: Int = DEFAULT_TOP_K,
+        threshold: Float = DEFAULT_THRESHOLD,
+        markAccessed: Boolean = true
+    ): List<ScoredMemory> {
+        val queryNorm = l2norm(queryEmbedding)
+        if (queryNorm == 0f) return emptyList()
+
+        val scored = dao.getActive()
+            .mapNotNull { memory ->
+                val memoryEmbedding = bytesToFloatArray(memory.embedding)
+                if (memoryEmbedding.size != queryEmbedding.size || memory.norm == 0f) return@mapNotNull null
+                val similarity = cosineSimilarity(queryEmbedding, queryNorm, memoryEmbedding, memory.norm)
+                val score = score(
+                    similarity = similarity,
+                    lastAccessedAt = memory.lastAccessedAt,
+                    importance = memory.importance,
+                    accessCount = memory.accessCount
+                )
+                if (score >= threshold) ScoredMemory(memory, score, similarity) else null
+            }
+            .sortedByDescending { it.score }
+            .take(topK.coerceAtLeast(1))
+
+        if (markAccessed && scored.isNotEmpty()) {
+            dao.markAccessed(scored.map { it.memory.id })
+        }
+        return scored
+    }
+
+    suspend fun softDelete(id: Long) {
+        dao.softDelete(id)
+    }
+
+    suspend fun softDeleteAll() {
+        dao.softDeleteAll()
+    }
+
+    data class ScoredMemory(
+        val memory: MemoryEntity,
+        val score: Float,
+        val similarity: Float
+    )
+
+    companion object {
+        const val DEFAULT_THRESHOLD = 0.5f
+        const val DEFAULT_TOP_K = 5
+        private const val MILLIS_PER_DAY = 86_400_000f
+
+        fun score(similarity: Float, lastAccessedAt: Long, importance: Float, accessCount: Int): Float {
+            val days = (System.currentTimeMillis() - lastAccessedAt) / MILLIS_PER_DAY
+            val rawDecay = exp(-0.05f * days / ln(accessCount + 2f))
+            val decay = max(rawDecay, importance * 0.3f)
+            return similarity * decay * importance
+        }
+
+        fun cosineSimilarity(a: FloatArray, normA: Float, b: FloatArray, normB: Float): Float {
+            if (a.size != b.size || normA == 0f || normB == 0f) return 0f
+            var dot = 0.0
+            for (i in a.indices) {
+                dot += (a[i] * b[i]).toDouble()
+            }
+            return (dot / (normA * normB)).toFloat()
+        }
+
+        fun l2norm(v: FloatArray): Float {
+            var sum = 0.0
+            for (value in v) {
+                sum += (value * value).toDouble()
+            }
+            return sqrt(sum).toFloat()
+        }
+
+        fun meanPool(tokenEmbeddings: Array<FloatArray>): FloatArray {
+            if (tokenEmbeddings.isEmpty()) return FloatArray(0)
+            val dim = tokenEmbeddings[0].size
+            val result = FloatArray(dim)
+            for (vec in tokenEmbeddings) {
+                for (i in 0 until dim) {
+                    result[i] += vec[i]
+                }
+            }
+            for (i in 0 until dim) {
+                result[i] /= tokenEmbeddings.size
+            }
+            return result
+        }
+
+        fun floatArrayToBytes(values: FloatArray): ByteArray {
+            val buffer = ByteBuffer.allocate(values.size * Float.SIZE_BYTES).order(ByteOrder.LITTLE_ENDIAN)
+            values.forEach { buffer.putFloat(it) }
+            return buffer.array()
+        }
+
+        fun bytesToFloatArray(bytes: ByteArray): FloatArray {
+            if (bytes.isEmpty()) return FloatArray(0)
+            val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+            return FloatArray(bytes.size / Float.SIZE_BYTES) { buffer.getFloat() }
+        }
+    }
+}

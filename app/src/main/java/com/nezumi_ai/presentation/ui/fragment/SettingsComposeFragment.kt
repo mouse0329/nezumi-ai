@@ -26,6 +26,7 @@ import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.inference.MemoryObserver
+import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 
 import com.nezumi_ai.utils.PreferencesHelper
@@ -34,6 +35,7 @@ import kotlin.math.roundToInt
 
 class SettingsComposeFragment : Fragment() {
     private lateinit var settingsRepository: SettingsRepository
+    private lateinit var memoryRepository: MemoryRepository
 
     private var contextWindowInput by mutableStateOf("4096")
     private var temperatureInput by mutableStateOf("0.7")
@@ -65,6 +67,7 @@ class SettingsComposeFragment : Fragment() {
         super.onCreate(savedInstanceState)
         val db = NezumiAiDatabase.getInstance(requireContext())
         settingsRepository = SettingsRepository(db.settingsDao(), db.chatSessionDao())
+        memoryRepository = MemoryRepository(db.memoryDao())
     }
 
     override fun onCreateView(
@@ -146,6 +149,7 @@ class SettingsComposeFragment : Fragment() {
             item { PersonalizationCard() }
             item { InferenceParamsCard() }
             item { ImageGenSettingsCard() }
+            item { MemoryManagementCard() }
             item { ChatHistoryCard() }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -815,6 +819,110 @@ class SettingsComposeFragment : Fragment() {
                         steps = 38,
                         modifier = Modifier.fillMaxWidth()
                     )
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun MemoryManagementCard() {
+        val memories by memoryRepository.observeMemories().collectAsState(initial = emptyList())
+        var confirmDeleteAll by remember { mutableStateOf(false) }
+
+        if (confirmDeleteAll) {
+            AlertDialog(
+                onDismissRequest = { confirmDeleteAll = false },
+                title = { Text("メモリを全削除") },
+                text = { Text("保存済みメモリをすべて削除します。") },
+                confirmButton = {
+                    Button(onClick = {
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            memoryRepository.softDeleteAll()
+                            confirmDeleteAll = false
+                            toast("メモリを削除しました")
+                        }
+                    }) {
+                        Text("削除")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmDeleteAll = false }) {
+                        Text("キャンセル")
+                    }
+                }
+            )
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(text = "メモリ管理", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                        Text(
+                            text = "${memories.size}件のメモリ",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    TextButton(
+                        enabled = memories.isNotEmpty(),
+                        onClick = { confirmDeleteAll = true }
+                    ) {
+                        Text("全削除")
+                    }
+                }
+
+                if (memories.isEmpty()) {
+                    Text(
+                        text = "保存されたメモリはありません",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    memories.take(20).forEach { memory ->
+                        Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.14f), thickness = 1.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = memory.content,
+                                    color = colorResource(id = R.color.text_primary),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = "重要度 ${String.format("%.2f", memory.importance)} / 参照 ${memory.accessCount}回",
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                            TextButton(onClick = {
+                                viewLifecycleOwner.lifecycleScope.launch {
+                                    memoryRepository.softDelete(memory.id)
+                                }
+                            }) {
+                                Text("削除")
+                            }
+                        }
+                    }
+                    if (memories.size > 20) {
+                        Text(
+                            text = "最新20件を表示中",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
                 }
             }
         }

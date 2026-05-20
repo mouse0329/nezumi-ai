@@ -168,6 +168,8 @@ dependencies {
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
     implementation("com.google.android.gms:play-services-tflite-java:16.4.0")
     implementation("com.google.android.gms:play-services-tflite-gpu:16.4.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.15.0")
+    implementation("ai.djl.huggingface:tokenizers:0.36.0")
 
     implementation("androidx.biometric:biometric:1.1.0")
 

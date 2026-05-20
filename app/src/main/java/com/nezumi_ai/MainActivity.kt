@@ -150,8 +150,8 @@ class MainActivity : AppCompatActivity() {
         }
         binding.drawerToolsButton.setOnClickListener {
             closeDrawer()
-            if (navController.currentDestination?.id != R.id.toolsSettingsFragment) {
-                navController.navigate(R.id.toolsSettingsFragment)
+            if (navController.currentDestination?.id != R.id.presetSettingsFragment) {
+                navController.navigate(R.id.presetSettingsFragment)
             }
         }
         binding.drawerNewChatButton.setOnClickListener {

@@ -3,6 +3,8 @@ package com.nezumi_ai.data.inference
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import com.nezumi_ai.data.preset.PresetConstants
+import org.json.JSONArray
 
 enum class NezumiTool(val displayName: String) {
     GET_TIME("現在時刻取得"),
@@ -22,10 +24,24 @@ class ToolPreferences(context: Context) {
         private const val PREFS_NAME = "tool_preferences"
         private const val KEY_PREFIX = "tool_enabled_"
         private const val KEY_INITIALIZED = "tools_initialized_v2"
+        private const val KEY_ACTIVE_PRESET_TOOL_IDS = "active_preset_tool_ids"
 
         fun resetToDefaults(context: Context) {
             val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs.edit().clear().commit()
+        }
+
+        fun presetIdsForTool(tool: NezumiTool): Set<String> = when (tool) {
+            NezumiTool.GET_TIME -> setOf(PresetConstants.TOOL_TIME)
+            NezumiTool.GET_BATTERY -> setOf(PresetConstants.TOOL_BATTERY)
+            NezumiTool.SET_ALARM,
+            NezumiTool.DISMISS_ALARM,
+            NezumiTool.LIST_ALARMS -> setOf(PresetConstants.TOOL_ALARM)
+            NezumiTool.FLASHLIGHT -> setOf(PresetConstants.TOOL_FLASHLIGHT)
+            NezumiTool.START_TIMER,
+            NezumiTool.STOP_TIMER,
+            NezumiTool.LIST_TIMERS -> setOf(PresetConstants.TOOL_TIMER)
+            NezumiTool.GENERATE_IMAGE -> setOf(PresetConstants.TOOL_IMAGE_GENERATION)
         }
     }
 
@@ -57,6 +73,10 @@ class ToolPreferences(context: Context) {
 
     fun isEnabled(tool: NezumiTool): Boolean {
         ensureInitialized()
+        val presetToolIds = getActivePresetToolIds()
+        if (presetToolIds != null) {
+            return presetIdsForTool(tool).any { it in presetToolIds }
+        }
         return prefs.getBoolean(keyFor(tool), defaultEnabled(tool))
     }
 
@@ -66,6 +86,30 @@ class ToolPreferences(context: Context) {
 
     fun getEnabledTools(): Set<NezumiTool> {
         return NezumiTool.entries.filterTo(linkedSetOf()) { isEnabled(it) }
+    }
+
+    fun setActivePresetToolIds(toolIdsJson: String) {
+        prefs.edit().putString(KEY_ACTIVE_PRESET_TOOL_IDS, toolIdsJson).apply()
+    }
+
+    fun clearActivePresetToolIds() {
+        prefs.edit().remove(KEY_ACTIVE_PRESET_TOOL_IDS).apply()
+    }
+
+    private fun getActivePresetToolIds(): Set<String>? {
+        val raw = prefs.getString(KEY_ACTIVE_PRESET_TOOL_IDS, null) ?: return null
+        return runCatching {
+            val array = JSONArray(raw)
+            buildSet {
+                for (i in 0 until array.length()) {
+                    val id = array.optString(i).trim()
+                    if (id.isNotEmpty()) add(id)
+                }
+            }
+        }.getOrElse {
+            Log.e("ToolPreferences", "Failed to parse active preset tools", it)
+            emptySet()
+        }
     }
 
     private fun keyFor(tool: NezumiTool): String = KEY_PREFIX + tool.name
