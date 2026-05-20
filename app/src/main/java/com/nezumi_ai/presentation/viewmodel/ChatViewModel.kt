@@ -16,7 +16,9 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nezumi_ai.data.repository.ChatSessionRepository
+import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.MessageRepository
+import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.inference.CpuCompatibility
@@ -33,6 +35,8 @@ import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.ToolCallState
 import com.nezumi_ai.data.inference.ToolExecutionResult
 import com.nezumi_ai.data.inference.PromptBuilder
+import com.nezumi_ai.data.memory.MemoryTextEmbedder
+import com.nezumi_ai.data.preset.PresetConstants
 import com.google.ai.edge.litertlm.ToolCall
 import com.nezumi_ai.utils.PreferencesHelper
 import java.io.File
@@ -69,7 +73,9 @@ class ChatViewModel(
     private val appContext: Context,
     private val sessionRepository: ChatSessionRepository,
     private val messageRepository: MessageRepository,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val presetRepository: PresetRepository? = null,
+    private val memoryRepository: MemoryRepository? = null
 ) : ViewModel() {
     
     private val voicevoxManager: VoicevoxManager by lazy {
@@ -121,6 +127,30 @@ class ChatViewModel(
         val signature: Int,
         val summary: String
     )
+
+    private suspend fun getActiveSelectedModel(): String {
+        val preset = presetRepository?.getCurrentPreset()
+        val presetModel = preset?.modelId?.let { mapPresetModelIdToSettingsModel(it) }
+        return normalizeModel(presetModel ?: settingsRepository.getSelectedModel())
+    }
+
+    private suspend fun getActiveSystemPrompt(): String {
+        val preset = presetRepository?.getCurrentPreset()
+        return preset?.systemPrompt ?: settingsRepository.getSystemPrompt()
+    }
+
+    private suspend fun isMemoryEnabledForCurrentPreset(): Boolean {
+        if (_isIncognitoMode.value) return false
+        return presetRepository?.getCurrentPreset()?.memoryEnabled ?: false
+    }
+
+    private fun mapPresetModelIdToSettingsModel(modelId: String): String? {
+        return when (modelId) {
+            PresetConstants.MODEL_GEMMA4_LITERT -> "Gemma4-2B"
+            PresetConstants.MODEL_QWEN3_GGUF -> null
+            else -> modelId.takeIf { it.isNotBlank() }
+        }
+    }
     
     private val _currentSessionId = MutableStateFlow<Long?>(null)
     val currentSessionId: StateFlow<Long?> = _currentSessionId
@@ -376,7 +406,7 @@ class ChatViewModel(
         // ViewModel初期化時は設定のみ取得（モデルロードはしない）
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                _selectedModel.value = normalizeModel(settingsRepository.getSelectedModel())
+                _selectedModel.value = getActiveSelectedModel()
             } catch (t: Throwable) {
                 val e = if (t is Exception) t else RuntimeException(t)
                 Log.e(TAG, "Error initializing ModelManager", e)
@@ -470,7 +500,7 @@ class ChatViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             // チャット画面表示時にはモデルをロードしない。
             // 実ロードは送信時(generateAIResponse)に遅延させる。
-            _selectedModel.value = normalizeModel(settingsRepository.getSelectedModel())
+            _selectedModel.value = getActiveSelectedModel()
             // チャット準備完了を示す
             _isChatReady.value = true
         }
@@ -570,6 +600,29 @@ class ChatViewModel(
             }
         }
     }
+
+    fun preloadActivePresetModel() {
+        if (_isLoading.value || _isModelLoading.value) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val selectedModel = getActiveSelectedModel()
+            _selectedModel.value = selectedModel
+            val engineModelName = toEngineModelName(selectedModel)
+            if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
+                _uiMessage.emit("プリセットのモデル($selectedModel)が未ダウンロードです")
+                return@launch
+            }
+            val config = chatInferenceConfigForModel(selectedModel)
+            val result = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = true)
+            if (result.isFailure) {
+                val error = result.exceptionOrNull()
+                if (error?.message == "MEMORY_WARNING_SHOWN" || error?.message == "CPU_COMPAT_WARNING_SHOWN") {
+                    return@launch
+                }
+                Log.e(TAG, "Failed to preload preset model: $selectedModel", error)
+                _uiMessage.emit("プリセットモデルのロードに失敗しました")
+            }
+        }
+    }
     
     fun sendMessage(userMessage: String) {
         if (_isLoading.value) return
@@ -640,7 +693,7 @@ class ChatViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val manager = requireModelManager()
-                val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
+                val selectedModel = getActiveSelectedModel()
                 _selectedModel.value = selectedModel
                 val engineModelName = toEngineModelName(selectedModel)
                 if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
@@ -800,7 +853,7 @@ class ChatViewModel(
             }
             
             val manager = requireModelManager()
-            val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
+            val selectedModel = getActiveSelectedModel()
             
             val memoryPercent = manager.getMemoryUsagePercent()
             Log.d(TAG, "generateAIResponse: memoryUsage=$memoryPercent%")
@@ -1319,6 +1372,7 @@ class ChatViewModel(
                     }
                     syncSessionTitleFromDb(sessionId)
                 }
+                enqueueMemoryExtraction(sessionId, userMessage)
                 if (BuildConfig.DEBUG) {
                     Log.d(TAG, "AI response saved to database: ${completeResponse.take(50)}...")
                 }
@@ -1453,7 +1507,7 @@ class ChatViewModel(
             // メモリ安定化のため少し待機
             delay(500L)
             
-            val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
+            val selectedModel = getActiveSelectedModel()
             val engineModelName = toEngineModelName(selectedModel)
             val baseConfig = chatInferenceConfigForModel(selectedModel)
             val backend = settingsRepository.getBackendForModel(selectedModel)
@@ -1882,7 +1936,15 @@ class ChatViewModel(
         if (messages.isEmpty()) return ""
 
         val isGgufEngine = isGgufEngineModel(engineModelName)
-        val fullPrompt = buildPromptFromMessages(messages, isGgufEngine, engineModelName, config.enableThinking, currentTurnMessageId)
+        val memoryBlock = buildRelevantMemoryBlock(messages, sessionId)
+        val fullPrompt = buildPromptFromMessages(
+            messages = messages,
+            isGgufEngine = isGgufEngine,
+            engineModelName = engineModelName,
+            enableThinking = config.enableThinking,
+            currentTurnMessageId = currentTurnMessageId,
+            memoryBlock = memoryBlock
+        )
         
         // Phase 12: thinkingContent が誤ってプロンプトに混入していないか検証
         val messagesWithThinking = messages.filter { it.thinkingContent != null && it.thinkingContent.isNotEmpty() }
@@ -1931,7 +1993,8 @@ class ChatViewModel(
                 engineModelName = engineModelName,
                 recentMessages = recentMessages,
                 compressedSummary = cached.summary,
-                enableThinking = config.enableThinking
+                enableThinking = config.enableThinking,
+                memoryBlock = memoryBlock
             )
             return trimPromptToWindow(prompt, config.contextWindow)
         }
@@ -1972,10 +2035,118 @@ class ChatViewModel(
             engineModelName = engineModelName,
             recentMessages = recentMessages,
             compressedSummary = compressedSummary,
-            enableThinking = config.enableThinking
+            enableThinking = config.enableThinking,
+            memoryBlock = memoryBlock
         )
 
         return trimPromptToWindow(prompt, config.contextWindow)
+    }
+
+    private suspend fun buildRelevantMemoryBlock(messages: List<MessageEntity>, sessionId: Long): String? {
+        val repo = memoryRepository ?: return null
+        if (!isMemoryEnabledForCurrentPreset()) return null
+        val query = messages.lastOrNull { it.role == "user" }?.content?.trim().orEmpty()
+        if (query.isBlank()) return null
+        val results = repo.search(
+            queryEmbedding = MemoryTextEmbedder.embed(query),
+            topK = 4,
+            threshold = 0.12f,
+            markAccessed = true
+        )
+        if (results.isEmpty()) return null
+        Log.d(TAG, "MEMORY_INJECT: session=$sessionId count=${results.size}")
+        return buildString {
+            append("関連メモリ:\n")
+            results.forEachIndexed { index, scored ->
+                append(index + 1)
+                append(". ")
+                append(scored.memory.content.trim())
+                append('\n')
+            }
+        }.trim()
+    }
+
+    private fun enqueueMemoryExtraction(sessionId: Long, userMessage: String) {
+        if (memoryRepository == null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            if (!isMemoryEnabledForCurrentPreset()) return@launch
+            val candidates = extractMemoryCandidates(userMessage)
+            if (candidates.isEmpty()) return@launch
+            val repo = memoryRepository ?: return@launch
+            for (candidate in candidates) {
+                val embedding = MemoryTextEmbedder.embed(candidate.content)
+                val nearest = repo.search(
+                    queryEmbedding = embedding,
+                    topK = 1,
+                    threshold = 0f,
+                    markAccessed = false
+                ).firstOrNull()
+                if (nearest != null && nearest.similarity >= 0.88f) {
+                    Log.d(TAG, "MEMORY_SAVE: duplicate skipped similarity=${nearest.similarity}")
+                    continue
+                }
+                repo.saveMemory(
+                    content = candidate.content,
+                    embedding = embedding,
+                    importance = candidate.importance,
+                    source = "extracted",
+                    sessionId = sessionId.toString()
+                )
+                Log.d(TAG, "MEMORY_SAVE: saved session=$sessionId content=${candidate.content.take(40)}")
+            }
+        }
+    }
+
+    private data class MemoryCandidate(
+        val content: String,
+        val importance: Float
+    )
+
+    private fun extractMemoryCandidates(userMessage: String): List<MemoryCandidate> {
+        val text = userMessage.trim()
+        if (text.length < 6) return emptyList()
+        val rememberIntent = text.contains("覚えて") || text.contains("記憶して") || text.contains("メモして")
+        val patterns = listOf(
+            "私は", "わたしは", "僕は", "俺は", "自分は",
+            "名前", "呼んで", "好き", "嫌い", "苦手",
+            "住ん", "在住", "仕事", "職業", "誕生日",
+            "使っている", "使ってる", "使う", "設定"
+        )
+        val sentences = text
+            .split(Regex("[\\n。！？!?]+"))
+            .map { it.trim() }
+            .filter { it.length >= 6 }
+
+        return sentences.mapNotNull { sentence ->
+            val shouldKeep = rememberIntent || patterns.any { sentence.contains(it) }
+            if (!shouldKeep) return@mapNotNull null
+            val cleaned = sentence
+                .replace("覚えておいて", "")
+                .replace("覚えて", "")
+                .replace("記憶して", "")
+                .replace("メモして", "")
+                .trim(' ', '　', '、', '。', ':', '：')
+                .take(220)
+            if (cleaned.length < 4) return@mapNotNull null
+            val importance = when {
+                rememberIntent -> 0.9f
+                cleaned.contains("名前") || cleaned.contains("呼んで") -> 0.85f
+                cleaned.contains("好き") || cleaned.contains("嫌い") || cleaned.contains("苦手") -> 0.75f
+                else -> 0.7f
+            }
+            MemoryCandidate(cleaned, importance)
+        }.distinctBy { it.content }.take(3)
+    }
+
+    private fun appendMemoryBlockToSystemPrompt(systemPrompt: String, memoryBlock: String?): String {
+        if (memoryBlock.isNullOrBlank()) return systemPrompt
+        return buildString {
+            if (systemPrompt.isNotBlank()) {
+                append(systemPrompt.trim())
+                append("\n\n")
+            }
+            append(memoryBlock)
+        }
     }
 
     private suspend fun requestCompressedContextSummary(
@@ -2121,7 +2292,7 @@ class ChatViewModel(
     private suspend fun estimateContextUsageChars(messages: List<MessageEntity>): Int {
         // ★ バグ修正: メーター計算を実際の推論ロジック（buildPromptWithSessionContext）と統一
         // Phase 14: プロンプトの現在の文字数を推定（実際の制限は config.contextWindow（トークン数）に依存）
-        val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
+        val selectedModel = getActiveSelectedModel()
         val engineModelName = toEngineModelName(selectedModel)
         val isGgufEngine = isGgufEngineModel(engineModelName)
         val config = settingsRepository.getInferenceConfigForModel(selectedModel)
@@ -2189,13 +2360,15 @@ class ChatViewModel(
         engineModelName: String,
         recentMessages: List<MessageEntity>,
         compressedSummary: String,
-        enableThinking: Boolean = false
+        enableThinking: Boolean = false,
+        memoryBlock: String? = null
     ): String {
-        var systemPrompt = settingsRepository.getSystemPrompt()
+        var systemPrompt = getActiveSystemPrompt()
         val userName = settingsRepository.getUserName()
         if (userName.isNotEmpty()) {
             systemPrompt = "ユーザー名：$userName\n\n$systemPrompt"
         }
+        systemPrompt = appendMemoryBlockToSystemPrompt(systemPrompt, memoryBlock)
         return if (isGgufEngine) {
             PromptBuilder.buildForGguf(
                 messages = recentMessages,
@@ -2243,7 +2416,8 @@ class ChatViewModel(
         isGgufEngine: Boolean,
         engineModelName: String = "",
         enableThinking: Boolean = false,
-        currentTurnMessageId: Long? = null
+        currentTurnMessageId: Long? = null,
+        memoryBlock: String? = null
     ): String {
         if (messages.isEmpty()) return ""
         
@@ -2258,7 +2432,7 @@ class ChatViewModel(
         }
         
         val filteredMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
-        val systemPrompt = settingsRepository.getSystemPrompt()
+        val systemPrompt = appendMemoryBlockToSystemPrompt(getActiveSystemPrompt(), memoryBlock)
 
         val sanitizer = makeSanitizer(isGgufEngine, currentTurnMessageId)
 

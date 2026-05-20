@@ -15,10 +15,7 @@
 
                 <TextView android:id="@+id/chat_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/chat_title" android:textSize="15sp" android:textStyle="bold" android:textColor="@color/text_primary" android:ellipsize="end" android:singleLine="true" />
 
-                <com.google.android.material.textfield.TextInputLayout android:id="@+id/model_dropdown_layout" style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:hint="@string/model_dropdown_hint">
-
-                    <com.google.android.material.textfield.TextInputEditText android:id="@+id/model_dropdown" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="none" android:focusable="false" android:focusableInTouchMode="false" android:clickable="true" android:cursorVisible="false" />
-                </com.google.android.material.textfield.TextInputLayout>
+                <TextView android:id="@+id/model_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="@string/model_not_downloaded" android:textSize="13sp" android:textColor="@color/text_secondary" android:ellipsize="end" android:singleLine="true" />
             </LinearLayout>
 
             <androidx.compose.ui.platform.ComposeView android:id="@+id/header_actions_compose" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" />

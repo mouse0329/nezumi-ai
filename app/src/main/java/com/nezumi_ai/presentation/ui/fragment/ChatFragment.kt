@@ -77,7 +77,9 @@ import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.stripGemmaTokens
 import com.nezumi_ai.data.repository.ChatSessionRepository
+import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.MessageRepository
+import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.presentation.viewmodel.ChatViewModel
 import com.nezumi_ai.presentation.viewmodel.ChatViewModelFactory
@@ -122,6 +124,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var modelOptions: List<ModelOption> = emptyList()
     private var responseTypingAnimationJob: Job? = null
     private lateinit var settingsRepository: SettingsRepository
+    private lateinit var presetRepository: PresetRepository
     private var isGenerating = false
     private var isModelLoadingNow = false
     private var currentBackendType = "CPU"
@@ -153,6 +156,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private val immediateScrollMaxFrames = 10
     private val autoFollowBottomThresholdPx = 120
     private var lastKnownScrollRange = 0
+    private var lastObservedPresetId: String? = null
     private var pendingInitialScrollToBottom = true
     // 生成中にユーザーが意図的に上スクロールしたときだけ true。
     // 最下部に戻るか送信するとリセット。
@@ -289,14 +293,22 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         settingsRepository = SettingsRepository(database.settingsDao(), database.chatSessionDao(), requireContext().applicationContext)
         val sessionRepository = ChatSessionRepository(database.chatSessionDao(), settingsRepository)
         val messageRepository = MessageRepository(database.messageDao())
+        presetRepository = PresetRepository(database.presetDao(), requireContext().applicationContext)
+        val memoryRepository = MemoryRepository(database.memoryDao())
+        lastObservedPresetId = PreferencesHelper.getCurrentPresetId(requireContext())
         val factory = ChatViewModelFactory(
             requireContext().applicationContext,
             sessionRepository,
             messageRepository,
-            settingsRepository
+            settingsRepository,
+            presetRepository,
+            memoryRepository
         )
         viewModel = ViewModelProvider(requireActivity(), factory).get(ChatViewModel::class.java)
-        setupModelDropdown()
+        binding.chatTitle.setOnClickListener {
+            findNavController().navigate(R.id.presetSettingsFragment)
+        }
+        setupModelDisplay()
         
         // RecyclerView設定（adapterの初期化をStateFlowのcollect前に移動）
         adapter = MessageAdapter(
@@ -602,7 +614,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             viewModel.isLoading.collect { isLoading ->
                 isGenerating = isLoading
                 renderSendButtonState()
-                renderModelDropdownState()
                 if (isLoading) {
                     userScrolledAwayDuringGeneration = false
                     autoFollowBottomLocked = isUserAtBottom || isNearBottom()
@@ -663,17 +674,20 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 refreshCurrentBackendType()
                 updateMediaAvailability(model)
                 updateThinkingToggleVisibility()
-                val selected = modelOptions.firstOrNull { it.key == model } ?: return@collect
-                val shown = modelDisplaySuffix(selected.label)
-                if (binding.modelDropdown.text?.toString() != shown) {
-                    binding.modelDropdown.setText(shown)
-                }
+                updateModelNameText(model)
             }
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.sessionTitle.collect { title ->
-                binding.chatTitle.text = title
+                binding.chatTitle.contentDescription = title
+                refreshPresetHeader()
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            presetRepository.observePresets().collect {
+                refreshPresetHeader()
             }
         }
 
@@ -721,7 +735,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 binding.modelLoadingComposeOverlay.visibility =
                     if (loading) View.VISIBLE else View.GONE
                 binding.backButton.isEnabled = !loading
-                renderModelDropdownState()
                 renderSendButtonState()
                 renderCompressButtonState()
                 binding.messageInput.isEnabled = !loading
@@ -834,9 +847,29 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     override fun onResume() {
         super.onResume()
-        setupModelDropdown()
+        modelOptions = buildDownloadedModelOptions()
+        updateModelNameText(viewModel.selectedModel.value)
         refreshCurrentBackendType()
         updateMediaAvailability(currentModelKey)
+        viewLifecycleOwner.lifecycleScope.launch {
+            refreshPresetHeader()
+        }
+        val currentPresetId = PreferencesHelper.getCurrentPresetId(requireContext())
+        if (lastObservedPresetId != null && currentPresetId != lastObservedPresetId) {
+            lastObservedPresetId = currentPresetId
+            viewModel.preloadActivePresetModel()
+        } else {
+            lastObservedPresetId = currentPresetId
+        }
+    }
+
+    private suspend fun refreshPresetHeader() {
+        val preset = presetRepository.getCurrentPreset()
+        binding.chatTitle.text = if (preset != null) {
+            "${preset.icon} ${preset.name} ▼"
+        } else {
+            getString(R.string.chat_title)
+        }
     }
 
     override fun onStop() {
@@ -1022,36 +1055,17 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
     }
 
-    private fun setupModelDropdown() {
+    private fun setupModelDisplay() {
         modelOptions = buildDownloadedModelOptions()
-        if (modelOptions.isEmpty()) {
-            binding.modelDropdown.setText(getString(R.string.model_not_downloaded))
-            binding.modelDropdown.isEnabled = false
-            binding.modelDropdownLayout.isEnabled = false
-            return
-        }
-
-        renderModelDropdownState()
-        syncSelectedModelLabel()
-        val openPicker = View.OnClickListener {
-            if (binding.modelDropdown.isEnabled) showModelPickerDialog()
-        }
-        binding.modelDropdown.setOnClickListener(openPicker)
-        binding.modelDropdownLayout.setOnClickListener(openPicker)
+        updateModelNameText(viewModel.selectedModel.value)
     }
 
-    private fun showModelPickerDialog() {
-        if (modelOptions.isEmpty()) return
-        val labels = modelOptions.mapIndexed { i, opt ->
-            "${i + 1}. ${opt.label}"
-        }.toTypedArray()
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.model_dropdown_hint)
-            .setItems(labels) { _, which ->
-                val selected = modelOptions.getOrNull(which) ?: return@setItems
-                viewModel.switchModel(selected.key)
-            }
-            .show()
+    private fun updateModelNameText(modelKey: String) {
+        val selected = modelOptions.firstOrNull { it.key == modelKey }
+        val label = selected?.label
+            ?: modelKey.takeIf { it.isNotBlank() }
+            ?: getString(R.string.model_not_downloaded)
+        binding.modelName.text = modelDisplaySuffix(label)
     }
 
     private fun buildDownloadedModelOptions(): List<ModelOption> {
@@ -1079,19 +1093,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         val label: String
     )
 
-    private fun syncSelectedModelLabel() {
-        val currentKey = viewModel.selectedModel.value
-        val selected = modelOptions.firstOrNull { it.key == currentKey }
-        if (selected != null) {
-            binding.modelDropdown.setText(modelDisplaySuffix(selected.label))
-            return
-        }
-
-        val fallback = modelOptions.firstOrNull() ?: return
-        binding.modelDropdown.setText(modelDisplaySuffix(fallback.label))
-        viewModel.setSelectedModelSilently(fallback.key)
-    }
-
     private fun renderSendButtonState() {
         binding.sendButton.setImageResource(
             if (isGenerating) R.drawable.ic_stop else R.drawable.ic_send
@@ -1117,12 +1118,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             binding.imageButton.visibility = if (imageInputEnabled) View.VISIBLE else View.GONE
             binding.micButton.visibility = if (audioInputEnabled) View.VISIBLE else View.GONE
         }
-    }
-
-    private fun renderModelDropdownState() {
-        val enabled = !isModelLoadingNow && !isGenerating && modelOptions.isNotEmpty()
-        binding.modelDropdown.isEnabled = enabled
-        binding.modelDropdownLayout.isEnabled = enabled
     }
 
     private fun renderCompressButtonState() {

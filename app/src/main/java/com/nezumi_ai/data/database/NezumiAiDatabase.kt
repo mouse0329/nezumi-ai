@@ -6,16 +6,30 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.nezumi_ai.data.database.dao.AlarmDao
 import com.nezumi_ai.data.database.dao.ChatSessionDao
+import com.nezumi_ai.data.database.dao.MemoryDao
+import com.nezumi_ai.data.database.dao.MemorySessionDao
 import com.nezumi_ai.data.database.dao.MessageDao
+import com.nezumi_ai.data.database.dao.PresetDao
 import com.nezumi_ai.data.database.dao.SettingsDao
 import com.nezumi_ai.data.database.entity.AlarmEntity
 import com.nezumi_ai.data.database.entity.ChatSessionEntity
+import com.nezumi_ai.data.database.entity.MemoryEntity
+import com.nezumi_ai.data.database.entity.MemorySessionEntity
 import com.nezumi_ai.data.database.entity.MessageEntity
+import com.nezumi_ai.data.database.entity.PresetEntity
 import com.nezumi_ai.data.database.entity.SettingsEntity
 
 @Database(
-    entities = [ChatSessionEntity::class, MessageEntity::class, SettingsEntity::class, AlarmEntity::class],
-    version = 18,
+    entities = [
+        ChatSessionEntity::class,
+        MessageEntity::class,
+        SettingsEntity::class,
+        AlarmEntity::class,
+        PresetEntity::class,
+        MemoryEntity::class,
+        MemorySessionEntity::class
+    ],
+    version = 19,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
@@ -24,6 +38,9 @@ abstract class NezumiAiDatabase : RoomDatabase() {
     abstract fun messageDao(): MessageDao
     abstract fun settingsDao(): SettingsDao
     abstract fun alarmDao(): AlarmDao
+    abstract fun presetDao(): PresetDao
+    abstract fun memoryDao(): MemoryDao
+    abstract fun memorySessionDao(): MemorySessionDao
     
     companion object {
         @Volatile
@@ -36,7 +53,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                     NezumiAiDatabase::class.java,
                     "nezumi_ai.db"
                 )
-                    .addMigrations(MIGRATION_17_18)
+                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19)
                     // 開発中: スキーマ不一致時は再作成して起動クラッシュを回避
                     .fallbackToDestructiveMigration()
                     .build()
@@ -47,6 +64,58 @@ abstract class NezumiAiDatabase : RoomDatabase() {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 // isPinned カラムを追加（デフォルト値: false）
                 database.execSQL("ALTER TABLE chat_session ADD COLUMN isPinned INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        private val MIGRATION_18_19 = object : androidx.room.migration.Migration(18, 19) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS preset (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        icon TEXT NOT NULL,
+                        system_prompt TEXT NOT NULL,
+                        model_id TEXT NOT NULL,
+                        enabled_tools TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        is_default INTEGER NOT NULL,
+                        memory_enabled INTEGER NOT NULL,
+                        description TEXT NOT NULL,
+                        is_locked INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS memory (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        content TEXT NOT NULL,
+                        embedding BLOB NOT NULL,
+                        norm REAL NOT NULL,
+                        importance REAL NOT NULL,
+                        access_count INTEGER NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        last_accessed_at INTEGER NOT NULL,
+                        is_deleted INTEGER NOT NULL,
+                        source TEXT NOT NULL,
+                        session_id TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS memory_session (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        last_extracted_turn INTEGER NOT NULL,
+                        pending_extraction INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_memory_is_deleted ON memory(is_deleted)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_memory_session_id ON memory(session_id)")
             }
         }
     }
