@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:background="@drawable/bg_input_bar_card">
+
+    <TextView
+        android:id="@+id/recording_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="録音中"
+        android:textColor="@color/text_primary"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:gravity="center" />
+
+    <TextView
+        android:id="@+id/recording_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="マイク入力を検出しています..."
+        android:textColor="@color/text_secondary"
+        android:textSize="14sp"
+        android:gravity="center" />
+
+    <LinearLayout
+        android:id="@+id/recording_waveform"
+        android:layout_width="match_parent"
+        android:layout_height="72dp"
+        android:layout_marginTop="18dp"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:padding="4dp">
+
+        <View
+            android:id="@+id/recording_bar_1"
+            android:layout_width="10dp"
+            android:layout_height="32dp"
+            android:layout_margin="6dp"
+            android:background="@color/nezumi_primary" />
+
+        <View
+            android:id="@+id/recording_bar_2"
+            android:layout_width="10dp"
+            android:layout_height="48dp"
+            android:layout_margin="6dp"
+            android:background="@color/nezumi_primary" />
+
+        <View
+            android:id="@+id/recording_bar_3"
+            android:layout_width="10dp"
+            android:layout_height="40dp"
+            android:layout_margin="6dp"
+            android:background="@color/nezumi_primary" />
+
+        <View
+            android:id="@+id/recording_bar_4"
+            android:layout_width="10dp"
+            android:layout_height="28dp"
+            android:layout_margin="6dp"
+            android:background="@color/nezumi_primary" />
+
+        <View
+            android:id="@+id/recording_bar_5"
+            android:layout_width="10dp"
+            android:layout_height="36dp"
+            android:layout_margin="6dp"
+            android:background="@color/nezumi_primary" />
+    </LinearLayout>
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/recording_stop_button"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="停止"
+        android:textAllCaps="false"
+        android:backgroundTint="@color/nezumi_primary"
+        android:textColor="@android:color/white" />
+</LinearLayout>

@@ -6,6 +6,7 @@ import com.nezumi_ai.data.database.dao.ChatSessionDao
 import com.nezumi_ai.data.database.dao.SettingsDao
 import com.nezumi_ai.data.database.entity.SettingsEntity
 import com.nezumi_ai.data.inference.InferenceConfig
+import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import java.io.File
@@ -157,6 +158,26 @@ class SettingsRepository(
             enableSpeculativeDecoding = current.speculativeDecodingEnabled,
             customStopTokens = customStopTokens
         ).normalized()
+    }
+
+    suspend fun getPreloadMemoryWarningThresholdPercent(): Int {
+        val current = currentSettings()
+        return current.preloadMemoryWarningThresholdPercent.coerceIn(
+            MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT,
+            MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT
+        )
+    }
+
+    suspend fun updatePreloadMemoryWarningThresholdPercent(thresholdPercent: Int) {
+        val current = currentSettings()
+        val clamped = thresholdPercent.coerceIn(
+            MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT,
+            MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT
+        )
+        dao.update(current.copy(
+            preloadMemoryWarningThresholdPercent = clamped,
+            lastModified = System.currentTimeMillis()
+        ))
     }
 
     suspend fun getBackendForModel(model: String): String {

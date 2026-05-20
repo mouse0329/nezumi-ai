@@ -131,6 +131,14 @@ window.inference = (() => {
       );
     } catch (e) {
       if (!_isStopped) callbacks.onError?.(e);
+    } finally {
+      // Android などのブラウザでは LlmInference が再利用時に不安定になることがあるため、
+      // 完了後は必ずクローズして再ロードするようにする。
+      try {
+        llmInference?.close();
+      } catch {}
+      isLoaded = false;
+      currentModel = null;
     }
   }
 

@@ -53,13 +53,105 @@
         <androidx.compose.ui.platform.ComposeView android:id="@+id/media_preview_compose" android:layout_width="match_parent" android:layout_height="wrap_content" android:background="@color/surface_card" />
 
         <!-- Input Bar -->
-        <LinearLayout android:id="@+id/input_bar" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="10dp" android:gravity="center_vertical" android:background="@color/surface_card">
+        <LinearLayout
+            android:id="@+id/input_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="10dp"
+            android:background="@color/surface_card">
 
-            <com.google.android.material.button.MaterialButton android:id="@+id/media_menu_button" style="@style/Widget.MaterialComponents.Button.OutlinedButton" android:layout_width="40dp" android:layout_height="40dp" android:minWidth="0dp" android:minHeight="0dp" android:text="+" android:textSize="20sp" android:contentDescription="@string/add_media_menu" android:insetTop="0dp" android:insetBottom="0dp" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_input_bar_card"
+                android:padding="10dp">
 
-            <com.nezumi_ai.presentation.ui.widget.ClipboardAwareEditText android:id="@+id/message_input" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="@string/enter_message" android:textSize="14sp" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" android:background="@drawable/bg_input_field" android:padding="10dp" android:layout_marginStart="8dp" android:layout_marginEnd="8dp" android:imeOptions="actionSend" />
+                <com.nezumi_ai.presentation.ui.widget.ClipboardAwareEditText
+                    android:id="@+id/message_input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="44dp"
+                    android:maxLines="6"
+                    android:scrollbars="vertical"
+                    android:hint="@string/enter_message"
+                    android:textSize="15sp"
+                    android:textColor="@color/text_primary"
+                    android:textColorHint="@color/text_secondary"
+                    android:background="@null"
+                    android:padding="8dp"
+                    android:imeOptions="actionSend" />
 
-            <com.google.android.material.button.MaterialButton android:id="@+id/send_button" android:layout_width="wrap_content" android:layout_height="wrap_content" android:minWidth="56dp" android:text="@string/send_icon" style="@style/Widget.MaterialComponents.Button" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="8dp">
+
+                    <LinearLayout
+                        android:id="@+id/input_action_group"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <ImageButton
+                            android:id="@+id/media_menu_button"
+                            android:layout_width="34dp"
+                            android:layout_height="34dp"
+                            android:src="@drawable/ic_add"
+                            android:tint="@color/black"
+                            android:background="@drawable/bg_icon_btn_circle"
+                            android:contentDescription="@string/add_media_menu"
+                            android:scaleType="centerInside"
+                            android:padding="6dp" />
+                        <LinearLayout
+                            android:id="@+id/input_expanded_icons"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:visibility="gone"
+                            android:layout_marginStart="4dp">
+
+                            <ImageButton
+                                android:id="@+id/image_button"
+                                android:layout_width="34dp"
+                                android:layout_height="34dp"
+                                android:src="@drawable/ic_image"
+                                android:background="@drawable/bg_icon_btn_circle"
+                                android:contentDescription="画像を添付"
+                                android:scaleType="centerInside"
+                                android:padding="6dp" />
+
+                            <ImageButton
+                                android:id="@+id/mic_button"
+                                android:layout_width="34dp"
+                                android:layout_height="34dp"
+                                android:src="@drawable/ic_mic"
+                                android:background="@drawable/bg_icon_btn_circle"
+                                android:contentDescription="音声入力"
+                                android:scaleType="centerInside"
+                                android:padding="6dp"
+                                android:layout_marginStart="4dp" />
+
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <ImageButton
+                        android:id="@+id/send_button"
+                        android:layout_width="34dp"
+                        android:layout_height="34dp"
+                        android:src="@drawable/ic_send"
+                        android:background="@drawable/bg_send_btn_circle"
+                        android:contentDescription="@string/send_icon"
+                        android:scaleType="centerInside"
+                        android:padding="6dp" />
+
+                </LinearLayout>
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 

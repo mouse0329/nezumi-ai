@@ -16,7 +16,7 @@ object CpuCompatibility {
         val isArm64 = abis.any { it == "arm64-v8a" }
         if (!isArm64) {
             return Warning(
-                userMessage = "⚠️ この端末は arm64-v8a ではないため、GGUF推論が遅い/不安定になる可能性があります。",
+                userMessage = "この端末は arm64-v8a ではないため、GGUF推論が遅い/不安定になる可能性があります。",
                 logMessage = "Device ABI is below arm64-v8a or non-ARM64: abis=${abis.joinToString()}"
             )
         }
@@ -28,7 +28,7 @@ object CpuCompatibility {
         if (hasArmV82aSignal) return null
 
         return Warning(
-            userMessage = "⚠️ この端末のCPUは armv8.2-a 未満の可能性があります。GGUF推論が遅くなる場合またはアプリがクラッシュする可能性があります。",
+            userMessage = "この端末のCPUは armv8.2-a 未満の可能性があります。GGUF推論が遅くなる場合またはアプリがクラッシュする可能性があります。",
             logMessage = "ARM64 CPU does not report armv8.2-a FP16 features: requiredAny=$ARM_V82A_FEATURES features=${features.sorted().joinToString()}"
         )
     }
