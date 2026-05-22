@@ -126,17 +126,15 @@ object MemoryTextEmbedder {
         val shape = longArrayOf(1, idsLong.size.toLong())
 
         val inputs = mutableMapOf<String, OnnxTensor>()
-        val allocator = getDefaultAllocator(ortEnvironment!!)
-        val idsTensor = createTensorWithReflection(ortEnvironment!!, allocator, LongBuffer.wrap(idsLong), shape)
+        val idsTensor = OnnxTensor.createTensor(ortEnvironment!!, LongBuffer.wrap(idsLong), shape)
         inputs[inputIdsName] = idsTensor
 
         val attentionMask = getIntArrayFromObject(encoding, "getAttentionMask")
         if (attentionMask.isNotEmpty()) {
-            val mask = IntBuffer.wrap(attentionMask)
-            inputs[attentionMaskName ?: "attention_mask"] = createTensorWithReflection(
+            val maskLong = attentionMask.map { it.toLong() }.toLongArray()
+            inputs[attentionMaskName ?: "attention_mask"] = OnnxTensor.createTensor(
                 ortEnvironment!!,
-                allocator,
-                mask,
+                LongBuffer.wrap(maskLong),
                 shape
             )
         }
@@ -181,30 +179,6 @@ object MemoryTextEmbedder {
 
     private fun findInputName(session: OrtSession, preferredName: String): String {
         return session.inputInfo.keys.firstOrNull { it == preferredName } ?: session.inputInfo.keys.firstOrNull() ?: preferredName
-    }
-
-    private fun getDefaultAllocator(environment: OrtEnvironment): Any {
-        val method = environment.javaClass.getDeclaredMethod("getDefaultAllocator")
-        method.isAccessible = true
-        return method.invoke(environment) as Any
-    }
-
-    private fun createTensorWithReflection(
-        environment: OrtEnvironment,
-        allocator: Any,
-        buffer: Any,
-        shape: LongArray
-    ): OnnxTensor {
-        val allocatorClass = Class.forName("ai.onnxruntime.OrtAllocator")
-        val method = OnnxTensor::class.java.getDeclaredMethod(
-            "createTensor",
-            OrtEnvironment::class.java,
-            allocatorClass,
-            buffer.javaClass,
-            LongArray::class.java
-        )
-        method.isAccessible = true
-        return method.invoke(null, environment, allocator, buffer, shape) as OnnxTensor
     }
 
     private fun cleanupOnnxResources() {
