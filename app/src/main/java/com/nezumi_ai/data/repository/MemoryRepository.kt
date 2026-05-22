@@ -42,6 +42,7 @@ class MemoryRepository(
         queryEmbedding: FloatArray,
         topK: Int = DEFAULT_TOP_K,
         threshold: Float = DEFAULT_THRESHOLD,
+        minSimilarity: Float = DEFAULT_SIMILARITY_THRESHOLD,
         markAccessed: Boolean = true
     ): List<ScoredMemory> {
         val queryNorm = l2norm(queryEmbedding)
@@ -52,6 +53,7 @@ class MemoryRepository(
                 val memoryEmbedding = bytesToFloatArray(memory.embedding)
                 if (memoryEmbedding.size != queryEmbedding.size || memory.norm == 0f) return@mapNotNull null
                 val similarity = cosineSimilarity(queryEmbedding, queryNorm, memoryEmbedding, memory.norm)
+                if (similarity < minSimilarity) return@mapNotNull null
                 val score = score(
                     similarity = similarity,
                     lastAccessedAt = memory.lastAccessedAt,
@@ -77,6 +79,21 @@ class MemoryRepository(
         dao.softDeleteAll()
     }
 
+    /**
+     * ② メモリ GC: 500件超で下位10%をsoft-delete
+     * importance が低く、参照回数が少なく、最終参照が古いものから削除
+     */
+    suspend fun runGcIfNeeded() {
+        val count = dao.countActive()
+        if (count <= MAX_MEMORY_COUNT) return
+        val deleteCount = (count * GC_DELETE_RATIO).toInt().coerceAtLeast(1)
+        val ids = dao.getLowScoreIds(deleteCount)
+        if (ids.isNotEmpty()) {
+            dao.softDeleteByIds(ids)
+            android.util.Log.d("MemoryRepository", "GC: deleted ${ids.size} low-score memories (was $count)")
+        }
+    }
+
     data class ScoredMemory(
         val memory: MemoryEntity,
         val score: Float,
@@ -85,8 +102,11 @@ class MemoryRepository(
 
     companion object {
         const val DEFAULT_THRESHOLD = 0.5f
+        const val DEFAULT_SIMILARITY_THRESHOLD = 0f
         const val DEFAULT_TOP_K = 5
         private const val MILLIS_PER_DAY = 86_400_000f
+        const val MAX_MEMORY_COUNT = 500
+        const val GC_DELETE_RATIO = 0.10f  // 10% を削除
 
         fun score(similarity: Float, lastAccessedAt: Long, importance: Float, accessCount: Int): Float {
             val days = (System.currentTimeMillis() - lastAccessedAt) / MILLIS_PER_DAY

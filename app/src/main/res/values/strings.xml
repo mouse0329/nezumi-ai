@@ -48,6 +48,7 @@
     <string name="context_meter_format">コンテキスト使用量: %1$d / %2$d tokens</string>
     <string name="response_generating">応答中</string>
     <string name="response_compressing">圧縮中</string>
+    <string name="response_extracting">⟳ 記憶を整理中...</string>
     <string name="compress_context">圧縮</string>
     <string name="compress_context_busy">圧縮中</string>
     <string name="chat_thinking_follow_settings">シンキング:ON</string>

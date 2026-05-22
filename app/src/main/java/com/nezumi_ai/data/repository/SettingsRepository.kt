@@ -8,6 +8,7 @@ import com.nezumi_ai.data.database.entity.SettingsEntity
 import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.ModelFileManager
+import com.nezumi_ai.data.memory.MemorySaveMode
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import java.io.File
 import kotlinx.coroutines.flow.Flow
@@ -360,6 +361,22 @@ class SettingsRepository(
         )
     }
 
+    suspend fun getMemorySaveMode(): MemorySaveMode {
+        val current = currentSettings()
+        return runCatching { MemorySaveMode.valueOf(current.memorySaveMode) }
+            .getOrDefault(MemorySaveMode.LLM)
+    }
+
+    suspend fun updateMemorySaveMode(mode: MemorySaveMode) {
+        val current = currentSettings()
+        dao.update(
+            current.copy(
+                memorySaveMode = mode.name,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
     suspend fun isSpeculativeDecodingEnabled(): Boolean {
         val current = currentSettings()
         return current.speculativeDecodingEnabled
@@ -386,10 +403,11 @@ class SettingsRepository(
     }
 
     /**
-     * LiteRT-LM では [InferenceConfig.enableThinking] 経由で `enable_thinking` を付与するため、
-     * プロンプト先頭への `<|think|>` 注入は行わない（二重指定を避ける）。
+     * LiteRT-LM では [InferenceConfig.enableThinking] による `enable_thinking` 送信を優先しつつ、
+     * 必要に応じてプロンプト先頭に `<|think|>` を注入して思考モードを明示する。
+     * この注入は Thinking モード時のみ有効化される。
      */
-    suspend fun shouldInjectGemmaThinkTrigger(): Boolean = false
+    suspend fun shouldInjectGemmaThinkTrigger(): Boolean = true
 
     private fun isBuiltinGemma4Model(model: String): Boolean {
         val t = model.trim()

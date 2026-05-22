@@ -159,7 +159,7 @@ class ModelManager(
     fun isModelLoaded(modelName: String, config: InferenceConfig): Boolean {
         val normalizedConfig = config.normalized()
         val isSameModel = currentModelName == modelName
-        val isSameConfig = currentConfig == normalizedConfig
+        val isSameConfig = currentConfig?.forModelLoad() == normalizedConfig.forModelLoad()
         val isSameBackend = currentConfig?.backendType == normalizedConfig.backendType
         val isLoaded = isSameModel && isSameConfig && isSameBackend && activeEngine !== null
         
@@ -193,8 +193,8 @@ class ModelManager(
                 val normalizedConfig = config.normalized()
                 
                 // 既に同じモデルがロードされている場合はスキップ
-                val shouldSkip = currentModelName == modelName && 
-                    currentConfig == normalizedConfig &&
+                val shouldSkip = currentModelName == modelName &&
+                    currentConfig?.forModelLoad() == normalizedConfig.forModelLoad() &&
                     currentConfig?.backendType == normalizedConfig.backendType &&
                     activeEngine === engineForModel(modelName)
 

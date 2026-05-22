@@ -75,4 +75,8 @@ data class InferenceConfig(
             requireMultimodal = requireMultimodal
         )
     }
+
+    fun forModelLoad(): InferenceConfig {
+        return copy(enableThinking = false)
+    }
 }

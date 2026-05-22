@@ -81,9 +81,14 @@ class LiteRtLmEngine(
     /** activeConversationLock で保護。@Volatile 不要（全アクセスが synchronized 内） */
     private var activeLiteRtConversation: Conversation? = null
     
+    private data class ConversationKey(
+        val sessionId: Long,
+        val enableThinking: Boolean
+    )
+
     /** セッション遷移検出用 */
     @Volatile
-    private var lastSessionId: Long? = null
+    private var activeLiteRtConversationKey: ConversationKey? = null
     
     // ─────────────────────────────────────────────────────────
     // Phase 11: リソース管理の統合
@@ -104,21 +109,39 @@ class LiteRtLmEngine(
     /** バックエンドリソース管理 */
     private val backendResourceManager = BackendResourceManager()
 
+    // ─────────────────────────────────────────────────────────
+    // Phase 13: メモリ抽出専用セッション（再ロードなし）
+    // ─────────────────────────────────────────────────────────
+    
+    /** メモリ抽出用専用セッション（Thinking=OFF, JSON確定用） */
+    @Volatile
+    private var memoryExtractionConversation: Conversation? = null
+    @Volatile
+    private var memoryExtractionConversationConfig: InferenceConfig? = null
+
     /**
      * AI Edge Gallery 方式：推論キャンセル時は cancelProcess() だけ。
      * close() はセッション遷移時のみ。
      */
+    private fun cancelConversation(conversation: Conversation?) {
+        if (conversation == null) return
+        runCatching {
+            Log.d(TAG, "Cancelling conversation process")
+            conversation.cancelProcess()
+        }.onFailure { t ->
+            Log.w(TAG, "Failed to cancel conversation process", t)
+        }
+    }
+
     private fun cancelActiveConversation() {
-        val resultConv: Conversation
-        val convToAttach: Conversation?
         synchronized(activeConversationLock) {
-            val c = activeLiteRtConversation ?: return
-            runCatching {
-                Log.d(TAG, "Cancelling active conversation process")
-                c.cancelProcess()
-            }.onFailure { t ->
-                Log.w(TAG, "Failed to cancel conversation process", t)
-            }
+            cancelConversation(activeLiteRtConversation)
+        }
+    }
+
+    private fun cancelMemoryExtractionConversation() {
+        synchronized(activeConversationLock) {
+            cancelConversation(memoryExtractionConversation)
         }
     }
 
@@ -129,6 +152,7 @@ class LiteRtLmEngine(
         synchronized(activeConversationLock) {
             val c = activeLiteRtConversation ?: return
             activeLiteRtConversation = null
+            activeLiteRtConversationKey = null
             runCatching {
                 Log.d(TAG, "Closing active conversation")
                 c.close()
@@ -136,6 +160,21 @@ class LiteRtLmEngine(
                 Log.w(TAG, "Failed to close conversation", t)
             }
             Log.i(TAG, "Active conversation closed and reset")
+        }
+    }
+
+    private fun closeAndResetMemoryExtractionConversation() {
+        synchronized(activeConversationLock) {
+            val c = memoryExtractionConversation ?: return
+            memoryExtractionConversation = null
+            memoryExtractionConversationConfig = null
+            runCatching {
+                Log.d(TAG, "Closing memory extraction conversation")
+                c.close()
+            }.onFailure { t ->
+                Log.w(TAG, "Failed to close memory extraction conversation", t)
+            }
+            Log.i(TAG, "Memory extraction conversation closed and reset")
         }
     }
 
@@ -153,45 +192,80 @@ class LiteRtLmEngine(
         eng: Engine,
         config: InferenceConfig
     ): Conversation {
+        val normalized = config.normalized()
+        val requestKey = ConversationKey(sessionId, normalized.enableThinking)
         var convToAttach: Conversation? = null
-        synchronized(activeConversationLock) {
-            // セッションが変わった場合、または Conversation が未作成の場合はリセット
-            if (lastSessionId != sessionId || activeLiteRtConversation == null) {
-                Log.i(TAG, "Session change or no conversation. Creating new: lastSessionId=$lastSessionId, newSessionId=$sessionId")
-                closeAndResetActiveConversation()
+        var created = false
+        val maxAttempts = 6
+        var attempt = 0
+        while (!created && attempt < maxAttempts) {
+            attempt++
+            synchronized(activeConversationLock) {
+                // セッションIDまたはThinking設定が変わった場合は新しいConversationを作成
+                if (activeLiteRtConversation == null || activeLiteRtConversationKey != requestKey) {
+                    Log.i(
+                        TAG,
+                        "Session changed. Creating new conversation: lastKey=$activeLiteRtConversationKey, newKey=$requestKey (attempt=$attempt)"
+                    )
 
-                val normalized = config.normalized()
-                ExperimentalFlags.enableConversationConstrainedDecoding = false
-                val samplerConfig = if (normalized.backendType.uppercase() == "NPU") {
-                    null
+                    // 既に存在するメモリ抽出用 Conversation があれば閉じる
+                    if (memoryExtractionConversation != null) {
+                        Log.i(TAG, "Closing existing memory extraction conversation before creating new one")
+                        closeAndResetMemoryExtractionConversation()
+                    }
+
+                    closeAndResetActiveConversation()
+
+                    ExperimentalFlags.enableConversationConstrainedDecoding = false
+                    val samplerConfig = if (normalized.backendType.uppercase() == "NPU") {
+                        null
+                    } else {
+                        SamplerConfig(
+                            topK = normalized.maxTopK,
+                            topP = normalized.topP.toDouble(),
+                            temperature = normalized.temperature.toDouble()
+                        )
+                    }
+
+                    // TQ導入: GPU利用時のみ投機的デコーディングを許可（NPUとの競合を防ぐ）
+                    val canUseSpeculative = normalized.enableSpeculativeDecoding &&
+                        normalized.backendType.uppercase() == "GPU"
+                    ExperimentalFlags.enableSpeculativeDecoding = canUseSpeculative
+
+                    try {
+                        val conv = eng.createConversation(
+                            ConversationConfig(
+                                tools = buildEnabledToolProviders(appContext, alarmDao),
+                                samplerConfig = samplerConfig,
+                                automaticToolCalling = false
+                            )
+                        )
+                        activeLiteRtConversation = conv
+                        activeLiteRtConversationKey = requestKey
+                        convToAttach = conv
+                        Log.d(TAG, "New conversation created for key=$requestKey, KVCache initialized")
+                        created = true
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "createConversation failed on attempt $attempt: ${t.message}")
+                        // もしネイティブ側で既存セッションが残っている旨のエラーなら、短い遅延ののち再試行
+                        if (attempt < maxAttempts && t.message?.contains("session already exists", ignoreCase = true) == true) {
+                            // leave synchronized block briefly to allow native cleanup
+                        } else {
+                            throw t
+                        }
+                    }
                 } else {
-                    SamplerConfig(
-                        topK = normalized.maxTopK,
-                        topP = normalized.topP.toDouble(),
-                        temperature = normalized.temperature.toDouble()
-                    )
+                    Log.d(TAG, "Conversation reused for key=$requestKey, KVCache preserved")
+                    created = true
                 }
-
-                // TQ導入: GPU利用時のみ投機的デコーディングを許可（NPUとの競合を防ぐ）
-                val canUseSpeculative = normalized.enableSpeculativeDecoding &&
-                    normalized.backendType.uppercase() == "GPU"
-                ExperimentalFlags.enableSpeculativeDecoding = canUseSpeculative
-
-                val conv = eng.createConversation(
-                    ConversationConfig(
-                        tools = buildEnabledToolProviders(appContext, alarmDao),
-                        samplerConfig = samplerConfig,
-                        automaticToolCalling = false
-                    )
-                )
-                activeLiteRtConversation = conv
-                lastSessionId = sessionId
-                convToAttach = conv
-                Log.d(TAG, "New conversation created for session=$sessionId, KVCache initialized")
-            } else {
-                Log.d(TAG, "Conversation reused for session=$sessionId, KVCache preserved")
             }
-            val resultConv = activeLiteRtConversation!!
+
+            if (!created) {
+                try {
+                    Thread.sleep(120)
+                } catch (_: InterruptedException) {
+                }
+            }
         }
 
         // synchronized 範囲外で SessionResourceManager に関連付けを行う
@@ -204,6 +278,91 @@ class LiteRtLmEngine(
         }
 
         return activeLiteRtConversation!!
+    }
+
+    private suspend fun getOrCreateMemoryExtractionConversation(
+        eng: Engine,
+        config: InferenceConfig
+    ): Conversation {
+        var convToAttach: Conversation? = null
+        var created = false
+        val maxAttempts = 6
+        var attempt = 0
+        val normalized = config.normalized()
+
+        while (!created && attempt < maxAttempts) {
+            attempt++
+            synchronized(activeConversationLock) {
+                if (memoryExtractionConversation == null || memoryExtractionConversationConfig != normalized) {
+                    Log.i(TAG, "Creating new memory extraction conversation (attempt=$attempt)")
+
+                    // 競合を避けるため、アクティブ会話を閉じる
+                    if (activeLiteRtConversation != null) {
+                        Log.i(TAG, "Closing active conversation before creating memory extraction conversation")
+                        closeAndResetActiveConversation()
+                    }
+
+                    closeAndResetMemoryExtractionConversation()
+
+                    ExperimentalFlags.enableConversationConstrainedDecoding = false
+                    val samplerConfig = if (normalized.backendType.uppercase() == "NPU") {
+                        null
+                    } else {
+                        SamplerConfig(
+                            topK = normalized.maxTopK,
+                            topP = normalized.topP.toDouble(),
+                            temperature = normalized.temperature.toDouble()
+                        )
+                    }
+
+                    val canUseSpeculative = normalized.enableSpeculativeDecoding &&
+                        normalized.backendType.uppercase() == "GPU"
+                    ExperimentalFlags.enableSpeculativeDecoding = canUseSpeculative
+
+                    try {
+                        val conv = eng.createConversation(
+                            ConversationConfig(
+                                tools = buildEnabledToolProviders(appContext, alarmDao),
+                                samplerConfig = samplerConfig,
+                                automaticToolCalling = false
+                            )
+                        )
+                        memoryExtractionConversation = conv
+                        memoryExtractionConversationConfig = normalized
+                        convToAttach = conv
+                        Log.d(TAG, "Memory extraction conversation created")
+                        created = true
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "createConversation for memory extraction failed on attempt $attempt: ${t.message}")
+                        if (attempt < maxAttempts && t.message?.contains("session already exists", ignoreCase = true) == true) {
+                            // will retry after brief sleep
+                        } else {
+                            throw t
+                        }
+                    }
+                } else {
+                    Log.d(TAG, "Memory extraction conversation reused")
+                    created = true
+                }
+            }
+
+            if (!created) {
+                try {
+                    Thread.sleep(120)
+                } catch (_: InterruptedException) {
+                }
+            }
+        }
+
+        convToAttach?.let { convCreated ->
+            try {
+                sessionManager.attachConversation(0L, convCreated)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to attach memory extraction conversation to session manager", e)
+            }
+        }
+
+        return memoryExtractionConversation!!
     }
 
     private suspend fun acquireInferenceMutex() {
@@ -352,7 +511,7 @@ class LiteRtLmEngine(
         }
         val modelPath = modelFile.absolutePath
         val needsReload = loadedModelPath != modelPath ||
-            loadedConfig != normalizedConfig ||
+            loadedConfig?.forModelLoad() != normalizedConfig.forModelLoad() ||
             loadedBackend != normalizedConfig.backendType ||
             (normalizedConfig.requireMultimodal && !loadedWithVisionAudio) ||
             engine == null
@@ -590,7 +749,7 @@ class LiteRtLmEngine(
             return@callbackFlow
         }
 
-        val normalized = modelMutex.withLock { loadedConfig?.normalized() } ?: config.normalized()
+        val normalized = config.normalized()
         val visionEnabled = loadedWithVisionAudio
         val hasMultimodalInput = images.isNotEmpty() || audioClips.isNotEmpty()
 
@@ -634,11 +793,17 @@ class LiteRtLmEngine(
             return@callbackFlow
         }
 
+        val useExtractionConversation = !normalized.enableThinking && sessionId == 0L
         try {
             Log.d(TAG, "LiteRT inference session=$sessionId images=${images.size} audio=${audioClips.size} enableThinking=${normalized.enableThinking} visionEnabled=$visionEnabled")
 
-            // getOrCreateConversation() で自動的にセッション管理と KVCache 再利用を処理
-            val conv = getOrCreateConversation(sessionId, eng, normalized)
+            val conv = if (useExtractionConversation) {
+                Log.d(TAG, "Using dedicated memory extraction conversation for session=$sessionId")
+                getOrCreateMemoryExtractionConversation(eng, normalized)
+            } else {
+                Log.d(TAG, "Using regular chat conversation for session=$sessionId")
+                getOrCreateConversation(sessionId, eng, normalized)
+            }
 
             val contents = mutableListOf<Content>()
             for (bitmap in images.take(MAX_VISION_IMAGES)) {
@@ -833,11 +998,19 @@ class LiteRtLmEngine(
             awaitClose {
                 Log.d(TAG, "awaitClose: cancelling session=$sessionId")
                 generationJob.cancel()
-                cancelActiveConversation()
+                if (useExtractionConversation) {
+                    cancelMemoryExtractionConversation()
+                } else {
+                    cancelActiveConversation()
+                }
             }
         } catch (t: Throwable) {
             // 例外時は cancel のみ（close は呼ばず）
-            cancelActiveConversation()
+            if (useExtractionConversation) {
+                cancelMemoryExtractionConversation()
+            } else {
+                cancelActiveConversation()
+            }
             // ★ 外側で例外が発生した場合も必ず release する（generationJob.finally が実行されない可能性あり）
             releaseInferenceMutex()
             if (t is CancellationException) {
@@ -857,7 +1030,9 @@ class LiteRtLmEngine(
                 
                 // 1. 推論をキャンセル
                 cancelActiveConversation()
+                cancelMemoryExtractionConversation()
                 closeAndResetActiveConversation()
+                closeAndResetMemoryExtractionConversation()
                 
                 // 2. 現在のモデル名を保持してから Engine をクローズ
                 val unloadingModelName = loadedModelPath?.let { File(it).name.lowercase() } ?: ""
@@ -901,6 +1076,7 @@ class LiteRtLmEngine(
         Log.d(TAG, "Memory status at cancel: ${memStatus.usedPercent}% (${memStatus.usedMB}MB/${memStatus.maxMB}MB)")
         
         cancelActiveConversation()
+        cancelMemoryExtractionConversation()
     }
 
     override suspend fun isAvailable(): Boolean = true

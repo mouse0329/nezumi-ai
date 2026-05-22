@@ -33,4 +33,19 @@ interface MemoryDao {
 
     @Query("UPDATE memory SET is_deleted = 1, updated_at = :updatedAt WHERE is_deleted = 0")
     suspend fun softDeleteAll(updatedAt: Long = System.currentTimeMillis())
+
+    @Query("SELECT COUNT(*) FROM memory WHERE is_deleted = 0")
+    suspend fun countActive(): Int
+
+    /** スコアが低い順に指定件数のIDを返す（GC用）- score = importance / access_count+1 で近似 */
+    @Query("""
+        SELECT id FROM memory 
+        WHERE is_deleted = 0 
+        ORDER BY (importance / (access_count + 1)) ASC, last_accessed_at ASC 
+        LIMIT :limit
+    """)
+    suspend fun getLowScoreIds(limit: Int): List<Long>
+
+    @Query("UPDATE memory SET is_deleted = 1, updated_at = :updatedAt WHERE id IN (:ids)")
+    suspend fun softDeleteByIds(ids: List<Long>, updatedAt: Long = System.currentTimeMillis())
 }
