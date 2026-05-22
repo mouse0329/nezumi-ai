@@ -26,6 +26,7 @@ import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.inference.MemoryObserver
+import com.nezumi_ai.data.memory.MemorySaveMode
 import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 
@@ -59,6 +60,7 @@ class SettingsComposeFragment : Fragment() {
     private var llamaCppNKeep by mutableStateOf(0)
     private var llamaCppRopeFreqBase by mutableStateOf(0.0f)
     private var llamaCppRopeFreqScale by mutableStateOf(1.0f)
+    private var memorySaveMode by mutableStateOf(MemorySaveMode.LLM.name)
     private var chatHistoryLimit by mutableStateOf(30)
     private var sdSteps by mutableStateOf(8)
     private var sdCfg by mutableStateOf(7.0f)
@@ -881,6 +883,30 @@ class SettingsComposeFragment : Fragment() {
                     }
                 }
 
+                Text(
+                    text = "メモリ保存方式",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    FilterChip(
+                        selected = memorySaveMode == MemorySaveMode.LLM.name,
+                        onClick = { memorySaveMode = MemorySaveMode.LLM.name },
+                        label = { Text("LLM抽出") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = memorySaveMode == MemorySaveMode.RULE_BASED.name,
+                        onClick = { memorySaveMode = MemorySaveMode.RULE_BASED.name },
+                        label = { Text("ルールベース") },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
                 if (memories.isEmpty()) {
                     Text(
                         text = "保存されたメモリはありません",
@@ -1001,6 +1027,7 @@ class SettingsComposeFragment : Fragment() {
             topkInput = config.maxTopK.toString()
             maxTokensInput = config.maxTokens.toString()
             preloadMemoryWarningThresholdPercent = settingsRepository.getPreloadMemoryWarningThresholdPercent()
+            memorySaveMode = settingsRepository.getMemorySaveMode().name
             contextCompressionEnabled = config.contextCompressionEnabled
             contextCompressionThresholdPercent = config.contextCompressionThresholdPercent
             userNameInput = userName
@@ -1078,6 +1105,7 @@ class SettingsComposeFragment : Fragment() {
             backendTargetModel = "ALL"
         )
         settingsRepository.updatePreloadMemoryWarningThresholdPercent(preloadMemoryWarningThresholdPercent)
+        settingsRepository.updateMemorySaveMode(MemorySaveMode.valueOf(memorySaveMode))
         settingsRepository.updateSystemPrompt(systemPromptInput)
         settingsRepository.updateUserName(userNameInput)
         settingsRepository.updateLlamaCppThreads(llamaCppThreads)

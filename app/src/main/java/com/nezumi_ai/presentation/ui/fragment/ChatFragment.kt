@@ -15,7 +15,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.PopupMenu
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -117,6 +119,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     
     private var _binding: FragmentChatBinding? = null
     private val binding get() = _binding!!
+    private var defaultInputHint: CharSequence? = null
     
     private lateinit var viewModel: ChatViewModel
     private lateinit var adapter: MessageAdapter
@@ -187,7 +190,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var recordingDialog: androidx.appcompat.app.AlertDialog? = null
     private var recordingStatusTextView: TextView? = null
     private var recordingWaveBars: List<View> = emptyList()
-    
+    private var embeddingDownloadDialog: androidx.appcompat.app.AlertDialog? = null
+    private var embeddingDownloadProgressTextView: TextView? = null
+    private var embeddingDownloadProgressBar: ProgressBar? = null
+
     
     // Phase 11: 複数画像選択
     private val imagePickerLauncher = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
@@ -309,6 +315,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             findNavController().navigate(R.id.presetSettingsFragment)
         }
         setupModelDisplay()
+
+        // 保存しておいたデフォルトの入力ヒントを保持（null で上書きしないようにするため）
+        defaultInputHint = binding.messageInput.hint
         
         // RecyclerView設定（adapterの初期化をStateFlowのcollect前に移動）
         adapter = MessageAdapter(
@@ -651,20 +660,53 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         viewLifecycleOwner.lifecycleScope.launch {
             combine(
                 viewModel.isCompressing,
-                viewModel.isLoading
-            ) { compressing, loading -> Pair(compressing, loading) }
-            .collect { (compressing, _) ->
+                viewModel.isEmbeddingDownloadInProgress
+            ) { compressing, downloading -> Pair(compressing, downloading) }
+            .collect { (compressing, downloading) ->
                 isCompressingNow = compressing
-                binding.messageInput.isEnabled = !compressing
-                binding.sendButton.isEnabled = !compressing
+                // 抽出中・埋め込みダウンロード中は入力を無効化しないが、ダウンロード中は送信を防ぐ
+                binding.messageInput.isEnabled = !compressing && !downloading
+                binding.sendButton.isEnabled = !compressing && !downloading
                 renderCompressButtonState()
                 renderSendButtonState()
                 if (isGenerating) {
-                    responseTypingText =
-                        if (compressing) getString(R.string.response_compressing)
-                        else getString(R.string.response_generating)
+                    responseTypingText = when {
+                        compressing -> getString(R.string.response_compressing)
+                        downloading -> "埋め込みファイルをダウンロード中..."
+                        else -> getString(R.string.response_generating)
+                    }
                 }
-                if (compressing) startResponseTypingAnimation() else stopResponseTypingAnimation()
+                if (compressing || downloading) startResponseTypingAnimation() else stopResponseTypingAnimation()
+            }
+        }
+
+        // Phase 3: メモリ抽出中インジケーター
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.isExtracting.collect { extracting ->
+                // 入力欄上部に「⟳ 記憶を整理中...」を表示
+                // （既存の compressingHintText または inputHint を流用）
+                if (extracting) {
+                    binding.messageInput.hint = getString(R.string.response_extracting)
+                } else {
+                    // デフォルトのヒントを復元（null をセットすると完全に消えるため）
+                    binding.messageInput.hint = defaultInputHint
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.isEmbeddingDownloadInProgress.collect { downloading ->
+                if (downloading) {
+                    showEmbeddingDownloadDialog()
+                } else {
+                    dismissEmbeddingDownloadDialog()
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.embeddingDownloadProgress.collect { progress ->
+                updateEmbeddingDownloadDialog(progress)
             }
         }
 
@@ -1396,6 +1438,64 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 }
             }
         )
+    }
+
+    private fun showEmbeddingDownloadDialog() {
+        if (embeddingDownloadDialog?.isShowing == true) return
+        val context = requireContext()
+        val container = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            val padding = (16 * resources.displayMetrics.density).toInt()
+            setPadding(padding, padding, padding, padding)
+        }
+        val messageView = TextView(context).apply {
+            text = "埋め込みファイルをダウンロード中..."
+            setPadding(0, 0, 0, (12 * resources.displayMetrics.density).toInt())
+        }
+        val progressBar = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = true
+            max = 100
+            progress = 0
+        }
+        container.addView(messageView)
+        container.addView(progressBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        val dialog = AlertDialog.Builder(context)
+            .setTitle("埋め込みファイルのダウンロード")
+            .setView(container)
+            .setNegativeButton("キャンセル") { _, _ ->
+                viewModel.cancelEmbeddingDownload()
+            }
+            .setCancelable(false)
+            .create()
+
+        dialog.show()
+        embeddingDownloadDialog = dialog
+        embeddingDownloadProgressTextView = messageView
+        embeddingDownloadProgressBar = progressBar
+    }
+
+    private fun updateEmbeddingDownloadDialog(progress: ChatViewModel.EmbeddingDownloadProgress?) {
+        if (embeddingDownloadDialog?.isShowing != true) return
+        if (progress == null) {
+            embeddingDownloadProgressTextView?.text = "埋め込みファイルを準備しています..."
+            embeddingDownloadProgressBar?.isIndeterminate = true
+            return
+        }
+        embeddingDownloadProgressTextView?.text = "${progress.fileName}: ${progress.downloaded} / ${if (progress.total > 0) progress.total else "?"}"
+        if (progress.total > 0) {
+            embeddingDownloadProgressBar?.isIndeterminate = false
+            embeddingDownloadProgressBar?.progress = ((progress.downloaded.toDouble() / progress.total.toDouble()) * 100).toInt().coerceIn(0, 100)
+        } else {
+            embeddingDownloadProgressBar?.isIndeterminate = true
+        }
+    }
+
+    private fun dismissEmbeddingDownloadDialog() {
+        embeddingDownloadDialog?.dismiss()
+        embeddingDownloadDialog = null
+        embeddingDownloadProgressTextView = null
+        embeddingDownloadProgressBar = null
     }
 
     private fun showCpuCompatibilityWarningDialog(warning: ChatViewModel.CpuCompatibilityWarningInfo) {

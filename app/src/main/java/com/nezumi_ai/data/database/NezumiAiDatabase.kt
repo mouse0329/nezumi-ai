@@ -29,7 +29,7 @@ import com.nezumi_ai.data.database.entity.SettingsEntity
         MemoryEntity::class,
         MemorySessionEntity::class
     ],
-    version = 19,
+    version = 20,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
@@ -53,7 +53,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                     NezumiAiDatabase::class.java,
                     "nezumi_ai.db"
                 )
-                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19)
+                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
                     // 開発中: スキーマ不一致時は再作成して起動クラッシュを回避
                     .fallbackToDestructiveMigration()
                     .build()
@@ -116,6 +116,12 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                 )
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_memory_is_deleted ON memory(is_deleted)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_memory_session_id ON memory(session_id)")
+            }
+        }
+
+        private val MIGRATION_19_20 = object : androidx.room.migration.Migration(19, 20) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE settings ADD COLUMN memorySaveMode TEXT NOT NULL DEFAULT 'LLM'")
             }
         }
     }

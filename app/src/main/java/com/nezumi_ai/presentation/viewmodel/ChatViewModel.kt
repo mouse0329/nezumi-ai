@@ -52,6 +52,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import com.nezumi_ai.MyApplication
@@ -103,6 +104,12 @@ class ChatViewModel(
         /** 最初のトークン以降、この時間チャンクが無ければ打ち切り */
         private const val GENERATION_STALL_TIMEOUT_MS = 180_000L
         private const val GENERATION_STALL_CHECK_MS = 5_000L
+        /** メモリ注入に使えるコンテキスト予算の最大比率 */
+        private const val MEMORY_BUDGET_RATIO = 0.15f
+        /** 会話履歴のために最低限確保する文字数 */
+        private const val HISTORY_RESERVE_CHARS = 2048
+        /** "関連メモリ:\n" ヘッダー文字数 */
+        private const val MEMORY_HEADER_CHARS = 10
 
         /**
          * ローカル .litertlm を「破損・欠落」とみなして削除してよいときだけ true。
@@ -141,6 +148,7 @@ class ChatViewModel(
 
     private suspend fun isMemoryEnabledForCurrentPreset(): Boolean {
         if (_isIncognitoMode.value) return false
+        if (_isMemoryTemporarilyDisabled.value) return false
         return presetRepository?.getCurrentPreset()?.memoryEnabled ?: false
     }
 
@@ -152,6 +160,12 @@ class ChatViewModel(
         }
     }
     
+    data class EmbeddingDownloadProgress(
+        val fileName: String,
+        val downloaded: Long,
+        val total: Long
+    )
+
     private val _currentSessionId = MutableStateFlow<Long?>(null)
     val currentSessionId: StateFlow<Long?> = _currentSessionId
     
@@ -184,6 +198,34 @@ class ChatViewModel(
 
     private val _isCompressing = MutableStateFlow(false)
     val isCompressing: StateFlow<Boolean> = _isCompressing
+
+    private val _isExtracting = MutableStateFlow(false)
+    val isExtracting: StateFlow<Boolean> = _isExtracting.asStateFlow()
+
+    private val _isEmbeddingDownloadInProgress = MutableStateFlow(false)
+    val isEmbeddingDownloadInProgress: StateFlow<Boolean> = _isEmbeddingDownloadInProgress.asStateFlow()
+
+    private val _embeddingDownloadProgress = MutableStateFlow<EmbeddingDownloadProgress?>(null)
+    val embeddingDownloadProgress: StateFlow<EmbeddingDownloadProgress?> = _embeddingDownloadProgress.asStateFlow()
+
+    private val _isMemoryTemporarilyDisabled = MutableStateFlow(false)
+    val isMemoryTemporarilyDisabled: StateFlow<Boolean> = _isMemoryTemporarilyDisabled.asStateFlow()
+
+    private var embeddingDownloadJob: Job? = null
+
+    private val memoryExtractionWorker: com.nezumi_ai.data.memory.MemoryExtractionWorker? by lazy {
+        val repo = memoryRepository ?: return@lazy null
+        val sessionRepo = com.nezumi_ai.data.repository.MemorySessionRepository(
+            com.nezumi_ai.data.database.NezumiAiDatabase.getInstance(appContext).memorySessionDao()
+        )
+        com.nezumi_ai.data.memory.MemoryExtractionWorker(repo, sessionRepo).also { worker ->
+            // isExtracting を Worker の StateFlow に橋渡し
+            viewModelScope.launch {
+                worker.isExtracting.collect { _isExtracting.value = it }
+            }
+            // 起動時 pending 処理は generateAIResponse 初回呼び出し後に行う
+        }
+    }
 
     /** true のとき、このチャットでは設定のシンキングONでも LiteRT の enable_thinking を付けない */
     private val _chatSessionDisableThinking = MutableStateFlow(false)
@@ -370,6 +412,8 @@ class ChatViewModel(
     private val assistantTurnMarkerRegex = Regex("(?i)(?:^|[\\s\\n\\r])(?:Assistant|アシスタント)\\s*[:：]")
     private val roleTurnMarkerRegex =
         Regex("(?i)(?:^|[\\s\\n\\r])(?:User|Assistant|ユーザー|アシスタント)\\s*[:：]")
+    /** 起動時の pending 抽出処理を1回だけ実行するフラグ */
+    private var pendingExtractionProcessed = false
     
     // WakeLock管理
     private var screenWakeLock: PowerManager.WakeLock? = null
@@ -636,6 +680,14 @@ class ChatViewModel(
             }
 
             try {
+                // Phase 3: 抽出キューが処理中なら完了を待つ（最大 30s）
+                if (_isExtracting.value) {
+                    Log.d(TAG, "sendMessage: waiting for memory extraction to finish...")
+                    withTimeoutOrNull(30_000L) {
+                        isExtracting.first { !it }
+                    }
+                }
+
                 val sessionId = ensureValidCurrentSession() ?: return@launch
 
                 // ユーザーメッセージを保存
@@ -653,7 +705,9 @@ class ChatViewModel(
 
                 // AI応答を生成
                 _isLoading.value = true
-                generateAIResponse(sessionId, userMessage, currentTurnMessageId = userMessageId)
+                // Note: sendMessage はテキストのみサポート。
+                // 画像付きメッセージは sendMessageWithMedia を使用すること。
+                generateAIResponse(sessionId, userMessage, images = emptyList(), audioClips = emptyList(), currentTurnMessageId = userMessageId)
             } catch (t: Throwable) {
                 val e = if (t is Exception) t else RuntimeException(t)
                 Log.e(TAG, "Error sending message", e)
@@ -943,6 +997,19 @@ class ChatViewModel(
             }
             
             Log.d(TAG, "Starting inference for session $sessionId")
+
+            // ① 起動時 pending 抽出処理（モデルロード完了後に1回だけ実行）
+            if (!pendingExtractionProcessed) {
+                pendingExtractionProcessed = true
+                val pendingSaveMode = settingsRepository.getMemorySaveMode()
+                memoryExtractionWorker?.processPending(manager, config.copy(
+                    temperature = 0.1f,
+                    enableThinking = false,
+                    contextCompressionEnabled = false
+                ), pendingSaveMode) { fetchSessionId ->
+                    messageRepository.getMessagesForSessionOnce(fetchSessionId)
+                }
+            }
             
             val promptForModel = buildPromptWithSessionContext(
                 sessionId = sessionId,
@@ -1372,7 +1439,7 @@ class ChatViewModel(
                     }
                     syncSessionTitleFromDb(sessionId)
                 }
-                enqueueMemoryExtraction(sessionId, userMessage)
+                enqueueMemoryExtraction(sessionId)
                 if (BuildConfig.DEBUG) {
                     Log.d(TAG, "AI response saved to database: ${completeResponse.take(50)}...")
                 }
@@ -1935,8 +2002,14 @@ class ChatViewModel(
         val messages = messageRepository.getMessagesForSessionOnce(sessionId)
         if (messages.isEmpty()) return ""
 
+        // 画像をコンテキストに含むための デバッグログ
+        val messagesWithImagesForLog = messages.filter { it.imageUri != null && it.imageUri.isNotEmpty() }
+        if (messagesWithImagesForLog.isNotEmpty()) {
+            Log.d(TAG, "PROMPT_BUILD: Found ${messagesWithImagesForLog.size} messages with images: ${messagesWithImagesForLog.map { "${it.id}:${it.role}" }}")
+        }
+
         val isGgufEngine = isGgufEngineModel(engineModelName)
-        val memoryBlock = buildRelevantMemoryBlock(messages, sessionId)
+        val memoryBlock = buildRelevantMemoryBlock(messages, sessionId, config.contextWindow)
         val fullPrompt = buildPromptFromMessages(
             messages = messages,
             isGgufEngine = isGgufEngine,
@@ -1964,19 +2037,23 @@ class ChatViewModel(
         val recentMessageCount = recentMessageCountForWindow(config.contextWindow)
         // 件数が少なくても長文であれば圧縮を発火できるようにする。
         // ただし直近メッセージを最低2件は保持し、残りを圧縮対象にする。
+        // また、画像を含むメッセージは圧縮対象から除外してコンテキストに残す
+        val messagesWithImages = validMessages.filter { it.imageUri != null && it.imageUri.isNotEmpty() }
+        val minKeepCount = 2 + messagesWithImages.size  // 画像付きメッセージを除外
         val keepRecentCount = when {
             validMessages.size <= 2 -> validMessages.size
             validMessages.size <= recentMessageCount -> validMessages.size - 1
-            else -> recentMessageCount
+            else -> maxOf(recentMessageCount, minKeepCount)  // 画像付きメッセージは必ず保持
         }
         if (keepRecentCount <= 0) {
             return trimPromptToWindow(fullPrompt, config.contextWindow)
         }
 
-        val olderMessages = validMessages.dropLast(keepRecentCount)
-        if (olderMessages.isEmpty()) {
-            return trimPromptToWindow(fullPrompt, config.contextWindow)
-        }
+        // 圧縮対象のメッセージから画像付きメッセージを除外する
+        val allNonCompressibleMessages = validMessages.filterNot { it.imageUri != null && it.imageUri.isNotEmpty() }
+        val cutoffIndex = maxOf(0, allNonCompressibleMessages.size - (recentMessageCount - messagesWithImages.size))
+        
+        val olderMessages = allNonCompressibleMessages.take(cutoffIndex)
         val recentMessages = validMessages.takeLast(keepRecentCount)
         val signature = olderMessages.fold(17) { acc, msg ->
             ((acc * 31) + msg.role.hashCode()) * 31 + msg.content.hashCode()
@@ -2042,22 +2119,61 @@ class ChatViewModel(
         return trimPromptToWindow(prompt, config.contextWindow)
     }
 
-    private suspend fun buildRelevantMemoryBlock(messages: List<MessageEntity>, sessionId: Long): String? {
+    private suspend fun buildRelevantMemoryBlock(
+        messages: List<MessageEntity>,
+        sessionId: Long,
+        contextWindowTokens: Int = 4096
+    ): String? {
         val repo = memoryRepository ?: return null
         if (!isMemoryEnabledForCurrentPreset()) return null
-        val query = messages.lastOrNull { it.role == "user" }?.content?.trim().orEmpty()
+        val query = buildMemorySearchQuery(messages)
         if (query.isBlank()) return null
+
+        // ONNX モデルがあれば初期化（初回のみ実行、以降はキャッシュ）
+        if (!MemoryTextEmbedder.hasEmbeddingFiles(appContext)) {
+            val ready = ensureEmbeddingFilesAvailable()
+            if (!ready) return null
+        }
+        MemoryTextEmbedder.initialize(appContext)
+
         val results = repo.search(
             queryEmbedding = MemoryTextEmbedder.embed(query),
-            topK = 4,
-            threshold = 0.12f,
+            topK = 8,
+            threshold = 0.0f,
+            minSimilarity = 0.18f,
             markAccessed = true
         )
         if (results.isEmpty()) return null
-        Log.d(TAG, "MEMORY_INJECT: session=$sessionId count=${results.size}")
+
+        // ③ トークン予算管理：メモリに使えるのはコンテキスト全体の最大15%
+        // 優先度: システムプロンプト(削らない) > 関連メモリ(スコア低い順に削る) > 会話履歴
+        val systemPromptChars = getActiveSystemPrompt().length
+        val totalBudgetChars = contextWindowTokens * TOKEN_TO_CHAR_RATIO
+        val memoryBudgetChars = (totalBudgetChars * MEMORY_BUDGET_RATIO).toInt()
+            .coerceAtMost(totalBudgetChars - systemPromptChars - HISTORY_RESERVE_CHARS)
+            .coerceAtLeast(0)
+
+        if (memoryBudgetChars == 0) {
+            Log.d(TAG, "MEMORY_INJECT: budget=0, skipping injection")
+            return null
+        }
+
+        // スコア高い順に予算内に収まるだけ詰める
+        val trimmedResults = mutableListOf<MemoryRepository.ScoredMemory>()
+        var usedChars = MEMORY_HEADER_CHARS  // "関連メモリ:\n" のオーバーヘッド
+        for (result in results) {
+            val entryChars = result.memory.content.length + 5  // "N. \n" のオーバーヘッド
+            if (usedChars + entryChars > memoryBudgetChars) break
+            trimmedResults.add(result)
+            usedChars += entryChars
+        }
+
+        if (trimmedResults.isEmpty()) return null
+
+        Log.d(TAG, "MEMORY_INJECT: session=$sessionId query='$query' count=${trimmedResults.size}/${results.size} budgetChars=$memoryBudgetChars usedChars=$usedChars")
         return buildString {
             append("関連メモリ:\n")
-            results.forEachIndexed { index, scored ->
+            trimmedResults.forEachIndexed { index, scored ->
                 append(index + 1)
                 append(". ")
                 append(scored.memory.content.trim())
@@ -2066,76 +2182,65 @@ class ChatViewModel(
         }.trim()
     }
 
-    private fun enqueueMemoryExtraction(sessionId: Long, userMessage: String) {
-        if (memoryRepository == null) return
+    /**
+     * Phase 3: LLM ベースのメモリ抽出をキューに積む
+     * - MemoryExtractionWorker の直列キュー（limitedParallelism(1)）に委譲
+     * - 抽出完了後に _isExtracting が false に戻る
+     */
+    private fun enqueueMemoryExtraction(sessionId: Long) {
+        val worker = memoryExtractionWorker ?: return
         viewModelScope.launch(Dispatchers.IO) {
             if (!isMemoryEnabledForCurrentPreset()) return@launch
-            val candidates = extractMemoryCandidates(userMessage)
-            if (candidates.isEmpty()) return@launch
-            val repo = memoryRepository ?: return@launch
-            for (candidate in candidates) {
-                val embedding = MemoryTextEmbedder.embed(candidate.content)
-                val nearest = repo.search(
-                    queryEmbedding = embedding,
-                    topK = 1,
-                    threshold = 0f,
-                    markAccessed = false
-                ).firstOrNull()
-                if (nearest != null && nearest.similarity >= 0.88f) {
-                    Log.d(TAG, "MEMORY_SAVE: duplicate skipped similarity=${nearest.similarity}")
-                    continue
-                }
-                repo.saveMemory(
-                    content = candidate.content,
-                    embedding = embedding,
-                    importance = candidate.importance,
-                    source = "extracted",
-                    sessionId = sessionId.toString()
-                )
-                Log.d(TAG, "MEMORY_SAVE: saved session=$sessionId content=${candidate.content.take(40)}")
+            val messages = messageRepository.getMessagesForSessionOnce(sessionId)
+            if (messages.isEmpty()) return@launch
+            val manager = try { requireModelManager() } catch (e: Exception) {
+                Log.w(TAG, "MEMORY_EXTRACT: no model manager available, skipping", e)
+                return@launch
             }
+            val selectedModel = getActiveSelectedModel()
+            val config = chatInferenceConfigForModel(selectedModel).copy(
+                temperature = 0.1f,
+                enableThinking = false,
+                contextCompressionEnabled = false
+            ).normalized()
+            val saveMode = settingsRepository.getMemorySaveMode()
+            worker.enqueue(sessionId, messages, manager, config, saveMode)
         }
     }
 
-    private data class MemoryCandidate(
-        val content: String,
-        val importance: Float
-    )
+    private suspend fun ensureEmbeddingFilesAvailable(): Boolean {
+        if (MemoryTextEmbedder.hasEmbeddingFiles(appContext)) return true
+        if (_isMemoryTemporarilyDisabled.value) return false
 
-    private fun extractMemoryCandidates(userMessage: String): List<MemoryCandidate> {
-        val text = userMessage.trim()
-        if (text.length < 6) return emptyList()
-        val rememberIntent = text.contains("覚えて") || text.contains("記憶して") || text.contains("メモして")
-        val patterns = listOf(
-            "私は", "わたしは", "僕は", "俺は", "自分は",
-            "名前", "呼んで", "好き", "嫌い", "苦手",
-            "住ん", "在住", "仕事", "職業", "誕生日",
-            "使っている", "使ってる", "使う", "設定"
-        )
-        val sentences = text
-            .split(Regex("[\\n。！？!?]+"))
-            .map { it.trim() }
-            .filter { it.length >= 6 }
-
-        return sentences.mapNotNull { sentence ->
-            val shouldKeep = rememberIntent || patterns.any { sentence.contains(it) }
-            if (!shouldKeep) return@mapNotNull null
-            val cleaned = sentence
-                .replace("覚えておいて", "")
-                .replace("覚えて", "")
-                .replace("記憶して", "")
-                .replace("メモして", "")
-                .trim(' ', '　', '、', '。', ':', '：')
-                .take(220)
-            if (cleaned.length < 4) return@mapNotNull null
-            val importance = when {
-                rememberIntent -> 0.9f
-                cleaned.contains("名前") || cleaned.contains("呼んで") -> 0.85f
-                cleaned.contains("好き") || cleaned.contains("嫌い") || cleaned.contains("苦手") -> 0.75f
-                else -> 0.7f
+        _isEmbeddingDownloadInProgress.value = true
+        _embeddingDownloadProgress.value = null
+        try {
+            val result = withContext(Dispatchers.IO) {
+                embeddingDownloadJob = coroutineContext[Job]
+                MemoryTextEmbedder.ensureEmbeddingFilesDownloaded(appContext) { file, downloaded, total ->
+                    _embeddingDownloadProgress.value = EmbeddingDownloadProgress(file, downloaded, total)
+                }
             }
-            MemoryCandidate(cleaned, importance)
-        }.distinctBy { it.content }.take(3)
+            if (!result && !_isMemoryTemporarilyDisabled.value) {
+                viewModelScope.launch {
+                    _uiMessage.emit("埋め込みファイルのダウンロードに失敗しました。ネットワークを確認してください。")
+                }
+            }
+            return result
+        } finally {
+            _isEmbeddingDownloadInProgress.value = false
+            _embeddingDownloadProgress.value = null
+            embeddingDownloadJob = null
+        }
+    }
+
+    fun cancelEmbeddingDownload() {
+        if (!_isEmbeddingDownloadInProgress.value) return
+        _isMemoryTemporarilyDisabled.value = true
+        embeddingDownloadJob?.cancel(CancellationException("Embedding download canceled by user"))
+        viewModelScope.launch {
+            _uiMessage.emit("埋め込みダウンロードがキャンセルされたため、メモリ機能を一時的に無効化しました。")
+        }
     }
 
     private fun appendMemoryBlockToSystemPrompt(systemPrompt: String, memoryBlock: String?): String {
@@ -2147,6 +2252,20 @@ class ChatViewModel(
             }
             append(memoryBlock)
         }
+    }
+
+    private fun buildMemorySearchQuery(messages: List<MessageEntity>): String {
+        return messages.takeLast(4)
+            .mapNotNull { msg ->
+                val text = msg.content.trim().takeIf { it.isNotBlank() }
+                when {
+                    text.isNullOrBlank() -> null
+                    msg.role == "assistant" -> "AI: $text"
+                    msg.role == "user" -> "ユーザー: $text"
+                    else -> null
+                }
+            }
+            .joinToString(separator = "\n")
     }
 
     private suspend fun requestCompressedContextSummary(
@@ -2382,7 +2501,7 @@ class ChatViewModel(
             PromptBuilder.buildForLiteRt(
                 messages = recentMessages,
                 systemPrompt = systemPrompt,
-                injectGemmaThinkTrigger = settingsRepository.shouldInjectGemmaThinkTrigger(),
+                injectGemmaThinkTrigger = enableThinking && settingsRepository.shouldInjectGemmaThinkTrigger(),
                 compressedSummary = compressedSummary,
                 sanitizeMessageContent = ::sanitizeMessageContentForPrompt
             )
@@ -2448,7 +2567,7 @@ class ChatViewModel(
             PromptBuilder.buildForLiteRt(
                 messages = filteredMessages,
                 systemPrompt = systemPrompt,
-                injectGemmaThinkTrigger = settingsRepository.shouldInjectGemmaThinkTrigger(),
+                injectGemmaThinkTrigger = enableThinking && settingsRepository.shouldInjectGemmaThinkTrigger(),
                 sanitizeMessageContent = sanitizer
             )
         }

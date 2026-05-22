@@ -119,7 +119,7 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
 
                 if (isModelLoaded &&
                     loadedModelPath == modelPath &&
-                    loadedConfig == normalized
+                    loadedConfig?.forModelLoad() == normalized.forModelLoad()
                 ) {
                     Log.d(TAG, "Model already loaded: $modelPath")
                     return@withLock Result.success(Unit)

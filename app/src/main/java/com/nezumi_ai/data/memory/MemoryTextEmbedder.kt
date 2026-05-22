@@ -5,15 +5,21 @@ import android.util.Log
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import com.nezumi_ai.data.inference.HfAuthManager
 import java.io.File
 import java.nio.IntBuffer
 import java.nio.LongBuffer
 import kotlin.math.abs
 import kotlin.math.sqrt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 
 object MemoryTextEmbedder {
     private const val TAG = "MemoryTextEmbedder"
-    const val DIMENSION = 1024
+    // 実行時に決まる場合があるため定数から可変へ変更。ONNX モデルから取得可能なら上書きする。
+    var DIMENSION = 1024
 
     private var initialized = false
     private var useOnnx = false
@@ -58,6 +64,11 @@ object MemoryTextEmbedder {
             }
 
             tokenizerInstance = createTokenizer(tokenizerFile)
+            if (tokenizerInstance == null) {
+                Log.w(TAG, "Tokenizer initialization failed, ONNX embedding disabled")
+                return false
+            }
+            
             ortEnvironment = OrtEnvironment.getEnvironment()
             ortSession = ortEnvironment!!.createSession(modelFile.absolutePath, OrtSession.SessionOptions())
             onnxModelPath = modelFile.absolutePath
@@ -87,18 +98,18 @@ object MemoryTextEmbedder {
         return fallbackEmbedding(text)
     }
 
-    private fun createTokenizer(tokenizerFile: File): Any {
-        val tokenizerClass = Class.forName("ai.djl.huggingface.tokenizers.HuggingFaceTokenizer")
-        val json = tokenizerFile.readText(Charsets.UTF_8)
-        val createMethod = tokenizerClass.getMethod("createTokenizerFromString", String::class.java)
-        val handle = (createMethod.invoke(null, json) as Number).toLong()
-        val constructor = try {
-            tokenizerClass.getDeclaredConstructor(java.lang.Long.TYPE)
-        } catch (_: NoSuchMethodException) {
-            tokenizerClass.getDeclaredConstructor(java.lang.Long::class.java)
+    private fun createTokenizer(tokenizerFile: File): Any? {
+        return try {
+            val tokenizerClass = Class.forName("ai.djl.huggingface.tokenizers.HuggingFaceTokenizer")
+            // DJL 0.36.0: HuggingFaceTokenizer.newInstance(Path path)
+            val newInstanceMethod = tokenizerClass.getMethod("newInstance", java.nio.file.Path::class.java)
+            val tokenizer = newInstanceMethod.invoke(null, tokenizerFile.toPath())
+            Log.d(TAG, "Successfully created tokenizer using newInstance(Path)")
+            tokenizer
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to create tokenizer with newInstance", e)
+            null
         }
-        constructor.isAccessible = true
-        return constructor.newInstance(handle)
     }
 
     private fun invokeTokenizerEncode(tokenizer: Any, text: String): Any {
@@ -145,12 +156,22 @@ object MemoryTextEmbedder {
         if (result.size() == 0) return null
         val value = result[0].value
         return when (value) {
-            is FloatArray -> value
+            is FloatArray -> {
+                DIMENSION = value.size
+                value
+            }
             is Array<*> -> {
                 val first = value.firstOrNull()
                 when (first) {
-                    is FloatArray -> first
-                    is DoubleArray -> first.map { it.toFloat() }.toFloatArray()
+                    is FloatArray -> {
+                        DIMENSION = first.size
+                        first
+                    }
+                    is DoubleArray -> {
+                        val arr = first.map { it.toFloat() }.toFloatArray()
+                        DIMENSION = arr.size
+                        arr
+                    }
                     else -> null
                 }
             }
@@ -245,5 +266,97 @@ object MemoryTextEmbedder {
             emptyList()
         }
         return words + bigrams
+    }
+    private const val EMBEDDING_MODEL_URL =
+        "https://huggingface.co/hotchpotch/static-embedding-japanese/resolve/main/onnx/model_quantized_arm64.onnx?download=true"
+    private const val EMBEDDING_TOKENIZER_URL =
+        "https://huggingface.co/hotchpotch/static-embedding-japanese/resolve/main/0_StaticEmbedding/tokenizer.json?download=true"
+
+    suspend fun ensureEmbeddingFilesDownloaded(
+        context: Context,
+        onProgress: ((file: String, downloaded: Long, total: Long) -> Unit)? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        val embeddingDir = File(context.filesDir, embeddingDirName).also { it.mkdirs() }
+        val modelFile = File(embeddingDir, "model_quantized_arm64.onnx")
+        val tokenizerFile = File(embeddingDir, "tokenizer.json")
+
+        runCatching {
+            if (!modelFile.exists() || modelFile.length() == 0L) {
+                Log.i(TAG, "Downloading embedding model...")
+                downloadEmbeddingFile(context, EMBEDDING_MODEL_URL, modelFile) { d, t ->
+                    onProgress?.invoke("model_quantized_arm64.onnx", d, t)
+                }
+                Log.i(TAG, "Embedding model downloaded: ${modelFile.length()} bytes")
+            } else {
+                Log.d(TAG, "Embedding model already exists, skipping download")
+            }
+            if (!tokenizerFile.exists() || tokenizerFile.length() == 0L) {
+                Log.i(TAG, "Downloading embedding tokenizer...")
+                downloadEmbeddingFile(context, EMBEDDING_TOKENIZER_URL, tokenizerFile) { d, t ->
+                    onProgress?.invoke("tokenizer.json", d, t)
+                }
+                Log.i(TAG, "Embedding tokenizer downloaded: ${tokenizerFile.length()} bytes")
+            } else {
+                Log.d(TAG, "Embedding tokenizer already exists, skipping download")
+            }
+            true
+        }.onFailure {
+            Log.e(TAG, "Failed to download embedding files", it)
+        }.getOrDefault(false)
+    }
+
+    private suspend fun downloadEmbeddingFile(
+        context: Context,
+        urlString: String,
+        outFile: File,
+        onProgress: ((Long, Long) -> Unit)?
+    ) {
+        val tmpFile = File("${outFile.absolutePath}.download")
+        val token = HfAuthManager.getToken(context)
+        val conn = (java.net.URL(urlString).openConnection() as java.net.HttpURLConnection).apply {
+            connectTimeout = 30_000
+            readTimeout = 60_000
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "nezumi-ai/1.0")
+            if (token.isNotBlank()) setRequestProperty("Authorization", "Bearer $token")
+        }
+        try {
+            conn.connect()
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                throw IllegalStateException("HTTP $code: $urlString")
+            }
+            val total = conn.contentLengthLong
+            conn.inputStream.use { input ->
+                java.io.FileOutputStream(tmpFile).buffered(32 * 1024).use { output ->
+                    val buffer = ByteArray(32 * 1024)
+                    var downloaded = 0L
+                    var read: Int
+                    while (input.read(buffer).also { read = it } > 0) {
+                        currentCoroutineContext().ensureActive()
+                        output.write(buffer, 0, read)
+                        downloaded += read
+                        onProgress?.invoke(downloaded, total)
+                    }
+                    output.flush()
+                }
+            }
+            if (outFile.exists()) outFile.delete()
+            if (!tmpFile.renameTo(outFile)) {
+                throw IllegalStateException("Failed to rename tmp file to ${outFile.absolutePath}")
+            }
+        } finally {
+            conn.disconnect()
+            if (tmpFile.exists() && !outFile.exists()) tmpFile.delete()
+        }
+    }
+
+    fun hasEmbeddingFiles(context: Context): Boolean {
+        val embeddingDir = File(context.filesDir, embeddingDirName)
+        val modelFile = onnxCandidates.map { File(embeddingDir, it) }
+            .firstOrNull { it.exists() && it.length() > 0 } ?: return false
+        val tokenizerFile = tokenizerCandidates.map { File(embeddingDir, it) }
+            .firstOrNull { it.exists() && it.length() > 0 } ?: return false
+        return modelFile.exists() && tokenizerFile.exists()
     }
 }
