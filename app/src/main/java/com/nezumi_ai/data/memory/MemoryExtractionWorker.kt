@@ -160,24 +160,28 @@ class MemoryExtractionWorker(
         )
 
         val raw = withTimeoutOrNull(EXTRACTION_TIMEOUT_MS) {
-            // Memory extraction must run in an isolated inference session to avoid
-            // contaminating the active chat session state, especially when thinking
-            // is enabled for the current conversation.
-            val flow = manager.runInference(
-                sessionId = 0L,
-                prompt = prompt,
-                config = extractionConfig
-            )
-            val builder = StringBuilder()
-            flow.collect { chunk ->
-                val final = InferenceStreamProtocol.decodeFinal(chunk)
-                if (final != null) {
-                    builder.clear(); builder.append(final)
-                } else if (chunk.isNotEmpty()) {
-                    builder.append(chunk)
+            // Create a temporary isolated session for memory extraction to avoid
+            // contaminating the active chat session state.
+            val tempSessionId = manager.sessionResourceManager.createSession()
+            try {
+                val flow = manager.runInference(
+                    sessionId = tempSessionId,
+                    prompt = prompt,
+                    config = extractionConfig
+                )
+                val builder = StringBuilder()
+                flow.collect { chunk ->
+                    val final = InferenceStreamProtocol.decodeFinal(chunk)
+                    if (final != null) {
+                        builder.clear(); builder.append(final)
+                    } else if (chunk.isNotEmpty()) {
+                        builder.append(chunk)
+                    }
                 }
+                builder.toString().trim()
+            } finally {
+                manager.sessionResourceManager.endSession(tempSessionId)
             }
-            builder.toString().trim()
         }
 
         if (raw.isNullOrBlank()) {
