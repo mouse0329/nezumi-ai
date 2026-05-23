@@ -56,6 +56,8 @@ import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.utils.PreferencesHelper
 import java.util.UUID
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 
 class PresetSettingsFragment : Fragment() {
@@ -137,20 +139,45 @@ class PresetSettingsFragment : Fragment() {
         ) {
             item { Spacer(modifier = Modifier.statusBarsPadding()) }
             item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { findNavController().navigateUp() }) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_back),
-                            contentDescription = "戻る",
-                            tint = colorResource(id = R.color.text_primary)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { findNavController().navigateUp() }) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_back),
+                                contentDescription = "戻る",
+                                tint = colorResource(id = R.color.text_primary)
+                            )
+                        }
+                        Text(
+                            text = "プリセット",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = colorResource(id = R.color.text_primary),
+                            fontWeight = FontWeight.Bold
                         )
                     }
-                    Text(
-                        text = "プリセット",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = colorResource(id = R.color.text_primary),
-                        fontWeight = FontWeight.Bold
-                    )
+                    TextButton(
+                        onClick = {
+                            scope.launch(Dispatchers.IO) {
+                                try {
+                                    val manager = com.nezumi_ai.data.inference.ModelManager.getInstance(requireContext())
+                                    manager.unloadModel()
+                                    withContext(Dispatchers.Main) {
+                                        toast("モデルを開放しました")
+                                    }
+                                } catch (e: Exception) {
+                                    withContext(Dispatchers.Main) {
+                                        toast("モデル開放に失敗: ${e.message}")
+                                    }
+                                }
+                            }
+                        }
+                    ) {
+                        Text("モデル開放")
+                    }
                 }
             }
 
