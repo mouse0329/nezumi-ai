@@ -17,6 +17,7 @@ import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.ToolCall
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.nezumi_ai.data.database.NezumiAiDatabase
+import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -74,7 +75,13 @@ class LiteRtLmEngine(
     private val inferenceMutex = Mutex()
     private val inferenceMutexHeld = AtomicBoolean(false)
     private val alarmDao by lazy { NezumiAiDatabase.getInstance(appContext).alarmDao() }
-    private val toolExecutor by lazy { NezumiLiteRtToolExecutor(appContext, alarmDao) }
+    private val memoryRepository: com.nezumi_ai.data.repository.MemoryRepository by lazy { 
+        val db = NezumiAiDatabase.getInstance(appContext)
+        com.nezumi_ai.data.repository.MemoryRepository(db.memoryDao())
+    }
+    private val toolExecutor by lazy { 
+        NezumiLiteRtToolExecutor(appContext, alarmDao, memoryRepository, MemoryTextEmbedder)
+    }
 
     /** Engine は同時に 1 セッションのみ。コールバックスレッドと awaitClose の競合もここで直列化する */
     private val activeConversationLock = Any()
@@ -284,6 +291,18 @@ class LiteRtLmEngine(
         eng: Engine,
         config: InferenceConfig
     ): Conversation {
+        // 通常の会話セッションが使用中の場合は待機
+        var waitCount = 0
+        while (inferenceMutexHeld.get() && waitCount < 100) {
+            Log.d(TAG, "Waiting for active inference to complete before creating memory extraction conversation (attempt=${waitCount + 1})")
+            kotlinx.coroutines.delay(200)
+            waitCount++
+        }
+        
+        if (inferenceMutexHeld.get()) {
+            throw IllegalStateException("Cannot create memory extraction conversation: active inference still running")
+        }
+        
         var convToAttach: Conversation? = null
         var created = false
         val maxAttempts = 6
@@ -322,7 +341,7 @@ class LiteRtLmEngine(
                     try {
                         val conv = eng.createConversation(
                             ConversationConfig(
-                                tools = buildEnabledToolProviders(appContext, alarmDao),
+                                tools = emptyList(),  // メモリ抽出はツール不要
                                 samplerConfig = samplerConfig,
                                 automaticToolCalling = false
                             )
@@ -1077,6 +1096,24 @@ class LiteRtLmEngine(
         
         cancelActiveConversation()
         cancelMemoryExtractionConversation()
+    }
+
+    suspend fun forceReset() {
+        modelMutex.withLock {
+            Log.w(TAG, "forceReset: Forcibly invalidating LiteRT-LM engine state without Engine.close()")
+            cancelActiveConversation()
+            cancelMemoryExtractionConversation()
+            closeAndResetActiveConversation()
+            closeAndResetMemoryExtractionConversation()
+
+            engine = null
+            loadedModelPath = null
+            loadedConfig = null
+            loadedBackend = null
+            loadedWithVisionAudio = false
+            bitmapPool.clear()
+            // backendResourceManager.cleanupAll() は close 系呼び出しと重複する可能性があるため避ける
+        }
     }
 
     override suspend fun isAvailable(): Boolean = true

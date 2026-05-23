@@ -16,6 +16,7 @@ object PresetConstants {
     const val TOOL_BATTERY = "battery"
     const val TOOL_TIMER = "timer"
     const val TOOL_IMAGE_GENERATION = "image_generation"
+    const val TOOL_MEMORY = "memory"
 
     val allToolIds: List<String> = listOf(
         TOOL_ALARM,
@@ -27,6 +28,7 @@ object PresetConstants {
         TOOL_TIME,
         TOOL_BATTERY,
         TOOL_TIMER,
-        TOOL_IMAGE_GENERATION
+        TOOL_IMAGE_GENERATION,
+        TOOL_MEMORY
     )
 }

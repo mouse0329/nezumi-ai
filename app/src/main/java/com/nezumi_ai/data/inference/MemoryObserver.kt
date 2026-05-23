@@ -62,21 +62,22 @@ object MemoryObserver {
      * Get current memory status.
      * #6 fix: use ActivityManager.MemoryInfo.availMem (system-wide free memory) instead of JVM heap.
      * LLM models load into native memory; JVM heap usage does not reflect actual memory pressure.
+     * Uses absolute memory thresholds instead of percentages for more reliable detection.
      */
     suspend fun getMemoryStatus(context: Context): MemoryStatus {
         return withContext(Dispatchers.IO) {
             val sysInfo = getSystemMemoryInfo(context)
-            val usedPercent = sysInfo.usedPercent
 
+            // 絶対値とlowMemoryフラグで判定
             val level = when {
-                usedPercent >= MEMORY_LEVEL_SEVERE -> MemoryLevel.SEVERE
-                usedPercent >= MEMORY_LEVEL_WARNING -> MemoryLevel.WARNING
+                sysInfo.lowMemoryFlag || sysInfo.availableMemoryMB < 300 -> MemoryLevel.SEVERE
+                sysInfo.availableMemoryMB < 800 -> MemoryLevel.WARNING
                 else -> MemoryLevel.NORMAL
             }
 
             MemoryStatus(
                 level = level,
-                usedPercent = usedPercent,
+                usedPercent = sysInfo.usedPercent,
                 usedMB = sysInfo.usedMemoryMB,
                 maxMB = sysInfo.totalMemoryMB,
                 isLowMemory = sysInfo.lowMemoryFlag
@@ -146,23 +147,25 @@ object MemoryObserver {
      * @return true: 推論続行可能 / false: 推論中止推奨
      */
     suspend fun requestMemoryCorrectionIfNeeded(context: Context): Boolean {
-        val status = getMemoryStatus(context)
-        
-        return when (status.level) {
-            MemoryLevel.NORMAL -> {
-                Log.d(TAG, "Memory: ${status.usedPercent}% - OK")
-                true
-            }
-            MemoryLevel.WARNING -> {
-                Log.w(TAG, "Memory: ${status.usedPercent}% - WARNING. Suggesting gc()")
-                triggerGarbageCollection()
-                true
-            }
-            MemoryLevel.SEVERE -> {
-                Log.e(TAG, "Memory: ${status.usedPercent}% - SEVERE. Inference should be aborted")
-                false
-            }
+        val sysInfo = getSystemMemoryInfo(context)
+
+        if (sysInfo.lowMemoryFlag) {
+            Log.e(TAG, "System lowMemory flag is set - aborting")
+            return false
         }
+
+        if (sysInfo.availableMemoryMB < 300) {
+            Log.e(TAG, "Available memory critically low: ${sysInfo.availableMemoryMB}MB")
+            return false
+        }
+
+        if (sysInfo.usedPercent >= MEMORY_LEVEL_WARNING) {
+            Log.w(TAG, "Memory: ${sysInfo.usedPercent}% - WARNING. Suggesting gc()")
+            triggerGarbageCollection()
+        }
+
+        Log.d(TAG, "Memory OK: avail=${sysInfo.availableMemoryMB}MB lowMemory=${sysInfo.lowMemoryFlag}")
+        return true
     }
     
     /**

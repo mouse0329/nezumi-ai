@@ -56,7 +56,7 @@ class ModelManager(
     // ─────────────────────────────────────────────────────────
     
     private val memoryObserver = MemoryObserver
-    private val sessionManager = SessionResourceManager()
+    internal val sessionManager = SessionResourceManager()
     private val jobController = InferenceJobController()
 
     private fun getOrCreateGgufEngine(): GgufInferenceEngine? {
@@ -115,16 +115,26 @@ class ModelManager(
         val normalized = config.normalized()
         Log.w(
             TAG,
-            "Compiled-model invoke failure detected. Reloading engine and retrying once: model=$modelName backend=${normalized.backendType}"
+            "Compiled-model invoke failure detected. Recovering model=$modelName backend=${normalized.backendType}"
         )
 
         val engine = activeEngine
-        runCatching { engine.unloadModel() }
-            .onFailure { Log.w(TAG, "Engine unload during recovery failed", it) }
+        val isGpuBacked = normalized.backendType.equals("GPU", ignoreCase = true) ||
+            normalized.backendType.equals("NPU", ignoreCase = true)
+
+        if (isGpuBacked && engine is LiteRtLmEngine) {
+            Log.w(TAG, "GPU/NPU backend: using forceReset() instead of unloadModel() to avoid SIGABRT")
+            engine.forceReset()
+        } else {
+            runCatching { engine.unloadModel() }
+                .onFailure { Log.w(TAG, "Engine unload during recovery failed", it) }
+        }
 
         val reloaded = engine.loadModel(modelName, normalized)
         if (reloaded.isSuccess) {
+            activeEngine = engine
             currentConfig = normalized
+            Log.i(TAG, "Recovery reload succeeded")
             return true
         }
         Log.e(TAG, "Engine reload during recovery failed", reloaded.exceptionOrNull())

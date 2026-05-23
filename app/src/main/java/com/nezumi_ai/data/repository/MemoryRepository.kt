@@ -46,14 +46,39 @@ class MemoryRepository(
         markAccessed: Boolean = true
     ): List<ScoredMemory> {
         val queryNorm = l2norm(queryEmbedding)
-        if (queryNorm == 0f) return emptyList()
+        if (queryNorm == 0f) {
+            android.util.Log.d("MemoryRepository", "SEARCH: query norm is zero -> returning empty")
+            return emptyList()
+        }
 
-        val scored = dao.getActive()
+        val active = dao.getActive()
+        android.util.Log.d("MemoryRepository", "SEARCH: queryEmbedding.size=${queryEmbedding.size}, activeCount=${active.size}")
+
+        val scored = active
             .mapNotNull { memory ->
                 val memoryEmbedding = bytesToFloatArray(memory.embedding)
-                if (memoryEmbedding.size != queryEmbedding.size || memory.norm == 0f) return@mapNotNull null
+                // debug log for sizes and norms
+                android.util.Log.d(
+                    "MemoryRepository",
+                    "SEARCH: memId=${memory.id} embSize=${memoryEmbedding.size} norm=${memory.norm}"
+                )
+                if (memoryEmbedding.size != queryEmbedding.size) {
+                    android.util.Log.d(
+                        "MemoryRepository",
+                        "SEARCH: skipping memId=${memory.id} due to embedding size mismatch: ${memoryEmbedding.size} != ${queryEmbedding.size}"
+                    )
+                    return@mapNotNull null
+                }
+                if (memory.norm == 0f) {
+                    android.util.Log.d("MemoryRepository", "SEARCH: skipping memId=${memory.id} due to zero norm")
+                    return@mapNotNull null
+                }
                 val similarity = cosineSimilarity(queryEmbedding, queryNorm, memoryEmbedding, memory.norm)
-                if (similarity < minSimilarity) return@mapNotNull null
+                android.util.Log.d("MemoryRepository", "SEARCH: memId=${memory.id} similarity=$similarity")
+                if (similarity < minSimilarity) {
+                    android.util.Log.d("MemoryRepository", "SEARCH: memId=${memory.id} below minSimilarity=$minSimilarity")
+                    return@mapNotNull null
+                }
                 val score = score(
                     similarity = similarity,
                     lastAccessedAt = memory.lastAccessedAt,

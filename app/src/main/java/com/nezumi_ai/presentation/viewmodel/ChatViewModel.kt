@@ -2124,17 +2124,33 @@ class ChatViewModel(
         sessionId: Long,
         contextWindowTokens: Int = 4096
     ): String? {
-        val repo = memoryRepository ?: return null
-        if (!isMemoryEnabledForCurrentPreset()) return null
+        val repo = memoryRepository ?: run {
+            Log.d(TAG, "MEMORY_INJECT: memoryRepository is null")
+            return null
+        }
+        if (!isMemoryEnabledForCurrentPreset()) {
+            Log.d(TAG, "MEMORY_INJECT: memory disabled for current preset")
+            return null
+        }
         val query = buildMemorySearchQuery(messages)
-        if (query.isBlank()) return null
+        if (query.isBlank()) {
+            Log.d(TAG, "MEMORY_INJECT: query is blank")
+            return null
+        }
+        Log.d(TAG, "MEMORY_INJECT: query='$query'")
 
         // ONNX モデルがあれば初期化（初回のみ実行、以降はキャッシュ）
         if (!MemoryTextEmbedder.hasEmbeddingFiles(appContext)) {
+            Log.d(TAG, "MEMORY_INJECT: embedding files not found, downloading...")
             val ready = ensureEmbeddingFilesAvailable()
-            if (!ready) return null
+            if (!ready) {
+                Log.d(TAG, "MEMORY_INJECT: failed to download embedding files")
+                return null
+            }
+            Log.d(TAG, "MEMORY_INJECT: embedding files downloaded successfully")
         }
         MemoryTextEmbedder.initialize(appContext)
+        Log.d(TAG, "MEMORY_INJECT: MemoryTextEmbedder initialized")
 
         val results = repo.search(
             queryEmbedding = MemoryTextEmbedder.embed(query),
@@ -2143,18 +2159,44 @@ class ChatViewModel(
             minSimilarity = 0.18f,
             markAccessed = true
         )
-        if (results.isEmpty()) return null
+        Log.d(TAG, "MEMORY_INJECT: search returned ${results.size} results")
+        if (results.isEmpty()) {
+            Log.d(TAG, "MEMORY_INJECT: no search results")
+            return null
+        }
 
         // ③ トークン予算管理：メモリに使えるのはコンテキスト全体の最大15%
         // 優先度: システムプロンプト(削らない) > 関連メモリ(スコア低い順に削る) > 会話履歴
         val systemPromptChars = getActiveSystemPrompt().length
         val totalBudgetChars = contextWindowTokens * TOKEN_TO_CHAR_RATIO
-        val memoryBudgetChars = (totalBudgetChars * MEMORY_BUDGET_RATIO).toInt()
-            .coerceAtMost(totalBudgetChars - systemPromptChars - HISTORY_RESERVE_CHARS)
-            .coerceAtLeast(0)
+        
+        // メモリの最小予算を保証（500 chars ≈ 125 tokens）
+        val MIN_MEMORY_BUDGET_CHARS = 500
+        
+        // 予算計算：全体の15% vs 残り領域
+        // システムプロンプトと会話履歴のために領域を予約
+        val memoryBudgetCharsBeforeCoerce = (totalBudgetChars * MEMORY_BUDGET_RATIO).toInt()
+        val availableCharsAfterReserves = totalBudgetChars - systemPromptChars - HISTORY_RESERVE_CHARS
+        
+        val memoryBudgetChars = if (availableCharsAfterReserves >= MIN_MEMORY_BUDGET_CHARS) {
+            // 十分な予算がある場合は、15% と残り領域の小さい方
+            minOf(memoryBudgetCharsBeforeCoerce, availableCharsAfterReserves)
+        } else if (availableCharsAfterReserves > 0) {
+            // わずかな予算しかない場合でも、最小限のメモリ領域を確保
+            minOf(MIN_MEMORY_BUDGET_CHARS, availableCharsAfterReserves).coerceAtLeast(100)
+        } else {
+            // 予備領域を調整してメモリ予算を確保
+            val adjustedReserve = HISTORY_RESERVE_CHARS / 2  // 会話履歴予約を半減
+            val remainingBudget = totalBudgetChars - systemPromptChars - adjustedReserve
+            minOf(MIN_MEMORY_BUDGET_CHARS, remainingBudget).coerceAtLeast(0)
+        }
+
+        Log.d(TAG, "MEMORY_INJECT: contextWindow=$contextWindowTokens tokens -> totalBudget=${totalBudgetChars}chars")
+        Log.d(TAG, "MEMORY_INJECT: systemPrompt=$systemPromptChars chars, historyReserve=$HISTORY_RESERVE_CHARS chars")
+        Log.d(TAG, "MEMORY_INJECT: budget calculation: 15%=$memoryBudgetCharsBeforeCoerce vs available=$availableCharsAfterReserves -> final=$memoryBudgetChars chars")
 
         if (memoryBudgetChars == 0) {
-            Log.d(TAG, "MEMORY_INJECT: budget=0, skipping injection")
+            Log.d(TAG, "MEMORY_INJECT: budget=0 (systemPrompt=$systemPromptChars > available space), skipping injection")
             return null
         }
 
@@ -2168,7 +2210,10 @@ class ChatViewModel(
             usedChars += entryChars
         }
 
-        if (trimmedResults.isEmpty()) return null
+        if (trimmedResults.isEmpty()) {
+            Log.d(TAG, "MEMORY_INJECT: all results filtered out by budget constraints")
+            return null
+        }
 
         Log.d(TAG, "MEMORY_INJECT: session=$sessionId query='$query' count=${trimmedResults.size}/${results.size} budgetChars=$memoryBudgetChars usedChars=$usedChars")
         return buildString {
@@ -2244,7 +2289,11 @@ class ChatViewModel(
     }
 
     private fun appendMemoryBlockToSystemPrompt(systemPrompt: String, memoryBlock: String?): String {
-        if (memoryBlock.isNullOrBlank()) return systemPrompt
+        if (memoryBlock.isNullOrBlank()) {
+            Log.d(TAG, "appendMemoryBlockToSystemPrompt: memoryBlock is null/blank")
+            return systemPrompt
+        }
+        Log.d(TAG, "appendMemoryBlockToSystemPrompt: appending ${memoryBlock.length} chars of memory to system prompt")
         return buildString {
             if (systemPrompt.isNotBlank()) {
                 append(systemPrompt.trim())
@@ -2482,6 +2531,7 @@ class ChatViewModel(
         enableThinking: Boolean = false,
         memoryBlock: String? = null
     ): String {
+        Log.d(TAG, "buildPromptWithCompressedSummary: memoryBlock=${if (memoryBlock != null) "present (${memoryBlock.length} chars)" else "null"}")
         var systemPrompt = getActiveSystemPrompt()
         val userName = settingsRepository.getUserName()
         if (userName.isNotEmpty()) {
@@ -2549,6 +2599,8 @@ class ChatViewModel(
         if (orphanedDescriptions.isNotEmpty()) {
             Log.w(TAG, "PROMPT_BUILD: Found ${orphanedDescriptions.size} orphaned imageDescription(s). These will be ignored: ${orphanedDescriptions.map { it.id }}")
         }
+        
+        Log.d(TAG, "PROMPT_BUILD: memoryBlock=${if (memoryBlock != null) "present (${memoryBlock.length} chars)" else "null"}")
         
         val filteredMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
         val systemPrompt = appendMemoryBlockToSystemPrompt(getActiveSystemPrompt(), memoryBlock)

@@ -16,7 +16,10 @@ enum class NezumiTool(val displayName: String) {
     START_TIMER("タイマー開始"),
     STOP_TIMER("タイマー停止"),
     LIST_TIMERS("タイマー一覧"),
-    GENERATE_IMAGE("画像生成(SD)")
+    GENERATE_IMAGE("画像生成(SD)"),
+    SEARCH_MEMORY("メモリ検索"),
+    ADD_CALENDAR_EVENT("カレンダー追加"),
+    LIST_CALENDAR_EVENTS("カレンダー一覧")
 }
 
 class ToolPreferences(context: Context) {
@@ -42,6 +45,9 @@ class ToolPreferences(context: Context) {
             NezumiTool.STOP_TIMER,
             NezumiTool.LIST_TIMERS -> setOf(PresetConstants.TOOL_TIMER)
             NezumiTool.GENERATE_IMAGE -> setOf(PresetConstants.TOOL_IMAGE_GENERATION)
+            NezumiTool.SEARCH_MEMORY -> setOf(PresetConstants.TOOL_MEMORY)
+            NezumiTool.ADD_CALENDAR_EVENT,
+            NezumiTool.LIST_CALENDAR_EVENTS -> setOf(PresetConstants.TOOL_CALENDAR)
         }
     }
 
@@ -62,6 +68,16 @@ class ToolPreferences(context: Context) {
                 } catch (e: Exception) {
                     Log.e("ToolPreferences", "Failed to initialize tool preferences", e)
                 }
+            } else {
+                // カレンダーツールが追加された場合の初期化
+                val editor = prefs.edit()
+                if (!prefs.contains(keyFor(NezumiTool.ADD_CALENDAR_EVENT))) {
+                    editor.putBoolean(keyFor(NezumiTool.ADD_CALENDAR_EVENT), false)
+                }
+                if (!prefs.contains(keyFor(NezumiTool.LIST_CALENDAR_EVENTS))) {
+                    editor.putBoolean(keyFor(NezumiTool.LIST_CALENDAR_EVENTS), false)
+                }
+                editor.apply()
             }
         }
     }
