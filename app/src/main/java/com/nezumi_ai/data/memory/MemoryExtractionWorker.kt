@@ -162,7 +162,7 @@ class MemoryExtractionWorker(
         val raw = withTimeoutOrNull(EXTRACTION_TIMEOUT_MS) {
             // Create a temporary isolated session for memory extraction to avoid
             // contaminating the active chat session state.
-            val tempSessionId = manager.sessionResourceManager.createSession()
+            val tempSessionId = manager.sessionManager.createSession()
             try {
                 val flow = manager.runInference(
                     sessionId = tempSessionId,
@@ -180,7 +180,7 @@ class MemoryExtractionWorker(
                 }
                 builder.toString().trim()
             } finally {
-                manager.sessionResourceManager.endSession(tempSessionId)
+                manager.sessionManager.endSession(tempSessionId)
             }
         }
 

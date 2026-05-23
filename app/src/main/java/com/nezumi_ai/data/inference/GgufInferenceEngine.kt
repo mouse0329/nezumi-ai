@@ -341,7 +341,9 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
         }
 
         if (lastSessionId != sessionId) {
-            Log.d(TAG, "Session: $lastSessionId → $sessionId")
+            Log.d(TAG, "Session: $lastSessionId → $sessionId, clearing KV cache")
+            // Clear KV cache to prevent context mixing between sessions
+            modelMutex.withLock { llamaContext?.clearKvCache() }
             lastSessionId = sessionId
         }
 

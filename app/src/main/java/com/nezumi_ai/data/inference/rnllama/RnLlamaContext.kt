@@ -109,6 +109,12 @@ class RnLlamaContext(
         RnLlamaNative.nativeInterrupt(p)
     }
 
+    fun clearKvCache() {
+        val p = ptr
+        if (p == 0L) return
+        RnLlamaNative.nativeClearKvCache(p)
+    }
+
     fun release() {
         val p = ptr
         if (p == 0L) return

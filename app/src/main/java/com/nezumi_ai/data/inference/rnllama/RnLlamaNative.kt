@@ -104,4 +104,10 @@ object RnLlamaNative {
      * Release context and free native resources
      */
     external fun nativeReleaseContext(contextPtr: Long)
+
+    /**
+     * Clear KV cache for the given context
+     * Call this when switching sessions or models to ensure clean state
+     */
+    external fun nativeClearKvCache(contextPtr: Long)
 }

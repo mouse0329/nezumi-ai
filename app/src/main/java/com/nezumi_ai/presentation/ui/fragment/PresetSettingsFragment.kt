@@ -457,7 +457,9 @@ class PresetSettingsFragment : Fragment() {
         ToolOption(PresetConstants.TOOL_ALARM, "アラーム"),
         ToolOption(PresetConstants.TOOL_TIMER, "タイマー"),
         ToolOption(PresetConstants.TOOL_FLASHLIGHT, "フラッシュライト"),
-        ToolOption(PresetConstants.TOOL_IMAGE_GENERATION, "画像生成")
+        ToolOption(PresetConstants.TOOL_IMAGE_GENERATION, "画像生成"),
+        ToolOption(PresetConstants.TOOL_MEMORY, "メモリ検索"),
+        ToolOption(PresetConstants.TOOL_CALENDAR, "カレンダー")
     )
 
     private data class ToolOption(val id: String, val label: String)

@@ -63,6 +63,7 @@ class PresetRepository(
     suspend fun initializeDefaultsIfNeeded() {
         if (dao.count() > 0) {
             ensureNezumiAiDefaultExists()
+            updateNezumiAiDefaultTools()  // 既存のデフォルトプリセットのツールを更新
             ensurePlainPresetsForDownloadedModels()
             deleteLegacyGeneratedDefaults()
             ensureCurrentPresetSelected()
@@ -121,6 +122,19 @@ class PresetRepository(
     private suspend fun ensureNezumiAiDefaultExists() {
         if (dao.getById(DEFAULT_NEZUMI_AI_ID) != null) return
         dao.insert(createNezumiAiDefault())
+    }
+
+    private suspend fun updateNezumiAiDefaultTools() {
+        val existing = dao.getById(DEFAULT_NEZUMI_AI_ID) ?: return
+        // デフォルトプリセットのツールを最新の allToolIds に更新
+        val updatedTools = encodeToolIds(PresetConstants.allToolIds)
+        if (existing.enabledTools != updatedTools) {
+            dao.update(existing.copy(enabledTools = updatedTools, updatedAt = System.currentTimeMillis()))
+            // 現在選択中のプリセットがデフォルトなら、ToolPreferences も更新
+            if (PreferencesHelper.getCurrentPresetId(context) == DEFAULT_NEZUMI_AI_ID) {
+                ToolPreferences(context).setActivePresetToolIds(updatedTools)
+            }
+        }
     }
 
     private suspend fun deleteLegacyGeneratedDefaults() {
