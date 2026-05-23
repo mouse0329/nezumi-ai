@@ -1,5 +1,6 @@
 package com.nezumi_ai.presentation.ui.fragment
 
+import android.Manifest
 import android.app.AlarmManager
 import android.content.Intent
 import android.os.Build
@@ -55,6 +56,22 @@ class ToolsSettingsFragment : Fragment() {
                     updateToolEnabledDirect(NezumiTool.FLASHLIGHT, false)
                     toast("ライト機能にはカメラ権限が必要です")
                 }
+            }
+        }
+
+    private val calendarPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+            val tool = pendingEnableTool
+            pendingEnableTool = null
+            if (tool == null) return@registerForActivityResult
+
+            val readGranted = results[Manifest.permission.READ_CALENDAR] == true
+            val writeGranted = results[Manifest.permission.WRITE_CALENDAR] == true
+            if (readGranted && writeGranted) {
+                updateToolEnabledDirect(tool, true)
+            } else {
+                updateToolEnabledDirect(tool, false)
+                toast("カレンダー機能にはカレンダー権限が必要です")
             }
         }
 
@@ -256,6 +273,16 @@ class ToolsSettingsFragment : Fragment() {
                 cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
                 return
             }
+        }
+        if (enabled && (tool == NezumiTool.ADD_CALENDAR_EVENT || tool == NezumiTool.LIST_CALENDAR_EVENTS)) {
+            pendingEnableTool = tool
+            calendarPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.READ_CALENDAR,
+                    Manifest.permission.WRITE_CALENDAR
+                )
+            )
+            return
         }
         if (enabled && tool == NezumiTool.SET_ALARM && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val alarmManager = requireContext().getSystemService(AlarmManager::class.java)

@@ -312,18 +312,23 @@ class MemoryExtractionWorker(
                 temperature = 0.1f,
                 contextCompressionEnabled = false
             )
-            val flow = manager.runInference(
-                sessionId = 0L,
-                prompt = prompt,
-                config = contradictionConfig
-            )
-            val builder = StringBuilder()
-            flow.collect { chunk ->
-                val final = InferenceStreamProtocol.decodeFinal(chunk)
-                if (final != null) { builder.clear(); builder.append(final) }
-                else if (chunk.isNotEmpty()) builder.append(chunk)
+            val tempSessionId = manager.sessionManager.createSession()
+            try {
+                val flow = manager.runInference(
+                    sessionId = tempSessionId,
+                    prompt = prompt,
+                    config = contradictionConfig
+                )
+                val builder = StringBuilder()
+                flow.collect { chunk ->
+                    val final = InferenceStreamProtocol.decodeFinal(chunk)
+                    if (final != null) { builder.clear(); builder.append(final) }
+                    else if (chunk.isNotEmpty()) builder.append(chunk)
+                }
+                builder.toString().trim()
+            } finally {
+                manager.sessionManager.endSession(tempSessionId)
             }
-            builder.toString().trim()
         } ?: return emptyList()
 
         // "UPDATE:123,456" をパース

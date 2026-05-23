@@ -373,14 +373,9 @@ class LiteRtLmEngine(
             }
         }
 
-        convToAttach?.let { convCreated ->
-            try {
-                sessionManager.attachConversation(0L, convCreated)
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to attach memory extraction conversation to session manager", e)
-            }
-        }
-
+        // Dedicated memory extraction conversations are managed internally
+        // and do not correspond to a regular session ID in SessionResourceManager.
+        // No session attachment is required.
         return memoryExtractionConversation!!
     }
 
