@@ -908,17 +908,20 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeClearKvCache(
         return;
     if (holder->is_released.load(std::memory_order_acquire))
         return;
-    
+
     if (holder->ctx && holder->ctx->ctx)
     {
         // Use llama C API to clear the memory (KV cache)
         llama_memory_t mem = llama_get_memory(holder->ctx->ctx);
-        if (mem) {
+        if (mem)
+        {
             // false = clear positions but keep backing buffers where possible
             llama_memory_clear(mem, false);
-            __android_log_print(ANDROID_LOG_INFO, TAG, "nativeClearKvCache: KV cache cleared for context %p", (void*)holder->ctx->ctx);
-        } else {
-            __android_log_print(ANDROID_LOG_WARN, TAG, "nativeClearKvCache: llama_get_memory returned null for context %p", (void*)holder->ctx->ctx);
+            __android_log_print(ANDROID_LOG_INFO, TAG, "nativeClearKvCache: KV cache cleared for context %p", (void *)holder->ctx->ctx);
+        }
+        else
+        {
+            __android_log_print(ANDROID_LOG_WARN, TAG, "nativeClearKvCache: llama_get_memory returned null for context %p", (void *)holder->ctx->ctx);
         }
     }
 }
