@@ -22,7 +22,13 @@ import android.widget.PopupWindow
 import android.widget.TextView
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import com.nezumi_ai.data.database.NezumiAiDatabase
+import com.nezumi_ai.data.repository.ChatChunkRepository
+import com.nezumi_ai.presentation.ui.screen.HistorySearchModal
+import com.nezumi_ai.presentation.viewmodel.ChatSessionListViewModel
+import com.nezumi_ai.presentation.viewmodel.ChatSessionListViewModelFactory
 import com.nezumi_ai.data.database.entity.ChatSessionEntity
 import com.nezumi_ai.data.repository.ChatSessionRepository
 import com.nezumi_ai.data.repository.SettingsRepository
@@ -112,6 +118,43 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+
+    private fun showHistorySearchModal() {
+        val database = NezumiAiDatabase.getInstance(this)
+        val repository = ChatSessionRepository(database.chatSessionDao())
+        val chunkRepository = ChatChunkRepository(database.chatChunkDao(), this)
+        val factory = ChatSessionListViewModelFactory(repository, chunkRepository)
+        val viewModel = androidx.lifecycle.ViewModelProvider(this, factory)[ChatSessionListViewModel::class.java]
+
+        val composeView = ComposeView(this).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+            setContent {
+                androidx.compose.material3.MaterialTheme {
+                    HistorySearchModal(
+                        viewModel = viewModel,
+                        onResultClick = { sessionId, messageId ->
+                            val bundle = android.os.Bundle().apply {
+                                putLong("sessionId", sessionId)
+                                putLong("scrollToMessageId", messageId)
+                            }
+                            findNavController(R.id.nav_host_fragment_content_main)
+                                .navigate(R.id.chatFragment, bundle)
+                            (window.decorView as? android.view.ViewGroup)?.removeView(this)
+                        },
+                        onDismiss = {
+                            (window.decorView as? android.view.ViewGroup)?.removeView(this)
+                        }
+                    )
+                }
+            }
+        }
+        (window.decorView as android.view.ViewGroup).addView(
+            composeView,
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT
+        )
+    }
+
     fun openDrawer() {
         binding.drawerLayout.openDrawer(GravityCompat.START)
     }
@@ -168,6 +211,10 @@ class MainActivity : AppCompatActivity() {
             if (navController.currentDestination?.id != R.id.imageGenFragment) {
                 navController.navigate(R.id.imageGenFragment)
             }
+        }
+        binding.drawerSearchButton.setOnClickListener {
+            closeDrawer()
+            showHistorySearchModal()
         }
     }
 

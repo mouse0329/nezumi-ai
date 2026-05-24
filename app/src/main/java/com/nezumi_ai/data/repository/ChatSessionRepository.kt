@@ -58,6 +58,9 @@ class ChatSessionRepository(
         return sessions.maxByOrNull { it.lastUpdated }
     }
 
+
+    suspend fun getAllSessionsOnce(): List<ChatSessionEntity> = dao.getAllSessions()
+
     suspend fun deleteAllIncognitoSessions() {
         // Delete sessions marked as incognito
         val allSessions = dao.getAllSessionsIncludingIncognito()
