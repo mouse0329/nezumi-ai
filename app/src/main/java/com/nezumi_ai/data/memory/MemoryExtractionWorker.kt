@@ -52,7 +52,7 @@ class MemoryExtractionWorker(
         saveMode: MemorySaveMode
     ) {
         extractionScope.launch {
-            runExtraction(sessionId, messages, manager, config, saveMode)
+            runExtraction(sessionId, messages, manager, config, saveMode, suppressContradictionDeletion = false)
         }
     }
 
@@ -63,7 +63,8 @@ class MemoryExtractionWorker(
         manager: ModelManager,
         config: InferenceConfig,
         saveMode: MemorySaveMode,
-        fetchMessages: suspend (Long) -> List<MessageEntity>
+        fetchMessages: suspend (Long) -> List<MessageEntity>,
+        suppressContradictionDeletion: Boolean = false
     ) {
         extractionScope.launch {
             val pending = memorySessionRepository.getPendingSessions()
@@ -71,7 +72,7 @@ class MemoryExtractionWorker(
             for (session in pending) {
                 val sessionId = session.id.toLongOrNull() ?: continue
                 val messages = fetchMessages(sessionId)
-                runExtraction(sessionId, messages, manager, config, saveMode)
+                runExtraction(sessionId, messages, manager, config, saveMode, suppressContradictionDeletion)
             }
         }
     }
@@ -85,7 +86,8 @@ class MemoryExtractionWorker(
         messages: List<MessageEntity>,
         manager: ModelManager,
         config: InferenceConfig,
-        saveMode: MemorySaveMode
+        saveMode: MemorySaveMode,
+        suppressContradictionDeletion: Boolean
     ) {
         if (messages.isEmpty()) return
 
@@ -117,7 +119,7 @@ class MemoryExtractionWorker(
             Log.d(TAG, "MEMORY_EXTRACT: session=$sessionId extracted ${candidates.size} candidates with mode=$saveMode")
 
             for (candidate in candidates) {
-                saveWithContradictionCheck(sessionId, candidate, manager, config)
+                saveWithContradictionCheck(sessionId, candidate, manager, config, !suppressContradictionDeletion)
             }
 
             memorySessionRepository.markExtracted(sessionId.toString(), currentTurn)
@@ -139,18 +141,19 @@ class MemoryExtractionWorker(
         manager: ModelManager,
         config: InferenceConfig
     ): List<MemoryCandidate> {
-        val transcript = messages.mapNotNull { msg ->
-            val role = if (msg.role == "assistant") "AI" else "ユーザー"
-            val content = msg.content.trim()
-            if (content.isBlank()) null else "$role: $content"
-        }.joinToString("\n")
+        // ユーザーの入力のみを抽出対象とする
+        val transcript = messages.filter { msg ->
+            msg.role == "user"
+        }.map { msg ->
+            msg.content.trim()
+        }.filter { it.isNotBlank() }.joinToString("\n")
 
         val prompt = buildString {
             append("次のJSONのみ出力せよ。他の文字は一切出力禁止。\n\n")
             append("[{\"content\":\"事実\",\"importance\":0.8}]\n\n")
-            append("会話から記憶すべき事実（ユーザーの名前・好み・設定・状況など）を抽出して上記形式で出力せよ。\n")
+            append("ユーザーの発言から記憶すべき事実（ユーザーの名前・好み・設定・状況など）を抽出して上記形式で出力せよ。\n")
             append("事実がなければ [] のみ出力せよ。\n\n")
-            append("会話:\n")
+            append("ユーザーの発言:\n")
             append(transcript)
         }
 
@@ -250,7 +253,8 @@ class MemoryExtractionWorker(
         sessionId: Long,
         candidate: MemoryCandidate,
         manager: ModelManager,
-        config: InferenceConfig
+        config: InferenceConfig,
+        allowContradictionDeletion: Boolean = true
     ) {
         val embedding = MemoryTextEmbedder.embed(candidate.content)
 
@@ -267,16 +271,20 @@ class MemoryExtractionWorker(
             return
         }
 
-        // 矛盾チェック対象（similarity 0.3〜0.94）
-        val contradictionCandidates = nearest.filter { it.similarity in 0.3f..0.94f }
-        if (contradictionCandidates.isNotEmpty()) {
-            val existingText = contradictionCandidates
-                .joinToString("\n") { "ID${it.memory.id}: ${it.memory.content}" }
-            val idsToDelete = runContradictionCheck(existingText, candidate.content, manager, config)
-            for (id in idsToDelete) {
-                memoryRepository.softDelete(id)
-                Log.d(TAG, "MEMORY_CONTRADICTION: soft-deleted id=$id")
+        if (allowContradictionDeletion) {
+            // 矛盾チェック対象（similarity 0.3〜0.94）
+            val contradictionCandidates = nearest.filter { it.similarity in 0.3f..0.94f }
+            if (contradictionCandidates.isNotEmpty()) {
+                val existingText = contradictionCandidates
+                    .joinToString("\n") { "ID${it.memory.id}: ${it.memory.content}" }
+                val idsToDelete = runContradictionCheck(existingText, candidate.content, manager, config)
+                for (id in idsToDelete) {
+                    memoryRepository.softDelete(id)
+                    Log.d(TAG, "MEMORY_CONTRADICTION: soft-deleted id=$id")
+                }
             }
+        } else {
+            Log.d(TAG, "MEMORY_SAVE: skipping contradiction deletion for startup pending extraction")
         }
 
         memoryRepository.saveMemory(

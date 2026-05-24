@@ -25,6 +25,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
@@ -74,6 +75,14 @@ class LiteRtLmEngine(
     private val modelMutex = Mutex()
     private val inferenceMutex = Mutex()
     private val inferenceMutexHeld = AtomicBoolean(false)
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 14: 抽出推論の割り込み検出メカニズム
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    /** 通常推論がリクエストされていることを示すフラグ。抽出推論がこれを見て自分をキャンセル */
+    @Volatile private var normalInferenceRequested = false
+    
     private val alarmDao by lazy { NezumiAiDatabase.getInstance(appContext).alarmDao() }
     private val memoryRepository: com.nezumi_ai.data.repository.MemoryRepository by lazy { 
         val db = NezumiAiDatabase.getInstance(appContext)
@@ -84,7 +93,7 @@ class LiteRtLmEngine(
     }
 
     /** Engine は同時に 1 セッションのみ。コールバックスレッドと awaitClose の競合もここで直列化する */
-    private val activeConversationLock = Any()
+    private val activeConversationLock = Mutex()
     /** activeConversationLock で保護。@Volatile 不要（全アクセスが synchronized 内） */
     private var activeLiteRtConversation: Conversation? = null
     
@@ -141,27 +150,43 @@ class LiteRtLmEngine(
     }
 
     private fun cancelActiveConversation() {
-        synchronized(activeConversationLock) {
-            cancelConversation(activeLiteRtConversation)
+        runBlocking {
+            activeConversationLock.withLock {
+                cancelConversation(activeLiteRtConversation)
+            }
         }
     }
 
     private fun cancelMemoryExtractionConversation() {
-        synchronized(activeConversationLock) {
-            cancelConversation(memoryExtractionConversation)
+        runBlocking {
+            activeConversationLock.withLock {
+                cancelConversation(memoryExtractionConversation)
+            }
         }
     }
 
     /**
      * セッション遷移時のみ使用。古い Conversation を close() して新たに作成する。
      */
-    private fun closeAndResetActiveConversation() {
-        synchronized(activeConversationLock) {
+    private suspend fun closeAndResetActiveConversation(sessionId: Long? = null) {
+        activeConversationLock.withLock {
             val c = activeLiteRtConversation ?: return
             activeLiteRtConversation = null
             activeLiteRtConversationKey = null
+            
             runCatching {
                 Log.d(TAG, "Closing active conversation")
+                // 1. まずネイティブプロセスをキャンセル
+                c.cancelProcess()
+                
+                // 2. セッションIDが指定されている場合、関連タスクのキャンセルを待機
+                if (sessionId != null) {
+                    jobController.cancelSessionTasks(sessionId)
+                    // ネイティブ側がキャンセルを処理し、スレッドが安全に停止するまでわずかに待機
+                    // (SIGSEGV 回避のための安全策)
+                    Thread.sleep(50) 
+                }
+                
                 c.close()
             }.onFailure { t ->
                 Log.w(TAG, "Failed to close conversation", t)
@@ -170,8 +195,8 @@ class LiteRtLmEngine(
         }
     }
 
-    private fun closeAndResetMemoryExtractionConversation() {
-        synchronized(activeConversationLock) {
+    private suspend fun closeAndResetMemoryExtractionConversation() {
+        activeConversationLock.withLock {
             val c = memoryExtractionConversation ?: return
             memoryExtractionConversation = null
             memoryExtractionConversationConfig = null
@@ -207,23 +232,22 @@ class LiteRtLmEngine(
         var attempt = 0
         while (!created && attempt < maxAttempts) {
             attempt++
-            synchronized(activeConversationLock) {
+            
+            // ロックの外でリソースをクリーンアップ
+            if (memoryExtractionConversation != null) {
+                Log.i(TAG, "Closing existing memory extraction conversation before creating new one")
+                closeAndResetMemoryExtractionConversation()
+            }
+
+            // 現在のセッション情報を取得してロック外でクローズを呼ぶ
+            val currentSessionId = activeConversationLock.withLock { activeLiteRtConversationKey?.sessionId }
+            if (currentSessionId != null) {
+                closeAndResetActiveConversation(currentSessionId)
+            }
+
+            activeConversationLock.withLock {
                 // セッションIDまたはThinking設定が変わった場合は新しいConversationを作成
                 if (activeLiteRtConversation == null || activeLiteRtConversationKey != requestKey) {
-                    Log.i(
-                        TAG,
-                        "Session changed. Creating new conversation: lastKey=$activeLiteRtConversationKey, newKey=$requestKey (attempt=$attempt)"
-                    )
-
-                    // 既に存在するメモリ抽出用 Conversation があれば閉じる
-                    if (memoryExtractionConversation != null) {
-                        Log.i(TAG, "Closing existing memory extraction conversation before creating new one")
-                        closeAndResetMemoryExtractionConversation()
-                    }
-
-                    closeAndResetActiveConversation()
-
-                    ExperimentalFlags.enableConversationConstrainedDecoding = false
                     val samplerConfig = if (normalized.backendType.uppercase() == "NPU") {
                         null
                     } else {
@@ -291,17 +315,8 @@ class LiteRtLmEngine(
         eng: Engine,
         config: InferenceConfig
     ): Conversation {
-        // 通常の会話セッションが使用中の場合は待機
-        var waitCount = 0
-        while (inferenceMutexHeld.get() && waitCount < 100) {
-            Log.d(TAG, "Waiting for active inference to complete before creating memory extraction conversation (attempt=${waitCount + 1})")
-            kotlinx.coroutines.delay(200)
-            waitCount++
-        }
-        
-        if (inferenceMutexHeld.get()) {
-            throw IllegalStateException("Cannot create memory extraction conversation: active inference still running")
-        }
+        // Note: At this point, inferenceMutex is already held by the calling inference() function.
+        // No need to wait for it.
         
         var convToAttach: Conversation? = null
         var created = false
@@ -311,57 +326,65 @@ class LiteRtLmEngine(
 
         while (!created && attempt < maxAttempts) {
             attempt++
-            synchronized(activeConversationLock) {
+
+            // まずロック内で作成が必要か確認し、フラグだけを立てる
+            var needCreate = false
+            activeConversationLock.withLock {
                 if (memoryExtractionConversation == null || memoryExtractionConversationConfig != normalized) {
                     Log.i(TAG, "Creating new memory extraction conversation (attempt=$attempt)")
-
-                    // 競合を避けるため、アクティブ会話を閉じる
-                    if (activeLiteRtConversation != null) {
-                        Log.i(TAG, "Closing active conversation before creating memory extraction conversation")
-                        closeAndResetActiveConversation()
-                    }
-
-                    closeAndResetMemoryExtractionConversation()
-
-                    ExperimentalFlags.enableConversationConstrainedDecoding = false
-                    val samplerConfig = if (normalized.backendType.uppercase() == "NPU") {
-                        null
-                    } else {
-                        SamplerConfig(
-                            topK = normalized.maxTopK,
-                            topP = normalized.topP.toDouble(),
-                            temperature = normalized.temperature.toDouble()
-                        )
-                    }
-
-                    val canUseSpeculative = normalized.enableSpeculativeDecoding &&
-                        normalized.backendType.uppercase() == "GPU"
-                    ExperimentalFlags.enableSpeculativeDecoding = canUseSpeculative
-
-                    try {
-                        val conv = eng.createConversation(
-                            ConversationConfig(
-                                tools = emptyList(),  // メモリ抽出はツール不要
-                                samplerConfig = samplerConfig,
-                                automaticToolCalling = false
-                            )
-                        )
-                        memoryExtractionConversation = conv
-                        memoryExtractionConversationConfig = normalized
-                        convToAttach = conv
-                        Log.d(TAG, "Memory extraction conversation created")
-                        created = true
-                    } catch (t: Throwable) {
-                        Log.w(TAG, "createConversation for memory extraction failed on attempt $attempt: ${t.message}")
-                        if (attempt < maxAttempts && t.message?.contains("session already exists", ignoreCase = true) == true) {
-                            // will retry after brief sleep
-                        } else {
-                            throw t
-                        }
-                    }
+                    needCreate = true
                 } else {
                     Log.d(TAG, "Memory extraction conversation reused")
                     created = true
+                }
+            }
+
+            if (needCreate) {
+                // 既存のメモリ抽出 Conversation を安全にクローズ（suspend 関数、ロック外で呼ぶ）
+                if (memoryExtractionConversation != null) {
+                    closeAndResetMemoryExtractionConversation()
+                }
+
+                ExperimentalFlags.enableConversationConstrainedDecoding = false
+                val samplerConfig = if (normalized.backendType.uppercase() == "NPU") {
+                    null
+                } else {
+                    SamplerConfig(
+                        topK = normalized.maxTopK,
+                        topP = normalized.topP.toDouble(),
+                        temperature = normalized.temperature.toDouble()
+                    )
+                }
+
+                val canUseSpeculative = normalized.enableSpeculativeDecoding &&
+                    normalized.backendType.uppercase() == "GPU"
+                ExperimentalFlags.enableSpeculativeDecoding = canUseSpeculative
+
+                try {
+                    val conv = eng.createConversation(
+                        ConversationConfig(
+                            tools = emptyList(),  // メモリ抽出はツール不要
+                            samplerConfig = samplerConfig,
+                            automaticToolCalling = false
+                        )
+                    )
+
+                    // 作成した Conversation をロック内で設定
+                    activeConversationLock.withLock {
+                        memoryExtractionConversation = conv
+                        memoryExtractionConversationConfig = normalized
+                    }
+
+                    convToAttach = conv
+                    Log.d(TAG, "Memory extraction conversation created")
+                    created = true
+                } catch (t: Throwable) {
+                    Log.w(TAG, "createConversation for memory extraction failed on attempt $attempt: ${t.message}")
+                    if (attempt < maxAttempts && t.message?.contains("session already exists", ignoreCase = true) == true) {
+                        // will retry after brief sleep
+                    } else {
+                        throw t
+                    }
                 }
             }
 
@@ -754,7 +777,24 @@ class LiteRtLmEngine(
         audioClips: List<ByteArray>,
         config: InferenceConfig
     ): Flow<String> = callbackFlow {
+        val normalized = config.normalized()
+        val useExtractionConversation = !normalized.enableThinking && sessionId == 0L
+
+        // 通常推論の場合、フラグをセット（抽出推論がこれを見てキャンセルする）
+        if (!useExtractionConversation) {
+            normalInferenceRequested = true
+        }
+
+        // 全ての推論（通常＆抽出）が同じmutexで直列化
         acquireInferenceMutex()
+
+        // 抽出推論がmutexを取った直後に通常推論がリクエストされたら、抽出をキャンセルして即座に終了
+        if (useExtractionConversation && normalInferenceRequested) {
+            Log.d(TAG, "Memory extraction cancelled due to normal inference request")
+            releaseInferenceMutex()
+            close()
+            return@callbackFlow
+        }
 
         val eng = modelMutex.withLock { engine }
         if (eng == null) {
@@ -763,7 +803,6 @@ class LiteRtLmEngine(
             return@callbackFlow
         }
 
-        val normalized = config.normalized()
         val visionEnabled = loadedWithVisionAudio
         val hasMultimodalInput = images.isNotEmpty() || audioClips.isNotEmpty()
 
@@ -806,8 +845,6 @@ class LiteRtLmEngine(
             close()
             return@callbackFlow
         }
-
-        val useExtractionConversation = !normalized.enableThinking && sessionId == 0L
         try {
             Log.d(TAG, "LiteRT inference session=$sessionId images=${images.size} audio=${audioClips.size} enableThinking=${normalized.enableThinking} visionEnabled=$visionEnabled")
 
@@ -1006,6 +1043,10 @@ class LiteRtLmEngine(
                     }
                 } finally {
                     releaseInferenceMutex()
+                    // 通常推論が終了したらフラグをリセット（抽出が再開できるように）
+                    if (!useExtractionConversation) {
+                        normalInferenceRequested = false
+                    }
                 }
             }
 
@@ -1027,6 +1068,9 @@ class LiteRtLmEngine(
             }
             // ★ 外側で例外が発生した場合も必ず release する（generationJob.finally が実行されない可能性あり）
             releaseInferenceMutex()
+            if (!useExtractionConversation) {
+                normalInferenceRequested = false
+            }
             if (t is CancellationException) {
                 close(t)
                 return@callbackFlow

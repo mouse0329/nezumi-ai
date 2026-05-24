@@ -13,6 +13,7 @@ import com.nezumi_ai.data.database.entity.AlarmEntity
 import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import com.nezumi_ai.data.tools.ToolSystemController
+import com.nezumi_ai.utils.PreferencesHelper
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -79,6 +80,10 @@ private val TOOL_NAME_MAP = mapOf(
     "list_calendar_events" to "listcalendarevents",
     "listCalendarEvents"   to "listcalendarevents",
     "listcalendarevents"   to "listcalendarevents",
+    // web_search
+    "web_search"           to "websearch",
+    "webSearch"            to "websearch",
+    "websearch"            to "websearch",
 )
 
 // ─────────────────────────────────────────────
@@ -118,6 +123,10 @@ internal fun buildEnabledToolProviders(context: Context, alarmDao: AlarmDao): Li
         }
         if (NezumiTool.ADD_CALENDAR_EVENT in enabled) add(tool(AddCalendarEventSchema()))
         if (NezumiTool.LIST_CALENDAR_EVENTS in enabled) add(tool(ListCalendarEventsSchema()))
+        if (NezumiTool.WEB_SEARCH in enabled) {
+            Log.d(TOOL_TAG, "Adding WebSearchSchema to tool providers")
+            add(tool(WebSearchSchema()))
+        }
     }.also {
         Log.d(TOOL_TAG, "Total tool providers registered: ${it.size}")
     }
@@ -235,6 +244,18 @@ private class ListCalendarEventsSchema : ToolSet {
     ): Map<String, Any?> = emptyMap()
 }
 
+private class WebSearchSchema : ToolSet {
+    @Tool(description = "Search the web using Brave Search API")
+    fun webSearch(
+        @ToolParam(description = "Search query text") query: String,
+        @ToolParam(description = "Result count 1-20") count: Int?,
+        @ToolParam(description = "Page offset 0-9") offset: Int?,
+        @ToolParam(description = "2-letter ISO country code only. Example: JP, US, GB") country: String?,
+        @ToolParam(description = "2-letter language code only. Example: ja, en") searchLang: String?,
+        @ToolParam(description = "Safe search: off, moderate, or strict") safeSearch: String?
+    ): Map<String, Any?> = emptyMap()
+}
+
 // ─────────────────────────────────────────────
 // 実行エンジン（単一責任・全ロジックここに集約）
 // ─────────────────────────────────────────────
@@ -280,6 +301,7 @@ internal class NezumiLiteRtToolExecutor(
             "searchmemory"    -> executeSearchMemory(toolCall)
             "addcalendarevent" -> executeAddCalendarEvent(toolCall)
             "listcalendarevents" -> executeListCalendarEvents(toolCall)
+            "websearch"       -> executeWebSearch(toolCall)
             else -> {
                 Log.w(TOOL_TAG, "Unknown tool: ${toolCall.name}")
                 ToolExecutionResult(
@@ -305,6 +327,7 @@ internal class NezumiLiteRtToolExecutor(
             "searchmemory" -> NezumiTool.SEARCH_MEMORY
             "addcalendarevent" -> NezumiTool.ADD_CALENDAR_EVENT
             "listcalendarevents" -> NezumiTool.LIST_CALENDAR_EVENTS
+            "websearch" -> NezumiTool.WEB_SEARCH
             else -> null
         }
     }
@@ -657,6 +680,73 @@ internal class NezumiLiteRtToolExecutor(
                     "success" to false,
                     "error" to "list_events_failed:${result.exceptionOrNull()?.message.orEmpty()}"
                 )
+            )
+        }
+    }
+
+    private suspend fun executeWebSearch(toolCall: ToolCall): ToolExecutionResult {
+        val query = toolCall.arguments["query"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_query"))
+
+        val count = toolCall.arguments.readInt("count") ?: 10
+        val offset = toolCall.arguments.readInt("offset") ?: 0
+        val country = (toolCall.arguments["country"] ?: toolCall.arguments["country_code"])?.toString()
+            ?.replace("/", "")
+            ?.filter { it.isLetter() }
+            ?.uppercase()
+            ?.takeIf { it.length == 2 } ?: "JP"
+        val searchLang = (toolCall.arguments["searchLang"] ?: toolCall.arguments["search_lang"])?.toString()
+            ?.let { lang ->
+                when (lang.lowercase()) {
+                    "ja", "japanese" -> "jp"
+                    else -> lang.lowercase()
+                }
+            }?.takeIf { it.length >= 2 } ?: "jp"
+        val safeSearch = (toolCall.arguments["safeSearch"] ?: toolCall.arguments["safesearch"])?.toString()?.lowercase() ?: "moderate"
+
+        // Validate parameters
+        if (count !in 1..20) {
+            return ToolExecutionResult(false, mapOf("success" to false, "error" to "invalid_count"))
+        }
+        if (offset !in 0..9) {
+            return ToolExecutionResult(false, mapOf("success" to false, "error" to "invalid_offset"))
+        }
+
+        return try {
+            val apiKey = PreferencesHelper.getBraveSearchApiKey(context.applicationContext).takeIf { it.isNotBlank() }
+                ?: context.applicationContext.getSharedPreferences("web_search_prefs", android.content.Context.MODE_PRIVATE)
+                    .getString("brave_api_key", null)
+            if (apiKey.isNullOrBlank()) {
+                return ToolExecutionResult(
+                    success = false,
+                    payload = mapOf("success" to false, "error" to "api_key_not_configured")
+                )
+            }
+
+            val results = performBraveSearch(
+                query = query,
+                count = count,
+                offset = offset,
+                country = country,
+                searchLang = searchLang,
+                safeSearch = safeSearch,
+                apiKey = apiKey
+            )
+
+            ToolExecutionResult(
+                success = true,
+                payload = mapOf(
+                    "success" to true,
+                    "query" to query,
+                    "count" to results.size,
+                    "results" to results
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TOOL_TAG, "Web search failed", e)
+            ToolExecutionResult(
+                success = false,
+                payload = mapOf("success" to false, "error" to "search_failed:${e.message}")
             )
         }
     }

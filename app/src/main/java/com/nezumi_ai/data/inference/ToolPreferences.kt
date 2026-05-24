@@ -19,7 +19,8 @@ enum class NezumiTool(val displayName: String) {
     GENERATE_IMAGE("画像生成(SD)"),
     SEARCH_MEMORY("メモリ検索"),
     ADD_CALENDAR_EVENT("カレンダー追加"),
-    LIST_CALENDAR_EVENTS("カレンダー一覧")
+    LIST_CALENDAR_EVENTS("カレンダー一覧"),
+    WEB_SEARCH("ウェブ検索")
 }
 
 class ToolPreferences(context: Context) {
@@ -48,6 +49,7 @@ class ToolPreferences(context: Context) {
             NezumiTool.SEARCH_MEMORY -> setOf(PresetConstants.TOOL_MEMORY)
             NezumiTool.ADD_CALENDAR_EVENT,
             NezumiTool.LIST_CALENDAR_EVENTS -> setOf(PresetConstants.TOOL_CALENDAR)
+            NezumiTool.WEB_SEARCH -> setOf(PresetConstants.TOOL_WEB_SEARCH)
         }
     }
 
@@ -76,6 +78,9 @@ class ToolPreferences(context: Context) {
                 }
                 if (!prefs.contains(keyFor(NezumiTool.LIST_CALENDAR_EVENTS))) {
                     editor.putBoolean(keyFor(NezumiTool.LIST_CALENDAR_EVENTS), false)
+                }
+                if (!prefs.contains(keyFor(NezumiTool.WEB_SEARCH))) {
+                    editor.putBoolean(keyFor(NezumiTool.WEB_SEARCH), false)
                 }
                 editor.apply()
             }

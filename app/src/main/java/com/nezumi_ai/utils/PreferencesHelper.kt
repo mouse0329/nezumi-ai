@@ -14,6 +14,7 @@ object PreferencesHelper {
     private const val KEY_SD_STEPS = "sd_steps"
     private const val KEY_SD_CFG = "sd_cfg"
     private const val KEY_CURRENT_PRESET_ID = "current_preset_id"
+    private const val KEY_BRAVE_SEARCH_API_KEY = "brave_search_api_key"
 
     const val THEME_SYSTEM = "SYSTEM"
     const val THEME_LIGHT = "LIGHT"
@@ -116,5 +117,13 @@ object PreferencesHelper {
 
     fun setCurrentPresetId(context: Context, presetId: String) {
         getSharedPreferences(context).edit().putString(KEY_CURRENT_PRESET_ID, presetId).apply()
+    }
+
+    fun getBraveSearchApiKey(context: Context): String {
+        return getSharedPreferences(context).getString(KEY_BRAVE_SEARCH_API_KEY, "") ?: ""
+    }
+
+    fun setBraveSearchApiKey(context: Context, apiKey: String) {
+        getSharedPreferences(context).edit().putString(KEY_BRAVE_SEARCH_API_KEY, apiKey.trim()).apply()
     }
 }
