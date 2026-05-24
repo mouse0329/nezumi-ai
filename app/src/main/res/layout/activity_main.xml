@@ -27,14 +27,14 @@
             <TextView android:id="@+id/drawer_title" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/app_name" android:textColor="@color/text_primary" android:textSize="20sp" android:textStyle="bold" />
         </LinearLayout>
 
-        <!-- クイックナビ（設定・モデル・ツール）横並び -->
+        <!-- クイックナビ（設定・モデル・プリセット）横並び -->
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal" android:layout_marginBottom="20dp">
 
             <com.google.android.material.button.MaterialButton android:id="@+id/drawer_settings_button" android:layout_width="0dp" android:layout_height="40dp" android:layout_weight="1" android:layout_marginEnd="4dp" android:padding="0dp" android:text="@string/action_settings" android:textSize="11sp" style="@style/Widget.MaterialComponents.Button.OutlinedButton" app:icon="@drawable/settings_24" app:iconGravity="textStart" app:cornerRadius="6dp" />
 
             <com.google.android.material.button.MaterialButton android:id="@+id/drawer_model_button" android:layout_width="0dp" android:layout_height="40dp" android:layout_weight="1" android:layout_marginEnd="4dp" android:layout_marginStart="0dp" android:padding="0dp" android:text="@string/model_settings" android:textSize="11sp" style="@style/Widget.MaterialComponents.Button.OutlinedButton" app:icon="@drawable/deployed_code_24" app:iconGravity="textStart" app:cornerRadius="6dp" />
 
-            <com.google.android.material.button.MaterialButton android:id="@+id/drawer_tools_button" android:layout_width="0dp" android:layout_height="40dp" android:layout_weight="1" android:layout_marginStart="0dp" android:padding="0dp" android:text="@string/tools_settings" android:textSize="11sp" style="@style/Widget.MaterialComponents.Button.OutlinedButton" app:icon="@drawable/plumbing_24" app:iconGravity="textStart" app:cornerRadius="6dp" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/drawer_tools_button" android:layout_width="0dp" android:layout_height="40dp" android:layout_weight="1" android:layout_marginStart="0dp" android:padding="0dp" android:text="プリセット" android:textSize="11sp" style="@style/Widget.MaterialComponents.Button.OutlinedButton" app:icon="@drawable/ic_nezumi_ai" app:iconGravity="textStart" app:cornerRadius="6dp" />
         </LinearLayout>
 
         <!-- 新規セッションボタン（プライマリ） -->

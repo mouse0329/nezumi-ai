@@ -119,7 +119,7 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
 
                 if (isModelLoaded &&
                     loadedModelPath == modelPath &&
-                    loadedConfig == normalized
+                    loadedConfig?.forModelLoad() == normalized.forModelLoad()
                 ) {
                     Log.d(TAG, "Model already loaded: $modelPath")
                     return@withLock Result.success(Unit)
@@ -341,7 +341,9 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
         }
 
         if (lastSessionId != sessionId) {
-            Log.d(TAG, "Session: $lastSessionId → $sessionId")
+            Log.d(TAG, "Session: $lastSessionId → $sessionId, clearing KV cache")
+            // Clear KV cache to prevent context mixing between sessions
+            modelMutex.withLock { llamaContext?.clearKvCache() }
             lastSessionId = sessionId
         }
 

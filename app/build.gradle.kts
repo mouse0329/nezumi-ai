@@ -168,12 +168,18 @@ dependencies {
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
     implementation("com.google.android.gms:play-services-tflite-java:16.4.0")
     implementation("com.google.android.gms:play-services-tflite-gpu:16.4.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.15.0")
+    implementation("ai.djl.huggingface:tokenizers:0.33.0")
+    implementation("ai.djl.android:tokenizer-native:0.33.0")
 
     implementation("androidx.biometric:biometric:1.1.0")
 
     implementation("net.openid:appauth:0.11.1")
 
     implementation("io.coil-kt:coil-compose:2.6.0")
+
+    // HTTP client for Brave Search API
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
 
     // VOICEVOX integration
     implementation(files("libs/voicevoxcore-android-0.16.4.aar"))

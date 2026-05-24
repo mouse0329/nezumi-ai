@@ -14,6 +14,7 @@ data class SettingsEntity(
     val contextWindowMap: String = "", // E2B=4096;E4B=4096;IMPORTED=4096
     val contextCompressionEnabled: Boolean = false,
     val contextCompressionThresholdPercent: Int = 70,
+    val preloadMemoryWarningThresholdPercent: Int = 50,
     val temperature: Float = 0.7f,
     val maxTopK: Int = 40,
     val maxTokens: Int = 2048,
@@ -32,6 +33,8 @@ data class SettingsEntity(
     val llamaCppNKeep: Int = 0,
     val llamaCppRopeFreqBase: Float = 0.0f,
     val llamaCppRopeFreqScale: Float = 1.0f,
+    // Memory save mode: LLM extraction or rule-based extraction
+    val memorySaveMode: String = "LLM",
     // Per-model custom stop tokens (path=token1,token2;path2=token3)
     val stopTokensMap: String = "",
     // Session persistence

@@ -5,7 +5,9 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.nezumi_ai.data.repository.ChatSessionRepository
+import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.MessageRepository
+import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 
 class ChatSessionListViewModelFactory(private val repository: ChatSessionRepository) :
@@ -20,7 +22,9 @@ class ChatViewModelFactory(
     private val appContext: Context,
     private val sessionRepository: ChatSessionRepository,
     private val messageRepository: MessageRepository,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val presetRepository: PresetRepository? = null,
+    private val memoryRepository: MemoryRepository? = null
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -28,7 +32,9 @@ class ChatViewModelFactory(
             appContext,
             sessionRepository,
             messageRepository,
-            settingsRepository
+            settingsRepository,
+            presetRepository,
+            memoryRepository
         ) as T
     }
 }

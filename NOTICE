@@ -133,6 +133,29 @@ UI & TEXT RENDERING
     - io.coil-kt:coil-compose
 
 ================================================================================
+NETWORK & UTILITIES
+================================================================================
+
+* OkHttp
+  License: Apache License 2.0
+  https://github.com/square/okhttp
+  Includes:
+    - com.squareup.okhttp3:okhttp
+
+* ONNX Runtime
+  License: MIT License
+  https://github.com/microsoft/onnxruntime
+  Includes:
+    - com.microsoft.onnxruntime:onnxruntime-android
+
+* DJL Tokenizers
+  License: Apache License 2.0
+  https://github.com/deepjavalibrary/djl
+  Includes:
+    - ai.djl.huggingface:tokenizers
+    - ai.djl.android:tokenizer-native
+
+================================================================================
 AUTHENTICATION & SECURITY
 ================================================================================
 

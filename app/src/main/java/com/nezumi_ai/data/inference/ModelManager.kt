@@ -56,7 +56,7 @@ class ModelManager(
     // ─────────────────────────────────────────────────────────
     
     private val memoryObserver = MemoryObserver
-    private val sessionManager = SessionResourceManager()
+    internal val sessionManager = SessionResourceManager()
     private val jobController = InferenceJobController()
 
     private fun getOrCreateGgufEngine(): GgufInferenceEngine? {
@@ -115,16 +115,26 @@ class ModelManager(
         val normalized = config.normalized()
         Log.w(
             TAG,
-            "Compiled-model invoke failure detected. Reloading engine and retrying once: model=$modelName backend=${normalized.backendType}"
+            "Compiled-model invoke failure detected. Recovering model=$modelName backend=${normalized.backendType}"
         )
 
         val engine = activeEngine
-        runCatching { engine.unloadModel() }
-            .onFailure { Log.w(TAG, "Engine unload during recovery failed", it) }
+        val isGpuBacked = normalized.backendType.equals("GPU", ignoreCase = true) ||
+            normalized.backendType.equals("NPU", ignoreCase = true)
+
+        if (isGpuBacked && engine is LiteRtLmEngine) {
+            Log.w(TAG, "GPU/NPU backend: using forceReset() instead of unloadModel() to avoid SIGABRT")
+            engine.forceReset()
+        } else {
+            runCatching { engine.unloadModel() }
+                .onFailure { Log.w(TAG, "Engine unload during recovery failed", it) }
+        }
 
         val reloaded = engine.loadModel(modelName, normalized)
         if (reloaded.isSuccess) {
+            activeEngine = engine
             currentConfig = normalized
+            Log.i(TAG, "Recovery reload succeeded")
             return true
         }
         Log.e(TAG, "Engine reload during recovery failed", reloaded.exceptionOrNull())
@@ -159,11 +169,23 @@ class ModelManager(
     fun isModelLoaded(modelName: String, config: InferenceConfig): Boolean {
         val normalizedConfig = config.normalized()
         val isSameModel = currentModelName == modelName
-        val isSameConfig = currentConfig == normalizedConfig
+        val isSameConfig = currentConfig?.forModelLoad() == normalizedConfig.forModelLoad()
         val isSameBackend = currentConfig?.backendType == normalizedConfig.backendType
         val isLoaded = isSameModel && isSameConfig && isSameBackend && activeEngine !== null
         
         Log.d(TAG, "isModelLoaded: model=$modelName | same=${isSameModel} config=${isSameConfig} backend=${isSameBackend} engine=${activeEngine != null} → result=$isLoaded")
+        return isLoaded
+    }
+
+    /**
+     * 同じモデルが現在ロード済みかどうかを判定する。
+     * 設定が異なっていて再ロードが必要でも、モデル自体はメモリ上にあるため
+     * 再表示されるメモリ警告を抑制したいケースで利用する。
+     */
+    fun isSameModelLoaded(modelName: String): Boolean {
+        val isSameModel = currentModelName == modelName
+        val isLoaded = isSameModel && activeEngine !== null
+        Log.d(TAG, "isSameModelLoaded: model=$modelName | same=${isSameModel} engine=${activeEngine != null} → result=$isLoaded")
         return isLoaded
     }
 
@@ -181,8 +203,8 @@ class ModelManager(
                 val normalizedConfig = config.normalized()
                 
                 // 既に同じモデルがロードされている場合はスキップ
-                val shouldSkip = currentModelName == modelName && 
-                    currentConfig == normalizedConfig &&
+                val shouldSkip = currentModelName == modelName &&
+                    currentConfig?.forModelLoad() == normalizedConfig.forModelLoad() &&
                     currentConfig?.backendType == normalizedConfig.backendType &&
                     activeEngine === engineForModel(modelName)
 

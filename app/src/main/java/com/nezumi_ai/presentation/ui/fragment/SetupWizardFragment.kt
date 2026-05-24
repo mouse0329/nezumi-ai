@@ -79,6 +79,7 @@ class SetupWizardFragment : Fragment() {
     private var currentStep by mutableStateOf(0)
     private var selectedBackend by mutableStateOf("CPU")
     private var selectedModel by mutableStateOf<String?>(null)
+    private var preloadMemoryWarningThresholdPercent by mutableStateOf(MemoryObserver.DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT)
     private var pendingDownloadModel: ModelFileManager.LocalModel? = null
     private var isCompleting by mutableStateOf(false)
 
@@ -142,6 +143,7 @@ class SetupWizardFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             selectedBackend = settingsRepository.getBackendForModel(settingsRepository.getSelectedModel())
             selectedModel = normalizeModelSelection(settingsRepository.getSelectedModel())
+            preloadMemoryWarningThresholdPercent = settingsRepository.getPreloadMemoryWarningThresholdPercent()
         }
     }
 
@@ -547,10 +549,10 @@ class SetupWizardFragment : Fragment() {
             val state = modelStates[option.model] ?: DownloadUiState()
             val selected = selectedModel == option.settingValue
             val sizeBytes = getModelSizeBytes(option.model)
-            val isMemoryLow = state.isDownloaded && MemoryObserver.isMemoryLowForFileSize(requireContext(), sizeBytes)
+            val isMemoryLow = state.isDownloaded && MemoryObserver.isMemoryLowForFileSize(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent, useAvailable = false)
             
             val resourceCheck = if (!state.isDownloaded) {
-                ModelFileManager.checkDownloadResources(requireContext(), sizeBytes)
+                ModelFileManager.checkDownloadResources(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent)
             } else {
                 ModelFileManager.ResourceCheckResult(false, false, 0f, 0f, null)
             }
@@ -755,7 +757,7 @@ class SetupWizardFragment : Fragment() {
         }
         
         val sizeBytes = getModelSizeBytes(model)
-        val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), sizeBytes)
+        val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent)
         
         if (resourceCheck.isMemoryLow || resourceCheck.isStorageLow) {
             downloadWarningModelName = modelName
@@ -871,7 +873,7 @@ class SetupWizardFragment : Fragment() {
             val option = builtinModelOptions().firstOrNull { it.settingValue == modelToCheck }
             if (option != null) {
                 val sizeBytes = getModelSizeBytes(option.model)
-                if (MemoryObserver.isMemoryLowForFileSize(requireContext(), sizeBytes)) {
+                if (MemoryObserver.isMemoryLowForFileSize(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent, useAvailable = false)) {
                     isCompleting = true
                     chatWarningModelName = modelToCheck
                     chatWarningSystemMemInfo = MemoryObserver.getSystemMemoryInfo(requireContext())

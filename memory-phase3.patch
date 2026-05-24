@@ -1,0 +1,770 @@
+diff --git a/app/src/main/java/com/nezumi_ai/data/memory/MemoryExtractionWorker.kt b/app/src/main/java/com/nezumi_ai/data/memory/MemoryExtractionWorker.kt
+new file mode 100644
+index 0000000..0000001
+--- /dev/null
++++ b/app/src/main/java/com/nezumi_ai/data/memory/MemoryExtractionWorker.kt
+@@ -0,0 +1,318 @@
++package com.nezumi_ai.data.memory
++
++import android.util.Log
++import com.nezumi_ai.data.database.entity.MessageEntity
++import com.nezumi_ai.data.inference.InferenceConfig
++import com.nezumi_ai.data.inference.InferenceStreamProtocol
++import com.nezumi_ai.data.inference.ModelManager
++import com.nezumi_ai.data.repository.MemoryRepository
++import com.nezumi_ai.data.repository.MemorySessionRepository
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.StateFlow
++import kotlinx.coroutines.flow.asStateFlow
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.withTimeoutOrNull
++import org.json.JSONArray
++import org.json.JSONObject
++
++/**
++ * Phase 3: LLMベースのメモリ抽出・矛盾解消・直列キュー
++ *
++ * - limitedParallelism(1) で直列化（同時に1セッションのみ抽出）
++ * - Gemma 4 2B で事実を JSON 抽出
++ * - 矛盾チェック → UPDATE or INSERT
++ * - MemorySessionRepository で lastExtractedTurn / pendingExtraction を管理
++ */
++class MemoryExtractionWorker(
++    private val memoryRepository: MemoryRepository,
++    private val memorySessionRepository: MemorySessionRepository
++) {
++    private val extractionScope = CoroutineScope(
++        Dispatchers.IO.limitedParallelism(1) + SupervisorJob()
++    )
++
++    private val _isExtracting = MutableStateFlow(false)
++    val isExtracting: StateFlow<Boolean> = _isExtracting.asStateFlow()
++
++    /**
++     * 抽出をキューに積む（non-blocking）
++     * @param sessionId  会話セッションID
++     * @param messages   直近の全メッセージ（DB から取得済み）
++     * @param manager    現在ロード中の ModelManager
++     * @param config     推論設定（temperature等）
++     */
++    fun enqueue(
++        sessionId: Long,
++        messages: List<MessageEntity>,
++        manager: ModelManager,
++        config: InferenceConfig
++    ) {
++        extractionScope.launch {
++            runExtraction(sessionId, messages, manager, config)
++        }
++    }
++
++    /**
++     * 起動時に pending_extraction=true のセッションを処理する
++     */
++    fun processPending(
++        manager: ModelManager,
++        config: InferenceConfig,
++        fetchMessages: suspend (Long) -> List<MessageEntity>
++    ) {
++        extractionScope.launch {
++            val pending = memorySessionRepository.getPendingSessions()
++            Log.d(TAG, "MEMORY_PENDING: ${pending.size} sessions to process")
++            for (session in pending) {
++                val sessionId = session.id.toLongOrNull() ?: continue
++                val messages = fetchMessages(sessionId)
++                runExtraction(sessionId, messages, manager, config)
++            }
++        }
++    }
++
++    // ─────────────────────────────────────────────────────────────────────────
++    // internal
++    // ─────────────────────────────────────────────────────────────────────────
++
++    private suspend fun runExtraction(
++        sessionId: Long,
++        messages: List<MessageEntity>,
++        manager: ModelManager,
++        config: InferenceConfig
++    ) {
++        if (messages.isEmpty()) return
++
++        val session = memorySessionRepository.getOrCreate(sessionId.toString())
++        val currentTurn = messages.size
++        val newTurns = currentTurn - session.lastExtractedTurn
++
++        // スキップ条件: 差分が2ターン未満 or 直近20ターンが100トークン未満
++        if (newTurns < 2) {
++            Log.d(TAG, "MEMORY_EXTRACT: skip session=$sessionId newTurns=$newTurns < 2")
++            return
++        }
++        val recentMessages = messages.takeLast(RECENT_TURN_LIMIT)
++        val estimatedTokens = recentMessages.sumOf { it.content.length } / 4
++        if (estimatedTokens < MIN_TOKENS) {
++            Log.d(TAG, "MEMORY_EXTRACT: skip session=$sessionId estimatedTokens=$estimatedTokens < $MIN_TOKENS")
++            return
++        }
++
++        _isExtracting.value = true
++        try {
++            // アプリが落ちた場合に備えて pending=true をマーク
++            memorySessionRepository.markPending(sessionId.toString(), true)
++
++            val candidates = runLlmExtraction(sessionId, recentMessages, manager, config)
++            Log.d(TAG, "MEMORY_EXTRACT: session=$sessionId extracted ${candidates.size} candidates")
++
++            for (candidate in candidates) {
++                saveWithContradictionCheck(sessionId, candidate, manager, config)
++            }
++
++            memorySessionRepository.markExtracted(sessionId.toString(), currentTurn)
++            Log.d(TAG, "MEMORY_EXTRACT: session=$sessionId done, turn=$currentTurn")
++
++            // ② GC: 500件超で下位10%を削除
++            memoryRepository.runGcIfNeeded()
++        } catch (e: Exception) {
++            Log.e(TAG, "MEMORY_EXTRACT: failed session=$sessionId", e)
++            // pending=true のまま → 次回起動時に再処理
++        } finally {
++            _isExtracting.value = false
++        }
++    }
++
++    /**
++     * LLM に事実抽出させて MemoryCandidate リストを返す
++     */
++    private suspend fun runLlmExtraction(
++        sessionId: Long,
++        messages: List<MessageEntity>,
++        manager: ModelManager,
++        config: InferenceConfig
++    ): List<MemoryCandidate> {
++        val transcript = messages.mapNotNull { msg ->
++            val role = if (msg.role == "assistant") "AI" else "ユーザー"
++            val content = msg.content.trim()
++            if (content.isBlank()) null else "$role: $content"
++        }.joinToString("\n")
++
++        val prompt = buildString {
++            append("次のJSONのみ出力せよ。他の文字は一切出力禁止。\n\n")
++            append("[{\"content\":\"事実\",\"importance\":0.8}]\n\n")
++            append("会話から記憶すべき事実（ユーザーの名前・好み・設定・状況など）を抽出して上記形式で出力せよ。\n")
++            append("事実がなければ [] のみ出力せよ。\n\n")
++            append("会話:\n")
++            append(transcript)
++        }
++
++        val extractionConfig = config.copy(
++            temperature = 0.1f,
++            enableThinking = false,
++            contextCompressionEnabled = false
++        )
++
++        val raw = withTimeoutOrNull(EXTRACTION_TIMEOUT_MS) {
++            val flow = manager.runInference(
++                sessionId = sessionId,
++                prompt = prompt,
++                config = extractionConfig
++            )
++            val builder = StringBuilder()
++            flow.collect { chunk ->
++                val final = InferenceStreamProtocol.decodeFinal(chunk)
++                if (final != null) {
++                    builder.clear(); builder.append(final)
++                } else if (chunk.isNotEmpty()) {
++                    builder.append(chunk)
++                }
++            }
++            builder.toString().trim()
++        }
++
++        if (raw.isNullOrBlank()) {
++            Log.w(TAG, "MEMORY_EXTRACT: LLM returned empty for session=$sessionId")
++            return emptyList()
++        }
++
++        return parseMemories(raw)
++    }
++
++    /**
++     * JSON パース（防衛処理）
++     * "[{"content":"...","importance":0.8}]" 形式
++     */
++    private fun parseMemories(response: String): List<MemoryCandidate> {
++        return try {
++            // JSON 配列部分だけ抽出（前後のゴミを除去）
++            val jsonStr = Regex("""\[.*?\]""", RegexOption.DOT_MATCHES_ALL)
++                .find(response)?.value ?: return emptyList()
++            val array = JSONArray(jsonStr)
++            (0 until array.length()).mapNotNull { i ->
++                val obj: JSONObject = array.optJSONObject(i) ?: return@mapNotNull null
++                val content = obj.optString("content", "").trim()
++                if (content.length < 4) return@mapNotNull null
++                val importance = obj.optDouble("importance", 0.7).toFloat().coerceIn(0f, 1f)
++                MemoryCandidate(content, importance)
++            }.distinctBy { it.content }
++        } catch (e: Exception) {
++            Log.w(TAG, "MEMORY_EXTRACT: parse failed: $response", e)
++            emptyList()
++        }
++    }
++
++    /**
++     * 矛盾チェックして INSERT または UPDATE
++     *
++     * - similarity ≥ 0.95 → 重複スキップ
++     * - 矛盾プロンプトで "UPDATE:ID1,ID2" → 既存を論理削除して INSERT
++     * - それ以外 → INSERT
++     */
++    private suspend fun saveWithContradictionCheck(
++        sessionId: Long,
++        candidate: MemoryCandidate,
++        manager: ModelManager,
++        config: InferenceConfig
++    ) {
++        val embedding = MemoryTextEmbedder.embed(candidate.content)
++
++        // 重複チェック（similarity ≥ 0.95 はスキップ）
++        val nearest = memoryRepository.search(
++            queryEmbedding = embedding,
++            topK = 5,
++            threshold = 0f,
++            markAccessed = false
++        )
++        val duplicate = nearest.firstOrNull { it.similarity >= DUPLICATE_THRESHOLD }
++        if (duplicate != null) {
++            Log.d(TAG, "MEMORY_SAVE: duplicate skipped similarity=${duplicate.similarity} content=${candidate.content.take(30)}")
++            return
++        }
++
++        // 矛盾チェック対象（similarity 0.3〜0.94）
++        val contradictionCandidates = nearest.filter { it.similarity in 0.3f..0.94f }
++        if (contradictionCandidates.isNotEmpty()) {
++            val existingText = contradictionCandidates
++                .joinToString("\n") { "ID${it.memory.id}: ${it.memory.content}" }
++            val idsToDelete = runContradictionCheck(existingText, candidate.content, manager, config)
++            for (id in idsToDelete) {
++                memoryRepository.softDelete(id)
++                Log.d(TAG, "MEMORY_CONTRADICTION: soft-deleted id=$id")
++            }
++        }
++
++        memoryRepository.saveMemory(
++            content = candidate.content,
++            embedding = embedding,
++            importance = candidate.importance,
++            source = "extracted",
++            sessionId = sessionId.toString()
++        )
++        Log.d(TAG, "MEMORY_SAVE: saved session=$sessionId content=${candidate.content.take(40)}")
++    }
++
++    /**
++     * 矛盾解消プロンプト → "UPDATE:ID1,ID2" または "NEW"
++     */
++    private suspend fun runContradictionCheck(
++        existingMemories: String,
++        newMemory: String,
++        manager: ModelManager,
++        config: InferenceConfig
++    ): List<Long> {
++        val prompt = buildString {
++            append("既存の記憶リストと新しい記憶を比較せよ。\n")
++            append("出力は以下のいずれかのみ。他の文字は一切出力禁止。\n\n")
++            append("- 矛盾する記憶がある場合: \"UPDATE:ID1,ID2\"（複数可）\n")
++            append("- 矛盾がない場合: \"NEW\"\n\n")
++            append("既存:\n$existingMemories\n\n")
++            append("新規: \"$newMemory\"")
++        }
++
++        val raw = withTimeoutOrNull(CONTRADICTION_TIMEOUT_MS) {
++            val contradictionConfig = config.copy(
++                temperature = 0.1f,
++                enableThinking = false,
++                contextCompressionEnabled = false
++            )
++            val flow = manager.runInference(
++                sessionId = 0L,
++                prompt = prompt,
++                config = contradictionConfig
++            )
++            val builder = StringBuilder()
++            flow.collect { chunk ->
++                val final = InferenceStreamProtocol.decodeFinal(chunk)
++                if (final != null) { builder.clear(); builder.append(final) }
++                else if (chunk.isNotEmpty()) builder.append(chunk)
++            }
++            builder.toString().trim()
++        } ?: return emptyList()
++
++        // "UPDATE:123,456" をパース
++        val match = Regex("""UPDATE:([0-9,]+)""").find(raw) ?: return emptyList()
++        return match.groupValues[1]
++            .split(",")
++            .mapNotNull { it.trim().toLongOrNull() }
++            .also { Log.d(TAG, "MEMORY_CONTRADICTION: ids_to_delete=$it raw=$raw") }
++    }
++
++    data class MemoryCandidate(
++        val content: String,
++        val importance: Float
++    )
++
++    companion object {
++        private const val TAG = "MemoryExtractionWorker"
++        private const val EXTRACTION_TIMEOUT_MS = 30_000L
++        private const val CONTRADICTION_TIMEOUT_MS = 15_000L
++        private const val RECENT_TURN_LIMIT = 20
++        private const val MIN_TOKENS = 100
++        private const val DUPLICATE_THRESHOLD = 0.95f
++    }
++}
+diff --git a/app/src/main/java/com/nezumi_ai/data/database/dao/MemoryDao.kt b/app/src/main/java/com/nezumi_ai/data/database/dao/MemoryDao.kt
+index 783f740..ba7d1e3 100644
+--- a/app/src/main/java/com/nezumi_ai/data/database/dao/MemoryDao.kt
++++ b/app/src/main/java/com/nezumi_ai/data/database/dao/MemoryDao.kt
+@@ -33,4 +33,19 @@ interface MemoryDao {
+ 
+     @Query("UPDATE memory SET is_deleted = 1, updated_at = :updatedAt WHERE is_deleted = 0")
+     suspend fun softDeleteAll(updatedAt: Long = System.currentTimeMillis())
++
++    @Query("SELECT COUNT(*) FROM memory WHERE is_deleted = 0")
++    suspend fun countActive(): Int
++
++    /** スコアが低い順に指定件数のIDを返す（GC用）- score = importance / access_count+1 で近似 */
++    @Query("""
++        SELECT id FROM memory 
++        WHERE is_deleted = 0 
++        ORDER BY (importance / (access_count + 1)) ASC, last_accessed_at ASC 
++        LIMIT :limit
++    """)
++    suspend fun getLowScoreIds(limit: Int): List<Long>
++
++    @Query("UPDATE memory SET is_deleted = 1, updated_at = :updatedAt WHERE id IN (:ids)")
++    suspend fun softDeleteByIds(ids: List<Long>, updatedAt: Long = System.currentTimeMillis())
+ }
+diff --git a/app/src/main/java/com/nezumi_ai/data/repository/MemoryRepository.kt b/app/src/main/java/com/nezumi_ai/data/repository/MemoryRepository.kt
+index bcefb8b..9f5d8cf 100644
+--- a/app/src/main/java/com/nezumi_ai/data/repository/MemoryRepository.kt
++++ b/app/src/main/java/com/nezumi_ai/data/repository/MemoryRepository.kt
+@@ -77,6 +77,21 @@ class MemoryRepository(
+         dao.softDeleteAll()
+     }
+ 
++    /**
++     * ② メモリ GC: 500件超で下位10%をsoft-delete
++     * importance が低く、参照回数が少なく、最終参照が古いものから削除
++     */
++    suspend fun runGcIfNeeded() {
++        val count = dao.countActive()
++        if (count <= MAX_MEMORY_COUNT) return
++        val deleteCount = (count * GC_DELETE_RATIO).toInt().coerceAtLeast(1)
++        val ids = dao.getLowScoreIds(deleteCount)
++        if (ids.isNotEmpty()) {
++            dao.softDeleteByIds(ids)
++            android.util.Log.d("MemoryRepository", "GC: deleted ${ids.size} low-score memories (was $count)")
++        }
++    }
++
+     data class ScoredMemory(
+         val memory: MemoryEntity,
+         val score: Float,
+@@ -87,6 +102,8 @@ class MemoryRepository(
+         const val DEFAULT_THRESHOLD = 0.5f
+         const val DEFAULT_TOP_K = 5
+         private const val MILLIS_PER_DAY = 86_400_000f
++        const val MAX_MEMORY_COUNT = 500
++        const val GC_DELETE_RATIO = 0.10f  // 10% を削除
+ 
+         fun score(similarity: Float, lastAccessedAt: Long, importance: Float, accessCount: Int): Float {
+             val days = (System.currentTimeMillis() - lastAccessedAt) / MILLIS_PER_DAY
+diff --git a/app/src/main/java/com/nezumi_ai/presentation/ui/fragment/ChatFragment.kt b/app/src/main/java/com/nezumi_ai/presentation/ui/fragment/ChatFragment.kt
+index 31ef3aa..baa7f06 100644
+--- a/app/src/main/java/com/nezumi_ai/presentation/ui/fragment/ChatFragment.kt
++++ b/app/src/main/java/com/nezumi_ai/presentation/ui/fragment/ChatFragment.kt
+@@ -651,23 +651,39 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
+         viewLifecycleOwner.lifecycleScope.launch {
+             combine(
+                 viewModel.isCompressing,
+-                viewModel.isLoading
+-            ) { compressing, loading -> Pair(compressing, loading) }
+-            .collect { (compressing, _) ->
++                viewModel.isLoading,
++                viewModel.isExtracting
++            ) { compressing, loading, extracting -> Triple(compressing, loading, extracting) }
++            .collect { (compressing, _, extracting) ->
+                 isCompressingNow = compressing
++                // 抽出中は入力を無効化しないが、インジケーターを表示
+                 binding.messageInput.isEnabled = !compressing
+                 binding.sendButton.isEnabled = !compressing
+                 renderCompressButtonState()
+                 renderSendButtonState()
+                 if (isGenerating) {
+-                    responseTypingText =
+-                        if (compressing) getString(R.string.response_compressing)
+-                        else getString(R.string.response_generating)
++                    responseTypingText = when {
++                        compressing -> getString(R.string.response_compressing)
++                        else -> getString(R.string.response_generating)
++                    }
+                 }
+                 if (compressing) startResponseTypingAnimation() else stopResponseTypingAnimation()
+             }
+         }
+ 
++        // Phase 3: メモリ抽出中インジケーター
++        viewLifecycleOwner.lifecycleScope.launch {
++            viewModel.isExtracting.collect { extracting ->
++                // 入力欄上部に「⟳ 記憶を整理中...」を表示
++                // （既存の compressingHintText または inputHint を流用）
++                if (extracting) {
++                    binding.messageInput.hint = getString(R.string.response_extracting)
++                } else {
++                    binding.messageInput.hint = null // デフォルトに戻す
++                }
++            }
++        }
++
+         viewLifecycleOwner.lifecycleScope.launch {
+             viewModel.selectedModel.collect { model ->
+                 currentModelKey = model
+diff --git a/app/src/main/java/com/nezumi_ai/presentation/ui/screen/SessionListScreen.kt b/app/src/main/java/com/nezumi_ai/presentation/ui/screen/SessionListScreen.kt
+index 3d9c6f0..d5da5b1 100644
+--- a/app/src/main/java/com/nezumi_ai/presentation/ui/screen/SessionListScreen.kt
++++ b/app/src/main/java/com/nezumi_ai/presentation/ui/screen/SessionListScreen.kt
+@@ -37,6 +37,37 @@ fun SessionListScreen(
+ ) {
+     val groupedSessions by viewModel.groupedSessions.collectAsState(emptyList())
+ 
++    // ④ セッション名変更ダイアログの状態
++    var renamingSessionId by remember { mutableStateOf<Long?>(null) }
++    var renameText by remember { mutableStateOf("") }
++
++    if (renamingSessionId != null) {
++        AlertDialog(
++            onDismissRequest = { renamingSessionId = null },
++            title = { Text("セッション名を変更") },
++            text = {
++                OutlinedTextField(
++                    value = renameText,
++                    onValueChange = { renameText = it },
++                    singleLine = true,
++                    label = { Text("新しい名前") }
++                )
++            },
++            confirmButton = {
++                TextButton(onClick = {
++                    val id = renamingSessionId
++                    if (id != null && renameText.isNotBlank()) {
++                        viewModel.renameSession(id, renameText.trim())
++                    }
++                    renamingSessionId = null
++                }) { Text("変更") }
++            },
++            dismissButton = {
++                TextButton(onClick = { renamingSessionId = null }) { Text("キャンセル") }
++            }
++        )
++    }
++
+     NezumiSessionTheme {
+         SessionListContent(
+             groupedSessions = groupedSessions,
+@@ -54,7 +85,11 @@ fun SessionListScreen(
+             },
+             onDeleteSession = { viewModel.deleteSession(it) },
+             onTogglePin = { viewModel.togglePinSession(it) },
+-            onRenameSession = { sessionId -> /* TODO: Show rename dialog */ },
++            onRenameSession = { sessionId ->
++                val session = groupedSessions.flatMap { it.sessions }.find { it.id == sessionId }
++                renameText = session?.name ?: ""
++                renamingSessionId = sessionId
++            },
+             currentSessionId = currentSessionId
+         )
+     }
+diff --git a/app/src/main/java/com/nezumi_ai/presentation/viewmodel/ChatViewModel.kt b/app/src/main/java/com/nezumi_ai/presentation/viewmodel/ChatViewModel.kt
+index 27c13fe..da88463 100644
+--- a/app/src/main/java/com/nezumi_ai/presentation/viewmodel/ChatViewModel.kt
++++ b/app/src/main/java/com/nezumi_ai/presentation/viewmodel/ChatViewModel.kt
+@@ -52,6 +52,7 @@ import kotlinx.coroutines.cancel
+ import kotlinx.coroutines.coroutineScope
+ import kotlinx.coroutines.delay
+ import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.first
+ import kotlinx.coroutines.sync.Mutex
+ import kotlinx.coroutines.sync.withLock
+ import com.nezumi_ai.MyApplication
+@@ -103,6 +104,12 @@ class ChatViewModel(
+         /** 最初のトークン以降、この時間チャンクが無ければ打ち切り */
+         private const val GENERATION_STALL_TIMEOUT_MS = 180_000L
+         private const val GENERATION_STALL_CHECK_MS = 5_000L
++        /** メモリ注入に使えるコンテキスト予算の最大比率 */
++        private const val MEMORY_BUDGET_RATIO = 0.15f
++        /** 会話履歴のために最低限確保する文字数 */
++        private const val HISTORY_RESERVE_CHARS = 2048
++        /** "関連メモリ:\n" ヘッダー文字数 */
++        private const val MEMORY_HEADER_CHARS = 10
+ 
+         /**
+          * ローカル .litertlm を「破損・欠落」とみなして削除してよいときだけ true。
+@@ -185,6 +192,23 @@ class ChatViewModel(
+     private val _isCompressing = MutableStateFlow(false)
+     val isCompressing: StateFlow<Boolean> = _isCompressing
+ 
++    private val _isExtracting = MutableStateFlow(false)
++    val isExtracting: StateFlow<Boolean> = _isExtracting.asStateFlow()
++
++    private val memoryExtractionWorker: com.nezumi_ai.data.memory.MemoryExtractionWorker? by lazy {
++        val repo = memoryRepository ?: return@lazy null
++        val sessionRepo = com.nezumi_ai.data.repository.MemorySessionRepository(
++            com.nezumi_ai.data.database.NezumiAiDatabase.getInstance(appContext).memorySessionDao()
++        )
++        com.nezumi_ai.data.memory.MemoryExtractionWorker(repo, sessionRepo).also { worker ->
++            // isExtracting を Worker の StateFlow に橋渡し
++            viewModelScope.launch {
++                worker.isExtracting.collect { _isExtracting.value = it }
++            }
++            // 起動時 pending 処理は generateAIResponse 初回呼び出し後に行う
++        }
++    }
++
+     /** true のとき、このチャットでは設定のシンキングONでも LiteRT の enable_thinking を付けない */
+     private val _chatSessionDisableThinking = MutableStateFlow(false)
+     val chatSessionDisableThinking: StateFlow<Boolean> = _chatSessionDisableThinking.asStateFlow()
+@@ -370,6 +394,8 @@ class ChatViewModel(
+     private val assistantTurnMarkerRegex = Regex("(?i)(?:^|[\\s\\n\\r])(?:Assistant|アシスタント)\\s*[:：]")
+     private val roleTurnMarkerRegex =
+         Regex("(?i)(?:^|[\\s\\n\\r])(?:User|Assistant|ユーザー|アシスタント)\\s*[:：]")
++    /** 起動時の pending 抽出処理を1回だけ実行するフラグ */
++    private var pendingExtractionProcessed = false
+     
+     // WakeLock管理
+     private var screenWakeLock: PowerManager.WakeLock? = null
+@@ -636,6 +662,14 @@ class ChatViewModel(
+             }
+ 
+             try {
++                // Phase 3: 抽出キューが処理中なら完了を待つ（最大 30s）
++                if (_isExtracting.value) {
++                    Log.d(TAG, "sendMessage: waiting for memory extraction to finish...")
++                    withTimeoutOrNull(30_000L) {
++                        isExtracting.first { !it }
++                    }
++                }
++
+                 val sessionId = ensureValidCurrentSession() ?: return@launch
+ 
+                 // ユーザーメッセージを保存
+@@ -943,6 +977,18 @@ class ChatViewModel(
+             }
+             
+             Log.d(TAG, "Starting inference for session $sessionId")
++
++            // ① 起動時 pending 抽出処理（モデルロード完了後に1回だけ実行）
++            if (!pendingExtractionProcessed) {
++                pendingExtractionProcessed = true
++                memoryExtractionWorker?.processPending(manager, config.copy(
++                    temperature = 0.1f,
++                    enableThinking = false,
++                    contextCompressionEnabled = false
++                )) { fetchSessionId ->
++                    messageRepository.getMessagesForSessionOnce(fetchSessionId)
++                }
++            }
+             
+             val promptForModel = buildPromptWithSessionContext(
+                 sessionId = sessionId,
+@@ -1372,7 +1418,7 @@ class ChatViewModel(
+                     }
+                     syncSessionTitleFromDb(sessionId)
+                 }
+-                enqueueMemoryExtraction(sessionId, userMessage)
++                enqueueMemoryExtraction(sessionId)
+                 if (BuildConfig.DEBUG) {
+                     Log.d(TAG, "AI response saved to database: ${completeResponse.take(50)}...")
+                 }
+@@ -1936,7 +1982,7 @@ class ChatViewModel(
+         if (messages.isEmpty()) return ""
+ 
+         val isGgufEngine = isGgufEngineModel(engineModelName)
+-        val memoryBlock = buildRelevantMemoryBlock(messages, sessionId)
++        val memoryBlock = buildRelevantMemoryBlock(messages, sessionId, config.contextWindow)
+         val fullPrompt = buildPromptFromMessages(
+             messages = messages,
+             isGgufEngine = isGgufEngine,
+@@ -2042,22 +2088,56 @@ class ChatViewModel(
+         return trimPromptToWindow(prompt, config.contextWindow)
+     }
+ 
+-    private suspend fun buildRelevantMemoryBlock(messages: List<MessageEntity>, sessionId: Long): String? {
++    private suspend fun buildRelevantMemoryBlock(
++        messages: List<MessageEntity>,
++        sessionId: Long,
++        contextWindowTokens: Int = 4096
++    ): String? {
+         val repo = memoryRepository ?: return null
+         if (!isMemoryEnabledForCurrentPreset()) return null
+         val query = messages.lastOrNull { it.role == "user" }?.content?.trim().orEmpty()
+         if (query.isBlank()) return null
++
++        // ONNX モデルがあれば初期化（初回のみ実行、以降はキャッシュ）
++        MemoryTextEmbedder.initialize(appContext)
++
+         val results = repo.search(
+             queryEmbedding = MemoryTextEmbedder.embed(query),
+-            topK = 4,
+-            threshold = 0.12f,
++            topK = 5,
++            threshold = 0.03f,
+             markAccessed = true
+         )
+         if (results.isEmpty()) return null
+-        Log.d(TAG, "MEMORY_INJECT: session=$sessionId count=${results.size}")
++
++        // ③ トークン予算管理：メモリに使えるのはコンテキスト全体の最大15%
++        // 優先度: システムプロンプト(削らない) > 関連メモリ(スコア低い順に削る) > 会話履歴
++        val systemPromptChars = getActiveSystemPrompt().length
++        val totalBudgetChars = contextWindowTokens * TOKEN_TO_CHAR_RATIO
++        val memoryBudgetChars = (totalBudgetChars * MEMORY_BUDGET_RATIO).toInt()
++            .coerceAtMost(totalBudgetChars - systemPromptChars - HISTORY_RESERVE_CHARS)
++            .coerceAtLeast(0)
++
++        if (memoryBudgetChars == 0) {
++            Log.d(TAG, "MEMORY_INJECT: budget=0, skipping injection")
++            return null
++        }
++
++        // スコア高い順に予算内に収まるだけ詰める
++        val trimmedResults = mutableListOf<MemoryRepository.ScoredMemory>()
++        var usedChars = MEMORY_HEADER_CHARS  // "関連メモリ:\n" のオーバーヘッド
++        for (result in results) {
++            val entryChars = result.memory.content.length + 5  // "N. \n" のオーバーヘッド
++            if (usedChars + entryChars > memoryBudgetChars) break
++            trimmedResults.add(result)
++            usedChars += entryChars
++        }
++
++        if (trimmedResults.isEmpty()) return null
++
++        Log.d(TAG, "MEMORY_INJECT: session=$sessionId count=${trimmedResults.size}/${results.size} budgetChars=$memoryBudgetChars usedChars=$usedChars")
+         return buildString {
+             append("関連メモリ:\n")
+-            results.forEachIndexed { index, scored ->
++            trimmedResults.forEachIndexed { index, scored ->
+                 append(index + 1)
+                 append(". ")
+                 append(scored.memory.content.trim())
+@@ -2066,78 +2146,31 @@ class ChatViewModel(
+         }.trim()
+     }
+ 
+-    private fun enqueueMemoryExtraction(sessionId: Long, userMessage: String) {
+-        if (memoryRepository == null) return
++    /**
++     * Phase 3: LLM ベースのメモリ抽出をキューに積む
++     * - MemoryExtractionWorker の直列キュー（limitedParallelism(1)）に委譲
++     * - 抽出完了後に _isExtracting が false に戻る
++     */
++    private fun enqueueMemoryExtraction(sessionId: Long) {
++        val worker = memoryExtractionWorker ?: return
+         viewModelScope.launch(Dispatchers.IO) {
+             if (!isMemoryEnabledForCurrentPreset()) return@launch
+-            val candidates = extractMemoryCandidates(userMessage)
+-            if (candidates.isEmpty()) return@launch
+-            val repo = memoryRepository ?: return@launch
+-            for (candidate in candidates) {
+-                val embedding = MemoryTextEmbedder.embed(candidate.content)
+-                val nearest = repo.search(
+-                    queryEmbedding = embedding,
+-                    topK = 1,
+-                    threshold = 0f,
+-                    markAccessed = false
+-                ).firstOrNull()
+-                if (nearest != null && nearest.similarity >= 0.88f) {
+-                    Log.d(TAG, "MEMORY_SAVE: duplicate skipped similarity=${nearest.similarity}")
+-                    continue
+-                }
+-                repo.saveMemory(
+-                    content = candidate.content,
+-                    embedding = embedding,
+-                    importance = candidate.importance,
+-                    source = "extracted",
+-                    sessionId = sessionId.toString()
+-                )
+-                Log.d(TAG, "MEMORY_SAVE: saved session=$sessionId content=${candidate.content.take(40)}")
++            val messages = messageRepository.getMessagesForSessionOnce(sessionId)
++            if (messages.isEmpty()) return@launch
++            val manager = try { requireModelManager() } catch (e: Exception) {
++                Log.w(TAG, "MEMORY_EXTRACT: no model manager available, skipping", e)
++                return@launch
+             }
++            val selectedModel = getActiveSelectedModel()
++            val config = chatInferenceConfigForModel(selectedModel).copy(
++                temperature = 0.1f,
++                enableThinking = false,
++                contextCompressionEnabled = false
++            ).normalized()
++            worker.enqueue(sessionId, messages, manager, config)
+         }
+     }
+ 
+-    private data class MemoryCandidate(
+-        val content: String,
+-        val importance: Float
+-    )
+-
+-    private fun extractMemoryCandidates(userMessage: String): List<MemoryCandidate> {
+-        val text = userMessage.trim()
+-        if (text.length < 6) return emptyList()
+-        val rememberIntent = text.contains("覚えて") || text.contains("記憶して") || text.contains("メモして")
+-        val patterns = listOf(
+-            "私は", "わたしは", "僕は", "俺は", "自分は",
+-            "名前", "呼んで", "好き", "嫌い", "苦手",
+-            "住ん", "在住", "仕事", "職業", "誕生日",
+-            "使っている", "使ってる", "使う", "設定"
+-        )
+-        val sentences = text
+-            .split(Regex("[\\n。！？!?]+"))
+-            .map { it.trim() }
+-            .filter { it.length >= 6 }
+-
+-        return sentences.mapNotNull { sentence ->
+-            val shouldKeep = rememberIntent || patterns.any { sentence.contains(it) }
+-            if (!shouldKeep) return@mapNotNull null
+-            val cleaned = sentence
+-                .replace("覚えておいて", "")
+-                .replace("覚えて", "")
+-                .replace("記憶して", "")
+-                .replace("メモして", "")
+-                .trim(' ', '　', '、', '。', ':', '：')
+-                .take(220)
+-            if (cleaned.length < 4) return@mapNotNull null
+-            val importance = when {
+-                rememberIntent -> 0.9f
+-                cleaned.contains("名前") || cleaned.contains("呼んで") -> 0.85f
+-                cleaned.contains("好き") || cleaned.contains("嫌い") || cleaned.contains("苦手") -> 0.75f
+-                else -> 0.7f
+-            }
+-            MemoryCandidate(cleaned, importance)
+-        }.distinctBy { it.content }.take(3)
+-    }
+-
+     private fun appendMemoryBlockToSystemPrompt(systemPrompt: String, memoryBlock: String?): String {
+         if (memoryBlock.isNullOrBlank()) return systemPrompt
+         return buildString {
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index 0b2b34c..dd85ce5 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -48,6 +48,7 @@
+     <string name="context_meter_format">コンテキスト使用量: %1$d / %2$d tokens</string>
+     <string name="response_generating">応答中</string>
+     <string name="response_compressing">圧縮中</string>
++    <string name="response_extracting">⟳ 記憶を整理中...</string>
+     <string name="compress_context">圧縮</string>
+     <string name="compress_context_busy">圧縮中</string>
+     <string name="chat_thinking_follow_settings">シンキング:ON</string>

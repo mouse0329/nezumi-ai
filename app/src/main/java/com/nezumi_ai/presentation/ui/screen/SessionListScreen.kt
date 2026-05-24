@@ -37,6 +37,37 @@ fun SessionListScreen(
 ) {
     val groupedSessions by viewModel.groupedSessions.collectAsState(emptyList())
 
+    // ④ セッション名変更ダイアログの状態
+    var renamingSessionId by remember { mutableStateOf<Long?>(null) }
+    var renameText by remember { mutableStateOf("") }
+
+    if (renamingSessionId != null) {
+        AlertDialog(
+            onDismissRequest = { renamingSessionId = null },
+            title = { Text("セッション名を変更") },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    singleLine = true,
+                    label = { Text("新しい名前") }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val id = renamingSessionId
+                    if (id != null && renameText.isNotBlank()) {
+                        viewModel.renameSession(id, renameText.trim())
+                    }
+                    renamingSessionId = null
+                }) { Text("変更") }
+            },
+            dismissButton = {
+                TextButton(onClick = { renamingSessionId = null }) { Text("キャンセル") }
+            }
+        )
+    }
+
     NezumiSessionTheme {
         SessionListContent(
             groupedSessions = groupedSessions,
@@ -54,7 +85,11 @@ fun SessionListScreen(
             },
             onDeleteSession = { viewModel.deleteSession(it) },
             onTogglePin = { viewModel.togglePinSession(it) },
-            onRenameSession = { sessionId -> /* TODO: Show rename dialog */ },
+            onRenameSession = { sessionId ->
+                val session = groupedSessions.flatMap { it.sessions }.find { it.id == sessionId }
+                renameText = session?.name ?: ""
+                renamingSessionId = sessionId
+            },
             currentSessionId = currentSessionId
         )
     }

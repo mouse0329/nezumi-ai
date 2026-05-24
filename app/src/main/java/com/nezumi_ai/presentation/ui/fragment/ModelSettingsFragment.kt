@@ -114,6 +114,7 @@ enum class ModelType {
 open class ModelSettingsFragment : Fragment() {
     private lateinit var settingsRepository: SettingsRepository
     private var authService: AuthorizationService? = null
+    private var preloadMemoryWarningThresholdPercent by mutableStateOf(MemoryObserver.DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT)
     private var pendingDownloadPermissionModel: ModelFileManager.LocalModel? = null
 
     private var hfLinked by mutableStateOf(false)
@@ -298,6 +299,9 @@ open class ModelSettingsFragment : Fragment() {
         observeDownloadWork()
         observeCustomHfDownloadWork()
         observeImageModelDownloadWork()
+        viewLifecycleOwner.lifecycleScope.launch {
+            preloadMemoryWarningThresholdPercent = settingsRepository.getPreloadMemoryWarningThresholdPercent()
+        }
     }
 
     override fun onResume() {
@@ -1319,7 +1323,7 @@ open class ModelSettingsFragment : Fragment() {
                 
                 // ストレージ判定
                 val sizeBytes = getModelSizeBytes(model)
-                val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), sizeBytes)
+                val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent)
                 
                 ModelAccordionItem(
                     title = state.title,
@@ -1613,7 +1617,7 @@ open class ModelSettingsFragment : Fragment() {
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodySmall
                 )
-                if (MemoryObserver.isMemoryLowForFileSize(requireContext(), model.size)) {
+                if (MemoryObserver.isMemoryLowForFileSize(requireContext(), model.size, preloadMemoryWarningThresholdPercent, useAvailable = false)) {
                     Text(
                         text = "⚠️ メモリ不足",
                         color = MaterialTheme.colorScheme.error,
@@ -1797,8 +1801,8 @@ open class ModelSettingsFragment : Fragment() {
                                         color = colorResource(id = R.color.text_secondary)
                                     )
                                     if (file.sizeBytes != null) {
-                                        val isMemoryLow = MemoryObserver.isMemoryLowForFileSize(requireContext(), file.sizeBytes)
-                                        val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), file.sizeBytes)
+                                        val isMemoryLow = MemoryObserver.isMemoryLowForFileSize(requireContext(), file.sizeBytes, preloadMemoryWarningThresholdPercent, useAvailable = false)
+                                        val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), file.sizeBytes, preloadMemoryWarningThresholdPercent)
                                         if (isMemoryLow || resourceCheck.isStorageLow) {
                                             Text(
                                                 text = when {
@@ -1814,7 +1818,7 @@ open class ModelSettingsFragment : Fragment() {
                                     }
                                 }
                                 Button(
-                                    enabled = hfDownloadingFilePath == null && (file.sizeBytes == null || !ModelFileManager.checkDownloadResources(requireContext(), file.sizeBytes).isStorageLow),
+                                    enabled = hfDownloadingFilePath == null && (file.sizeBytes == null || !ModelFileManager.checkDownloadResources(requireContext(), file.sizeBytes, preloadMemoryWarningThresholdPercent).isStorageLow),
                                     onClick = { downloadHfModelFile(model.id, file.path) }
                                 ) {
                                     val isDownloading = hfDownloadingFilePath == file.path
@@ -3189,16 +3193,17 @@ open class ModelSettingsFragment : Fragment() {
 
     private fun requestNotificationPermissionForDownload(model: ModelFileManager.LocalModel) {
         // ダウンロード前にメモリチェックして警告を設定
-        val modelName = when (model) {
-            ModelFileManager.LocalModel.GEMMA3N_2B -> "GEMMA3-2B"
-            ModelFileManager.LocalModel.GEMMA3N_4B -> "GEMMA3-4B"
-            ModelFileManager.LocalModel.GEMMA4_2B -> "GEMMA4-2B"
-            ModelFileManager.LocalModel.GEMMA4_4B -> "GEMMA4-4B"
-        }
-        
-        if (MemoryObserver.isMemoryLow(requireContext(), modelName)) {
+        val sizeBytes = getModelSizeBytes(model)
+        val isMemoryLow = MemoryObserver.isMemoryLowForFileSize(
+            requireContext(),
+            sizeBytes,
+            preloadMemoryWarningThresholdPercent,
+            useAvailable = false
+        )
+
+        if (isMemoryLow) {
             val sysMemInfo = MemoryObserver.getSystemMemoryInfo(requireContext())
-            val warning = "このモデルは現在のデバイスメモリ (${sysMemInfo.totalMemoryMB / 1024}GB) では動作が不安定になる可能性があります。ダウンロード後の使用時にクラッシュやフリーズが発生する場合があります。"
+            val warning = "このモデルは現在のデバイス総メモリ (${sysMemInfo.totalMemoryMB / 1024}GB) では動作が不安定になる可能性があります。ダウンロード後の使用時にクラッシュやフリーズが発生する場合があります。"
             modelStates[model]?.memoryWarning = warning
         } else {
             modelStates[model]?.memoryWarning = null
@@ -3237,16 +3242,17 @@ open class ModelSettingsFragment : Fragment() {
             }
             
             // メモリチェックを実行して警告を設定
-            val modelName = when (it) {
-                ModelFileManager.LocalModel.GEMMA3N_2B -> "GEMMA3-2B"
-                ModelFileManager.LocalModel.GEMMA3N_4B -> "GEMMA3-4B"
-                ModelFileManager.LocalModel.GEMMA4_2B -> "GEMMA4-2B"
-                ModelFileManager.LocalModel.GEMMA4_4B -> "GEMMA4-4B"
-            }
-            
-            if (MemoryObserver.isMemoryLow(requireContext(), modelName)) {
+            val sizeBytes = getModelSizeBytes(it)
+            val isMemoryLow = MemoryObserver.isMemoryLowForFileSize(
+                requireContext(),
+                sizeBytes,
+                preloadMemoryWarningThresholdPercent,
+                useAvailable = false
+            )
+
+            if (isMemoryLow) {
                 val sysMemInfo = MemoryObserver.getSystemMemoryInfo(requireContext())
-                state.memoryWarning = "このモデルは現在のデバイスメモリ (${sysMemInfo.totalMemoryMB / 1024}GB) では動作が不安定になる可能性があります。" + 
+                state.memoryWarning = "このモデルは現在のデバイス総メモリ (${sysMemInfo.totalMemoryMB / 1024}GB) では動作が不安定になる可能性があります。" + 
                     if (downloaded) "使用時にクラッシュやフリーズが発生する場合があります。" 
                     else "ダウンロード後の使用時にクラッシュやフリーズが発生する場合があります。"
             } else {
@@ -3296,16 +3302,17 @@ open class ModelSettingsFragment : Fragment() {
                 state.isDownloaded = true
                 
                 // ダウンロード完了後にメモリチェック
-                val modelName = when (model) {
-                    ModelFileManager.LocalModel.GEMMA3N_2B -> "GEMMA3-2B"
-                    ModelFileManager.LocalModel.GEMMA3N_4B -> "GEMMA3-4B"
-                    ModelFileManager.LocalModel.GEMMA4_2B -> "GEMMA4-2B"
-                    ModelFileManager.LocalModel.GEMMA4_4B -> "GEMMA4-4B"
-                }
-                
-                if (MemoryObserver.isMemoryLow(requireContext(), modelName)) {
+                val sizeBytes = getModelSizeBytes(model)
+                val isMemoryLow = MemoryObserver.isMemoryLowForFileSize(
+                    requireContext(),
+                    sizeBytes,
+                    preloadMemoryWarningThresholdPercent,
+                    useAvailable = false
+                )
+
+                if (isMemoryLow) {
                     val sysMemInfo = MemoryObserver.getSystemMemoryInfo(requireContext())
-                    state.memoryWarning = "このモデルは現在のデバイスメモリ (${sysMemInfo.totalMemoryMB / 1024}GB) では動作が不安定になる可能性があります。使用時にクラッシュやフリーズが発生する場合があります。"
+                    state.memoryWarning = "このモデルは現在のデバイス総メモリ (${sysMemInfo.totalMemoryMB / 1024}GB) では動作が不安定になる可能性があります。使用時にクラッシュやフリーズが発生する場合があります。"
                 } else {
                     state.memoryWarning = null
                 }
