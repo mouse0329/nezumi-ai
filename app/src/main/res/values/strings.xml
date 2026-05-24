@@ -191,6 +191,18 @@
     <string name="license_coil_url">https://github.com/coil-kt/coil</string>
     <string name="license_coil_desc">Apache License 2.0\n\nImage loading library for Android backed by Kotlin Coroutines. Version 2.6.0</string>
 
+    <string name="license_okhttp_title">OkHttp</string>
+    <string name="license_okhttp_url">https://github.com/square/okhttp</string>
+    <string name="license_okhttp_desc">Apache License 2.0\n\nEfficient HTTP client for Android and Java. Version 4.11.0</string>
+
+    <string name="license_onnxruntime_title">ONNX Runtime</string>
+    <string name="license_onnxruntime_url">https://github.com/microsoft/onnxruntime</string>
+    <string name="license_onnxruntime_desc">MIT License\n\nHigh-performance inference engine for ONNX models. Version 1.15.0</string>
+
+    <string name="license_djl_tokenizers_title">DJL Tokenizers</string>
+    <string name="license_djl_tokenizers_url">https://github.com/deepjavalibrary/djl</string>
+    <string name="license_djl_tokenizers_desc">Apache License 2.0\n\nDeep Java Library tokenizers for Hugging Face models. Version 0.33.0</string>
+
     <string name="license_kotlin_coroutines_title">Kotlin Coroutines</string>
     <string name="license_kotlin_coroutines_url">https://github.com/Kotlin/kotlinx.coroutines</string>
     <string name="license_kotlin_coroutines_desc">Apache License 2.0\n\nKotlin library for asynchronous programming using coroutines. Version 1.7.3</string>
