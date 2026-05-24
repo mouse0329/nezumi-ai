@@ -1006,9 +1006,9 @@ class ChatViewModel(
                     temperature = 0.1f,
                     enableThinking = false,
                     contextCompressionEnabled = false
-                ), pendingSaveMode) { fetchSessionId ->
+                ), pendingSaveMode, { fetchSessionId ->
                     messageRepository.getMessagesForSessionOnce(fetchSessionId)
-                }
+                }, suppressContradictionDeletion = true)
             }
             
             val promptForModel = buildPromptWithSessionContext(

@@ -17,6 +17,7 @@ import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -45,8 +46,6 @@ class SettingsComposeFragment : Fragment() {
     private var contextCompressionEnabled by mutableStateOf(false)
     private var contextCompressionThresholdPercent by mutableStateOf(70)
     private var preloadMemoryWarningThresholdPercent by mutableStateOf(250)
-    private var userNameInput by mutableStateOf("")
-    private var systemPromptInput by mutableStateOf("")
     private var selectedModel by mutableStateOf("E2B")
     private var backendType by mutableStateOf("CPU")
     private var themeMode by mutableStateOf(PreferencesHelper.THEME_SYSTEM)
@@ -64,6 +63,7 @@ class SettingsComposeFragment : Fragment() {
     private var chatHistoryLimit by mutableStateOf(30)
     private var sdSteps by mutableStateOf(8)
     private var sdCfg by mutableStateOf(7.0f)
+    private var braveSearchApiKeyInput by mutableStateOf("")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -148,7 +148,7 @@ class SettingsComposeFragment : Fragment() {
             }
             
             item { GeneralSettingsCard() }
-            item { PersonalizationCard() }
+            item { WebSearchApiKeyCard() }
             item { InferenceParamsCard() }
             item { ImageGenSettingsCard() }
             item { MemoryManagementCard() }
@@ -266,6 +266,39 @@ class SettingsComposeFragment : Fragment() {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    @Composable
+    private fun WebSearchApiKeyCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(text = "Brave Search API", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Text(
+                    text = "Brave Search の API キーを設定します。ツール呼び出し時にこのキーが使用されます。",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedTextField(
+                    value = braveSearchApiKeyInput,
+                    onValueChange = { braveSearchApiKeyInput = it },
+                    label = { Text("APIキー") },
+                    placeholder = { Text("brave_api_key を入力") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation()
+                )
+                Text(
+                    text = if (braveSearchApiKeyInput.isBlank()) "未設定の場合、ウェブ検索ツールは動作しません。" else "現在設定済みの API キーが保存されています。",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
     }
@@ -704,53 +737,6 @@ class SettingsComposeFragment : Fragment() {
         }
     }
 
-    @Composable
-    private fun PersonalizationCard() {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = colorResource(id = R.color.primary_light)
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = "個人化設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
-                
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "ユーザー名",
-                        color = colorResource(id = R.color.text_secondary),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    OutlinedTextField(
-                        value = userNameInput,
-                        onValueChange = { userNameInput = it },
-                        placeholder = { Text("ユーザー名") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                }
-                
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "システムプロンプト",
-                        color = colorResource(id = R.color.text_secondary),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    OutlinedTextField(
-                        value = systemPromptInput,
-                        onValueChange = { systemPromptInput = it },
-                        placeholder = { Text("AIの振る舞いやルールを入力...") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 80.dp),
-                        minLines = 3
-                    )
-                }
-            }
-        }
-    }
 
     @Composable
     private fun ImageGenSettingsCard() {
@@ -1030,10 +1016,9 @@ class SettingsComposeFragment : Fragment() {
             memorySaveMode = settingsRepository.getMemorySaveMode().name
             contextCompressionEnabled = config.contextCompressionEnabled
             contextCompressionThresholdPercent = config.contextCompressionThresholdPercent
-            userNameInput = userName
-            systemPromptInput = systemPrompt
             backendType = config.backendType
             themeMode = PreferencesHelper.getThemeMode(requireContext())
+            braveSearchApiKeyInput = PreferencesHelper.getBraveSearchApiKey(requireContext())
             maxThreads = InferenceConfig.MAX_THREADS
             llamaCppThreads = threads.coerceIn(1, maxThreads)
             llamaCppGpuLayers = gpuLayers
@@ -1106,8 +1091,6 @@ class SettingsComposeFragment : Fragment() {
         )
         settingsRepository.updatePreloadMemoryWarningThresholdPercent(preloadMemoryWarningThresholdPercent)
         settingsRepository.updateMemorySaveMode(MemorySaveMode.valueOf(memorySaveMode))
-        settingsRepository.updateSystemPrompt(systemPromptInput)
-        settingsRepository.updateUserName(userNameInput)
         settingsRepository.updateLlamaCppThreads(llamaCppThreads)
         settingsRepository.updateLlamaCppGpuLayers(llamaCppGpuLayers)
         settingsRepository.updateLlamaCppBatchSize(llamaCppBatchSize)
@@ -1117,6 +1100,7 @@ class SettingsComposeFragment : Fragment() {
         settingsRepository.updateChatHistoryLimit(chatHistoryLimit)
         PreferencesHelper.setSdSteps(requireContext(), sdSteps)
         PreferencesHelper.setSdCfg(requireContext(), sdCfg)
+        PreferencesHelper.setBraveSearchApiKey(requireContext(), braveSearchApiKeyInput.trim())
     }
 
     @Composable

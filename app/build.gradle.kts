@@ -178,6 +178,9 @@ dependencies {
 
     implementation("io.coil-kt:coil-compose:2.6.0")
 
+    // HTTP client for Brave Search API
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
+
     // VOICEVOX integration
     implementation(files("libs/voicevoxcore-android-0.16.4.aar"))
 
