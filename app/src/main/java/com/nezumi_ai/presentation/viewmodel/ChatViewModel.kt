@@ -218,7 +218,10 @@ class ChatViewModel(
         val sessionRepo = com.nezumi_ai.data.repository.MemorySessionRepository(
             com.nezumi_ai.data.database.NezumiAiDatabase.getInstance(appContext).memorySessionDao()
         )
-        com.nezumi_ai.data.memory.MemoryExtractionWorker(repo, sessionRepo).also { worker ->
+        val chunkRepo = com.nezumi_ai.data.repository.ChatChunkRepository(
+            com.nezumi_ai.data.database.NezumiAiDatabase.getInstance(appContext).chatChunkDao(), appContext
+        )
+        com.nezumi_ai.data.memory.MemoryExtractionWorker(repo, sessionRepo, chunkRepo).also { worker ->
             // isExtracting を Worker の StateFlow に橋渡し
             viewModelScope.launch {
                 worker.isExtracting.collect { _isExtracting.value = it }
@@ -2235,9 +2238,30 @@ class ChatViewModel(
     private fun enqueueMemoryExtraction(sessionId: Long) {
         val worker = memoryExtractionWorker ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            if (!isMemoryEnabledForCurrentPreset()) return@launch
             val messages = messageRepository.getMessagesForSessionOnce(sessionId)
             if (messages.isEmpty()) return@launch
+
+            // チャンクインデックスはメモリ設定に関係なく常に実行
+            val chunkRepo = try {
+                val db = com.nezumi_ai.data.database.NezumiAiDatabase.getInstance(appContext)
+                com.nezumi_ai.data.repository.ChatChunkRepository(db.chatChunkDao(), appContext)
+            } catch (e: Exception) {
+                Log.w(TAG, "CHUNK_INDEX: failed to get repository", e)
+                null
+            }
+            chunkRepo?.let { repo ->
+                messages.filter { it.content.isNotBlank() }.forEach { msg ->
+                    try {
+                        repo.indexMessage(msg.id, sessionId, msg.content)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "CHUNK_INDEX: failed for messageId=${msg.id}", e)
+                    }
+                }
+                Log.d(TAG, "CHUNK_INDEX: session=$sessionId indexed ${messages.size} messages")
+            }
+
+            // メモリ抽出はメモリ設定が有効な場合のみ
+            if (!isMemoryEnabledForCurrentPreset()) return@launch
             val manager = try { requireModelManager() } catch (e: Exception) {
                 Log.w(TAG, "MEMORY_EXTRACT: no model manager available, skipping", e)
                 return@launch

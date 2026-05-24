@@ -1,0 +1,29 @@
+From be7d17b559ac4af09366a5da4a8c34366342e13d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=E3=81=AD=E3=81=9A=E3=81=BF?= <nezumi@nezumi.ai>
+Date: Sun, 24 May 2026 22:03:58 +0000
+Subject: [PATCH] =?UTF-8?q?fix:=20=E3=83=81=E3=83=A3=E3=83=B3=E3=82=AF?=
+ =?UTF-8?q?=E3=82=AB=E3=83=BC=E3=83=89=E3=82=BF=E3=83=83=E3=83=97=E6=99=82?=
+ =?UTF-8?q?=E3=81=AB=E3=83=A2=E3=83=BC=E3=83=80=E3=83=AB=E3=82=92=E9=96=89?=
+ =?UTF-8?q?=E3=81=98=E3=82=8B?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/src/main/java/com/nezumi_ai/MainActivity.kt | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/app/src/main/java/com/nezumi_ai/MainActivity.kt b/app/src/main/java/com/nezumi_ai/MainActivity.kt
+index bbc10e7..fc978ee 100644
+--- a/app/src/main/java/com/nezumi_ai/MainActivity.kt
++++ b/app/src/main/java/com/nezumi_ai/MainActivity.kt
+@@ -139,6 +139,7 @@ class MainActivity : AppCompatActivity() {
+                             }
+                             findNavController(R.id.nav_host_fragment_content_main)
+                                 .navigate(R.id.chatFragment, bundle)
++                            (window.decorView as? android.view.ViewGroup)?.removeView(this)
+                         },
+                         onDismiss = {
+                             (window.decorView as? android.view.ViewGroup)?.removeView(this)
+-- 
+2.43.0

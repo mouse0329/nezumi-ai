@@ -22,6 +22,7 @@
 
         <argument android:name="sessionId" app:argType="long" android:defaultValue="-1L" />
         <argument android:name="isIncognito" app:argType="boolean" android:defaultValue="false" />
+        <argument android:name="scrollToMessageId" app:argType="long" android:defaultValue="-1L" />
 
         <action android:id="@+id/action_chatFragment_to_sessionListFragment" app:destination="@id/sessionListFragment" app:popUpTo="@id/sessionListFragment" app:popUpToInclusive="false" app:enterAnim="@android:anim/slide_in_left" app:exitAnim="@android:anim/slide_out_right" app:popEnterAnim="@android:anim/slide_in_left" app:popExitAnim="@android:anim/slide_out_right" />
     </fragment>
