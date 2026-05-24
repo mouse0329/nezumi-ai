@@ -478,6 +478,14 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     }
                     // ★ setCurrentSession は suspend 関数に変更されたため、直接 await する
                     viewModel.setCurrentSession(sessionId)
+
+                    // 検索結果からのジャンプ: scrollToMessageId が指定されている場合
+                    val scrollToId = arguments?.getLong("scrollToMessageId", -1L) ?: -1L
+                    if (scrollToId > 0L) {
+                        withContext(Dispatchers.Main) {
+                            scrollToMessageId(scrollToId)
+                        }
+                    }
                 } catch (e: Exception) {
                     Log.e("ChatFragment", "Failed to save session", e)
                 }
@@ -941,6 +949,24 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             insets
         }
         ViewCompat.requestApplyInsets(binding.root)
+    }
+
+
+    private fun scrollToMessageId(messageId: Long) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            // メッセージリストが描画されるまで少し待つ
+            kotlinx.coroutines.delay(400L)
+            val currentList = adapter.currentList
+            val position = currentList.indexOfFirst { it.id == messageId }
+            if (position >= 0) {
+                val lm = binding.messagesRecyclerView.layoutManager
+                    as? androidx.recyclerview.widget.LinearLayoutManager ?: return@launch
+                lm.scrollToPositionWithOffset(position, 120)
+                Log.d("ChatFragment", "scrollToMessageId: id=$messageId pos=$position")
+            } else {
+                Log.w("ChatFragment", "scrollToMessageId: messageId=$messageId not found in list")
+            }
+        }
     }
 
     private fun scrollToBottomImmediate() {

@@ -5,6 +5,7 @@ import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.ModelManager
+import com.nezumi_ai.data.repository.ChatChunkRepository
 import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.MemorySessionRepository
 import kotlinx.coroutines.CoroutineScope
@@ -28,7 +29,8 @@ import org.json.JSONObject
  */
 class MemoryExtractionWorker(
     private val memoryRepository: MemoryRepository,
-    private val memorySessionRepository: MemorySessionRepository
+    private val memorySessionRepository: MemorySessionRepository,
+    private val chatChunkRepository: ChatChunkRepository
 ) {
     private val extractionScope = CoroutineScope(
         Dispatchers.IO.limitedParallelism(1) + SupervisorJob()
@@ -124,6 +126,14 @@ class MemoryExtractionWorker(
 
             memorySessionRepository.markExtracted(sessionId.toString(), currentTurn)
             Log.d(TAG, "MEMORY_EXTRACT: session=$sessionId done, turn=$currentTurn")
+
+            // チャット履歴インデックス化（メモリ抽出と同タイミング）
+            for (msg in messages) {
+                if (msg.content.isNotBlank()) {
+                    chatChunkRepository.indexMessage(msg.id, sessionId, msg.content)
+                }
+            }
+            Log.d(TAG, "CHUNK_INDEX: session=$sessionId indexed ${messages.size} messages")
         } catch (e: Exception) {
             Log.e(TAG, "MEMORY_EXTRACT: failed session=$sessionId", e)
             // pending=true のまま → 次回起動時に再処理

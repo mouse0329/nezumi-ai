@@ -4,17 +4,21 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import com.nezumi_ai.data.repository.ChatChunkRepository
 import com.nezumi_ai.data.repository.ChatSessionRepository
 import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.MessageRepository
 import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 
-class ChatSessionListViewModelFactory(private val repository: ChatSessionRepository) :
+class ChatSessionListViewModelFactory(
+    private val repository: ChatSessionRepository,
+    private val chatChunkRepository: ChatChunkRepository? = null
+) :
     ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return ChatSessionListViewModel(repository) as T
+        return ChatSessionListViewModel(repository, chatChunkRepository) as T
     }
 }
 

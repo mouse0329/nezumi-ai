@@ -5,6 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.nezumi_ai.data.database.dao.AlarmDao
+import com.nezumi_ai.data.database.dao.ChatChunkDao
 import com.nezumi_ai.data.database.dao.ChatSessionDao
 import com.nezumi_ai.data.database.dao.MemoryDao
 import com.nezumi_ai.data.database.dao.MemorySessionDao
@@ -12,6 +13,7 @@ import com.nezumi_ai.data.database.dao.MessageDao
 import com.nezumi_ai.data.database.dao.PresetDao
 import com.nezumi_ai.data.database.dao.SettingsDao
 import com.nezumi_ai.data.database.entity.AlarmEntity
+import com.nezumi_ai.data.database.entity.ChatChunkEntity
 import com.nezumi_ai.data.database.entity.ChatSessionEntity
 import com.nezumi_ai.data.database.entity.MemoryEntity
 import com.nezumi_ai.data.database.entity.MemorySessionEntity
@@ -21,6 +23,7 @@ import com.nezumi_ai.data.database.entity.SettingsEntity
 
 @Database(
     entities = [
+        ChatChunkEntity::class,
         ChatSessionEntity::class,
         MessageEntity::class,
         SettingsEntity::class,
@@ -29,11 +32,12 @@ import com.nezumi_ai.data.database.entity.SettingsEntity
         MemoryEntity::class,
         MemorySessionEntity::class
     ],
-    version = 20,
+    version = 21,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
     
+    abstract fun chatChunkDao(): ChatChunkDao
     abstract fun chatSessionDao(): ChatSessionDao
     abstract fun messageDao(): MessageDao
     abstract fun settingsDao(): SettingsDao
@@ -53,13 +57,33 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                     NezumiAiDatabase::class.java,
                     "nezumi_ai.db"
                 )
-                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
+                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21)
                     // 開発中: スキーマ不一致時は再作成して起動クラッシュを回避
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { instance = it }
             }
         
+
+        private val MIGRATION_20_21 = object : androidx.room.migration.Migration(20, 21) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS chat_chunk (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        message_id INTEGER NOT NULL,
+                        session_id INTEGER NOT NULL,
+                        chunk_text TEXT NOT NULL,
+                        embedding BLOB NOT NULL,
+                        norm REAL NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        FOREIGN KEY(message_id) REFERENCES message(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_chat_chunk_message_id ON chat_chunk(message_id)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_chat_chunk_session_id ON chat_chunk(session_id)")
+            }
+        }
+
         private val MIGRATION_17_18 = object : androidx.room.migration.Migration(17, 18) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 // isPinned カラムを追加（デフォルト値: false）

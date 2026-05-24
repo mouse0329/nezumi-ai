@@ -7,6 +7,8 @@ import android.view.View
 import android.widget.Toast
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
@@ -18,6 +20,7 @@ import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.repository.ChatSessionRepository
 import com.nezumi_ai.presentation.viewmodel.ChatSessionListViewModel
 import com.nezumi_ai.presentation.viewmodel.ChatSessionListViewModelFactory
+import com.nezumi_ai.presentation.ui.screen.HistorySearchModal
 import com.nezumi_ai.presentation.ui.screen.SessionListScreen
 import kotlinx.coroutines.launch
 
@@ -41,7 +44,10 @@ class SessionListFragment : Fragment() {
             val settingsRepository = com.nezumi_ai.data.repository.SettingsRepository(database.settingsDao(), database.chatSessionDao())
             val messageRepository = com.nezumi_ai.data.repository.MessageRepository(database.messageDao())
             val repository = ChatSessionRepository(database.chatSessionDao(), settingsRepository, messageRepository)
-            val factory = ChatSessionListViewModelFactory(repository)
+            val chatChunkRepository = com.nezumi_ai.data.repository.ChatChunkRepository(
+                database.chatChunkDao(), requireContext()
+            )
+            val factory = ChatSessionListViewModelFactory(repository, chatChunkRepository)
             viewModel = ViewModelProvider(this, factory).get(ChatSessionListViewModel::class.java)
         } catch (t: Throwable) {
             Log.e(TAG, "Failed to initialize session list screen", t)
@@ -64,15 +70,28 @@ class SessionListFragment : Fragment() {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
                 val currentSessionId = currentSessionIdState.longValue.takeIf { it != -1L }
-                
+                var showSearch by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+
                 SessionListScreen(
                     viewModel = viewModel,
                     onOpenSettings = {
                         (requireActivity() as com.nezumi_ai.MainActivity).openDrawer()
                     },
                     onSessionClick = ::navigateToChat,
+                    onSearchClick = { showSearch = true },
                     currentSessionId = currentSessionId
                 )
+
+                if (showSearch) {
+                    HistorySearchModal(
+                        viewModel = viewModel,
+                        onResultClick = { sessionId, messageId ->
+                            showSearch = false
+                            navigateToChatWithScroll(sessionId, messageId)
+                        },
+                        onDismiss = { showSearch = false }
+                    )
+                }
             }
         }
     }
@@ -88,6 +107,19 @@ class SessionListFragment : Fragment() {
     private fun navigateToChat(sessionId: Long) {
         val action = SessionListFragmentDirections.actionSessionListFragmentToChatFragment(sessionId)
         findNavController().navigate(action)
+    }
+
+    private fun navigateToChatWithScroll(sessionId: Long, messageId: Long) {
+        val action = SessionListFragmentDirections
+            .actionSessionListFragmentToChatFragment(sessionId)
+            .also {
+                // scrollToMessageId はDirectionsの引数として渡す
+            }
+        val bundle = android.os.Bundle().apply {
+            putLong("sessionId", sessionId)
+            putLong("scrollToMessageId", messageId)
+        }
+        findNavController().navigate(R.id.chatFragment, bundle)
     }
 
     private fun confirmDeleteSession(sessionId: Long) {
