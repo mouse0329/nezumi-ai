@@ -15,10 +15,7 @@
 
                 <TextView android:id="@+id/chat_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/chat_title" android:textSize="15sp" android:textStyle="bold" android:textColor="@color/text_primary" android:ellipsize="end" android:singleLine="true" />
 
-                <com.google.android.material.textfield.TextInputLayout android:id="@+id/model_dropdown_layout" style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:hint="@string/model_dropdown_hint">
-
-                    <com.google.android.material.textfield.TextInputEditText android:id="@+id/model_dropdown" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="none" android:focusable="false" android:focusableInTouchMode="false" android:clickable="true" android:cursorVisible="false" />
-                </com.google.android.material.textfield.TextInputLayout>
+                <TextView android:id="@+id/model_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="@string/model_not_downloaded" android:textSize="13sp" android:textColor="@color/text_secondary" android:ellipsize="end" android:singleLine="true" />
             </LinearLayout>
 
             <androidx.compose.ui.platform.ComposeView android:id="@+id/header_actions_compose" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" />
@@ -53,13 +50,106 @@
         <androidx.compose.ui.platform.ComposeView android:id="@+id/media_preview_compose" android:layout_width="match_parent" android:layout_height="wrap_content" android:background="@color/surface_card" />
 
         <!-- Input Bar -->
-        <LinearLayout android:id="@+id/input_bar" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="10dp" android:gravity="center_vertical" android:background="@color/surface_card">
+        <LinearLayout
+            android:id="@+id/input_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/surface_card"
+            android:orientation="vertical"
+            android:padding="10dp">
 
-            <com.google.android.material.button.MaterialButton android:id="@+id/media_menu_button" style="@style/Widget.MaterialComponents.Button.OutlinedButton" android:layout_width="40dp" android:layout_height="40dp" android:minWidth="0dp" android:minHeight="0dp" android:text="+" android:textSize="20sp" android:contentDescription="@string/add_media_menu" android:insetTop="0dp" android:insetBottom="0dp" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_input_bar_card"
+                android:orientation="vertical"
+                android:padding="10dp">
 
-            <com.nezumi_ai.presentation.ui.widget.ClipboardAwareEditText android:id="@+id/message_input" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="@string/enter_message" android:textSize="14sp" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" android:background="@drawable/bg_input_field" android:padding="10dp" android:layout_marginStart="8dp" android:layout_marginEnd="8dp" android:imeOptions="actionSend" />
+                <com.nezumi_ai.presentation.ui.widget.ClipboardAwareEditText
+                    android:id="@+id/message_input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@null"
+                    android:hint="@string/enter_message"
+                    android:imeOptions="actionSend"
+                    android:maxLines="6"
+                    android:minHeight="44dp"
+                    android:padding="8dp"
+                    android:scrollbars="vertical"
+                    android:textColor="@color/text_primary"
+                    android:textColorHint="@color/text_secondary"
+                    android:textSize="15sp" />
 
-            <com.google.android.material.button.MaterialButton android:id="@+id/send_button" android:layout_width="wrap_content" android:layout_height="wrap_content" android:minWidth="56dp" android:text="@string/send_icon" style="@style/Widget.MaterialComponents.Button" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:id="@+id/input_action_group"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <ImageButton
+                            android:id="@+id/media_menu_button"
+                            android:layout_width="34dp"
+                            android:layout_height="34dp"
+                            android:background="@drawable/bg_icon_btn_circle"
+                            android:contentDescription="@string/add_media_menu"
+                            android:padding="6dp"
+                            android:scaleType="centerInside"
+                            android:src="@drawable/ic_add"
+                            android:tint="@color/text_primary" />
+
+                        <LinearLayout
+                            android:id="@+id/input_expanded_icons"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="4dp"
+                            android:orientation="horizontal"
+                            android:visibility="gone">
+
+                            <ImageButton
+                                android:id="@+id/image_button"
+                                android:layout_width="34dp"
+                                android:layout_height="34dp"
+                                android:background="@drawable/bg_icon_btn_circle"
+                                android:contentDescription="画像を添付"
+                                android:padding="6dp"
+                                android:scaleType="centerInside"
+                                android:src="@drawable/ic_image" />
+
+                            <ImageButton
+                                android:id="@+id/mic_button"
+                                android:layout_width="34dp"
+                                android:layout_height="34dp"
+                                android:layout_marginStart="4dp"
+                                android:background="@drawable/bg_icon_btn_circle"
+                                android:contentDescription="音声入力"
+                                android:padding="6dp"
+                                android:scaleType="centerInside"
+                                android:src="@drawable/ic_mic" />
+
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <ImageButton
+                        android:id="@+id/send_button"
+                        android:layout_width="34dp"
+                        android:layout_height="34dp"
+                        android:background="@drawable/bg_send_btn_circle"
+                        android:contentDescription="@string/send_icon"
+                        android:padding="6dp"
+                        android:scaleType="centerInside"
+                        android:src="@drawable/ic_send" />
+
+                </LinearLayout>
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 

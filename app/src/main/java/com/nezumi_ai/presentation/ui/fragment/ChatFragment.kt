@@ -15,7 +15,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.PopupMenu
+import android.widget.ProgressBar
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -76,7 +79,9 @@ import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.stripGemmaTokens
 import com.nezumi_ai.data.repository.ChatSessionRepository
+import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.MessageRepository
+import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.presentation.viewmodel.ChatViewModel
 import com.nezumi_ai.presentation.viewmodel.ChatViewModelFactory
@@ -114,6 +119,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     
     private var _binding: FragmentChatBinding? = null
     private val binding get() = _binding!!
+    private var defaultInputHint: CharSequence? = null
     
     private lateinit var viewModel: ChatViewModel
     private lateinit var adapter: MessageAdapter
@@ -121,6 +127,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var modelOptions: List<ModelOption> = emptyList()
     private var responseTypingAnimationJob: Job? = null
     private lateinit var settingsRepository: SettingsRepository
+    private lateinit var presetRepository: PresetRepository
     private var isGenerating = false
     private var isModelLoadingNow = false
     private var currentBackendType = "CPU"
@@ -152,6 +159,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private val immediateScrollMaxFrames = 10
     private val autoFollowBottomThresholdPx = 120
     private var lastKnownScrollRange = 0
+    private var lastObservedPresetId: String? = null
     private var pendingInitialScrollToBottom = true
     // 生成中にユーザーが意図的に上スクロールしたときだけ true。
     // 最下部に戻るか送信するとリセット。
@@ -179,7 +187,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var isRecordingAudio = false
     private var recordingAnimationJob: Job? = null
     private var recordingFile: java.io.File? = null
-    
+    private var recordingDialog: androidx.appcompat.app.AlertDialog? = null
+    private var recordingStatusTextView: TextView? = null
+    private var recordingWaveBars: List<View> = emptyList()
+    private var embeddingDownloadDialog: androidx.appcompat.app.AlertDialog? = null
+    private var embeddingDownloadProgressTextView: TextView? = null
+    private var embeddingDownloadProgressBar: ProgressBar? = null
+
     
     // Phase 11: 複数画像選択
     private val imagePickerLauncher = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
@@ -285,14 +299,25 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         settingsRepository = SettingsRepository(database.settingsDao(), database.chatSessionDao(), requireContext().applicationContext)
         val sessionRepository = ChatSessionRepository(database.chatSessionDao(), settingsRepository)
         val messageRepository = MessageRepository(database.messageDao())
+        presetRepository = PresetRepository(database.presetDao(), requireContext().applicationContext)
+        val memoryRepository = MemoryRepository(database.memoryDao())
+        lastObservedPresetId = PreferencesHelper.getCurrentPresetId(requireContext())
         val factory = ChatViewModelFactory(
             requireContext().applicationContext,
             sessionRepository,
             messageRepository,
-            settingsRepository
+            settingsRepository,
+            presetRepository,
+            memoryRepository
         )
-        viewModel = ViewModelProvider(this, factory).get(ChatViewModel::class.java)
-        setupModelDropdown()
+        viewModel = ViewModelProvider(requireActivity(), factory).get(ChatViewModel::class.java)
+        binding.chatTitle.setOnClickListener {
+            findNavController().navigate(R.id.presetSettingsFragment)
+        }
+        setupModelDisplay()
+
+        // 保存しておいたデフォルトの入力ヒントを保持（null で上書きしないようにするため）
+        defaultInputHint = binding.messageInput.hint
         
         // RecyclerView設定（adapterの初期化をStateFlowのcollect前に移動）
         adapter = MessageAdapter(
@@ -553,42 +578,51 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             pasteFromClipboard()
         }
 
+        // +ボタン: expanded iconsのトグル
         binding.mediaMenuButton.setOnClickListener { view ->
-            if (!imageInputEnabled && !audioInputEnabled) {
+            val expanded = binding.inputExpandedIcons
+            val isNowVisible = expanded.visibility == View.VISIBLE
+            if (!isNowVisible && !imageInputEnabled && !audioInputEnabled) {
                 Toast.makeText(requireContext(), "このモデルは画像・音声入力に対応していません", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
             imm.hideSoftInputFromWindow(view.windowToken, 0)
+            expanded.visibility = if (isNowVisible) View.GONE else View.VISIBLE
+            binding.imageButton.visibility = if (imageInputEnabled) View.VISIBLE else View.GONE
+            binding.micButton.visibility = if (audioInputEnabled) View.VISIBLE else View.GONE
+            binding.mediaMenuButton.animate()
+                .rotation(if (isNowVisible) 0f else 45f)
+                .setDuration(200)
+                .start()
+        }
+
+        // 画像ボタン: ギャラリー or カメラ選択
+        binding.imageButton.setOnClickListener { view ->
             val popupMenu = PopupMenu(requireContext(), view)
-            popupMenu.menuInflater.inflate(R.menu.menu_media_select, popupMenu.menu)
-            if (!imageInputEnabled) {
-                popupMenu.menu.findItem(R.id.menu_select_image)?.isVisible = false
-                popupMenu.menu.findItem(R.id.menu_camera)?.isVisible = false
-                popupMenu.menu.findItem(R.id.menu_clipboard_paste)?.isVisible = false
-            }
-            if (!audioInputEnabled) {
-                popupMenu.menu.findItem(R.id.menu_select_audio)?.isVisible = false
-                popupMenu.menu.findItem(R.id.menu_record_audio)?.isVisible = false
-            }
+            popupMenu.menu.add(0, 1, 0, "ギャラリーから選択")
+            popupMenu.menu.add(0, 2, 1, "カメラで撮影")
+            popupMenu.menu.add(0, 3, 2, "クリップボードから貼り付け")
             popupMenu.setOnMenuItemClickListener { menuItem ->
                 when (menuItem.itemId) {
-                    R.id.menu_select_image -> { imagePickerLauncher.launch("image/*"); true }
-                    R.id.menu_camera -> { launchCamera(); true }
-                    R.id.menu_clipboard_paste -> { pasteFromClipboard(); true }
-                    R.id.menu_select_audio -> { audioPickerLauncher.launch("audio/*"); true }
-                    R.id.menu_record_audio -> { launchAudioRecording(); true }
+                    1 -> { imagePickerLauncher.launch("image/*"); true }
+                    2 -> { launchCamera(); true }
+                    3 -> { pasteFromClipboard(); true }
                     else -> false
                 }
             }
             popupMenu.show()
         }
 
+        // マイクボタン: 音声録音
+        binding.micButton.setOnClickListener {
+            launchAudioRecording()
+        }
+
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.isLoading.collect { isLoading ->
                 isGenerating = isLoading
                 renderSendButtonState()
-                renderModelDropdownState()
                 if (isLoading) {
                     userScrolledAwayDuringGeneration = false
                     autoFollowBottomLocked = isUserAtBottom || isNearBottom()
@@ -626,20 +660,53 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         viewLifecycleOwner.lifecycleScope.launch {
             combine(
                 viewModel.isCompressing,
-                viewModel.isLoading
-            ) { compressing, loading -> Pair(compressing, loading) }
-            .collect { (compressing, _) ->
+                viewModel.isEmbeddingDownloadInProgress
+            ) { compressing, downloading -> Pair(compressing, downloading) }
+            .collect { (compressing, downloading) ->
                 isCompressingNow = compressing
-                binding.messageInput.isEnabled = !compressing
-                binding.sendButton.isEnabled = !compressing
+                // 抽出中・埋め込みダウンロード中は入力を無効化しないが、ダウンロード中は送信を防ぐ
+                binding.messageInput.isEnabled = !compressing && !downloading
+                binding.sendButton.isEnabled = !compressing && !downloading
                 renderCompressButtonState()
                 renderSendButtonState()
                 if (isGenerating) {
-                    responseTypingText =
-                        if (compressing) getString(R.string.response_compressing)
-                        else getString(R.string.response_generating)
+                    responseTypingText = when {
+                        compressing -> getString(R.string.response_compressing)
+                        downloading -> "埋め込みファイルをダウンロード中..."
+                        else -> getString(R.string.response_generating)
+                    }
                 }
-                if (compressing) startResponseTypingAnimation() else stopResponseTypingAnimation()
+                if (compressing || downloading) startResponseTypingAnimation() else stopResponseTypingAnimation()
+            }
+        }
+
+        // Phase 3: メモリ抽出中インジケーター
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.isExtracting.collect { extracting ->
+                // 入力欄上部に「⟳ 記憶を整理中...」を表示
+                // （既存の compressingHintText または inputHint を流用）
+                if (extracting) {
+                    binding.messageInput.hint = getString(R.string.response_extracting)
+                } else {
+                    // デフォルトのヒントを復元（null をセットすると完全に消えるため）
+                    binding.messageInput.hint = defaultInputHint
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.isEmbeddingDownloadInProgress.collect { downloading ->
+                if (downloading) {
+                    showEmbeddingDownloadDialog()
+                } else {
+                    dismissEmbeddingDownloadDialog()
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.embeddingDownloadProgress.collect { progress ->
+                updateEmbeddingDownloadDialog(progress)
             }
         }
 
@@ -649,17 +716,20 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 refreshCurrentBackendType()
                 updateMediaAvailability(model)
                 updateThinkingToggleVisibility()
-                val selected = modelOptions.firstOrNull { it.key == model } ?: return@collect
-                val shown = modelDisplaySuffix(selected.label)
-                if (binding.modelDropdown.text?.toString() != shown) {
-                    binding.modelDropdown.setText(shown)
-                }
+                updateModelNameText(model)
             }
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.sessionTitle.collect { title ->
-                binding.chatTitle.text = title
+                binding.chatTitle.contentDescription = title
+                refreshPresetHeader()
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            presetRepository.observePresets().collect {
+                refreshPresetHeader()
             }
         }
 
@@ -707,7 +777,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 binding.modelLoadingComposeOverlay.visibility =
                     if (loading) View.VISIBLE else View.GONE
                 binding.backButton.isEnabled = !loading
-                renderModelDropdownState()
                 renderSendButtonState()
                 renderCompressButtonState()
                 binding.messageInput.isEnabled = !loading
@@ -820,9 +889,29 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     override fun onResume() {
         super.onResume()
-        setupModelDropdown()
+        modelOptions = buildDownloadedModelOptions()
+        updateModelNameText(viewModel.selectedModel.value)
         refreshCurrentBackendType()
         updateMediaAvailability(currentModelKey)
+        viewLifecycleOwner.lifecycleScope.launch {
+            refreshPresetHeader()
+        }
+        val currentPresetId = PreferencesHelper.getCurrentPresetId(requireContext())
+        if (lastObservedPresetId != null && currentPresetId != lastObservedPresetId) {
+            lastObservedPresetId = currentPresetId
+            viewModel.preloadActivePresetModel()
+        } else {
+            lastObservedPresetId = currentPresetId
+        }
+    }
+
+    private suspend fun refreshPresetHeader() {
+        val preset = presetRepository.getCurrentPreset()
+        binding.chatTitle.text = if (preset != null) {
+            "${preset.icon} ${preset.name} ▼"
+        } else {
+            getString(R.string.chat_title)
+        }
     }
 
     override fun onStop() {
@@ -1008,36 +1097,17 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
     }
 
-    private fun setupModelDropdown() {
+    private fun setupModelDisplay() {
         modelOptions = buildDownloadedModelOptions()
-        if (modelOptions.isEmpty()) {
-            binding.modelDropdown.setText(getString(R.string.model_not_downloaded))
-            binding.modelDropdown.isEnabled = false
-            binding.modelDropdownLayout.isEnabled = false
-            return
-        }
-
-        renderModelDropdownState()
-        syncSelectedModelLabel()
-        val openPicker = View.OnClickListener {
-            if (binding.modelDropdown.isEnabled) showModelPickerDialog()
-        }
-        binding.modelDropdown.setOnClickListener(openPicker)
-        binding.modelDropdownLayout.setOnClickListener(openPicker)
+        updateModelNameText(viewModel.selectedModel.value)
     }
 
-    private fun showModelPickerDialog() {
-        if (modelOptions.isEmpty()) return
-        val labels = modelOptions.mapIndexed { i, opt ->
-            "${i + 1}. ${opt.label}"
-        }.toTypedArray()
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.model_dropdown_hint)
-            .setItems(labels) { _, which ->
-                val selected = modelOptions.getOrNull(which) ?: return@setItems
-                viewModel.switchModel(selected.key)
-            }
-            .show()
+    private fun updateModelNameText(modelKey: String) {
+        val selected = modelOptions.firstOrNull { it.key == modelKey }
+        val label = selected?.label
+            ?: modelKey.takeIf { it.isNotBlank() }
+            ?: getString(R.string.model_not_downloaded)
+        binding.modelName.text = modelDisplaySuffix(label)
     }
 
     private fun buildDownloadedModelOptions(): List<ModelOption> {
@@ -1065,24 +1135,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         val label: String
     )
 
-    private fun syncSelectedModelLabel() {
-        val currentKey = viewModel.selectedModel.value
-        val selected = modelOptions.firstOrNull { it.key == currentKey }
-        if (selected != null) {
-            binding.modelDropdown.setText(modelDisplaySuffix(selected.label))
-            return
-        }
-
-        val fallback = modelOptions.firstOrNull() ?: return
-        binding.modelDropdown.setText(modelDisplaySuffix(fallback.label))
-        viewModel.setSelectedModelSilently(fallback.key)
-    }
-
     private fun renderSendButtonState() {
-        // 生成中は常に「停止(四角)」を優先表示
-        binding.sendButton.text =
-            if (isGenerating) getString(R.string.stop_icon) else getString(R.string.send_icon)
-        // モデルロード中のみ操作不可
+        binding.sendButton.setImageResource(
+            if (isGenerating) R.drawable.ic_stop else R.drawable.ic_send
+        )
         binding.sendButton.isEnabled = !isModelLoadingNow
     }
 
@@ -1099,14 +1155,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             selectedAudioUri = null
         }
         updateMediaPreview()
-        binding.mediaMenuButton.visibility =
-            if (imageInputEnabled || audioInputEnabled) View.VISIBLE else View.GONE
-    }
-
-    private fun renderModelDropdownState() {
-        val enabled = !isModelLoadingNow && !isGenerating && modelOptions.isNotEmpty()
-        binding.modelDropdown.isEnabled = enabled
-        binding.modelDropdownLayout.isEnabled = enabled
+        binding.mediaMenuButton.visibility = View.VISIBLE
+        if (binding.inputExpandedIcons.visibility == View.VISIBLE) {
+            binding.imageButton.visibility = if (imageInputEnabled) View.VISIBLE else View.GONE
+            binding.micButton.visibility = if (audioInputEnabled) View.VISIBLE else View.GONE
+        }
     }
 
     private fun renderCompressButtonState() {
@@ -1267,7 +1320,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     ) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = onDismiss,
-            icon = { Text("🚨", fontSize = 32.sp) },
+            icon = {
+                Image(
+                    painter = painterResource(id = R.drawable.ic_errnezumi),
+                    contentDescription = "エラー",
+                    modifier = Modifier.size(128.dp)
+                )
+            },
             title = { Text("メモリ不足") },
             text = {
                 Column {
@@ -1345,7 +1404,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = onDismiss,
             icon = {
-                Text("⚠️", fontSize = 32.sp)
+                Image(
+                    painter = painterResource(id = R.drawable.ic_wnezumi),
+                    contentDescription = "警告",
+                    modifier = Modifier.size(128.dp)
+                )
             },
             title = {
                 Text("メモリ警告")
@@ -1357,7 +1420,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     Text("スマホ本体: ${warning.usedMemoryMB}MB / ${warning.totalMemoryMB}MB")
                     Text("使用率: ${warning.usedPercent}%")
                     Text(
-                        if (warning.lowMemoryFlag) "⚠️ デバイスがメモリ不足状態です" else "✓ 正常",
+                        if (warning.lowMemoryFlag) "デバイスがメモリ不足状態です" else "正常",
                         color = if (warning.lowMemoryFlag) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.height(12.dp))
@@ -1377,12 +1440,71 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         )
     }
 
+    private fun showEmbeddingDownloadDialog() {
+        if (embeddingDownloadDialog?.isShowing == true) return
+        val context = requireContext()
+        val container = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            val padding = (16 * resources.displayMetrics.density).toInt()
+            setPadding(padding, padding, padding, padding)
+        }
+        val messageView = TextView(context).apply {
+            text = "埋め込みファイルをダウンロード中..."
+            setPadding(0, 0, 0, (12 * resources.displayMetrics.density).toInt())
+        }
+        val progressBar = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = true
+            max = 100
+            progress = 0
+        }
+        container.addView(messageView)
+        container.addView(progressBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        val dialog = AlertDialog.Builder(context)
+            .setTitle("埋め込みファイルのダウンロード")
+            .setView(container)
+            .setNegativeButton("キャンセル") { _, _ ->
+                viewModel.cancelEmbeddingDownload()
+            }
+            .setCancelable(false)
+            .create()
+
+        dialog.show()
+        embeddingDownloadDialog = dialog
+        embeddingDownloadProgressTextView = messageView
+        embeddingDownloadProgressBar = progressBar
+    }
+
+    private fun updateEmbeddingDownloadDialog(progress: ChatViewModel.EmbeddingDownloadProgress?) {
+        if (embeddingDownloadDialog?.isShowing != true) return
+        if (progress == null) {
+            embeddingDownloadProgressTextView?.text = "埋め込みファイルを準備しています..."
+            embeddingDownloadProgressBar?.isIndeterminate = true
+            return
+        }
+        embeddingDownloadProgressTextView?.text = "${progress.fileName}: ${progress.downloaded} / ${if (progress.total > 0) progress.total else "?"}"
+        if (progress.total > 0) {
+            embeddingDownloadProgressBar?.isIndeterminate = false
+            embeddingDownloadProgressBar?.progress = ((progress.downloaded.toDouble() / progress.total.toDouble()) * 100).toInt().coerceIn(0, 100)
+        } else {
+            embeddingDownloadProgressBar?.isIndeterminate = true
+        }
+    }
+
+    private fun dismissEmbeddingDownloadDialog() {
+        embeddingDownloadDialog?.dismiss()
+        embeddingDownloadDialog = null
+        embeddingDownloadProgressTextView = null
+        embeddingDownloadProgressBar = null
+    }
+
     private fun showCpuCompatibilityWarningDialog(warning: ChatViewModel.CpuCompatibilityWarningInfo) {
         val alertDialog = androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle("⚠️ CPU互換性警告")
+            .setTitle("CPU互換性警告")
+            .setIcon(R.drawable.ic_nezumi_ai)
             .setMessage(
                 "モデル「${warning.modelName}」のロード前に確認が必要です。\n\n" +
-                    warning.message + "\n\n" +
+                    warning.message.replace("⚠️", "").trim() + "\n\n" +
                     "ロードを続行しますか？"
             )
             .setPositiveButton("続行") { _, _ ->
@@ -1773,13 +1895,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 start()
             }
             
-            // 送信ボタンを停止ボタンに変更
-            _binding?.sendButton?.text = "停止"
-            _binding?.sendButton?.setOnClickListener {
-                stopAudioRecording()
-            }
-            
-            // 音量アニメーションを開始
+            // 録音用モーダルを表示
+            showAudioRecordingDialog()
+            binding.sendButton.isEnabled = false
+            binding.messageInput.isEnabled = false
+            binding.mediaMenuButton.isEnabled = false
+
+            // 録音アニメーションを開始
             startRecordingAmplitudeAnimation()
             
             Toast.makeText(requireContext(), "録音開始しました", Toast.LENGTH_SHORT).show()
@@ -1813,25 +1935,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 // hintを元に戻す（cancelするとアニメJob内の後処理が走らないため明示的に戻す）
                 _binding?.messageInput?.hint = "メッセージを入力..."
                 
-                // 送信ボタンを戻す
-                _binding?.sendButton?.text = getString(R.string.send)
-                _binding?.sendButton?.setOnClickListener {
-                    if (viewModel.isLoading.value) {
-                        viewModel.stopGeneration()
-                        return@setOnClickListener
-                    }
-                    val message = _binding?.messageInput?.text.toString().trim()
-                    if (message.isNotEmpty()) {
-                        // Phase 11: 複数画像対応
-                        val imagesToSend = if (imageInputEnabled) selectedImageUrisList else emptyList()
-                        val audioToSend = if (audioInputEnabled) selectedAudioUri else null
-                        viewModel.sendMessageWithMedia(message, imagesToSend, audioToSend)
-                        _binding?.messageInput?.text?.clear()
-                        selectedImageUrisList = emptyList()
-                        selectedAudioUri = null
-                        updateMediaPreview()
-                    }
+                // 送信ボタンはモーダル停止ボタンで分離しているので、通常の送信UIに戻す
+                if (_binding != null) {
+                    renderSendButtonState()
                 }
+                _binding?.messageInput?.isEnabled = true
+                _binding?.mediaMenuButton?.isEnabled = true
                 
                 // 録音ファイルをコンテキストに追加
                 if (recordingFile != null && recordingFile!!.exists()) {
@@ -1855,6 +1964,47 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             Toast.makeText(requireContext(), "録音の停止に失敗しました", Toast.LENGTH_SHORT).show()
         }
     }
+
+    private fun showAudioRecordingDialog() {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_audio_recording, null, false)
+        recordingStatusTextView = dialogView.findViewById(R.id.recording_status)
+        recordingWaveBars = listOf(
+            dialogView.findViewById(R.id.recording_bar_1),
+            dialogView.findViewById(R.id.recording_bar_2),
+            dialogView.findViewById(R.id.recording_bar_3),
+            dialogView.findViewById(R.id.recording_bar_4),
+            dialogView.findViewById(R.id.recording_bar_5),
+        )
+
+        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+            .setView(dialogView)
+            .setCancelable(false)
+            .create()
+
+        dialog.setOnShowListener {
+            dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.recording_stop_button)
+                .setOnClickListener {
+                    dialog.dismiss()
+                    stopAudioRecording()
+                }
+        }
+
+        dialog.setOnDismissListener {
+            recordingDialog = null
+            recordingStatusTextView = null
+            recordingWaveBars = emptyList()
+        }
+
+        dialog.show()
+        recordingDialog = dialog
+    }
+
+    private fun dismissAudioRecordingDialog() {
+        recordingDialog?.dismiss()
+        recordingDialog = null
+        recordingStatusTextView = null
+        recordingWaveBars = emptyList()
+    }
     
     private fun startRecordingAmplitudeAnimation() {
         recordingAnimationJob?.cancel()
@@ -1867,12 +2017,19 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     dotCount = (dotCount % 3) + 1
                     val dots = ".".repeat(dotCount)
                     
-                            withContext(Dispatchers.Main) {
-                                // プレースホルダーテキストをドット進捗表示に変更
-                                _binding?.messageInput?.hint = "録音中$dots"
+                    withContext(Dispatchers.Main) {
+                        recordingStatusTextView?.text = "録音中$dots"
+                        val density = requireContext().resources.displayMetrics.density
+                        recordingWaveBars.forEachIndexed { index, bar ->
+                            val heightDp = 24 + ((dotCount + index) % 5) * 10
+                            bar.layoutParams = bar.layoutParams.apply {
+                                height = (heightDp * density).toInt()
                             }
+                            bar.requestLayout()
+                        }
+                    }
                     
-                    delay(500) // 500msごとにドット更新
+                    delay(500) // 500msごとに更新
                 } catch (e: Exception) {
                     Log.d("ChatFragment", "Recording animation error", e)
                 }

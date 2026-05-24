@@ -31,6 +31,9 @@ object MemoryObserver {
     // メモリ段階のしきい値（％）
     private const val MEMORY_LEVEL_WARNING = 70
     private const val MEMORY_LEVEL_SEVERE = 85
+        const val DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT = 45
+        const val MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT = 0
+        const val MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT = 100
     
     // メモリ段階
     enum class MemoryLevel {
@@ -59,21 +62,22 @@ object MemoryObserver {
      * Get current memory status.
      * #6 fix: use ActivityManager.MemoryInfo.availMem (system-wide free memory) instead of JVM heap.
      * LLM models load into native memory; JVM heap usage does not reflect actual memory pressure.
+     * Uses absolute memory thresholds instead of percentages for more reliable detection.
      */
     suspend fun getMemoryStatus(context: Context): MemoryStatus {
         return withContext(Dispatchers.IO) {
             val sysInfo = getSystemMemoryInfo(context)
-            val usedPercent = sysInfo.usedPercent
 
+            // 絶対値とlowMemoryフラグで判定
             val level = when {
-                usedPercent >= MEMORY_LEVEL_SEVERE -> MemoryLevel.SEVERE
-                usedPercent >= MEMORY_LEVEL_WARNING -> MemoryLevel.WARNING
+                sysInfo.lowMemoryFlag || sysInfo.availableMemoryMB < 300 -> MemoryLevel.SEVERE
+                sysInfo.availableMemoryMB < 800 -> MemoryLevel.WARNING
                 else -> MemoryLevel.NORMAL
             }
 
             MemoryStatus(
                 level = level,
-                usedPercent = usedPercent,
+                usedPercent = sysInfo.usedPercent,
                 usedMB = sysInfo.usedMemoryMB,
                 maxMB = sysInfo.totalMemoryMB,
                 isLowMemory = sysInfo.lowMemoryFlag
@@ -143,23 +147,25 @@ object MemoryObserver {
      * @return true: 推論続行可能 / false: 推論中止推奨
      */
     suspend fun requestMemoryCorrectionIfNeeded(context: Context): Boolean {
-        val status = getMemoryStatus(context)
-        
-        return when (status.level) {
-            MemoryLevel.NORMAL -> {
-                Log.d(TAG, "Memory: ${status.usedPercent}% - OK")
-                true
-            }
-            MemoryLevel.WARNING -> {
-                Log.w(TAG, "Memory: ${status.usedPercent}% - WARNING. Suggesting gc()")
-                triggerGarbageCollection()
-                true
-            }
-            MemoryLevel.SEVERE -> {
-                Log.e(TAG, "Memory: ${status.usedPercent}% - SEVERE. Inference should be aborted")
-                false
-            }
+        val sysInfo = getSystemMemoryInfo(context)
+
+        if (sysInfo.lowMemoryFlag) {
+            Log.e(TAG, "System lowMemory flag is set - aborting")
+            return false
         }
+
+        if (sysInfo.availableMemoryMB < 300) {
+            Log.e(TAG, "Available memory critically low: ${sysInfo.availableMemoryMB}MB")
+            return false
+        }
+
+        if (sysInfo.usedPercent >= MEMORY_LEVEL_WARNING) {
+            Log.w(TAG, "Memory: ${sysInfo.usedPercent}% - WARNING. Suggesting gc()")
+            triggerGarbageCollection()
+        }
+
+        Log.d(TAG, "Memory OK: avail=${sysInfo.availableMemoryMB}MB lowMemory=${sysInfo.lowMemoryFlag}")
+        return true
     }
     
     /**
@@ -256,31 +262,41 @@ object MemoryObserver {
 
     /**
      * モデルファイルサイズから必要なメモリを推定してメモリ不足を検知
+     * デフォルトでは利用可能な空きメモリを基準に判定します。
      * @param modelFileSizeBytes モデルファイルのサイズ（バイト）
+     * @param thresholdPercent モデルサイズが利用可能な空きメモリの何%を超えると警告するか
+     * @param useAvailable true: 空きメモリを基準に判定 / false: 総メモリを基準に判定
      * @return true: メモリが不足している / false: メモリが十分
      */
-    fun isMemoryLowForFileSize(context: Context, modelFileSizeBytes: Long): Boolean {
+    fun isMemoryLowForFileSize(context: Context, modelFileSizeBytes: Long, thresholdPercent: Int = DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT, useAvailable: Boolean = true): Boolean {
+        if (thresholdPercent <= 0) {
+            return false
+        }
+
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
             ?: return false
 
         val memInfo = ActivityManager.MemoryInfo()
         activityManager.getMemoryInfo(memInfo)
 
-        // 現在の空きメモリ（GB）
         val availableGb = memInfo.availMem / BYTES_IN_GB
-
-        // モデルファイルサイズから必要メモリを推定
-        // 経験則: モデルファイルサイズの約2.5倍のRAMが必要
-        // （モデルロード + KVキャッシュ + 推論バッファ）
+        val totalGb = memInfo.totalMem / BYTES_IN_GB
         val modelFileSizeGb = modelFileSizeBytes / BYTES_IN_GB
-        val estimatedRequiredMemGb = modelFileSizeGb * 2.5f
+
+        val isLow = if (useAvailable) {
+            val requiredAvailableGb = modelFileSizeGb * (thresholdPercent / 100f)
+            requiredAvailableGb > availableGb
+        } else {
+            val allowedModelSizeGb = totalGb * (thresholdPercent / 100f)
+            modelFileSizeGb > allowedModelSizeGb
+        }
 
         Log.d(
             TAG,
-            "isMemoryLowForFileSize: modelFileSize=${modelFileSizeGb}GB estimatedRequired=${estimatedRequiredMemGb}GB availableMem=${availableGb}GB"
+            "isMemoryLowForFileSize: modelFileSize=${modelFileSizeGb}GB threshold=${thresholdPercent}% " +
+                "availableMem=${availableGb}GB totalMem=${totalGb}GB useAvailable=$useAvailable isLow=$isLow"
         )
 
-        // 推定必要メモリが空きメモリを超える場合は警告
-        return estimatedRequiredMemGb > availableGb
+        return isLow
     }
 }

@@ -17,6 +17,7 @@ import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -25,6 +26,9 @@ import com.nezumi_ai.R
 import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.InferenceConfig
+import com.nezumi_ai.data.inference.MemoryObserver
+import com.nezumi_ai.data.memory.MemorySaveMode
+import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 
 import com.nezumi_ai.utils.PreferencesHelper
@@ -33,6 +37,7 @@ import kotlin.math.roundToInt
 
 class SettingsComposeFragment : Fragment() {
     private lateinit var settingsRepository: SettingsRepository
+    private lateinit var memoryRepository: MemoryRepository
 
     private var contextWindowInput by mutableStateOf("4096")
     private var temperatureInput by mutableStateOf("0.7")
@@ -40,13 +45,13 @@ class SettingsComposeFragment : Fragment() {
     private var maxTokensInput by mutableStateOf("1024")
     private var contextCompressionEnabled by mutableStateOf(false)
     private var contextCompressionThresholdPercent by mutableStateOf(70)
-    private var userNameInput by mutableStateOf("")
-    private var systemPromptInput by mutableStateOf("")
+    private var preloadMemoryWarningThresholdPercent by mutableStateOf(250)
     private var selectedModel by mutableStateOf("E2B")
     private var backendType by mutableStateOf("CPU")
     private var themeMode by mutableStateOf(PreferencesHelper.THEME_SYSTEM)
     private var errorDialogMessage by mutableStateOf<String?>(null)
     private var versionDialogVisible by mutableStateOf(false)
+    private var aboutDialogVisible by mutableStateOf(false)
     private var llamaCppThreads by mutableStateOf(InferenceConfig.getDefaultThreadCount())
     private var maxThreads by mutableStateOf(InferenceConfig.MAX_THREADS)
     private var llamaCppGpuLayers by mutableStateOf(0)
@@ -54,14 +59,17 @@ class SettingsComposeFragment : Fragment() {
     private var llamaCppNKeep by mutableStateOf(0)
     private var llamaCppRopeFreqBase by mutableStateOf(0.0f)
     private var llamaCppRopeFreqScale by mutableStateOf(1.0f)
+    private var memorySaveMode by mutableStateOf(MemorySaveMode.LLM.name)
     private var chatHistoryLimit by mutableStateOf(30)
     private var sdSteps by mutableStateOf(8)
     private var sdCfg by mutableStateOf(7.0f)
+    private var braveSearchApiKeyInput by mutableStateOf("")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val db = NezumiAiDatabase.getInstance(requireContext())
         settingsRepository = SettingsRepository(db.settingsDao(), db.chatSessionDao())
+        memoryRepository = MemoryRepository(db.memoryDao())
     }
 
     override fun onCreateView(
@@ -107,6 +115,11 @@ class SettingsComposeFragment : Fragment() {
                 onDismiss = { versionDialogVisible = false }
             )
         }
+        if (aboutDialogVisible) {
+            AboutDialog(
+                onDismiss = { aboutDialogVisible = false }
+            )
+        }
 
         LazyColumn(
             modifier = Modifier
@@ -133,13 +146,18 @@ class SettingsComposeFragment : Fragment() {
                     )
                 }
             }
+            
             item { GeneralSettingsCard() }
-            item { PersonalizationCard() }
+            item { WebSearchApiKeyCard() }
             item { InferenceParamsCard() }
             item { ImageGenSettingsCard() }
+            item { MemoryManagementCard() }
             item { ChatHistoryCard() }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { aboutDialogVisible = true }) {
+                        Text(text = "このアプリについて")
+                    }
                     TextButton(onClick = {
                         PreferencesHelper.resetInitialSetupCompleted(requireContext())
                         findNavController().navigate(R.id.setupWizardFragment)
@@ -248,6 +266,39 @@ class SettingsComposeFragment : Fragment() {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    @Composable
+    private fun WebSearchApiKeyCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(text = "Brave Search API", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Text(
+                    text = "Brave Search の API キーを設定します。ツール呼び出し時にこのキーが使用されます。",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                OutlinedTextField(
+                    value = braveSearchApiKeyInput,
+                    onValueChange = { braveSearchApiKeyInput = it },
+                    label = { Text("APIキー") },
+                    placeholder = { Text("brave_api_key を入力") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation()
+                )
+                Text(
+                    text = if (braveSearchApiKeyInput.isBlank()) "未設定の場合、ウェブ検索ツールは動作しません。" else "現在設定済みの API キーが保存されています。",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
     }
@@ -463,6 +514,47 @@ class SettingsComposeFragment : Fragment() {
                         )
                     }
                 }
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "プリロードメモリ警告閾値",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "${preloadMemoryWarningThresholdPercent}%",
+                            color = colorResource(id = R.color.primary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                    Slider(
+                        value = preloadMemoryWarningThresholdPercent.toFloat(),
+                        onValueChange = { value ->
+                            preloadMemoryWarningThresholdPercent = value.roundToInt().coerceIn(
+                                MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT,
+                                MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT
+                            )
+                        },
+                        valueRange = MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT.toFloat()..
+                            MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT.toFloat(),
+                        steps = MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT -
+                            MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT - 1,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = "モデルサイズが利用可能な空きメモリのこの割合を超えると警告します",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
                 
                 // Advanced Llama.cpp Settings (Collapsible)
                 var expanded by remember { mutableStateOf(false) }
@@ -645,53 +737,6 @@ class SettingsComposeFragment : Fragment() {
         }
     }
 
-    @Composable
-    private fun PersonalizationCard() {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = colorResource(id = R.color.primary_light)
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = "個人化設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
-                
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "ユーザー名",
-                        color = colorResource(id = R.color.text_secondary),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    OutlinedTextField(
-                        value = userNameInput,
-                        onValueChange = { userNameInput = it },
-                        placeholder = { Text("ユーザー名") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                }
-                
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "システムプロンプト",
-                        color = colorResource(id = R.color.text_secondary),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    OutlinedTextField(
-                        value = systemPromptInput,
-                        onValueChange = { systemPromptInput = it },
-                        placeholder = { Text("AIの振る舞いやルールを入力...") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 80.dp),
-                        minLines = 3
-                    )
-                }
-            }
-        }
-    }
 
     @Composable
     private fun ImageGenSettingsCard() {
@@ -762,6 +807,134 @@ class SettingsComposeFragment : Fragment() {
                         steps = 38,
                         modifier = Modifier.fillMaxWidth()
                     )
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun MemoryManagementCard() {
+        val memories by memoryRepository.observeMemories().collectAsState(initial = emptyList())
+        var confirmDeleteAll by remember { mutableStateOf(false) }
+
+        if (confirmDeleteAll) {
+            AlertDialog(
+                onDismissRequest = { confirmDeleteAll = false },
+                title = { Text("メモリを全削除") },
+                text = { Text("保存済みメモリをすべて削除します。") },
+                confirmButton = {
+                    Button(onClick = {
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            memoryRepository.softDeleteAll()
+                            confirmDeleteAll = false
+                            toast("メモリを削除しました")
+                        }
+                    }) {
+                        Text("削除")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmDeleteAll = false }) {
+                        Text("キャンセル")
+                    }
+                }
+            )
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(text = "メモリ管理", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                        Text(
+                            text = "${memories.size}件のメモリ",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    TextButton(
+                        enabled = memories.isNotEmpty(),
+                        onClick = { confirmDeleteAll = true }
+                    ) {
+                        Text("全削除")
+                    }
+                }
+
+                Text(
+                    text = "メモリ保存方式",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    FilterChip(
+                        selected = memorySaveMode == MemorySaveMode.LLM.name,
+                        onClick = { memorySaveMode = MemorySaveMode.LLM.name },
+                        label = { Text("LLM抽出") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = memorySaveMode == MemorySaveMode.RULE_BASED.name,
+                        onClick = { memorySaveMode = MemorySaveMode.RULE_BASED.name },
+                        label = { Text("ルールベース") },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                if (memories.isEmpty()) {
+                    Text(
+                        text = "保存されたメモリはありません",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    memories.take(20).forEach { memory ->
+                        Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.14f), thickness = 1.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = memory.content,
+                                    color = colorResource(id = R.color.text_primary),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = "重要度 ${String.format("%.2f", memory.importance)} / 参照 ${memory.accessCount}回",
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                            TextButton(onClick = {
+                                viewLifecycleOwner.lifecycleScope.launch {
+                                    memoryRepository.softDelete(memory.id)
+                                }
+                            }) {
+                                Text("削除")
+                            }
+                        }
+                    }
+                    if (memories.size > 20) {
+                        Text(
+                            text = "最新20件を表示中",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
                 }
             }
         }
@@ -839,12 +1012,13 @@ class SettingsComposeFragment : Fragment() {
             temperatureInput = config.temperature.toString()
             topkInput = config.maxTopK.toString()
             maxTokensInput = config.maxTokens.toString()
+            preloadMemoryWarningThresholdPercent = settingsRepository.getPreloadMemoryWarningThresholdPercent()
+            memorySaveMode = settingsRepository.getMemorySaveMode().name
             contextCompressionEnabled = config.contextCompressionEnabled
             contextCompressionThresholdPercent = config.contextCompressionThresholdPercent
-            userNameInput = userName
-            systemPromptInput = systemPrompt
             backendType = config.backendType
             themeMode = PreferencesHelper.getThemeMode(requireContext())
+            braveSearchApiKeyInput = PreferencesHelper.getBraveSearchApiKey(requireContext())
             maxThreads = InferenceConfig.MAX_THREADS
             llamaCppThreads = threads.coerceIn(1, maxThreads)
             llamaCppGpuLayers = gpuLayers
@@ -891,6 +1065,11 @@ class SettingsComposeFragment : Fragment() {
         ) {
             return "圧縮しきい値は ${InferenceConfig.MIN_COMPRESSION_THRESHOLD} - ${InferenceConfig.MAX_COMPRESSION_THRESHOLD} の範囲で入力してください"
         }
+        if (preloadMemoryWarningThresholdPercent !in
+            MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT..MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT
+        ) {
+            return "プリロードメモリ警告閾値は ${MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT} - ${MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT} の範囲で設定してください"
+        }
         return null
     }
 
@@ -910,8 +1089,8 @@ class SettingsComposeFragment : Fragment() {
             backendType = backendType,
             backendTargetModel = "ALL"
         )
-        settingsRepository.updateSystemPrompt(systemPromptInput)
-        settingsRepository.updateUserName(userNameInput)
+        settingsRepository.updatePreloadMemoryWarningThresholdPercent(preloadMemoryWarningThresholdPercent)
+        settingsRepository.updateMemorySaveMode(MemorySaveMode.valueOf(memorySaveMode))
         settingsRepository.updateLlamaCppThreads(llamaCppThreads)
         settingsRepository.updateLlamaCppGpuLayers(llamaCppGpuLayers)
         settingsRepository.updateLlamaCppBatchSize(llamaCppBatchSize)
@@ -921,6 +1100,7 @@ class SettingsComposeFragment : Fragment() {
         settingsRepository.updateChatHistoryLimit(chatHistoryLimit)
         PreferencesHelper.setSdSteps(requireContext(), sdSteps)
         PreferencesHelper.setSdCfg(requireContext(), sdCfg)
+        PreferencesHelper.setBraveSearchApiKey(requireContext(), braveSearchApiKeyInput.trim())
     }
 
     @Composable
@@ -934,6 +1114,31 @@ class SettingsComposeFragment : Fragment() {
                     Text("llama.cpp: ${BuildConfig.LLAMACPP_VERSION}")
                     Text(
                         "※実行時には内部 JNI / モデル対応により挙動が変わる場合があります。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = onDismiss) {
+                    Text("閉じる")
+                }
+            }
+        )
+    }
+
+    @Composable
+    private fun AboutDialog(onDismiss: () -> Unit) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("このアプリについて") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Nezumi AI")
+                    Text("バージョン: ${BuildConfig.VERSION_NAME}")
+                    Text("ビルド: ${BuildConfig.VERSION_CODE}")
+                    Text(
+                        "Nezumi AI は端末上でのAI推論とチャット体験を提供します。",
                         style = MaterialTheme.typography.bodySmall,
                         color = colorResource(id = R.color.text_secondary)
                     )

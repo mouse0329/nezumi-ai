@@ -892,3 +892,36 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCompleteWithMedia
 
     return newSafeJStringUTF(env, out, "native_complete_media_result");
 }
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeClearKvCache(
+    JNIEnv * /*env*/,
+    jclass /*clazz*/,
+    jlong ctxPtr)
+{
+    auto *holder = fromPtr(ctxPtr);
+    if (!holder)
+        return;
+
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_live_holders.find(holder) == g_live_holders.end())
+        return;
+    if (holder->is_released.load(std::memory_order_acquire))
+        return;
+
+    if (holder->ctx && holder->ctx->ctx)
+    {
+        // Use llama C API to clear the memory (KV cache)
+        llama_memory_t mem = llama_get_memory(holder->ctx->ctx);
+        if (mem)
+        {
+            // false = clear positions but keep backing buffers where possible
+            llama_memory_clear(mem, false);
+            __android_log_print(ANDROID_LOG_INFO, TAG, "nativeClearKvCache: KV cache cleared for context %p", (void *)holder->ctx->ctx);
+        }
+        else
+        {
+            __android_log_print(ANDROID_LOG_WARN, TAG, "nativeClearKvCache: llama_get_memory returned null for context %p", (void *)holder->ctx->ctx);
+        }
+    }
+}

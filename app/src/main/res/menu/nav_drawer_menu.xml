@@ -9,9 +9,9 @@
         android:title="モデル"
         android:icon="@drawable/ic_add" />
     <item
-        android:id="@+id/toolsSettingsFragment"
-        android:title="ツール"
-        android:icon="@drawable/ic_alarm" />
+        android:id="@+id/presetSettingsFragment"
+        android:title="プリセット"
+        android:icon="@drawable/ic_nezumi_ai" />
     <item
         android:id="@+id/menu_new_chat"
         android:title="新しいチャット"

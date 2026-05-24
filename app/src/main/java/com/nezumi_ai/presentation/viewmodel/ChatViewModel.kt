@@ -16,7 +16,9 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nezumi_ai.data.repository.ChatSessionRepository
+import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.MessageRepository
+import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.inference.CpuCompatibility
@@ -33,6 +35,8 @@ import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.ToolCallState
 import com.nezumi_ai.data.inference.ToolExecutionResult
 import com.nezumi_ai.data.inference.PromptBuilder
+import com.nezumi_ai.data.memory.MemoryTextEmbedder
+import com.nezumi_ai.data.preset.PresetConstants
 import com.google.ai.edge.litertlm.ToolCall
 import com.nezumi_ai.utils.PreferencesHelper
 import java.io.File
@@ -48,6 +52,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import com.nezumi_ai.MyApplication
@@ -69,7 +74,9 @@ class ChatViewModel(
     private val appContext: Context,
     private val sessionRepository: ChatSessionRepository,
     private val messageRepository: MessageRepository,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val presetRepository: PresetRepository? = null,
+    private val memoryRepository: MemoryRepository? = null
 ) : ViewModel() {
     
     private val voicevoxManager: VoicevoxManager by lazy {
@@ -97,6 +104,12 @@ class ChatViewModel(
         /** 最初のトークン以降、この時間チャンクが無ければ打ち切り */
         private const val GENERATION_STALL_TIMEOUT_MS = 180_000L
         private const val GENERATION_STALL_CHECK_MS = 5_000L
+        /** メモリ注入に使えるコンテキスト予算の最大比率 */
+        private const val MEMORY_BUDGET_RATIO = 0.15f
+        /** 会話履歴のために最低限確保する文字数 */
+        private const val HISTORY_RESERVE_CHARS = 2048
+        /** "関連メモリ:\n" ヘッダー文字数 */
+        private const val MEMORY_HEADER_CHARS = 10
 
         /**
          * ローカル .litertlm を「破損・欠落」とみなして削除してよいときだけ true。
@@ -121,7 +134,38 @@ class ChatViewModel(
         val signature: Int,
         val summary: String
     )
+
+    private suspend fun getActiveSelectedModel(): String {
+        val preset = presetRepository?.getCurrentPreset()
+        val presetModel = preset?.modelId?.let { mapPresetModelIdToSettingsModel(it) }
+        return normalizeModel(presetModel ?: settingsRepository.getSelectedModel())
+    }
+
+    private suspend fun getActiveSystemPrompt(): String {
+        val preset = presetRepository?.getCurrentPreset()
+        return preset?.systemPrompt ?: settingsRepository.getSystemPrompt()
+    }
+
+    private suspend fun isMemoryEnabledForCurrentPreset(): Boolean {
+        if (_isIncognitoMode.value) return false
+        if (_isMemoryTemporarilyDisabled.value) return false
+        return presetRepository?.getCurrentPreset()?.memoryEnabled ?: false
+    }
+
+    private fun mapPresetModelIdToSettingsModel(modelId: String): String? {
+        return when (modelId) {
+            PresetConstants.MODEL_GEMMA4_LITERT -> "Gemma4-2B"
+            PresetConstants.MODEL_QWEN3_GGUF -> null
+            else -> modelId.takeIf { it.isNotBlank() }
+        }
+    }
     
+    data class EmbeddingDownloadProgress(
+        val fileName: String,
+        val downloaded: Long,
+        val total: Long
+    )
+
     private val _currentSessionId = MutableStateFlow<Long?>(null)
     val currentSessionId: StateFlow<Long?> = _currentSessionId
     
@@ -154,6 +198,34 @@ class ChatViewModel(
 
     private val _isCompressing = MutableStateFlow(false)
     val isCompressing: StateFlow<Boolean> = _isCompressing
+
+    private val _isExtracting = MutableStateFlow(false)
+    val isExtracting: StateFlow<Boolean> = _isExtracting.asStateFlow()
+
+    private val _isEmbeddingDownloadInProgress = MutableStateFlow(false)
+    val isEmbeddingDownloadInProgress: StateFlow<Boolean> = _isEmbeddingDownloadInProgress.asStateFlow()
+
+    private val _embeddingDownloadProgress = MutableStateFlow<EmbeddingDownloadProgress?>(null)
+    val embeddingDownloadProgress: StateFlow<EmbeddingDownloadProgress?> = _embeddingDownloadProgress.asStateFlow()
+
+    private val _isMemoryTemporarilyDisabled = MutableStateFlow(false)
+    val isMemoryTemporarilyDisabled: StateFlow<Boolean> = _isMemoryTemporarilyDisabled.asStateFlow()
+
+    private var embeddingDownloadJob: Job? = null
+
+    private val memoryExtractionWorker: com.nezumi_ai.data.memory.MemoryExtractionWorker? by lazy {
+        val repo = memoryRepository ?: return@lazy null
+        val sessionRepo = com.nezumi_ai.data.repository.MemorySessionRepository(
+            com.nezumi_ai.data.database.NezumiAiDatabase.getInstance(appContext).memorySessionDao()
+        )
+        com.nezumi_ai.data.memory.MemoryExtractionWorker(repo, sessionRepo).also { worker ->
+            // isExtracting を Worker の StateFlow に橋渡し
+            viewModelScope.launch {
+                worker.isExtracting.collect { _isExtracting.value = it }
+            }
+            // 起動時 pending 処理は generateAIResponse 初回呼び出し後に行う
+        }
+    }
 
     /** true のとき、このチャットでは設定のシンキングONでも LiteRT の enable_thinking を付けない */
     private val _chatSessionDisableThinking = MutableStateFlow(false)
@@ -268,16 +340,12 @@ class ChatViewModel(
     private val _cpuCompatibilityWarning = MutableStateFlow<CpuCompatibilityWarningInfo?>(null)
     val cpuCompatibilityWarning: StateFlow<CpuCompatibilityWarningInfo?> = _cpuCompatibilityWarning.asStateFlow()
 
-    private var memoryWarningShownForModel: String? = null
-
     fun dismissMemoryWarning() {
         _memoryWarning.value = null
-        memoryWarningShownForModel = null
     }
 
     fun cancelMemoryWarningAndGoHome() {
         _memoryWarning.value = null
-        memoryWarningShownForModel = null
         viewModelScope.launch {
             _navigationEvent.emit(NavigationEvent.BACK_TO_HOME)
         }
@@ -344,6 +412,8 @@ class ChatViewModel(
     private val assistantTurnMarkerRegex = Regex("(?i)(?:^|[\\s\\n\\r])(?:Assistant|アシスタント)\\s*[:：]")
     private val roleTurnMarkerRegex =
         Regex("(?i)(?:^|[\\s\\n\\r])(?:User|Assistant|ユーザー|アシスタント)\\s*[:：]")
+    /** 起動時の pending 抽出処理を1回だけ実行するフラグ */
+    private var pendingExtractionProcessed = false
     
     // WakeLock管理
     private var screenWakeLock: PowerManager.WakeLock? = null
@@ -380,7 +450,7 @@ class ChatViewModel(
         // ViewModel初期化時は設定のみ取得（モデルロードはしない）
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                _selectedModel.value = normalizeModel(settingsRepository.getSelectedModel())
+                _selectedModel.value = getActiveSelectedModel()
             } catch (t: Throwable) {
                 val e = if (t is Exception) t else RuntimeException(t)
                 Log.e(TAG, "Error initializing ModelManager", e)
@@ -474,7 +544,7 @@ class ChatViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             // チャット画面表示時にはモデルをロードしない。
             // 実ロードは送信時(generateAIResponse)に遅延させる。
-            _selectedModel.value = normalizeModel(settingsRepository.getSelectedModel())
+            _selectedModel.value = getActiveSelectedModel()
             // チャット準備完了を示す
             _isChatReady.value = true
         }
@@ -574,6 +644,29 @@ class ChatViewModel(
             }
         }
     }
+
+    fun preloadActivePresetModel() {
+        if (_isLoading.value || _isModelLoading.value) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val selectedModel = getActiveSelectedModel()
+            _selectedModel.value = selectedModel
+            val engineModelName = toEngineModelName(selectedModel)
+            if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
+                _uiMessage.emit("プリセットのモデル($selectedModel)が未ダウンロードです")
+                return@launch
+            }
+            val config = chatInferenceConfigForModel(selectedModel)
+            val result = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = true)
+            if (result.isFailure) {
+                val error = result.exceptionOrNull()
+                if (error?.message == "MEMORY_WARNING_SHOWN" || error?.message == "CPU_COMPAT_WARNING_SHOWN") {
+                    return@launch
+                }
+                Log.e(TAG, "Failed to preload preset model: $selectedModel", error)
+                _uiMessage.emit("プリセットモデルのロードに失敗しました")
+            }
+        }
+    }
     
     fun sendMessage(userMessage: String) {
         if (_isLoading.value) return
@@ -587,6 +680,14 @@ class ChatViewModel(
             }
 
             try {
+                // Phase 3: 抽出キューが処理中なら完了を待つ（最大 30s）
+                if (_isExtracting.value) {
+                    Log.d(TAG, "sendMessage: waiting for memory extraction to finish...")
+                    withTimeoutOrNull(30_000L) {
+                        isExtracting.first { !it }
+                    }
+                }
+
                 val sessionId = ensureValidCurrentSession() ?: return@launch
 
                 // ユーザーメッセージを保存
@@ -604,7 +705,9 @@ class ChatViewModel(
 
                 // AI応答を生成
                 _isLoading.value = true
-                generateAIResponse(sessionId, userMessage, currentTurnMessageId = userMessageId)
+                // Note: sendMessage はテキストのみサポート。
+                // 画像付きメッセージは sendMessageWithMedia を使用すること。
+                generateAIResponse(sessionId, userMessage, images = emptyList(), audioClips = emptyList(), currentTurnMessageId = userMessageId)
             } catch (t: Throwable) {
                 val e = if (t is Exception) t else RuntimeException(t)
                 Log.e(TAG, "Error sending message", e)
@@ -644,7 +747,7 @@ class ChatViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val manager = requireModelManager()
-                val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
+                val selectedModel = getActiveSelectedModel()
                 _selectedModel.value = selectedModel
                 val engineModelName = toEngineModelName(selectedModel)
                 if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
@@ -804,7 +907,7 @@ class ChatViewModel(
             }
             
             val manager = requireModelManager()
-            val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
+            val selectedModel = getActiveSelectedModel()
             
             val memoryPercent = manager.getMemoryUsagePercent()
             Log.d(TAG, "generateAIResponse: memoryUsage=$memoryPercent%")
@@ -894,6 +997,19 @@ class ChatViewModel(
             }
             
             Log.d(TAG, "Starting inference for session $sessionId")
+
+            // ① 起動時 pending 抽出処理（モデルロード完了後に1回だけ実行）
+            if (!pendingExtractionProcessed) {
+                pendingExtractionProcessed = true
+                val pendingSaveMode = settingsRepository.getMemorySaveMode()
+                memoryExtractionWorker?.processPending(manager, config.copy(
+                    temperature = 0.1f,
+                    enableThinking = false,
+                    contextCompressionEnabled = false
+                ), pendingSaveMode, { fetchSessionId ->
+                    messageRepository.getMessagesForSessionOnce(fetchSessionId)
+                }, suppressContradictionDeletion = true)
+            }
             
             val promptForModel = buildPromptWithSessionContext(
                 sessionId = sessionId,
@@ -1323,6 +1439,7 @@ class ChatViewModel(
                     }
                     syncSessionTitleFromDb(sessionId)
                 }
+                enqueueMemoryExtraction(sessionId)
                 if (BuildConfig.DEBUG) {
                     Log.d(TAG, "AI response saved to database: ${completeResponse.take(50)}...")
                 }
@@ -1457,7 +1574,7 @@ class ChatViewModel(
             // メモリ安定化のため少し待機
             delay(500L)
             
-            val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
+            val selectedModel = getActiveSelectedModel()
             val engineModelName = toEngineModelName(selectedModel)
             val baseConfig = chatInferenceConfigForModel(selectedModel)
             val backend = settingsRepository.getBackendForModel(selectedModel)
@@ -1662,6 +1779,20 @@ class ChatViewModel(
 
     private fun isGgufEngineModel(engineModelName: String): Boolean {
         return engineModelName.lowercase().endsWith(".gguf")
+    }
+
+    private fun getEngineModelSizeBytes(engineModelName: String): Long? {
+        val lowerName = engineModelName.lowercase()
+        if (File(engineModelName).exists()) {
+            return File(engineModelName).length()
+        }
+        return when (lowerName) {
+            "gemma4-4b", "gemma-4-4b.litertlm" -> 4_800_000_000L
+            "gemma4-2b", "gemma-4-2b.litertlm" -> 2_400_000_000L
+            "gemma-3n-4b", "gemma-3n-4b.task" -> 4_000_000_000L
+            "gemma-3n-2b", "gemma-3n-2b.task" -> 2_000_000_000L
+            else -> null
+        }
     }
 
     /**
@@ -1871,8 +2002,22 @@ class ChatViewModel(
         val messages = messageRepository.getMessagesForSessionOnce(sessionId)
         if (messages.isEmpty()) return ""
 
+        // 画像をコンテキストに含むための デバッグログ
+        val messagesWithImagesForLog = messages.filter { it.imageUri != null && it.imageUri.isNotEmpty() }
+        if (messagesWithImagesForLog.isNotEmpty()) {
+            Log.d(TAG, "PROMPT_BUILD: Found ${messagesWithImagesForLog.size} messages with images: ${messagesWithImagesForLog.map { "${it.id}:${it.role}" }}")
+        }
+
         val isGgufEngine = isGgufEngineModel(engineModelName)
-        val fullPrompt = buildPromptFromMessages(messages, isGgufEngine, engineModelName, config.enableThinking, currentTurnMessageId)
+        val memoryBlock = buildRelevantMemoryBlock(messages, sessionId, config.contextWindow)
+        val fullPrompt = buildPromptFromMessages(
+            messages = messages,
+            isGgufEngine = isGgufEngine,
+            engineModelName = engineModelName,
+            enableThinking = config.enableThinking,
+            currentTurnMessageId = currentTurnMessageId,
+            memoryBlock = memoryBlock
+        )
         
         // Phase 12: thinkingContent が誤ってプロンプトに混入していないか検証
         val messagesWithThinking = messages.filter { it.thinkingContent != null && it.thinkingContent.isNotEmpty() }
@@ -1892,19 +2037,23 @@ class ChatViewModel(
         val recentMessageCount = recentMessageCountForWindow(config.contextWindow)
         // 件数が少なくても長文であれば圧縮を発火できるようにする。
         // ただし直近メッセージを最低2件は保持し、残りを圧縮対象にする。
+        // また、画像を含むメッセージは圧縮対象から除外してコンテキストに残す
+        val messagesWithImages = validMessages.filter { it.imageUri != null && it.imageUri.isNotEmpty() }
+        val minKeepCount = 2 + messagesWithImages.size  // 画像付きメッセージを除外
         val keepRecentCount = when {
             validMessages.size <= 2 -> validMessages.size
             validMessages.size <= recentMessageCount -> validMessages.size - 1
-            else -> recentMessageCount
+            else -> maxOf(recentMessageCount, minKeepCount)  // 画像付きメッセージは必ず保持
         }
         if (keepRecentCount <= 0) {
             return trimPromptToWindow(fullPrompt, config.contextWindow)
         }
 
-        val olderMessages = validMessages.dropLast(keepRecentCount)
-        if (olderMessages.isEmpty()) {
-            return trimPromptToWindow(fullPrompt, config.contextWindow)
-        }
+        // 圧縮対象のメッセージから画像付きメッセージを除外する
+        val allNonCompressibleMessages = validMessages.filterNot { it.imageUri != null && it.imageUri.isNotEmpty() }
+        val cutoffIndex = maxOf(0, allNonCompressibleMessages.size - (recentMessageCount - messagesWithImages.size))
+        
+        val olderMessages = allNonCompressibleMessages.take(cutoffIndex)
         val recentMessages = validMessages.takeLast(keepRecentCount)
         val signature = olderMessages.fold(17) { acc, msg ->
             ((acc * 31) + msg.role.hashCode()) * 31 + msg.content.hashCode()
@@ -1921,7 +2070,8 @@ class ChatViewModel(
                 engineModelName = engineModelName,
                 recentMessages = recentMessages,
                 compressedSummary = cached.summary,
-                enableThinking = config.enableThinking
+                enableThinking = config.enableThinking,
+                memoryBlock = memoryBlock
             )
             return trimPromptToWindow(prompt, config.contextWindow)
         }
@@ -1962,10 +2112,209 @@ class ChatViewModel(
             engineModelName = engineModelName,
             recentMessages = recentMessages,
             compressedSummary = compressedSummary,
-            enableThinking = config.enableThinking
+            enableThinking = config.enableThinking,
+            memoryBlock = memoryBlock
         )
 
         return trimPromptToWindow(prompt, config.contextWindow)
+    }
+
+    private suspend fun buildRelevantMemoryBlock(
+        messages: List<MessageEntity>,
+        sessionId: Long,
+        contextWindowTokens: Int = 4096
+    ): String? {
+        val repo = memoryRepository ?: run {
+            Log.d(TAG, "MEMORY_INJECT: memoryRepository is null")
+            return null
+        }
+        if (!isMemoryEnabledForCurrentPreset()) {
+            Log.d(TAG, "MEMORY_INJECT: memory disabled for current preset")
+            return null
+        }
+        val query = buildMemorySearchQuery(messages)
+        if (query.isBlank()) {
+            Log.d(TAG, "MEMORY_INJECT: query is blank")
+            return null
+        }
+        Log.d(TAG, "MEMORY_INJECT: query='$query'")
+
+        // ONNX モデルがあれば初期化（初回のみ実行、以降はキャッシュ）
+        if (!MemoryTextEmbedder.hasEmbeddingFiles(appContext)) {
+            Log.d(TAG, "MEMORY_INJECT: embedding files not found, downloading...")
+            val ready = ensureEmbeddingFilesAvailable()
+            if (!ready) {
+                Log.d(TAG, "MEMORY_INJECT: failed to download embedding files")
+                return null
+            }
+            Log.d(TAG, "MEMORY_INJECT: embedding files downloaded successfully")
+        }
+        MemoryTextEmbedder.initialize(appContext)
+        Log.d(TAG, "MEMORY_INJECT: MemoryTextEmbedder initialized")
+
+        val results = repo.search(
+            queryEmbedding = MemoryTextEmbedder.embed(query),
+            topK = 8,
+            threshold = 0.0f,
+            minSimilarity = 0.18f,
+            markAccessed = true
+        )
+        Log.d(TAG, "MEMORY_INJECT: search returned ${results.size} results")
+        if (results.isEmpty()) {
+            Log.d(TAG, "MEMORY_INJECT: no search results")
+            return null
+        }
+
+        // ③ トークン予算管理：メモリに使えるのはコンテキスト全体の最大15%
+        // 優先度: システムプロンプト(削らない) > 関連メモリ(スコア低い順に削る) > 会話履歴
+        val systemPromptChars = getActiveSystemPrompt().length
+        val totalBudgetChars = contextWindowTokens * TOKEN_TO_CHAR_RATIO
+        
+        // メモリの最小予算を保証（500 chars ≈ 125 tokens）
+        val MIN_MEMORY_BUDGET_CHARS = 500
+        
+        // 予算計算：全体の15% vs 残り領域
+        // システムプロンプトと会話履歴のために領域を予約
+        val memoryBudgetCharsBeforeCoerce = (totalBudgetChars * MEMORY_BUDGET_RATIO).toInt()
+        val availableCharsAfterReserves = totalBudgetChars - systemPromptChars - HISTORY_RESERVE_CHARS
+        
+        val memoryBudgetChars = if (availableCharsAfterReserves >= MIN_MEMORY_BUDGET_CHARS) {
+            // 十分な予算がある場合は、15% と残り領域の小さい方
+            minOf(memoryBudgetCharsBeforeCoerce, availableCharsAfterReserves)
+        } else if (availableCharsAfterReserves > 0) {
+            // わずかな予算しかない場合でも、最小限のメモリ領域を確保
+            minOf(MIN_MEMORY_BUDGET_CHARS, availableCharsAfterReserves).coerceAtLeast(100)
+        } else {
+            // 予備領域を調整してメモリ予算を確保
+            val adjustedReserve = HISTORY_RESERVE_CHARS / 2  // 会話履歴予約を半減
+            val remainingBudget = totalBudgetChars - systemPromptChars - adjustedReserve
+            minOf(MIN_MEMORY_BUDGET_CHARS, remainingBudget).coerceAtLeast(0)
+        }
+
+        Log.d(TAG, "MEMORY_INJECT: contextWindow=$contextWindowTokens tokens -> totalBudget=${totalBudgetChars}chars")
+        Log.d(TAG, "MEMORY_INJECT: systemPrompt=$systemPromptChars chars, historyReserve=$HISTORY_RESERVE_CHARS chars")
+        Log.d(TAG, "MEMORY_INJECT: budget calculation: 15%=$memoryBudgetCharsBeforeCoerce vs available=$availableCharsAfterReserves -> final=$memoryBudgetChars chars")
+
+        if (memoryBudgetChars == 0) {
+            Log.d(TAG, "MEMORY_INJECT: budget=0 (systemPrompt=$systemPromptChars > available space), skipping injection")
+            return null
+        }
+
+        // スコア高い順に予算内に収まるだけ詰める
+        val trimmedResults = mutableListOf<MemoryRepository.ScoredMemory>()
+        var usedChars = MEMORY_HEADER_CHARS  // "関連メモリ:\n" のオーバーヘッド
+        for (result in results) {
+            val entryChars = result.memory.content.length + 5  // "N. \n" のオーバーヘッド
+            if (usedChars + entryChars > memoryBudgetChars) break
+            trimmedResults.add(result)
+            usedChars += entryChars
+        }
+
+        if (trimmedResults.isEmpty()) {
+            Log.d(TAG, "MEMORY_INJECT: all results filtered out by budget constraints")
+            return null
+        }
+
+        Log.d(TAG, "MEMORY_INJECT: session=$sessionId query='$query' count=${trimmedResults.size}/${results.size} budgetChars=$memoryBudgetChars usedChars=$usedChars")
+        return buildString {
+            append("関連メモリ:\n")
+            trimmedResults.forEachIndexed { index, scored ->
+                append(index + 1)
+                append(". ")
+                append(scored.memory.content.trim())
+                append('\n')
+            }
+        }.trim()
+    }
+
+    /**
+     * Phase 3: LLM ベースのメモリ抽出をキューに積む
+     * - MemoryExtractionWorker の直列キュー（limitedParallelism(1)）に委譲
+     * - 抽出完了後に _isExtracting が false に戻る
+     */
+    private fun enqueueMemoryExtraction(sessionId: Long) {
+        val worker = memoryExtractionWorker ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            if (!isMemoryEnabledForCurrentPreset()) return@launch
+            val messages = messageRepository.getMessagesForSessionOnce(sessionId)
+            if (messages.isEmpty()) return@launch
+            val manager = try { requireModelManager() } catch (e: Exception) {
+                Log.w(TAG, "MEMORY_EXTRACT: no model manager available, skipping", e)
+                return@launch
+            }
+            val selectedModel = getActiveSelectedModel()
+            val config = chatInferenceConfigForModel(selectedModel).copy(
+                temperature = 0.1f,
+                enableThinking = false,
+                contextCompressionEnabled = false
+            ).normalized()
+            val saveMode = settingsRepository.getMemorySaveMode()
+            worker.enqueue(sessionId, messages, manager, config, saveMode)
+        }
+    }
+
+    private suspend fun ensureEmbeddingFilesAvailable(): Boolean {
+        if (MemoryTextEmbedder.hasEmbeddingFiles(appContext)) return true
+        if (_isMemoryTemporarilyDisabled.value) return false
+
+        _isEmbeddingDownloadInProgress.value = true
+        _embeddingDownloadProgress.value = null
+        try {
+            val result = withContext(Dispatchers.IO) {
+                embeddingDownloadJob = coroutineContext[Job]
+                MemoryTextEmbedder.ensureEmbeddingFilesDownloaded(appContext) { file, downloaded, total ->
+                    _embeddingDownloadProgress.value = EmbeddingDownloadProgress(file, downloaded, total)
+                }
+            }
+            if (!result && !_isMemoryTemporarilyDisabled.value) {
+                viewModelScope.launch {
+                    _uiMessage.emit("埋め込みファイルのダウンロードに失敗しました。ネットワークを確認してください。")
+                }
+            }
+            return result
+        } finally {
+            _isEmbeddingDownloadInProgress.value = false
+            _embeddingDownloadProgress.value = null
+            embeddingDownloadJob = null
+        }
+    }
+
+    fun cancelEmbeddingDownload() {
+        if (!_isEmbeddingDownloadInProgress.value) return
+        _isMemoryTemporarilyDisabled.value = true
+        embeddingDownloadJob?.cancel(CancellationException("Embedding download canceled by user"))
+        viewModelScope.launch {
+            _uiMessage.emit("埋め込みダウンロードがキャンセルされたため、メモリ機能を一時的に無効化しました。")
+        }
+    }
+
+    private fun appendMemoryBlockToSystemPrompt(systemPrompt: String, memoryBlock: String?): String {
+        if (memoryBlock.isNullOrBlank()) {
+            Log.d(TAG, "appendMemoryBlockToSystemPrompt: memoryBlock is null/blank")
+            return systemPrompt
+        }
+        Log.d(TAG, "appendMemoryBlockToSystemPrompt: appending ${memoryBlock.length} chars of memory to system prompt")
+        return buildString {
+            if (systemPrompt.isNotBlank()) {
+                append(systemPrompt.trim())
+                append("\n\n")
+            }
+            append(memoryBlock)
+        }
+    }
+
+    private fun buildMemorySearchQuery(messages: List<MessageEntity>): String {
+        return messages.takeLast(4)
+            .mapNotNull { msg ->
+                val text = msg.content.trim().takeIf { it.isNotBlank() }
+                when {
+                    text.isNullOrBlank() -> null
+                    msg.role == "assistant" -> "AI: $text"
+                    msg.role == "user" -> "ユーザー: $text"
+                    else -> null
+                }
+            }
+            .joinToString(separator = "\n")
     }
 
     private suspend fun requestCompressedContextSummary(
@@ -2111,7 +2460,7 @@ class ChatViewModel(
     private suspend fun estimateContextUsageChars(messages: List<MessageEntity>): Int {
         // ★ バグ修正: メーター計算を実際の推論ロジック（buildPromptWithSessionContext）と統一
         // Phase 14: プロンプトの現在の文字数を推定（実際の制限は config.contextWindow（トークン数）に依存）
-        val selectedModel = normalizeModel(settingsRepository.getSelectedModel())
+        val selectedModel = getActiveSelectedModel()
         val engineModelName = toEngineModelName(selectedModel)
         val isGgufEngine = isGgufEngineModel(engineModelName)
         val config = settingsRepository.getInferenceConfigForModel(selectedModel)
@@ -2179,13 +2528,16 @@ class ChatViewModel(
         engineModelName: String,
         recentMessages: List<MessageEntity>,
         compressedSummary: String,
-        enableThinking: Boolean = false
+        enableThinking: Boolean = false,
+        memoryBlock: String? = null
     ): String {
-        var systemPrompt = settingsRepository.getSystemPrompt()
+        Log.d(TAG, "buildPromptWithCompressedSummary: memoryBlock=${if (memoryBlock != null) "present (${memoryBlock.length} chars)" else "null"}")
+        var systemPrompt = getActiveSystemPrompt()
         val userName = settingsRepository.getUserName()
         if (userName.isNotEmpty()) {
             systemPrompt = "ユーザー名：$userName\n\n$systemPrompt"
         }
+        systemPrompt = appendMemoryBlockToSystemPrompt(systemPrompt, memoryBlock)
         return if (isGgufEngine) {
             PromptBuilder.buildForGguf(
                 messages = recentMessages,
@@ -2199,7 +2551,7 @@ class ChatViewModel(
             PromptBuilder.buildForLiteRt(
                 messages = recentMessages,
                 systemPrompt = systemPrompt,
-                injectGemmaThinkTrigger = settingsRepository.shouldInjectGemmaThinkTrigger(),
+                injectGemmaThinkTrigger = enableThinking && settingsRepository.shouldInjectGemmaThinkTrigger(),
                 compressedSummary = compressedSummary,
                 sanitizeMessageContent = ::sanitizeMessageContentForPrompt
             )
@@ -2233,7 +2585,8 @@ class ChatViewModel(
         isGgufEngine: Boolean,
         engineModelName: String = "",
         enableThinking: Boolean = false,
-        currentTurnMessageId: Long? = null
+        currentTurnMessageId: Long? = null,
+        memoryBlock: String? = null
     ): String {
         if (messages.isEmpty()) return ""
         
@@ -2247,8 +2600,10 @@ class ChatViewModel(
             Log.w(TAG, "PROMPT_BUILD: Found ${orphanedDescriptions.size} orphaned imageDescription(s). These will be ignored: ${orphanedDescriptions.map { it.id }}")
         }
         
+        Log.d(TAG, "PROMPT_BUILD: memoryBlock=${if (memoryBlock != null) "present (${memoryBlock.length} chars)" else "null"}")
+        
         val filteredMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
-        val systemPrompt = settingsRepository.getSystemPrompt()
+        val systemPrompt = appendMemoryBlockToSystemPrompt(getActiveSystemPrompt(), memoryBlock)
 
         val sanitizer = makeSanitizer(isGgufEngine, currentTurnMessageId)
 
@@ -2264,7 +2619,7 @@ class ChatViewModel(
             PromptBuilder.buildForLiteRt(
                 messages = filteredMessages,
                 systemPrompt = systemPrompt,
-                injectGemmaThinkTrigger = settingsRepository.shouldInjectGemmaThinkTrigger(),
+                injectGemmaThinkTrigger = enableThinking && settingsRepository.shouldInjectGemmaThinkTrigger(),
                 sanitizeMessageContent = sanitizer
             )
         }
@@ -2419,6 +2774,7 @@ class ChatViewModel(
         val manager = requireModelManager()
         val engineModelName = toEngineModelName(model)
         val isModelAlreadyLoaded = manager.isModelLoaded(engineModelName, config)
+        val isSameModelLoaded = manager.isSameModelLoaded(engineModelName)
         val effectiveSkipMemoryWarning = skipMemoryWarning || isModelAlreadyLoaded
         _isModelLoading.value = true
         _modelLoadingStatus.value = "モデルを準備中..."
@@ -2433,7 +2789,7 @@ class ChatViewModel(
             _modelLoadingStatus.value = "[$displayModel] メモリを確認中..."
             Log.d(
                 TAG,
-                "loadModelWithOverlay: PRE_LOAD_MEMORY_CHECK model=$model backend=${config.backendType} alreadyLoaded=$isModelAlreadyLoaded skipMemoryWarning=$skipMemoryWarning effectiveSkip=$effectiveSkipMemoryWarning"
+                "loadModelWithOverlay: PRE_LOAD_MEMORY_CHECK model=$model backend=${config.backendType} alreadyLoaded=$isModelAlreadyLoaded sameModelLoaded=$isSameModelLoaded skipMemoryWarning=$skipMemoryWarning effectiveSkip=$effectiveSkipMemoryWarning"
             )
 
             if (!skipCpuCompatibilityWarning && !isModelAlreadyLoaded && isGgufEngineModel(engineModelName)) {
@@ -2455,55 +2811,68 @@ class ChatViewModel(
             val memoryStatus = MemoryObserver.getMemoryStatus(appContext)
             Log.d(TAG, "loadModelWithOverlay: MEMORY_STATUS level=${memoryStatus.level} used=${memoryStatus.usedMB}MB max=${memoryStatus.maxMB}MB percent=${memoryStatus.usedPercent}% device_low_memory=${memoryStatus.isLowMemory}")
 
-            // 既にロード済みの間はメモリ警告を再表示しない
-            // （同一モデル・同一設定で active な状態が続く限り警告抑制）
-            // ★ バグ修正: 同じモデルで既に警告を表示済みなら再表示しない
-            val shouldShowMemoryWarning = !effectiveSkipMemoryWarning && 
-                memoryWarningShownForModel != model
-            
+            val shouldShowMemoryWarning = !effectiveSkipMemoryWarning
+
             if (shouldShowMemoryWarning) {
-                // ★ 新機能: モデルファイルサイズからもメモリ不足を検知
-                val isMemoryLowByName = MemoryObserver.isMemoryLow(appContext, model)
-                val isMemoryLowByFileSize = if (!isMemoryLowByName && File(engineModelName).exists()) {
-                    val fileSize = File(engineModelName).length()
-                    MemoryObserver.isMemoryLowForFileSize(appContext, fileSize)
-                } else {
-                    false
+                val thresholdPercent = settingsRepository.getPreloadMemoryWarningThresholdPercent()
+
+                // 既にモデルがロード済みで、現在の設定とは異なる場合は、
+                // メモリ警告前に現在のモデルをアンロードしてメモリを解放する
+                if (!isModelAlreadyLoaded && manager.getCurrentModelName() != null) {
+                    Log.d(TAG, "loadModelWithOverlay: unloading current model before memory warning check for model=$model")
+                    val unloadResult = manager.unloadModel()
+                    unloadResult.onFailure { Log.w(TAG, "loadModelWithOverlay: pre-warning unload failed", it) }
                 }
                 
-                if (isMemoryLowByName || isMemoryLowByFileSize) {
-                    Log.w(TAG, "loadModelWithOverlay: MEMORY LOW - model=$model byName=$isMemoryLowByName byFileSize=$isMemoryLowByFileSize")
-                    _modelLoadingStatus.value = "メモリ確認中..."
-
-                    // 警告情報を取得
-                    val systemMemInfo = MemoryObserver.getSystemMemoryInfo(appContext)
+                // 0%に設定されている場合は警告をスキップ（警告無効化）
+                if (thresholdPercent <= 0) {
+                    Log.d(TAG, "loadModelWithOverlay: Memory warning threshold is 0%, skipping check")
+                    // 警告を表示しない
+                } else {
+                    // ★ 新機能: モデルファイルサイズからメモリ不足を検知
+                    // 注意: isMemoryLow()（モデル名ベース）は空きメモリ基準で不正確なため使用しない
+                    val isMemoryLowByFileSize = if (File(engineModelName).exists()) {
+                        val fileSize = File(engineModelName).length()
+                        MemoryObserver.isMemoryLowForFileSize(appContext, fileSize, thresholdPercent)
+                    } else {
+                        val knownSize = getEngineModelSizeBytes(engineModelName)
+                        if (knownSize != null) {
+                            MemoryObserver.isMemoryLowForFileSize(appContext, knownSize, thresholdPercent)
+                        } else {
+                            Log.w(TAG, "loadModelWithOverlay: unknown model size for engineModelName=$engineModelName, skipping memory size warning")
+                            false
+                        }
+                    }
                     
-                    // ★ バグ修正: 既に警告が表示されている場合はスキップ
-                    if (_memoryWarning.value == null) {
-                        memoryWarningShownForModel = model
-                        _memoryWarning.value = MemoryWarningInfo(
-                            modelName = displayModel,
-                            predictedUsagePercent = systemMemInfo.usedPercent,
-                            currentUsagePercent = systemMemInfo.usedPercent,
-                            currentUsageMB = systemMemInfo.usedMemoryMB,
-                            maxMB = systemMemInfo.totalMemoryMB,
-                            usedMemoryMB = systemMemInfo.usedMemoryMB,
-                            totalMemoryMB = systemMemInfo.totalMemoryMB,
-                            usedPercent = systemMemInfo.usedPercent,
-                            lowMemoryFlag = systemMemInfo.lowMemoryFlag
-                        )
-                        // 警告が表示されるまで待機（ローディング状態を維持）
-                        _isModelLoading.value = false
-                        return Result.failure(RuntimeException("MEMORY_WARNING_SHOWN"))
+                    if (isMemoryLowByFileSize) {
+                        Log.w(TAG, "loadModelWithOverlay: MEMORY LOW - model=$model byFileSize=$isMemoryLowByFileSize")
+                        _modelLoadingStatus.value = "メモリ確認中..."
+
+                        // 警告情報を取得
+                        val systemMemInfo = MemoryObserver.getSystemMemoryInfo(appContext)
+                        
+                        // ★ バグ修正: 既に警告が表示されている場合はスキップ
+                        if (_memoryWarning.value == null) {
+                            _memoryWarning.value = MemoryWarningInfo(
+                                modelName = displayModel,
+                                predictedUsagePercent = systemMemInfo.usedPercent,
+                                currentUsagePercent = systemMemInfo.usedPercent,
+                                currentUsageMB = systemMemInfo.usedMemoryMB,
+                                maxMB = systemMemInfo.totalMemoryMB,
+                                usedMemoryMB = systemMemInfo.usedMemoryMB,
+                                totalMemoryMB = systemMemInfo.totalMemoryMB,
+                                usedPercent = systemMemInfo.usedPercent,
+                                lowMemoryFlag = systemMemInfo.lowMemoryFlag
+                            )
+                            // 警告が表示されるまで待機（ローディング状態を維持）
+                            _isModelLoading.value = false
+                            return Result.failure(RuntimeException("MEMORY_WARNING_SHOWN"))
+                        }
                     }
                 }
             }
 
             // effectiveSkipMemoryWarning=true の場合はメモリ警告をスキップしてロード続行
-            if (effectiveSkipMemoryWarning && MemoryObserver.isMemoryLow(appContext, model)) {
-                Log.w(TAG, "loadModelWithOverlay: MEMORY LOW but user confirmed - proceeding with load model=$model")
-            }
-
             Log.d(TAG, "loadModelWithOverlay: Memory check passed for model=$model")
             
             _modelLoadingStatus.value = "[$displayModel] エンジンを初期化中..."

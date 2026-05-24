@@ -11,7 +11,7 @@
 
     <!-- Text Colors -->
     <color name="text_primary">#F3F4F6</color>
-    <color name="text_secondary">#9CA3AF</color>
+    <color name="text_secondary">#D1D5DB</color>
 
     <!-- Background Colors -->
     <color name="bg_session_list">#0F172A</color>

@@ -4,8 +4,10 @@ import android.app.Application
 import android.util.Log
 import androidx.work.Configuration
 import androidx.work.WorkManager
+import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.CacheManager
 import com.nezumi_ai.data.media.MessageMediaStore
+import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.voicevox.VoicevoxManager
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +45,15 @@ class MyApplication : Application() {
         // Phase 14: アプリ起動時にメディアクリーンアップを実行
         // 無効な URI や孤立したメディアファイルをクリーンアップ
         cleanupMediaOnStartup()
+
+        // Initialize embedding backend detection (ONNX model presence)
+        try {
+            com.nezumi_ai.data.memory.MemoryTextEmbedder.initialize(this)
+        } catch (e: Exception) {
+            Log.w(TAG, "MemoryTextEmbedder initialization failed", e)
+        }
+
+        initializePresetDefaults()
     }
     
     /**
@@ -96,6 +107,18 @@ class MyApplication : Application() {
                 Log.i(TAG, "VOICEVOX initialized successfully")
             } else {
                 Log.e(TAG, "Failed to initialize VOICEVOX")
+            }
+        }
+    }
+
+    private fun initializePresetDefaults() {
+        applicationScope.launch {
+            try {
+                val database = NezumiAiDatabase.getInstance(this@MyApplication)
+                PresetRepository(database.presetDao(), this@MyApplication)
+                    .initializeDefaultsIfNeeded()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to initialize preset defaults", e)
             }
         }
     }

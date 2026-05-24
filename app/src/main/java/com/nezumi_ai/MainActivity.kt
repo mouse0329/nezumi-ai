@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
+import coil.load
 
 class MainActivity : AppCompatActivity() {
 
@@ -150,8 +151,8 @@ class MainActivity : AppCompatActivity() {
         }
         binding.drawerToolsButton.setOnClickListener {
             closeDrawer()
-            if (navController.currentDestination?.id != R.id.toolsSettingsFragment) {
-                navController.navigate(R.id.toolsSettingsFragment)
+            if (navController.currentDestination?.id != R.id.presetSettingsFragment) {
+                navController.navigate(R.id.presetSettingsFragment)
             }
         }
         binding.drawerNewChatButton.setOnClickListener {
@@ -367,9 +368,8 @@ class MainActivity : AppCompatActivity() {
             gravity = android.view.Gravity.CENTER
         }
 
-        // 鍵アイコン
+        // 鍵アイコン（外部URLの Material Symbol に置換）
         val fingerPrintView = android.widget.ImageView(this).apply {
-            setImageResource(R.drawable.ic_lock)
             layoutParams = android.widget.LinearLayout.LayoutParams(
                 120.dp(),
                 120.dp()
@@ -382,6 +382,8 @@ class MainActivity : AppCompatActivity() {
             )
             this.colorFilter = colorFilter
         }
+        // Material Symbols のレンダーURLから読み込む
+        fingerPrintView.load("https://fonts.gstatic.com/render/v1/Material+Symbols+Outlined/24dp/edit_off.kt?var=opsz,wght,FILL,GRAD,ROND@24,400,0,0,50")
         overlayContainer.addView(fingerPrintView)
 
         // 「ロック中」テキスト

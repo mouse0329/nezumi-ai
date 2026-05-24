@@ -10,7 +10,10 @@ import com.google.ai.edge.litertlm.ToolSet
 import com.google.ai.edge.litertlm.tool
 import com.nezumi_ai.data.database.dao.AlarmDao
 import com.nezumi_ai.data.database.entity.AlarmEntity
+import com.nezumi_ai.data.repository.MemoryRepository
+import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import com.nezumi_ai.data.tools.ToolSystemController
+import com.nezumi_ai.utils.PreferencesHelper
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -65,6 +68,22 @@ private val TOOL_NAME_MAP = mapOf(
     "generate_image"     to "generateimage",
     "generateImage"      to "generateimage",
     "generateimage"      to "generateimage",
+    // search_memory
+    "search_memory"      to "searchmemory",
+    "searchMemory"       to "searchmemory",
+    "searchmemory"       to "searchmemory",
+    // add_calendar_event
+    "add_calendar_event" to "addcalendarevent",
+    "addCalendarEvent"   to "addcalendarevent",
+    "addcalendarevent"   to "addcalendarevent",
+    // list_calendar_events
+    "list_calendar_events" to "listcalendarevents",
+    "listCalendarEvents"   to "listcalendarevents",
+    "listcalendarevents"   to "listcalendarevents",
+    // web_search
+    "web_search"           to "websearch",
+    "webSearch"            to "websearch",
+    "websearch"            to "websearch",
 )
 
 // ─────────────────────────────────────────────
@@ -74,6 +93,7 @@ private val TOOL_NAME_MAP = mapOf(
 
 internal fun buildEnabledToolProviders(context: Context, alarmDao: AlarmDao): List<ToolProvider> {
     val enabled = ToolPreferences(context).getEnabledTools()
+    Log.d(TOOL_TAG, "Building tool providers. Enabled tools: ${enabled.map { it.name }}")
     return buildList {
         if (NezumiTool.GET_TIME in enabled)      add(tool(GetTimeSchema()))
         if (NezumiTool.GET_BATTERY in enabled)   add(tool(GetBatterySchema()))
@@ -97,6 +117,18 @@ internal fun buildEnabledToolProviders(context: Context, alarmDao: AlarmDao): Li
         if (NezumiTool.GENERATE_IMAGE in enabled) {
             add(tool(GenerateImageSchema()))
         }
+        if (NezumiTool.SEARCH_MEMORY in enabled) {
+            Log.d(TOOL_TAG, "Adding SearchMemorySchema to tool providers")
+            add(tool(SearchMemorySchema()))
+        }
+        if (NezumiTool.ADD_CALENDAR_EVENT in enabled) add(tool(AddCalendarEventSchema()))
+        if (NezumiTool.LIST_CALENDAR_EVENTS in enabled) add(tool(ListCalendarEventsSchema()))
+        if (NezumiTool.WEB_SEARCH in enabled) {
+            Log.d(TOOL_TAG, "Adding WebSearchSchema to tool providers")
+            add(tool(WebSearchSchema()))
+        }
+    }.also {
+        Log.d(TOOL_TAG, "Total tool providers registered: ${it.size}")
     }
 }
 
@@ -177,6 +209,53 @@ private class GenerateImageSchema : ToolSet {
     ): Map<String, Any?> = emptyMap()
 }
 
+private class SearchMemorySchema : ToolSet {
+    @Tool(description = "Search stored memories by semantic similarity to a query")
+    fun searchMemory(
+        @ToolParam(description = "Search query text") query: String,
+        @ToolParam(description = "Maximum number of results (default 5)") topK: Int?
+    ): Map<String, Any?> = emptyMap()
+}
+
+private class AddCalendarEventSchema : ToolSet {
+    @Tool(description = "Add an event to the device calendar")
+    fun addCalendarEvent(
+        @ToolParam(description = "Event title") title: String,
+        @ToolParam(description = "Start time: year (e.g. 2024)") startYear: Int,
+        @ToolParam(description = "Start time: month (1-12)") startMonth: Int,
+        @ToolParam(description = "Start time: day (1-31)") startDay: Int,
+        @ToolParam(description = "Start time: hour (0-23)") startHour: Int,
+        @ToolParam(description = "Start time: minute (0-59)") startMinute: Int,
+        @ToolParam(description = "Duration in minutes") durationMinutes: Int,
+        @ToolParam(description = "Event description (optional)") description: String?,
+        @ToolParam(description = "Event location (optional)") location: String?
+    ): Map<String, Any?> = emptyMap()
+}
+
+private class ListCalendarEventsSchema : ToolSet {
+    @Tool(description = "List calendar events within a time range")
+    fun listCalendarEvents(
+        @ToolParam(description = "Start year (e.g. 2024)") startYear: Int,
+        @ToolParam(description = "Start month (1-12)") startMonth: Int,
+        @ToolParam(description = "Start day (1-31)") startDay: Int,
+        @ToolParam(description = "End year (e.g. 2024)") endYear: Int,
+        @ToolParam(description = "End month (1-12)") endMonth: Int,
+        @ToolParam(description = "End day (1-31)") endDay: Int
+    ): Map<String, Any?> = emptyMap()
+}
+
+private class WebSearchSchema : ToolSet {
+    @Tool(description = "Search the web using Brave Search API")
+    fun webSearch(
+        @ToolParam(description = "Search query text") query: String,
+        @ToolParam(description = "Result count 1-20") count: Int?,
+        @ToolParam(description = "Page offset 0-9") offset: Int?,
+        @ToolParam(description = "2-letter ISO country code only. Example: JP, US, GB") country: String?,
+        @ToolParam(description = "2-letter language code only. Example: ja, en") searchLang: String?,
+        @ToolParam(description = "Safe search: off, moderate, or strict") safeSearch: String?
+    ): Map<String, Any?> = emptyMap()
+}
+
 // ─────────────────────────────────────────────
 // 実行エンジン（単一責任・全ロジックここに集約）
 // ─────────────────────────────────────────────
@@ -188,7 +267,9 @@ data class ToolExecutionResult(
 
 internal class NezumiLiteRtToolExecutor(
     private val context: Context,
-    private val alarmDao: AlarmDao
+    private val alarmDao: AlarmDao,
+    private val memoryRepository: MemoryRepository? = null,
+    private val memoryEmbedder: MemoryTextEmbedder? = null
 ) {
     suspend fun execute(toolCall: ToolCall): ToolExecutionResult {
         val normalized = normalizeToolName(toolCall.name)
@@ -217,6 +298,10 @@ internal class NezumiLiteRtToolExecutor(
             "stoptimer"       -> executeStopTimer(toolCall)
             "listtimers"      -> executeListTimers()
             "generateimage"   -> executeGenerateImage(toolCall)
+            "searchmemory"    -> executeSearchMemory(toolCall)
+            "addcalendarevent" -> executeAddCalendarEvent(toolCall)
+            "listcalendarevents" -> executeListCalendarEvents(toolCall)
+            "websearch"       -> executeWebSearch(toolCall)
             else -> {
                 Log.w(TOOL_TAG, "Unknown tool: ${toolCall.name}")
                 ToolExecutionResult(
@@ -239,6 +324,10 @@ internal class NezumiLiteRtToolExecutor(
             "stoptimer" -> NezumiTool.STOP_TIMER
             "listtimers" -> NezumiTool.LIST_TIMERS
             "generateimage" -> NezumiTool.GENERATE_IMAGE
+            "searchmemory" -> NezumiTool.SEARCH_MEMORY
+            "addcalendarevent" -> NezumiTool.ADD_CALENDAR_EVENT
+            "listcalendarevents" -> NezumiTool.LIST_CALENDAR_EVENTS
+            "websearch" -> NezumiTool.WEB_SEARCH
             else -> null
         }
     }
@@ -451,6 +540,215 @@ internal class NezumiLiteRtToolExecutor(
                 payload = mapOf("success" to false, "error" to "generate_image_handler_missing")
             )
         return handler.handle(toolCall)
+    }
+
+    private suspend fun executeSearchMemory(toolCall: ToolCall): ToolExecutionResult {
+        val query = toolCall.arguments["query"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_query"))
+        val topK = toolCall.arguments.readInt("topK") ?: 5
+
+        if (memoryRepository == null) {
+            return ToolExecutionResult(
+                success = false,
+                payload = mapOf("success" to false, "error" to "memory_not_initialized")
+            )
+        }
+
+        // MemoryTextEmbedderの初期化を確認（初回のみ）
+        if (!MemoryTextEmbedder.initialize(context)) {
+            Log.w(TOOL_TAG, "MemoryTextEmbedder initialization failed, using fallback")
+        }
+
+        val embedding = MemoryTextEmbedder.embed(query)
+        if (embedding.isEmpty()) {
+            return ToolExecutionResult(
+                success = false,
+                payload = mapOf("success" to false, "error" to "embedding_failed")
+            )
+        }
+
+        val results = memoryRepository.search(embedding, topK = topK, markAccessed = false)
+        val memories = results.map { scored ->
+            mapOf(
+                "content" to scored.memory.content,
+                "similarity" to scored.similarity,
+                "score" to scored.score,
+                "importance" to scored.memory.importance,
+                "source" to scored.memory.source
+            )
+        }
+
+        return ToolExecutionResult(
+            success = true,
+            payload = mapOf(
+                "success" to true,
+                "count" to memories.size,
+                "memories" to memories
+            )
+        )
+    }
+
+    private suspend fun executeAddCalendarEvent(toolCall: ToolCall): ToolExecutionResult {
+        val title = toolCall.arguments["title"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_title"))
+        
+        val startYear = toolCall.arguments.readInt("startYear")
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_start_year"))
+        val startMonth = toolCall.arguments.readInt("startMonth")
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_start_month"))
+        val startDay = toolCall.arguments.readInt("startDay")
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_start_day"))
+        val startHour = toolCall.arguments.readInt("startHour") ?: 0
+        val startMinute = toolCall.arguments.readInt("startMinute") ?: 0
+        val durationMinutes = toolCall.arguments.readInt("durationMinutes") ?: 60
+        
+        val description = toolCall.arguments["description"]?.toString()
+        val location = toolCall.arguments["location"]?.toString()
+
+        val calendar = java.util.Calendar.getInstance().apply {
+            set(startYear, startMonth - 1, startDay, startHour, startMinute, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val startTimeMillis = calendar.timeInMillis
+        val endTimeMillis = startTimeMillis + (durationMinutes * 60 * 1000L)
+
+        val result = com.nezumi_ai.data.tools.CalendarTool.addEvent(
+            context, title, startTimeMillis, endTimeMillis, description, location
+        )
+
+        return if (result.isSuccess) {
+            ToolExecutionResult(
+                success = true,
+                payload = mapOf(
+                    "success" to true,
+                    "eventId" to result.getOrNull(),
+                    "title" to title
+                )
+            )
+        } else {
+            ToolExecutionResult(
+                success = false,
+                payload = mapOf(
+                    "success" to false,
+                    "error" to "add_event_failed:${result.exceptionOrNull()?.message.orEmpty()}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeListCalendarEvents(toolCall: ToolCall): ToolExecutionResult {
+        val startYear = toolCall.arguments.readInt("startYear")
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_start_year"))
+        val startMonth = toolCall.arguments.readInt("startMonth")
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_start_month"))
+        val startDay = toolCall.arguments.readInt("startDay")
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_start_day"))
+        val endYear = toolCall.arguments.readInt("endYear")
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_end_year"))
+        val endMonth = toolCall.arguments.readInt("endMonth")
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_end_month"))
+        val endDay = toolCall.arguments.readInt("endDay")
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_end_day"))
+
+        val startCalendar = java.util.Calendar.getInstance().apply {
+            set(startYear, startMonth - 1, startDay, 0, 0, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val endCalendar = java.util.Calendar.getInstance().apply {
+            set(endYear, endMonth - 1, endDay, 23, 59, 59)
+            set(java.util.Calendar.MILLISECOND, 999)
+        }
+
+        val result = com.nezumi_ai.data.tools.CalendarTool.listEvents(
+            context, startCalendar.timeInMillis, endCalendar.timeInMillis
+        )
+
+        return if (result.isSuccess) {
+            val events = result.getOrNull() ?: emptyList()
+            ToolExecutionResult(
+                success = true,
+                payload = mapOf(
+                    "success" to true,
+                    "count" to events.size,
+                    "events" to events
+                )
+            )
+        } else {
+            ToolExecutionResult(
+                success = false,
+                payload = mapOf(
+                    "success" to false,
+                    "error" to "list_events_failed:${result.exceptionOrNull()?.message.orEmpty()}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeWebSearch(toolCall: ToolCall): ToolExecutionResult {
+        val query = toolCall.arguments["query"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_query"))
+
+        val count = toolCall.arguments.readInt("count") ?: 10
+        val offset = toolCall.arguments.readInt("offset") ?: 0
+        val country = (toolCall.arguments["country"] ?: toolCall.arguments["country_code"])?.toString()
+            ?.replace("/", "")
+            ?.filter { it.isLetter() }
+            ?.uppercase()
+            ?.takeIf { it.length == 2 } ?: "JP"
+        val searchLang = (toolCall.arguments["searchLang"] ?: toolCall.arguments["search_lang"])?.toString()
+            ?.let { lang ->
+                when (lang.lowercase()) {
+                    "ja", "japanese" -> "jp"
+                    else -> lang.lowercase()
+                }
+            }?.takeIf { it.length >= 2 } ?: "jp"
+        val safeSearch = (toolCall.arguments["safeSearch"] ?: toolCall.arguments["safesearch"])?.toString()?.lowercase() ?: "moderate"
+
+        // Validate parameters
+        if (count !in 1..20) {
+            return ToolExecutionResult(false, mapOf("success" to false, "error" to "invalid_count"))
+        }
+        if (offset !in 0..9) {
+            return ToolExecutionResult(false, mapOf("success" to false, "error" to "invalid_offset"))
+        }
+
+        return try {
+            val apiKey = PreferencesHelper.getBraveSearchApiKey(context.applicationContext).takeIf { it.isNotBlank() }
+                ?: context.applicationContext.getSharedPreferences("web_search_prefs", android.content.Context.MODE_PRIVATE)
+                    .getString("brave_api_key", null)
+            if (apiKey.isNullOrBlank()) {
+                return ToolExecutionResult(
+                    success = false,
+                    payload = mapOf("success" to false, "error" to "api_key_not_configured")
+                )
+            }
+
+            val results = performBraveSearch(
+                query = query,
+                count = count,
+                offset = offset,
+                country = country,
+                searchLang = searchLang,
+                safeSearch = safeSearch,
+                apiKey = apiKey
+            )
+
+            ToolExecutionResult(
+                success = true,
+                payload = mapOf(
+                    "success" to true,
+                    "query" to query,
+                    "count" to results.size,
+                    "results" to results
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TOOL_TAG, "Web search failed", e)
+            ToolExecutionResult(
+                success = false,
+                payload = mapOf("success" to false, "error" to "search_failed:${e.message}")
+            )
+        }
     }
 }
 

@@ -22,7 +22,6 @@ import java.util.TimerTask
 
 object ToolSystemController {
     private const val TAG = "ToolSystemController"
-    private fun alarmRequestCode(hour: Int, minute: Int): Int = hour * 100 + minute
 
     // ===== Timer Management (Session-only, In-Memory) =====
     object TimerManager {
@@ -150,96 +149,123 @@ object ToolSystemController {
         context: Context,
         hour: Int,
         minute: Int,
-        label: String,
-        skipUi: Boolean = true
+        label: String
     ): Result<Unit> {
         return runCatching {
             Log.d(TAG, "setAlarm: hour=$hour, minute=$minute, label=$label")
 
-            // ACTION_SET_ALARM でシステム時計アプリに直接登録（UIなし）
+            // ACTION_SET_ALARM でシステム時計アプリに直接登録
             val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
                 putExtra(AlarmClock.EXTRA_HOUR, hour)
                 putExtra(AlarmClock.EXTRA_MINUTES, minute)
                 putExtra(AlarmClock.EXTRA_MESSAGE, label)
+                putExtra(AlarmClock.EXTRA_VIBRATE, true)
+                // SKIP_UI=true にすることで、UIを表示せずに直接アラームを設定
                 putExtra(AlarmClock.EXTRA_SKIP_UI, true)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
 
-            val resolved = context.packageManager.resolveActivity(
-                intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY
-            )
-            if (resolved != null) {
-                context.startActivity(intent)
-                Log.d(TAG, "Alarm registered via ACTION_SET_ALARM: $hour:${minute.toString().padStart(2, '0')}")
+            // 時計アプリが存在するか確認（複数の方法で試行）
+            val packageManager = context.packageManager
+            
+            // 方法1: resolveActivity() で確認
+            val resolvedActivity = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.resolveActivity(
+                    intent,
+                    PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+                )
             } else {
-                Log.w(TAG, "No clock app found, falling back to AlarmManager")
-                setAlarmViaAlarmManager(context, hour, minute, label)
+                @Suppress("DEPRECATION")
+                packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+            }
+            
+            Log.d(TAG, "resolveActivity result: $resolvedActivity")
+            
+            // 方法2: queryIntentActivities() で確認
+            val activities = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.queryIntentActivities(
+                    intent,
+                    PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+            }
+            
+            Log.d(TAG, "queryIntentActivities found ${activities.size} handlers")
+            activities.forEach { resolveInfo ->
+                Log.d(TAG, "  - ${resolveInfo.activityInfo.packageName}/${resolveInfo.activityInfo.name}")
+            }
+
+            if (resolvedActivity != null || activities.isNotEmpty()) {
+                try {
+                    context.startActivity(intent)
+                    Log.d(TAG, "System alarm registered via ACTION_SET_ALARM: $hour:${minute.toString().padStart(2, '0')} label=$label")
+                } catch (e: SecurityException) {
+                    Log.e(TAG, "SecurityException when starting alarm activity", e)
+                    throw IllegalStateException("Permission denied: ${e.message}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Exception when starting alarm activity", e)
+                    throw IllegalStateException("Failed to start alarm activity: ${e.message}")
+                }
+            } else {
+                val errorMsg = "No clock app found to handle ACTION_SET_ALARM"
+                Log.e(TAG, errorMsg)
+                throw IllegalStateException(errorMsg)
             }
         }
     }
 
-    private fun setAlarmViaAlarmManager(
-        context: Context,
-        hour: Int,
-        minute: Int,
-        label: String
-    ) {
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
-        val calendar = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, hour)
-            set(Calendar.MINUTE, minute)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-            if (before(Calendar.getInstance())) add(Calendar.DAY_OF_MONTH, 1)
-        }
-
-        val intent = Intent(context, AlarmReceiver::class.java).apply {
-            putExtra("alarm_id", label.hashCode().toLong())
-            putExtra("label", label)
-            action = "com.nezumi_ai.ALARM_ACTION_${alarmRequestCode(hour, minute)}"
-        }
-        val requestCode = alarmRequestCode(hour, minute)
-        val pendingIntent = PendingIntent.getBroadcast(
-            context, requestCode, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            alarmManager.canScheduleExactAlarms()
-        ) {
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent
-            )
-            Log.d(TAG, "Alarm set via setExactAndAllowWhileIdle: $calendar")
-        } else {
-            alarmManager.set(
-                AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent
-            )
-            Log.d(TAG, "Alarm set via set: $calendar")
-        }
-    }
 
     fun dismissAlarm(context: Context, hour: Int, minute: Int): Result<Unit> {
         return runCatching {
             Log.d(TAG, "dismissAlarm: hour=$hour, minute=$minute")
             
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            // ACTION_DISMISS_ALARM でシステム時計アプリのアラームを削除
+            val intent = Intent(AlarmClock.ACTION_DISMISS_ALARM).apply {
+                putExtra(AlarmClock.EXTRA_HOUR, hour)
+                putExtra(AlarmClock.EXTRA_MINUTES, minute)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
             
-            val requestCode = alarmRequestCode(hour, minute)
+            val packageManager = context.packageManager
+            val resolvedActivity = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.resolveActivity(
+                    intent,
+                    PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+            }
             
-            val intent = Intent(context, AlarmReceiver::class.java)
-            val pendingIntent = PendingIntent.getBroadcast(
-                context,
-                requestCode,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            
-            alarmManager.cancel(pendingIntent)
-            pendingIntent.cancel()
-            
-            Log.d(TAG, "Alarm dismissed: ${hour}:${minute.toString().padStart(2, '0')} rc=$requestCode")
+            if (resolvedActivity != null) {
+                context.startActivity(intent)
+                Log.d(TAG, "System alarm dismissed via ACTION_DISMISS_ALARM: $hour:${minute.toString().padStart(2, '0')}")
+            } else {
+                Log.w(TAG, "No clock app found to handle ACTION_DISMISS_ALARM")
+                // フォールバック: SHOW_ALARMS でアラーム一覧を表示
+                val showAlarmsIntent = Intent(AlarmClock.ACTION_SHOW_ALARMS).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                val showAlarmsResolved = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    packageManager.resolveActivity(
+                        showAlarmsIntent,
+                        PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    packageManager.resolveActivity(showAlarmsIntent, PackageManager.MATCH_DEFAULT_ONLY)
+                }
+                
+                if (showAlarmsResolved != null) {
+                    context.startActivity(showAlarmsIntent)
+                    Log.d(TAG, "Opened alarm list via ACTION_SHOW_ALARMS for manual deletion")
+                } else {
+                    throw IllegalStateException("No clock app found")
+                }
+            }
         }
     }
 
