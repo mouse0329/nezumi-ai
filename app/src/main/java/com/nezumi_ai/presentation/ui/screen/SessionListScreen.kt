@@ -33,6 +33,7 @@ fun SessionListScreen(
     viewModel: ChatSessionListViewModel,
     onSessionClick: (Long) -> Unit,
     onOpenSettings: () -> Unit,
+    onSearchClick: () -> Unit = {},
     currentSessionId: Long?
 ) {
     val groupedSessions by viewModel.groupedSessions.collectAsState(emptyList())
@@ -73,6 +74,7 @@ fun SessionListScreen(
             groupedSessions = groupedSessions,
             onSessionClick = onSessionClick,
             onOpenSettings = onOpenSettings,
+            onSearchClick = onSearchClick,
             onCreateSession = { 
                 viewModel.createNewSession("新しいチャット") { sessionId ->
                     onSessionClick(sessionId)
@@ -100,6 +102,7 @@ private fun SessionListContent(
     groupedSessions: List<GroupedChatSessions>,
     onSessionClick: (Long) -> Unit,
     onOpenSettings: () -> Unit,
+    onSearchClick: () -> Unit = {},
     onCreateSession: () -> Unit,
     onCreateIncognitoSession: () -> Unit,
     onDeleteSession: (Long) -> Unit,
@@ -123,6 +126,7 @@ private fun SessionListContent(
         Spacer(modifier = Modifier.statusBarsPadding())
         SessionListHeader(
             onOpenSettings = onOpenSettings,
+            onSearchClick = onSearchClick,
             onCreateSession = onCreateSession,
             onCreateIncognitoSession = onCreateIncognitoSession
         )
@@ -183,6 +187,7 @@ private fun DateHeader(dateLabel: String) {
 @Composable
 private fun SessionListHeader(
     onOpenSettings: () -> Unit,
+    onSearchClick: () -> Unit = {},
     onCreateSession: () -> Unit,
     onCreateIncognitoSession: () -> Unit
 ) {
@@ -209,6 +214,13 @@ private fun SessionListHeader(
             Icon(
                 painter = painterResource(id = R.drawable.ic_menu),
                 contentDescription = "メニュー",
+                tint = colorResource(id = R.color.text_primary)
+            )
+        }
+        IconButton(onClick = onSearchClick) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_search),
+                contentDescription = "履歴検索",
                 tint = colorResource(id = R.color.text_primary)
             )
         }
