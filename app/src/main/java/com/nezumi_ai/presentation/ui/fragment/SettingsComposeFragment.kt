@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -815,6 +816,7 @@ class SettingsComposeFragment : Fragment() {
     @Composable
     private fun MemoryManagementCard() {
         val memories by memoryRepository.observeMemories().collectAsState(initial = emptyList())
+        var showMemoryListModal by remember { mutableStateOf(false) }
         var confirmDeleteAll by remember { mutableStateOf(false) }
 
         if (confirmDeleteAll) {
@@ -841,6 +843,18 @@ class SettingsComposeFragment : Fragment() {
             )
         }
 
+        if (showMemoryListModal) {
+            MemoryListModal(
+                memories = memories,
+                onDismiss = { showMemoryListModal = false },
+                onDeleteMemory = { memoryId ->
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        memoryRepository.softDelete(memoryId)
+                    }
+                }
+            )
+        }
+
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -861,11 +875,19 @@ class SettingsComposeFragment : Fragment() {
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
-                    TextButton(
-                        enabled = memories.isNotEmpty(),
-                        onClick = { confirmDeleteAll = true }
-                    ) {
-                        Text("全削除")
+                    Row {
+                        TextButton(
+                            enabled = memories.isNotEmpty(),
+                            onClick = { showMemoryListModal = true }
+                        ) {
+                            Text("一覧表示")
+                        }
+                        TextButton(
+                            enabled = memories.isNotEmpty(),
+                            onClick = { confirmDeleteAll = true }
+                        ) {
+                            Text("全削除")
+                        }
                     }
                 }
 
@@ -892,19 +914,30 @@ class SettingsComposeFragment : Fragment() {
                         modifier = Modifier.weight(1f)
                     )
                 }
+            }
+        }
+    }
 
-                if (memories.isEmpty()) {
-                    Text(
-                        text = "保存されたメモリはありません",
-                        color = colorResource(id = R.color.text_secondary),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                } else {
-                    memories.take(20).forEach { memory ->
-                        Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.14f), thickness = 1.dp)
+    @Composable
+    private fun MemoryListModal(
+        memories: List<com.nezumi_ai.data.database.entity.MemoryEntity>,
+        onDismiss: () -> Unit,
+        onDeleteMemory: (Long) -> Unit
+    ) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("保存済みメモリ一覧") },
+            text = {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(memories) { memory ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.Top
                         ) {
                             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -919,25 +952,20 @@ class SettingsComposeFragment : Fragment() {
                                     style = MaterialTheme.typography.labelSmall
                                 )
                             }
-                            TextButton(onClick = {
-                                viewLifecycleOwner.lifecycleScope.launch {
-                                    memoryRepository.softDelete(memory.id)
-                                }
-                            }) {
+                            TextButton(onClick = { onDeleteMemory(memory.id) }) {
                                 Text("削除")
                             }
                         }
-                    }
-                    if (memories.size > 20) {
-                        Text(
-                            text = "最新20件を表示中",
-                            color = colorResource(id = R.color.text_secondary),
-                            style = MaterialTheme.typography.labelSmall
-                        )
+                        Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.14f), thickness = 1.dp)
                     }
                 }
+            },
+            confirmButton = {
+                TextButton(onClick = onDismiss) {
+                    Text("閉じる")
+                }
             }
-        }
+        )
     }
 
     @Composable
