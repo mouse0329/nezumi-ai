@@ -104,6 +104,12 @@ class ChatViewModel(
         /** 最初のトークン以降、この時間チャンクが無ければ打ち切り */
         private const val GENERATION_STALL_TIMEOUT_MS = 180_000L
         private const val GENERATION_STALL_CHECK_MS = 5_000L
+        /** 推論開始を拒否するメモリ使用率閾値 */
+        private const val MEMORY_BLOCK_INFERENCE_PERCENT = 90
+        /** 推論中にキャンセルするメモリ使用率閾値 */
+        private const val MEMORY_ABORT_INFERENCE_PERCENT = 95
+        /** 推論中メモリ監視の確認間隔 */
+        private const val MEMORY_WATCH_INTERVAL_MS = 10_000L
         /** メモリ注入に使えるコンテキスト予算の最大比率 */
         private const val MEMORY_BUDGET_RATIO = 0.15f
         /** 会話履歴のために最低限確保する文字数 */
@@ -914,6 +920,16 @@ class ChatViewModel(
             
             val memoryPercent = manager.getMemoryUsagePercent()
             Log.d(TAG, "generateAIResponse: memoryUsage=$memoryPercent%")
+            if (memoryPercent >= MEMORY_BLOCK_INFERENCE_PERCENT) {
+                Log.w(TAG, "generateAIResponse: memory too high ($memoryPercent%), blocking inference")
+                val memStatus = MemoryObserver.getMemoryStatus(appContext)
+                _memoryError.value = MemoryErrorInfo(
+                    usedPercent = memStatus.usedPercent,
+                    usedMB = memStatus.usedMB,
+                    totalMB = memStatus.maxMB
+                )
+                return
+            }
             _selectedModel.value = selectedModel
             val engineModelName = toEngineModelName(selectedModel)
             val hasMediaInput = images.isNotEmpty() || audioClips.isNotEmpty()
@@ -1110,6 +1126,24 @@ class ChatViewModel(
                                 val idle = SystemClock.elapsedRealtime() - lastChunkAt.get()
                                 if (idle >= GENERATION_STALL_TIMEOUT_MS) {
                                     throw GenerationStalledException()
+                                }
+                            }
+                        }
+
+                        // 推論中メモリ監視：閾値超えたらキャンセル
+                        val memoryWatchJob = launch {
+                            while (isActive) {
+                                delay(MEMORY_WATCH_INTERVAL_MS)
+                                val mem = manager.getMemoryUsagePercent()
+                                if (mem >= MEMORY_ABORT_INFERENCE_PERCENT) {
+                                    Log.w(TAG, "memoryWatchJob: memory critical ($mem%), aborting inference")
+                                    val memStatus = MemoryObserver.getMemoryStatus(appContext)
+                                    _memoryError.value = MemoryErrorInfo(
+                                        usedPercent = memStatus.usedPercent,
+                                        usedMB = memStatus.usedMB,
+                                        totalMB = memStatus.maxMB
+                                    )
+                                    cancel(CancellationException("MEMORY_CRITICAL"))
                                 }
                             }
                         }
@@ -2140,8 +2174,6 @@ class ChatViewModel(
             Log.d(TAG, "MEMORY_INJECT: query is blank")
             return null
         }
-        Log.d(TAG, "MEMORY_INJECT: query='$query'")
-
         // ONNX モデルがあれば初期化（初回のみ実行、以降はキャッシュ）
         if (!MemoryTextEmbedder.hasEmbeddingFiles(appContext)) {
             Log.d(TAG, "MEMORY_INJECT: embedding files not found, downloading...")
@@ -2984,7 +3016,6 @@ class ChatViewModel(
                 // Phase 11: 複数画像をカンマ区切りで保存
                 // Phase 12: 画像説明を自動生成・保存
                 val userMessageId = withContext(Dispatchers.IO) {
-                    Log.d(TAG, "SAVE_MESSAGE_START: content='$userMessage' images=${storedImages.size}")
                     val imageDesc = if (storedImages.isNotEmpty()) {
                         // 初めての画像に対する簡潔な説明を生成
                         generateImageDescription(storedImages)
@@ -2998,7 +3029,6 @@ class ChatViewModel(
                         imageDescription = imageDesc,  // Phase 12: 画像説明を保存
                         audioUri = storedAudio
                     )
-                    Log.d(TAG, "SAVE_MESSAGE_END: messageId=$messageId content='$userMessage' imageDesc='$imageDesc'")
                     sessionRepository.updateSessionLastUpdated(sessionId)
                     messageId
                 }
