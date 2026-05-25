@@ -1238,7 +1238,9 @@ class ChatViewModel(
                                     }
                                 } else if (toolResults != null) {
                                     // ツール実行結果JSON（テーブル保存用）
-                                    toolResultsJson = toolResults
+                                    if (toolResults != "[]") {
+                                        toolResultsJson = toolResults
+                                    }
                                     Log.d(TAG, "Tool results JSON received: length=${toolResults.length}")
                                 } else {
                                     val executedToolsList = InferenceStreamProtocol.decodeExecutedToolsList(chunk)
@@ -2026,10 +2028,12 @@ class ChatViewModel(
 
         // 累積全文が届くケース
         if (chunk.startsWith(current)) return chunk
-        // 既に反映済みの重複delta
-        if (current.endsWith(chunk)) return current
-        // 巻き戻った累積全文らしきケースは現状維持
-        if (current.startsWith(chunk)) return current
+        // 既に反映済みの重複delta。短い chunk は通常単語にも出るので捨てない。
+        if (chunk.length >= 8 && current.endsWith(chunk)) return current
+        // 巻き戻った累積全文らしきケースは現状維持。短い prefix chunk は本文中に再登場するので捨てない。
+        if (chunk.length >= 32 && chunk.length >= current.length / 2 && current.startsWith(chunk)) {
+            return current
+        }
 
         // 保守的な重複検出: 大きすぎる重複は検出しない
         // これにより、substring操作での文字削除バグを防止
@@ -2053,10 +2057,11 @@ class ChatViewModel(
     }
 
     private fun suffixPrefixOverlapConservative(left: String, right: String): Int {
-        // 重複を検出する際、最大チェック文字数を制限して安全性を確保
-        // これにより、不正な重複検出による文字削除を防止
+        // Short overlaps are often just ordinary word/token boundaries
+        // ("test" + "time", "し" + "した" etc.). Only trim clear repeated tails.
         val maxCheckSize = minOf(left.length, right.length, 50)
-        val minCheckSize = 1
+        val minCheckSize = 8
+        if (maxCheckSize < minCheckSize) return 0
         
         for (size in maxCheckSize downTo minCheckSize) {
             if (left.regionMatches(left.length - size, right, 0, size, ignoreCase = false)) {

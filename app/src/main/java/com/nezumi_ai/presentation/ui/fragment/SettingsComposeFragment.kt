@@ -2,24 +2,30 @@ package com.nezumi_ai.presentation.ui.fragment
 
 import android.os.Bundle
 import android.widget.Toast
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
@@ -118,7 +124,11 @@ class SettingsComposeFragment : Fragment() {
         }
         if (aboutDialogVisible) {
             AboutDialog(
-                onDismiss = { aboutDialogVisible = false }
+                onDismiss = { aboutDialogVisible = false },
+                onOpenLicenses = {
+                    aboutDialogVisible = false
+                    findNavController().navigate(R.id.action_settingsFragment_to_licenseFragment)
+                }
             )
         }
 
@@ -1156,20 +1166,76 @@ class SettingsComposeFragment : Fragment() {
     }
 
     @Composable
-    private fun AboutDialog(onDismiss: () -> Unit) {
+    private fun AboutDialog(
+        onDismiss: () -> Unit,
+        onOpenLicenses: () -> Unit
+    ) {
         AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text("このアプリについて") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Nezumi AI")
-                    Text("バージョン: ${BuildConfig.VERSION_NAME}")
-                    Text("ビルド: ${BuildConfig.VERSION_CODE}")
-                    Text(
-                        "Nezumi AI は端末上でのAI推論とチャット体験を提供します。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorResource(id = R.color.text_secondary)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 520.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Image(
+                        painter = painterResource(id = R.mipmap.ic_launcher_round),
+                        contentDescription = "Nezumi AI アイコン",
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(RoundedCornerShape(18.dp))
                     )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "Nezumi AI",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = colorResource(id = R.color.text_primary)
+                        )
+                        Text(
+                            text = "端末上で動くローカルAIチャット",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorResource(id = R.color.text_secondary),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+
+                    AboutSection(title = "アプリ情報") {
+                        AboutInfoRow("バージョン", BuildConfig.VERSION_NAME)
+                        AboutInfoRow("ビルド番号", BuildConfig.VERSION_CODE.toString())
+                        AboutInfoRow("パッケージ", BuildConfig.APPLICATION_ID)
+                        AboutInfoRow("ビルド種別", BuildConfig.BUILD_TYPE)
+                    }
+
+                    AboutSection(title = "推論エンジン") {
+                        AboutInfoRow("LiteRT-LM", BuildConfig.LITERTLM_VERSION)
+                        AboutInfoRow("GGUF / llama.cpp", BuildConfig.LLAMACPP_VERSION)
+                        AboutInfoRow("Stable Diffusion", "LocalDream / MNN・QNN")
+                        AboutInfoRow("音声合成", "VOICEVOX CORE 0.16.4")
+                    }
+
+                    AboutSection(title = "主な機能") {
+                        AboutBullet("Gemma 系モデルのローカルチャット")
+                        AboutBullet("GGUF モデル、画像・音声入力、シンキング表示")
+                        AboutBullet("メモリ抽出、会話履歴、コンテキスト圧縮")
+                        AboutBullet("Web 検索、アラーム、画像生成などのツール連携")
+                    }
+
+                    Text(
+                        text = "モデルや外部ライブラリには、それぞれの提供元ライセンスと利用条件が適用されます。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_secondary),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onOpenLicenses) {
+                    Text("ライセンス")
                 }
             },
             confirmButton = {
@@ -1178,6 +1244,73 @@ class SettingsComposeFragment : Fragment() {
                 }
             }
         )
+    }
+
+    @Composable
+    private fun AboutSection(
+        title: String,
+        content: @Composable ColumnScope.() -> Unit
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = colorResource(id = R.color.text_primary)
+            )
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                content = content
+            )
+        }
+    }
+
+    @Composable
+    private fun AboutInfoRow(label: String, value: String) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = colorResource(id = R.color.text_secondary),
+                modifier = Modifier.weight(0.42f)
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodySmall,
+                color = colorResource(id = R.color.text_primary),
+                textAlign = TextAlign.End,
+                modifier = Modifier.weight(0.58f)
+            )
+        }
+    }
+
+    @Composable
+    private fun AboutBullet(text: String) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Text(
+                text = "•",
+                style = MaterialTheme.typography.bodySmall,
+                color = colorResource(id = R.color.primary)
+            )
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodySmall,
+                color = colorResource(id = R.color.text_primary),
+                modifier = Modifier.weight(1f)
+            )
+        }
     }
 
     private fun onBackButtonPressed() {

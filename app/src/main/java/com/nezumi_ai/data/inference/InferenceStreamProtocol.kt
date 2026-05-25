@@ -48,8 +48,7 @@ object InferenceStreamProtocol {
 
     fun decodeToolResults(chunk: String): String? {
         if (!chunk.startsWith(TOOL_RESULTS_JSON_PREFIX)) return null
-        val json = chunk.removePrefix(TOOL_RESULTS_JSON_PREFIX)
-        return if (json == "[]") null else json
+        return chunk.removePrefix(TOOL_RESULTS_JSON_PREFIX)
     }
 
     /** 実行されたツール一覧（推論完了時にまとめて送出） */
