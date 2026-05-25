@@ -56,17 +56,27 @@ class MessageRepository(private val dao: MessageDao) {
         generationTps: Float? = null,
         generationTimeMs: Long? = null
     ) {
-        val current = dao.getMessageById(messageId) ?: return
-        dao.update(
-            current.copy(
-                content = content,
-                thinkingContent = thinkingContent,
-                isStreaming = isStreaming,
-                toolResultsJson = toolResultsJson ?: current.toolResultsJson,
-                generationTps = generationTps ?: current.generationTps,
-                generationTimeMs = generationTimeMs ?: current.generationTimeMs
+        try {
+            android.util.Log.d("MessageRepository", "updateMessageContent: start messageId=$messageId isStreaming=$isStreaming contentLen=${content.length}")
+            val current = dao.getMessageById(messageId) ?: run {
+                android.util.Log.w("MessageRepository", "updateMessageContent: message not found messageId=$messageId")
+                return
+            }
+            dao.update(
+                current.copy(
+                    content = content,
+                    thinkingContent = thinkingContent,
+                    isStreaming = isStreaming,
+                    toolResultsJson = toolResultsJson ?: current.toolResultsJson,
+                    generationTps = generationTps ?: current.generationTps,
+                    generationTimeMs = generationTimeMs ?: current.generationTimeMs
+                )
             )
-        )
+            android.util.Log.d("MessageRepository", "updateMessageContent: complete messageId=$messageId")
+        } catch (t: Throwable) {
+            android.util.Log.e("MessageRepository", "updateMessageContent: failed for messageId=$messageId", t)
+            throw t
+        }
     }
 
     suspend fun updateMessageMedia(
