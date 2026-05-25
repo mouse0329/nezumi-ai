@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
+import android.content.ClipData
 import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
@@ -63,7 +64,9 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.navigation.fragment.findNavController
@@ -628,21 +631,25 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.isLoading.collect { isLoading ->
-                isGenerating = isLoading
-                renderSendButtonState()
-                if (isLoading) {
-                    userScrolledAwayDuringGeneration = false
-                    autoFollowBottomLocked = isUserAtBottom || isNearBottom()
-                    startResponseTypingAnimation()
-                    if (autoFollowBottomLocked) {
-                        binding.messagesRecyclerView.post {
-                            val lastItem = adapter.itemCount - 1
-                            if (lastItem >= 0) scrollToBottom(lastItem)
+            viewLifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.isLoading.collect { isLoading ->
+                    isGenerating = isLoading
+                    renderSendButtonState()
+                    if (isLoading) {
+                        userScrolledAwayDuringGeneration = false
+                        autoFollowBottomLocked = isUserAtBottom || isNearBottom()
+                        startResponseTypingAnimation()
+                        if (autoFollowBottomLocked) {
+                            binding.messagesRecyclerView.post {
+                                val lastItem = adapter.itemCount - 1
+                                if (lastItem >= 0) scrollToBottom(lastItem)
+                            }
                         }
+                    } else {
+                        stopResponseTypingAnimation()
+                        responseTypingVisible = false
+                        responseTypingText = getString(R.string.response_generating)
                     }
-                } else {
-                    stopResponseTypingAnimation()
                 }
             }
         }
@@ -1789,6 +1796,15 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             )
             cameraImageUri = fileUri
             cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, fileUri)
+            cameraIntent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            cameraIntent.clipData = ClipData.newUri(
+                requireContext().contentResolver,
+                "ImageCapture",
+                fileUri
+            )
             cameraLauncher.launch(cameraIntent)
         } catch (e: Exception) {
             Log.e("ChatFragment", "Camera app not found", e)

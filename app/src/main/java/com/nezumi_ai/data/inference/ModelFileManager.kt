@@ -291,22 +291,37 @@ object ModelFileManager {
             val safeLimit = limit.coerceIn(1, 50)
             val url =
                 "https://huggingface.co/api/models?search=$encodedQuery&sort=downloads&direction=-1&limit=$safeLimit&full=true"
-            val response = httpGetText(context, url)
-            val array = JSONArray(response)
-            buildList {
-                for (i in 0 until array.length()) {
-                    val item = array.optJSONObject(i) ?: continue
-                    val id = item.optString("id").ifBlank { continue }
-                    add(
-                        HfModelSearchResult(
-                            id = id,
-                            downloads = item.optLong("downloads", 0L),
-                            likes = item.optLong("likes", 0L),
-                            lastModified = item.optString("lastModified").ifBlank { null },
-                            privateModel = item.optBoolean("private", false)
-                        )
+            val (response, _) = httpGetTextWithNextLink(context, url)
+            parseHfModelSearchResults(response)
+        }
+    }
+
+    /** 指定URLから続きの検索結果を取得する。nextPageUrl は前回の応答から得たURL。 */
+    suspend fun searchHuggingFaceModelsNextPage(
+        context: Context,
+        nextPageUrl: String
+    ): Result<Pair<List<HfModelSearchResult>, String?>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val (response, nextLink) = httpGetTextWithNextLink(context, nextPageUrl)
+            Pair(parseHfModelSearchResults(response), nextLink)
+        }
+    }
+
+    private fun parseHfModelSearchResults(response: String): List<HfModelSearchResult> {
+        val array = JSONArray(response)
+        return buildList {
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                val id = item.optString("id").ifBlank { continue }
+                add(
+                    HfModelSearchResult(
+                        id = id,
+                        downloads = item.optLong("downloads", 0L),
+                        likes = item.optLong("likes", 0L),
+                        lastModified = item.optString("lastModified").ifBlank { null },
+                        privateModel = item.optBoolean("private", false)
                     )
-                }
+                )
             }
         }
     }
@@ -1247,7 +1262,14 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         return false
     }
 
-    private fun httpGetText(context: Context, urlString: String): String {
+    private fun httpGetText(context: Context, urlString: String): String =
+        httpGetTextWithNextLink(context, urlString).first
+
+    /**
+     * GETリクエストを送り、レスポンスボディと Link ヘッダーから取得した
+     * 次ページURL（rel="next"）のペアを返す。
+     */
+    private fun httpGetTextWithNextLink(context: Context, urlString: String): Pair<String, String?> {
         val token = HfAuthManager.getToken(context)
         val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
             connectTimeout = 20_000
@@ -1266,7 +1288,13 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
             if (code !in 200..299) {
                 throw IllegalStateException("Hugging Face API error (HTTP $code): $body")
             }
-            return body
+            // Link: <https://...>; rel="next", <https://...>; rel="prev" のパース
+            val nextLink = connection.getHeaderField("Link")
+                ?.split(",")
+                ?.map { it.trim() }
+                ?.firstOrNull { it.contains("""rel="next"""") }
+                ?.let { Regex("""<([^>]+)>""").find(it)?.groupValues?.getOrNull(1) }
+            return Pair(body, nextLink)
         } finally {
             connection.disconnect()
         }

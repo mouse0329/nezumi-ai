@@ -905,6 +905,8 @@ class ChatViewModel(
         currentTurnMessageId: Long? = null
     ) {
         var streamingMessageId: Long? = null
+        var currentHasMediaInput = false
+        var currentEngineModelName: String? = null
         val aiStartMs = System.currentTimeMillis()  // Phase 11: 全体ロード時間を計測開始
         try {
             // Acquire WakeLock to prevent screen sleep during generation
@@ -932,7 +934,9 @@ class ChatViewModel(
             }
             _selectedModel.value = selectedModel
             val engineModelName = toEngineModelName(selectedModel)
+            currentEngineModelName = engineModelName
             val hasMediaInput = images.isNotEmpty() || audioClips.isNotEmpty()
+            currentHasMediaInput = hasMediaInput
             if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
                 messageRepository.addMessage(
                     sessionId = sessionId,
@@ -1562,6 +1566,34 @@ class ChatViewModel(
             }
         } finally {
             streamingAssistantMessageIdForTools = null
+            // Safety fallback: if the streaming message still exists and is still marked as streaming,
+            // clear the flag so the UI does not stay stuck in "生成中".
+            if (streamingMessageId != null) {
+                try {
+                    withContext(Dispatchers.IO) {
+                        val current = messageRepository.getMessageById(streamingMessageId)
+                        if (current?.isStreaming == true) {
+                            Log.w(
+                                TAG,
+                                "generateAIResponse finally: message $streamingMessageId still streaming after completion, clearing flag"
+                            )
+                            messageRepository.updateMessageContent(
+                                messageId = streamingMessageId,
+                                content = current.content.ifBlank {
+                                    messageForEmptyInferencePayload(
+                                        currentHasMediaInput,
+                                        currentEngineModelName ?: ""
+                                    )
+                                },
+                                isStreaming = false,
+                                thinkingContent = current.thinkingContent
+                            )
+                        }
+                    }
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Failed to clear streaming flag on message $streamingMessageId", t)
+                }
+            }
             // Gallery パターン: 全パスで _isLoading を false にする
             Log.d(TAG, "Generation concluded, setting isLoading=false")
             _isLoading.value = false
