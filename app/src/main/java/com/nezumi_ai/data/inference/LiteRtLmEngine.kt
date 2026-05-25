@@ -24,6 +24,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.Flow
@@ -913,7 +915,10 @@ class LiteRtLmEngine(
                     var tokenCount = 0
                     var firstRequest = true
                     var pendingToolResponseMessage: Message? = null
-                    while (true) {
+                    val maxToolRounds = 5
+                    var toolRound = 0
+                    while (isActive && toolRound < maxToolRounds) {
+                        toolRound++
                         var toolCallsInTurn: List<ToolCall> = emptyList()
                         val messageFlow = if (firstRequest) {
                             firstRequest = false
@@ -965,6 +970,10 @@ class LiteRtLmEngine(
                         }
 
                         if (toolCallsInTurn.isEmpty()) {
+                            break
+                        }
+                        if (toolRound >= maxToolRounds) {
+                            Log.w(TAG, "Tool call loop exceeded max rounds, breaking session=$sessionId")
                             break
                         }
                         // ツール呼び出し時は計測をリセット

@@ -55,6 +55,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.NonCancellable
 import com.nezumi_ai.MyApplication
 import com.nezumi_ai.voicevox.VoicevoxManager
 import com.nezumi_ai.voicevox.VoicevoxStreamingTts
@@ -847,7 +848,9 @@ class ChatViewModel(
             generationJob = null
             _isLoading.value = false
             job
-        }
+        } ?: return
+
+        currentJob.cancel(CancellationException("Stopped by user"))
 
         try {
             val manager = requireModelManager()
@@ -1375,6 +1378,7 @@ class ChatViewModel(
                             generationEndAtMs = SystemClock.elapsedRealtime()
                             firstTokenTimeoutJob.cancel()
                             stallWatchJob.cancel()
+                            memoryWatchJob.cancel()
                             Log.d(TAG, "Flow collection completed")
                         }
                     }
@@ -1440,6 +1444,8 @@ class ChatViewModel(
             val hasPayload =
                 contentToSave.isNotEmpty() || !finalThinking.isNullOrEmpty()
 
+            Log.d(TAG, "generateAIResponse finalization: hasPayload=$hasPayload, activeStreamingMessageId=$activeStreamingMessageId, completeResponse.len=${completeResponse.length}, finalThinking=${!finalThinking.isNullOrEmpty()}")
+
             val generationTimeMs = firstOutputAtMs?.let { first ->
                 val end = generationEndAtMs ?: SystemClock.elapsedRealtime()
                 (end - first).coerceAtLeast(0L)
@@ -1474,13 +1480,17 @@ class ChatViewModel(
                         generationTps = tps,
                         generationTimeMs = generationTimeMs
                     )
+                    Log.d(TAG, "Message content update complete")
                     if (contentToSave.isNotEmpty()) {
                         Log.d(TAG, "Generating session title")
                         maybeGenerateSessionTitle(sessionId, userMessage, contentToSave)
+                        Log.d(TAG, "Session title generation complete")
                     }
                     syncSessionTitleFromDb(sessionId)
+                    Log.d(TAG, "Session title sync complete")
                 }
                 enqueueMemoryExtraction(sessionId)
+                Log.d(TAG, "Memory extraction enqueued")
                 if (BuildConfig.DEBUG) {
                     Log.d(TAG, "AI response saved to database: ${completeResponse.take(50)}...")
                 }
@@ -1494,7 +1504,9 @@ class ChatViewModel(
                         isStreaming = false,
                         thinkingContent = null
                     )
+                    Log.d(TAG, "Empty payload message saved to DB")
                     syncSessionTitleFromDb(sessionId)
+                    Log.d(TAG, "Session title sync complete (empty payload)")
                 }
             }
         } catch (t: Throwable) {
@@ -1565,48 +1577,53 @@ class ChatViewModel(
                 _uiMessage.emit("❌ " + (e.message?.take(30) ?: "エラーが発生しました"))
             }
         } finally {
-            streamingAssistantMessageIdForTools = null
-            // Safety fallback: if the streaming message still exists and is still marked as streaming,
-            // clear the flag so the UI does not stay stuck in "生成中".
-            if (streamingMessageId != null) {
-                try {
-                    withContext(Dispatchers.IO) {
-                        val current = messageRepository.getMessageById(streamingMessageId)
-                        if (current?.isStreaming == true) {
-                            Log.w(
-                                TAG,
-                                "generateAIResponse finally: message $streamingMessageId still streaming after completion, clearing flag"
-                            )
-                            messageRepository.updateMessageContent(
-                                messageId = streamingMessageId,
-                                content = current.content.ifBlank {
-                                    messageForEmptyInferencePayload(
-                                        currentHasMediaInput,
-                                        currentEngineModelName ?: ""
-                                    )
-                                },
-                                isStreaming = false,
-                                thinkingContent = current.thinkingContent
-                            )
+            Log.d(TAG, "generateAIResponse finally entered")
+            // Ensure cleanup runs even if the coroutine job was cancelled.
+            withContext(NonCancellable) {
+                streamingAssistantMessageIdForTools = null
+                // Safety fallback: if the streaming message still exists and is still marked as streaming,
+                // clear the flag so the UI does not stay stuck in "生成中".
+                if (streamingMessageId != null) {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            val current = messageRepository.getMessageById(streamingMessageId)
+                            if (current?.isStreaming == true) {
+                                Log.w(
+                                    TAG,
+                                    "generateAIResponse finally: message $streamingMessageId still streaming after completion, clearing flag"
+                                )
+                                messageRepository.updateMessageContent(
+                                    messageId = streamingMessageId,
+                                    content = current.content.ifBlank {
+                                        messageForEmptyInferencePayload(
+                                            currentHasMediaInput,
+                                            currentEngineModelName ?: ""
+                                        )
+                                    },
+                                    isStreaming = false,
+                                    thinkingContent = current.thinkingContent
+                                )
+                            }
                         }
+                    } catch (t: Throwable) {
+                        Log.e(TAG, "Failed to clear streaming flag on message $streamingMessageId", t)
                     }
-                } catch (t: Throwable) {
-                    Log.e(TAG, "Failed to clear streaming flag on message $streamingMessageId", t)
                 }
+
+                // Gallery パターン: 全パスで _isLoading を false にする
+                Log.d(TAG, "Generation concluded, setting isLoading=false")
+                _isLoading.value = false
+
+                // Tool Call State マシンを Done に設定
+                _toolCallState.value = ToolCallState.Done
+
+                // Phase 11: 全体のロード時間をログ出力
+                val aiTotalMs = System.currentTimeMillis() - aiStartMs
+                Log.d(TAG, "generateAIResponse TOTAL_DURATION: ${aiTotalMs}ms (model load, inference, and all processing)")
+
+                // Release WakeLock when generation completes
+                releaseScreenWakeLock()
             }
-            // Gallery パターン: 全パスで _isLoading を false にする
-            Log.d(TAG, "Generation concluded, setting isLoading=false")
-            _isLoading.value = false
-            
-            // Tool Call State マシンを Done に設定
-            _toolCallState.value = ToolCallState.Done
-            
-            // Phase 11: 全体のロード時間をログ出力
-            val aiTotalMs = System.currentTimeMillis() - aiStartMs
-            Log.d(TAG, "generateAIResponse TOTAL_DURATION: ${aiTotalMs}ms (model load, inference, and all processing)")
-            
-            // Release WakeLock when generation completes
-            releaseScreenWakeLock()
         }
     }
 
