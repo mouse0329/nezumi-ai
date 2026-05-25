@@ -465,7 +465,10 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                     Log.d(TAG, "GGUF started session=$sessionId")
 
                     // ★ 推論実行（maxTokens に基づいてタイムアウトを計算）
-                    val normalized = modelMutex.withLock { loadedConfig?.normalized() } ?: config.normalized()
+                    // enableThinking はリクエスト単位の config を正とする
+                    // loadedConfig はモデルロード設定（バックエンド・コンテキスト長等）の保持用であり、
+                    // スイッチ切り替え後の最新状態を反映しない可能性がある
+                    val normalized = config.normalized()
                     enableThinkingMode = normalized.enableThinking
                     val timeoutSeconds = (normalized.maxTokens / 10).coerceIn(5, 300)  // 最小5秒、最大300秒
                     val effectiveStopSequences = if (normalized.customStopTokens.isEmpty()) {

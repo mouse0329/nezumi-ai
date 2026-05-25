@@ -149,20 +149,30 @@ class LiteRtLmEngine(
         }
     }
 
-    private fun cancelActiveConversation() {
-        runBlocking {
-            activeConversationLock.withLock {
-                cancelConversation(activeLiteRtConversation)
-            }
+    private suspend fun cancelActiveConversation() {
+        activeConversationLock.withLock {
+            cancelConversation(activeLiteRtConversation)
         }
     }
 
-    private fun cancelMemoryExtractionConversation() {
-        runBlocking {
-            activeConversationLock.withLock {
-                cancelConversation(memoryExtractionConversation)
-            }
+    private suspend fun cancelMemoryExtractionConversation() {
+        activeConversationLock.withLock {
+            cancelConversation(memoryExtractionConversation)
         }
+    }
+
+    /**
+     * awaitClose など suspend 不可のコンテキスト向け。
+     * ロックなしで cancelProcess() のみ直接呼ぶ（runBlocking 禁止）。
+     */
+    private fun cancelActiveConversationNonSuspend() {
+        runCatching { activeLiteRtConversation?.cancelProcess() }
+            .onFailure { Log.w(TAG, "cancelActiveConversationNonSuspend failed", it) }
+    }
+
+    private fun cancelMemoryExtractionConversationNonSuspend() {
+        runCatching { memoryExtractionConversation?.cancelProcess() }
+            .onFailure { Log.w(TAG, "cancelMemoryExtractionConversationNonSuspend failed", it) }
     }
 
     /**
@@ -1053,18 +1063,19 @@ class LiteRtLmEngine(
             awaitClose {
                 Log.d(TAG, "awaitClose: cancelling session=$sessionId")
                 generationJob.cancel()
+                // awaitClose は suspend 不可。runBlocking 禁止のため NonSuspend 版を使用
                 if (useExtractionConversation) {
-                    cancelMemoryExtractionConversation()
+                    cancelMemoryExtractionConversationNonSuspend()
                 } else {
-                    cancelActiveConversation()
+                    cancelActiveConversationNonSuspend()
                 }
             }
         } catch (t: Throwable) {
             // 例外時は cancel のみ（close は呼ばず）
             if (useExtractionConversation) {
-                cancelMemoryExtractionConversation()
+                cancelMemoryExtractionConversationNonSuspend()
             } else {
-                cancelActiveConversation()
+                cancelActiveConversationNonSuspend()
             }
             // ★ 外側で例外が発生した場合も必ず release する（generationJob.finally が実行されない可能性あり）
             releaseInferenceMutex()
