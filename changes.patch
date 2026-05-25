@@ -1,29 +1,196 @@
-From be7d17b559ac4af09366a5da4a8c34366342e13d Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?=E3=81=AD=E3=81=9A=E3=81=BF?= <nezumi@nezumi.ai>
-Date: Sun, 24 May 2026 22:03:58 +0000
-Subject: [PATCH] =?UTF-8?q?fix:=20=E3=83=81=E3=83=A3=E3=83=B3=E3=82=AF?=
- =?UTF-8?q?=E3=82=AB=E3=83=BC=E3=83=89=E3=82=BF=E3=83=83=E3=83=97=E6=99=82?=
- =?UTF-8?q?=E3=81=AB=E3=83=A2=E3=83=BC=E3=83=80=E3=83=AB=E3=82=92=E9=96=89?=
- =?UTF-8?q?=E3=81=98=E3=82=8B?=
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
-
----
- app/src/main/java/com/nezumi_ai/MainActivity.kt | 1 +
- 1 file changed, 1 insertion(+)
-
-diff --git a/app/src/main/java/com/nezumi_ai/MainActivity.kt b/app/src/main/java/com/nezumi_ai/MainActivity.kt
-index bbc10e7..fc978ee 100644
---- a/app/src/main/java/com/nezumi_ai/MainActivity.kt
-+++ b/app/src/main/java/com/nezumi_ai/MainActivity.kt
-@@ -139,6 +139,7 @@ class MainActivity : AppCompatActivity() {
+--- a/app/src/main/java/com/nezumi_ai/data/inference/ModelFileManager.kt
++++ b/app/src/main/java/com/nezumi_ai/data/inference/ModelFileManager.kt
+@@ -291,22 +291,37 @@
+             val safeLimit = limit.coerceIn(1, 50)
+             val url =
+                 "https://huggingface.co/api/models?search=$encodedQuery&sort=downloads&direction=-1&limit=$safeLimit&full=true"
+-            val response = httpGetText(context, url)
+-            val array = JSONArray(response)
+-            buildList {
+-                for (i in 0 until array.length()) {
+-                    val item = array.optJSONObject(i) ?: continue
+-                    val id = item.optString("id").ifBlank { continue }
+-                    add(
+-                        HfModelSearchResult(
+-                            id = id,
+-                            downloads = item.optLong("downloads", 0L),
+-                            likes = item.optLong("likes", 0L),
+-                            lastModified = item.optString("lastModified").ifBlank { null },
+-                            privateModel = item.optBoolean("private", false)
+-                        )
++            val (response, _) = httpGetTextWithNextLink(context, url)
++            parseHfModelSearchResults(response)
++        }
++    }
++
++    /** 指定URLから続きの検索結果を取得する。nextPageUrl は前回の応答から得たURL。 */
++    suspend fun searchHuggingFaceModelsNextPage(
++        context: Context,
++        nextPageUrl: String
++    ): Result<Pair<List<HfModelSearchResult>, String?>> = withContext(Dispatchers.IO) {
++        runCatching {
++            val (response, nextLink) = httpGetTextWithNextLink(context, nextPageUrl)
++            Pair(parseHfModelSearchResults(response), nextLink)
++        }
++    }
++
++    private fun parseHfModelSearchResults(response: String): List<HfModelSearchResult> {
++        val array = JSONArray(response)
++        return buildList {
++            for (i in 0 until array.length()) {
++                val item = array.optJSONObject(i) ?: continue
++                val id = item.optString("id").ifBlank { continue }
++                add(
++                    HfModelSearchResult(
++                        id = id,
++                        downloads = item.optLong("downloads", 0L),
++                        likes = item.optLong("likes", 0L),
++                        lastModified = item.optString("lastModified").ifBlank { null },
++                        privateModel = item.optBoolean("private", false)
+                     )
+-                }
++                )
+             }
+         }
+     }
+@@ -1247,7 +1262,14 @@
+         return false
+     }
+ 
+-    private fun httpGetText(context: Context, urlString: String): String {
++    private fun httpGetText(context: Context, urlString: String): String =
++        httpGetTextWithNextLink(context, urlString).first
++
++    /**
++     * GETリクエストを送り、レスポンスボディと Link ヘッダーから取得した
++     * 次ページURL（rel="next"）のペアを返す。
++     */
++    private fun httpGetTextWithNextLink(context: Context, urlString: String): Pair<String, String?> {
+         val token = HfAuthManager.getToken(context)
+         val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
+             connectTimeout = 20_000
+@@ -1266,7 +1288,13 @@
+             if (code !in 200..299) {
+                 throw IllegalStateException("Hugging Face API error (HTTP $code): $body")
+             }
+-            return body
++            // Link: <https://...>; rel="next", <https://...>; rel="prev" のパース
++            val nextLink = connection.getHeaderField("Link")
++                ?.split(",")
++                ?.map { it.trim() }
++                ?.firstOrNull { it.contains("""rel="next"""") }
++                ?.let { Regex("""<([^>]+)>""").find(it)?.groupValues?.getOrNull(1) }
++            return Pair(body, nextLink)
+         } finally {
+             connection.disconnect()
+         }
+--- a/app/src/main/java/com/nezumi_ai/presentation/ui/fragment/ModelSettingsFragment.kt
++++ b/app/src/main/java/com/nezumi_ai/presentation/ui/fragment/ModelSettingsFragment.kt
+@@ -47,6 +47,7 @@
+ import androidx.compose.material3.darkColorScheme
+ import androidx.compose.material3.lightColorScheme
+ import androidx.compose.runtime.Composable
++import androidx.compose.runtime.LaunchedEffect
+ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableFloatStateOf
+ import androidx.compose.runtime.mutableStateListOf
+@@ -122,6 +123,8 @@
+     private var hfSearchLoading by mutableStateOf(false)
+     private var hfSearchError by mutableStateOf<String?>(null)
+     private var hfSearchResults by mutableStateOf<List<ModelFileManager.HfModelSearchResult>>(emptyList())
++    private var hfSearchNextPageUrl by mutableStateOf<String?>(null)
++    private var hfSearchLoadingMore by mutableStateOf(false)
+     private var hfSearchResultsDialogVisible by mutableStateOf(false)
+     private var hfFilePickerModel by mutableStateOf<ModelFileManager.HfModelSearchResult?>(null)
+     private var hfFilePickerLoading by mutableStateOf(false)
+@@ -1248,6 +1251,7 @@
+                             enabled = !hfSearchLoading,
+                             onClick = {
+                                 hfSearchResults = emptyList()
++                                hfSearchNextPageUrl = null
+                                 hfSearchError = null
+                                 hfSearchResultsDialogVisible = false
                              }
-                             findNavController(R.id.nav_host_fragment_content_main)
-                                 .navigate(R.id.chatFragment, bundle)
-+                            (window.decorView as? android.view.ViewGroup)?.removeView(this)
-                         },
-                         onDismiss = {
-                             (window.decorView as? android.view.ViewGroup)?.removeView(this)
--- 
-2.43.0
+@@ -1735,6 +1739,25 @@
+                             }
+                         }
+                     }
++                    // 次ページ読み込みトリガー
++                    item {
++                        val nextUrl = hfSearchNextPageUrl
++                        if (nextUrl != null) {
++                            LaunchedEffect(hfSearchResults.size) {
++                                if (!hfSearchLoadingMore) {
++                                    loadMoreHfResults(nextUrl)
++                                }
++                            }
++                            Box(
++                                modifier = Modifier
++                                    .fillMaxWidth()
++                                    .padding(vertical = 12.dp),
++                                contentAlignment = Alignment.Center
++                            ) {
++                                CircularProgressIndicator()
++                            }
++                        }
++                    }
+                 }
+             }
+         }
+@@ -2668,6 +2691,7 @@
+         // トークン状態変更時は検索結果をクリア
+         if (hfLinked && hfSearchResults.isNotEmpty()) {
+             hfSearchResults = emptyList()
++            hfSearchNextPageUrl = null
+             hfSearchResultsDialogVisible = false
+         }
+     }
+@@ -2771,16 +2795,21 @@
+         
+         hfSearchLoading = true
+         hfSearchError = null
++        hfSearchNextPageUrl = null
+         viewLifecycleOwner.lifecycleScope.launch {
++            val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
++            val url = "https://huggingface.co/api/models?search=$encodedQuery&sort=downloads&direction=-1&limit=20&full=true"
+             val result = withContext(Dispatchers.IO) {
+-                ModelFileManager.searchHuggingFaceModels(requireContext(), query)
++                ModelFileManager.searchHuggingFaceModelsNextPage(requireContext(), url)
+             }
+-            result.onSuccess { list ->
++            result.onSuccess { (list, nextUrl) ->
+                 hfSearchResults = list
++                hfSearchNextPageUrl = nextUrl
+                 hfSearchError = if (list.isEmpty()) "検索結果がありませんでした" else null
+                 hfSearchResultsDialogVisible = list.isNotEmpty()
+             }.onFailure {
+                 hfSearchResults = emptyList()
++                hfSearchNextPageUrl = null
+                 hfSearchError = "検索失敗: ${it.message}"
+                 hfSearchResultsDialogVisible = false
+             }
+@@ -2788,6 +2817,24 @@
+         }
+     }
+ 
++    private fun loadMoreHfResults(nextUrl: String) {
++        if (hfSearchLoadingMore) return
++        hfSearchLoadingMore = true
++        viewLifecycleOwner.lifecycleScope.launch {
++            val result = withContext(Dispatchers.IO) {
++                ModelFileManager.searchHuggingFaceModelsNextPage(requireContext(), nextUrl)
++            }
++            result.onSuccess { (list, newNextUrl) ->
++                hfSearchResults = hfSearchResults + list
++                hfSearchNextPageUrl = newNextUrl
++            }.onFailure {
++                // 追加読み込み失敗は静かに無視（次回スクロール時に再試行可能）
++                hfSearchNextPageUrl = null
++            }
++            hfSearchLoadingMore = false
++        }
++    }
++
+     private fun openHfFilePicker(result: ModelFileManager.HfModelSearchResult) {
+         hfFilePickerModel = result
+         hfFilePickerLoading = true

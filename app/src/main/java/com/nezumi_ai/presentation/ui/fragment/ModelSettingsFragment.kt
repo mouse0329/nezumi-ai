@@ -47,6 +47,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -122,10 +123,13 @@ open class ModelSettingsFragment : Fragment() {
     private var hfSearchLoading by mutableStateOf(false)
     private var hfSearchError by mutableStateOf<String?>(null)
     private var hfSearchResults by mutableStateOf<List<ModelFileManager.HfModelSearchResult>>(emptyList())
+    private var hfSearchNextPageUrl by mutableStateOf<String?>(null)
+    private var hfSearchLoadingMore by mutableStateOf(false)
     private var hfSearchResultsDialogVisible by mutableStateOf(false)
     private var hfFilePickerModel by mutableStateOf<ModelFileManager.HfModelSearchResult?>(null)
     private var hfFilePickerLoading by mutableStateOf(false)
     private var hfFilePickerFiles by mutableStateOf<List<ModelFileManager.HfModelFile>>(emptyList())
+    private var hfMmprojCandidates by mutableStateOf<List<ModelFileManager.HfModelFile>>(emptyList())
     private var hfReadmeText by mutableStateOf<String?>(null)
     private var hfReadmeLoading by mutableStateOf(false)
     private var hfReadmeError by mutableStateOf<String?>(null)
@@ -1248,6 +1252,7 @@ open class ModelSettingsFragment : Fragment() {
                             enabled = !hfSearchLoading,
                             onClick = {
                                 hfSearchResults = emptyList()
+                                hfSearchNextPageUrl = null
                                 hfSearchError = null
                                 hfSearchResultsDialogVisible = false
                             }
@@ -1735,6 +1740,25 @@ open class ModelSettingsFragment : Fragment() {
                             }
                         }
                     }
+                    // 次ページ読み込みトリガー
+                    item {
+                        val nextUrl = hfSearchNextPageUrl
+                        if (nextUrl != null) {
+                            LaunchedEffect(hfSearchResults.size) {
+                                if (!hfSearchLoadingMore) {
+                                    loadMoreHfResults(nextUrl)
+                                }
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator()
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1785,45 +1809,39 @@ open class ModelSettingsFragment : Fragment() {
                             CircularProgressIndicator(modifier = Modifier.size(18.dp))
                             Text("ファイル一覧を取得中...")
                         }
-                    } else if (hfFilePickerFiles.isEmpty()) {
+                    } else if (hfFilePickerFiles.isEmpty() && hfMmprojCandidates.isEmpty()) {
                         Text("対応ファイル（.gguf / .task / .litertlm / .mmproj）が見つかりません")
                     } else {
-                        hfFilePickerFiles.forEach { file ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                    Text(text = file.path)
-                                    Text(
-                                        text = file.sizeBytes?.let { formatBytes(it) } ?: "size: unknown",
-                                        color = colorResource(id = R.color.text_secondary)
-                                    )
-                                    if (file.sizeBytes != null) {
-                                        val isMemoryLow = MemoryObserver.isMemoryLowForFileSize(requireContext(), file.sizeBytes, preloadMemoryWarningThresholdPercent, useAvailable = false)
-                                        val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), file.sizeBytes, preloadMemoryWarningThresholdPercent)
-                                        if (isMemoryLow || resourceCheck.isStorageLow) {
-                                            Text(
-                                                text = when {
-                                                    isMemoryLow && resourceCheck.isStorageLow -> "⚠️ メモリ・ストレージ不足"
-                                                    isMemoryLow -> "⚠️ メモリ不足"
-                                                    else -> "⚠️ ストレージ不足"
-                                                },
-                                                color = MaterialTheme.colorScheme.error,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                modifier = Modifier.padding(top = 4.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                                Button(
-                                    enabled = hfDownloadingFilePath == null && (file.sizeBytes == null || !ModelFileManager.checkDownloadResources(requireContext(), file.sizeBytes, preloadMemoryWarningThresholdPercent).isStorageLow),
-                                    onClick = { downloadHfModelFile(model.id, file.path) }
-                                ) {
-                                    val isDownloading = hfDownloadingFilePath == file.path
-                                    Text(if (isDownloading) "DL中..." else "DL")
-                                }
+                        // メインモデルファイル一覧
+                        if (hfFilePickerFiles.isNotEmpty()) {
+                            // mmproj がある場合は自動DLの旨を表示
+                            if (hfMmprojCandidates.isNotEmpty()) {
+                                val autoMmproj = hfMmprojCandidates
+                                    .filter { it.sizeBytes != null }
+                                    .minByOrNull { it.sizeBytes!! }
+                                    ?: hfMmprojCandidates.first()
+                                Text(
+                                    text = "📎 mmproj が見つかりました。DL時に「${autoMmproj.path}」も自動ダウンロードし、画像認識が有効になります。",
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                )
+                            }
+                            hfFilePickerFiles.forEach { file ->
+                                HfFileRow(model.id, file)
+                            }
+                        }
+                        // mmproj セクション（同リポジトリのみ）
+                        if (hfMmprojCandidates.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "mmproj（マルチモーダル用）",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = colorResource(id = R.color.text_primary)
+                            )
+                            hfMmprojCandidates.forEach { file ->
+                                HfFileRow(model.id, file, isMmproj = true)
                             }
                         }
                     }
@@ -1837,6 +1855,53 @@ open class ModelSettingsFragment : Fragment() {
                         ) { Text("閉じる") }
                     }
                 }
+            }
+        }
+    }
+
+    @Composable
+    private fun HfFileRow(
+        modelId: String,
+        file: ModelFileManager.HfModelFile,
+        isMmproj: Boolean = false
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                Text(text = file.path)
+                Text(
+                    text = file.sizeBytes?.let { formatBytes(it) } ?: "size: unknown",
+                    color = colorResource(id = R.color.text_secondary)
+                )
+                if (file.sizeBytes != null) {
+                    val isMemoryLow = MemoryObserver.isMemoryLowForFileSize(requireContext(), file.sizeBytes, preloadMemoryWarningThresholdPercent, useAvailable = false)
+                    val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), file.sizeBytes, preloadMemoryWarningThresholdPercent)
+                    if (isMemoryLow || resourceCheck.isStorageLow) {
+                        Text(
+                            text = when {
+                                isMemoryLow && resourceCheck.isStorageLow -> "⚠️ メモリ・ストレージ不足"
+                                isMemoryLow -> "⚠️ メモリ不足"
+                                else -> "⚠️ ストレージ不足"
+                            },
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                }
+            }
+            Button(
+                enabled = hfDownloadingFilePath == null && (file.sizeBytes == null || !ModelFileManager.checkDownloadResources(requireContext(), file.sizeBytes, preloadMemoryWarningThresholdPercent).isStorageLow),
+                onClick = {
+                    if (isMmproj) downloadHfMmprojFile(modelId, file.path)
+                    else downloadHfModelFile(modelId, file.path)
+                }
+            ) {
+                val isDownloading = hfDownloadingFilePath == file.path
+                Text(if (isDownloading) "DL中..." else "DL")
             }
         }
     }
@@ -2668,6 +2733,7 @@ open class ModelSettingsFragment : Fragment() {
         // トークン状態変更時は検索結果をクリア
         if (hfLinked && hfSearchResults.isNotEmpty()) {
             hfSearchResults = emptyList()
+            hfSearchNextPageUrl = null
             hfSearchResultsDialogVisible = false
         }
     }
@@ -2771,16 +2837,21 @@ open class ModelSettingsFragment : Fragment() {
         
         hfSearchLoading = true
         hfSearchError = null
+        hfSearchNextPageUrl = null
         viewLifecycleOwner.lifecycleScope.launch {
+            val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+            val url = "https://huggingface.co/api/models?search=$encodedQuery&sort=downloads&direction=-1&limit=20&full=true"
             val result = withContext(Dispatchers.IO) {
-                ModelFileManager.searchHuggingFaceModels(requireContext(), query)
+                ModelFileManager.searchHuggingFaceModelsNextPage(requireContext(), url)
             }
-            result.onSuccess { list ->
+            result.onSuccess { (list, nextUrl) ->
                 hfSearchResults = list
+                hfSearchNextPageUrl = nextUrl
                 hfSearchError = if (list.isEmpty()) "検索結果がありませんでした" else null
                 hfSearchResultsDialogVisible = list.isNotEmpty()
             }.onFailure {
                 hfSearchResults = emptyList()
+                hfSearchNextPageUrl = null
                 hfSearchError = "検索失敗: ${it.message}"
                 hfSearchResultsDialogVisible = false
             }
@@ -2788,10 +2859,29 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
+    private fun loadMoreHfResults(nextUrl: String) {
+        if (hfSearchLoadingMore) return
+        hfSearchLoadingMore = true
+        viewLifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                ModelFileManager.searchHuggingFaceModelsNextPage(requireContext(), nextUrl)
+            }
+            result.onSuccess { (list, newNextUrl) ->
+                hfSearchResults = hfSearchResults + list
+                hfSearchNextPageUrl = newNextUrl
+            }.onFailure {
+                // 追加読み込み失敗は静かに無視（次回スクロール時に再試行可能）
+                hfSearchNextPageUrl = null
+            }
+            hfSearchLoadingMore = false
+        }
+    }
+
     private fun openHfFilePicker(result: ModelFileManager.HfModelSearchResult) {
         hfFilePickerModel = result
         hfFilePickerLoading = true
         hfFilePickerFiles = emptyList()
+        hfMmprojCandidates = emptyList()
         hfReadmeText = null
         hfReadmeError = null
         hfReadmeLoading = false
@@ -2799,10 +2889,21 @@ open class ModelSettingsFragment : Fragment() {
             val files = withContext(Dispatchers.IO) {
                 ModelFileManager.listHuggingFaceDownloadableFiles(requireContext(), result.id)
             }
-            files.onSuccess {
-                hfFilePickerFiles = it
+            files.onSuccess { all ->
+                // mmproj ファイルとメインモデルを分離
+                val mmprojFiles = all.filter { f ->
+                    val lower = f.path.lowercase()
+                    lower.contains("mmproj") && (lower.endsWith(".gguf") || lower.endsWith(".mmproj"))
+                }
+                val mainFiles = all.filter { f ->
+                    val lower = f.path.lowercase()
+                    !lower.contains("mmproj")
+                }
+                hfFilePickerFiles = mainFiles
+                hfMmprojCandidates = mmprojFiles
             }.onFailure {
                 hfFilePickerFiles = emptyList()
+                hfMmprojCandidates = emptyList()
                 toast("ファイル一覧取得に失敗: ${it.message}")
             }
             hfFilePickerLoading = false
@@ -2841,8 +2942,53 @@ open class ModelSettingsFragment : Fragment() {
                     isActive = true
                 )
             }
-            toast("ダウンロードキューに追加しました")
+            // mmproj 候補があれば最も小さいものを自動でDLキューに追加
+            val mmprojToDownload = hfMmprojCandidates
+                .filter { it.sizeBytes != null }
+                .minByOrNull { it.sizeBytes!! }
+                ?: hfMmprojCandidates.firstOrNull()
+            if (mmprojToDownload != null) {
+                val mmprojEnqueued = ModelDownloadWorker.enqueueCustomHf(
+                    requireContext(), modelId, mmprojToDownload.path
+                )
+                if (mmprojEnqueued &&
+                    hfQueuedDownloads.none { it.modelId == modelId && it.filePath == mmprojToDownload.path }) {
+                    hfQueuedDownloads = hfQueuedDownloads + HfQueuedDownloadUiState(
+                        modelId = modelId,
+                        filePath = mmprojToDownload.path,
+                        downloadedBytes = 0L,
+                        totalBytes = 0L,
+                        statusText = "待機中",
+                        isActive = true
+                    )
+                }
+                toast("モデルと mmproj をダウンロードキューに追加しました")
+            } else {
+                toast("ダウンロードキューに追加しました")
+            }
             hfFilePickerModel = null
+        } else {
+            toast("すでにダウンロード中です")
+        }
+        hfDownloadingFilePath = null
+    }
+
+    /** mmproj ファイルを単独でダウンロードする（メインモデルDL時の自動DLとは別に、後から個別追加する用途） */
+    private fun downloadHfMmprojFile(modelId: String, filePath: String) {
+        hfDownloadingFilePath = filePath
+        val enqueued = ModelDownloadWorker.enqueueCustomHf(requireContext(), modelId, filePath)
+        if (enqueued) {
+            if (hfQueuedDownloads.none { it.modelId == modelId && it.filePath == filePath }) {
+                hfQueuedDownloads = hfQueuedDownloads + HfQueuedDownloadUiState(
+                    modelId = modelId,
+                    filePath = filePath,
+                    downloadedBytes = 0L,
+                    totalBytes = 0L,
+                    statusText = "待機中",
+                    isActive = true
+                )
+            }
+            toast("mmproj をダウンロードキューに追加しました")
         } else {
             toast("すでにダウンロード中です")
         }
@@ -2862,8 +3008,31 @@ open class ModelSettingsFragment : Fragment() {
                     if (!lower.endsWith(".gguf") && !lower.endsWith(".safetensors")) return@forEach
                     val modelId = info.outputData.getString(ModelDownloadWorker.KEY_HF_MODEL_ID) ?: return@forEach
                     val filePath = info.outputData.getString(ModelDownloadWorker.KEY_HF_FILE_PATH) ?: return@forEach
-                    if (!ModelFileManager.isProbableStableDiffusionWeights(modelId, filePath)) return@forEach
                     val ctx = requireContext()
+
+                    // mmproj ファイルのDL完了: 同じリポジトリのメインモデルに自動紐付け
+                    if (lower.contains("mmproj")) {
+                        // 同ディレクトリにある GGUF（メインモデル）を探して mmproj + imageEnabled を設定
+                        val parentDir = File(outPath).parentFile
+                        if (parentDir != null) {
+                            val mainModels = parentDir.listFiles { f ->
+                                val n = f.name.lowercase()
+                                n.endsWith(".gguf") && !n.contains("mmproj")
+                            } ?: emptyArray()
+                            for (mainModel in mainModels) {
+                                val existing = ImportedModelCapabilityStore.get(ctx, mainModel.absolutePath)
+                                if (existing.mmprojPath == null || !File(existing.mmprojPath).exists()) {
+                                    ImportedModelCapabilityStore.set(
+                                        ctx, mainModel.absolutePath,
+                                        existing.copy(imageEnabled = true, mmprojPath = outPath)
+                                    )
+                                }
+                            }
+                        }
+                        return@forEach
+                    }
+
+                    if (!ModelFileManager.isProbableStableDiffusionWeights(modelId, filePath)) return@forEach
                     if (PreferencesHelper.getSdModelPath(ctx).isBlank()) {
                         PreferencesHelper.setSdModelPath(ctx, outPath)
                         toast(ctx.getString(R.string.model_sd_hf_toast_set_as_image_gen))
