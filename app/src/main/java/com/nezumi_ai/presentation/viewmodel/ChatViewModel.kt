@@ -767,7 +767,7 @@ class ChatViewModel(
                     return@launch
                 }
 
-                val config = settingsRepository.getInferenceConfigForModel(selectedModel)
+                val config = settingsRepository.getInferenceConfigForModel(selectedModel, appContext)
                 val loadResult = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = false)
                 if (loadResult.isFailure) {
                     val error = loadResult.exceptionOrNull()
@@ -1835,7 +1835,7 @@ class ChatViewModel(
     }
 
     private suspend fun chatInferenceConfigForModel(model: String): InferenceConfig {
-        val base = settingsRepository.getInferenceConfigForModel(model)
+        val base = settingsRepository.getInferenceConfigForModel(model, appContext)
         val disableThinking = _chatSessionDisableThinking.value
         val result = if (disableThinking) {
             base.copy(enableThinking = false)
@@ -2587,7 +2587,7 @@ class ChatViewModel(
         val selectedModel = getActiveSelectedModel()
         val engineModelName = toEngineModelName(selectedModel)
         val isGgufEngine = isGgufEngineModel(engineModelName)
-        val config = settingsRepository.getInferenceConfigForModel(selectedModel)
+        val config = settingsRepository.getInferenceConfigForModel(selectedModel, appContext)
         val basePrompt = buildPromptFromMessages(messages, isGgufEngine, engineModelName, config.enableThinking)
         
         // ★ 常に trimPromptToWindow で実際に使用される文字数を計算
