@@ -908,6 +908,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         updateModelNameText(viewModel.selectedModel.value)
         refreshCurrentBackendType()
         updateMediaAvailability(currentModelKey)
+        updateThinkingToggleVisibility()
         viewLifecycleOwner.lifecycleScope.launch {
             refreshPresetHeader()
         }

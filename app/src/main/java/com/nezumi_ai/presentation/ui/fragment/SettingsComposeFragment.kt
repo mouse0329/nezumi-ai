@@ -75,7 +75,11 @@ class SettingsComposeFragment : Fragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val db = NezumiAiDatabase.getInstance(requireContext())
-        settingsRepository = SettingsRepository(db.settingsDao(), db.chatSessionDao())
+        settingsRepository = SettingsRepository(
+            db.settingsDao(),
+            db.chatSessionDao(),
+            requireContext().applicationContext
+        )
         memoryRepository = MemoryRepository(db.memoryDao())
     }
 

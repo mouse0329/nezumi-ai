@@ -1116,6 +1116,7 @@ class ChatViewModel(
             val lastChunkAt = AtomicLong(SystemClock.elapsedRealtime())
             val wallEndAt = SystemClock.elapsedRealtime() + GENERATION_WALL_TIMEOUT_MS
             var streamAbortNote: String? = null
+            var collectionCancelledByUser = false
             try {
                 withContext(Dispatchers.IO) {
                     coroutineScope {
@@ -1407,6 +1408,7 @@ class ChatViewModel(
                         }
                     }
                     collectionError is CancellationException -> {
+                        collectionCancelledByUser = collectionError.message == "Stopped by user"
                         Log.d(TAG, "Flow collection was cancelled: ${collectionError.message}")
                     }
                     else -> {
@@ -1436,8 +1438,11 @@ class ChatViewModel(
                 finalThinking = finalParsed.thinking
             }
             val note = streamAbortNote
+            val stoppedWithoutPayload =
+                collectionCancelledByUser && completeResponse.isEmpty() && finalThinking.isNullOrEmpty()
             val contentToSave =
                 when {
+                    stoppedWithoutPayload -> "生成を停止しました。"
                     note == null -> completeResponse
                     completeResponse.isNotEmpty() -> completeResponse + note
                     else -> note.trim()
@@ -1470,8 +1475,11 @@ class ChatViewModel(
 
             Log.d(TAG, "Inference collection completed: hasPayload=$hasPayload, completeResponse.length=${completeResponse.length}, finalThinking=${!finalThinking.isNullOrEmpty()}, generationTimeMs=$generationTimeMs, tps=$tps")
 
+            val finalizationContext =
+                if (collectionCancelledByUser) Dispatchers.IO + NonCancellable else Dispatchers.IO
+
             if (hasPayload) {
-                withContext(Dispatchers.IO) {
+                withContext(finalizationContext) {
                     Log.d(TAG, "Updating message content with final response")
                     messageRepository.updateMessageContent(
                         messageId = activeStreamingMessageId,
@@ -1483,7 +1491,7 @@ class ChatViewModel(
                         generationTimeMs = generationTimeMs
                     )
                     Log.d(TAG, "Message content update complete")
-                    if (contentToSave.isNotEmpty()) {
+                    if (contentToSave.isNotEmpty() && !stoppedWithoutPayload) {
                         Log.d(TAG, "Generating session title")
                         maybeGenerateSessionTitle(sessionId, userMessage, contentToSave)
                         Log.d(TAG, "Session title generation complete")
@@ -1491,15 +1499,17 @@ class ChatViewModel(
                     syncSessionTitleFromDb(sessionId)
                     Log.d(TAG, "Session title sync complete")
                 }
-                enqueueMemoryExtraction(sessionId)
-                Log.d(TAG, "Memory extraction enqueued")
+                if (!stoppedWithoutPayload) {
+                    enqueueMemoryExtraction(sessionId)
+                    Log.d(TAG, "Memory extraction enqueued")
+                }
                 if (BuildConfig.DEBUG) {
                     Log.d(TAG, "AI response saved to database: ${completeResponse.take(50)}...")
                 }
             } else {
                 Log.w(TAG, "No payload generated, saving default message")
                 val emptyExplanation = messageForEmptyInferencePayload(hasMediaInput, engineModelName)
-                withContext(Dispatchers.IO) {
+                withContext(finalizationContext) {
                     messageRepository.updateMessageContent(
                         messageId = activeStreamingMessageId,
                         content = emptyExplanation,
@@ -1530,12 +1540,14 @@ class ChatViewModel(
             if (t is CancellationException) {
                 val id = streamingMessageId
                 if (id != null) {
-                    messageRepository.updateMessageContent(
-                        messageId = id,
-                        content = "生成を停止しました。",
-                        isStreaming = false,
-                        thinkingContent = null
-                    )
+                    withContext(Dispatchers.IO + NonCancellable) {
+                        messageRepository.updateMessageContent(
+                            messageId = id,
+                            content = "生成を停止しました。",
+                            isStreaming = false,
+                            thinkingContent = null
+                        )
+                    }
                 }
                 Log.d(TAG, "Generation cancelled: ${t.message}")
                 return
@@ -2655,6 +2667,7 @@ class ChatViewModel(
                 compressedSummary = compressedSummary,
                 format = PromptBuilder.detectGgufFormat(engineModelName),
                 enableThinking = enableThinking,
+                modelPath = engineModelName,
                 sanitizeMessageContent = ::sanitizeMessageContentForPrompt
             )
         } else {
@@ -2723,6 +2736,7 @@ class ChatViewModel(
                 systemPrompt = systemPrompt,
                 format = PromptBuilder.detectGgufFormat(engineModelName),
                 enableThinking = enableThinking,
+                modelPath = engineModelName,
                 sanitizeMessageContent = sanitizer
             )
         } else {
@@ -2918,7 +2932,7 @@ class ChatViewModel(
             val detailedMemInfo = MemoryObserver.getDetailedMemoryInfo(appContext)
             Log.d(TAG, "PRE_LOAD_MEMORY:\n$detailedMemInfo")
 
-            val memoryStatus = MemoryObserver.getMemoryStatus(appContext)
+            var memoryStatus = MemoryObserver.getMemoryStatus(appContext)
             Log.d(TAG, "loadModelWithOverlay: MEMORY_STATUS level=${memoryStatus.level} used=${memoryStatus.usedMB}MB max=${memoryStatus.maxMB}MB percent=${memoryStatus.usedPercent}% device_low_memory=${memoryStatus.isLowMemory}")
 
             val shouldShowMemoryWarning = !effectiveSkipMemoryWarning
@@ -2932,6 +2946,8 @@ class ChatViewModel(
                     Log.d(TAG, "loadModelWithOverlay: unloading current model before memory warning check for model=$model")
                     val unloadResult = manager.unloadModel()
                     unloadResult.onFailure { Log.w(TAG, "loadModelWithOverlay: pre-warning unload failed", it) }
+                    memoryStatus = MemoryObserver.getMemoryStatus(appContext)
+                    Log.d(TAG, "loadModelWithOverlay: MEMORY_STATUS after pre-warning unload level=${memoryStatus.level} used=${memoryStatus.usedMB}MB max=${memoryStatus.maxMB}MB percent=${memoryStatus.usedPercent}% device_low_memory=${memoryStatus.isLowMemory}")
                 }
                 
                 // 0%に設定されている場合は警告をスキップ（警告無効化）
