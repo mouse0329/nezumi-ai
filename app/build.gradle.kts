@@ -47,8 +47,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["appAuthRedirectScheme"] = "nezumiai"
 
-        buildConfigField("String", "LITERTLM_VERSION", "\"0.11.0\"")
-        buildConfigField("String", "LLAMACPP_VERSION", "\"llamacpp-kotlin 0.4.0 (llama.rn rc.9)\"")
+        buildConfigField("String", "LITERTLM_VERSION", "\"0.12.0\"")
+        buildConfigField("String", "LLAMACPP_VERSION", "\"llamacpp-kotlin 0.4.0 (llama.rn 0.12.4)\"")
 
         ndk {
             abiFilters.add("arm64-v8a")
@@ -165,7 +165,7 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
 
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.11.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.12.0")
     implementation("com.google.android.gms:play-services-tflite-java:16.4.0")
     implementation("com.google.android.gms:play-services-tflite-gpu:16.4.0")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.15.0")

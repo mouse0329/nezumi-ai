@@ -40,7 +40,7 @@ class SettingsViewModel(private val repository: SettingsRepository) : ViewModel(
     }
     
     /**
-     * モデルを削除して再ダウンロードを強制する（0.11.0対応の最新版を取得）
+     * モデルを削除して再ダウンロードを強制する（0.12.4対応の最新版を取得）
      */
     fun redownloadModel(context: Context, modelName: String) {
         viewModelScope.launch {

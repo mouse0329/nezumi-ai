@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_library(LOG_LIB log)
 
-# --- rnllama sources (vendored from llama.rn 0.12.0-rc.9) ---
+# --- rnllama sources (vendored from llama.rn 0.12.4) ---
 set(RNLLAMA_DIR ${CMAKE_SOURCE_DIR}/llama_rn)
 
 # llama_rn のヘッダは rnllama ターゲットのみに付与する（stable-diffusion.cpp の ggml と混ざるのを防ぐ）
