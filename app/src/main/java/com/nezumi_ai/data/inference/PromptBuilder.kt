@@ -59,10 +59,16 @@ object PromptBuilder {
         compressedSummary: String? = null,
         format: GgufPromptFormat = GgufPromptFormat.CHATML,
         enableThinking: Boolean = false,
+        modelPath: String = "",
         sanitizeMessageContent: (MessageEntity) -> String
     ): String = when (format) {
-        GgufPromptFormat.GEMMA_CHAT -> buildForGgufGemma(messages, systemPrompt, compressedSummary, enableThinking, sanitizeMessageContent)
-        GgufPromptFormat.CHATML     -> buildForGgufChatMl(messages, systemPrompt, compressedSummary, enableThinking, sanitizeMessageContent)
+        GgufPromptFormat.GEMMA_CHAT -> buildForGgufGemma(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
+        GgufPromptFormat.CHATML     -> buildForGgufChatMl(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
+    }
+
+    private fun shouldUseQwenInstantDirective(modelPath: String): Boolean {
+        val name = modelPath.lowercase()
+        return "qwen" in name
     }
 
     private fun buildForGgufGemma(
@@ -70,9 +76,12 @@ object PromptBuilder {
         systemPrompt: String,
         compressedSummary: String?,
         enableThinking: Boolean,
+        modelPath: String,
         sanitizeMessageContent: (MessageEntity) -> String
     ): String {
         val sb = StringBuilder()
+        val instantDirective = !enableThinking && shouldUseQwenInstantDirective(modelPath)
+        val lastUserMessage = messages.indexOfLast { it.role != "assistant" && sanitizeMessageContent(it).isNotBlank() }
         val hasPrelude = systemPrompt.isNotEmpty() || !compressedSummary.isNullOrBlank()
         if (hasPrelude) {
             sb.append("<start_of_turn>user\n")
@@ -83,15 +92,22 @@ object PromptBuilder {
             }
             sb.append('\n').append("<end_of_turn>\n")
         }
-        for (msg in messages) {
-            val content = sanitizeMessageContent(msg)
+        for (index in messages.indices) {
+            val msg = messages[index]
+            var content = sanitizeMessageContent(msg)
             if (content.isBlank()) continue
+            if (instantDirective && index == lastUserMessage) {
+                content = "$content\n/no_think"
+            }
             val role = if (msg.role == "assistant") "model" else "user"
             sb.append("<start_of_turn>").append(role).append('\n')
                 .append(content).append('\n').append("<end_of_turn>\n")
         }
         sb.append("<start_of_turn>model\n")
-        if (enableThinking) sb.append("<think>\n")
+        when {
+            enableThinking -> sb.append("<think>\n")
+            instantDirective -> sb.append("<think>\n\n</think>\n\n")
+        }
         return sb.toString()
     }
 
@@ -100,9 +116,12 @@ object PromptBuilder {
         systemPrompt: String,
         compressedSummary: String?,
         enableThinking: Boolean,
+        modelPath: String,
         sanitizeMessageContent: (MessageEntity) -> String
     ): String {
         val sb = StringBuilder()
+        val instantDirective = !enableThinking && shouldUseQwenInstantDirective(modelPath)
+        val lastUserMessage = messages.indexOfLast { it.role != "assistant" && sanitizeMessageContent(it).isNotBlank() }
         val systemContent = buildString {
             if (systemPrompt.isNotEmpty()) append(systemPrompt)
             if (!compressedSummary.isNullOrBlank()) {
@@ -113,15 +132,22 @@ object PromptBuilder {
         if (systemContent.isNotEmpty()) {
             sb.append("<|im_start|>system\n").append(systemContent).append("\n<|im_end|>\n")
         }
-        for (msg in messages) {
-            val content = sanitizeMessageContent(msg)
+        for (index in messages.indices) {
+            val msg = messages[index]
+            var content = sanitizeMessageContent(msg)
             if (content.isBlank()) continue
+            if (instantDirective && index == lastUserMessage) {
+                content = "$content\n/no_think"
+            }
             val role = if (msg.role == "assistant") "assistant" else "user"
             sb.append("<|im_start|>").append(role).append('\n')
                 .append(content).append("\n<|im_end|>\n")
         }
         sb.append("<|im_start|>assistant\n")
-        if (enableThinking) sb.append("<think>\n")
+        when {
+            enableThinking -> sb.append("<think>\n")
+            instantDirective -> sb.append("<think>\n\n</think>\n\n")
+        }
         return sb.toString()
     }
 }

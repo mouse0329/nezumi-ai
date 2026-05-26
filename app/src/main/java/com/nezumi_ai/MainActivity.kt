@@ -82,7 +82,11 @@ class MainActivity : AppCompatActivity() {
 
             // DB / リポジトリは onPause などで必須。NavHost の準備後にドロワーとセットアップ遷移を行う
             val database = NezumiAiDatabase.getInstance(this)
-            settingsRepository = SettingsRepository(database.settingsDao(), database.chatSessionDao())
+            settingsRepository = SettingsRepository(
+                database.settingsDao(),
+                database.chatSessionDao(),
+                applicationContext
+            )
             val messageRepository = com.nezumi_ai.data.repository.MessageRepository(database.messageDao())
             sessionRepository = ChatSessionRepository(database.chatSessionDao(), settingsRepository, messageRepository)
             if (!isIncognitoModeActive) {
@@ -583,7 +587,7 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch(Dispatchers.IO) {
                 runCatching {
                     val db = NezumiAiDatabase.getInstance(this@MainActivity)
-                    SettingsRepository(db.settingsDao(), db.chatSessionDao())
+                    SettingsRepository(db.settingsDao(), db.chatSessionDao(), applicationContext)
                         .initializeSettingsIfNeeded(applicationContext)
                 }.onFailure {
                     Log.w(TAG, "LiteRT-LM (.litertlm) migration failed", it)

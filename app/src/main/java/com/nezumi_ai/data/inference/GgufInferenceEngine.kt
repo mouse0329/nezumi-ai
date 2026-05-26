@@ -411,13 +411,41 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
             }
         }
 
-        /** シンキングOFF: 従来どおり parseStreaming で分割 */
-        fun emitParseStreamingSplit() {
-            val parsed = Gemma4ThinkingParser.parseStreaming(answerAccum.toString())
-            val curThinking = parsed.thinking ?: ""
-            val curAnswer = parsed.answer
-            emitThinkingDeltaChunk(curThinking)
-            emitAnswerDeltaChunk(curAnswer)
+        fun answerOnlyForThinkingOff(raw: String): String {
+            val thinkStart = REDACTED_THINK_OPEN
+            val thinkEnd = REDACTED_THINK_CLOSE
+            val channelStart = "<|channel>"
+            val channelEnd = "<channel|>"
+
+            fun removeBlock(text: String, start: String, end: String): String {
+                val startIdx = text.indexOf(start)
+                if (startIdx < 0) return text
+                val endIdx = text.indexOf(end, startIdx + start.length)
+                if (endIdx < 0) {
+                    // The model entered a thinking block even though the user turned it off.
+                    // Do not stream hidden reasoning as either thinking UI or visible answer.
+                    return text.substring(0, startIdx)
+                }
+                return text.removeRange(startIdx, endIdx + end.length)
+            }
+
+            var visible = raw
+            while (thinkStart in visible) {
+                val next = removeBlock(visible, thinkStart, thinkEnd)
+                if (next == visible) break
+                visible = next
+            }
+            while (channelStart in visible) {
+                val next = removeBlock(visible, channelStart, channelEnd)
+                if (next == visible) break
+                visible = next
+            }
+            return Gemma4ThinkingParser.sanitizeVisibleText(visible)
+        }
+
+        /** シンキングOFF: Thinking チャンネルは絶対に emit せず、本文だけを流す */
+        fun emitAnswerOnlySplit() {
+            emitAnswerDeltaChunk(answerOnlyForThinkingOff(answerAccum.toString()))
         }
 
         /**
@@ -442,13 +470,13 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
         }
 
         fun emitStreamDeltas(enableThinkingMode: Boolean) {
-            if (enableThinkingMode) emitWaitForCloseTagSplit() else emitParseStreamingSplit()
+            if (enableThinkingMode) emitWaitForCloseTagSplit() else emitAnswerOnlySplit()
         }
 
         fun finalAnswerForProtocol(enableThinkingMode: Boolean): String {
             val raw = answerAccum.toString()
             if (!enableThinkingMode) {
-                return Gemma4ThinkingParser.parse(raw).answer
+                return answerOnlyForThinkingOff(raw)
             }
             val idx = raw.indexOf(REDACTED_THINK_CLOSE)
             return if (idx >= 0) {

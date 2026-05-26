@@ -41,7 +41,11 @@ class SessionListFragment : Fragment() {
     private fun initViewModel() {
         try {
             val database = NezumiAiDatabase.getInstance(requireContext())
-            val settingsRepository = com.nezumi_ai.data.repository.SettingsRepository(database.settingsDao(), database.chatSessionDao())
+            val settingsRepository = com.nezumi_ai.data.repository.SettingsRepository(
+                database.settingsDao(),
+                database.chatSessionDao(),
+                requireContext().applicationContext
+            )
             val messageRepository = com.nezumi_ai.data.repository.MessageRepository(database.messageDao())
             val repository = ChatSessionRepository(database.chatSessionDao(), settingsRepository, messageRepository)
             val chatChunkRepository = com.nezumi_ai.data.repository.ChatChunkRepository(
