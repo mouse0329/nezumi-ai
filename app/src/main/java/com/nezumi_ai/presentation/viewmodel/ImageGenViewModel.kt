@@ -349,7 +349,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private suspend fun reloadChatModel(manager: ModelManager) {
         val ui = normalizeModel(settingsRepository.getSelectedModel())
         val engineName = toEngineModelName(ui)
-        val base = settingsRepository.getInferenceConfigForModel(ui)
+        val base = settingsRepository.getInferenceConfigForModel(ui, getApplication())
         val backend = settingsRepository.getBackendForModel(ui)
         val config = base.copy(backendType = backend).normalized()
         runCatching { manager.initializeModel(engineName, config) }
