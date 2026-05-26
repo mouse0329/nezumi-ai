@@ -129,7 +129,7 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
 
                 Log.i(TAG, "Loading GGUF: $modelPath nCtx=${normalized.contextWindow}")
 
-                // ★ rnllama (llama.rn rc.9) をソースビルドした JNI ブリッジで初期化
+                // ★ rnllama (llama.rn 0.12.4) をソースビルドした JNI ブリッジで初期化
                 try {
                     // ★ llama.cpp パラメータ最適化（安定性とパフォーマンスのバランス）
                     val requestedThreads = normalized.llamaCppThreads
