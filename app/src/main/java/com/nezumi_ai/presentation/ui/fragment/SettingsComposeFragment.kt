@@ -12,10 +12,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
@@ -71,6 +76,7 @@ class SettingsComposeFragment : Fragment() {
     private var sdSteps by mutableStateOf(8)
     private var sdCfg by mutableStateOf(7.0f)
     private var braveSearchApiKeyInput by mutableStateOf("")
+    private var selectedSection by mutableStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -157,13 +163,59 @@ class SettingsComposeFragment : Fragment() {
                     )
                 }
             }
-            
-            item { GeneralSettingsCard() }
-            item { WebSearchApiKeyCard() }
-            item { InferenceParamsCard() }
-            item { ImageGenSettingsCard() }
-            item { MemoryManagementCard() }
-            item { ChatHistoryCard() }
+
+            item {
+                val sectionTitles = listOf("全般", "推論", "画像", "メモリ", "チャット")
+                ScrollableTabRow(
+                    selectedTabIndex = selectedSection,
+                    edgePadding = 0.dp,
+                    indicator = { tabPositions ->
+                        TabRowDefaults.Indicator(
+                            Modifier.tabIndicatorOffset(tabPositions[selectedSection]),
+                            color = colorResource(id = R.color.primary)
+                        )
+                    },
+                    containerColor = colorResource(id = R.color.primary_light)
+                ) {
+                    val isDark = isSystemInDarkTheme()
+                    sectionTitles.forEachIndexed { index, title ->
+                        Tab(
+                            selected = selectedSection == index,
+                            onClick = { selectedSection = index },
+                            selectedContentColor = if (isDark) Color.White else Color.Black,
+                            unselectedContentColor = if (isDark) Color.White.copy(alpha = 0.7f) else Color.Gray,
+                            text = { Text(text = title) }
+                        )
+                    }
+                }
+            }
+
+            item {
+                when (selectedSection) {
+                    0 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        GeneralSettingsCard()
+                        WebSearchApiKeyCard()
+                        BackendCard()
+                    }
+                    1 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        InferenceParamsCard()
+                    }
+                    2 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        ImageGenSettingsCard()
+                    }
+                    3 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        MemoryManagementCard()
+                    }
+                    4 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        ChatHistoryCard()
+                    }
+                    else -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        GeneralSettingsCard()
+                        WebSearchApiKeyCard()
+                        BackendCard()
+                    }
+                }
+            }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { aboutDialogVisible = true }) {
