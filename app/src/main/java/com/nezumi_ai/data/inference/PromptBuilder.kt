@@ -68,7 +68,7 @@ object PromptBuilder {
 
     private fun shouldUseQwenInstantDirective(modelPath: String): Boolean {
         val name = modelPath.lowercase()
-        return "qwen" in name
+        return Regex("(^|[^a-z0-9])qwen([0-9._-]*)([^a-z0-9]|$)").containsMatchIn(name)
     }
 
     private fun buildForGgufGemma(
@@ -81,7 +81,7 @@ object PromptBuilder {
     ): String {
         val sb = StringBuilder()
         val instantDirective = !enableThinking && shouldUseQwenInstantDirective(modelPath)
-        val lastUserMessage = messages.indexOfLast { it.role != "assistant" && sanitizeMessageContent(it).isNotBlank() }
+        val lastUserMessage = messages.indexOfLast { it.role == "user" && sanitizeMessageContent(it).isNotBlank() }
         val hasPrelude = systemPrompt.isNotEmpty() || !compressedSummary.isNullOrBlank()
         if (hasPrelude) {
             sb.append("<start_of_turn>user\n")
@@ -121,7 +121,7 @@ object PromptBuilder {
     ): String {
         val sb = StringBuilder()
         val instantDirective = !enableThinking && shouldUseQwenInstantDirective(modelPath)
-        val lastUserMessage = messages.indexOfLast { it.role != "assistant" && sanitizeMessageContent(it).isNotBlank() }
+        val lastUserMessage = messages.indexOfLast { it.role == "user" && sanitizeMessageContent(it).isNotBlank() }
         val systemContent = buildString {
             if (systemPrompt.isNotEmpty()) append(systemPrompt)
             if (!compressedSummary.isNullOrBlank()) {

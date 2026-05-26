@@ -110,11 +110,7 @@ class SetupWizardFragment : Fragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val database = NezumiAiDatabase.getInstance(requireContext())
-        settingsRepository = SettingsRepository(
-            database.settingsDao(),
-            database.chatSessionDao(),
-            requireContext().applicationContext
-        )
+        settingsRepository = SettingsRepository.fromDatabase(database)
         sessionRepository = ChatSessionRepository(
             database.chatSessionDao(),
             settingsRepository,

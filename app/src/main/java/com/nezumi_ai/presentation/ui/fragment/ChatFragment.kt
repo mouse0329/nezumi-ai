@@ -299,7 +299,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         
         // ViewModel初期化
         val database = NezumiAiDatabase.getInstance(requireContext())
-        settingsRepository = SettingsRepository(database.settingsDao(), database.chatSessionDao(), requireContext().applicationContext)
+        settingsRepository = SettingsRepository.fromDatabase(database)
         val sessionRepository = ChatSessionRepository(database.chatSessionDao(), settingsRepository)
         val messageRepository = MessageRepository(database.messageDao())
         presetRepository = PresetRepository(database.presetDao(), requireContext().applicationContext)

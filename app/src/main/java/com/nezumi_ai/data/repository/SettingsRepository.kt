@@ -2,6 +2,7 @@ package com.nezumi_ai.data.repository
 
 import android.content.Context
 import android.util.Log
+import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.database.dao.ChatSessionDao
 import com.nezumi_ai.data.database.dao.SettingsDao
 import com.nezumi_ai.data.database.entity.SettingsEntity
@@ -15,8 +16,7 @@ import kotlinx.coroutines.flow.Flow
 
 class SettingsRepository(
     private val dao: SettingsDao,
-    private val chatSessionDao: ChatSessionDao,
-    private val context: android.content.Context? = null
+    private val chatSessionDao: ChatSessionDao
 ) {
     companion object {
         private const val BACKEND_CPU = "CPU"
@@ -28,6 +28,9 @@ class SettingsRepository(
         private const val MODEL_GEMMA4_4B = "GEMMA4_4B"
         private const val MODEL_IMPORTED = "IMPORTED"
         private const val MODEL_ALL = "ALL"
+
+        fun fromDatabase(database: NezumiAiDatabase): SettingsRepository =
+            SettingsRepository(database.settingsDao(), database.chatSessionDao())
     }
     
     fun getSettings(): Flow<SettingsEntity?> = dao.getSettingsFlow()

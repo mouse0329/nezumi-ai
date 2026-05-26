@@ -71,6 +71,8 @@ import kotlin.coroutines.resume
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+class UserStopCancellationException : CancellationException("Stopped by user")
+
 class ChatViewModel(
     private val appContext: Context,
     private val sessionRepository: ChatSessionRepository,
@@ -685,7 +687,7 @@ class ChatViewModel(
             val thisJob = coroutineContext[Job] ?: return@launch
 
             generationControlMutex.withLock {
-                generationJob?.cancel(CancellationException("Stopped by user"))
+                generationJob?.cancel(UserStopCancellationException())
                 generationJob = thisJob
             }
 
@@ -850,7 +852,7 @@ class ChatViewModel(
             job
         } ?: return
 
-        currentJob.cancel(CancellationException("Stopped by user"))
+        currentJob.cancel(UserStopCancellationException())
 
         try {
             val manager = requireModelManager()
@@ -1407,9 +1409,9 @@ class ChatViewModel(
                             _uiMessage.emit("生成時間が上限に達しました。表示された分まで保存しました。")
                         }
                     }
-                    collectionError is CancellationException -> {
-                        collectionCancelledByUser = collectionError.message == "Stopped by user"
-                        Log.d(TAG, "Flow collection was cancelled: ${collectionError.message}")
+                    collectionError is UserStopCancellationException -> {
+                        collectionCancelledByUser = true
+                        Log.d(TAG, "Flow collection was cancelled by user stop")
                     }
                     else -> {
                         Log.e(TAG, "Error during flow collection", collectionError)
@@ -3060,7 +3062,7 @@ class ChatViewModel(
         viewModelScope.launch(Dispatchers.Default) {
             val thisJob = coroutineContext[Job]  // このJobインスタンスを保存
             generationControlMutex.withLock {
-                generationJob?.cancel(CancellationException("Stopped by user"))
+                generationJob?.cancel(UserStopCancellationException())
                 generationJob = thisJob
             }
             val sessionId = ensureValidCurrentSession() ?: return@launch
