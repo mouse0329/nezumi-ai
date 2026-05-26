@@ -1208,7 +1208,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun updateThinkingToggleVisibility() {
-        val modelSupportsThinking = settingsRepository.modelSupportsGemmaThinking(currentModelKey)
+        val modelSupportsThinking = settingsRepository.modelSupportsGemmaThinking(currentModelKey, requireContext())
         thinkingToggleVisible = modelSupportsThinking
         renderCompressButtonState()
     }

@@ -141,14 +141,14 @@ class SettingsRepository(
         ).normalized()
     }
 
-    suspend fun getInferenceConfigForModel(model: String): InferenceConfig {
+    suspend fun getInferenceConfigForModel(model: String, appContext: android.content.Context? = null): InferenceConfig {
         val current = currentSettings()
         val backend = getBackendForModel(model)
         val contextWindow = getContextWindowForModel(model)
         val isGemma4 = isBuiltinGemma4Model(model)
         val isGguf = isGgufModel(model)
-        val ggufThinking = isGguf && context != null &&
-            ImportedModelCapabilityStore.get(context, model).thinkingEnabled
+        val ggufThinking = isGguf && appContext != null &&
+            ImportedModelCapabilityStore.get(appContext, model).thinkingEnabled
         val enableThinking = isGemma4 || ggufThinking
         val base = getInferenceConfig()
         val customStopTokens = if (model.endsWith(".gguf", ignoreCase = true)) {
@@ -424,10 +424,10 @@ class SettingsRepository(
     }
 
     /** チャット画面の「このチャットでシンキングOFF」トグルを出すか（GGUF は設定で Thinking 有効時のみ） */
-    fun modelSupportsGemmaThinking(model: String): Boolean {
+    fun modelSupportsGemmaThinking(model: String, appContext: android.content.Context? = null): Boolean {
         if (isBuiltinGemma4Model(model)) return true
         if (!isGgufModel(model)) return false
-        val ctx = context ?: return false
+        val ctx = appContext ?: return false
         return ImportedModelCapabilityStore.get(ctx, model).thinkingEnabled
     }
 
