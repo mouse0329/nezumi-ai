@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -150,6 +151,8 @@ open class ModelSettingsFragment : Fragment() {
     private var capabilityDialogCurrentCapabilities by mutableStateOf<ImportedModelCapabilities?>(null)
     private var capabilityDialogModelType by mutableStateOf<ModelType>(ModelType.LLM)
     private var mmprojDropdownExpanded by mutableStateOf(false)
+    private var capabilityDialogRepoMmprojCandidates by mutableStateOf<List<ModelFileManager.HfModelFile>>(emptyList())
+    private var capabilityDialogRepoMmprojLoading by mutableStateOf(false)
     
     private var imageModelsLoading by mutableStateOf(false)
     private var imageModelsError by mutableStateOf<String?>(null)
@@ -348,6 +351,7 @@ open class ModelSettingsFragment : Fragment() {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
                 .background(colorResource(id = R.color.bg_session_list))
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -596,14 +600,56 @@ open class ModelSettingsFragment : Fragment() {
                                         mmprojDropdownExpanded = false
                                     }
                                 )
-                                importedMmprojTasks.forEach { mmprojModel ->
+                                if (capabilityDialogRepoMmprojLoading) {
                                     DropdownMenuItem(
-                                        text = { Text(mmprojModel.shortDisplayName) },
-                                        onClick = {
-                                            capabilityDialogMmprojPath = mmprojModel.path
-                                            mmprojDropdownExpanded = false
-                                        }
+                                        text = { Text("候補を取得中…") },
+                                        onClick = {}
                                     )
+                                } else {
+                                    // ローカル済み（同リポジトリのみ）
+                                    val repoQualifier = capabilityDialogModel?.hfRepoQualifier
+                                    val localRepoMmprojTasks = if (repoQualifier != null) {
+                                        importedMmprojTasks.filter { it.hfRepoQualifier == repoQualifier }
+                                    } else {
+                                        importedMmprojTasks
+                                    }
+                                    localRepoMmprojTasks.forEach { mmprojModel ->
+                                        DropdownMenuItem(
+                                            text = { Text(mmprojModel.shortDisplayName) },
+                                            onClick = {
+                                                capabilityDialogMmprojPath = mmprojModel.path
+                                                mmprojDropdownExpanded = false
+                                            }
+                                        )
+                                    }
+                                    // 未DLのリポジトリ内mmproj候補
+                                    val localPaths = localRepoMmprojTasks.map { it.fileNameStem.substringAfter("__") }
+                                    val notYetDownloaded = capabilityDialogRepoMmprojCandidates.filter { candidate ->
+                                        val candidateStem = candidate.path.replace('/', '_').replace(Regex("[^A-Za-z0-9._-]"), "_")
+                                        localPaths.none { it == candidateStem || candidate.path.endsWith(it) }
+                                    }
+                                    notYetDownloaded.forEach { candidate ->
+                                        val label = candidate.path.substringAfterLast("/") +
+                                            (candidate.sizeBytes?.let { " (${it / 1024 / 1024}MB, 未DL)" } ?: " (未DL)")
+                                        DropdownMenuItem(
+                                            text = { Text(label) },
+                                            onClick = {
+                                                mmprojDropdownExpanded = false
+                                                // DLキューに追加し、完了後に自動選択
+                                                val hfModelId = capabilityDialogModel?.hfRepoQualifier?.let {
+                                                    ModelFileManager.hfModelIdFromRepoQualifier(it)
+                                                }
+                                                if (hfModelId != null) {
+                                                    val enqueued = ModelDownloadWorker.enqueueCustomHf(
+                                                        requireContext(), hfModelId, candidate.path
+                                                    )
+                                                    if (enqueued) {
+                                                        toast("mmproj のダウンロードを開始しました: ${candidate.path.substringAfterLast("/")}")
+                                                    }
+                                                }
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -2497,6 +2543,24 @@ open class ModelSettingsFragment : Fragment() {
                                     capabilityDialogMmprojPath = caps.mmprojPath ?: ""
                                     capabilityDialogCurrentCapabilities = caps
                                     capabilityDialogModel = model
+                                    // 同リポジトリのmmproj候補を取得（HF由来GGUFのみ）
+                                    capabilityDialogRepoMmprojCandidates = emptyList()
+                                    val repoQualifier = model.hfRepoQualifier
+                                    if (repoQualifier != null && model.path.lowercase().endsWith(".gguf")) {
+                                        capabilityDialogRepoMmprojLoading = true
+                                        viewLifecycleOwner.lifecycleScope.launch {
+                                            val hfModelId = withContext(Dispatchers.IO) {
+                                                ModelFileManager.hfModelIdFromRepoQualifier(repoQualifier)
+                                            }
+                                            if (hfModelId != null) {
+                                                val result = withContext(Dispatchers.IO) {
+                                                    ModelFileManager.findMmprojCandidates(requireContext(), hfModelId)
+                                                }
+                                                capabilityDialogRepoMmprojCandidates = result.getOrNull() ?: emptyList()
+                                            }
+                                            capabilityDialogRepoMmprojLoading = false
+                                        }
+                                    }
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -3010,14 +3074,16 @@ open class ModelSettingsFragment : Fragment() {
                     val filePath = info.outputData.getString(ModelDownloadWorker.KEY_HF_FILE_PATH) ?: return@forEach
                     val ctx = requireContext()
 
-                    // mmproj ファイルのDL完了: 同じリポジトリのメインモデルに自動紐付け
+                    // mmproj ファイルのDL完了: 同じリポジトリのメインモデルにのみ自動紐付け
                     if (lower.contains("mmproj")) {
-                        // 同ディレクトリにある GGUF（メインモデル）を探して mmproj + imageEnabled を設定
                         val parentDir = File(outPath).parentFile
                         if (parentDir != null) {
+                            // ファイル名プレフィックス（__ より左 = repoQualifier）で同リポジトリ判定
+                            val mmprojRepoQualifier = File(outPath).nameWithoutExtension.substringBefore("__")
                             val mainModels = parentDir.listFiles { f ->
                                 val n = f.name.lowercase()
-                                n.endsWith(".gguf") && !n.contains("mmproj")
+                                n.endsWith(".gguf") && !n.contains("mmproj") &&
+                                    f.nameWithoutExtension.substringBefore("__") == mmprojRepoQualifier
                             } ?: emptyArray()
                             for (mainModel in mainModels) {
                                 val existing = ImportedModelCapabilityStore.get(ctx, mainModel.absolutePath)

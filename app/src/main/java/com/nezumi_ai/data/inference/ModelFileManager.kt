@@ -157,6 +157,17 @@ object ModelFileManager {
         return left to right
     }
 
+    /**
+     * repoQualifier（`owner_repo` 形式、`__` 左側）から HF modelId（`owner/repo`）を復元する。
+     * HF の modelId は必ず `owner/repo` の形式（スラッシュ1個）なので、
+     * 最初のアンダースコアをスラッシュに置換すれば復元できる。
+     */
+    fun hfModelIdFromRepoQualifier(repoQualifier: String): String? {
+        val firstUnderscore = repoQualifier.indexOf('_')
+        if (firstUnderscore <= 0 || firstUnderscore >= repoQualifier.length - 1) return null
+        return repoQualifier.substring(0, firstUnderscore) + "/" + repoQualifier.substring(firstUnderscore + 1)
+    }
+
     data class HfModelSearchResult(
         val id: String,
         val downloads: Long,
@@ -385,11 +396,32 @@ object ModelFileManager {
 
     suspend fun findMmprojCandidates(
         context: Context,
-        modelId: String
+        modelId: String,
+        targetFilePath: String? = null
     ): Result<List<HfModelFile>> = withContext(Dispatchers.IO) {
         runCatching {
             val files = listHuggingFaceDownloadableFiles(context, modelId).getOrThrow()
-            files.filter { it.path.lowercase().endsWith(".mmproj") }
+            val mmprojFiles = files.filter { it.path.lowercase().endsWith(".mmproj") }
+
+            if (targetFilePath.isNullOrBlank() || mmprojFiles.isEmpty()) return@runCatching mmprojFiles
+
+            fun normalizeName(name: String): String {
+                return name.lowercase()
+                    .replace(Regex("\\.mmproj$"), "")
+                    .replace(Regex("[-_]?mmproj(?:[-_]?f[0-9]+)?$"), "")
+                    .replace(Regex("[-_]?[Qq][0-9].*$"), "")
+                    .replace(Regex("[-_]+"), "-")
+                    .trim('-', '_')
+            }
+
+            val modelBase = normalizeName(File(targetFilePath).nameWithoutExtension)
+            val matched = mmprojFiles.filter { mmproj ->
+                val mmprojBase = normalizeName(File(mmproj.path).name)
+                mmprojBase.startsWith(modelBase) || modelBase.startsWith(mmprojBase) ||
+                    mmprojBase.contains(modelBase) || modelBase.contains(mmprojBase)
+            }
+
+            matched
         }
     }
 

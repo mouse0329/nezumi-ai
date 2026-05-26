@@ -289,7 +289,7 @@ class ModelDownloadWorker(
                     if (abs.lowercase().endsWith(".gguf") && !skipMmproj) {
                         // チャット用マルチモーダル GGUF: mmproj を検索してダウンロード
                         val mmprojFile = withContext(Dispatchers.IO) {
-                            val mmprojCandidates = ModelFileManager.findMmprojCandidates(applicationContext, modelId).getOrNull()
+                            val mmprojCandidates = ModelFileManager.findMmprojCandidates(applicationContext, modelId, filePath).getOrNull()
                             mmprojCandidates?.firstOrNull()?.let { candidate ->
                                 ModelFileManager.downloadHuggingFaceModelFile(
                                     context = applicationContext,
