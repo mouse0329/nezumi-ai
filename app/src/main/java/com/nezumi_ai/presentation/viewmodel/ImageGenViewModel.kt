@@ -36,10 +36,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         private const val TAG = "ImageGenViewModel"
     }
 
-    private val settingsRepository = SettingsRepository(
-        NezumiAiDatabase.getInstance(application).settingsDao(),
-        NezumiAiDatabase.getInstance(application).chatSessionDao(),
-        application.applicationContext
+    private val settingsRepository = SettingsRepository.fromDatabase(
+        NezumiAiDatabase.getInstance(application)
     )
 
     private val _modelPath = MutableStateFlow(PreferencesHelper.getSdModelPath(application))
