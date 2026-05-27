@@ -4,6 +4,7 @@ class RnLlamaContext(
     val modelPath: String,
     nCtx: Int,
     nBatch: Int,
+    nUbatch: Int,
     nThreads: Int,
     nGpuLayers: Int,
     mmprojPath: String? = null
@@ -16,6 +17,7 @@ class RnLlamaContext(
                 modelPath = modelPath,
                 nCtx = nCtx,
                 nBatch = nBatch,
+                nUbatch = nUbatch,
                 nThreads = nThreads,
                 nGpuLayers = nGpuLayers,
                 useMmap = true,

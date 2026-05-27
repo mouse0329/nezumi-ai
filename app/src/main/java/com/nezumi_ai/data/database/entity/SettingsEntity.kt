@@ -30,6 +30,7 @@ data class SettingsEntity(
     val llamaCppThreads: Int = 4,
     val llamaCppGpuLayers: Int = 0,
     val llamaCppBatchSize: Int = 512,
+    val llamaCppUBatchSize: Int = 512,
     val llamaCppNKeep: Int = 0,
     val llamaCppRopeFreqBase: Float = 0.0f,
     val llamaCppRopeFreqScale: Float = 1.0f,

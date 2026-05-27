@@ -323,6 +323,7 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
     jstring modelPath,
     jint nCtx,
     jint nBatch,
+    jint nUbatch,
     jint nThreads,
     jint nGpuLayers,
     jboolean useMmap,
@@ -350,7 +351,7 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
     params.model.path = path;
     params.n_ctx = nCtx;
     params.n_batch = nBatch;
-    params.n_ubatch = std::min(512, (int)nBatch);
+    params.n_ubatch = nUbatch;
     params.cpuparams.n_threads = nThreads;
     params.cpuparams_batch.n_threads = nThreads;
     params.n_gpu_layers = nGpuLayers;

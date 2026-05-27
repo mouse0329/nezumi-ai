@@ -135,6 +135,7 @@ class SettingsRepository(
             llamaCppThreads = current.llamaCppThreads,
             llamaCppGpuLayers = current.llamaCppGpuLayers,
             llamaCppBatchSize = current.llamaCppBatchSize,
+            llamaCppUBatchSize = current.llamaCppUBatchSize,
             llamaCppNKeep = current.llamaCppNKeep,
             llamaCppRopeFreqBase = current.llamaCppRopeFreqBase,
             llamaCppRopeFreqScale = current.llamaCppRopeFreqScale
@@ -631,6 +632,21 @@ class SettingsRepository(
         dao.update(
             current.copy(
                 llamaCppBatchSize = clamped,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun getLlamaCppUBatchSize(): Int {
+        return currentSettings().llamaCppUBatchSize
+    }
+
+    suspend fun updateLlamaCppUBatchSize(uBatchSize: Int) {
+        val current = currentSettings()
+        val clamped = uBatchSize.coerceIn(32, 2048)
+        dao.update(
+            current.copy(
+                llamaCppUBatchSize = clamped,
                 lastModified = System.currentTimeMillis()
             )
         )

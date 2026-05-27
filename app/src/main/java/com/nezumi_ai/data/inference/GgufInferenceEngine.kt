@@ -134,6 +134,7 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                     // ★ llama.cpp パラメータ最適化（安定性とパフォーマンスのバランス）
                     val requestedThreads = normalized.llamaCppThreads
                     val requestedBatchSize = normalized.llamaCppBatchSize
+                    val requestedUBatchSize = normalized.llamaCppUBatchSize
                     val requestedGpuLayers = normalized.llamaCppGpuLayers
                     val requestedNKeep = normalized.llamaCppNKeep
                     val numCores = Runtime.getRuntime().availableProcessors()
@@ -146,6 +147,11 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                     val appliedBatchSize = when {
                         mmCaps.imageEnabled || mmCaps.audioEnabled -> coercedBatch.coerceAtLeast(512)
                         else -> coercedBatch
+                    }
+                    val coercedUBatch = requestedUBatchSize.coerceIn(32, 2048)
+                    val appliedUBatch = when {
+                        mmCaps.imageEnabled || mmCaps.audioEnabled -> coercedUBatch.coerceAtLeast(512)
+                        else -> coercedUBatch
                     }
                     val appliedGpuLayers = 0  // GPU 無効化（Tensor G3 は OpenCL 非対応）
                     val appliedNKeep = 0  // KV キャッシュ無効化
@@ -169,7 +175,7 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                     Log.d(
                         TAG,
                         "Params(applied): n_ctx=${normalized.contextWindow}, n_threads=$appliedThreads, " +
-                            "n_batch=$appliedBatchSize, n_gpu_layers=$appliedGpuLayers, n_keep=$appliedNKeep, " +
+                            "n_batch=$appliedBatchSize, n_ubatch=$appliedUBatch, n_gpu_layers=$appliedGpuLayers, n_keep=$appliedNKeep, " +
                             "rope_freq_base=${normalized.llamaCppRopeFreqBase}, rope_freq_scale=${normalized.llamaCppRopeFreqScale}"
                     )
 
@@ -200,6 +206,7 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                         modelPath = modelPath,
                         nCtx = normalized.contextWindow,
                         nBatch = appliedBatchSize,
+                        nUbatch = appliedUBatch,
                         nThreads = appliedThreads,
                         nGpuLayers = appliedGpuLayers,
                         mmprojPath = resolvedMmprojPath

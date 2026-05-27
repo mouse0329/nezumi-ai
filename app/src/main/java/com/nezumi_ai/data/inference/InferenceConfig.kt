@@ -19,6 +19,7 @@ data class InferenceConfig(
     val llamaCppThreads: Int = 4,  // ★ スレッド数を 4 に変更
     val llamaCppGpuLayers: Int = 0,  // GPU 無効化（Tensor G3 は OpenCL 非対応）
     val llamaCppBatchSize: Int = 512,  // ★ バッチサイズをデフォルトに戻す：32 → 512
+    val llamaCppUBatchSize: Int = 512,  // n_ubatch を独立制御できるように準備
     val llamaCppNKeep: Int = 0,  // KV キャッシュ無効化
     val llamaCppRopeFreqBase: Float = 500000.0f,  // 標準値
     val llamaCppRopeFreqScale: Float = 1.0f,  // 標準値
@@ -40,6 +41,10 @@ data class InferenceConfig(
         const val MAX_TOP_P = 1.0f
         const val MIN_THREADS = 1
         const val MAX_THREADS = 16
+        const val MIN_BATCH_SIZE = 32
+        const val MAX_BATCH_SIZE = 2048
+        const val MIN_UBATCH_SIZE = 32
+        const val MAX_UBATCH_SIZE = 2048
 
         fun getDefaultThreadCount(): Int {
             val availableCores = Runtime.getRuntime().availableProcessors()
@@ -58,6 +63,8 @@ data class InferenceConfig(
         val normalizedTopK = maxTopK.coerceIn(MIN_TOP_K, MAX_TOP_K)
         val normalizedMaxTokens = maxTokens.coerceIn(MIN_MAX_TOKENS, MAX_MAX_TOKENS)
         val normalizedTopP = topP.coerceIn(MIN_TOP_P, MAX_TOP_P)
+        val normalizedBatchSize = llamaCppBatchSize.coerceIn(MIN_BATCH_SIZE, MAX_BATCH_SIZE)
+        val normalizedUBatchSize = llamaCppUBatchSize.coerceIn(MIN_UBATCH_SIZE, MAX_UBATCH_SIZE)
         val normalizedBackend = when (backendType.uppercase()) {
             "GPU" -> "GPU"
             "NPU" -> "NPU"
@@ -71,6 +78,8 @@ data class InferenceConfig(
             maxTopK = normalizedTopK,
             maxTokens = normalizedMaxTokens,
             topP = normalizedTopP,
+            llamaCppBatchSize = normalizedBatchSize,
+            llamaCppUBatchSize = normalizedUBatchSize,
             backendType = normalizedBackend,
             requireMultimodal = requireMultimodal
         )

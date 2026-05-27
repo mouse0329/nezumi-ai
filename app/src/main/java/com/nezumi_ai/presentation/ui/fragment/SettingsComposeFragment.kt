@@ -68,6 +68,7 @@ class SettingsComposeFragment : Fragment() {
     private var maxThreads by mutableStateOf(InferenceConfig.MAX_THREADS)
     private var llamaCppGpuLayers by mutableStateOf(0)
     private var llamaCppBatchSize by mutableStateOf(512)
+    private var llamaCppUBatchSize by mutableStateOf(512)
     private var llamaCppNKeep by mutableStateOf(0)
     private var llamaCppRopeFreqBase by mutableStateOf(0.0f)
     private var llamaCppRopeFreqScale by mutableStateOf(1.0f)
@@ -736,6 +737,36 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
 
+                            // 内部バッチサイズ (n_ubatch)
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "内部バッチサイズ (n_ubatch)",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = llamaCppUBatchSize.toString(),
+                                        color = colorResource(id = R.color.primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                    )
+                                }
+                                Slider(
+                                    value = llamaCppUBatchSize.toFloat(),
+                                    onValueChange = { llamaCppUBatchSize = it.roundToInt().coerceIn(32, 2048) },
+                                    valueRange = 32f..2048f,
+                                    steps = 2016/32 - 1,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
                             // RoPE周波数基数
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(
@@ -1094,6 +1125,7 @@ class SettingsComposeFragment : Fragment() {
             val threads = settingsRepository.getLlamaCppThreads()
             val gpuLayers = settingsRepository.getLlamaCppGpuLayers()
             val batchSize = settingsRepository.getLlamaCppBatchSize()
+            val uBatchSize = settingsRepository.getLlamaCppUBatchSize()
             val nKeep = settingsRepository.getLlamaCppNKeep()
             val ropeFreqBase = settingsRepository.getLlamaCppRopeFreqBase()
             val ropeFreqScale = settingsRepository.getLlamaCppRopeFreqScale()
@@ -1113,6 +1145,7 @@ class SettingsComposeFragment : Fragment() {
             llamaCppThreads = threads.coerceIn(1, maxThreads)
             llamaCppGpuLayers = gpuLayers
             llamaCppBatchSize = batchSize
+            llamaCppUBatchSize = uBatchSize
             llamaCppNKeep = nKeep
             llamaCppRopeFreqBase = ropeFreqBase
             llamaCppRopeFreqScale = ropeFreqScale
@@ -1184,6 +1217,7 @@ class SettingsComposeFragment : Fragment() {
         settingsRepository.updateLlamaCppThreads(llamaCppThreads)
         settingsRepository.updateLlamaCppGpuLayers(llamaCppGpuLayers)
         settingsRepository.updateLlamaCppBatchSize(llamaCppBatchSize)
+        settingsRepository.updateLlamaCppUBatchSize(llamaCppUBatchSize)
         settingsRepository.updateLlamaCppNKeep(llamaCppNKeep)
         settingsRepository.updateLlamaCppRopeFreqBase(llamaCppRopeFreqBase)
         settingsRepository.updateLlamaCppRopeFreqScale(llamaCppRopeFreqScale)
