@@ -912,7 +912,7 @@ class LiteRtLmEngine(
                 try {
                     var inferenceStartMs = System.currentTimeMillis()
                     var firstTokenMs = -1L
-                    var tokenCount = 0
+                    var tokenCount = 0f
                     var firstRequest = true
                     var pendingToolResponseMessage: Message? = null
                     val maxToolRounds = 5
@@ -955,13 +955,13 @@ class LiteRtLmEngine(
                                 }
                                 
                                 // トークン数カウント
-                                tokenCount += text.split(Regex("\\s+")).count { it.isNotEmpty() }
+                                tokenCount += TextTokenEstimator.estimateOutputTokens(text)
                                 
                                 // TPS ログ
-                                if (tokenCount % 10 == 0) {
+                                if (tokenCount.toInt() % 10 == 0) {
                                     val elapsedMs = System.currentTimeMillis() - inferenceStartMs
                                     val tps = if (elapsedMs > 0) tokenCount * 1000.0 / elapsedMs else 0.0
-                                    Log.d(TAG, "TPS: %.1f tok/s (tokens=$tokenCount, elapsed=${elapsedMs}ms) session=$sessionId".format(tps))
+                                    Log.d(TAG, "TPS: %.1f tok/s (tokens=%.1f, elapsed=${elapsedMs}ms) session=$sessionId".format(tps, tokenCount))
                                 }
                                 
                                 answerAccum.append(text)
@@ -979,7 +979,7 @@ class LiteRtLmEngine(
                         // ツール呼び出し時は計測をリセット
                         inferenceStartMs = System.currentTimeMillis()
                         firstTokenMs = -1L
-                        tokenCount = 0
+                        tokenCount = 0f
                         val toolResponses = mutableListOf<Content>()
                         // 複数ツール実行を並列化（非ブロッキング）
                         val toolJobs = toolCallsInTurn.map { toolCall ->
@@ -1028,7 +1028,7 @@ class LiteRtLmEngine(
                     // 最終サマリーログ
                     val totalElapsed = System.currentTimeMillis() - inferenceStartMs
                     val finalTps = if (totalElapsed > 0) tokenCount * 1000.0 / totalElapsed else 0.0
-                    Log.i(TAG, "Inference complete: %.1f tok/s total (tokens=$tokenCount, ${totalElapsed}ms) session=$sessionId".format(finalTps))
+                    Log.i(TAG, "Inference complete: %.1f tok/s total (tokens=%.1f, ${totalElapsed}ms) session=$sessionId".format(finalTps, tokenCount))
 
                     // toolResultCards をJSON化して toolResultsJson として送出
                     val toolResultsJson = if (toolResultCards.isNotEmpty()) {

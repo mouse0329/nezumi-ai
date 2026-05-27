@@ -32,7 +32,7 @@ import com.nezumi_ai.data.database.entity.SettingsEntity
         MemoryEntity::class,
         MemorySessionEntity::class
     ],
-    version = 21,
+    version = 22,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
@@ -57,13 +57,34 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                     NezumiAiDatabase::class.java,
                     "nezumi_ai.db"
                 )
-                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21)
+                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
                     // 開発中: スキーマ不一致時は再作成して起動クラッシュを回避
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { instance = it }
             }
         
+
+
+        private val MIGRATION_21_22 = object : androidx.room.migration.Migration(21, 22) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE memory ADD COLUMN rga_uid TEXT NOT NULL DEFAULT \'\'"
+                )
+                database.execSQL(
+                    "ALTER TABLE memory ADD COLUMN rga_prev_uid TEXT"
+                )
+                database.execSQL("""
+                    UPDATE memory SET rga_uid = (
+                        lower(hex(randomblob(4))) || '-' ||
+                        lower(hex(randomblob(2))) || '-' ||
+                        lower(hex(randomblob(2))) || '-' ||
+                        lower(hex(randomblob(2))) || '-' ||
+                        lower(hex(randomblob(6)))
+                    ) WHERE rga_uid = ''
+                """.trimIndent())
+            }
+        }
 
         private val MIGRATION_20_21 = object : androidx.room.migration.Migration(20, 21) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {

@@ -15,12 +15,15 @@ class MemoryRepository(
 ) {
     fun observeMemories(): Flow<List<MemoryEntity>> = dao.observeActive()
 
+    suspend fun getById(id: Long): MemoryEntity? = dao.getById(id)
+
     suspend fun saveMemory(
         content: String,
         embedding: FloatArray,
         importance: Float = 0.7f,
         source: String = MemoryEntity.SOURCE_EXTRACTED,
-        sessionId: String = ""
+        sessionId: String = "",
+        rgaPrevUid: String? = null
     ): Long {
         val now = System.currentTimeMillis()
         return dao.insert(
@@ -33,7 +36,8 @@ class MemoryRepository(
                 updatedAt = now,
                 lastAccessedAt = now,
                 source = source,
-                sessionId = sessionId
+                sessionId = sessionId,
+                rgaPrevUid = rgaPrevUid
             )
         )
     }

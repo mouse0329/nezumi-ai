@@ -32,6 +32,7 @@ import com.nezumi_ai.data.inference.EngineManager
 import com.nezumi_ai.data.inference.GenerateImageToolBridge
 import com.nezumi_ai.data.inference.GenerateImageToolHandler
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
+import com.nezumi_ai.data.inference.TextTokenEstimator
 import com.nezumi_ai.data.inference.ToolCallState
 import com.nezumi_ai.data.inference.ToolExecutionResult
 import com.nezumi_ai.data.inference.PromptBuilder
@@ -1464,7 +1465,7 @@ class ChatViewModel(
                     val nativeTokens = manager.getLastGenerationTokenCount()
                     nativeTokens?.minus(1f)?.coerceAtLeast(0f)
                 } else {
-                    (completeResponse.length / 2f - 1f).coerceAtLeast(0f)
+                    (TextTokenEstimator.estimateOutputTokens(completeResponse) - 1f).coerceAtLeast(0f)
                 }
                 if (tokensAfterFirst != null && tokensAfterFirst > 0f) {
                     tokensAfterFirst * 1000f / generationTimeMs
