@@ -55,7 +55,8 @@ class BenchmarkRunner(
         prompt: BenchmarkPrompt,
         config: InferenceConfig,
         engineName: String,
-        runIndex: Int
+        runIndex: Int,
+        onChunk: (String) -> Unit = {}
     ): BenchmarkResult {
         val memBefore = getUsedMemoryMB()
 
@@ -76,6 +77,13 @@ class BenchmarkRunner(
                     if (chunk.startsWith(PROTOCOL_PREFIX)) return@collect
 
                     if (chunk.isNotEmpty()) {
+                        // ここでライブ出力コールバックを呼ぶ
+                        try {
+                            onChunk(chunk)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "onChunk callback failed: ${e.message}")
+                        }
+
                         // TTFT: 最初のテキストチャンクが届いた時刻
                         if (firstTokenAbsMs < 0) {
                             firstTokenAbsMs = System.currentTimeMillis()

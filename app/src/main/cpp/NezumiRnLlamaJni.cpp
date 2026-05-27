@@ -358,7 +358,7 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
     params.use_mlock = (useMlock == JNI_TRUE);
     params.rope_freq_base = ropeFreqBase;
     params.rope_freq_scale = ropeFreqScale;
-    params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
     params.n_parallel = 1;
     params.kv_unified = false;
     params.no_perf = false;

@@ -2,6 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
     android:background="@color/bg_chat">
 
     <LinearLayout
@@ -12,6 +13,7 @@
 
         <!-- ヘッダー -->
         <LinearLayout
+            android:id="@+id/header_container"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
@@ -123,6 +125,88 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content" />
                 </LinearLayout>
+
+                <!-- プロンプト内容プレビュー -->
+                <TextView
+                    android:id="@+id/tv_prompt_preview_label"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="プロンプト内容"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary"
+                    android:layout_marginTop="16dp"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:id="@+id/tv_prompt_short_title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="短文 ▶"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_primary"
+                    android:layout_marginBottom="2dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:padding="8dp"
+                    android:background="?android:attr/selectableItemBackground" />
+
+                <TextView
+                    android:id="@+id/tv_prompt_short_content"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="短文のプロンプト内容"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_secondary"
+                    android:visibility="gone"
+                    android:layout_marginBottom="8dp"
+                    android:paddingStart="12dp" />
+
+                <TextView
+                    android:id="@+id/tv_prompt_medium_title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="中文 ▶"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_primary"
+                    android:layout_marginBottom="2dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:padding="8dp"
+                    android:background="?android:attr/selectableItemBackground" />
+
+                <TextView
+                    android:id="@+id/tv_prompt_medium_content"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="中文のプロンプト内容"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_secondary"
+                    android:visibility="gone"
+                    android:layout_marginBottom="8dp"
+                    android:paddingStart="12dp" />
+
+                <TextView
+                    android:id="@+id/tv_prompt_long_title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="長文 ▶"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_primary"
+                    android:layout_marginBottom="2dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:padding="8dp"
+                    android:background="?android:attr/selectableItemBackground" />
+
+                <TextView
+                    android:id="@+id/tv_prompt_long_content"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="長文のプロンプト内容"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_secondary"
+                    android:visibility="gone"
+                    android:paddingStart="12dp" />
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
@@ -170,6 +254,34 @@
             android:textSize="13sp"
             android:visibility="gone"
             android:layout_marginBottom="12dp" />
+
+        <!-- ライブ出力ストリーム -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="200dp"
+            android:layout_marginBottom="12dp"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="2dp"
+            app:cardBackgroundColor="@color/surface_card"
+            xmlns:app="http://schemas.android.com/apk/res-auto">
+
+            <ScrollView
+                android:id="@+id/sv_stream"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="12dp">
+
+                <TextView
+                    android:id="@+id/tv_stream"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_primary"
+                    android:lineSpacingExtra="2dp" />
+
+            </ScrollView>
+        </androidx.cardview.widget.CardView>
 
         <!-- サマリーカード -->
         <androidx.cardview.widget.CardView
