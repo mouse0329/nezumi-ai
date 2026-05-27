@@ -45,6 +45,7 @@ object RnLlamaNative {
         modelPath: String,
         nCtx: Int,
         nBatch: Int,
+        nUbatch: Int,
         nThreads: Int,
         nGpuLayers: Int,
         useMmap: Boolean,
