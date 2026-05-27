@@ -6,7 +6,7 @@ data class InferenceConfig(
     val contextCompressionThresholdPercent: Int = 70,
     val temperature: Float = 0.7f,
     val maxTopK: Int = 40,
-    val maxTokens: Int = 384,
+    val maxTokens: Int = 1024,
     val topP: Float = 0.95f,
     /** LiteRT-LM の extraContext enable_thinking（Gemma 4 のみ対応。他モデルでは無視される）。デフォルトはオフ */
     val enableThinking: Boolean = false,
@@ -16,7 +16,7 @@ data class InferenceConfig(
     /** LiteRT-LM のロード時に vision/audio executor を必須化する。 */
     val requireMultimodal: Boolean = false,
     // llama.cpp settings (最適化版 - Gallery 相準化)
-    val llamaCppThreads: Int = 2,  // ★ スレッド削減：4 → 2（Tensor G3 CPU 最適化）
+    val llamaCppThreads: Int = 4,  // ★ スレッド数を 4 に変更
     val llamaCppGpuLayers: Int = 0,  // GPU 無効化（Tensor G3 は OpenCL 非対応）
     val llamaCppBatchSize: Int = 512,  // ★ バッチサイズをデフォルトに戻す：32 → 512
     val llamaCppNKeep: Int = 0,  // KV キャッシュ無効化
