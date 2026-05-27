@@ -15,6 +15,9 @@ import android.widget.ProgressBar
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.ScrollView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
@@ -53,6 +56,14 @@ class BenchmarkFragment : Fragment() {
     private lateinit var cardDetails: View
     private lateinit var tvDetails: TextView
     private lateinit var btnCopy: Button
+    private lateinit var tvPromptShortTitle: TextView
+    private lateinit var tvPromptShortContent: TextView
+    private lateinit var tvPromptMediumTitle: TextView
+    private lateinit var tvPromptMediumContent: TextView
+    private lateinit var tvPromptLongTitle: TextView
+    private lateinit var tvPromptLongContent: TextView
+    private lateinit var svStream: ScrollView
+    private lateinit var tvStream: TextView
     private var modelOptions: List<BenchmarkViewModel.ModelOption> = emptyList()
     private val repeatValues = listOf(1, 3, 5)
 
@@ -90,6 +101,14 @@ class BenchmarkFragment : Fragment() {
         cardDetails = view.findViewById(R.id.card_details)
         tvDetails = view.findViewById(R.id.tv_details)
         btnCopy = view.findViewById(R.id.btn_copy)
+        tvPromptShortTitle = view.findViewById(R.id.tv_prompt_short_title)
+        tvPromptShortContent = view.findViewById(R.id.tv_prompt_short_content)
+        tvPromptMediumTitle = view.findViewById(R.id.tv_prompt_medium_title)
+        tvPromptMediumContent = view.findViewById(R.id.tv_prompt_medium_content)
+        tvPromptLongTitle = view.findViewById(R.id.tv_prompt_long_title)
+        tvPromptLongContent = view.findViewById(R.id.tv_prompt_long_content)
+        svStream = view.findViewById(R.id.sv_stream)
+        tvStream = view.findViewById(R.id.tv_stream)
 
         // 繰り返し数Spinner
         val repeatOptions = listOf("1回", "3回", "5回")
@@ -106,6 +125,7 @@ class BenchmarkFragment : Fragment() {
         configureStartButton("ベンチマーク開始")
 
         viewModel.refreshModelOptions()
+        bindPromptPreviews()
 
         btnCopy.setOnClickListener {
             copyResultsToClipboard()
@@ -180,6 +200,22 @@ class BenchmarkFragment : Fragment() {
                 }
             }
         }
+
+        // ライブ出力をストリーミング表示
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.liveOutput.collectLatest { text ->
+                tvStream.text = text
+                svStream.post { svStream.fullScroll(View.FOCUS_DOWN) }
+            }
+        }
+
+        // ステータスバー分のインセットをヘッダーに適用
+        ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
+            val statusBarTop = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            val header = view.findViewById<View>(R.id.header_container)
+            header.setPadding(header.paddingLeft, statusBarTop, header.paddingRight, header.paddingBottom)
+            insets
+        }
     }
 
     private fun configureStartButton(label: String) {
@@ -250,4 +286,40 @@ class BenchmarkFragment : Fragment() {
         cm?.setPrimaryClip(ClipData.newPlainText("ベンチマーク結果", text))
         Toast.makeText(requireContext(), "クリップボードにコピーしました", Toast.LENGTH_SHORT).show()
     }
+
+    private fun bindPromptPreviews() {
+        tvPromptShortTitle.text = "短文 ▶"
+        tvPromptShortContent.text = BenchmarkPrompt.SHORT.text
+        tvPromptShortContent.visibility = View.GONE
+
+        tvPromptMediumTitle.text = "中文 ▶"
+        tvPromptMediumContent.text = BenchmarkPrompt.MEDIUM.text
+        tvPromptMediumContent.visibility = View.GONE
+
+        tvPromptLongTitle.text = "長文 ▶"
+        tvPromptLongContent.text = BenchmarkPrompt.LONG.text
+        tvPromptLongContent.visibility = View.GONE
+
+        fun togglePrompt(title: TextView, content: TextView, prefix: String) {
+            val isVisible = content.visibility == View.VISIBLE
+            if (isVisible) {
+                content.visibility = View.GONE
+                title.text = "$prefix ▶"
+            } else {
+                content.visibility = View.VISIBLE
+                title.text = "$prefix ▼"
+            }
+        }
+
+        tvPromptShortTitle.setOnClickListener {
+            togglePrompt(tvPromptShortTitle, tvPromptShortContent, "短文")
+        }
+        tvPromptMediumTitle.setOnClickListener {
+            togglePrompt(tvPromptMediumTitle, tvPromptMediumContent, "中文")
+        }
+        tvPromptLongTitle.setOnClickListener {
+            togglePrompt(tvPromptLongTitle, tvPromptLongContent, "長文")
+        }
+    }
 }
+

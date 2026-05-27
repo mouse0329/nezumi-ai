@@ -48,7 +48,7 @@ android {
         manifestPlaceholders["appAuthRedirectScheme"] = "nezumiai"
 
         buildConfigField("String", "LITERTLM_VERSION", "\"0.12.0\"")
-        buildConfigField("String", "LLAMACPP_VERSION", "\"llamacpp-kotlin 0.4.0 (llama.rn 0.12.4)\"")
+        buildConfigField("String", "LLAMACPP_VERSION", "\"llama.rn 0.12.4\"")
 
         ndk {
             abiFilters.add("arm64-v8a")

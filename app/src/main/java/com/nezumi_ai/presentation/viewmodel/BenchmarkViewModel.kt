@@ -52,6 +52,9 @@ class BenchmarkViewModel(
     private val _results = MutableStateFlow<List<BenchmarkResult>>(emptyList())
     val results: StateFlow<List<BenchmarkResult>> = _results.asStateFlow()
 
+    private val _liveOutput = MutableStateFlow("")
+    val liveOutput: StateFlow<String> = _liveOutput.asStateFlow()
+
     private val _modelOptions = MutableStateFlow<List<ModelOption>>(emptyList())
     val modelOptions: StateFlow<List<ModelOption>> = _modelOptions.asStateFlow()
 
@@ -148,6 +151,9 @@ class BenchmarkViewModel(
             val totalRuns = selectedPrompts.size * repeatCount
             var completedRuns = 0
 
+            // クリアしてライブ出力を開始
+            _liveOutput.value = ""
+
             // ウォームアップ
             _state.value = State.Running("ウォームアップ中...", 0, totalRuns)
             runner.warmup(config)
@@ -164,7 +170,15 @@ class BenchmarkViewModel(
                         prompt = prompt,
                         config = config,
                         engineName = engineName,
-                        runIndex = i
+                        runIndex = i,
+                        onChunk = { chunk ->
+                            // ストリーム出力を蓄積
+                            try {
+                                _liveOutput.value = _liveOutput.value + chunk
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed to append live output: ${e.message}")
+                            }
+                        }
                     )
                     allResults.add(result)
                     _results.value = allResults.toList()
