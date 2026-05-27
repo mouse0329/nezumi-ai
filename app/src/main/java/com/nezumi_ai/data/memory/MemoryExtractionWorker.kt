@@ -120,8 +120,13 @@ class MemoryExtractionWorker(
             }
             Log.d(TAG, "MEMORY_EXTRACT: session=$sessionId extracted ${candidates.size} candidates with mode=$saveMode")
 
+            var lastRgaUid: String? = null
             for (candidate in candidates) {
-                saveWithContradictionCheck(sessionId, candidate, manager, config, !suppressContradictionDeletion)
+                lastRgaUid = saveWithContradictionCheck(
+                    sessionId, candidate, manager, config,
+                    !suppressContradictionDeletion,
+                    rgaPrevUid = lastRgaUid
+                )
             }
 
             memorySessionRepository.markExtracted(sessionId.toString(), currentTurn)
@@ -264,8 +269,9 @@ class MemoryExtractionWorker(
         candidate: MemoryCandidate,
         manager: ModelManager,
         config: InferenceConfig,
-        allowContradictionDeletion: Boolean = true
-    ) {
+        allowContradictionDeletion: Boolean = true,
+        rgaPrevUid: String? = null
+    ): String? {
         val embedding = MemoryTextEmbedder.embed(candidate.content)
 
         // 重複チェック（similarity ≥ 0.95 はスキップ）
@@ -278,7 +284,7 @@ class MemoryExtractionWorker(
         val duplicate = nearest.firstOrNull { it.similarity >= DUPLICATE_THRESHOLD }
         if (duplicate != null) {
             Log.d(TAG, "MEMORY_SAVE: duplicate skipped similarity=${duplicate.similarity} content=${candidate.content.take(30)}")
-            return
+            return null
         }
 
         if (allowContradictionDeletion) {
@@ -297,14 +303,17 @@ class MemoryExtractionWorker(
             Log.d(TAG, "MEMORY_SAVE: skipping contradiction deletion for startup pending extraction")
         }
 
-        memoryRepository.saveMemory(
+        val savedId = memoryRepository.saveMemory(
             content = candidate.content,
             embedding = embedding,
             importance = candidate.importance,
             source = "extracted",
-            sessionId = sessionId.toString()
+            sessionId = sessionId.toString(),
+            rgaPrevUid = rgaPrevUid
         )
-        Log.d(TAG, "MEMORY_SAVE: saved session=$sessionId content=${candidate.content.take(40)}")
+        val savedUid = memoryRepository.getById(savedId)?.rgaUid
+        Log.d(TAG, "MEMORY_SAVE: saved session=$sessionId content=${candidate.content.take(40)} rgaUid=$savedUid")
+        return savedUid
     }
 
     /**

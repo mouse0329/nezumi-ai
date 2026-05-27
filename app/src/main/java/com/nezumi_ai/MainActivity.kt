@@ -212,6 +212,12 @@ class MainActivity : AppCompatActivity() {
                 navController.navigate(R.id.imageGenFragment)
             }
         }
+        binding.drawerBenchmarkButton.setOnClickListener {
+            closeDrawer()
+            if (navController.currentDestination?.id != R.id.benchmarkFragment) {
+                navController.navigate(R.id.benchmarkFragment)
+            }
+        }
         binding.drawerSearchButton.setOnClickListener {
             closeDrawer()
             showHistorySearchModal()

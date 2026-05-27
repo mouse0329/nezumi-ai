@@ -31,7 +31,11 @@ data class MemoryEntity(
     val isDeleted: Boolean = false,
     val source: String = SOURCE_EXTRACTED,
     @ColumnInfo(name = "session_id")
-    val sessionId: String = ""
+    val sessionId: String = "",
+    @ColumnInfo(name = "rga_uid")
+    val rgaUid: String = java.util.UUID.randomUUID().toString(),
+    @ColumnInfo(name = "rga_prev_uid")
+    val rgaPrevUid: String? = null
 ) {
     companion object {
         const val SOURCE_USER = "user"
