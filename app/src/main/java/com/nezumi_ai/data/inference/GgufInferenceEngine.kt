@@ -137,7 +137,7 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                     val requestedGpuLayers = normalized.llamaCppGpuLayers
                     val requestedNKeep = normalized.llamaCppNKeep
                     val numCores = Runtime.getRuntime().availableProcessors()
-                    val appliedThreads = (numCores / 2).coerceIn(1, 4)  // スレッド数削減（オーバーヘッド低減）
+                    val appliedThreads = requestedThreads.coerceIn(1, numCores)
                     // 以前は 32.coerceAtMost(requested) で設定の n_batch（例: 512）が無視され、常に 32 固定になっていた。
                     // Gemma3/4 等の非因果ビジョン（mtmd_decode_use_non_causal）は画像トークン列を n_batch 幅で分割デコードするため、
                     // n_batch が極端に小さいとマルチモーダルが失敗する。
