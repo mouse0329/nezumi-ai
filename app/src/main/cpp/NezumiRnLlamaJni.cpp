@@ -360,7 +360,7 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
     params.rope_freq_scale = ropeFreqScale;
     params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
     params.n_parallel = 1;
-    params.kv_unified = false;
+    params.kv_unified = true;
     params.no_perf = false;
 
     __android_log_print(ANDROID_LOG_INFO, TAG,
