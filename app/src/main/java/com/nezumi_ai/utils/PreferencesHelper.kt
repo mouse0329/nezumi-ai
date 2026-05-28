@@ -15,6 +15,8 @@ object PreferencesHelper {
     private const val KEY_SD_CFG = "sd_cfg"
     private const val KEY_CURRENT_PRESET_ID = "current_preset_id"
     private const val KEY_BRAVE_SEARCH_API_KEY = "brave_search_api_key"
+    private const val KEY_ENABLE_THINKING = "enable_thinking"
+    private const val KEY_REQUIRE_MULTIMODAL = "require_multimodal"
 
     const val THEME_SYSTEM = "SYSTEM"
     const val THEME_LIGHT = "LIGHT"
@@ -125,5 +127,21 @@ object PreferencesHelper {
 
     fun setBraveSearchApiKey(context: Context, apiKey: String) {
         getSharedPreferences(context).edit().putString(KEY_BRAVE_SEARCH_API_KEY, apiKey.trim()).apply()
+    }
+
+    fun isEnableThinking(context: Context): Boolean {
+        return getSharedPreferences(context).getBoolean(KEY_ENABLE_THINKING, false)
+    }
+
+    fun setEnableThinking(context: Context, enabled: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_ENABLE_THINKING, enabled).apply()
+    }
+
+    fun isRequireMultimodal(context: Context): Boolean {
+        return getSharedPreferences(context).getBoolean(KEY_REQUIRE_MULTIMODAL, false)
+    }
+
+    fun setRequireMultimodal(context: Context, enabled: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_REQUIRE_MULTIMODAL, enabled).apply()
     }
 }

@@ -53,10 +53,13 @@ class SettingsComposeFragment : Fragment() {
 
     private var contextWindowInput by mutableStateOf("4096")
     private var temperatureInput by mutableStateOf("0.7")
+    private var topPInput by mutableStateOf("0.95")
     private var topkInput by mutableStateOf("40")
     private var maxTokensInput by mutableStateOf("1024")
     private var contextCompressionEnabled by mutableStateOf(false)
     private var contextCompressionThresholdPercent by mutableStateOf(70)
+    private var speculativeDecodingEnabled by mutableStateOf(false)
+    private var requireMultimodal by mutableStateOf(false)
     private var preloadMemoryWarningThresholdPercent by mutableStateOf(250)
     private var selectedModel by mutableStateOf("E2B")
     private var backendType by mutableStateOf("CPU")
@@ -69,6 +72,7 @@ class SettingsComposeFragment : Fragment() {
     private var llamaCppGpuLayers by mutableStateOf(0)
     private var llamaCppBatchSize by mutableStateOf(512)
     private var llamaCppUBatchSize by mutableStateOf(512)
+    private var llamaCppKvUnified by mutableStateOf(true)
     private var llamaCppNKeep by mutableStateOf(0)
     private var llamaCppRopeFreqBase by mutableStateOf(0.0f)
     private var llamaCppRopeFreqScale by mutableStateOf(1.0f)
@@ -200,6 +204,7 @@ class SettingsComposeFragment : Fragment() {
                     }
                     1 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         InferenceParamsCard()
+                        LiteRtSettingsCard()
                     }
                     2 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         ImageGenSettingsCard()
@@ -297,39 +302,11 @@ class SettingsComposeFragment : Fragment() {
                 }
                 
                 Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
-                
-                // Backend Selection
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "バックエンド (現在: $backendType)",
-                        color = colorResource(id = R.color.text_secondary),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        FilterChip(
-                            selected = backendType == "CPU",
-                            onClick = { backendType = "CPU" },
-                            label = { Text("CPU") },
-                            modifier = Modifier.weight(1f)
-                        )
-                        FilterChip(
-                            selected = backendType == "GPU",
-                            onClick = { backendType = "GPU" },
-                            label = { Text("GPU") },
-                            modifier = Modifier.weight(1f)
-                        )
-                        FilterChip(
-                            selected = backendType == "NPU",
-                            onClick = { backendType = "NPU" },
-                            label = { Text("NPU") },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
+                Text(
+                    text = "テーマを切り替えて、アプリ表示モードを変更します。",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
     }
@@ -382,23 +359,6 @@ class SettingsComposeFragment : Fragment() {
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodySmall
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = backendType == "CPU",
-                        onClick = { backendType = "CPU" },
-                        label = { Text("CPU") }
-                    )
-                    FilterChip(
-                        selected = backendType == "GPU",
-                        onClick = { backendType = "GPU" },
-                        label = { Text("GPU") }
-                    )
-                    FilterChip(
-                        selected = backendType == "NPU",
-                        onClick = { backendType = "NPU" },
-                        label = { Text("NPU") }
-                    )
-                }
                 TextButton(
                     onClick = { versionDialogVisible = true },
                     modifier = Modifier.fillMaxWidth()
@@ -452,7 +412,40 @@ class SettingsComposeFragment : Fragment() {
                         singleLine = true
                     )
                 }
-                
+
+                // Backend Selection
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "バックエンド",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        FilterChip(
+                            selected = backendType == "CPU",
+                            onClick = { backendType = "CPU" },
+                            label = { Text("CPU") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = backendType == "GPU",
+                            onClick = { backendType = "GPU" },
+                            label = { Text("GPU") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = backendType == "NPU",
+                            onClick = { backendType = "NPU" },
+                            label = { Text("NPU") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
                 // Temperature Slider
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(
@@ -512,72 +505,108 @@ class SettingsComposeFragment : Fragment() {
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
-                
-                Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
-                
-                // Context Compression Toggle and Slider
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
+
+                // Top-P Slider
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            text = "コンテキスト圧縮 (ベータ版)",
-                            color = colorResource(id = R.color.text_primary),
+                            text = "Top-P",
+                            color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold
                         )
+                        Text(
+                            text = topPInput,
+                            color = colorResource(id = R.color.primary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
                     }
-                    Switch(
-                        checked = contextCompressionEnabled,
-                        onCheckedChange = { contextCompressionEnabled = it }
+                    Slider(
+                        value = topPInput.toFloatOrNull() ?: 0.95f,
+                        onValueChange = { topPInput = String.format("%.2f", it) },
+                        valueRange = 0f..1f,
+                        steps = 100,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
-                
-                if (contextCompressionEnabled) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "圧縮しきい値",
-                                color = colorResource(id = R.color.text_secondary),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "${contextCompressionThresholdPercent}%",
-                                color = colorResource(id = R.color.primary),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                            )
-                        }
-                        Slider(
-                            value = contextCompressionThresholdPercent.toFloat(),
-                            onValueChange = { value ->
-                                contextCompressionThresholdPercent = value.roundToInt()
-                                    .coerceIn(
-                                        InferenceConfig.MIN_COMPRESSION_THRESHOLD,
-                                        InferenceConfig.MAX_COMPRESSION_THRESHOLD
-                                    )
-                            },
-                            valueRange = InferenceConfig.MIN_COMPRESSION_THRESHOLD.toFloat()..
-                                InferenceConfig.MAX_COMPRESSION_THRESHOLD.toFloat(),
-                            steps = InferenceConfig.MAX_COMPRESSION_THRESHOLD -
-                                InferenceConfig.MIN_COMPRESSION_THRESHOLD - 1,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Text(
-                            text = "メモリ使用量がこの割合を超えると自動圧縮",
-                            color = colorResource(id = R.color.text_secondary),
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
-                }
+
+
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    // 自動圧縮トグル
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "自動圧縮",
+            color = colorResource(id = R.color.text_secondary),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f)
+        )
+        Switch(
+            checked = contextCompressionEnabled,
+            onCheckedChange = { contextCompressionEnabled = it }
+        )
+    }
+    Text(
+        text = "有効にすると指定した割合を超えたときに自動的に圧縮します",
+        color = colorResource(id = R.color.text_secondary),
+        style = MaterialTheme.typography.bodySmall
+    )
+
+    // 圧縮しきい値（animatedAlphaとかで無効時は薄くしてもいい）
+    if (contextCompressionEnabled) {
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "圧縮しきい値",
+                color = colorResource(id = R.color.text_secondary),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "${contextCompressionThresholdPercent}%",
+                color = colorResource(id = R.color.primary),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+            )
+        }
+        Slider(
+            value = contextCompressionThresholdPercent.toFloat(),
+            onValueChange = { value ->
+                contextCompressionThresholdPercent = value.roundToInt()
+                    .coerceIn(
+                        InferenceConfig.MIN_COMPRESSION_THRESHOLD,
+                        InferenceConfig.MAX_COMPRESSION_THRESHOLD
+                    )
+            },
+            valueRange = InferenceConfig.MIN_COMPRESSION_THRESHOLD.toFloat()..
+                InferenceConfig.MAX_COMPRESSION_THRESHOLD.toFloat(),
+            steps = InferenceConfig.MAX_COMPRESSION_THRESHOLD -
+                InferenceConfig.MIN_COMPRESSION_THRESHOLD - 1,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Text(
+            text = "メモリ使用量がこの割合を超えると自動圧縮します",
+            color = colorResource(id = R.color.text_secondary),
+            style = MaterialTheme.typography.labelSmall
+        )
+    }
+}
 
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(
@@ -633,7 +662,7 @@ class SettingsComposeFragment : Fragment() {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "高度な Llama.cpp 設定",
+                            text = "GGUF / llama.cpp 設定",
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold
@@ -767,6 +796,31 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
 
+                            // KV 統合
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "kvUnified",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "KV キャッシュの統合モードを有効化します。",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                Switch(
+                                    checked = llamaCppKvUnified,
+                                    onCheckedChange = { llamaCppKvUnified = it }
+                                )
+                            }
+
                             // RoPE周波数基数
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(
@@ -826,6 +880,67 @@ class SettingsComposeFragment : Fragment() {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+
+    @Composable
+    private fun LiteRtSettingsCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(text = "LiteRT-LM 設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "投機的デコーディング",
+                            color = colorResource(id = R.color.text_primary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "LiteRT 推論の高速化を有効化します。",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Switch(
+                        checked = speculativeDecodingEnabled,
+                        onCheckedChange = { speculativeDecodingEnabled = it }
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "requireMultimodal",
+                            color = colorResource(id = R.color.text_primary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "vision/audio executor を必須化します。",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Switch(
+                        checked = requireMultimodal,
+                        onCheckedChange = { requireMultimodal = it }
+                    )
                 }
             }
         }
@@ -1116,7 +1231,7 @@ class SettingsComposeFragment : Fragment() {
 
     private fun loadInferenceSettings() {
         viewLifecycleOwner.lifecycleScope.launch {
-            val config = settingsRepository.getInferenceConfig()
+            val config = settingsRepository.getInferenceConfig(requireContext())
             val systemPrompt = settingsRepository.getSystemPrompt()
             val userName = settingsRepository.getUserName()
             val model = settingsRepository.getSelectedModel()
@@ -1132,12 +1247,15 @@ class SettingsComposeFragment : Fragment() {
             val historyLimit = settingsRepository.getChatHistoryLimit()
             contextWindowInput = contextWindow.toString()
             temperatureInput = config.temperature.toString()
+            topPInput = config.topP.toString()
             topkInput = config.maxTopK.toString()
             maxTokensInput = config.maxTokens.toString()
             preloadMemoryWarningThresholdPercent = settingsRepository.getPreloadMemoryWarningThresholdPercent()
             memorySaveMode = settingsRepository.getMemorySaveMode().name
             contextCompressionEnabled = config.contextCompressionEnabled
             contextCompressionThresholdPercent = config.contextCompressionThresholdPercent
+            speculativeDecodingEnabled = settingsRepository.isSpeculativeDecodingEnabled()
+            requireMultimodal = PreferencesHelper.isRequireMultimodal(requireContext())
             backendType = config.backendType
             themeMode = PreferencesHelper.getThemeMode(requireContext())
             braveSearchApiKeyInput = PreferencesHelper.getBraveSearchApiKey(requireContext())
@@ -1146,6 +1264,7 @@ class SettingsComposeFragment : Fragment() {
             llamaCppGpuLayers = gpuLayers
             llamaCppBatchSize = batchSize
             llamaCppUBatchSize = uBatchSize
+            llamaCppKvUnified = settingsRepository.getLlamaCppKvUnified()
             llamaCppNKeep = nKeep
             llamaCppRopeFreqBase = ropeFreqBase
             llamaCppRopeFreqScale = ropeFreqScale
@@ -1157,15 +1276,19 @@ class SettingsComposeFragment : Fragment() {
 
     private fun validateSettings(): String? {
         val temperature = temperatureInput.toFloatOrNull()
+        val topP = topPInput.toFloatOrNull()
         val topK = topkInput.toIntOrNull()
         val maxTokens = maxTokensInput.toIntOrNull()
         val contextWindow = contextWindowInput.toIntOrNull()
 
-        if (temperature == null || topK == null || maxTokens == null || contextWindow == null) {
+        if (temperature == null || topP == null || topK == null || maxTokens == null || contextWindow == null) {
             return "推論設定の入力値が不正です"
         }
         if (temperature !in InferenceConfig.MIN_TEMPERATURE..InferenceConfig.MAX_TEMPERATURE) {
             return "温度は ${InferenceConfig.MIN_TEMPERATURE} - ${InferenceConfig.MAX_TEMPERATURE} の範囲で入力してください"
+        }
+        if (topP !in InferenceConfig.MIN_TOP_P..InferenceConfig.MAX_TOP_P) {
+            return "Top-P は ${InferenceConfig.MIN_TOP_P} - ${InferenceConfig.MAX_TOP_P} の範囲で入力してください"
         }
         if (topK !in InferenceConfig.MIN_TOP_K..InferenceConfig.MAX_TOP_K) {
             return "Top-K は ${InferenceConfig.MIN_TOP_K} - ${InferenceConfig.MAX_TOP_K} の範囲で入力してください"
@@ -1198,6 +1321,7 @@ class SettingsComposeFragment : Fragment() {
 
     private suspend fun persistSettings() {
         val temperature = temperatureInput.toFloat()
+        val topP = topPInput.toFloat()
         val topK = topkInput.toInt()
         val maxTokens = maxTokensInput.toInt()
         val contextWindow = contextWindowInput.toInt()
@@ -1206,18 +1330,22 @@ class SettingsComposeFragment : Fragment() {
             contextCompressionEnabled = contextCompressionEnabled,
             contextCompressionThresholdPercent = contextCompressionThresholdPercent,
             temperature = temperature,
+            topP = topP,
             maxTopK = topK,
             maxTokens = maxTokens,
             contextWindow = contextWindow,
             backendType = backendType,
             backendTargetModel = "ALL"
         )
+        settingsRepository.updateSpeculativeDecodingEnabled(speculativeDecodingEnabled)
+        PreferencesHelper.setRequireMultimodal(requireContext(), requireMultimodal)
         settingsRepository.updatePreloadMemoryWarningThresholdPercent(preloadMemoryWarningThresholdPercent)
         settingsRepository.updateMemorySaveMode(MemorySaveMode.valueOf(memorySaveMode))
         settingsRepository.updateLlamaCppThreads(llamaCppThreads)
         settingsRepository.updateLlamaCppGpuLayers(llamaCppGpuLayers)
         settingsRepository.updateLlamaCppBatchSize(llamaCppBatchSize)
         settingsRepository.updateLlamaCppUBatchSize(llamaCppUBatchSize)
+        settingsRepository.updateLlamaCppKvUnified(llamaCppKvUnified)
         settingsRepository.updateLlamaCppNKeep(llamaCppNKeep)
         settingsRepository.updateLlamaCppRopeFreqBase(llamaCppRopeFreqBase)
         settingsRepository.updateLlamaCppRopeFreqScale(llamaCppRopeFreqScale)

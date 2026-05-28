@@ -243,6 +243,11 @@ class ChatViewModel(
     /** true のとき、このチャットでは設定のシンキングONでも LiteRT の enable_thinking を付けない */
     private val _chatSessionDisableThinking = MutableStateFlow(false)
     val chatSessionDisableThinking: StateFlow<Boolean> = _chatSessionDisableThinking.asStateFlow()
+
+    /** true のとき、このチャットでは Thinking を強制ONする */
+    private val _chatSessionThinkingEnabledOverride = MutableStateFlow(false)
+    private val chatSessionThinkingEnabledOverride: StateFlow<Boolean> = _chatSessionThinkingEnabledOverride.asStateFlow()
+
     private var hasUserToggledThinking = false
     private var lastThinkingSessionId: Long? = null
 
@@ -519,10 +524,12 @@ class ChatViewModel(
         if (lastThinkingSessionId != sessionId) {
             hasUserToggledThinking = false
             lastThinkingSessionId = sessionId
+            _chatSessionThinkingEnabledOverride.value = false
         }
         // チャットを開いた直後は OFF 表示（disableThinking=true）を既定にする。
         if (!hasUserToggledThinking) {
             _chatSessionDisableThinking.value = true
+            _chatSessionThinkingEnabledOverride.value = false
         }
         
         stopGenerationInternal()
@@ -593,6 +600,7 @@ class ChatViewModel(
         Log.d(TAG, "setChatSessionDisableThinking: disabled=$disabled")
         hasUserToggledThinking = true
         _chatSessionDisableThinking.value = disabled
+        _chatSessionThinkingEnabledOverride.value = !disabled
         viewModelScope.launch {
             _uiMessage.emit(if (disabled) "このチャットでシンキング: OFF" else "このチャットでシンキング: ON")
         }
@@ -1838,12 +1846,22 @@ class ChatViewModel(
     private suspend fun chatInferenceConfigForModel(model: String): InferenceConfig {
         val base = settingsRepository.getInferenceConfigForModel(model, appContext)
         val disableThinking = _chatSessionDisableThinking.value
-        val result = if (disableThinking) {
-            base.copy(enableThinking = false)
-        } else {
-            base
+        val thinkingEnabledOverride = _chatSessionThinkingEnabledOverride.value
+        val result = when {
+            thinkingEnabledOverride -> {
+                if (settingsRepository.modelSupportsGemmaThinking(model, appContext)) {
+                    base.copy(enableThinking = true)
+                } else {
+                    base
+                }
+            }
+            disableThinking -> base.copy(enableThinking = false)
+            else -> base
         }
-        Log.d(TAG, "chatInferenceConfigForModel: model=$model, disableThinking=$disableThinking, enableThinking=${result.enableThinking}")
+        Log.d(
+            TAG,
+            "chatInferenceConfigForModel: model=$model, disableThinking=$disableThinking, overrideEnabled=$thinkingEnabledOverride, enableThinking=${result.enableThinking}"
+        )
         return result
     }
 

@@ -8,9 +8,8 @@ data class InferenceConfig(
     val maxTopK: Int = 40,
     val maxTokens: Int = 1024,
     val topP: Float = 0.95f,
-    /** LiteRT-LM の extraContext enable_thinking（Gemma 4 のみ対応。他モデルでは無視される）。デフォルトはオフ */
-    val enableThinking: Boolean = false,
     /** LiteRT-LM の投機的デコーディング有効化（推論高速化。デフォルトはオフ） */
+    val enableThinking: Boolean = false,
     val enableSpeculativeDecoding: Boolean = false,
     val backendType: String = "CPU",
     /** LiteRT-LM のロード時に vision/audio executor を必須化する。 */
@@ -20,12 +19,47 @@ data class InferenceConfig(
     val llamaCppGpuLayers: Int = 0,  // GPU 無効化（Tensor G3 は OpenCL 非対応）
     val llamaCppBatchSize: Int = 512,  // ★ バッチサイズをデフォルトに戻す：32 → 512
     val llamaCppUBatchSize: Int = 512,  // n_ubatch を独立制御できるように準備
+    val llamaCppKvUnified: Boolean = true,  // KV 統合をデフォルトで有効化
     val llamaCppNKeep: Int = 0,  // KV キャッシュ無効化
     val llamaCppRopeFreqBase: Float = 500000.0f,  // 標準値
     val llamaCppRopeFreqScale: Float = 1.0f,  // 標準値
     /** モデルパスに紐付いたカスタムストップトークン（カンマ区切り）。空の場合はデフォルトのみ使用 */
     val customStopTokens: List<String> = emptyList()
 ) {
+    data class GgufConfig(
+        val nThreads: Int = 4,
+        val nBatch: Int = 512,
+        val nUBatch: Int = 512,
+        val nGpuLayers: Int = 0,
+        val kvUnified: Boolean = true,
+        val ropeFreqBase: Float = 500000.0f,
+        val ropeFreqScale: Float = 1.0f
+    )
+
+    data class LiteRtConfig(
+        val enableThinking: Boolean = false,
+        val enableSpeculativeDecoding: Boolean = false,
+        val requireMultimodal: Boolean = false
+    )
+
+    val ggufConfig: GgufConfig
+        get() = GgufConfig(
+            nThreads = llamaCppThreads,
+            nBatch = llamaCppBatchSize,
+            nUBatch = llamaCppUBatchSize,
+            nGpuLayers = llamaCppGpuLayers,
+            kvUnified = llamaCppKvUnified,
+            ropeFreqBase = llamaCppRopeFreqBase,
+            ropeFreqScale = llamaCppRopeFreqScale
+        )
+
+    val liteRtConfig: LiteRtConfig
+        get() = LiteRtConfig(
+            enableThinking = enableThinking,
+            enableSpeculativeDecoding = enableSpeculativeDecoding,
+            requireMultimodal = requireMultimodal
+        )
+
     companion object {
         const val MIN_CONTEXT_WINDOW = 512
         const val MAX_CONTEXT_WINDOW = 8192
@@ -86,6 +120,18 @@ data class InferenceConfig(
     }
 
     fun forModelLoad(): InferenceConfig {
-        return copy(enableThinking = false)
+        return InferenceConfig(
+            contextWindow = contextWindow,
+            backendType = backendType,
+            requireMultimodal = requireMultimodal,
+            llamaCppThreads = llamaCppThreads,
+            llamaCppGpuLayers = llamaCppGpuLayers,
+            llamaCppBatchSize = llamaCppBatchSize,
+            llamaCppUBatchSize = llamaCppUBatchSize,
+            llamaCppKvUnified = llamaCppKvUnified,
+            llamaCppNKeep = llamaCppNKeep,
+            llamaCppRopeFreqBase = llamaCppRopeFreqBase,
+            llamaCppRopeFreqScale = llamaCppRopeFreqScale
+        )
     }
 }

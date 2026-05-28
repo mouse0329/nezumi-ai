@@ -32,7 +32,7 @@ import com.nezumi_ai.data.database.entity.SettingsEntity
         MemoryEntity::class,
         MemorySessionEntity::class
     ],
-    version = 22,
+    version = 23,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
@@ -57,7 +57,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                     NezumiAiDatabase::class.java,
                     "nezumi_ai.db"
                 )
-                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
+                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
                     // 開発中: スキーマ不一致時は再作成して起動クラッシュを回避
                     .fallbackToDestructiveMigration()
                     .build()
@@ -83,6 +83,13 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                         lower(hex(randomblob(6)))
                     ) WHERE rga_uid = ''
                 """.trimIndent())
+            }
+        }
+
+        private val MIGRATION_22_23 = object : androidx.room.migration.Migration(22, 23) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE settings ADD COLUMN topP REAL NOT NULL DEFAULT 0.95")
+                database.execSQL("ALTER TABLE settings ADD COLUMN llamaCppKvUnified INTEGER NOT NULL DEFAULT 1")
             }
         }
 

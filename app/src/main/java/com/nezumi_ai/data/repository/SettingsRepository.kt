@@ -11,6 +11,7 @@ import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.memory.MemorySaveMode
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
+import com.nezumi_ai.utils.PreferencesHelper
 import java.io.File
 import kotlinx.coroutines.flow.Flow
 
@@ -114,31 +115,32 @@ class SettingsRepository(
         dao.update(current.copy(resourceMonitorEnabled = enabled))
     }
 
-    suspend fun getInferenceConfig(): InferenceConfig {
+    suspend fun getInferenceConfig(context: Context? = null): InferenceConfig {
         val current = currentSettings()
         val backendForSelected = parseBackendMap(current.backendType)[modelToBackendKey(current.selectedModel)]
             ?: BACKEND_CPU
         val contextWindowForSelected = parseContextWindowMap(current.contextWindowMap)[modelToBackendKey(current.selectedModel)]
             ?: 4096
-        val enableThinking =
-            isBuiltinGemma4Model(current.selectedModel)
+        val requireMultimodal = context?.let { PreferencesHelper.isRequireMultimodal(it) } ?: false
         return InferenceConfig(
             contextWindow = contextWindowForSelected,
             contextCompressionEnabled = current.contextCompressionEnabled,
             contextCompressionThresholdPercent = current.contextCompressionThresholdPercent,
             temperature = current.temperature,
+            topP = current.topP,
             maxTopK = current.maxTopK,
             maxTokens = current.maxTokens,
-            enableThinking = enableThinking,
             enableSpeculativeDecoding = current.speculativeDecodingEnabled,
             backendType = backendForSelected,
             llamaCppThreads = current.llamaCppThreads,
             llamaCppGpuLayers = current.llamaCppGpuLayers,
             llamaCppBatchSize = current.llamaCppBatchSize,
             llamaCppUBatchSize = current.llamaCppUBatchSize,
+            llamaCppKvUnified = current.llamaCppKvUnified,
             llamaCppNKeep = current.llamaCppNKeep,
             llamaCppRopeFreqBase = current.llamaCppRopeFreqBase,
-            llamaCppRopeFreqScale = current.llamaCppRopeFreqScale
+            llamaCppRopeFreqScale = current.llamaCppRopeFreqScale,
+            requireMultimodal = requireMultimodal
         ).normalized()
     }
 
@@ -148,19 +150,25 @@ class SettingsRepository(
         val contextWindow = getContextWindowForModel(model)
         val isGemma4 = isBuiltinGemma4Model(model)
         val isGguf = isGgufModel(model)
+        val enableThinkingPref = appContext?.let { PreferencesHelper.isEnableThinking(it) } ?: false
+        val requireMultimodalPref = appContext?.let { PreferencesHelper.isRequireMultimodal(it) } ?: false
         val ggufThinking = isGguf && appContext != null &&
             ImportedModelCapabilityStore.get(appContext, model).thinkingEnabled
-        val enableThinking = isGemma4 || ggufThinking
-        val base = getInferenceConfig()
+        val enableThinking = when {
+            isGemma4 -> enableThinkingPref
+            isGguf -> enableThinkingPref && ggufThinking
+            else -> false
+        }
+        val base = getInferenceConfig(appContext)
         val customStopTokens = if (model.endsWith(".gguf", ignoreCase = true)) {
             getStopTokensForModel(model)
         } else emptyList()
-        Log.d("SettingsRepository", "getInferenceConfigForModel: model=$model, isGemma4=$isGemma4, gemmaThinkingEnabled=${current.gemmaThinkingEnabled}, enableThinking=$enableThinking, speculativeDecoding=${current.speculativeDecodingEnabled}")
         return base.copy(
             backendType = backend,
             contextWindow = contextWindow,
             enableThinking = enableThinking,
             enableSpeculativeDecoding = current.speculativeDecodingEnabled,
+            requireMultimodal = requireMultimodalPref,
             customStopTokens = customStopTokens
         ).normalized()
     }
@@ -223,6 +231,7 @@ class SettingsRepository(
         contextCompressionEnabled: Boolean,
         contextCompressionThresholdPercent: Int,
         temperature: Float,
+        topP: Float,
         maxTopK: Int,
         maxTokens: Int,
         contextWindow: Int = 4096,
@@ -263,6 +272,7 @@ class SettingsRepository(
             contextCompressionEnabled = contextCompressionEnabled,
             contextCompressionThresholdPercent = contextCompressionThresholdPercent,
             temperature = temperature,
+            topP = topP,
             maxTopK = maxTopK,
             maxTokens = maxTokens,
             backendType = normalizedBackend
@@ -274,6 +284,7 @@ class SettingsRepository(
                 contextCompressionEnabled = config.contextCompressionEnabled,
                 contextCompressionThresholdPercent = config.contextCompressionThresholdPercent,
                 temperature = config.temperature,
+                topP = config.topP,
                 maxTopK = config.maxTopK,
                 maxTokens = config.maxTokens,
                 backendType = encodeBackendMap(backendMap),
@@ -647,6 +658,20 @@ class SettingsRepository(
         dao.update(
             current.copy(
                 llamaCppUBatchSize = clamped,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun getLlamaCppKvUnified(): Boolean {
+        return currentSettings().llamaCppKvUnified
+    }
+
+    suspend fun updateLlamaCppKvUnified(enabled: Boolean) {
+        val current = currentSettings()
+        dao.update(
+            current.copy(
+                llamaCppKvUnified = enabled,
                 lastModified = System.currentTimeMillis()
             )
         )

@@ -177,6 +177,19 @@ class VoicevoxManager(private val context: Context) {
 
     suspend fun getAvailableStyles(): List<VoiceStyle> = withContext(Dispatchers.IO) {
         if (!modelFile.isFile) return@withContext emptyList()
+
+        // Reuse an initialized VoiceModelFile when available to avoid creating
+        // an extra native object that would later need finalization.
+        val currentModelFile = voiceModelFile
+        if (currentModelFile != null) {
+            return@withContext try {
+                readStyles(currentModelFile)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to read VOICEVOX styles from initialized model file", e)
+                emptyList()
+            }
+        }
+
         var file: BlockingVoiceModelFile? = null
         try {
             file = BlockingVoiceModelFile(modelFile.absolutePath)
