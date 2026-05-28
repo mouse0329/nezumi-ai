@@ -3,6 +3,7 @@ package com.nezumi_ai.data.inference
 import android.app.ActivityManager
 import android.content.Context
 import android.util.Log
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -100,7 +101,10 @@ object MemoryObserver {
             activityManager.getMemoryInfo(memInfo)
 
             val totalMemoryMB = memInfo.totalMem / (1024 * 1024)
-            val availableMemoryMB = memInfo.availMem / (1024 * 1024)
+            // /proc/meminfo の MemAvailable を使用してシステム設定画面と一致させる。
+            // ActivityManager.availMem はカーネルキャッシュ込みの値で過大になるため不使用。
+            val availableMemoryMB = readMemAvailableKB()?.let { it / 1024 }
+                ?: (memInfo.availMem / (1024 * 1024))  // fallback
             val usedMemoryMB = totalMemoryMB - availableMemoryMB
             val usedPercent = if (totalMemoryMB > 0) {
                 ((usedMemoryMB * 100) / totalMemoryMB).toInt()
@@ -108,7 +112,7 @@ object MemoryObserver {
                 0
             }
 
-            Log.d(TAG, "SYSTEM_MEMORY_INFO: totalMem=${memInfo.totalMem}B (${totalMemoryMB}MB) availMem=${memInfo.availMem}B (${availableMemoryMB}MB) usedMemory=${usedMemoryMB}MB usedPercent=${usedPercent}% lowMemory=${memInfo.lowMemory}")
+            Log.d(TAG, "SYSTEM_MEMORY_INFO: totalMem=${memInfo.totalMem}B (${totalMemoryMB}MB) MemAvailable=${availableMemoryMB}MB usedMemory=${usedMemoryMB}MB usedPercent=${usedPercent}% lowMemory=${memInfo.lowMemory}")
 
             SystemMemoryInfo(
                 totalMemoryMB = totalMemoryMB,
@@ -120,6 +124,28 @@ object MemoryObserver {
         } catch (e: Exception) {
             Log.w(TAG, "Failed to get system memory info", e)
             SystemMemoryInfo(0, 0, 0, 0, false)
+        }
+    }
+
+    /**
+     * /proc/meminfo の MemAvailable (KB) を読む。
+     * Androidシステム設定画面の「空きRAM」と同じ基準。
+     * @return MemAvailable の値 (KB)、読み取り失敗時は null
+     */
+    private fun readMemAvailableKB(): Long? {
+        return try {
+            File("/proc/meminfo").useLines { lines ->
+                for (line in lines) {
+                    if (line.startsWith("MemAvailable:")) {
+                        return@useLines line.split(Regex("\\s+"))
+                            .getOrNull(1)?.toLongOrNull()
+                    }
+                }
+                null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read /proc/meminfo: ${e.message}")
+            null
         }
     }
 
@@ -245,8 +271,8 @@ object MemoryObserver {
             val memInfo = ActivityManager.MemoryInfo()
             activityManager.getMemoryInfo(memInfo)
 
-            // 現在の空きメモリ（アンロード後に利用可能な量）
-            val availableGb = memInfo.availMem / BYTES_IN_GB
+            // MemAvailable を使用（システム設定画面と同じ基準）
+            val availableGb = (readMemAvailableKB()?.let { it * 1024L } ?: memInfo.availMem) / BYTES_IN_GB
 
             Log.d(
                 TAG,
@@ -279,7 +305,7 @@ object MemoryObserver {
         val memInfo = ActivityManager.MemoryInfo()
         activityManager.getMemoryInfo(memInfo)
 
-        val availableGb = memInfo.availMem / BYTES_IN_GB
+        val availableGb = (readMemAvailableKB()?.let { it * 1024L } ?: memInfo.availMem) / BYTES_IN_GB
         val totalGb = memInfo.totalMem / BYTES_IN_GB
         val modelFileSizeGb = modelFileSizeBytes / BYTES_IN_GB
 

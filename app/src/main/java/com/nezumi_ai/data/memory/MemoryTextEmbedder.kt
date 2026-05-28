@@ -1,20 +1,29 @@
 package com.nezumi_ai.data.memory
 
 import android.content.Context
+import android.text.TextUtils
 import android.util.Log
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import ai.onnxruntime.extensions.OrtxPackage
 import com.nezumi_ai.data.inference.HfAuthManager
 import java.io.File
 import java.nio.IntBuffer
 import java.nio.LongBuffer
+import java.text.Normalizer
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sqrt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 object MemoryTextEmbedder {
     private const val TAG = "MemoryTextEmbedder"
@@ -24,7 +33,7 @@ object MemoryTextEmbedder {
     private var initialized = false
     private var useOnnx = false
     private var onnxModelPath: String? = null
-    private var tokenizerInstance: Any? = null
+    private var tokenizerInstance: Tokenizer? = null
     private var ortEnvironment: OrtEnvironment? = null
     private var ortSession: OrtSession? = null
     private var inputIdsName: String = "input_ids"
@@ -33,6 +42,21 @@ object MemoryTextEmbedder {
     private val embeddingDirName = "embeddings"
     private val onnxCandidates = listOf("model_quantized_arm64.onnx", "embedding.onnx")
     private val tokenizerCandidates = listOf("tokenizer.json", "tokenizer.model")
+
+    private interface Tokenizer {
+        fun encode(text: String): TokenizationResult
+    }
+
+    private data class TokenizationResult(
+        val ids: IntArray,
+        val attentionMask: IntArray
+    )
+
+    private data class Token(
+        val text: String,
+        val score: Double,
+        val id: Int
+    )
 
     fun initialize(context: Context): Boolean {
         if (initialized) return useOnnx
@@ -70,7 +94,7 @@ object MemoryTextEmbedder {
             }
             
             ortEnvironment = OrtEnvironment.getEnvironment()
-            ortSession = ortEnvironment!!.createSession(modelFile.absolutePath, OrtSession.SessionOptions())
+            ortSession = ortEnvironment!!.createSession(modelFile.absolutePath, createSessionOptions())
             onnxModelPath = modelFile.absolutePath
             inputIdsName = findInputName(ortSession!!, "input_ids")
             attentionMaskName = findInputName(ortSession!!, "attention_mask")
@@ -98,40 +122,66 @@ object MemoryTextEmbedder {
         return fallbackEmbedding(text)
     }
 
-    private fun createTokenizer(tokenizerFile: File): Any? {
+    private fun createTokenizer(tokenizerFile: File): Tokenizer? {
         return try {
-            val tokenizerClass = Class.forName("ai.djl.huggingface.tokenizers.HuggingFaceTokenizer")
-            // DJL 0.36.0: HuggingFaceTokenizer.newInstance(Path path)
-            val newInstanceMethod = tokenizerClass.getMethod("newInstance", java.nio.file.Path::class.java)
-            val tokenizer = newInstanceMethod.invoke(null, tokenizerFile.toPath())
-            Log.d(TAG, "Successfully created tokenizer using newInstance(Path)")
-            tokenizer
+            val raw = tokenizerFile.readText(Charsets.UTF_8)
+            val root = Json.parseToJsonElement(raw).jsonObject
+            val model = root["model"]?.jsonObject ?: return null
+            val vocabArray = model["vocab"]?.jsonArray ?: return null
+
+            val tokens = vocabArray.mapIndexed { index, element ->
+                val tokenElement = element.jsonArray
+                val tokenText = tokenElement[0].jsonPrimitive.content
+                val tokenScore = tokenElement[1].jsonPrimitive.content.toDouble()
+                Token(tokenText, tokenScore, index)
+            }
+            val tokenByText = tokens.associateBy { it.text }
+            val unkId = model["unk_id"]?.jsonPrimitive?.content?.toInt()
+                ?: tokenByText["<unk>"]?.id
+                ?: 0
+            val bosId = tokenByText["<s>"]?.id
+            val eosId = tokenByText["</s>"]?.id
+
+            val preTokenizer = root["pre_tokenizer"]?.jsonObject
+            val replacement = preTokenizer?.get("replacement")?.jsonPrimitive?.content ?: "▁"
+            val prependScheme = preTokenizer?.get("prepend_scheme")?.jsonPrimitive?.content
+            val prepend = prependScheme == "always"
+
+            UnigramTokenizer(tokens, unkId, bosId, eosId, replacement, prepend)
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to create tokenizer with newInstance", e)
+            Log.w(TAG, "Failed to create tokenizer from tokenizer.json", e)
             null
         }
     }
 
-    private fun invokeTokenizerEncode(tokenizer: Any, text: String): Any {
-        val encodeMethod = tokenizer.javaClass.getMethod("encode", String::class.java)
-        return encodeMethod.invoke(tokenizer, text) as Any
+    private fun createSessionOptions(): OrtSession.SessionOptions {
+        val sessionOptions = OrtSession.SessionOptions()
+        try {
+            OrtxPackage.getPackage()
+            sessionOptions.registerCustomOpLibrary(OrtxPackage.getLibraryPath())
+            Log.d(TAG, "Registered ONNX Runtime extension library: ${OrtxPackage.getLibraryPath()}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to register ONNX Runtime extension library", e)
+        }
+        return sessionOptions
     }
 
-    private fun runOnnxEmbedding(encoding: Any): FloatArray {
-        val session = ortSession ?: return fallbackEmbedding(encoding.toString())
+    private fun invokeTokenizerEncode(tokenizer: Tokenizer, text: String): TokenizationResult {
+        return tokenizer.encode(text)
+    }
 
-        val ids = getIntArrayFromObject(encoding, "getIds")
-        if (ids.isEmpty()) return FloatArray(DIMENSION)
-        val idsLong = ids.map { it.toLong() }.toLongArray()
+    private fun runOnnxEmbedding(encoding: TokenizationResult): FloatArray {
+        val session = ortSession ?: return fallbackEmbedding(encoding.ids.joinToString())
+
+        val idsLong = encoding.ids.map { it.toLong() }.toLongArray()
         val shape = longArrayOf(1, idsLong.size.toLong())
 
         val inputs = mutableMapOf<String, OnnxTensor>()
         val idsTensor = OnnxTensor.createTensor(ortEnvironment!!, LongBuffer.wrap(idsLong), shape)
         inputs[inputIdsName] = idsTensor
 
-        val attentionMask = getIntArrayFromObject(encoding, "getAttentionMask")
-        if (attentionMask.isNotEmpty()) {
-            val maskLong = attentionMask.map { it.toLong() }.toLongArray()
+        if (encoding.attentionMask.isNotEmpty()) {
+            val maskLong = encoding.attentionMask.map { it.toLong() }.toLongArray()
             inputs[attentionMaskName ?: "attention_mask"] = OnnxTensor.createTensor(
                 ortEnvironment!!,
                 LongBuffer.wrap(maskLong),
@@ -147,7 +197,98 @@ object MemoryTextEmbedder {
             inputs.values.forEach { try { it.close() } catch (_: Exception) {} }
         }
 
-        return resultTensor ?: fallbackEmbedding(encoding.toString())
+        return resultTensor ?: fallbackEmbedding(encoding.ids.joinToString())
+    }
+
+    private class UnigramTokenizer(
+        tokens: List<Token>,
+        private val unkId: Int,
+        private val bosId: Int?,
+        private val eosId: Int?,
+        private val replacement: String,
+        private val prepend: Boolean
+    ) : Tokenizer {
+        private val tokensByFirstChar: Map<Char, List<Token>> = tokens
+            .groupBy { it.text.firstOrNull() ?: '\u0000' }
+            .mapValues { it.value.sortedByDescending { token -> token.text.length } }
+
+        override fun encode(text: String): TokenizationResult {
+            val normalized = normalizeText(text)
+            val preTokenized = applyMetaspace(normalized)
+            val ids = encodeUnigram(preTokenized)
+            val attentionMask = IntArray(ids.size) { 1 }
+            return TokenizationResult(ids, attentionMask)
+        }
+
+        private fun normalizeText(text: String): String {
+            return Normalizer.normalize(text, Normalizer.Form.NFKC).lowercase()
+        }
+
+        private fun applyMetaspace(text: String): String {
+            var result = text.replace(Regex("\\s+"), replacement)
+            if (prepend && result.isNotEmpty() && !result.startsWith(replacement)) {
+                result = replacement + result
+            }
+            return result
+        }
+
+        private fun encodeUnigram(text: String): IntArray {
+            val n = text.length
+            val best = DoubleArray(n + 1) { Double.NEGATIVE_INFINITY }
+            val prev = IntArray(n + 1) { -1 }
+            val tokenAt = IntArray(n + 1) { -1 }
+            best[0] = 0.0
+
+            for (i in 0 until n) {
+                if (best[i] == Double.NEGATIVE_INFINITY) continue
+                val candidates = tokensByFirstChar[text[i]] ?: emptyList()
+                var matched = false
+                for (token in candidates) {
+                    if (text.regionMatches(i, token.text, 0, token.text.length)) {
+                        val j = i + token.text.length
+                        val score = best[i] + token.score
+                        if (score > best[j]) {
+                            best[j] = score
+                            prev[j] = i
+                            tokenAt[j] = token.id
+                        }
+                        matched = true
+                    }
+                }
+                if (!matched) {
+                    val j = i + 1
+                    if (best[i] > best[j]) {
+                        best[j] = best[i]
+                        prev[j] = i
+                        tokenAt[j] = unkId
+                    }
+                }
+            }
+
+            if (best[n] == Double.NEGATIVE_INFINITY) {
+                return buildOutput(listOf(unkId))
+            }
+
+            val ids = mutableListOf<Int>()
+            var cursor = n
+            while (cursor > 0 && prev[cursor] >= 0) {
+                ids.add(tokenAt[cursor])
+                cursor = prev[cursor]
+            }
+            if (cursor != 0) {
+                return buildOutput(listOf(unkId))
+            }
+            ids.reverse()
+            return buildOutput(ids)
+        }
+
+        private fun buildOutput(tokenIds: List<Int>): IntArray {
+            val output = mutableListOf<Int>()
+            if (bosId != null) output.add(bosId)
+            output.addAll(tokenIds)
+            if (eosId != null) output.add(eosId)
+            return output.toIntArray()
+        }
     }
 
     private fun extractEmbedding(result: OrtSession.Result): FloatArray? {
@@ -188,21 +329,6 @@ object MemoryTextEmbedder {
         ortEnvironment = null
         tokenizerInstance = null
         useOnnx = false
-    }
-
-    private fun getIntArrayFromObject(obj: Any, methodName: String): IntArray {
-        return try {
-            val method = obj.javaClass.getMethod(methodName)
-            when (val raw = method.invoke(obj)) {
-                is IntArray -> raw
-                is LongArray -> raw.map { it.toInt() }.toIntArray()
-                is Array<*> -> raw.filterIsInstance<Number>().map { it.toInt() }.toIntArray()
-                else -> IntArray(0)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to invoke $methodName on tokenizer encoding", e)
-            IntArray(0)
-        }
     }
 
     private fun fallbackEmbedding(text: String): FloatArray {
