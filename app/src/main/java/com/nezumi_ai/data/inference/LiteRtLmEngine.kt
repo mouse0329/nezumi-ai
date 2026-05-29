@@ -427,10 +427,32 @@ class LiteRtLmEngine(
         }
     }
 
-    private fun resolveNativeLibraryDirForLitert(): String {
+    private fun resolveNativeLibraryDirForLitert(): String? {
         val nativeLibDir = appContext.applicationInfo.nativeLibraryDir
+        if (nativeLibDir.isNullOrBlank()) {
+            Log.w(TAG, "NPU native library directory is not available")
+            return null
+        }
+
+        val nativeDir = File(nativeLibDir)
+        if (!nativeDir.isDirectory) {
+            Log.w(TAG, "NPU native library directory does not exist: $nativeLibDir")
+            return null
+        }
+
+        val hasLiteRtLib = nativeDir.listFiles { file ->
+            file.isFile && (file.name.equals("libLiteRt.so", ignoreCase = true) ||
+                file.name.equals("liblitertlm_jni.so", ignoreCase = true) ||
+                file.name.equals("libLiteRtClGlAccelerator.so", ignoreCase = true))
+        }?.isNotEmpty() == true
+
+        if (!hasLiteRtLib) {
+            Log.w(TAG, "NPU native library directory does not contain expected LiteRT libs: $nativeLibDir")
+            return null
+        }
+
         Log.d(TAG, "NPU native library dir: $nativeLibDir")
-        return nativeLibDir ?: ""
+        return nativeLibDir
     }
 
     private fun getOptimalBackendType(requestedBackendType: String): String {
@@ -668,13 +690,20 @@ class LiteRtLmEngine(
         }
 
         suspend fun getBackendFallbackChain(preferred: Backend): List<Backend> {
-            val npuLibDir = resolveNativeLibraryDirForLitert()
             return when (preferred) {
-                is Backend.NPU -> listOf(
-                    Backend.NPU(nativeLibraryDir = npuLibDir),
-                    Backend.GPU(),
-                    Backend.CPU()
-                )
+                is Backend.NPU -> {
+                    val npuLibDir = resolveNativeLibraryDirForLitert()
+                    if (npuLibDir.isNullOrBlank()) {
+                        Log.w(TAG, "NPU backend requested but native library dir is unavailable. Falling back to GPU/CPU chain.")
+                        listOf(Backend.GPU(), Backend.CPU())
+                    } else {
+                        listOf(
+                            Backend.NPU(nativeLibraryDir = npuLibDir),
+                            Backend.GPU(),
+                            Backend.CPU()
+                        )
+                    }
+                }
                 is Backend.GPU -> listOf(Backend.GPU(), Backend.CPU())
                 else -> listOf(Backend.CPU())
             }
@@ -736,7 +765,15 @@ class LiteRtLmEngine(
     private fun backendForConfig(backendType: String): Backend {
         return when (backendType.uppercase()) {
             "GPU" -> Backend.GPU()
-            "NPU" -> Backend.NPU(nativeLibraryDir = resolveNativeLibraryDirForLitert())
+            "NPU" -> {
+                val npuLibDir = resolveNativeLibraryDirForLitert()
+                if (npuLibDir.isNullOrBlank()) {
+                    Log.w(TAG, "NPU backend requested but native library directory is unavailable. Using GPU instead.")
+                    Backend.GPU()
+                } else {
+                    Backend.NPU(nativeLibraryDir = npuLibDir)
+                }
+            }
             else -> Backend.CPU()
         }
     }

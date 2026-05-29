@@ -3437,7 +3437,7 @@ open class ModelSettingsFragment : Fragment() {
         )
 
         if (isMemoryLow) {
-            val sysMemInfo = MemoryObserver.getSystemMemoryInfo(requireContext())
+            val sysMemInfo = MemoryObserver.getSystemMemoryInfoSync(requireContext())
             val warning = "このモデルは現在のデバイス総メモリ (${sysMemInfo.totalMemoryMB / 1024}GB) では動作が不安定になる可能性があります。ダウンロード後の使用時にクラッシュやフリーズが発生する場合があります。"
             modelStates[model]?.memoryWarning = warning
         } else {
@@ -3486,7 +3486,7 @@ open class ModelSettingsFragment : Fragment() {
             )
 
             if (isMemoryLow) {
-                val sysMemInfo = MemoryObserver.getSystemMemoryInfo(requireContext())
+                val sysMemInfo = MemoryObserver.getSystemMemoryInfoSync(requireContext())
                 state.memoryWarning = "このモデルは現在のデバイス総メモリ (${sysMemInfo.totalMemoryMB / 1024}GB) では動作が不安定になる可能性があります。" + 
                     if (downloaded) "使用時にクラッシュやフリーズが発生する場合があります。" 
                     else "ダウンロード後の使用時にクラッシュやフリーズが発生する場合があります。"
@@ -3546,7 +3546,7 @@ open class ModelSettingsFragment : Fragment() {
                 )
 
                 if (isMemoryLow) {
-                    val sysMemInfo = MemoryObserver.getSystemMemoryInfo(requireContext())
+                    val sysMemInfo = MemoryObserver.getSystemMemoryInfoSync(requireContext())
                     state.memoryWarning = "このモデルは現在のデバイス総メモリ (${sysMemInfo.totalMemoryMB / 1024}GB) では動作が不安定になる可能性があります。使用時にクラッシュやフリーズが発生する場合があります。"
                 } else {
                     state.memoryWarning = null
