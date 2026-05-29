@@ -6,7 +6,6 @@ import android.util.Log
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
-import ai.onnxruntime.extensions.OrtxPackage
 import com.nezumi_ai.data.inference.HfAuthManager
 import java.io.File
 import java.nio.IntBuffer
@@ -155,15 +154,7 @@ object MemoryTextEmbedder {
     }
 
     private fun createSessionOptions(): OrtSession.SessionOptions {
-        val sessionOptions = OrtSession.SessionOptions()
-        try {
-            OrtxPackage.getPackage()
-            sessionOptions.registerCustomOpLibrary(OrtxPackage.getLibraryPath())
-            Log.d(TAG, "Registered ONNX Runtime extension library: ${OrtxPackage.getLibraryPath()}")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to register ONNX Runtime extension library", e)
-        }
-        return sessionOptions
+        return OrtSession.SessionOptions()
     }
 
     private fun invokeTokenizerEncode(tokenizer: Tokenizer, text: String): TokenizationResult {

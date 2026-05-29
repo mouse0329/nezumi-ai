@@ -169,7 +169,6 @@ dependencies {
     implementation("com.google.android.gms:play-services-tflite-java:16.4.0")
     implementation("com.google.android.gms:play-services-tflite-gpu:16.4.0")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")
-    implementation("com.microsoft.onnxruntime:onnxruntime-extensions-android:0.13.0")
 
     implementation("androidx.biometric:biometric:1.1.0")
 
