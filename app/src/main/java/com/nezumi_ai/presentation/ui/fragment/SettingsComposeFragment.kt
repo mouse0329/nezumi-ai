@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
@@ -32,6 +33,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.fragment.app.Fragment
+import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.nezumi_ai.R
@@ -82,6 +84,10 @@ class SettingsComposeFragment : Fragment() {
     private var sdCfg by mutableStateOf(7.0f)
     private var braveSearchApiKeyInput by mutableStateOf("")
     private var selectedSection by mutableStateOf(0)
+    private var debugTextAInput by mutableStateOf("")
+    private var debugTextBInput by mutableStateOf("")
+    private var debugTextSimilarityResult by mutableStateOf<String?>(null)
+    private var debugTextErrorMessage by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -170,7 +176,7 @@ class SettingsComposeFragment : Fragment() {
             }
 
             item {
-                val sectionTitles = listOf("全般", "推論", "画像", "メモリ", "チャット")
+                val sectionTitles = listOf("全般", "推論", "画像", "メモリ", "チャット", "デバッグ")
                 ScrollableTabRow(
                     selectedTabIndex = selectedSection,
                     edgePadding = 0.dp,
@@ -214,6 +220,9 @@ class SettingsComposeFragment : Fragment() {
                     }
                     4 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         ChatHistoryCard()
+                    }
+                    5 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        DebugSettingsCard()
                     }
                     else -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         GeneralSettingsCard()
@@ -1174,6 +1183,137 @@ class SettingsComposeFragment : Fragment() {
                 }
             }
         )
+    }
+
+    @Composable
+    private fun DebugSettingsCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(text = "デバッグ", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Text(
+                    text = "モデル埋め込みによる類似度",
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    text = "単語やフレーズを入力して、埋め込みモデルを使った類似度を計算します。",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val localContext = LocalContext.current
+                val memoryInfoFlow = remember(localContext) {
+                    MemoryObserver.observeSystemMemoryInfo(localContext)
+                }
+                val systemMemoryInfo by memoryInfoFlow.collectAsState(
+                    initial = MemoryObserver.SystemMemoryInfo(0, 0, 0, 0, 0, false)
+                )
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(text = "システムメモリ状況 (1秒更新)", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = "使用率: ${systemMemoryInfo.usedPercent}% / 空き率: ${systemMemoryInfo.availablePercent}%",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = "合計: ${systemMemoryInfo.totalMemoryMB}MB / 使用: ${systemMemoryInfo.usedMemoryMB}MB / 空き: ${systemMemoryInfo.availableMemoryMB}MB",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorResource(id = R.color.text_secondary)
+                        )
+                        Text(
+                            text = if (systemMemoryInfo.lowMemoryFlag) "低メモリ状態です。" else "メモリ状態は安定しています。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (systemMemoryInfo.lowMemoryFlag) MaterialTheme.colorScheme.error else colorResource(id = R.color.text_secondary)
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = debugTextAInput,
+                    onValueChange = { debugTextAInput = it },
+                    label = { Text("テキストA") },
+                    placeholder = { Text("犬") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 64.dp),
+                    maxLines = 4
+                )
+                OutlinedTextField(
+                    value = debugTextBInput,
+                    onValueChange = { debugTextBInput = it },
+                    label = { Text("テキストB") },
+                    placeholder = { Text("猫") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 64.dp),
+                    maxLines = 4
+                )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        debugTextErrorMessage = null
+                        debugTextSimilarityResult = null
+                        if (debugTextAInput.isBlank()) {
+                            debugTextErrorMessage = "テキストAを入力してください。"
+                            return@Button
+                        }
+                        if (debugTextBInput.isBlank()) {
+                            debugTextErrorMessage = "テキストBを入力してください。"
+                            return@Button
+                        }
+                        MemoryTextEmbedder.initialize(localContext)
+                        val embeddingA = MemoryTextEmbedder.embed(debugTextAInput)
+                        val embeddingB = MemoryTextEmbedder.embed(debugTextBInput)
+                        if (embeddingA.isEmpty() || embeddingB.isEmpty()) {
+                            debugTextErrorMessage = "埋め込みの計算に失敗しました。"
+                            return@Button
+                        }
+                        if (embeddingA.size != embeddingB.size) {
+                            debugTextErrorMessage = "埋め込み次元が一致しません。"
+                            return@Button
+                        }
+                        val normA = MemoryRepository.l2norm(embeddingA)
+                        val normB = MemoryRepository.l2norm(embeddingB)
+                        if (normA == 0f || normB == 0f) {
+                            debugTextErrorMessage = "埋め込みがゼロベクトルになりました。"
+                            return@Button
+                        }
+                        val similarity = MemoryRepository.cosineSimilarity(embeddingA, normA, embeddingB, normB)
+                        debugTextSimilarityResult = String.format("モデル埋め込み類似度: %.6f", similarity)
+                    }) {
+                        Text("モデルで計算する")
+                    }
+                    Button(onClick = {
+                        debugTextAInput = ""
+                        debugTextBInput = ""
+                        debugTextSimilarityResult = null
+                        debugTextErrorMessage = null
+                    }) {
+                        Text("クリア")
+                    }
+                }
+
+                debugTextErrorMessage?.let {
+                    Text(text = it, color = MaterialTheme.colorScheme.error)
+                }
+                debugTextSimilarityResult?.let {
+                    Text(text = it, color = colorResource(id = R.color.primary))
+                }
+            }
+        }
     }
 
     @Composable

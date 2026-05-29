@@ -876,7 +876,7 @@ class SetupWizardFragment : Fragment() {
                 if (MemoryObserver.isMemoryLowForFileSize(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent, useAvailable = false)) {
                     isCompleting = true
                     chatWarningModelName = modelToCheck
-                    chatWarningSystemMemInfo = MemoryObserver.getSystemMemoryInfo(requireContext())
+                    chatWarningSystemMemInfo = MemoryObserver.getSystemMemoryInfoSync(requireContext())
                     pendingSkipModelSelection = skipModelSelection
                     showChatMemoryWarning = true
                     return
