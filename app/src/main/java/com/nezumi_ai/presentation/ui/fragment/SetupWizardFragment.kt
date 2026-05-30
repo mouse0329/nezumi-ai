@@ -549,7 +549,7 @@ class SetupWizardFragment : Fragment() {
             val state = modelStates[option.model] ?: DownloadUiState()
             val selected = selectedModel == option.settingValue
             val sizeBytes = getModelSizeBytes(option.model)
-            val isMemoryLow = state.isDownloaded && MemoryObserver.isMemoryLowForFileSize(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent, useAvailable = false)
+            val isMemoryLow = MemoryObserver.isMemoryLowForFileSize(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent, useAvailable = false)
             
             val resourceCheck = if (!state.isDownloaded) {
                 ModelFileManager.checkDownloadResources(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent)
@@ -925,7 +925,7 @@ class SetupWizardFragment : Fragment() {
     private fun getModelSizeBytes(model: ModelFileManager.LocalModel): Long {
         return when (model) {
             ModelFileManager.LocalModel.GEMMA4_2B -> 2_400_000_000L  // 約 2.4GB
-            ModelFileManager.LocalModel.GEMMA4_4B -> 4_800_000_000L  // 約 4.8GB
+            ModelFileManager.LocalModel.GEMMA4_4B -> 8_000_000_000L  // 約 8GB (12GB端末推奨)
             ModelFileManager.LocalModel.GEMMA3N_2B -> 2_000_000_000L  // 約 2GB
             ModelFileManager.LocalModel.GEMMA3N_4B -> 4_000_000_000L  // 約 4GB
         }

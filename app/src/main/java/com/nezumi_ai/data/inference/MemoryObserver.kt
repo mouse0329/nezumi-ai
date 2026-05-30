@@ -41,8 +41,9 @@ object MemoryObserver {
     )
 
     // #11 fix: thresholdPercent の意味を再定義。
-    //   モデルサイズ × thresholdPercent% の空きメモリが必要。
-    //   例: 60% → 3GB モデルなら 1.8GB の空きが必要。
+    //   モデルサイズ × thresholdPercent% のメモリが必要。
+    //   例: 60% → 3GB モデルなら 1.8GB のメモリが必要。
+    //   ダウンロード時は総メモリ、ロード時は空きメモリで判定。
     const val DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT = 60
     const val MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT = 0
     const val MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT = 300
@@ -341,11 +342,11 @@ object MemoryObserver {
     /**
      * モデルファイルサイズから必要なメモリを推定してメモリ不足を検知。
      * #11 fix: androidFreeRam ベースの空きメモリで判定。
-     *   thresholdPercent はモデルサイズに対して必要な空きメモリの割合。
-     *   例: 60% → 3GB モデルなら 1.8GB の空きが必要。
+     *   thresholdPercent はモデルサイズに対して必要なメモリの割合。
+     *   例: 60% → 3GB モデルなら 1.8GB のメモリが必要。
      * @param modelFileSizeBytes モデルファイルのサイズ（バイト）
-     * @param thresholdPercent モデルサイズの何%の空きメモリが必要か（デフォルト60）
-     * @param useAvailable true: 空きメモリ基準 / false: 総メモリ基準
+     * @param thresholdPercent モデルサイズの何%のメモリが必要か（デフォルト60）
+     * @param useAvailable true: 空きメモリ基準（ロード時） / false: 総メモリ基準（ダウンロード時）
      * @return true: メモリが不足している / false: メモリが十分
      */
     fun isMemoryLowForFileSize(
@@ -357,12 +358,13 @@ object MemoryObserver {
         if (thresholdPercent <= 0) return false
 
         val modelFileSizeGb = modelFileSizeBytes / BYTES_IN_GB
+        val requiredGb = modelFileSizeGb * (thresholdPercent / 100f)
 
         val isLow = if (useAvailable) {
+            // ロード時: 空きメモリが必要量以上あるかチェック
             val memFields = readMemInfoFields()
             val androidFreeKB = getAndroidFreeRamKB(memFields)
             val availableGb = androidFreeKB / 1024f / 1024f  // KB → GB
-            val requiredGb = modelFileSizeGb * (thresholdPercent / 100f)
 
             Log.d(
                 TAG,
@@ -371,19 +373,19 @@ object MemoryObserver {
             )
             availableGb < requiredGb
         } else {
+            // ダウンロード時: 総メモリが必要量以上あるかチェック
             val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
                 ?: return false
             val memInfo = ActivityManager.MemoryInfo()
             activityManager.getMemoryInfo(memInfo)
             val totalGb = memInfo.totalMem / BYTES_IN_GB
-            val allowedGb = totalGb * (thresholdPercent / 100f)
 
             Log.d(
                 TAG,
                 "isMemoryLowForFileSize: modelFileSize=${modelFileSizeGb}GB threshold=${thresholdPercent}% " +
-                    "allowed=${allowedGb}GB totalGb=${totalGb}GB isLow=${modelFileSizeGb > allowedGb}"
+                    "required=${requiredGb}GB totalGb=${totalGb}GB isLow=${totalGb < requiredGb}"
             )
-            modelFileSizeGb > allowedGb
+            totalGb < requiredGb
         }
 
         return isLow

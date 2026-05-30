@@ -394,6 +394,8 @@ open class ModelSettingsFragment : Fragment() {
                         if (state != null) {
                             val modelKey = "builtin_${model.name}"
                             val isExpanded = expandedModelKey == modelKey
+                            val sizeBytes = getModelSizeBytes(model)
+                            val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent)
                             ModelAccordionItem(
                                 title = state.title,
                                 status = state.status,
@@ -409,7 +411,9 @@ open class ModelSettingsFragment : Fragment() {
                                 isDownloading = state.isDownloading,
                                 isDownloaded = state.isDownloaded,
                                 progress = state.progress,
-                                progressText = state.progressText
+                                progressText = state.progressText,
+                                isMemoryLow = state.memoryWarning != null,
+                                isStorageLow = resourceCheck.isStorageLow
                             )
                         }
                     }
@@ -2352,14 +2356,14 @@ open class ModelSettingsFragment : Fragment() {
                                     Text(
                                         text = "⚠️ メモリ・ストレージ不足",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = colorResource(id = R.color.nezumi_primary_container),
+                                        color = MaterialTheme.colorScheme.error,
                                         fontWeight = FontWeight.Bold
                                     )
                                 } else if (isMemoryLow) {
                                     Text(
                                         text = "⚠️ メモリ不足",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = colorResource(id = R.color.nezumi_primary_container),
+                                        color = MaterialTheme.colorScheme.error,
                                         fontWeight = FontWeight.Bold
                                     )
                                 } else if (isStorageLow) {
@@ -3642,9 +3646,9 @@ open class ModelSettingsFragment : Fragment() {
     private fun getModelSizeBytes(model: ModelFileManager.LocalModel): Long {
         return when (model) {
             ModelFileManager.LocalModel.GEMMA4_2B -> 2_400_000_000L  // 約 2.4GB
-            ModelFileManager.LocalModel.GEMMA4_4B -> 4_800_000_000L  // 約 4.8GB
+            ModelFileManager.LocalModel.GEMMA4_4B -> 8_000_000_000L  // 約 8GB (12GB端末推奨)
             ModelFileManager.LocalModel.GEMMA3N_2B -> 2_000_000_000L  // 約 2GB
-            ModelFileManager.LocalModel.GEMMA3N_4B -> 4_000_000_000L  // 約 4GB
+            ModelFileManager.LocalModel.GEMMA3N_4B -> 8_000_000_000L  // 約 4GB
         }
     }
 
