@@ -5,14 +5,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 
@@ -27,9 +25,6 @@ import java.util.concurrent.atomic.AtomicReference
 class InferenceJobController {
     companion object {
         private const val TAG = "InferenceJobController"
-        
-        // デフォルトタイムアウト（5分）
-        private const val DEFAULT_INFERENCE_TIMEOUT_MS = 5 * 60 * 1000L
     }
     
     /**
@@ -40,8 +35,7 @@ class InferenceJobController {
         RUNNING,     // 実行中
         CANCELLING,  // キャンセル中
         COMPLETED,   // 完了
-        FAILED,      // 失敗
-        TIMEOUT      // タイムアウト
+        FAILED       // 失敗
     }
     
     /**
@@ -76,15 +70,13 @@ class InferenceJobController {
     private fun generateTaskId(): Long = taskIdCounter.accumulateAndGet(1) { a, _ -> a + 1 }
     
     /**
-     * 推論タスクを開始
+     * 推論タスクを開始（タイムアウトなし、完了まで待機）
      * @param sessionId セッション ID
-     * @param timeoutMs タイムアウト時間（ミリ秒）
      * @param block 実行する処理
      * @return タスク ID
      */
     suspend fun <T> launchInference(
         sessionId: Long,
-        timeoutMs: Long = DEFAULT_INFERENCE_TIMEOUT_MS,
         block: suspend () -> T
     ): Result<Pair<Long, T>> {
         // ★ task 登録だけを mutex 内で実行
@@ -98,7 +90,7 @@ class InferenceJobController {
             
             tasks[taskId] = task
             task.state = InferenceState.RUNNING
-            Log.d(TAG, "Inference task created: taskId=$taskId sessionId=$sessionId timeout=${timeoutMs}ms")
+            Log.d(TAG, "Inference task created: taskId=$taskId sessionId=$sessionId")
             
             taskId
         }
@@ -107,24 +99,13 @@ class InferenceJobController {
         return try {
             val task = tasks[taskId] ?: return Result.failure(Exception("Task not found"))
             
-            // タイムアウト付きで実行
-            val result = withTimeoutOrNull(timeoutMs) {
-                block()
-            }
+            // タイムアウトなしで実行（完了まで待機）
+            val result = block()
             
             task.elapsedMs = System.currentTimeMillis() - task.startTimeMs
-            
-            if (result != null) {
-                task.state = InferenceState.COMPLETED
-                Log.d(TAG, "Inference task completed: taskId=$taskId elapsed=${task.elapsedMs}ms")
-                Result.success(Pair(taskId, result))
-            } else {
-                task.state = InferenceState.TIMEOUT
-                Log.w(TAG, "Inference task timeout: taskId=$taskId timeout=${timeoutMs}ms")
-                Result.failure(
-                    Exception("Inference timeout after ${timeoutMs}ms")
-                )
-            }
+            task.state = InferenceState.COMPLETED
+            Log.d(TAG, "Inference task completed: taskId=$taskId elapsed=${task.elapsedMs}ms")
+            Result.success(Pair(taskId, result))
         } catch (e: CancellationException) {
             val task = tasks[taskId]
             task?.let {

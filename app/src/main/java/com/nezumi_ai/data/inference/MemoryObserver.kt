@@ -21,6 +21,12 @@ private const val BYTES_IN_GB = 1024f * 1024 * 1024
  * - 85%+: 危険（赤）、推論中断推奨
  *
  * また、モデルロード前に必要なデバイスメモリをチェック（Gallery アプローチ）
+ *
+ * #11 fix: androidFreeRam ベースの空きメモリ取得に変更。
+ *   /proc/meminfo の MemFree + (Cached - Shmem) + SReclaimable - Unevictable を合算。
+ *   MemAvailable のみでは約2GBの乖離があったが、この方式で Android 設定の「空きRAM」に近い値を取得できる。
+ *   isMemoryLowForFileSize の thresholdPercent の意味を「モデルサイズに対して必要な空きメモリの割合」に再定義し、
+ *   デフォルトを 60% に変更（3GB モデル × 0.6 = 1.8GB の空きが必要）。
  */
 object MemoryObserver {
     private const val TAG = "MemoryObserver"
@@ -33,18 +39,21 @@ object MemoryObserver {
         "GEMMA3-4B" to 12.0f,   // Gemma-3n-E4B-it: 最小 12GB
         "GEMMA3-1B" to 6.0f,    // Gemma3-1B-IT: 最小 6GB
     )
-    
-    const val DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT = 45
+
+    // #11 fix: thresholdPercent の意味を再定義。
+    //   モデルサイズ × thresholdPercent% の空きメモリが必要。
+    //   例: 60% → 3GB モデルなら 1.8GB の空きが必要。
+    const val DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT = 60
     const val MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT = 0
-    const val MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT = 100
-    
+    const val MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT = 300
+
     // メモリ段階
     enum class MemoryLevel {
         NORMAL,      // 通常状態
         WARNING,     // 用量が高く GC を促進するべき状態
         SEVERE       // 低メモリ状態、または利用可能メモリが極めて少ない状態
     }
-    
+
     data class MemoryStatus(
         val level: MemoryLevel,
         val usedPercent: Int,
@@ -59,12 +68,13 @@ object MemoryObserver {
         val usedMemoryMB: Long,
         val usedPercent: Int,
         val availablePercent: Int,
-        val lowMemoryFlag: Boolean
+        val lowMemoryFlag: Boolean,
+        val source: String = ""
     )
-    
+
     /**
      * Get current memory status.
-     * #6 fix: use MemAvailable from /proc/meminfo when available, falling back to ActivityManager.MemoryInfo.availMem.
+     * #11 fix: androidFreeRam ベースの空きメモリを使用。
      * LLM models load into native memory; JVM heap usage does not reflect actual memory pressure.
      * Uses absolute memory thresholds instead of percentages for more reliable detection.
      */
@@ -88,9 +98,10 @@ object MemoryObserver {
             )
         }
     }
-    
+
     /**
-     * スマホ本体のシステムメモリ情報を取得
+     * スマホ本体のシステムメモリ情報を取得。
+     * #11 fix: androidFreeRam（/proc/meminfo 複数フィールド合算）を優先使用。
      */
     private fun getSystemMemoryInfoBlocking(context: Context): SystemMemoryInfo {
         return try {
@@ -103,7 +114,22 @@ object MemoryObserver {
             activityManager.getMemoryInfo(memInfo)
 
             val totalMemoryMB = memInfo.totalMem / (1024 * 1024)
-            val availableMemoryMB = getAvailableMemoryMB(memInfo)
+
+            val memFields = readMemInfoFields()
+            val androidFreeKB = getAndroidFreeRamKB(memFields)
+            val memAvailableKB = memFields["MemAvailable"]
+
+            val availableMemoryMB = when {
+                androidFreeKB > 0 -> androidFreeKB / 1024
+                memAvailableKB != null -> memAvailableKB / 1024
+                else -> memInfo.availMem / (1024 * 1024)
+            }
+            val source = when {
+                androidFreeKB > 0 -> "androidFreeRam"
+                memAvailableKB != null -> "MemAvailable"
+                else -> "availMem"
+            }
+
             val usedMemoryMB = totalMemoryMB - availableMemoryMB
             val usedPercent = if (totalMemoryMB > 0) {
                 ((usedMemoryMB * 100) / totalMemoryMB).toInt()
@@ -115,7 +141,7 @@ object MemoryObserver {
             Log.d(
                 TAG,
                 "SYSTEM_MEMORY_INFO: totalMem=${memInfo.totalMem}B (${totalMemoryMB}MB) " +
-                    "MemAvailable=${availableMemoryMB}MB usedMemory=${usedMemoryMB}MB " +
+                    "source=${source} availableMemory=${availableMemoryMB}MB usedMemory=${usedMemoryMB}MB " +
                     "usedPercent=${usedPercent}% availablePercent=${availablePercent}% lowMemory=${memInfo.lowMemory}"
             )
 
@@ -125,7 +151,8 @@ object MemoryObserver {
                 usedMemoryMB = usedMemoryMB,
                 usedPercent = usedPercent,
                 availablePercent = availablePercent,
-                lowMemoryFlag = memInfo.lowMemory
+                lowMemoryFlag = memInfo.lowMemory,
+                source = source
             )
         } catch (e: Exception) {
             Log.w(TAG, "Failed to get system memory info", e)
@@ -147,9 +174,10 @@ object MemoryObserver {
     }
 
     /**
-     * 1秒ごとにシステムメモリ情報をサンプリングする Flow を返す。
+     * 指定間隔でシステムメモリ情報をサンプリングする Flow を返す。
+     * デフォルト5秒（androidFreeRam の計算コストを考慮）。
      */
-    fun observeSystemMemoryInfo(context: Context, sampleIntervalMs: Long = 1000L): Flow<SystemMemoryInfo> {
+    fun observeSystemMemoryInfo(context: Context, sampleIntervalMs: Long = 5000L): Flow<SystemMemoryInfo> {
         return flow {
             while (true) {
                 emit(getSystemMemoryInfo(context))
@@ -159,46 +187,49 @@ object MemoryObserver {
     }
 
     /**
-     * /proc/meminfo の MemAvailable (KB) を読む。
-     * Androidシステム設定画面の「空きRAM」と同じ基準。
-     * @return MemAvailable の値 (KB)、読み取り失敗時は null
+     * /proc/meminfo の各フィールドを合算して Android の「空きRAM」を近似的に算出する。
+     * #11 fix: MemAvailable のみでは Android 設定と約2GB乖離があったため、複数フィールドを合算。
+     * 空きRAM ≈ MemFree + (Cached - Shmem) + SReclaimable - Unevictable
+     *   - Cached: ページキャッシュ（必要に応じて解放可能）
+     *   - Shmem: 共有メモリ（Cached に含まれるが解放不可のため除外）
+     *   - SReclaimable: 回収可能なカーネルスラブ
+     *   - Unevictable: ロックされた解放不可ページ
      */
-    private fun readMemAvailableKB(): Long? {
-        return try {
-            File("/proc/meminfo").useLines { lines ->
-                for (line in lines) {
-                    val trimmed = line.trimStart()
-                    if (trimmed.startsWith("MemAvailable:")) {
-                        return@useLines trimmed.split(Regex("\\s+"))
-                            .getOrNull(1)?.toLongOrNull()
-                    }
-                }
-                null
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to read /proc/meminfo: ${e.message}")
-            null
-        }
-    }
+    private fun getAndroidFreeRamKB(memFields: Map<String, Long>): Long {
+        val memFree = memFields["MemFree"] ?: 0L
+        val cached = memFields["Cached"] ?: 0L
+        val sReclaimable = memFields["SReclaimable"] ?: 0L
+        val shmem = memFields["Shmem"] ?: 0L
+        val unevictable = memFields["Unevictable"] ?: 0L
 
-    private fun getMemAvailableBytes(): Long? {
-        return readMemAvailableKB()?.takeIf { it > 0 }?.let { it * 1024L }
-    }
-
-    private fun getAvailableBytes(memInfo: ActivityManager.MemoryInfo): Long {
-        return getMemAvailableBytes() ?: memInfo.availMem
-    }
-
-    private fun getAvailableMemoryMB(memInfo: ActivityManager.MemoryInfo): Long {
-        return getAvailableBytes(memInfo) / (1024 * 1024)
-    }
-
-    private fun getAvailableMemoryGB(memInfo: ActivityManager.MemoryInfo): Float {
-        return getAvailableBytes(memInfo) / BYTES_IN_GB
+        val freeableCache = (cached - shmem).coerceAtLeast(0L)
+        return memFree + freeableCache + sReclaimable - unevictable
     }
 
     /**
-     * メモリ不足に対する段階的な対応を推奨
+     * /proc/meminfo の全フィールドを Map として読み取る。
+     */
+    private fun readMemInfoFields(): Map<String, Long> {
+        val result = mutableMapOf<String, Long>()
+        try {
+            File("/proc/meminfo").useLines { lines ->
+                for (line in lines) {
+                    val parts = line.trim().split(Regex("\\s+"))
+                    if (parts.size >= 2) {
+                        val key = parts[0].trimEnd(':')
+                        val value = parts[1].toLongOrNull() ?: continue
+                        result[key] = value
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read /proc/meminfo fields", e)
+        }
+        return result
+    }
+
+    /**
+     * メモリ不足に対する段階的な対応を推奨。
      * @return true: 推論続行可能 / false: 推論中止推奨
      */
     suspend fun requestMemoryCorrectionIfNeeded(context: Context): Boolean {
@@ -222,9 +253,9 @@ object MemoryObserver {
         Log.d(TAG, "Memory OK: avail=${sysInfo.availableMemoryMB}MB lowMemory=${sysInfo.lowMemoryFlag}")
         return true
     }
-    
+
     /**
-     * 異常なメモリ急増を検出（前回比との差分チェック）
+     * 異常なメモリ急増を検出（前回比との差分チェック）。
      * @return true: メモリ足りている / false: 異常検出またはメモリ危機
      */
     // #35 fix: use AtomicLong to prevent concurrent access from multiple coroutines
@@ -251,7 +282,7 @@ object MemoryObserver {
 
         return status.level != MemoryLevel.SEVERE
     }
-    
+
     /**
      * 強制ガベージコレクション
      */
@@ -264,7 +295,7 @@ object MemoryObserver {
             Log.w(TAG, "Failed to trigger GC", e)
         }
     }
-    
+
     /**
      * デバイスのネイティブメモリ情報（デバッグ用）
      */
@@ -289,68 +320,71 @@ object MemoryObserver {
 
     /**
      * アンロード後に確保できる空きメモリがモデルの最小要件を満たすか判定。
-     * 現在の空きメモリ（MemAvailable）を基準にするため、アンロード直後に呼ぶこと。
+     * MODEL_MIN_MEMORY に載っていないモデル（GGUF 等）は isMemoryLowForFileSize で判定すること。
      * @return true: メモリが不足している / false: メモリが十分
      */
     fun isMemoryLow(context: Context, modelName: String): Boolean {
-        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
         val minRequiredGb = MODEL_MIN_MEMORY[modelName.uppercase()]
-
-        return if (activityManager != null && minRequiredGb != null) {
-            val memInfo = ActivityManager.MemoryInfo()
-            activityManager.getMemoryInfo(memInfo)
-
-            // MemAvailable を使用（システム設定画面と同じ基準）
-            val availableGb = getAvailableMemoryGB(memInfo)
-
-            Log.d(
-                TAG,
-                "isMemoryLow check: model=$modelName availableGb=$availableGb minRequired=$minRequiredGb"
-            )
-
-            availableGb < minRequiredGb
-        } else {
-            Log.w(TAG, "isMemoryLow: Unable to determine - activityManager=$activityManager minMemory=$minRequiredGb")
-            false  // 判定不可の場合は進める
-        }
-    }
-
-    /**
-     * モデルファイルサイズから必要なメモリを推定してメモリ不足を検知
-     * デフォルトでは利用可能な空きメモリを基準に判定します。
-     * @param modelFileSizeBytes モデルファイルのサイズ（バイト）
-     * @param thresholdPercent モデルサイズが利用可能な空きメモリの何%を超えると警告するか
-     * @param useAvailable true: 空きメモリを基準に判定 / false: 総メモリを基準に判定
-     * @return true: メモリが不足している / false: メモリが十分
-     */
-    fun isMemoryLowForFileSize(context: Context, modelFileSizeBytes: Long, thresholdPercent: Int = DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT, useAvailable: Boolean = true): Boolean {
-        if (thresholdPercent <= 0) {
+        if (minRequiredGb == null) {
+            Log.w(TAG, "isMemoryLow: unknown model=$modelName, skipping check")
             return false
         }
 
-        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-            ?: return false
+        val memFields = readMemInfoFields()
+        val androidFreeKB = getAndroidFreeRamKB(memFields)
+        val availableGb = androidFreeKB / 1024f / 1024f  // KB → GB
 
-        val memInfo = ActivityManager.MemoryInfo()
-        activityManager.getMemoryInfo(memInfo)
+        Log.d(TAG, "isMemoryLow: model=$modelName availableGb=$availableGb minRequired=$minRequiredGb")
+        return availableGb < minRequiredGb
+    }
 
-        val availableGb = getAvailableMemoryGB(memInfo)
-        val totalGb = memInfo.totalMem / BYTES_IN_GB
+    /**
+     * モデルファイルサイズから必要なメモリを推定してメモリ不足を検知。
+     * #11 fix: androidFreeRam ベースの空きメモリで判定。
+     *   thresholdPercent はモデルサイズに対して必要な空きメモリの割合。
+     *   例: 60% → 3GB モデルなら 1.8GB の空きが必要。
+     * @param modelFileSizeBytes モデルファイルのサイズ（バイト）
+     * @param thresholdPercent モデルサイズの何%の空きメモリが必要か（デフォルト60）
+     * @param useAvailable true: 空きメモリ基準 / false: 総メモリ基準
+     * @return true: メモリが不足している / false: メモリが十分
+     */
+    fun isMemoryLowForFileSize(
+        context: Context,
+        modelFileSizeBytes: Long,
+        thresholdPercent: Int = DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT,
+        useAvailable: Boolean = true
+    ): Boolean {
+        if (thresholdPercent <= 0) return false
+
         val modelFileSizeGb = modelFileSizeBytes / BYTES_IN_GB
 
         val isLow = if (useAvailable) {
-            val requiredAvailableGb = modelFileSizeGb * (thresholdPercent / 100f)
-            requiredAvailableGb > availableGb
-        } else {
-            val allowedModelSizeGb = totalGb * (thresholdPercent / 100f)
-            modelFileSizeGb > allowedModelSizeGb
-        }
+            val memFields = readMemInfoFields()
+            val androidFreeKB = getAndroidFreeRamKB(memFields)
+            val availableGb = androidFreeKB / 1024f / 1024f  // KB → GB
+            val requiredGb = modelFileSizeGb * (thresholdPercent / 100f)
 
-        Log.d(
-            TAG,
-            "isMemoryLowForFileSize: modelFileSize=${modelFileSizeGb}GB threshold=${thresholdPercent}% " +
-                "availableMem=${availableGb}GB totalMem=${totalGb}GB useAvailable=$useAvailable isLow=$isLow"
-        )
+            Log.d(
+                TAG,
+                "isMemoryLowForFileSize: modelFileSize=${modelFileSizeGb}GB threshold=${thresholdPercent}% " +
+                    "required=${requiredGb}GB availableGb=${availableGb}GB isLow=${availableGb < requiredGb}"
+            )
+            availableGb < requiredGb
+        } else {
+            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+                ?: return false
+            val memInfo = ActivityManager.MemoryInfo()
+            activityManager.getMemoryInfo(memInfo)
+            val totalGb = memInfo.totalMem / BYTES_IN_GB
+            val allowedGb = totalGb * (thresholdPercent / 100f)
+
+            Log.d(
+                TAG,
+                "isMemoryLowForFileSize: modelFileSize=${modelFileSizeGb}GB threshold=${thresholdPercent}% " +
+                    "allowed=${allowedGb}GB totalGb=${totalGb}GB isLow=${modelFileSizeGb > allowedGb}"
+            )
+            modelFileSizeGb > allowedGb
+        }
 
         return isLow
     }
