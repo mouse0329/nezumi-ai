@@ -24,7 +24,16 @@ data class InferenceConfig(
     val llamaCppRopeFreqBase: Float = 500000.0f,  // 標準値
     val llamaCppRopeFreqScale: Float = 1.0f,  // 標準値
     /** モデルパスに紐付いたカスタムストップトークン（カンマ区切り）。空の場合はデフォルトのみ使用 */
-    val customStopTokens: List<String> = emptyList()
+    val customStopTokens: List<String> = emptyList(),
+    // Performance optimization settings
+    val mtpEnabled: Boolean = false,  // Multi-Token Prediction (投機的デコーディング)
+    val mtpDraftTokens: Int = 5,  // MTP draft token count (1-16)
+    val flashAttentionEnabled: Boolean = true,  // Flash Attention (自動検出)
+    val dynamicBatchSizeEnabled: Boolean = true,  // 動的バッチサイズ調整
+    val promptBatchSize: Int = 512,  // プロンプト処理用バッチサイズ
+    val generationBatchSize: Int = 128,  // トークン生成用バッチサイズ
+    val kvCacheOptimizationEnabled: Boolean = true,  // KVキャッシュ最適化
+    val contextShiftEnabled: Boolean = true  // コンテキストシフト有効化
 ) {
     data class GgufConfig(
         val nThreads: Int = 4,

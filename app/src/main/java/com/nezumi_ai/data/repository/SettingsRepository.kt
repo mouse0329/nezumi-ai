@@ -140,7 +140,15 @@ class SettingsRepository(
             llamaCppNKeep = current.llamaCppNKeep,
             llamaCppRopeFreqBase = current.llamaCppRopeFreqBase,
             llamaCppRopeFreqScale = current.llamaCppRopeFreqScale,
-            requireMultimodal = requireMultimodal
+            requireMultimodal = requireMultimodal,
+            mtpEnabled = current.mtpEnabled,
+            mtpDraftTokens = current.mtpDraftTokens,
+            flashAttentionEnabled = current.flashAttentionEnabled,
+            dynamicBatchSizeEnabled = current.dynamicBatchSizeEnabled,
+            promptBatchSize = current.promptBatchSize,
+            generationBatchSize = current.generationBatchSize,
+            kvCacheOptimizationEnabled = current.kvCacheOptimizationEnabled,
+            contextShiftEnabled = current.contextShiftEnabled
         ).normalized()
     }
 
