@@ -35,9 +35,10 @@ object ModelFileManager {
 
     /**
      * モデルダウンロード前のリソースチェック（メモリ・ストレージ）
+     * ダウンロード時は総メモリでチェック（useAvailable = false）
      */
     fun checkDownloadResources(context: Context, modelSizeBytes: Long, thresholdPercent: Int = com.nezumi_ai.data.inference.MemoryObserver.DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT): ResourceCheckResult {
-        val isMemoryLow = com.nezumi_ai.data.inference.MemoryObserver.isMemoryLowForFileSize(context, modelSizeBytes, thresholdPercent, useAvailable = true)
+        val isMemoryLow = com.nezumi_ai.data.inference.MemoryObserver.isMemoryLowForFileSize(context, modelSizeBytes, thresholdPercent, useAvailable = false)
         val systemMemInfo = if (isMemoryLow) {
             com.nezumi_ai.data.inference.MemoryObserver.getSystemMemoryInfoSync(context)
         } else null

@@ -23,6 +23,12 @@ namespace
 
         JavaVM *jvm = nullptr;
         jobject token_callback = nullptr; // GlobalRef
+        jmethodID on_token_mid = nullptr; // キャッシュ済みメソッドID
+
+        // 推論スレッド固定Attach用
+        JNIEnv *inference_env = nullptr;
+        bool inference_attached = false;
+
         std::atomic<bool> is_released{false};
         int active_completions = 0;
     };
@@ -156,86 +162,90 @@ namespace
         return env->NewStringUTF("");
     }
 
-    static JNIEnv *getEnv(JavaVM *jvm, bool *didAttach)
+    // 推論スレッドのJNI Attach/DetachをRAIIで管理する。
+    // 推論スレッドが既にAttach済みならそのenvをそのまま使い、
+    // DetachedならAttachして終了時にDetachする。
+    struct InferenceEnvGuard
     {
-        *didAttach = false;
-        JNIEnv *env = nullptr;
-        if (jvm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK)
+        ContextHolder *holder_;
+        bool ok_ = false;
+
+        explicit InferenceEnvGuard(ContextHolder *h) : holder_(h)
         {
-            if (jvm->AttachCurrentThread(&env, nullptr) == JNI_OK)
+            if (!h || !h->jvm)
+                return;
+            JNIEnv *env = nullptr;
+            const int ret = h->jvm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6);
+            if (ret == JNI_OK)
             {
-                *didAttach = true;
+                h->inference_env = env;
+                h->inference_attached = false;
             }
+            else if (ret == JNI_EDETACHED)
+            {
+                if (h->jvm->AttachCurrentThread(&env, nullptr) == JNI_OK)
+                {
+                    h->inference_env = env;
+                    h->inference_attached = true;
+                }
+                else
+                {
+                    return;
+                }
+            }
+            else
+            {
+                return;
+            }
+            ok_ = true;
         }
-        return env;
-    }
 
-    static void sendToken(ContextHolder *holder, const std::string &token)
+        ~InferenceEnvGuard()
+        {
+            if (!holder_)
+                return;
+            if (holder_->inference_attached && holder_->jvm)
+            {
+                holder_->jvm->DetachCurrentThread();
+            }
+            holder_->inference_env = nullptr;
+            holder_->inference_attached = false;
+        }
+
+        bool ok() const { return ok_; }
+    };
+
+    // envは推論スレッドのInferenceEnvGuardが保持するもの。Attach/Detachはしない。
+    // on_token_midはnativeSetTokenCallback時にキャッシュ済み。
+    static void sendToken(ContextHolder *holder, JNIEnv *env, const std::string &token)
     {
-        if (!holder || !holder->jvm || holder->is_released.load(std::memory_order_acquire))
-            return;
-
-        bool didAttach = false;
-        JNIEnv *env = getEnv(holder->jvm, &didAttach);
-        if (!env)
+        if (!holder || !env || holder->is_released.load(std::memory_order_acquire))
             return;
 
         jobject callback = nullptr;
+        jmethodID mid = nullptr;
         {
             std::lock_guard<std::mutex> lock(g_mutex);
             if (!holder->is_released.load(std::memory_order_acquire) && holder->token_callback)
             {
                 callback = env->NewLocalRef(holder->token_callback);
+                mid = holder->on_token_mid;
             }
         }
-        if (!callback)
+        if (!callback || !mid)
         {
-            if (didAttach)
-            {
-                holder->jvm->DetachCurrentThread();
-            }
+            if (callback)
+                env->DeleteLocalRef(callback);
             return;
         }
 
-        jclass cbCls = env->GetObjectClass(callback);
-        if (cbCls)
+        jstring jTok = newSafeJStringUTF(env, token, "token_callback");
+        if (jTok)
         {
-            jmethodID mid = env->GetMethodID(cbCls, "onToken", "(Ljava/lang/String;)V");
-            if (mid)
-            {
-                jstring jTok = newSafeJStringUTF(env, token, "token_callback");
-                if (jTok)
-                {
-                    env->CallVoidMethod(callback, mid, jTok);
-                    env->DeleteLocalRef(jTok);
-                }
-            }
-            else
-            {
-                __android_log_print(
-                    ANDROID_LOG_ERROR,
-                    TAG,
-                    "token_callback: GetMethodID failed for onToken - callback class may not implement TokenCallback interface");
-                if (env->ExceptionCheck())
-                {
-                    env->ExceptionClear();
-                }
-            }
-            env->DeleteLocalRef(cbCls);
-        }
-        else
-        {
-            __android_log_print(
-                ANDROID_LOG_ERROR,
-                TAG,
-                "token_callback: GetObjectClass failed for callback");
+            env->CallVoidMethod(callback, mid, jTok);
+            env->DeleteLocalRef(jTok);
         }
         env->DeleteLocalRef(callback);
-
-        if (didAttach)
-        {
-            holder->jvm->DetachCurrentThread();
-        }
     }
 
     static ContextHolder *fromPtr(jlong ptr)
@@ -513,10 +523,24 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeSetTokenCallback(
     {
         env->DeleteGlobalRef(holder->token_callback);
         holder->token_callback = nullptr;
+        holder->on_token_mid = nullptr;
     }
     if (callback)
     {
         holder->token_callback = env->NewGlobalRef(callback);
+        jclass cls = env->GetObjectClass(holder->token_callback);
+        if (cls)
+        {
+            holder->on_token_mid = env->GetMethodID(cls, "onToken", "(Ljava/lang/String;)V");
+            if (!holder->on_token_mid)
+            {
+                __android_log_print(ANDROID_LOG_ERROR, TAG,
+                                    "nativeSetTokenCallback: GetMethodID failed for onToken");
+                if (env->ExceptionCheck())
+                    env->ExceptionClear();
+            }
+            env->DeleteLocalRef(cls);
+        }
     }
 }
 
@@ -628,6 +652,10 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeComplete(
     if (!completionGuard.engaged() || !holder->ctx || !holder->completion)
         return newSafeJStringUTF(env, "", "native_complete_empty_context");
 
+    InferenceEnvGuard inferenceEnv(holder);
+    if (!inferenceEnv.ok())
+        return newSafeJStringUTF(env, "", "native_complete_env_attach_failed");
+
     const char *pChars = prompt ? env->GetStringUTFChars(prompt, nullptr) : nullptr;
     std::string p = pChars ? std::string(pChars) : std::string();
     if (pChars)
@@ -694,7 +722,7 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeComplete(
                 const std::string to_send = holder->completion->generated_text.substr(pos, stop_pos);
                 sent_count += to_send.size();
                 out += to_send;
-                sendToken(holder, to_send);
+                sendToken(holder, holder->inference_env, to_send);
 
                 holder->completion->generated_text.erase(
                     holder->completion->generated_text.begin() + (long)(pos + stop_pos),
@@ -712,7 +740,7 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeComplete(
                 const std::string to_send = holder->completion->generated_text.substr(pos);
                 sent_count += to_send.size();
                 out += to_send;
-                sendToken(holder, to_send);
+                sendToken(holder, holder->inference_env, to_send);
             }
         }
 
@@ -764,6 +792,10 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCompleteWithMedia
     ActiveCompletionGuard completionGuard(holder);
     if (!completionGuard.engaged() || !holder->ctx || !holder->completion)
         return newSafeJStringUTF(env, "", "native_complete_media_empty_context");
+
+    InferenceEnvGuard inferenceEnv(holder);
+    if (!inferenceEnv.ok())
+        return newSafeJStringUTF(env, "", "native_complete_media_env_attach_failed");
 
     const char *pChars = prompt ? env->GetStringUTFChars(prompt, nullptr) : nullptr;
     std::string p = pChars ? std::string(pChars) : std::string();
@@ -855,7 +887,7 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCompleteWithMedia
                 const std::string to_send = holder->completion->generated_text.substr(pos, stop_pos);
                 sent_count += to_send.size();
                 out += to_send;
-                sendToken(holder, to_send);
+                sendToken(holder, holder->inference_env, to_send);
 
                 holder->completion->generated_text.erase(
                     holder->completion->generated_text.begin() + (long)(pos + stop_pos),
@@ -873,7 +905,7 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCompleteWithMedia
                 const std::string to_send = holder->completion->generated_text.substr(pos);
                 sent_count += to_send.size();
                 out += to_send;
-                sendToken(holder, to_send);
+                sendToken(holder, holder->inference_env, to_send);
             }
         }
 
