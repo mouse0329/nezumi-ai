@@ -1,0 +1,499 @@
+    @Composable
+    private fun GgufLlamaCppSettingsCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(text = "GGUF / llama.cpp 設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Text(
+                    text = "インポートした GGUF モデル専用の設定（llama.rn エンジン）",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                
+                // 基本設定（折りたたみ）
+                var basicExpanded by remember { mutableStateOf(false) }
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { basicExpanded = !basicExpanded }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "基本設定",
+                            color = colorResource(id = R.color.text_primary),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = if (basicExpanded) "▼" else "▶",
+                            color = colorResource(id = R.color.text_secondary)
+                        )
+                    }
+                    
+                    if (basicExpanded) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            // CPU スレッド数
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "CPU スレッド数",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = llamaCppThreads.toString(),
+                                        color = colorResource(id = R.color.primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                    )
+                                }
+                                Slider(
+                                    value = llamaCppThreads.toFloat(),
+                                    onValueChange = { llamaCppThreads = it.roundToInt() },
+                                    valueRange = 1f..maxThreads.toFloat(),
+                                    steps = maxOf(0, maxThreads - 2),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            // GPU レイヤー数
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "GPU レイヤー数",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = llamaCppGpuLayers.toString(),
+                                        color = colorResource(id = R.color.primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                    )
+                                }
+                                Slider(
+                                    value = llamaCppGpuLayers.toFloat(),
+                                    onValueChange = { llamaCppGpuLayers = it.roundToInt() },
+                                    valueRange = 0f..128f,
+                                    steps = 127,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            // バッチサイズ
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "バッチサイズ",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = llamaCppBatchSize.toString(),
+                                        color = colorResource(id = R.color.primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                    )
+                                }
+                                Slider(
+                                    value = llamaCppBatchSize.toFloat(),
+                                    onValueChange = { llamaCppBatchSize = it.roundToInt().coerceIn(32, 2048) },
+                                    valueRange = 32f..2048f,
+                                    steps = 2016/32 - 1,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            // 内部バッチサイズ
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "内部バッチサイズ (n_ubatch)",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = llamaCppUBatchSize.toString(),
+                                        color = colorResource(id = R.color.primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                    )
+                                }
+                                Slider(
+                                    value = llamaCppUBatchSize.toFloat(),
+                                    onValueChange = { llamaCppUBatchSize = it.roundToInt().coerceIn(32, 2048) },
+                                    valueRange = 32f..2048f,
+                                    steps = 2016/32 - 1,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            // KV 統合
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "kvUnified",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "KV キャッシュの統合モード",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                Switch(
+                                    checked = llamaCppKvUnified,
+                                    onCheckedChange = { llamaCppKvUnified = it }
+                                )
+                            }
+
+                            // RoPE周波数基数
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = "RoPE周波数基数",
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                OutlinedTextField(
+                                    value = String.format("%.1f", llamaCppRopeFreqBase),
+                                    onValueChange = { newValue ->
+                                        newValue.toFloatOrNull()?.let { llamaCppRopeFreqBase = it }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true
+                                )
+                                Text(
+                                    text = "0 = 自動設定",
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+
+                            // RoPE周波数スケール
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "RoPE周波数スケール",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = String.format("%.2f", llamaCppRopeFreqScale),
+                                        color = colorResource(id = R.color.primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                    )
+                                }
+                                Slider(
+                                    value = llamaCppRopeFreqScale,
+                                    onValueChange = { llamaCppRopeFreqScale = it },
+                                    valueRange = 0.5f..5.0f,
+                                    steps = 44,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Text(
+                                    text = "1.0 = デフォルト",
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                        }
+                    }
+                }
+                
+                // パフォーマンス最適化（折りたたみ）
+                var perfExpanded by remember { mutableStateOf(false) }
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { perfExpanded = !perfExpanded }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "パフォーマンス最適化",
+                            color = colorResource(id = R.color.text_primary),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = if (perfExpanded) "▼" else "▶",
+                            color = colorResource(id = R.color.text_secondary)
+                        )
+                    }
+                    
+                    if (perfExpanded) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            // MTP
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "MTP (投機的デコーディング)",
+                                        color = colorResource(id = R.color.text_primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "複数トークンを並列生成（2-3倍高速化）",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                Switch(
+                                    checked = mtpEnabled,
+                                    onCheckedChange = { mtpEnabled = it }
+                                )
+                            }
+
+                            if (mtpEnabled) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Draft トークン数",
+                                            color = colorResource(id = R.color.text_secondary),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = mtpDraftTokens.toString(),
+                                            color = colorResource(id = R.color.primary),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                        )
+                                    }
+                                    Slider(
+                                        value = mtpDraftTokens.toFloat(),
+                                        onValueChange = { mtpDraftTokens = it.roundToInt() },
+                                        valueRange = 1f..16f,
+                                        steps = 14,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Text(
+                                        text = "推奨: 5-8",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            }
+
+                            // Flash Attention
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Flash Attention",
+                                        color = colorResource(id = R.color.text_primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "メモリ効率的なAttention計算",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                Switch(
+                                    checked = flashAttentionEnabled,
+                                    onCheckedChange = { flashAttentionEnabled = it }
+                                )
+                            )
+
+                            // 動的バッチサイズ
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "動的バッチサイズ",
+                                        color = colorResource(id = R.color.text_primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "プロンプト処理と生成で最適化",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                Switch(
+                                    checked = dynamicBatchSizeEnabled,
+                                    onCheckedChange = { dynamicBatchSizeEnabled = it }
+                                )
+                            }
+
+                            if (dynamicBatchSizeEnabled) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "プロンプト用バッチ",
+                                            color = colorResource(id = R.color.text_secondary),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = promptBatchSize.toString(),
+                                            color = colorResource(id = R.color.primary),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                        )
+                                    }
+                                    Slider(
+                                        value = promptBatchSize.toFloat(),
+                                        onValueChange = { promptBatchSize = it.roundToInt().coerceIn(32, 2048) },
+                                        valueRange = 32f..2048f,
+                                        steps = 2016/32 - 1,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "生成用バッチ",
+                                            color = colorResource(id = R.color.text_secondary),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = generationBatchSize.toString(),
+                                            color = colorResource(id = R.color.primary),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                        )
+                                    }
+                                    Slider(
+                                        value = generationBatchSize.toFloat(),
+                                        onValueChange = { generationBatchSize = it.roundToInt().coerceIn(32, 2048) },
+                                        valueRange = 32f..2048f,
+                                        steps = 2016/32 - 1,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+
+                            // KVキャッシュ最適化
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "KVキャッシュ最適化",
+                                        color = colorResource(id = R.color.text_primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "ハイブリッドモデル対応",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                Switch(
+                                    checked = kvCacheOptimizationEnabled,
+                                    onCheckedChange = { kvCacheOptimizationEnabled = it }
+                                )
+                            }
+
+                            // コンテキストシフト
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "コンテキストシフト",
+                                        color = colorResource(id = R.color.text_primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "満杯時に古い部分を自動削除",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                Switch(
+                                    checked = contextShiftEnabled,
+                                    onCheckedChange = { contextShiftEnabled = it }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }

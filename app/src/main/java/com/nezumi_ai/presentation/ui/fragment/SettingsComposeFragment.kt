@@ -218,6 +218,7 @@ class SettingsComposeFragment : Fragment() {
                     }
                     1 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         InferenceParamsCard()
+                        GgufLlamaCppSettingsCard()
                         LiteRtSettingsCard()
                     }
                     2 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -666,34 +667,53 @@ class SettingsComposeFragment : Fragment() {
                     )
                 }
                 
-                // Advanced Llama.cpp Settings (Collapsible)
-                var expanded by remember { mutableStateOf(false) }
+                // GGUF / llama.cpp 固有設定は別のカードに移動しました
+            }
+        }
+    }
+
+    @Composable
+    private fun GgufLlamaCppSettingsCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(text = "GGUF / llama.rn 設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Text(
+                    text = "インポートした GGUF モデル専用の設定です。llama.rn エンジンに適用されます。",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                var basicExpanded by remember { mutableStateOf(true) }
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { expanded = !expanded }
+                            .clickable { basicExpanded = !basicExpanded }
                             .padding(vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "GGUF / llama.cpp 設定",
+                            text = "基本設定",
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = if (expanded) "▼" else "▶",
+                            text = if (basicExpanded) "▼" else "▶",
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
-                    
-                    if (expanded) {
+
+                    if (basicExpanded) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            // CPU スレッド数
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -723,7 +743,6 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
 
-                            // GPU レイヤー数
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -753,7 +772,6 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
 
-                            // バッチサイズ
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -783,7 +801,6 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
 
-                            // 内部バッチサイズ (n_ubatch)
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -813,7 +830,6 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
 
-                            // KV 統合
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -838,7 +854,6 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
 
-                            // RoPE周波数基数
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(
                                     text = "RoPE周波数基数",
@@ -861,7 +876,6 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
 
-                            // RoPE周波数スケール
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -898,8 +912,7 @@ class SettingsComposeFragment : Fragment() {
                         }
                     }
                 }
-                
-                // Performance Optimization Settings (Collapsible)
+
                 var perfExpanded by remember { mutableStateOf(false) }
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
@@ -923,10 +936,9 @@ class SettingsComposeFragment : Fragment() {
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
-                    
+
                     if (perfExpanded) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            // MTP (Multi-Token Prediction)
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -951,7 +963,6 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
 
-                            // MTP Draft Tokens
                             if (mtpEnabled) {
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Row(
@@ -988,7 +999,6 @@ class SettingsComposeFragment : Fragment() {
                                 }
                             }
 
-                            // Flash Attention
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -1013,7 +1023,6 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
 
-                            // Dynamic Batch Size
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -1038,7 +1047,6 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
 
-                            // Batch Sizes
                             if (dynamicBatchSizeEnabled) {
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Row(
@@ -1104,7 +1112,6 @@ class SettingsComposeFragment : Fragment() {
                                 }
                             }
 
-                            // KV Cache Optimization
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -1129,7 +1136,6 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
 
-                            // Context Shift
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
