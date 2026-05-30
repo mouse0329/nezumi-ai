@@ -166,8 +166,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
 
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.12.0")
-    implementation("com.google.android.gms:play-services-tflite-java:16.4.0")
-    implementation("com.google.android.gms:play-services-tflite-gpu:16.4.0")
+    implementation("com.google.android.gms:play-services-tflite-java:16.5.0")
+    implementation("com.google.android.gms:play-services-tflite-gpu:16.5.0")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")
 
     implementation("androidx.biometric:biometric:1.1.0")
