@@ -156,12 +156,33 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                     val appliedGpuLayers = 0  // GPU 無効化（Tensor G3 は OpenCL 非対応）
                     val appliedNKeep = 0  // KV キャッシュ無効化
 
+                    // ★ 動的バッチサイズ: プロンプト処理と生成で異なるバッチサイズを使用
+                    // 現在はロード時に固定するため、プロンプト用を優先
+                    // TODO: 将来的には推論時に n_batch を動的切り替え
+                    val finalBatchSize = if (normalized.dynamicBatchSizeEnabled) {
+                        // プロンプト処理用バッチサイズを優先（ロード時に固定）
+                        normalized.promptBatchSize.coerceIn(32, 2048)
+                    } else {
+                        appliedBatchSize
+                    }
+                    val finalUBatchSize = if (normalized.dynamicBatchSizeEnabled) {
+                        normalized.generationBatchSize.coerceIn(32, 2048)
+                    } else {
+                        appliedUBatch
+                    }
+
                     Log.d(TAG, "Creating rnllama context with model_path=$modelPath")
-                    if ((mmCaps.imageEnabled || mmCaps.audioEnabled) && appliedBatchSize > requestedBatchSize) {
+                    if ((mmCaps.imageEnabled || mmCaps.audioEnabled) && finalBatchSize > requestedBatchSize) {
                         Log.i(
                             TAG,
-                            "GGUF multimodal: n_batch raised from requested=$requestedBatchSize to applied=$appliedBatchSize " +
+                            "GGUF multimodal: n_batch raised from requested=$requestedBatchSize to applied=$finalBatchSize " +
                                 "(need sufficient batch for vision/audio decode)"
+                        )
+                    }
+                    if (normalized.dynamicBatchSizeEnabled) {
+                        Log.i(
+                            TAG,
+                            "Dynamic batch size enabled: prompt_batch=$finalBatchSize, generation_ubatch=$finalUBatchSize"
                         )
                     }
                     if (requestedGpuLayers != appliedGpuLayers || requestedNKeep != appliedNKeep) {
@@ -175,8 +196,11 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                     Log.d(
                         TAG,
                         "Params(applied): n_ctx=${normalized.contextWindow}, n_threads=$appliedThreads, " +
-                            "n_batch=$appliedBatchSize, n_ubatch=$appliedUBatch, n_gpu_layers=$appliedGpuLayers, n_keep=$appliedNKeep, " +
-                            "rope_freq_base=${normalized.llamaCppRopeFreqBase}, rope_freq_scale=${normalized.llamaCppRopeFreqScale}"
+                            "n_batch=$finalBatchSize, n_ubatch=$finalUBatchSize, n_gpu_layers=$appliedGpuLayers, n_keep=$appliedNKeep, " +
+                            "rope_freq_base=${normalized.llamaCppRopeFreqBase}, rope_freq_scale=${normalized.llamaCppRopeFreqScale}, " +
+                            "mtp_enabled=${normalized.mtpEnabled}, mtp_draft=${normalized.mtpDraftTokens}, " +
+                            "flash_attn=${normalized.flashAttentionEnabled}, kv_opt=${normalized.kvCacheOptimizationEnabled}, " +
+                            "ctx_shift=${normalized.contextShiftEnabled}"
                     )
 
                     // ★ マルチモーダル初期化: 明示的なmmproj パスがない場合でも、
@@ -205,11 +229,19 @@ class GgufInferenceEngine(private val context: Context) : AIInferenceEngine {
                     val lc = RnLlamaContext(
                         modelPath = modelPath,
                         nCtx = normalized.contextWindow,
-                        nBatch = appliedBatchSize,
-                        nUbatch = appliedUBatch,
+                        nBatch = finalBatchSize,
+                        nUbatch = finalUBatchSize,
                         nThreads = appliedThreads,
                         nGpuLayers = appliedGpuLayers,
-                        mmprojPath = resolvedMmprojPath
+                        mmprojPath = resolvedMmprojPath,
+                        // Performance optimization settings
+                        mtpEnabled = normalized.mtpEnabled,
+                        mtpDraftTokens = normalized.mtpDraftTokens,
+                        flashAttentionEnabled = normalized.flashAttentionEnabled,
+                        kvCacheOptimizationEnabled = normalized.kvCacheOptimizationEnabled,
+                        contextShiftEnabled = normalized.contextShiftEnabled,
+                        ropeFreqBase = normalized.llamaCppRopeFreqBase,
+                        ropeFreqScale = normalized.llamaCppRopeFreqScale
                     )
                     if (!lc.isValid) {
                         throw IllegalStateException("Failed to initialize rnllama context")
