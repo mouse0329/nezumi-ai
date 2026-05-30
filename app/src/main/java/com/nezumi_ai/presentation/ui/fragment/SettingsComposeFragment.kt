@@ -62,7 +62,7 @@ class SettingsComposeFragment : Fragment() {
     private var contextCompressionThresholdPercent by mutableStateOf(70)
     private var speculativeDecodingEnabled by mutableStateOf(false)
     private var requireMultimodal by mutableStateOf(false)
-    private var preloadMemoryWarningThresholdPercent by mutableStateOf(250)
+    private var preloadMemoryWarningThresholdPercent by mutableStateOf(MemoryObserver.DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT)
     private var selectedModel by mutableStateOf("E2B")
     private var backendType by mutableStateOf("CPU")
     private var themeMode by mutableStateOf(PreferencesHelper.THEME_SYSTEM)
@@ -1238,6 +1238,11 @@ class SettingsComposeFragment : Fragment() {
                             style = MaterialTheme.typography.bodySmall,
                             color = if (systemMemoryInfo.lowMemoryFlag) MaterialTheme.colorScheme.error else colorResource(id = R.color.text_secondary)
                         )
+                        Text(
+    text = "source: ${systemMemoryInfo.source}",
+    style = MaterialTheme.typography.bodySmall,
+    color = colorResource(id = R.color.text_secondary)
+)
                     }
                 }
 

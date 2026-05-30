@@ -51,38 +51,29 @@ class MemoryRepository(
     ): List<ScoredMemory> {
         val queryNorm = l2norm(queryEmbedding)
         if (queryNorm == 0f) {
-            android.util.Log.d("MemoryRepository", "SEARCH: query norm is zero -> returning empty")
+            android.util.Log.w("MemoryRepository", "SEARCH: query norm is zero (hash fallback embedding?) -> returning empty")
             return emptyList()
         }
 
         val active = dao.getActive()
-        android.util.Log.d("MemoryRepository", "SEARCH: queryEmbedding.size=${queryEmbedding.size}, activeCount=${active.size}")
+        android.util.Log.d("MemoryRepository", "SEARCH: queryDim=${queryEmbedding.size}, activeCount=${active.size}")
+
+        var dimMismatchCount = 0
+        var zeroNormCount = 0
 
         val scored = active
             .mapNotNull { memory ->
                 val memoryEmbedding = bytesToFloatArray(memory.embedding)
-                // debug log for sizes and norms
-                android.util.Log.d(
-                    "MemoryRepository",
-                    "SEARCH: memId=${memory.id} embSize=${memoryEmbedding.size} norm=${memory.norm}"
-                )
                 if (memoryEmbedding.size != queryEmbedding.size) {
-                    android.util.Log.d(
-                        "MemoryRepository",
-                        "SEARCH: skipping memId=${memory.id} due to embedding size mismatch: ${memoryEmbedding.size} != ${queryEmbedding.size}"
-                    )
+                    dimMismatchCount++
                     return@mapNotNull null
                 }
                 if (memory.norm == 0f) {
-                    android.util.Log.d("MemoryRepository", "SEARCH: skipping memId=${memory.id} due to zero norm")
+                    zeroNormCount++
                     return@mapNotNull null
                 }
                 val similarity = cosineSimilarity(queryEmbedding, queryNorm, memoryEmbedding, memory.norm)
-                android.util.Log.d("MemoryRepository", "SEARCH: memId=${memory.id} similarity=$similarity")
-                if (similarity < minSimilarity) {
-                    android.util.Log.d("MemoryRepository", "SEARCH: memId=${memory.id} below minSimilarity=$minSimilarity")
-                    return@mapNotNull null
-                }
+                if (similarity < minSimilarity) return@mapNotNull null
                 val score = score(
                     similarity = similarity,
                     lastAccessedAt = memory.lastAccessedAt,
@@ -93,6 +84,20 @@ class MemoryRepository(
             }
             .sortedByDescending { it.score }
             .take(topK.coerceAtLeast(1))
+
+        if (dimMismatchCount > 0) {
+            android.util.Log.w(
+                "MemoryRepository",
+                "SEARCH: skipped $dimMismatchCount memories due to embedding dimension mismatch " +
+                "(queryDim=${queryEmbedding.size}). " +
+                "Stored memories may have been indexed with a different embedder (ONNX vs hash). " +
+                "Consider clearing memory DB after switching embedding backend."
+            )
+        }
+        if (zeroNormCount > 0) {
+            android.util.Log.w("MemoryRepository", "SEARCH: skipped $zeroNormCount memories due to zero norm")
+        }
+        android.util.Log.d("MemoryRepository", "SEARCH: results=${scored.size}, dimMismatches=$dimMismatchCount, zeroNorms=$zeroNormCount")
 
         if (markAccessed && scored.isNotEmpty()) {
             dao.markAccessed(scored.map { it.memory.id })

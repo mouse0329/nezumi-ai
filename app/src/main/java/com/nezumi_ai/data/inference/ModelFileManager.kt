@@ -465,6 +465,7 @@ object ModelFileManager {
                 throw it
             }
             val lowerOut = outFile.name.lowercase()
+            val isMmproj = lowerOut.contains("mmproj")
             when {
                 lowerOut.endsWith(".task") || lowerOut.endsWith(".litertlm") -> {
                     validateImportedTaskFile(outFile).getOrElse { reason ->
@@ -476,6 +477,9 @@ object ModelFileManager {
                     if (!outFile.isFile || !outFile.canRead() || outFile.length() <= 0L) {
                         outFile.delete()
                         throw IllegalStateException("ダウンロードしたファイルが無効です")
+                    }
+                    if (isMmproj) {
+                        linkMmprojToModel(context, outFile, normalizedModelId)
                     }
                 }
                 else -> {
@@ -1562,6 +1566,28 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
                 return block()
             } finally {
                 runCatching { lock.release() }
+            }
+        }
+    }
+
+    private fun linkMmprojToModel(context: Context, mmprojFile: File, modelId: String) {
+        val importedDir = mmprojFile.parentFile ?: return
+        val repoQualifier = modelId.replace('/', '_')
+        val modelFiles = importedDir.listFiles()?.filter {
+            it.isFile && it.name.startsWith(repoQualifier) && 
+            it.name.lowercase().endsWith(".gguf") && 
+            !it.name.lowercase().contains("mmproj")
+        } ?: return
+        
+        for (modelFile in modelFiles) {
+            val caps = com.nezumi_ai.utils.ImportedModelCapabilityStore.get(context, modelFile.absolutePath)
+            if (caps.mmprojPath == null) {
+                com.nezumi_ai.utils.ImportedModelCapabilityStore.set(
+                    context,
+                    modelFile.absolutePath,
+                    caps.copy(mmprojPath = mmprojFile.absolutePath, imageEnabled = true)
+                )
+                Log.d(TAG, "Linked mmproj ${mmprojFile.name} to model ${modelFile.name}")
             }
         }
     }

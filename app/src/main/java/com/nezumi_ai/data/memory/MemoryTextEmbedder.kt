@@ -59,64 +59,95 @@ object MemoryTextEmbedder {
 
     fun initialize(context: Context): Boolean {
         if (initialized) return useOnnx
-        initialized = true
 
         try {
             val embeddingDir = File(context.filesDir, embeddingDirName)
             if (!embeddingDir.exists()) {
                 Log.w(TAG, "Embedding directory does not exist: ${embeddingDir.absolutePath}")
+                initialized = true
                 return false
             }
 
             val modelFile = onnxCandidates.map { File(embeddingDir, it) }.firstOrNull { it.exists() }
             if (modelFile == null) {
                 Log.w(TAG, "No ONNX embedding model found in ${embeddingDir.absolutePath}")
+                initialized = true
                 return false
             }
 
             val tokenizerFile = tokenizerCandidates.map { File(embeddingDir, it) }.firstOrNull { it.exists() }
             if (tokenizerFile == null) {
                 Log.w(TAG, "No tokenizer file found in ${embeddingDir.absolutePath}")
+                initialized = true
                 return false
             }
 
             val classPresent = runCatching { Class.forName("ai.onnxruntime.OrtEnvironment") }.isSuccess
             if (!classPresent) {
                 Log.w(TAG, "ONNX Runtime is not available on classpath")
+                initialized = true
                 return false
             }
 
             tokenizerInstance = createTokenizer(tokenizerFile)
             if (tokenizerInstance == null) {
                 Log.w(TAG, "Tokenizer initialization failed, ONNX embedding disabled")
+                initialized = true
                 return false
             }
-            
+
             ortEnvironment = OrtEnvironment.getEnvironment()
             ortSession = ortEnvironment!!.createSession(modelFile.absolutePath, createSessionOptions())
             onnxModelPath = modelFile.absolutePath
             inputIdsName = findInputName(ortSession!!, "input_ids")
             attentionMaskName = findInputName(ortSession!!, "attention_mask")
+
+            val outputInfo = ortSession!!.outputInfo
+            val firstOutput = outputInfo.values.firstOrNull()
+            val onnxDim = (firstOutput?.info as? ai.onnxruntime.TensorInfo)
+                ?.shape?.lastOrNull()?.toInt()
+            if (onnxDim != null && onnxDim > 0 && DIMENSION != onnxDim) {
+                Log.i(TAG, "ONNX embedding dimension updated: $DIMENSION -> $onnxDim")
+                DIMENSION = onnxDim
+            }
+
             useOnnx = true
-            Log.i(TAG, "ONNX embedding initialized: model=${modelFile.absolutePath}, tokenizer=${tokenizerFile.absolutePath}")
+            initialized = true
+            Log.i(TAG, "ONNX embedding initialized: model=${modelFile.absolutePath}, tokenizer=${tokenizerFile.absolutePath}, dim=$DIMENSION")
             return true
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize ONNX embedding backend", e)
+            Log.e(TAG, "Failed to initialize ONNX embedding backend — will use hash fallback", e)
             cleanupOnnxResources()
             return false
+        }
+    }
+
+    fun resetInitialization() {
+        if (!useOnnx) {
+            Log.d(TAG, "resetInitialization: clearing initialized flag for retry")
+            initialized = false
+            cleanupOnnxResources()
         }
     }
 
     fun embed(text: String): FloatArray {
         if (initialized && useOnnx) {
             try {
-                val tokenizer = tokenizerInstance ?: return fallbackEmbedding(text)
+                val tokenizer = tokenizerInstance ?: run {
+                    Log.w(TAG, "embed: tokenizerInstance is null despite useOnnx=true — falling back to hash")
+                    return fallbackEmbedding(text)
+                }
                 val encoding = invokeTokenizerEncode(tokenizer, text)
                 return runOnnxEmbedding(encoding)
             } catch (e: Exception) {
                 Log.e(TAG, "ONNX embedding failed, falling back to hash embedder", e)
                 return fallbackEmbedding(text)
             }
+        }
+        if (!initialized) {
+            Log.d(TAG, "embed: not initialized yet — using hash fallback (call initialize() first)")
+        } else {
+            Log.d(TAG, "embed: ONNX unavailable (useOnnx=false) — using hash fallback")
         }
         return fallbackEmbedding(text)
     }
@@ -390,6 +421,7 @@ object MemoryTextEmbedder {
             } else {
                 Log.d(TAG, "Embedding tokenizer already exists, skipping download")
             }
+            resetInitialization()
             true
         }.onFailure {
             Log.e(TAG, "Failed to download embedding files", it)
