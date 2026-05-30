@@ -32,7 +32,7 @@ import com.nezumi_ai.data.database.entity.SettingsEntity
         MemoryEntity::class,
         MemorySessionEntity::class
     ],
-    version = 23,
+    version = 24,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
@@ -57,7 +57,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                     NezumiAiDatabase::class.java,
                     "nezumi_ai.db"
                 )
-                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
+                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24)
                     // 開発中: スキーマ不一致時は再作成して起動クラッシュを回避
                     .fallbackToDestructiveMigration()
                     .build()
@@ -90,6 +90,20 @@ abstract class NezumiAiDatabase : RoomDatabase() {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE settings ADD COLUMN topP REAL NOT NULL DEFAULT 0.95")
                 database.execSQL("ALTER TABLE settings ADD COLUMN llamaCppKvUnified INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
+        private val MIGRATION_23_24 = object : androidx.room.migration.Migration(23, 24) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // Performance optimization settings
+                database.execSQL("ALTER TABLE settings ADD COLUMN mtpEnabled INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE settings ADD COLUMN mtpDraftTokens INTEGER NOT NULL DEFAULT 5")
+                database.execSQL("ALTER TABLE settings ADD COLUMN flashAttentionEnabled INTEGER NOT NULL DEFAULT 1")
+                database.execSQL("ALTER TABLE settings ADD COLUMN dynamicBatchSizeEnabled INTEGER NOT NULL DEFAULT 1")
+                database.execSQL("ALTER TABLE settings ADD COLUMN promptBatchSize INTEGER NOT NULL DEFAULT 512")
+                database.execSQL("ALTER TABLE settings ADD COLUMN generationBatchSize INTEGER NOT NULL DEFAULT 128")
+                database.execSQL("ALTER TABLE settings ADD COLUMN kvCacheOptimizationEnabled INTEGER NOT NULL DEFAULT 1")
+                database.execSQL("ALTER TABLE settings ADD COLUMN contextShiftEnabled INTEGER NOT NULL DEFAULT 1")
             }
         }
 

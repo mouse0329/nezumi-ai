@@ -746,4 +746,120 @@ class SettingsRepository(
             chatSessionDao.deleteOldestSessions(toDelete)
         }
     }
+
+    // Performance optimization settings
+    suspend fun isMtpEnabled(): Boolean {
+        return currentSettings().mtpEnabled
+    }
+
+    suspend fun updateMtpEnabled(enabled: Boolean) {
+        val current = currentSettings()
+        dao.update(
+            current.copy(
+                mtpEnabled = enabled,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun getMtpDraftTokens(): Int {
+        return currentSettings().mtpDraftTokens.coerceIn(1, 16)
+    }
+
+    suspend fun updateMtpDraftTokens(tokens: Int) {
+        val current = currentSettings()
+        val clamped = tokens.coerceIn(1, 16)
+        dao.update(
+            current.copy(
+                mtpDraftTokens = clamped,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun isFlashAttentionEnabled(): Boolean {
+        return currentSettings().flashAttentionEnabled
+    }
+
+    suspend fun updateFlashAttentionEnabled(enabled: Boolean) {
+        val current = currentSettings()
+        dao.update(
+            current.copy(
+                flashAttentionEnabled = enabled,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun isDynamicBatchSizeEnabled(): Boolean {
+        return currentSettings().dynamicBatchSizeEnabled
+    }
+
+    suspend fun updateDynamicBatchSizeEnabled(enabled: Boolean) {
+        val current = currentSettings()
+        dao.update(
+            current.copy(
+                dynamicBatchSizeEnabled = enabled,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun getPromptBatchSize(): Int {
+        return currentSettings().promptBatchSize.coerceIn(32, 2048)
+    }
+
+    suspend fun updatePromptBatchSize(size: Int) {
+        val current = currentSettings()
+        val clamped = size.coerceIn(32, 2048)
+        dao.update(
+            current.copy(
+                promptBatchSize = clamped,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun getGenerationBatchSize(): Int {
+        return currentSettings().generationBatchSize.coerceIn(32, 2048)
+    }
+
+    suspend fun updateGenerationBatchSize(size: Int) {
+        val current = currentSettings()
+        val clamped = size.coerceIn(32, 2048)
+        dao.update(
+            current.copy(
+                generationBatchSize = clamped,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun isKvCacheOptimizationEnabled(): Boolean {
+        return currentSettings().kvCacheOptimizationEnabled
+    }
+
+    suspend fun updateKvCacheOptimizationEnabled(enabled: Boolean) {
+        val current = currentSettings()
+        dao.update(
+            current.copy(
+                kvCacheOptimizationEnabled = enabled,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun isContextShiftEnabled(): Boolean {
+        return currentSettings().contextShiftEnabled
+    }
+
+    suspend fun updateContextShiftEnabled(enabled: Boolean) {
+        val current = currentSettings()
+        dao.update(
+            current.copy(
+                contextShiftEnabled = enabled,
+                lastModified = System.currentTimeMillis()
+            )
+        )
+    }
 }

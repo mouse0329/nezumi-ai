@@ -43,5 +43,14 @@ data class SettingsEntity(
     // Session persistence
     val currentSessionId: Long = -1,
     // Chat history settings
-    val chatHistoryLimit: Int = 30 // 10, 30, 50, or -1 for unlimited
+    val chatHistoryLimit: Int = 30, // 10, 30, 50, or -1 for unlimited
+    // Performance optimization settings
+    val mtpEnabled: Boolean = false, // Multi-Token Prediction (投機的デコーディング)
+    val mtpDraftTokens: Int = 5, // MTP draft token count (1-16)
+    val flashAttentionEnabled: Boolean = true, // Flash Attention (自動検出)
+    val dynamicBatchSizeEnabled: Boolean = true, // 動的バッチサイズ調整
+    val promptBatchSize: Int = 512, // プロンプト処理用バッチサイズ
+    val generationBatchSize: Int = 128, // トークン生成用バッチサイズ
+    val kvCacheOptimizationEnabled: Boolean = true, // KVキャッシュ最適化
+    val contextShiftEnabled: Boolean = true // コンテキストシフト有効化
 )
