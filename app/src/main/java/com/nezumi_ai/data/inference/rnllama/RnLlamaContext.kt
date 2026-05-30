@@ -7,7 +7,15 @@ class RnLlamaContext(
     nUbatch: Int,
     nThreads: Int,
     nGpuLayers: Int,
-    mmprojPath: String? = null
+    mmprojPath: String? = null,
+    // Performance optimization parameters
+    val mtpEnabled: Boolean = false,
+    val mtpDraftTokens: Int = 5,
+    val flashAttentionEnabled: Boolean = true,
+    val kvCacheOptimizationEnabled: Boolean = true,
+    val contextShiftEnabled: Boolean = true,
+    ropeFreqBase: Float = 0f,
+    ropeFreqScale: Float = 1f
 ) {
     private var ptr: Long = 0L
 
@@ -22,8 +30,8 @@ class RnLlamaContext(
                 nGpuLayers = nGpuLayers,
                 useMmap = true,
                 useMlock = false,
-                ropeFreqBase = 0f,
-                ropeFreqScale = 1f,
+                ropeFreqBase = ropeFreqBase,
+                ropeFreqScale = ropeFreqScale,
                 mmprojPath = mmprojPath
             )
         } else {

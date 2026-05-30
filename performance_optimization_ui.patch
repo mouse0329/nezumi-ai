@@ -47,7 +47,7 @@ SettingsComposeFragment.ktに以下の変数とUIを追加：
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "パフォーマンス最適化",
+                            text = "パフォーマンス最適化:llama.rn用",
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold
