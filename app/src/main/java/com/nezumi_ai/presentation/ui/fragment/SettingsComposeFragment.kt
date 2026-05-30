@@ -88,6 +88,14 @@ class SettingsComposeFragment : Fragment() {
     private var debugTextBInput by mutableStateOf("")
     private var debugTextSimilarityResult by mutableStateOf<String?>(null)
     private var debugTextErrorMessage by mutableStateOf<String?>(null)
+    private var mtpEnabled by mutableStateOf(false)
+    private var mtpDraftTokens by mutableStateOf(5)
+    private var flashAttentionEnabled by mutableStateOf(true)
+    private var dynamicBatchSizeEnabled by mutableStateOf(true)
+    private var promptBatchSize by mutableStateOf(512)
+    private var generationBatchSize by mutableStateOf(128)
+    private var kvCacheOptimizationEnabled by mutableStateOf(true)
+    private var contextShiftEnabled by mutableStateOf(true)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -890,6 +898,264 @@ class SettingsComposeFragment : Fragment() {
                         }
                     }
                 }
+                
+                // Performance Optimization Settings (Collapsible)
+                var perfExpanded by remember { mutableStateOf(false) }
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { perfExpanded = !perfExpanded }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "パフォーマンス最適化",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (perfExpanded) "▼" else "▶",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    
+                    if (perfExpanded) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            // MTP (Multi-Token Prediction)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "MTP (投機的デコーディング)",
+                                        color = colorResource(id = R.color.text_primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "複数トークンを並列生成して高速化（2-3倍）",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                Switch(
+                                    checked = mtpEnabled,
+                                    onCheckedChange = { mtpEnabled = it }
+                                )
+                            }
+
+                            // MTP Draft Tokens
+                            if (mtpEnabled) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "MTP Draft トークン数",
+                                            color = colorResource(id = R.color.text_secondary),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = mtpDraftTokens.toString(),
+                                            color = colorResource(id = R.color.primary),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                        )
+                                    }
+                                    Slider(
+                                        value = mtpDraftTokens.toFloat(),
+                                        onValueChange = { mtpDraftTokens = it.roundToInt() },
+                                        valueRange = 1f..16f,
+                                        steps = 14,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Text(
+                                        text = "推奨: 5-8 (多いほど高速だがメモリ消費増)",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            }
+
+                            // Flash Attention
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Flash Attention",
+                                        color = colorResource(id = R.color.text_primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "メモリ効率的な Attention 計算",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                Switch(
+                                    checked = flashAttentionEnabled,
+                                    onCheckedChange = { flashAttentionEnabled = it }
+                                )
+                            }
+
+                            // Dynamic Batch Size
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "動的バッチサイズ調整",
+                                        color = colorResource(id = R.color.text_primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "プロンプト処理と生成で異なるバッチサイズを使用",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                Switch(
+                                    checked = dynamicBatchSizeEnabled,
+                                    onCheckedChange = { dynamicBatchSizeEnabled = it }
+                                )
+                            }
+
+                            // Batch Sizes
+                            if (dynamicBatchSizeEnabled) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "プロンプト用バッチサイズ",
+                                            color = colorResource(id = R.color.text_secondary),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = promptBatchSize.toString(),
+                                            color = colorResource(id = R.color.primary),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                        )
+                                    }
+                                    Slider(
+                                        value = promptBatchSize.toFloat(),
+                                        onValueChange = { promptBatchSize = it.roundToInt().coerceIn(32, 2048) },
+                                        valueRange = 32f..2048f,
+                                        steps = 2016/32 - 1,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "生成用バッチサイズ",
+                                            color = colorResource(id = R.color.text_secondary),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = generationBatchSize.toString(),
+                                            color = colorResource(id = R.color.primary),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                        )
+                                    }
+                                    Slider(
+                                        value = generationBatchSize.toFloat(),
+                                        onValueChange = { generationBatchSize = it.roundToInt().coerceIn(32, 2048) },
+                                        valueRange = 32f..2048f,
+                                        steps = 2016/32 - 1,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Text(
+                                        text = "推奨: プロンプト=512, 生成=128",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            }
+
+                            // KV Cache Optimization
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "KVキャッシュ最適化",
+                                        color = colorResource(id = R.color.text_primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "ハイブリッドモデル対応の賢いキャッシュ管理",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                Switch(
+                                    checked = kvCacheOptimizationEnabled,
+                                    onCheckedChange = { kvCacheOptimizationEnabled = it }
+                                )
+                            }
+
+                            // Context Shift
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "コンテキストシフト",
+                                        color = colorResource(id = R.color.text_primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "コンテキスト満杯時に古い部分を自動削除",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                                Switch(
+                                    checked = contextShiftEnabled,
+                                    onCheckedChange = { contextShiftEnabled = it }
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1416,6 +1682,14 @@ class SettingsComposeFragment : Fragment() {
             chatHistoryLimit = historyLimit
             sdSteps = PreferencesHelper.getSdSteps(requireContext())
             sdCfg = PreferencesHelper.getSdCfg(requireContext())
+            mtpEnabled = settingsRepository.isMtpEnabled()
+            mtpDraftTokens = settingsRepository.getMtpDraftTokens()
+            flashAttentionEnabled = settingsRepository.isFlashAttentionEnabled()
+            dynamicBatchSizeEnabled = settingsRepository.isDynamicBatchSizeEnabled()
+            promptBatchSize = settingsRepository.getPromptBatchSize()
+            generationBatchSize = settingsRepository.getGenerationBatchSize()
+            kvCacheOptimizationEnabled = settingsRepository.isKvCacheOptimizationEnabled()
+            contextShiftEnabled = settingsRepository.isContextShiftEnabled()
         }
     }
 
@@ -1498,6 +1772,14 @@ class SettingsComposeFragment : Fragment() {
         PreferencesHelper.setSdSteps(requireContext(), sdSteps)
         PreferencesHelper.setSdCfg(requireContext(), sdCfg)
         PreferencesHelper.setBraveSearchApiKey(requireContext(), braveSearchApiKeyInput.trim())
+        settingsRepository.updateMtpEnabled(mtpEnabled)
+        settingsRepository.updateMtpDraftTokens(mtpDraftTokens)
+        settingsRepository.updateFlashAttentionEnabled(flashAttentionEnabled)
+        settingsRepository.updateDynamicBatchSizeEnabled(dynamicBatchSizeEnabled)
+        settingsRepository.updatePromptBatchSize(promptBatchSize)
+        settingsRepository.updateGenerationBatchSize(generationBatchSize)
+        settingsRepository.updateKvCacheOptimizationEnabled(kvCacheOptimizationEnabled)
+        settingsRepository.updateContextShiftEnabled(contextShiftEnabled)
     }
 
     @Composable
