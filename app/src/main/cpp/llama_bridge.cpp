@@ -208,10 +208,43 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaTokenToPiece(
         buf, sizeof(buf) - 1,
         /* lstrip */ 0,
         /* special */ false);
-    if (n < 0)
+    if (n <= 0)
         return env->NewStringUTF("");
-    buf[n] = '\0';
-    return env->NewStringUTF(buf);
+
+    // NewStringUTF は Modified UTF-8 のみ受け付けるため、
+    // 4バイト UTF-8（絵文字等）を含む場合は NewString (UTF-16) で渡す
+    // UTF-8 → UTF-16 変換
+    std::vector<jchar> utf16;
+    int i = 0;
+    while (i < n) {
+        unsigned char c = static_cast<unsigned char>(buf[i]);
+        uint32_t cp = 0;
+        int bytes = 0;
+        if (c < 0x80) {
+            cp = c; bytes = 1;
+        } else if ((c & 0xE0) == 0xC0) {
+            cp = c & 0x1F; bytes = 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            cp = c & 0x0F; bytes = 3;
+        } else if ((c & 0xF8) == 0xF0) {
+            cp = c & 0x07; bytes = 4;
+        } else {
+            i++; continue; // 不正バイトはスキップ
+        }
+        for (int b = 1; b < bytes && (i + b) < n; b++) {
+            cp = (cp << 6) | (static_cast<unsigned char>(buf[i + b]) & 0x3F);
+        }
+        i += bytes;
+        if (cp < 0x10000) {
+            utf16.push_back(static_cast<jchar>(cp));
+        } else {
+            // サロゲートペア
+            cp -= 0x10000;
+            utf16.push_back(static_cast<jchar>(0xD800 | (cp >> 10)));
+            utf16.push_back(static_cast<jchar>(0xDC00 | (cp & 0x3FF)));
+        }
+    }
+    return env->NewString(utf16.data(), static_cast<jsize>(utf16.size()));
 }
 
 // ─── KV キャッシュ ────────────────────────────────────────────────
