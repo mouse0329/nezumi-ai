@@ -16,12 +16,19 @@ object LlamaBridge {
 
     private const val TAG = "LlamaBridge"
 
+    @Volatile
+    private var libraryLoaded: Boolean = false
+
+    fun isLibraryLoaded(): Boolean = libraryLoaded
+
     init {
         try {
             // llama.cpp AAR を使う場合はこれだけでよい
             System.loadLibrary("llama_bridge")
+            libraryLoaded = true
             Log.i(TAG, "llama_bridge loaded")
         } catch (e: UnsatisfiedLinkError) {
+            libraryLoaded = false
             Log.e(TAG, "Failed to load llama_bridge", e)
         }
     }
@@ -79,6 +86,12 @@ object LlamaBridge {
      * @return 0 = 成功、負値 = エラー
      */
     external fun llamaDecode(ctx: Long, tokens: IntArray): Int
+
+    /**
+     * ネイティブバッチ容量を返す。
+     * llamaDecode() に渡すトークン配列はこの長さ以下である必要がある。
+     */
+    external fun llamaGetBatchCapacity(ctx: Long): Int
 
     /**
      * 次トークンをサンプリングして返す。

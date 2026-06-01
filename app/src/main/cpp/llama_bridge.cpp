@@ -57,7 +57,14 @@ struct NezumiLlamaCtx {
     llama_model*   model   = nullptr;
     llama_context* ctx     = nullptr;
     llama_sampler* sampler = nullptr;
+    llama_batch    batch   = {};
     int            n_ctx   = 0;
+    int            n_batch = 512;
+    // サンプラーパラメータキャッシュ
+    float          cached_temp = -1.0f;
+    float          cached_top_p = -1.0f;
+    int            cached_top_k = -1;
+    float          cached_repeat_penalty = -1.0f;
 };
 
 // ─── ライフサイクル ───────────────────────────────────────────────
@@ -92,7 +99,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     cparams.n_ctx       = static_cast<uint32_t>(n_ctx);
     cparams.n_threads   = static_cast<int32_t>(n_threads);
     cparams.n_threads_batch = static_cast<int32_t>(n_threads);
-    cparams.seed        = (seed < 0) ? LLAMA_DEFAULT_SEED : static_cast<uint32_t>(seed);
+    // Note: some versions of llama_context_params do not expose a seed member.
+    // Seed handling is optional; keep deterministic behavior by leaving default.
 
     llama_context* ctx = llama_init_from_model(model, cparams);
     if (!ctx) {
@@ -105,9 +113,11 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     nc->model = model;
     nc->ctx   = ctx;
     nc->n_ctx = n_ctx;
+    nc->n_batch = (n_ctx > 2048) ? 512 : 256;  // コンテキストサイズに応じて調整
+    nc->batch = llama_batch_init(nc->n_batch, 0, 1);  // バッチを事前確保
     // sampler は llamaSample() の呼び出し時に生成する（パラメータを受け取るため）
 
-    LOGI("llamaInit: OK n_ctx=%d n_gpu_layers=%d", n_ctx, n_gpu_layers);
+    LOGI("llamaInit: OK n_ctx=%d n_gpu_layers=%d n_batch=%d", n_ctx, n_gpu_layers, nc->n_batch);
     return reinterpret_cast<jlong>(nc);
 }
 
@@ -121,6 +131,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaFree(
     if (j_ctx == 0) return;
     auto* nc = reinterpret_cast<NezumiLlamaCtx*>(j_ctx);
     if (nc->sampler) { llama_sampler_free(nc->sampler); nc->sampler = nullptr; }
+    llama_batch_free(nc->batch);  // バッチを解放
     if (nc->ctx)     { llama_free(nc->ctx);              nc->ctx     = nullptr; }
     if (nc->model)   { llama_model_free(nc->model);      nc->model   = nullptr; }
     delete nc;
@@ -141,15 +152,16 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaTokenize(
 {
     auto* nc = reinterpret_cast<NezumiLlamaCtx*>(j_ctx);
     const char* text = env->GetStringUTFChars(j_text, nullptr);
+    size_t text_len = strlen(text);
 
-    // 最大トークン数を見積もる（文字数 + 余裕）
-    int max_tokens = static_cast<int>(strlen(text)) + 64;
+    // 最大トークン数を見積もる（文字数 * 1.5 + 余裕）- より正確な見積もり
+    int max_tokens = static_cast<int>(text_len * 1.5f) + 128;
     std::vector<llama_token> tokens(max_tokens);
 
     int n = llama_tokenize(
         llama_model_get_vocab(nc->model),
         text,
-        static_cast<int32_t>(strlen(text)),
+        static_cast<int32_t>(text_len),
         tokens.data(),
         max_tokens,
         add_bos,
@@ -199,7 +211,9 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaClearKvCache(
         jlong j_ctx)
 {
     auto* nc = reinterpret_cast<NezumiLlamaCtx*>(j_ctx);
-    llama_kv_self_clear(nc->ctx);
+    if (!nc || !nc->ctx) return;
+    // Use llama_memory_clear to clear KV cache according to rnllama API
+    llama_memory_clear(llama_get_memory(nc->ctx), true);
     LOGI("llamaClearKvCache: done");
 }
 
@@ -217,13 +231,38 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaDecode(
     jsize len = env->GetArrayLength(j_tokens);
     jint* raw = env->GetIntArrayElements(j_tokens, nullptr);
 
-    llama_batch batch = llama_batch_get_one(
-        reinterpret_cast<llama_token*>(raw),
-        static_cast<int32_t>(len)
-    );
-    int ret = llama_decode(nc->ctx, batch);
+    // 事前確保したバッチを再利用してトークン配列を埋める
+    if (len > nc->n_batch) {
+        // エラー: 事前確保したバッファより大きい
+        LOGE("llamaDecode: token batch size %d exceeds capacity %d", len, nc->n_batch);
+        env->ReleaseIntArrayElements(j_tokens, raw, JNI_ABORT);
+        return static_cast<jint>(-1);
+    }
+
+    nc->batch.n_tokens = static_cast<int32_t>(len);
+    for (int i = 0; i < len; ++i) {
+        nc->batch.token[i] = static_cast<llama_token>(raw[i]);
+        if (nc->batch.pos) nc->batch.pos[i] = i;
+        if (nc->batch.n_seq_id) nc->batch.n_seq_id[i] = 1;
+        if (nc->batch.seq_id && nc->batch.seq_id[i]) nc->batch.seq_id[i][0] = 0;
+        if (nc->batch.logits) nc->batch.logits[i] = 0;
+    }
+    if (nc->batch.logits && nc->batch.n_tokens > 0) nc->batch.logits[nc->batch.n_tokens - 1] = 1;  // 最後のトークンのみlogitsを計算
+
+    int ret = llama_decode(nc->ctx, nc->batch);
     env->ReleaseIntArrayElements(j_tokens, raw, JNI_ABORT);
     return static_cast<jint>(ret);
+}
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaGetBatchCapacity(
+        JNIEnv* /* env */,
+        jobject /* obj */,
+        jlong j_ctx)
+{
+    auto* nc = reinterpret_cast<NezumiLlamaCtx*>(j_ctx);
+    return static_cast<jint>(nc ? nc->n_batch : 0);
 }
 
 extern "C"
@@ -239,26 +278,39 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaSample(
 {
     auto* nc = reinterpret_cast<NezumiLlamaCtx*>(j_ctx);
 
-    // サンプラーを毎回再構築（パラメータが変わる可能性があるため）
-    if (nc->sampler) {
-        llama_sampler_free(nc->sampler);
-        nc->sampler = nullptr;
-    }
+    // パラメータが変更された場合のみサンプラーを再構築
+    bool params_changed = (nc->cached_temp != temperature ||
+                          nc->cached_top_p != top_p ||
+                          nc->cached_top_k != top_k ||
+                          nc->cached_repeat_penalty != repeat_penalty);
 
-    // サンプラーチェーン: repeat_penalty → top_k → top_p → temperature → greedy
-    nc->sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
-    llama_sampler_chain_add(nc->sampler,
-        llama_sampler_init_penalties(
-            /* last_n */ 64,
-            /* repeat_penalty */ repeat_penalty,
-            /* frequency_penalty */ 0.0f,
-            /* presence_penalty */ 0.0f
-        )
-    );
-    llama_sampler_chain_add(nc->sampler, llama_sampler_init_top_k(top_k));
-    llama_sampler_chain_add(nc->sampler, llama_sampler_init_top_p(top_p, /* min_keep */ 1));
-    llama_sampler_chain_add(nc->sampler, llama_sampler_init_temp(temperature));
-    llama_sampler_chain_add(nc->sampler, llama_sampler_init_greedy());
+    if (params_changed || !nc->sampler) {
+        if (nc->sampler) {
+            llama_sampler_free(nc->sampler);
+            nc->sampler = nullptr;
+        }
+
+        // サンプラーチェーン: repeat_penalty → top_k → top_p → temperature → greedy
+        nc->sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
+        llama_sampler_chain_add(nc->sampler,
+            llama_sampler_init_penalties(
+                /* last_n */ 64,
+                /* repeat_penalty */ repeat_penalty,
+                /* frequency_penalty */ 0.0f,
+                /* presence_penalty */ 0.0f
+            )
+        );
+        llama_sampler_chain_add(nc->sampler, llama_sampler_init_top_k(top_k));
+        llama_sampler_chain_add(nc->sampler, llama_sampler_init_top_p(top_p, /* min_keep */ 1));
+        llama_sampler_chain_add(nc->sampler, llama_sampler_init_temp(temperature));
+        llama_sampler_chain_add(nc->sampler, llama_sampler_init_greedy());
+
+        // キャッシュを更新
+        nc->cached_temp = temperature;
+        nc->cached_top_p = top_p;
+        nc->cached_top_k = top_k;
+        nc->cached_repeat_penalty = repeat_penalty;
+    }
 
     llama_token token = llama_sampler_sample(nc->sampler, nc->ctx, /* idx */ -1);
     llama_sampler_accept(nc->sampler, token);
@@ -275,7 +327,9 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaEosToken(
         jlong j_ctx)
 {
     auto* nc = reinterpret_cast<NezumiLlamaCtx*>(j_ctx);
-    return static_cast<jint>(llama_model_eos(nc->model));
+    if (!nc || !nc->model) return static_cast<jint>(-1);
+    const llama_vocab* vocab = llama_model_get_vocab(nc->model);
+    return static_cast<jint>(llama_vocab_eos(vocab));
 }
 
 extern "C"
