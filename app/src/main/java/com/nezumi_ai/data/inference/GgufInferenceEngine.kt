@@ -46,6 +46,30 @@ class GgufInferenceEngine : AIInferenceEngine {
         private const val MAX_NEW_TOKENS = 4096
         private const val CHUNK_SIZE = 8  // トークンをチャンク単位で送信
 
+        // ロールプレイループ・自己対話を防ぐ停止シーケンス
+        private val STOP_SEQUENCES = listOf(
+            "<|im_end|>",
+            "<|im_start|>",
+            "<end_of_turn>",
+            "<start_of_turn>",
+            "User:",
+            "User：",
+            "\nUser:",
+            " User:",
+            "Assistant:",
+            "Assistant：",
+            "\nAssistant:",
+            " Assistant:",
+            "ユーザー:",
+            "ユーザー：",
+            "\nユーザー:",
+            " ユーザー:",
+            "アシスタント:",
+            "アシスタント：",
+            "\nアシスタント:",
+            " アシスタント:"
+        )
+
         /**
          * デバイスのCPUコア数に基づいて最適なスレッド数を計算
          */
@@ -307,6 +331,20 @@ class GgufInferenceEngine : AIInferenceEngine {
                         chunkBuffer.append(piece)
                         tokensSinceLastSend++
                         PerformanceMonitor.recordToken(sessionId)  // トークン生成を記録
+                    }
+
+                    // ストップシーケンスチェック（自己対話ループを防ぐ）
+                    val accumulated = answerAccum.toString()
+                    val hitStop = STOP_SEQUENCES.any { stop -> accumulated.endsWith(stop) }
+                    if (hitStop) {
+                        // ストップシーケンス分をバッファから除去して送信
+                        val matchedStop = STOP_SEQUENCES.first { stop -> accumulated.endsWith(stop) }
+                        val trimmed = chunkBuffer.toString().removeSuffix(matchedStop)
+                        if (trimmed.isNotEmpty()) trySend(trimmed)
+                        chunkBuffer.clear()
+                        tokensSinceLastSend = 0
+                        Log.d(TAG, "Stop sequence hit at token $generatedCount: ${matchedStop.take(20)}")
+                        break
                     }
 
                     // チャンク単位または100ms経過で送信（UIの応答性向上）

@@ -61,6 +61,7 @@ struct NezumiLlamaCtx
     llama_batch batch = {};
     int n_ctx = 0;
     int n_batch = 512;
+    int n_past = 0; // KVキャッシュに書き込み済みのトークン数（位置オフセット）
     // サンプラーパラメータキャッシュ
     float cached_temp = -1.0f;
     float cached_top_p = -1.0f;
@@ -224,9 +225,9 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaClearKvCache(
     auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
     if (!nc || !nc->ctx)
         return;
-    // Use llama_memory_clear to clear KV cache according to rnllama API
     llama_memory_clear(llama_get_memory(nc->ctx), true);
-    LOGI("llamaClearKvCache: done");
+    nc->n_past = 0; // 位置カウンタもリセット
+    LOGI("llamaClearKvCache: done (n_past reset to 0)");
 }
 
 // ─── 推論 ─────────────────────────────────────────────────────────
@@ -256,7 +257,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaDecode(
     {
         nc->batch.token[i] = static_cast<llama_token>(raw[i]);
         if (nc->batch.pos)
-            nc->batch.pos[i] = i;
+            nc->batch.pos[i] = nc->n_past + i; // ★ KVキャッシュの現在位置から続ける
         if (nc->batch.n_seq_id)
             nc->batch.n_seq_id[i] = 1;
         if (nc->batch.seq_id && nc->batch.seq_id[i])
@@ -269,6 +270,10 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaDecode(
 
     int ret = llama_decode(nc->ctx, nc->batch);
     env->ReleaseIntArrayElements(j_tokens, raw, JNI_ABORT);
+
+    if (ret == 0)
+        nc->n_past += static_cast<int>(len); // ★ 成功時のみ位置を進める
+
     return static_cast<jint>(ret);
 }
 
