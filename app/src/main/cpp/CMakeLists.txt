@@ -114,3 +114,20 @@ target_link_options(nezumi_rnllama_jni PRIVATE
         -Wl,-z,common-page-size=16384
 )
 
+# --- llama_bridge JNI wrapper (enabled) ---
+# Build a small JNI bridge that forwards calls to the rnllama_core target.
+# This uses the existing rnllama sources included above and produces
+# libllama_bridge.so which is loaded by LlamaBridge.kt at runtime.
+add_library(llama_bridge SHARED llama_bridge.cpp)
+
+target_include_directories(llama_bridge PRIVATE ${RNLLAMA_INCLUDE_DIRS})
+
+# Link against rnllama_core (provides llama/ggml symbols) and Android log
+target_link_libraries(llama_bridge PRIVATE rnllama_core ${LOG_LIB} android)
+
+target_compile_options(llama_bridge PRIVATE -O3 -DNDEBUG -pthread)
+target_link_options(llama_bridge PRIVATE
+        -Wl,-z,max-page-size=16384
+        -Wl,-z,common-page-size=16384
+)
+
