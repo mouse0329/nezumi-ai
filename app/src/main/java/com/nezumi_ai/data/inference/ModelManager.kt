@@ -67,8 +67,12 @@ class ModelManager(
                 Log.w(TAG, "GGUF native library unavailable")
                 return null
             }
+            if (!LlamaBridge.isLibraryLoaded()) {
+                Log.w(TAG, "GGUF native bridge unavailable: llama_bridge not loaded")
+                return null
+            }
             return try {
-                GgufInferenceEngine(context).also { ggufEngine = it }
+                GgufInferenceEngine().also { ggufEngine = it }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to construct GgufInferenceEngine", e)
                 null
@@ -79,13 +83,13 @@ class ModelManager(
     private fun shouldUseGgufEngine(modelName: String): Boolean {
         val trimmed = modelName.trim()
         val lowered = trimmed.lowercase()
-        val isAbsoluteGguf = lowered.endsWith(".gguf") && java.io.File(trimmed).isAbsolute
-        return isAbsoluteGguf
+        return lowered.endsWith(".gguf") && java.io.File(trimmed).isAbsolute
     }
 
     private fun engineForModel(modelName: String): AIInferenceEngine {
         return if (shouldUseGgufEngine(modelName)) {
-            getOrCreateGgufEngine() ?: liteRtEngine
+            getOrCreateGgufEngine()
+                ?: throw IllegalStateException("GGUF engine unavailable: native library could not be loaded")
         } else {
             liteRtEngine
         }
@@ -402,13 +406,10 @@ class ModelManager(
         }
     }
 
-    fun getLastGenerationTokenCount(): Float? {
-        val engine = activeEngine
-        return if (engine is GgufInferenceEngine) {
-            engine.getLastGenerationTokenCount()
-        } else {
-            null
-        }
+    suspend fun getLastGenerationTokenCount(): Float? {
+        // GGUFエンジンでは内部トークン数を直接取得できないため、
+        // PerformanceMonitorの直近完了セッションから補完する。
+        return PerformanceMonitor.getLastCompletedTokenCount()
     }
 
     /* Phase 15 TODO: calibrateBackend を後で実装

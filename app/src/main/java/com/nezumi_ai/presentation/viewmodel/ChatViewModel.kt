@@ -35,6 +35,7 @@ import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.TextTokenEstimator
 import com.nezumi_ai.data.inference.ToolCallState
 import com.nezumi_ai.data.inference.ToolExecutionResult
+import com.nezumi_ai.data.inference.ToolResultCard
 import com.nezumi_ai.data.inference.PromptBuilder
 import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import com.nezumi_ai.data.preset.PresetConstants
@@ -52,7 +53,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -322,6 +325,9 @@ class ChatViewModel(
 
     private val _imageGenProgress = MutableStateFlow<Pair<Int, Int>?>(null)
     val imageGenProgress: StateFlow<Pair<Int, Int>?> = _imageGenProgress.asStateFlow()
+
+    private val _currentTps = MutableStateFlow<Float?>(null)
+    val currentTps: StateFlow<Float?> = _currentTps.asStateFlow()
 
     private val _confirmationRequest = MutableStateFlow<String?>(null)
     val confirmationRequest: StateFlow<String?> = _confirmationRequest.asStateFlow()
@@ -1079,7 +1085,7 @@ class ChatViewModel(
             // GGUF マルチモーダル: JNI が mmproj 未指定時もベース GGUF から clip/mtmd を初期化する（単一ファイル統合型）
 
             // ストリーミング推論を実行（マルチモーダル対応）
-            val aiResponseFlow = withContext(Dispatchers.IO) {
+            val aiResponseFlow: Flow<String> = withContext(Dispatchers.IO) {
                 if (hasMediaInput) {
                     // マルチモーダル推論
                     Log.d(TAG, "Using multimodal inference: ${images.size} images, ${audioClips.size} audio clips")
@@ -1120,6 +1126,7 @@ class ChatViewModel(
             var toolResultsJson: String? = null
             var firstOutputAtMs: Long? = null
             var generationEndAtMs: Long? = null
+            var tokenCount = 0f
 
             // ストリーム内容を収集
             // タイムアウトは「最初の出力が来るまで」のみ有効。
@@ -1177,128 +1184,144 @@ class ChatViewModel(
                                     firstOutputAtMs = SystemClock.elapsedRealtime()
                                 }
                                 lastChunkAt.set(SystemClock.elapsedRealtime())
-                                val finalFromModel = InferenceStreamProtocol.decodeFinal(chunk)
-                                val thinkDelta = InferenceStreamProtocol.decodeThinkChunk(chunk)
-                                val toolCallChunk = InferenceStreamProtocol.decodeToolCallChunk(chunk)
-                                val toolResultChunk = InferenceStreamProtocol.decodeToolResultChunk(chunk)
-                                val toolResults = InferenceStreamProtocol.decodeToolResults(chunk)
-                                if (finalFromModel != null) {
-                                    Log.d(TAG, "FINAL received: length=${finalFromModel.length}")
-                                    answerBuilder.clear()
-                                    answerBuilder.append(finalFromModel)
-                                } else if (thinkDelta != null) {
-                                    nativeThinkingStream = true
-                                    if (thinkDelta.isNotEmpty()) {
-                                        val curT = thinkingBuilder.toString()
-                                        val mergedT = mergeStreamingChunk(curT, thinkDelta)
-                                        if (mergedT != curT && mergedT.length >= curT.length) {
-                                            thinkingBuilder.clear()
-                                            thinkingBuilder.append(mergedT)
-                                        } else if (mergedT.length < curT.length) {
-                                            Log.w(
-                                                TAG,
-                                                "Thinking chunk merge would shrink: ${curT.length} -> ${mergedT.length}, skipping"
-                                            )
+                                // Split incoming chunk by embedded control markers so that
+                                // markers like \u0000__TPS__\u0000 or \u0000__FINAL__\u0000
+                                // are handled separately even if they arrive inside a single
+                                // delivered chunk.
+                                var finalFromModelGlobal: String? = null
+                                val segments = InferenceStreamProtocol.splitStreamChunks(chunk)
+                                for (seg in segments) {
+                                    val finalFromModel = InferenceStreamProtocol.decodeFinal(seg)
+                                    val thinkDelta = InferenceStreamProtocol.decodeThinkChunk(seg)
+                                    val toolCallChunk = InferenceStreamProtocol.decodeToolCallChunk(seg)
+                                    val toolResultChunk = InferenceStreamProtocol.decodeToolResultChunk(seg)
+                                    val toolResults = InferenceStreamProtocol.decodeToolResults(seg)
+                                    val tpsValue = InferenceStreamProtocol.decodeTps(seg)
+
+                                    when {
+                                        finalFromModel != null -> {
+                                            Log.d(TAG, "FINAL received: length=${finalFromModel.length}")
+                                            finalFromModelGlobal = finalFromModel
+                                            answerBuilder.clear()
+                                            answerBuilder.append(finalFromModel)
                                         }
-                                    }
-                                } else if (toolCallChunk != null) {
-                                    // Tool Call チャンク処理：実行中の詳細フィードバック
-                                    Log.d(TAG, "Tool call detected: $toolCallChunk")
-                                    val toolNames = toolCallChunk.split(",").map { it.trim() }
-                                    for (toolName in toolNames) {
-                                        // ToolCallState を Executing に更新（async で非ブロッキング）
-                                        viewModelScope.launch {
-                                            _toolCallState.value = ToolCallState.Executing(
-                                                toolName = toolName,
-                                                elapsedMs = System.currentTimeMillis() - lastChunkAt.get()
-                                            )
-                                        }
-                                        
-                                        val executingMsg = when (toolName) {
-                                            "set_alarm" -> "⏰ アラームを設定中..."
-                                            "send_message" -> "💬 メッセージを送信中..."
-                                            "search" -> "🔍 検索中..."
-                                            else -> "🔧 $toolName を実行中..."
-                                        }
-                                        _uiMessage.emit(executingMsg)
-                                        Log.d(TAG, "Tool execution started: $toolName")
-                                    }
-                                } else if (toolResultChunk != null) {
-                                    // Tool Result チャンク処理：実行結果のフィードバック
-                                    Log.d(TAG, "Tool result received: $toolResultChunk")
-                                    val parts = toolResultChunk.split(":", limit = 2)
-                                    if (parts.size >= 2) {
-                                        val toolName = parts[0].trim()
-                                        val status = parts[1].trim()
-                                        
-                                        // ToolCallState を Result に更新（async で非ブロッキング）
-                                        viewModelScope.launch {
-                                            _toolCallState.value = ToolCallState.Result(
-                                                toolName = toolName,
-                                                status = if (status.contains("success", ignoreCase = true)) "success" else "error",
-                                                resultMessage = status
-                                            )
-                                        }
-                                        
-                                        val resultMsg = when (status) {
-                                            "success" -> "✅ $toolName: 成功"
-                                            "error" -> "❌ $toolName: 実行失敗"
-                                            else -> "⏳ $toolName: ${status}"
-                                        }
-                                        _uiMessage.emit(resultMsg)
-                                        Log.d(TAG, "Tool execution completed: $toolName status=$status")
-                                    }
-                                } else if (toolResults != null) {
-                                    // ツール実行結果JSON（テーブル保存用）
-                                    if (toolResults != "[]") {
-                                        toolResultsJson = toolResults
-                                    }
-                                    Log.d(TAG, "Tool results JSON received: length=${toolResults.length}")
-                                } else {
-                                    val executedToolsList = InferenceStreamProtocol.decodeExecutedToolsList(chunk)
-                                    if (executedToolsList != null) {
-                                        // 実行されたツール一覧を UI に表示
-                                        Log.d(TAG, "Executed tools list: $executedToolsList")
-                                        if (executedToolsList.isNotEmpty()) {
-                                            val toolsDisplay = executedToolsList.joinToString(", ")
-                                            val toolListMsg = "🔧 実行ツール: $toolsDisplay"
-                                            _uiMessage.emit(toolListMsg)
-                                        }
-                                    } else {
-                                        if (chunk.isNotEmpty()) {
-                                            val currentContent = answerBuilder.toString()
-                                            if (BuildConfig.DEBUG) {
-                                                Log.d(TAG, "RAW_CHUNK: length=${chunk.length} content='${chunk.take(100)}'")
-                                            }
-                                            val merged = mergeStreamingChunk(currentContent, chunk)
-                                            if (merged != currentContent && merged.length >= currentContent.length) {
-                                                answerBuilder.clear()
-                                                answerBuilder.append(merged)
-                                                if (BuildConfig.DEBUG) {
-                                                    Log.d(
+                                        thinkDelta != null -> {
+                                            nativeThinkingStream = true
+                                            if (thinkDelta.isNotEmpty()) {
+                                                val curT = thinkingBuilder.toString()
+                                                val mergedT = mergeStreamingChunk(curT, thinkDelta)
+                                                if (mergedT != curT && mergedT.length >= curT.length) {
+                                                    thinkingBuilder.clear()
+                                                    thinkingBuilder.append(mergedT)
+                                                } else if (mergedT.length < curT.length) {
+                                                    Log.w(
                                                         TAG,
-                                                        "Chunk merged: ${currentContent.length} -> ${merged.length} chars (added ${merged.length - currentContent.length} chars)"
-                                                )
-                                                if (merged.length - currentContent.length != chunk.length) {
-                                                    Log.w(TAG, "⚠ OVERLAP DETECTED: chunk=${chunk.length} chars, but added only ${merged.length - currentContent.length} chars")
+                                                        "Thinking chunk merge would shrink: ${curT.length} -> ${mergedT.length}, skipping"
+                                                    )
                                                 }
-                                                            }
-                                                    } else if (merged.length < currentContent.length) {
-                                                        Log.w(TAG, "❌ Chunk merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping merge")
-                                                        if (BuildConfig.DEBUG) {
-                                                            Log.w(TAG, "  original chunk: '${chunk.take(80)}'")
-                                                            Log.w(TAG, "  current: '${currentContent.take(80)}'")
-                                                            Log.w(TAG, "  merged: '${merged.take(80)}'")
+                                            }
+                                        }
+                                        toolCallChunk != null -> {
+                                            Log.d(TAG, "Tool call detected: $toolCallChunk")
+                                            val toolNames = toolCallChunk.split(",").map { it.trim() }
+                                            for (toolName in toolNames) {
+                                                viewModelScope.launch {
+                                                    _toolCallState.value = ToolCallState.Executing(
+                                                        toolName = toolName,
+                                                        elapsedMs = System.currentTimeMillis() - lastChunkAt.get()
+                                                    )
+                                                }
+                                                val executingMsg = when (toolName) {
+                                                    "set_alarm" -> "⏰ アラームを設定中..."
+                                                    "send_message" -> "💬 メッセージを送信中..."
+                                                    "search" -> "🔍 検索中..."
+                                                    else -> "🔧 $toolName を実行中..."
+                                                }
+                                                _uiMessage.emit(executingMsg)
+                                                Log.d(TAG, "Tool execution started: $toolName")
+                                            }
+                                        }
+                                        toolResultChunk != null -> {
+                                            Log.d(TAG, "Tool result received: $toolResultChunk")
+                                            val parts = toolResultChunk.split(":", limit = 2)
+                                            if (parts.size >= 2) {
+                                                val toolName = parts[0].trim()
+                                                val status = parts[1].trim()
+                                                viewModelScope.launch {
+                                                    _toolCallState.value = ToolCallState.Result(
+                                                        toolName = toolName,
+                                                        status = if (status.contains("success", ignoreCase = true)) "success" else "error",
+                                                        resultMessage = status
+                                                    )
+                                                }
+                                                val resultMsg = when (status) {
+                                                    "success" -> "✅ $toolName: 成功"
+                                                    "error" -> "❌ $toolName: 実行失敗"
+                                                    else -> "⏳ $toolName: $status"
+                                                }
+                                                _uiMessage.emit(resultMsg)
+                                                Log.d(TAG, "Tool execution completed: $toolName status=$status")
+                                            }
+                                        }
+                                        toolResults != null -> {
+                                            if (toolResults != "[]") {
+                                                toolResultsJson = toolResults
+                                            }
+                                            Log.d(TAG, "Tool results JSON received: length=${toolResults.length}")
+                                        }
+                                        tpsValue != null -> {
+                                            _currentTps.value = tpsValue
+                                        }
+                                        else -> {
+                                            val executedToolsList = InferenceStreamProtocol.decodeExecutedToolsList(seg)
+                                            if (executedToolsList != null) {
+                                                Log.d(TAG, "Executed tools list: $executedToolsList")
+                                                if (executedToolsList.isNotEmpty()) {
+                                                    val toolsDisplay = executedToolsList.joinToString(", ")
+                                                    val toolListMsg = "🔧 実行ツール: $toolsDisplay"
+                                                    _uiMessage.emit(toolListMsg)
+                                                }
+                                            } else if (seg.isNotEmpty()) {
+                                                val currentContent = answerBuilder.toString()
+                                                if (BuildConfig.DEBUG) {
+                                                    Log.d(TAG, "RAW_CHUNK: length=${seg.length} content='${seg.take(100)}'")
+                                                }
+                                                val merged = mergeStreamingChunk(currentContent, seg)
+                                                if (merged != currentContent && merged.length >= currentContent.length) {
+                                                    answerBuilder.clear()
+                                                    answerBuilder.append(merged)
+                                                    tokenCount += TextTokenEstimator.estimateOutputTokens(seg)
+                                                    if (tokenCount >= 10f && firstOutputAtMs != null) {
+                                                        val elapsed = SystemClock.elapsedRealtime() - firstOutputAtMs
+                                                        if (elapsed > 0) {
+                                                            _currentTps.value = (tokenCount * 1000f) / elapsed
                                                         }
-                                                    } else if (merged == currentContent) {
-                                                        // chunk が既に反映済み
-                                                        if (BuildConfig.DEBUG) {
-                                                            Log.d(TAG, "DUPLICATE_CHUNK: skipped (already present)")
-                                                        }
+                                                    }
+                                                    if (BuildConfig.DEBUG) {
+                                                        Log.d(
+                                                            TAG,
+                                                            "Chunk merged: ${currentContent.length} -> ${merged.length} chars (added ${merged.length - currentContent.length} chars)"
+                                                        )
+                                                    }
+                                                    if (merged.length - currentContent.length != seg.length) {
+                                                        Log.w(TAG, "⚠ OVERLAP DETECTED: chunk=${seg.length} chars, but added only ${merged.length - currentContent.length} chars")
+                                                    }
+                                                } else if (merged.length < currentContent.length) {
+                                                    Log.w(TAG, "❌ Chunk merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping merge")
+                                                    if (BuildConfig.DEBUG) {
+                                                        Log.w(TAG, "  original chunk: '${seg.take(80)}'")
+                                                        Log.w(TAG, "  current: '${currentContent.take(80)}'")
+                                                        Log.w(TAG, "  merged: '${merged.take(80)}'")
+                                                    }
+                                                } else if (merged == currentContent) {
+                                                    if (BuildConfig.DEBUG) {
+                                                        Log.d(TAG, "DUPLICATE_CHUNK: skipped (already present)")
                                                     }
                                                 }
                                             }
                                         }
+                                    }
+                                }
                                 val messageIdToUpdate = streamingMessageId ?: activeStreamingMessageId
                                 messageIdToUpdate?.let { id ->
                                     val contentForUi: String
@@ -1346,7 +1369,7 @@ class ChatViewModel(
                                             // Content が存在すれば通常の persist ロジック
                                             (contentForUi != lastPersistedContent ||
                                                 thinkingForUi != lastPersistedThinking) &&
-                                                (finalFromModel != null ||
+                                                (finalFromModelGlobal != null ||
                                                     isFirstVisibleContent ||
                                                     isFirstThinkingPersist ||
                                                     now - lastPersistAt >= persistInterval)
@@ -1355,9 +1378,9 @@ class ChatViewModel(
                                         messageRepository.updateMessageContent(
                                             messageId = id,
                                             content = contentForUi,
-                                            isStreaming = finalFromModel == null,
+                                            isStreaming = finalFromModelGlobal == null,
                                             thinkingContent = thinkingForUi,
-                                            toolResultsJson = if (finalFromModel != null) toolResultsJson else null
+                                            toolResultsJson = if (finalFromModelGlobal != null) toolResultsJson else null
                                         )
                                         lastPersistedContent = contentForUi
                                         lastPersistedThinking = thinkingForUi
@@ -1407,7 +1430,7 @@ class ChatViewModel(
                         streamAbortNote =
                             "\n\n（長時間出力が途切れたため、ここで打ち切りました）"
                         withContext(Dispatchers.Main) {
-                            _uiMessage.emit("応答が長時間途切れました。表示された分まで保存しました。")
+                            _uiMessage.emit("⏱️ 応答が長時間途切れました。表示された分まで保存しました。")
                         }
                     }
                     collectionError is GenerationWallTimeoutException -> {
@@ -1415,7 +1438,7 @@ class ChatViewModel(
                         streamAbortNote =
                             "\n\n（生成時間の上限に達したため、ここで打ち切りました）"
                         withContext(Dispatchers.Main) {
-                            _uiMessage.emit("生成時間が上限に達しました。表示された分まで保存しました。")
+                            _uiMessage.emit("⏱️ 生成時間が上限に達しました。表示された分まで保存しました。")
                         }
                     }
                     collectionError is UserStopCancellationException -> {
@@ -1453,11 +1476,31 @@ class ChatViewModel(
                 collectionCancelledByUser && completeResponse.isEmpty() && finalThinking.isNullOrEmpty()
             val contentToSave =
                 when {
-                    stoppedWithoutPayload -> "生成を停止しました。"
+                    stoppedWithoutPayload -> ""  // 空の場合は空文字列を保存（後でフォールバックメッセージに置換）
                     note == null -> completeResponse
                     completeResponse.isNotEmpty() -> completeResponse + note
                     else -> note.trim()
                 }
+            
+            // ★ ユーザー停止時はツール実行結果カードとして保存
+            val finalToolResultsJson = if (collectionCancelledByUser) {
+                val stopCard = ToolResultCard(
+                    toolName = "user_stop",
+                    success = true,
+                    payload = mapOf(
+                        "message" to kotlinx.serialization.json.JsonPrimitive("ユーザーが生成を停止しました"),
+                        "icon" to kotlinx.serialization.json.JsonPrimitive("⏸️")
+                    )
+                )
+                val existingCards = if (!toolResultsJson.isNullOrBlank() && toolResultsJson != "[]") {
+                    ToolResultCard.listFromJsonArray(toolResultsJson)
+                } else {
+                    emptyList()
+                }
+                ToolResultCard.listToJsonArray(existingCards + stopCard)
+            } else {
+                toolResultsJson
+            }
 
             val hasPayload =
                 contentToSave.isNotEmpty() || !finalThinking.isNullOrEmpty()
@@ -1471,11 +1514,12 @@ class ChatViewModel(
             val tps = if (generationTimeMs != null && generationTimeMs > 0L) {
                 val tokensAfterFirst = if (isGgufEngineModel(engineModelName)) {
                     val nativeTokens = manager.getLastGenerationTokenCount()
-                    nativeTokens?.minus(1f)?.coerceAtLeast(0f)
+                    (nativeTokens?.minus(1f))?.coerceAtLeast(0f)
+                        ?: (TextTokenEstimator.estimateOutputTokens(completeResponse) - 1f).coerceAtLeast(0f)
                 } else {
                     (TextTokenEstimator.estimateOutputTokens(completeResponse) - 1f).coerceAtLeast(0f)
                 }
-                if (tokensAfterFirst != null && tokensAfterFirst > 0f) {
+                if (tokensAfterFirst > 0f) {
                     tokensAfterFirst * 1000f / generationTimeMs
                 } else {
                     null
@@ -1497,7 +1541,7 @@ class ChatViewModel(
                         content = contentToSave,
                         isStreaming = false,
                         thinkingContent = finalThinking,
-                        toolResultsJson = toolResultsJson,
+                        toolResultsJson = finalToolResultsJson,
                         generationTps = tps,
                         generationTimeMs = generationTimeMs
                     )
@@ -1552,11 +1596,38 @@ class ChatViewModel(
                 val id = streamingMessageId
                 if (id != null) {
                     withContext(Dispatchers.IO + NonCancellable) {
+                        // ★ 既存の内容を取得して保存（上書きしない）
+                        val current = messageRepository.getMessageById(id)
+                        val existingContent = current?.content?.trim() ?: ""
+                        val finalContent = if (existingContent.isNotEmpty()) {
+                            existingContent  // 既存の内容をそのまま保存
+                        } else {
+                            ""  // 空の場合は空文字列（後でフォールバックメッセージに置換）
+                        }
+                        
+                        // ★ 停止カードを追加
+                        val stopCard = ToolResultCard(
+                            toolName = "user_stop",
+                            success = true,
+                            payload = mapOf(
+                                "message" to kotlinx.serialization.json.JsonPrimitive("ユーザーが生成を停止しました"),
+                                "icon" to kotlinx.serialization.json.JsonPrimitive("⏸️")
+                            )
+                        )
+                        val existingToolResults = current?.toolResultsJson
+                        val existingCards = if (!existingToolResults.isNullOrBlank() && existingToolResults != "[]") {
+                            ToolResultCard.listFromJsonArray(existingToolResults)
+                        } else {
+                            emptyList()
+                        }
+                        val updatedToolResultsJson = ToolResultCard.listToJsonArray(existingCards + stopCard)
+                        
                         messageRepository.updateMessageContent(
                             messageId = id,
-                            content = "生成を停止しました。",
+                            content = finalContent,
                             isStreaming = false,
-                            thinkingContent = null
+                            thinkingContent = current?.thinkingContent,
+                            toolResultsJson = updatedToolResultsJson
                         )
                     }
                 }
@@ -1641,6 +1712,7 @@ class ChatViewModel(
 
                 // Tool Call State マシンを Done に設定
                 _toolCallState.value = ToolCallState.Done
+                _currentTps.value = null
 
                 // Phase 11: 全体のロード時間をログ出力
                 val aiTotalMs = System.currentTimeMillis() - aiStartMs
