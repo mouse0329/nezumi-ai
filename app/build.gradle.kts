@@ -102,6 +102,12 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // VOICEVOX 無効化期間中は 4KB アライン SO を除外する。
+            // VoicevoxFeatureFlag.ENABLED = true に戻す際はこの excludes を削除すること。
+            excludes += setOf(
+                "lib/arm64-v8a/libvoicevox_onnxruntime.so",
+                "lib/x86_64/libvoicevox_onnxruntime.so"
+            )
         }
     }
 
@@ -180,7 +186,13 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
 
     // VOICEVOX integration
-    implementation(files("libs/voicevoxcore-android-0.16.4.aar"))
+    // -----------------------------------------------------------------------
+    // DISABLED: voicevoxcore-android-0.16.4.aar に同梱の
+    //   libvoicevox_onnxruntime.so が ORT v1.17.3 ベース (4KB アライン) のため
+    //   Android 15 以降の 16KB ページサイズデバイスで dlopen 失敗 / Play 拒否。
+    //   VoicevoxFeatureFlag.ENABLED = true に戻す際は下行のコメントを外すこと。
+    // -----------------------------------------------------------------------
+    // implementation(files("libs/voicevoxcore-android-0.16.4.aar"))
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

@@ -3454,6 +3454,10 @@ class ChatViewModel(
     }
 
     fun synthesizeText(messageId: Long, text: String) {
+        if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) {
+            Log.i(TAG, "synthesizeText: VOICEVOX is disabled. Skipping.")
+            return
+        }
         if (_speakingMessageId.value != null) return
         _speakingMessageId.value = messageId
         voicevoxStreamingTts.stop()

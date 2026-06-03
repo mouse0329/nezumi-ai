@@ -655,8 +655,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.speakingMessageId.collect { messageId ->
-                adapter.setSpeakingMessageId(messageId)
+            if (com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) {
+                viewModel.speakingMessageId.collect { messageId ->
+                    adapter.setSpeakingMessageId(messageId)
+                }
             }
         }
 

@@ -537,6 +537,7 @@ class MessageAdapter(
 
                 val speakText = message.content.stripGemmaTokens().trim()
                 val canSpeak = !message.isStreaming && speakText.isNotBlank()
+                    && com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED
                 val isSpeakingThisMessage = speakingMessageId == message.id
                 speakMessageButton.visibility =
                     if (canSpeak && !isSpeakingThisMessage) View.VISIBLE else View.GONE
