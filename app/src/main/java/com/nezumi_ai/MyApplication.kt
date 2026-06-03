@@ -27,9 +27,13 @@ class MyApplication : Application() {
         super.onCreate()
         PreferencesHelper.applyThemeMode(this)
         
-        // Initialize VOICEVOX
+        // Initialize VOICEVOX (フラグが false の場合はスタブが返るだけで何もしない)
         voicevoxManager = VoicevoxManager(this)
-        initializeVoicevox()
+        if (com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) {
+            initializeVoicevox()
+        } else {
+            Log.i(TAG, "VOICEVOX is disabled (VoicevoxFeatureFlag.ENABLED=false). Skipping initialization.")
+        }
         
         // CacheManager を初期化（前回ロードしたモデル名の復元）
         CacheManager.initialize(this)

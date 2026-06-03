@@ -10,11 +10,13 @@
 nezumi-aiは、インターネット接続なしで動作するプライベート性の高いAIアシスタントです。以下の特徴があります：
 
 - **完全オフライン動作**: ローカル推論で、サーバーへのデータ送信なし
-- **マルチモデル対応**: Gemma 3n E2B (軽量) / E4B (高性能) の選択可能
+- **マルチモデル対応**: Gemma 4 2B (軽量) / 4B (高性能) + Gemma 3n の選択可能
 - **GPU/CPU自動切り替え**: 端末のハードウェア最適化による高速化
 - **画像入力対応**: カメラ・ギャラリーから画像を取り込んでAIに解析させられる
 - **画像生成機能**: LocalDreamModule（MNN/QNN）による高速画像生成
 - **チャット履歴管理**: Room DBで会話履歴を永続化
+
+> **注意**: VOICEVOX音声読み上げ機能は、Android 15以降の16KBページサイズ端末との互換性問題のため、現在無効化されています。詳細は [VOICEVOX_RESTORE.md](docs/VOICEVOX_RESTORE.md) を参照してください。
 
 ---
 
@@ -72,8 +74,9 @@ KEY_PASSWORD=your_key_password
 - セッション分岐対応
 
 ### 2. モデル設定
-- **Gemma 3n E2B**: 軽量・高速（低スペック端末推奨）
-- **Gemma 3n E4B**: 高精度・高性能（ハイエンド端末推奨）
+- **Gemma 4 2B**: 軽量・高速（低スペック端末推奨）
+- **Gemma 4 4B**: 高精度・高性能（ハイエンド端末推奨）
+- **Gemma 3n E2B / E4B**: レガシーモデル（互換性維持）
 
 ### 3. 画像生成機能
 - **LocalDreamModule**: MNN/QNNバックエンドによる高速画像生成
@@ -112,13 +115,24 @@ KEY_PASSWORD=your_key_password
 
 ## 開発状況
 
-- **現在のバージョン**: v0.x (開発中)
-- **ターゲットリリース**: v1.0.0
+- **現在のバージョン**: v1.0.0
 - **主要コンポーネント**:
   - UI/UX: Jetpack Compose
   - データベース: Room
-  - 推論エンジン: llama.cpp, MNN/QNN
-  - モデル: Gemma 3n, Stable Diffusion 1.5
+  - 推論エンジン: llama.cpp (GGUF), LiteRT-LM (TFLite), MNN/QNN (画像生成)
+  - LLMモデル: Gemma 4 (2B/4B), Gemma 3n (E2B/E4B)
+  - 画像生成: Stable Diffusion 1.5 (MNN/QNN)
+
+### VOICEVOX音声読み上げについて
+
+現在、VOICEVOX機能は **一時的に無効化** されています。理由は以下の通りです：
+
+- VOICEVOX CORE 0.16.4 に同梱の ONNX Runtime 1.17.3 は 4KB ページアライメントでビルドされている
+- Android 15 以降の一部端末（Pixel 6 以降など）は 16KB ページサイズを使用
+- 4KB アライメントのネイティブライブラリは 16KB 端末で `dlopen` 失敗してクラッシュ
+- Google Play Console は 16KB 非対応 APK の新規アップロードを拒否
+
+**復元方法**: ONNX Runtime 1.18.0 以降（16KB 対応版）へのアップグレード後、[VOICEVOX_RESTORE.md](docs/VOICEVOX_RESTORE.md) の手順に従ってください。
 
 詳細な開発計画については [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) を参照してください。
        ↓
@@ -171,7 +185,7 @@ KEY_PASSWORD=your_key_password
 
 ### 初回起動
 1. アプリを起動
-2. モデルを選択（E2B / E4B）
+2. モデルを選択（Gemma 4 2B / 4B 推奨）
 3. バックエンド選択（GPU / CPU）
 4. モデルダウンロード開始
 
@@ -192,10 +206,10 @@ KEY_PASSWORD=your_key_password
 | 指標 | 目標値 |
 |-----|--------|
 | 起動時間 | < 3秒 |
-| 初回推論時間（E2B） | < 5秒 |
-| 初回推論時間（E4B） | < 10秒 |
-| ピークメモリ（E2B） | < 3GB |
-| ピークメモリ（E4B） | < 5GB |
+| 初回推論時間（2B） | < 3秒 |
+| 初回推論時間（4B） | < 8秒 |
+| ピークメモリ（2B） | < 3GB |
+| ピークメモリ（4B） | < 5GB |
 
 ---
 
@@ -225,5 +239,7 @@ KEY_PASSWORD=your_key_password
 
 ### 使用モデル
 
+- **Google Gemma 4** (2B / 4B) - [Gemma Terms](https://ai.google.dev/gemma/terms)
 - **Google Gemma 3n** (E2B / E4B) - [Gemma Terms](https://ai.google.dev/gemma/terms)
+- **Stable Diffusion 1.5** - [Stability AI License](https://github.com/Stability-AI/stablediffusion/blob/main/LICENSE-MODEL)
 - **Hugging Face Hub** - モデル配布ページ参照

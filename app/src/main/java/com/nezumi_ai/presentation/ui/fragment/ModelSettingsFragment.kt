@@ -168,7 +168,8 @@ open class ModelSettingsFragment : Fragment() {
     private var voicevoxModelMenuExpanded by mutableStateOf(false)
     private var voicevoxSelectedCatalogEntry by mutableStateOf(
         VoicevoxManager.modelCatalog.firstOrNull { it.fileName == "3.vvm" }
-            ?: VoicevoxManager.modelCatalog.first()
+            ?: VoicevoxManager.modelCatalog.firstOrNull()
+            ?: VoicevoxManager.VoiceModelCatalogEntry("", VoicevoxManager.VoiceModelCategory.TALK, emptyList())
     )
 
     private val mmprojPickerLauncher =
@@ -783,12 +784,14 @@ open class ModelSettingsFragment : Fragment() {
                     onClick = { selectedTab = ModelType.IMAGE_GENERATION },
                     modifier = Modifier.weight(1f)
                 )
-                TabButton(
-                    text = "読み上げ",
-                    selected = selectedTab == ModelType.TEXT_TO_SPEECH,
-                    onClick = { selectedTab = ModelType.TEXT_TO_SPEECH },
-                    modifier = Modifier.weight(1f)
-                )
+                if (com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) {
+                    TabButton(
+                        text = "読み上げ",
+                        selected = selectedTab == ModelType.TEXT_TO_SPEECH,
+                        onClick = { selectedTab = ModelType.TEXT_TO_SPEECH },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
                 TabButton(
                     text = "DL",
                     selected = selectedTab == ModelType.DOWNLOAD_QUEUE,
@@ -801,6 +804,8 @@ open class ModelSettingsFragment : Fragment() {
     
     @Composable
     private fun VoicevoxSummaryCard() {
+        // VOICEVOX 無効時はセクション全体を非表示にする
+        if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) return
         Text(
             text = "音声読み上げ",
             style = MaterialTheme.typography.labelSmall,
@@ -3256,6 +3261,7 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     private fun initializeVoicevoxFromSettings() {
+        if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) return
         voicevoxInitializing = true
         viewLifecycleOwner.lifecycleScope.launch {
             val success = withContext(Dispatchers.IO) {
@@ -3270,6 +3276,7 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     private fun downloadSelectedVoicevoxModel() {
+        if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) return
         val entry = voicevoxSelectedCatalogEntry
         voicevoxDownloading = true
         viewLifecycleOwner.lifecycleScope.launch {
@@ -3286,6 +3293,7 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     private fun refreshVoicevoxState() {
+        if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) return
         if (!isAdded) return
         val model = voicevoxModelFile()
         val dict = voicevoxDictionaryDir()

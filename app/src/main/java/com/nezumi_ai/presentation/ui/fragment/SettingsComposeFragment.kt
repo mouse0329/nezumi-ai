@@ -1862,7 +1862,9 @@ class SettingsComposeFragment : Fragment() {
                         AboutInfoRow("LiteRT-LM", BuildConfig.LITERTLM_VERSION)
                         AboutInfoRow("GGUF / llama.cpp", BuildConfig.LLAMACPP_VERSION)
                         AboutInfoRow("Stable Diffusion", "LocalDream / MNN・QNN")
-                        AboutInfoRow("音声合成", "VOICEVOX CORE 0.16.4")
+                        if (com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) {
+                            AboutInfoRow("音声合成", "VOICEVOX CORE 0.16.4")
+                        }
                     }
 
                     AboutSection(title = "主な機能") {
