@@ -77,6 +77,8 @@ class LiteRtLmEngine(
     private val modelMutex = Mutex()
     private val inferenceMutex = Mutex()
     private val inferenceMutexHeld = AtomicBoolean(false)
+    @Volatile private var npuNativeLibraryDirChecked = false
+    @Volatile private var cachedNpuNativeLibraryDir: String? = null
     
     // ─────────────────────────────────────────────────────────────────────────
     // Phase 14: 抽出推論の割り込み検出メカニズム
@@ -428,15 +430,21 @@ class LiteRtLmEngine(
     }
 
     private fun resolveNativeLibraryDirForLitert(): String? {
+        if (npuNativeLibraryDirChecked) {
+            return cachedNpuNativeLibraryDir
+        }
+
         val nativeLibDir = appContext.applicationInfo.nativeLibraryDir
         if (nativeLibDir.isNullOrBlank()) {
             Log.w(TAG, "NPU native library directory is not available")
+            npuNativeLibraryDirChecked = true
             return null
         }
 
         val nativeDir = File(nativeLibDir)
         if (!nativeDir.isDirectory) {
             Log.w(TAG, "NPU native library directory does not exist: $nativeLibDir")
+            npuNativeLibraryDirChecked = true
             return null
         }
 
@@ -448,11 +456,36 @@ class LiteRtLmEngine(
 
         if (!hasLiteRtLib) {
             Log.w(TAG, "NPU native library directory does not contain expected LiteRT libs: $nativeLibDir")
+            npuNativeLibraryDirChecked = true
             return null
         }
 
-        Log.d(TAG, "NPU native library dir: $nativeLibDir")
-        return nativeLibDir
+        val dispatchLibraryDir = listOf(
+            nativeDir,
+            File(appContext.filesDir, "models")
+        ).firstOrNull { dir ->
+            dir.isDirectory && dir.listFiles { file ->
+                file.isFile &&
+                    file.name.endsWith(".so", ignoreCase = true) &&
+                    file.name.contains("dispatch", ignoreCase = true)
+            }?.isNotEmpty() == true
+        }
+
+        if (dispatchLibraryDir == null) {
+            Log.w(
+                TAG,
+                "NPU backend requested but LiteRT dispatch library is unavailable. Falling back before Engine init to avoid repeated Dispatch API failures."
+            )
+            npuNativeLibraryDirChecked = true
+            cachedNpuNativeLibraryDir = null
+            return null
+        }
+
+        val result = dispatchLibraryDir.absolutePath
+        Log.d(TAG, "NPU native/dispatch library dir: $result")
+        cachedNpuNativeLibraryDir = result
+        npuNativeLibraryDirChecked = true
+        return result
     }
 
     private fun getOptimalBackendType(requestedBackendType: String): String {
@@ -477,6 +510,10 @@ class LiteRtLmEngine(
             isGoogleTensor -> {
                 Log.i(TAG, "Google Tensor detected. TQ演算の相性によりGPUへフォールバック.")
                 "GPU"
+            }
+            resolveNativeLibraryDirForLitert().isNullOrBlank() -> {
+                Log.i(TAG, "NPU dispatch runtime is unavailable. Falling back to CPU/XNNPACK.")
+                "CPU"
             }
             isSupportedQualcommNpu -> {
                 Log.i(TAG, "Supported Qualcomm NPU SoC detected. Attempting NPU.")

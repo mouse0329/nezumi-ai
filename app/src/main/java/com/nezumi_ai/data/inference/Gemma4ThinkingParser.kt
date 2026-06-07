@@ -32,7 +32,10 @@ object Gemma4ThinkingParser {
         "</think>"
     )
 
-    fun parse(rawInput: String): Gemma4ThinkingParseResult {
+    fun parse(
+        rawInput: String,
+        treatUnmarkedInputAsThinking: Boolean = false
+    ): Gemma4ThinkingParseResult {
         val raw = rawInput.trim()
         if (raw.isEmpty()) return Gemma4ThinkingParseResult(null, "")
 
@@ -75,14 +78,21 @@ object Gemma4ThinkingParser {
 
         var answer = stripThoughtLabel(deduped)
         answer = sanitizeVisibleText(answer)
-        return Gemma4ThinkingParseResult(null, answer)
+        return if (treatUnmarkedInputAsThinking) {
+            Gemma4ThinkingParseResult(answer.ifBlank { null }, "")
+        } else {
+            Gemma4ThinkingParseResult(null, answer)
+        }
     }
 
     /**
      * ストリーミング中: 終了タグ未到達でも thought チャンネル内のテキストを返す。
      * 特殊トークンがデコードに含まれないバックエンドでは [thinking] も [answer] も生テキスト扱いになる。
      */
-    fun parseStreaming(rawInput: String): Gemma4ThinkingParseResult {
+    fun parseStreaming(
+        rawInput: String,
+        treatUnmarkedInputAsThinking: Boolean = false
+    ): Gemma4ThinkingParseResult {
         if (rawInput.isEmpty()) return Gemma4ThinkingParseResult(null, "")
 
         // GGUF (<think>...</think>) 形式を優先チェック
@@ -133,7 +143,12 @@ object Gemma4ThinkingParser {
             }
         }
 
-        return Gemma4ThinkingParseResult(null, sanitizeVisibleText(stripThoughtLabel(rawInput)))
+        val visible = sanitizeVisibleText(stripThoughtLabel(rawInput))
+        return if (treatUnmarkedInputAsThinking) {
+            Gemma4ThinkingParseResult(visible.ifBlank { null }, "")
+        } else {
+            Gemma4ThinkingParseResult(null, visible)
+        }
     }
 
     private fun dedupeDoubledFullText(text: String): String {
