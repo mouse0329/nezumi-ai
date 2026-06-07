@@ -25,6 +25,7 @@ class ToolResultCardView @JvmOverloads constructor(
     private lateinit var toolResultSubtext: TextView
 
     init {
+        minimumWidth = resources.getDimensionPixelSize(R.dimen.tool_result_card_min_width)
         inflate(context, R.layout.item_tool_result_card, this)
         toolResultIcon = findViewById(R.id.toolResultIcon)
         toolResultTitle = findViewById(R.id.toolResultTitle)

@@ -1206,6 +1206,14 @@ class ChatViewModel(
                                             answerBuilder.append(finalFromModel)
                                         }
                                         thinkDelta != null -> {
+                                            if (!nativeThinkingStream && answerBuilder.isNotBlank()) {
+                                                val leadingThinking =
+                                                    Gemma4ThinkingParser.sanitizeVisibleText(answerBuilder.toString())
+                                                if (leadingThinking.isNotBlank()) {
+                                                    thinkingBuilder.append(leadingThinking)
+                                                }
+                                                answerBuilder.clear()
+                                            }
                                             nativeThinkingStream = true
                                             if (thinkDelta.isNotEmpty()) {
                                                 val curT = thinkingBuilder.toString()
@@ -1340,7 +1348,10 @@ class ChatViewModel(
                                         }
                                     } else {
                                         val parsedStream =
-                                            Gemma4ThinkingParser.parseStreaming(answerBuilder.toString())
+                                            Gemma4ThinkingParser.parseStreaming(
+                                                rawInput = answerBuilder.toString(),
+                                                treatUnmarkedInputAsThinking = config.enableThinking
+                                            )
                                         contentForUi =
                                             sanitizeAssistantOutputForModel(
                                                 engineModelName = engineModelName,
@@ -1463,7 +1474,10 @@ class ChatViewModel(
                 finalThinking =
                     Gemma4ThinkingParser.sanitizeVisibleText(thinkingBuilder.toString()).ifBlank { null }
             } else {
-                val finalParsed = Gemma4ThinkingParser.parse(answerBuilder.toString())
+                val finalParsed = Gemma4ThinkingParser.parse(
+                    rawInput = answerBuilder.toString(),
+                    treatUnmarkedInputAsThinking = config.enableThinking
+                )
                 completeResponse =
                     sanitizeAssistantOutputForModel(
                         engineModelName = engineModelName,
@@ -1474,33 +1488,20 @@ class ChatViewModel(
             val note = streamAbortNote
             val stoppedWithoutPayload =
                 collectionCancelledByUser && completeResponse.isEmpty() && finalThinking.isNullOrEmpty()
+            val stoppedDuringThinkingOnly =
+                collectionCancelledByUser && completeResponse.isEmpty() && !finalThinking.isNullOrEmpty()
             val contentToSave =
                 when {
                     stoppedWithoutPayload -> ""  // 空の場合は空文字列を保存（後でフォールバックメッセージに置換）
+                    stoppedDuringThinkingOnly -> appContext.getString(R.string.assistant_no_response)
                     note == null -> completeResponse
                     completeResponse.isNotEmpty() -> completeResponse + note
                     else -> note.trim()
                 }
             
             // ★ ユーザー停止時はツール実行結果カードとして保存
-            val finalToolResultsJson = if (collectionCancelledByUser) {
-                val stopCard = ToolResultCard(
-                    toolName = "user_stop",
-                    success = true,
-                    payload = mapOf(
-                        "message" to kotlinx.serialization.json.JsonPrimitive("ユーザーが生成を停止しました"),
-                        "icon" to kotlinx.serialization.json.JsonPrimitive("⏸️")
-                    )
-                )
-                val existingCards = if (!toolResultsJson.isNullOrBlank() && toolResultsJson != "[]") {
-                    ToolResultCard.listFromJsonArray(toolResultsJson)
-                } else {
-                    emptyList()
-                }
-                ToolResultCard.listToJsonArray(existingCards + stopCard)
-            } else {
-                toolResultsJson
-            }
+            val finalToolResultsJson =
+                if (collectionCancelledByUser) withUserStopCard(toolResultsJson) else toolResultsJson
 
             val hasPayload =
                 contentToSave.isNotEmpty() || !finalThinking.isNullOrEmpty()
@@ -1605,22 +1606,7 @@ class ChatViewModel(
                             ""  // 空の場合は空文字列（後でフォールバックメッセージに置換）
                         }
                         
-                        // ★ 停止カードを追加
-                        val stopCard = ToolResultCard(
-                            toolName = "user_stop",
-                            success = true,
-                            payload = mapOf(
-                                "message" to kotlinx.serialization.json.JsonPrimitive("ユーザーが生成を停止しました"),
-                                "icon" to kotlinx.serialization.json.JsonPrimitive("⏸️")
-                            )
-                        )
-                        val existingToolResults = current?.toolResultsJson
-                        val existingCards = if (!existingToolResults.isNullOrBlank() && existingToolResults != "[]") {
-                            ToolResultCard.listFromJsonArray(existingToolResults)
-                        } else {
-                            emptyList()
-                        }
-                        val updatedToolResultsJson = ToolResultCard.listToJsonArray(existingCards + stopCard)
+                        val updatedToolResultsJson = withUserStopCard(current?.toolResultsJson)
                         
                         messageRepository.updateMessageContent(
                             messageId = id,
@@ -1722,6 +1708,27 @@ class ChatViewModel(
                 releaseScreenWakeLock()
             }
         }
+    }
+
+    private fun withUserStopCard(toolResultsJson: String?): String {
+        val existingCards = if (!toolResultsJson.isNullOrBlank() && toolResultsJson != "[]") {
+            ToolResultCard.listFromJsonArray(toolResultsJson)
+        } else {
+            emptyList()
+        }
+        if (existingCards.any { it.toolName == "user_stop" }) {
+            return ToolResultCard.listToJsonArray(existingCards)
+        }
+
+        val stopCard = ToolResultCard(
+            toolName = "user_stop",
+            success = true,
+            payload = mapOf(
+                "message" to kotlinx.serialization.json.JsonPrimitive("ユーザーが生成を停止しました"),
+                "icon" to kotlinx.serialization.json.JsonPrimitive("⏸️")
+            )
+        )
+        return ToolResultCard.listToJsonArray(existingCards + stopCard)
     }
 
     private suspend fun awaitImageGenerationConfirmation(initialPrompt: String): String? =
