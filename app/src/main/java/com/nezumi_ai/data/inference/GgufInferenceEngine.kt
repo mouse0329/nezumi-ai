@@ -1,7 +1,12 @@
 package com.nezumi_ai.data.inference
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
+import com.google.ai.edge.litertlm.ToolCall
+import com.nezumi_ai.data.database.NezumiAiDatabase
+import com.nezumi_ai.data.memory.MemoryTextEmbedder
+import com.nezumi_ai.data.repository.MemoryRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -12,6 +17,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonElement
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -36,7 +45,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - 推論ループが毎トークン後にフラグを確認して脱出する
  * - LiteRT 側の cancelProcess() 相当
  */
-class GgufInferenceEngine : AIInferenceEngine {
+class GgufInferenceEngine(
+    private val appContext: Context
+) : AIInferenceEngine {
 
     companion object {
         private const val TAG = "GgufInferenceEngine"
@@ -47,7 +58,7 @@ class GgufInferenceEngine : AIInferenceEngine {
         private const val CHUNK_SIZE = 8  // トークンをチャンク単位で送信
 
         // ロールプレイループ・自己対話を防ぐ停止シーケンス
-        private val STOP_SEQUENCES = listOf(
+        internal val DEFAULT_STOP_SEQUENCES = listOf(
             "<|im_end|>",
             "<|im_start|>",
             "<end_of_turn>",
@@ -69,6 +80,11 @@ class GgufInferenceEngine : AIInferenceEngine {
             "\nアシスタント:",
             " アシスタント:"
         )
+
+        private fun effectiveStopSequences(config: InferenceConfig): List<String> {
+            val custom = config.customStopTokens.map { it.trim() }.filter { it.isNotEmpty() }
+            return DEFAULT_STOP_SEQUENCES + custom
+        }
 
         /**
          * デバイスのCPUコア数に基づいて最適なスレッド数を計算
@@ -135,6 +151,14 @@ class GgufInferenceEngine : AIInferenceEngine {
     /** 推論ループへのキャンセルシグナル */
     private val cancelFlag = AtomicBoolean(false)
 
+    private val alarmDao by lazy { NezumiAiDatabase.getInstance(appContext).alarmDao() }
+    private val memoryRepository by lazy {
+        MemoryRepository(NezumiAiDatabase.getInstance(appContext).memoryDao())
+    }
+    private val toolExecutor by lazy {
+        NezumiLiteRtToolExecutor(appContext, alarmDao, memoryRepository, MemoryTextEmbedder)
+    }
+
     // ─── ロード / アンロード ──────────────────────────────────────
 
     override suspend fun loadModel(modelName: String, config: InferenceConfig): Result<Unit> {
@@ -198,18 +222,25 @@ class GgufInferenceEngine : AIInferenceEngine {
     }
 
     override suspend fun unloadModel(): Result<Unit> {
-        return modelMutex.withLock {
-            try {
-                cancelFlag.set(true)
-                freeNativeCtx()
-                lastSessionId = null
-                Log.i(TAG, "GGUF model unloaded")
-                Result.success(Unit)
-            } catch (t: Throwable) {
-                Result.failure(if (t is Exception) t else RuntimeException(t))
-            } finally {
-                cancelFlag.set(false)
+        cancelFlag.set(true)
+        return try {
+            inferenceMutex.withLock {
+                modelMutex.withLock {
+                    try {
+                        freeNativeCtx()
+                        lastSessionId = null
+                        Log.i(TAG, "GGUF model unloaded")
+                        Result.success(Unit)
+                    } catch (t: Throwable) {
+                        Result.failure(if (t is Exception) t else RuntimeException(t))
+                    } finally {
+                        cancelFlag.set(false)
+                    }
+                }
             }
+        } catch (t: Throwable) {
+            cancelFlag.set(false)
+            Result.failure(if (t is Exception) t else RuntimeException(t))
         }
     }
 
@@ -280,125 +311,109 @@ class GgufInferenceEngine : AIInferenceEngine {
 
             Log.d(TAG, "GGUF inference start: session=$sessionId promptLen=${prompt.length}")
 
-            // パフォーマンスモニタリング開始
-            val promptTokenCount = withContext(Dispatchers.IO) {
-                LlamaBridge.llamaTokenize(ctx, prompt, addBos = true)?.size ?: 0
-            }
-            PerformanceMonitor.startInference(sessionId, normalized.backendType, promptTokenCount)
+            val fullAnswer = StringBuilder()
+            var currentPrompt = prompt
+            val toolCallingEnabled = normalized.enableToolCalling
+            val maxToolRounds = if (toolCallingEnabled) 5 else 1
+            var toolRound = 0
+            var isFirstGenerationRound = true
 
-            val answerAccum = StringBuilder()
-            val chunkBuffer = StringBuilder()
-            var lastSendTime = System.currentTimeMillis()
-            val inferenceStartTime = System.currentTimeMillis()
-            var firstTokenTime: Long? = null
+            val toolResultCards = mutableListOf<ToolResultCard>()
+            while (isActive && toolRound < maxToolRounds) {
+                toolRound++
+                val roundText = generateRound(
+                    ctx = ctx,
+                    sessionId = sessionId,
+                    prompt = currentPrompt,
+                    config = normalized,
+                    isFirstRound = isFirstGenerationRound,
+                    emitChunk = { chunk -> trySend(chunk) }
+                )
+                isFirstGenerationRound = false
 
-            withContext(Dispatchers.IO) {
-                // トークナイズ
-                val tokens = LlamaBridge.llamaTokenize(ctx, prompt, addBos = true)
-                    ?: throw IllegalStateException("Tokenization failed")
+                val visibleRoundText = if (toolCallingEnabled) {
+                    val parsed = GgufToolCallParser.parse(roundText)
+                    if (parsed.toolCalls.isNotEmpty()) {
+                        buildString {
+                            append(parsed.textBeforeTools)
+                            if (parsed.textAfterTools.isNotBlank()) append(parsed.textAfterTools)
+                        }
+                    } else {
+                        roundText
+                    }
+                } else {
+                    roundText
+                }
+                fullAnswer.append(visibleRoundText)
 
-                Log.d(TAG, "Tokenized: ${tokens.size} tokens")
+                if (!toolCallingEnabled) break
 
-                // プロンプトを KV キャッシュに投入
-                decodePromptTokens(ctx, tokens)
+                val parsed = GgufToolCallParser.parse(roundText)
+                if (parsed.toolCalls.isEmpty() || cancelFlag.get()) {
+                    break
+                }
+                if (toolRound >= maxToolRounds) {
+                    Log.w(TAG, "Tool call loop exceeded max rounds, breaking session=$sessionId")
+                    break
+                }
 
-                val eosToken = LlamaBridge.llamaEosToken(ctx)
-                var generatedCount = 0
-                var tokensSinceLastSend = 0
+                trySend(
+                    InferenceStreamProtocol.encodeToolCallChunk(parsed.toolCalls.map { it.name })
+                )
+                val toolResults = mutableListOf<Pair<ToolCall, ToolExecutionResult>>()
+                for (toolCall in parsed.toolCalls) {
+                    val result = toolExecutor.execute(toolCall)
+                    toolResults.add(toolCall to result)
+                    val status = if (result.success) "success" else "error"
+                    trySend(InferenceStreamProtocol.encodeToolResultChunk(toolCall.name, status))
+                    synchronized(toolResultCards) {
+                        toolResultCards.add(
+                            ToolResultCard(
+                                toolName = toolCall.name.lowercase(),
+                                success = result.success,
+                                payload = anyToJsonElementMap(result.payload)
+                            )
+                        )
+                    }
+                }
 
-                // 生成ループ - チャンク単位で送信して効率化
-                while (isActive && !cancelFlag.get() && generatedCount < MAX_NEW_TOKENS) {
-                    val token = LlamaBridge.llamaSample(
-                        ctx = ctx,
-                        temperature = normalized.temperature,
-                        topP = normalized.topP,
-                        topK = normalized.maxTopK,
-                        repeatPenalty = DEFAULT_REPEAT_PENALTY
+                if (toolResultCards.isNotEmpty()) {
+                    val toolResultsJson = ToolResultCard.listToJsonArray(toolResultCards)
+                    trySend(InferenceStreamProtocol.encodeToolResults(toolResultsJson))
+                    trySend(
+                        InferenceStreamProtocol.encodeExecutedToolsList(
+                            toolResultCards.map { it.toolName }.distinct()
+                        )
                     )
-
-                    if (token == eosToken) {
-                        Log.d(TAG, "EOS reached at token $generatedCount")
-                        break
-                    }
-
-                    // トークン → テキスト
-                    val piece = LlamaBridge.llamaTokenToPiece(ctx, token)
-                    if (piece.isNotEmpty()) {
-                        if (firstTokenTime == null) {
-                            firstTokenTime = System.currentTimeMillis()
-                        }
-                        answerAccum.append(piece)
-                        chunkBuffer.append(piece)
-                        tokensSinceLastSend++
-                        PerformanceMonitor.recordToken(sessionId)  // トークン生成を記録
-                    }
-
-                    // ストップシーケンスチェック（自己対話ループを防ぐ）
-                    val accumulated = answerAccum.toString()
-                    val hitStop = STOP_SEQUENCES.any { stop -> accumulated.endsWith(stop) }
-                    if (hitStop) {
-                        // ストップシーケンス分をバッファから除去して送信
-                        val matchedStop = STOP_SEQUENCES.first { stop -> accumulated.endsWith(stop) }
-                        val trimmed = chunkBuffer.toString().removeSuffix(matchedStop)
-                        if (trimmed.isNotEmpty()) trySend(trimmed)
-                        chunkBuffer.clear()
-                        tokensSinceLastSend = 0
-                        Log.d(TAG, "Stop sequence hit at token $generatedCount: ${matchedStop.take(20)}")
-                        break
-                    }
-
-                    // チャンク単位または100ms経過で送信（UIの応答性向上）
-                    val now = System.currentTimeMillis()
-                    if (tokensSinceLastSend >= CHUNK_SIZE || (now - lastSendTime) >= 100) {
-                        if (chunkBuffer.isNotEmpty()) {
-                            trySend(chunkBuffer.toString())
-                            chunkBuffer.clear()
-                            tokensSinceLastSend = 0
-                            lastSendTime = now
-                        }
-                        
-                        // TPS計算（10トークンごと）
-                        if (generatedCount > 0 && generatedCount % 10 == 0 && firstTokenTime != null) {
-                            val elapsed = now - firstTokenTime
-                            if (elapsed > 0) {
-                                val tps = (generatedCount * 1000f) / elapsed
-                                trySend(InferenceStreamProtocol.encodeTps(tps))
-                                Log.d(TAG, "TPS: %.1f tok/s (tokens=$generatedCount, elapsed=${elapsed}ms)".format(tps))
-                            }
-                        }
-                    }
-
-                    // 生成トークンを KV キャッシュに追加（次ターン継続用）
-                    LlamaBridge.llamaDecode(ctx, intArrayOf(token))
-                    generatedCount++
                 }
 
-                // 残りのバッファを送信
-                if (chunkBuffer.isNotEmpty()) {
-                    trySend(chunkBuffer.toString())
+                currentPrompt = buildString {
+                    append(prompt)
+                    append(roundText)
+                    append(GgufToolCallParser.formatToolResults(toolResults))
                 }
-                
-                // 最終TPS計算と送信
-                if (generatedCount > 0 && firstTokenTime != null) {
-                    val finalElapsed = System.currentTimeMillis() - firstTokenTime
-                    if (finalElapsed > 0) {
-                        val finalTps = (generatedCount * 1000f) / finalElapsed
-                        trySend(InferenceStreamProtocol.encodeTps(finalTps))
-                        Log.d(TAG, "Final TPS: %.1f tok/s (tokens=$generatedCount, elapsed=${finalElapsed}ms)".format(finalTps))
-                    }
+                withContext(Dispatchers.IO) {
+                    LlamaBridge.llamaClearKvCache(ctx)
                 }
-
-                Log.d(TAG, "GGUF inference done: session=$sessionId generated=$generatedCount cancelled=${cancelFlag.get()}")
+                lastSessionId = null
             }
 
-            // パフォーマンスメトリクスを記録
+            if (toolResultCards.isNotEmpty()) {
+                val toolResultsJson = ToolResultCard.listToJsonArray(toolResultCards)
+                trySend(InferenceStreamProtocol.encodeToolResults(toolResultsJson))
+                trySend(
+                    InferenceStreamProtocol.encodeExecutedToolsList(
+                        toolResultCards.map { it.toolName }.distinct()
+                    )
+                )
+            }
+
             val metrics = PerformanceMonitor.endInference(sessionId)
             if (metrics != null) {
                 Log.i(TAG, "Performance: ${metrics.toLogString()}")
             }
 
-            // LiteRT 側と同じ final チャンクを送出
-            trySend(InferenceStreamProtocol.encodeFinal(answerAccum.toString()))
+            trySend(InferenceStreamProtocol.encodeFinal(fullAnswer.toString()))
             close()
         } catch (t: Throwable) {
             if (t is CancellationException) {
@@ -422,6 +437,139 @@ class GgufInferenceEngine : AIInferenceEngine {
     // ─── ユーティリティ ──────────────────────────────────────────
 
     override suspend fun isAvailable(): Boolean = nativeCtx != 0L
+
+    private suspend fun generateRound(
+        ctx: Long,
+        sessionId: Long,
+        prompt: String,
+        config: InferenceConfig,
+        isFirstRound: Boolean,
+        emitChunk: (String) -> Unit
+    ): String = withContext(Dispatchers.IO) {
+        val promptTokenCount = LlamaBridge.llamaTokenize(ctx, prompt, addBos = true)?.size ?: 0
+        if (isFirstRound) {
+            PerformanceMonitor.startInference(sessionId, config.backendType, promptTokenCount)
+        }
+
+        val tokens = LlamaBridge.llamaTokenize(ctx, prompt, addBos = true)
+            ?: throw IllegalStateException("Tokenization failed")
+        decodePromptTokens(ctx, tokens)
+
+        val answerAccum = StringBuilder()
+        val chunkBuffer = StringBuilder()
+        var lastSendTime = System.currentTimeMillis()
+        var firstTokenTime: Long? = null
+        val eosToken = LlamaBridge.llamaEosToken(ctx)
+        var generatedCount = 0
+        var tokensSinceLastSend = 0
+        val stopSequences = effectiveStopSequences(config)
+        val maxTokens = config.maxTokens.coerceAtMost(MAX_NEW_TOKENS)
+
+        while (isActive && !cancelFlag.get() && generatedCount < maxTokens) {
+            val token = LlamaBridge.llamaSample(
+                ctx = ctx,
+                temperature = config.temperature,
+                topP = config.topP,
+                topK = config.maxTopK,
+                repeatPenalty = DEFAULT_REPEAT_PENALTY
+            )
+            if (token == eosToken) break
+
+            val piece = LlamaBridge.llamaTokenToPiece(ctx, token)
+            if (piece.isNotEmpty()) {
+                if (firstTokenTime == null) firstTokenTime = System.currentTimeMillis()
+                answerAccum.append(piece)
+                chunkBuffer.append(piece)
+                tokensSinceLastSend++
+                PerformanceMonitor.recordToken(sessionId)
+            }
+
+            val accumulated = answerAccum.toString()
+            if (GgufToolCallParser.hasToolCalls(accumulated)) {
+                if (chunkBuffer.isNotEmpty()) {
+                    val parsed = GgufToolCallParser.parse(accumulated)
+                    val safePrefix = parsed.textBeforeTools
+                    val alreadyEmittedLength = accumulated.length - chunkBuffer.length
+                    val safeRemaining = (safePrefix.length - alreadyEmittedLength)
+                        .coerceAtLeast(0)
+                        .coerceAtMost(chunkBuffer.length)
+                    if (safeRemaining > 0) {
+                        emitChunk(chunkBuffer.substring(0, safeRemaining))
+                    }
+                }
+                break
+            }
+
+            val hitStop = stopSequences.any { stop -> accumulated.endsWith(stop) }
+            if (hitStop) {
+                val matchedStop = stopSequences.first { stop -> accumulated.endsWith(stop) }
+                val trimmed = chunkBuffer.toString().removeSuffix(matchedStop)
+                if (trimmed.isNotEmpty()) emitChunk(trimmed)
+                answerAccum.setLength(answerAccum.length - matchedStop.length)
+                break
+            }
+
+            val now = System.currentTimeMillis()
+            if (tokensSinceLastSend >= CHUNK_SIZE || (now - lastSendTime) >= 100) {
+                if (chunkBuffer.isNotEmpty()) {
+                    emitChunk(chunkBuffer.toString())
+                    chunkBuffer.clear()
+                    tokensSinceLastSend = 0
+                    lastSendTime = now
+                }
+                if (generatedCount > 0 && generatedCount % 10 == 0 && firstTokenTime != null) {
+                    val elapsed = now - firstTokenTime
+                    if (elapsed > 0) {
+                        val tps = (generatedCount * 1000f) / elapsed
+                        emitChunk(InferenceStreamProtocol.encodeTps(tps))
+                    }
+                }
+            }
+
+            LlamaBridge.llamaDecode(ctx, intArrayOf(token))
+            generatedCount++
+        }
+
+        if (chunkBuffer.isNotEmpty()) {
+            emitChunk(chunkBuffer.toString())
+        }
+        if (generatedCount > 0 && firstTokenTime != null) {
+            val finalElapsed = System.currentTimeMillis() - firstTokenTime
+            if (finalElapsed > 0) {
+                val finalTps = (generatedCount * 1000f) / finalElapsed
+                emitChunk(InferenceStreamProtocol.encodeTps(finalTps))
+            }
+        }
+        answerAccum.toString()
+    }
+
+    private fun anyToJsonElementMap(values: Map<String, Any?>): Map<String, JsonElement> {
+        return values.entries.associate { (key, value) ->
+            key to anyToJsonElement(value)
+        }
+    }
+
+    private fun anyToJsonElement(value: Any?): JsonElement {
+        return when (value) {
+            null -> JsonNull
+            is JsonElement -> value
+            is Boolean -> JsonPrimitive(value)
+            is Number -> JsonPrimitive(value)
+            is String -> JsonPrimitive(value)
+            is Map<*, *> -> {
+                val obj = value.entries.mapNotNull { (k, v) ->
+                    val key = k?.toString() ?: return@mapNotNull null
+                    key to anyToJsonElement(v)
+                }.toMap()
+                JsonObject(obj)
+            }
+            is List<*> -> {
+                val elements = value.map { anyToJsonElement(it) }
+                kotlinx.serialization.json.JsonArray(elements)
+            }
+            else -> JsonPrimitive(value.toString())
+        }
+    }
 
     private fun decodePromptTokens(ctx: Long, tokens: IntArray) {
         if (tokens.isEmpty()) return

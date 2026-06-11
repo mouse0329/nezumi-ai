@@ -489,6 +489,10 @@ class ModelDownloadWorker(
         }
 
         fun enqueueCustomHf(context: Context, modelId: String, filePath: String): Boolean {
+            val outFile = ModelFileManager.huggingFaceImportedFile(context, modelId, filePath)
+            if (outFile.isFile && outFile.canRead() && outFile.length() > 0L) {
+                return false
+            }
             val workName = customWorkName(modelId, filePath)
             val workManager = WorkManager.getInstance(context)
             val hasActive = runCatching {

@@ -24,7 +24,10 @@ object PresetModelCatalog {
             options += PresetModelOption("Gemma4-4B", "Gemma 4 4B")
         }
         ModelFileManager.listImportedTaskModels(context).forEach { imported ->
-            options += PresetModelOption(imported.path, imported.shortDisplayName)
+            val label = com.nezumi_ai.utils.ImportedModelCapabilityStore.resolveDisplayName(
+                context, imported.path, imported.shortDisplayName
+            )
+            options += PresetModelOption(imported.path, label)
         }
         return options
     }

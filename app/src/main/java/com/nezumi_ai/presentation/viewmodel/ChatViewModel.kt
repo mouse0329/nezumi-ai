@@ -28,6 +28,7 @@ import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
+import com.nezumi_ai.data.inference.GgufToolPromptBuilder
 import com.nezumi_ai.data.inference.EngineManager
 import com.nezumi_ai.data.inference.GenerateImageToolBridge
 import com.nezumi_ai.data.inference.GenerateImageToolHandler
@@ -358,14 +359,34 @@ class ChatViewModel(
         val message: String
     )
 
+    data class ModelLoadErrorInfo(
+        val title: String,
+        val message: String,
+        val details: String? = null
+    )
+
     private val _memoryWarning = MutableStateFlow<MemoryWarningInfo?>(null)
     val memoryWarning: StateFlow<MemoryWarningInfo?> = _memoryWarning.asStateFlow()
 
     private val _cpuCompatibilityWarning = MutableStateFlow<CpuCompatibilityWarningInfo?>(null)
     val cpuCompatibilityWarning: StateFlow<CpuCompatibilityWarningInfo?> = _cpuCompatibilityWarning.asStateFlow()
 
+    private val _modelLoadError = MutableStateFlow<ModelLoadErrorInfo?>(null)
+    val modelLoadError: StateFlow<ModelLoadErrorInfo?> = _modelLoadError.asStateFlow()
+
+    private val _inferenceError = MutableStateFlow<ModelLoadErrorInfo?>(null)
+    val inferenceError: StateFlow<ModelLoadErrorInfo?> = _inferenceError.asStateFlow()
+
     fun dismissMemoryWarning() {
         _memoryWarning.value = null
+    }
+
+    fun dismissModelLoadError() {
+        _modelLoadError.value = null
+    }
+
+    fun dismissInferenceError() {
+        _inferenceError.value = null
     }
 
     fun cancelMemoryWarningAndGoHome() {
@@ -651,7 +672,11 @@ class ChatViewModel(
                 if (shouldDeleteLocalModelFileOnLoadError(errorMsg)) {
                     
                     Log.w(TAG, "モデルファイルの読み込みエラー: $normalizedModel")
-                    _uiMessage.emit("❌ モデルファイルが読み込めません。設定画面で再ダウンロードしてください。")
+                    _modelLoadError.value = ModelLoadErrorInfo(
+                        title = "モデルロードエラー",
+                        message = "モデルファイルが読み込めません。設定画面で再ダウンロードしてください。",
+                        details = errorMsg
+                    )
                     
                     // ファイルを削除してリセット
                     try {
@@ -690,7 +715,11 @@ class ChatViewModel(
                     return@launch
                 }
                 Log.e(TAG, "Failed to preload preset model: $selectedModel", error)
-                _uiMessage.emit("プリセットモデルのロードに失敗しました")
+                _modelLoadError.value = ModelLoadErrorInfo(
+                    title = "モデルロードエラー",
+                    message = "プリセットモデルのロードに失敗しました",
+                    details = error?.message
+                )
             }
         }
     }
@@ -792,7 +821,11 @@ class ChatViewModel(
                         Log.d(TAG, "Model warning shown during compression - waiting for user action: $errorMsg")
                         return@launch
                     }
-                    _uiMessage.emit("圧縮用モデルのロードに失敗しました：$errorMsg")
+                    _modelLoadError.value = ModelLoadErrorInfo(
+                        title = "モデルロードエラー",
+                        message = "圧縮用モデルのロードに失敗しました",
+                        details = errorMsg
+                    )
                     return@launch
                 }
 
@@ -861,17 +894,22 @@ class ChatViewModel(
 
     private suspend fun stopGenerationInternal() {
         val currentJob = generationControlMutex.withLock {
-            val job = generationJob ?: return@withLock null
+            val job = generationJob
             generationJob = null
             _isLoading.value = false
             job
-        } ?: return
+        }
 
-        currentJob.cancel(UserStopCancellationException())
+        currentJob?.cancel(UserStopCancellationException())
 
         try {
             val manager = requireModelManager()
-            manager.cancelInference()
+            val sessionId = _currentSessionId.value
+            if (sessionId != null) {
+                manager.cancelInferenceForSession(sessionId)
+            } else {
+                manager.cancelInference()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to cancel inference", e)
         }
@@ -1565,6 +1603,15 @@ class ChatViewModel(
             } else {
                 Log.w(TAG, "No payload generated, saving default message")
                 val emptyExplanation = messageForEmptyInferencePayload(hasMediaInput, engineModelName)
+                if (!collectionCancelledByUser) {
+                    withContext(Dispatchers.Main) {
+                        _inferenceError.value = ModelLoadErrorInfo(
+                            title = appContext.getString(R.string.assistant_error_empty_output_title),
+                            message = emptyExplanation,
+                            details = if (engineModelName.isNotBlank()) "モデル: $engineModelName" else null
+                        )
+                    }
+                }
                 withContext(finalizationContext) {
                     messageRepository.updateMessageContent(
                         messageId = activeStreamingMessageId,
@@ -2213,11 +2260,13 @@ class ChatViewModel(
 
         val isGgufEngine = isGgufEngineModel(engineModelName)
         val memoryBlock = buildRelevantMemoryBlock(messages, sessionId, config.contextWindow)
+        val enableThinkingForPrompt = config.enableThinking && !config.enableToolCalling
         val fullPrompt = buildPromptFromMessages(
             messages = messages,
             isGgufEngine = isGgufEngine,
             engineModelName = engineModelName,
-            enableThinking = config.enableThinking,
+            enableThinking = enableThinkingForPrompt,
+            enableToolCalling = config.enableToolCalling,
             currentTurnMessageId = currentTurnMessageId,
             memoryBlock = memoryBlock
         )
@@ -2274,6 +2323,7 @@ class ChatViewModel(
                 recentMessages = recentMessages,
                 compressedSummary = cached.summary,
                 enableThinking = config.enableThinking,
+                enableToolCalling = config.enableToolCalling,
                 memoryBlock = memoryBlock
             )
             return trimPromptToWindow(prompt, config.contextWindow)
@@ -2316,6 +2366,7 @@ class ChatViewModel(
             recentMessages = recentMessages,
             compressedSummary = compressedSummary,
             enableThinking = config.enableThinking,
+            enableToolCalling = config.enableToolCalling,
             memoryBlock = memoryBlock
         )
 
@@ -2686,7 +2737,13 @@ class ChatViewModel(
         val engineModelName = toEngineModelName(selectedModel)
         val isGgufEngine = isGgufEngineModel(engineModelName)
         val config = settingsRepository.getInferenceConfigForModel(selectedModel, appContext)
-        val basePrompt = buildPromptFromMessages(messages, isGgufEngine, engineModelName, config.enableThinking)
+        val basePrompt = buildPromptFromMessages(
+            messages,
+            isGgufEngine,
+            engineModelName,
+            config.enableThinking,
+            enableToolCalling = config.enableToolCalling
+        )
         
         // ★ 常に trimPromptToWindow で実際に使用される文字数を計算
         val maxChars = config.contextWindow * TOKEN_TO_CHAR_RATIO
@@ -2732,7 +2789,8 @@ class ChatViewModel(
                 engineModelName = engineModelName,
                 recentMessages = recentMessages,
                 compressedSummary = cached.summary,
-                enableThinking = config.enableThinking
+                enableThinking = config.enableThinking,
+                enableToolCalling = config.enableToolCalling
             )
             val compressedSize = trimPromptToWindow(compressedPrompt, config.contextWindow).length
             Log.d(TAG, "CONTEXT_METER: Using cached compression | original=${basePromptSize}ch -> compressed=${compressedSize}ch")
@@ -2751,6 +2809,7 @@ class ChatViewModel(
         recentMessages: List<MessageEntity>,
         compressedSummary: String,
         enableThinking: Boolean = false,
+        enableToolCalling: Boolean = false,
         memoryBlock: String? = null
     ): String {
         Log.d(TAG, "buildPromptWithCompressedSummary: memoryBlock=${if (memoryBlock != null) "present (${memoryBlock.length} chars)" else "null"}")
@@ -2760,13 +2819,17 @@ class ChatViewModel(
             systemPrompt = "ユーザー名：$userName\n\n$systemPrompt"
         }
         systemPrompt = appendMemoryBlockToSystemPrompt(systemPrompt, memoryBlock)
+        if (isGgufEngine && enableToolCalling) {
+            systemPrompt = GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt)
+        }
+        val enableThinkingForPrompt = enableThinking && !enableToolCalling
         return if (isGgufEngine) {
             PromptBuilder.buildForGguf(
                 messages = recentMessages,
                 systemPrompt = systemPrompt,
                 compressedSummary = compressedSummary,
                 format = PromptBuilder.detectGgufFormat(engineModelName),
-                enableThinking = enableThinking,
+                enableThinking = enableThinkingForPrompt,
                 modelPath = engineModelName,
                 sanitizeMessageContent = ::sanitizeMessageContentForPrompt
             )
@@ -2774,7 +2837,7 @@ class ChatViewModel(
             PromptBuilder.buildForLiteRt(
                 messages = recentMessages,
                 systemPrompt = systemPrompt,
-                injectGemmaThinkTrigger = enableThinking && settingsRepository.shouldInjectGemmaThinkTrigger(),
+                injectGemmaThinkTrigger = enableThinkingForPrompt && settingsRepository.shouldInjectGemmaThinkTrigger(),
                 compressedSummary = compressedSummary,
                 sanitizeMessageContent = ::sanitizeMessageContentForPrompt
             )
@@ -2808,6 +2871,7 @@ class ChatViewModel(
         isGgufEngine: Boolean,
         engineModelName: String = "",
         enableThinking: Boolean = false,
+        enableToolCalling: Boolean = false,
         currentTurnMessageId: Long? = null,
         memoryBlock: String? = null
     ): String {
@@ -2826,16 +2890,20 @@ class ChatViewModel(
         Log.d(TAG, "PROMPT_BUILD: memoryBlock=${if (memoryBlock != null) "present (${memoryBlock.length} chars)" else "null"}")
         
         val filteredMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
-        val systemPrompt = appendMemoryBlockToSystemPrompt(getActiveSystemPrompt(), memoryBlock)
+        var systemPrompt = appendMemoryBlockToSystemPrompt(getActiveSystemPrompt(), memoryBlock)
+        if (isGgufEngine && enableToolCalling) {
+            systemPrompt = GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt)
+        }
 
         val sanitizer = makeSanitizer(isGgufEngine, currentTurnMessageId)
 
+        val enableThinkingForPrompt = enableThinking && !enableToolCalling
         return if (isGgufEngine) {
             PromptBuilder.buildForGguf(
                 messages = filteredMessages,
                 systemPrompt = systemPrompt,
                 format = PromptBuilder.detectGgufFormat(engineModelName),
-                enableThinking = enableThinking,
+                enableThinking = enableThinkingForPrompt,
                 modelPath = engineModelName,
                 sanitizeMessageContent = sanitizer
             )
@@ -2843,7 +2911,7 @@ class ChatViewModel(
             PromptBuilder.buildForLiteRt(
                 messages = filteredMessages,
                 systemPrompt = systemPrompt,
-                injectGemmaThinkTrigger = enableThinking && settingsRepository.shouldInjectGemmaThinkTrigger(),
+                injectGemmaThinkTrigger = enableThinkingForPrompt && settingsRepository.shouldInjectGemmaThinkTrigger(),
                 sanitizeMessageContent = sanitizer
             )
         }

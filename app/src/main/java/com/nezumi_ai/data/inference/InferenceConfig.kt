@@ -25,6 +25,8 @@ data class InferenceConfig(
     val llamaCppRopeFreqScale: Float = 1.0f,  // 標準値
     /** モデルパスに紐付いたカスタムストップトークン（カンマ区切り）。空の場合はデフォルトのみ使用 */
     val customStopTokens: List<String> = emptyList(),
+    /** ツール呼び出しを有効化（LiteRT-LM / GGUF） */
+    val enableToolCalling: Boolean = false,
     // Performance optimization settings
     val mtpEnabled: Boolean = false,  // Multi-Token Prediction (投機的デコーディング)
     val mtpDraftTokens: Int = 5,  // MTP draft token count (1-16)
@@ -124,7 +126,9 @@ data class InferenceConfig(
             llamaCppBatchSize = normalizedBatchSize,
             llamaCppUBatchSize = normalizedUBatchSize,
             backendType = normalizedBackend,
-            requireMultimodal = requireMultimodal
+            requireMultimodal = requireMultimodal,
+            customStopTokens = customStopTokens.map { it.trim() }.filter { it.isNotEmpty() },
+            enableToolCalling = enableToolCalling
         )
     }
 

@@ -55,7 +55,7 @@ window.inference = (() => {
     onStatus?.('準備完了');
   }
 
-  async function generate(prompt, callbacks = {}) {
+  async function generate(prompt, callbacks = {}, options = {}) {
     const modelKey = window.state?.model || 'gemma4-e2b';
     const thinking = window.state?.thinking || false;
 
@@ -86,7 +86,7 @@ window.inference = (() => {
 
     try {
       const promptText = thinking
-        ? buildPromptWithThinking(prompt)
+        ? buildPromptWithThinking(prompt, options.isToolCall)
         : buildPrompt(prompt);
 
 
@@ -105,13 +105,9 @@ window.inference = (() => {
             done = true;
           }
 
-          // <|channel>thought...<channel|> を除いた表示用テキスト
-          const thinkMatch = fullText.match(/<\|channel>thought([\s\S]*?)(?:<channel\|>|$)/i);
-          const currentThink = thinkMatch ? thinkMatch[1] : '';
-          const displayText = fullText
-            .replace(/<\|channel>thought[\s\S]*?<channel\|>/gi, '')
-            .replace(/<\|channel>thought[\s\S]*/gi, '')
-            .trim();
+          const parsed = parseResponse(fullText);
+          const currentThink = parsed.think;
+          const displayText = parsed.display;
 
           if (!done) {
             callbacks.onToken?.(partial, displayText, currentThink);
@@ -121,12 +117,8 @@ window.inference = (() => {
           isDone = true;
           callbacks.onToken?.(partial, displayText, currentThink);
 
-          thinkText = currentThink;
-          const cleaned = fullText
-            .replace(/<\|channel>thought[\s\S]*?<channel\|>/gi, '')
-            .replace(/<\|channel>thought[\s\S]*/gi, '')
-            .trim();
-          callbacks.onDone?.(cleaned, thinkText);
+          thinkText = parsed.think;
+          callbacks.onDone?.(displayText, thinkText);
         }
       );
     } catch (e) {
@@ -136,7 +128,7 @@ window.inference = (() => {
       // 完了後は必ずクローズして再ロードするようにする。
       try {
         llmInference?.close();
-      } catch {}
+      } catch { }
       isLoaded = false;
       currentModel = null;
     }
@@ -166,7 +158,11 @@ window.inference = (() => {
     return prompt;
   }
 
-  function buildPromptWithThinking(userText) {
+  function buildPromptWithThinking(userText, isToolCall = false) {
+    if (isToolCall) {
+      return buildPrompt(userText);
+    }
+
     const allMessages = (window.state?.messages || []);
     const history = allMessages.slice(-11, -1);
     const sys = window.state?.systemPrompt;
@@ -181,6 +177,48 @@ window.inference = (() => {
     });
     prompt += `<|turn>user\n${userText}<turn|>\n<|turn>model\n`;
     return prompt;
+  }
+
+  function parseResponse(fullText) {
+    const thinkMatch = /<\|channel>thought([\s\S]*?)(?:<channel\|>|$)/i.exec(fullText);
+    if (!thinkMatch) {
+      return {
+        think: '',
+        display: fullText.replace(/<channel\|>/gi, '').trim(),
+      };
+    }
+
+    const thought = thinkMatch[1];
+    const stopIdx = findEarliest(thought, ['```', '`', '{', '}']);
+    const think = stopIdx >= 0 ? thought.slice(0, stopIdx).trim() : thought.trim();
+
+    let display = '';
+    if (stopIdx >= 0) {
+      const beforeThought = fullText.slice(0, thinkMatch.index);
+      const remainder = thought.slice(stopIdx);
+      const afterThought = fullText.slice(thinkMatch.index + thinkMatch[0].length);
+      display = (beforeThought + remainder + afterThought)
+        .replace(/<channel\|>/gi, '')
+        .trim();
+    } else {
+      display = fullText
+        .replace(/<\|channel>thought[\s\S]*?<channel\|>/gi, '')
+        .replace(/<\|channel>thought[\s\S]*/gi, '')
+        .trim();
+    }
+
+    return { think, display };
+  }
+
+  function findEarliest(text, tokens) {
+    let idx = -1;
+    tokens.forEach(token => {
+      const pos = text.indexOf(token);
+      if (pos !== -1 && (idx === -1 || pos < idx)) {
+        idx = pos;
+      }
+    });
+    return idx;
   }
 
   return {

@@ -482,4 +482,31 @@ object MemoryTextEmbedder {
             .firstOrNull { it.exists() && it.length() > 0 } ?: return false
         return modelFile.exists() && tokenizerFile.exists()
     }
+
+    data class EmbeddingFileEntry(
+        val fileName: String,
+        val sizeBytes: Long,
+        val exists: Boolean
+    )
+
+    fun listEmbeddingFileEntries(context: Context): List<EmbeddingFileEntry> {
+        val embeddingDir = File(context.filesDir, embeddingDirName)
+        val knownFiles = listOf(
+            "model_quantized_arm64.onnx",
+            "embedding.onnx",
+            "tokenizer.json",
+            "tokenizer.model"
+        )
+        return knownFiles.map { name ->
+            val file = File(embeddingDir, name)
+            EmbeddingFileEntry(
+                fileName = name,
+                sizeBytes = if (file.isFile) file.length() else 0L,
+                exists = file.isFile && file.length() > 0L
+            )
+        }.filter { it.exists }
+    }
+
+    fun totalEmbeddingSizeBytes(context: Context): Long =
+        listEmbeddingFileEntries(context).sumOf { it.sizeBytes }
 }

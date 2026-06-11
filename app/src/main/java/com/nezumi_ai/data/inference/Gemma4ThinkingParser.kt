@@ -42,18 +42,21 @@ object Gemma4ThinkingParser {
         // GGUF (<think>...</think>) 形式を優先チェック
         if (THINK_END in raw) {
             val parts = raw.split(THINK_END, limit = 2)
-            val thinking = parts[0].removePrefix(THINK_START).trim()
-            val answer = if (parts.size > 1) sanitizeVisibleText(parts[1]) else ""
+            val thinkingRaw = parts[0].removePrefix(THINK_START).trim()
+            val (thinking, remainder) = splitThinkingBySpecialToken(thinkingRaw)
+            val answer = sanitizeVisibleText((remainder + (parts.getOrNull(1) ?: "")).trim())
             return Gemma4ThinkingParseResult(
                 thinking = thinking.ifBlank { null },
                 answer = answer
             )
         }
         if (raw.startsWith(THINK_START)) {
-            val thinking = raw.removePrefix(THINK_START).trim()
+            val thinkingRaw = raw.removePrefix(THINK_START).trim()
+            val (thinking, remainder) = splitThinkingBySpecialToken(thinkingRaw)
+            val answer = sanitizeVisibleText(remainder)
             return Gemma4ThinkingParseResult(
                 thinking = thinking.ifBlank { null },
-                answer = ""
+                answer = answer
             )
         }
 
@@ -70,9 +73,10 @@ object Gemma4ThinkingParser {
                 thinkingBlock
             }
             thinking = sanitizeVisibleText(stripThoughtLabel(thinking.trim()).trim())
+            val (finalThinking, remainder) = splitThinkingBySpecialToken(thinking)
             return Gemma4ThinkingParseResult(
-                thinking = thinking.ifBlank { null },
-                answer = answerPart
+                thinking = finalThinking.ifBlank { null },
+                answer = sanitizeVisibleText((remainder + answerPart).trim())
             )
         }
 
@@ -123,9 +127,10 @@ object Gemma4ThinkingParser {
                 thinkingBlock
             }
             thinking = stripThoughtLabelStreaming(thinking) ?: ""
+            val (finalThinking, remainder) = splitThinkingBySpecialToken(thinking)
             return Gemma4ThinkingParseResult(
-                thinking = sanitizeVisibleText(thinking).ifBlank { null },
-                answer = sanitizeVisibleText(afterEnd)
+                thinking = sanitizeVisibleText(finalThinking).ifBlank { null },
+                answer = sanitizeVisibleText((remainder + afterEnd).trim())
             )
         }
 
@@ -136,9 +141,10 @@ object Gemma4ThinkingParser {
             return if (thinking == null) {
                 Gemma4ThinkingParseResult(thinking = null, answer = "")
             } else {
+                val (finalThinking, remainder) = splitThinkingBySpecialToken(thinking)
                 Gemma4ThinkingParseResult(
-                    thinking = sanitizeVisibleText(thinking).ifBlank { null },
-                    answer = ""
+                    thinking = sanitizeVisibleText(finalThinking).ifBlank { null },
+                    answer = sanitizeVisibleText(remainder)
                 )
             }
         }
@@ -164,6 +170,17 @@ object Gemma4ThinkingParser {
             text.substring(THOUGHT_LABEL.length)
         } else {
             text
+        }
+    }
+
+    private fun splitThinkingBySpecialToken(thinking: String): Pair<String, String> {
+        val splitIndex = listOf("```", "`", "{", "}", "<tool_call>", "</tool_call>", "<tool_result>", "</tool_result>")
+            .mapNotNull { token -> thinking.indexOf(token).takeIf { it >= 0 } }
+            .minOrNull() ?: -1
+        return if (splitIndex >= 0) {
+            thinking.substring(0, splitIndex).trim() to thinking.substring(splitIndex)
+        } else {
+            thinking.trim() to ""
         }
     }
 

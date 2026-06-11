@@ -451,6 +451,11 @@ object ModelFileManager {
                 "${normalizedModelId.replace('/', '_')}__${normalizedFilePath.replace('/', '_')}"
                     .replace(Regex("[^A-Za-z0-9._-]"), "_")
             val outFile = File(importedDir, finalName)
+            if (outFile.isFile && outFile.canRead() && outFile.length() >= MIN_VALID_MODEL_BYTES) {
+                Log.d(TAG, "HF file already exists, skipping download: ${outFile.name}")
+                onProgress?.invoke(outFile.length(), outFile.length())
+                return@runCatching outFile
+            }
 
             val encodedModel = encodeRepoPath(normalizedModelId)
             val encodedPath = normalizedFilePath.split('/').joinToString("/") {
