@@ -27,5 +27,7 @@ data class PresetEntity(
     val memoryEnabled: Boolean = true,
     val description: String = "",
     @ColumnInfo(name = "is_locked")
-    val isLocked: Boolean = false
+    val isLocked: Boolean = false,
+    @ColumnInfo(name = "tool_calling_enabled")
+    val toolCallingEnabled: Boolean = false
 )

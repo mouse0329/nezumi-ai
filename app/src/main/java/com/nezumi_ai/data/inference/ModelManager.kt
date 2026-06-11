@@ -72,7 +72,7 @@ class ModelManager(
                 return null
             }
             return try {
-                GgufInferenceEngine().also { ggufEngine = it }
+                GgufInferenceEngine(context.applicationContext).also { ggufEngine = it }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to construct GgufInferenceEngine", e)
                 null
@@ -170,14 +170,31 @@ class ModelManager(
      *
      * @return true: 既にロード済み / false: 再ロード必要
      */
+    private fun InferenceConfig.isCompatibleWithRequest(request: InferenceConfig): Boolean {
+        if (!backendType.equals(request.backendType, ignoreCase = true)) return false
+        if (llamaCppThreads != request.llamaCppThreads) return false
+        if (llamaCppGpuLayers != request.llamaCppGpuLayers) return false
+        if (llamaCppBatchSize != request.llamaCppBatchSize) return false
+        if (llamaCppUBatchSize != request.llamaCppUBatchSize) return false
+        if (llamaCppKvUnified != request.llamaCppKvUnified) return false
+        if (llamaCppNKeep != request.llamaCppNKeep) return false
+        if (llamaCppRopeFreqBase != request.llamaCppRopeFreqBase) return false
+        if (llamaCppRopeFreqScale != request.llamaCppRopeFreqScale) return false
+        if (contextWindow < request.contextWindow) return false
+        if (request.requireMultimodal && !requireMultimodal) return false
+        return true
+    }
+
     fun isModelLoaded(modelName: String, config: InferenceConfig): Boolean {
         val normalizedConfig = config.normalized()
         val isSameModel = currentModelName == modelName
-        val isSameConfig = currentConfig?.forModelLoad() == normalizedConfig.forModelLoad()
-        val isSameBackend = currentConfig?.backendType == normalizedConfig.backendType
-        val isLoaded = isSameModel && isSameConfig && isSameBackend && activeEngine !== null
+        val isCompatible = currentConfig?.isCompatibleWithRequest(normalizedConfig) == true
+        val isLoaded = isSameModel && isCompatible
         
-        Log.d(TAG, "isModelLoaded: model=$modelName | same=${isSameModel} config=${isSameConfig} backend=${isSameBackend} engine=${activeEngine != null} → result=$isLoaded")
+        Log.d(
+            TAG,
+            "isModelLoaded: model=$modelName | same=$isSameModel compatible=$isCompatible → result=$isLoaded"
+        )
         return isLoaded
     }
 
@@ -188,8 +205,8 @@ class ModelManager(
      */
     fun isSameModelLoaded(modelName: String): Boolean {
         val isSameModel = currentModelName == modelName
-        val isLoaded = isSameModel && activeEngine !== null
-        Log.d(TAG, "isSameModelLoaded: model=$modelName | same=${isSameModel} engine=${activeEngine != null} → result=$isLoaded")
+        val isLoaded = isSameModel
+        Log.d(TAG, "isSameModelLoaded: model=$modelName | same=${isSameModel} → result=$isLoaded")
         return isLoaded
     }
 
@@ -206,14 +223,13 @@ class ModelManager(
             try {
                 val normalizedConfig = config.normalized()
                 
-                // 既に同じモデルがロードされている場合はスキップ
+                // 既に同じモデルがロードされていて、要求されたロード設定に対して互換性がある場合はスキップ
                 val shouldSkip = currentModelName == modelName &&
-                    currentConfig?.forModelLoad() == normalizedConfig.forModelLoad() &&
-                    currentConfig?.backendType == normalizedConfig.backendType &&
+                    currentConfig?.isCompatibleWithRequest(normalizedConfig) == true &&
                     activeEngine === engineForModel(modelName)
 
                 if (shouldSkip) {
-                    Log.d(TAG, "Model $modelName is already loaded with same backend: ${normalizedConfig.backendType}")
+                    Log.d(TAG, "Model $modelName is already loaded and compatible with requested load config: ${normalizedConfig.backendType}")
                     return Result.success(Unit)
                 }
                 val targetEngine = engineForModel(modelName)
@@ -378,6 +394,9 @@ class ModelManager(
     suspend fun unloadModel(): Result<Unit> {
         return loadMutex.withLock {
             try {
+                runCatching { activeEngine.cancelInference() }
+                    .onFailure { Log.w(TAG, "cancelInference before unload failed", it) }
+                delay(100)
                 val result = activeEngine.unloadModel()
                 currentModelName = null
                 currentConfig = null
@@ -403,6 +422,15 @@ class ModelManager(
             activeEngine.cancelInference()
         } catch (e: Exception) {
             Log.e(TAG, "Error during inference cancellation", e)
+        }
+    }
+
+    suspend fun cancelInferenceForSession(sessionId: Long) {
+        cancelInference()
+        try {
+            jobController.cancelSessionTasks(sessionId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error cancelling session inference tasks", e)
         }
     }
 

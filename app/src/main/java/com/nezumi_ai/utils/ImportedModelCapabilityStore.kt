@@ -7,7 +7,11 @@ data class ImportedModelCapabilities(
     val imageEnabled: Boolean = false,
     val audioEnabled: Boolean = false,
     val mmprojPath: String? = null,
-    val thinkingEnabled: Boolean = false
+    val thinkingEnabled: Boolean = false,
+    /** UI 表示用の名前（ファイル名とは別） */
+    val displayName: String? = null,
+    /** ツール呼び出しを有効化（LiteRT-LM / GGUF） */
+    val toolCallingEnabled: Boolean = false
 )
 
 object ImportedModelCapabilityStore {
@@ -28,6 +32,8 @@ object ImportedModelCapabilityStore {
     private fun audioKey(path: String) = "${normalizeKey(path)}#audio"
     private fun mmprojKey(path: String) = "${normalizeKey(path)}#mmproj"
     private fun thinkingKey(path: String) = "${normalizeKey(path)}#thinking"
+    private fun displayNameKey(path: String) = "${normalizeKey(path)}#displayName"
+    private fun toolCallingKey(path: String) = "${normalizeKey(path)}#toolCalling"
 
     fun get(context: Context, modelPath: String): ImportedModelCapabilities {
         val p = prefs(context)
@@ -39,7 +45,9 @@ object ImportedModelCapabilityStore {
             imageEnabled = p.getBoolean(imageKey(modelPath), defaultImage),
             audioEnabled = p.getBoolean(audioKey(modelPath), defaultAudio),
             mmprojPath = p.getString(mmprojKey(modelPath), null),
-            thinkingEnabled = p.getBoolean(thinkingKey(modelPath), false)
+            thinkingEnabled = p.getBoolean(thinkingKey(modelPath), false),
+            displayName = p.getString(displayNameKey(modelPath), null),
+            toolCallingEnabled = p.getBoolean(toolCallingKey(modelPath), false)
         )
     }
 
@@ -48,9 +56,13 @@ object ImportedModelCapabilityStore {
             .putBoolean(imageKey(modelPath), capabilities.imageEnabled)
             .putBoolean(audioKey(modelPath), capabilities.audioEnabled)
             .putBoolean(thinkingKey(modelPath), capabilities.thinkingEnabled)
+            .putBoolean(toolCallingKey(modelPath), capabilities.toolCallingEnabled)
             .apply {
                 if (capabilities.mmprojPath != null) putString(mmprojKey(modelPath), capabilities.mmprojPath)
                 else remove(mmprojKey(modelPath))
+                val name = capabilities.displayName?.trim()
+                if (!name.isNullOrEmpty()) putString(displayNameKey(modelPath), name)
+                else remove(displayNameKey(modelPath))
             }
             .commit()
     }
@@ -61,7 +73,14 @@ object ImportedModelCapabilityStore {
             .remove(audioKey(modelPath))
             .remove(mmprojKey(modelPath))
             .remove(thinkingKey(modelPath))
+            .remove(displayNameKey(modelPath))
+            .remove(toolCallingKey(modelPath))
             .commit()
+    }
+
+    fun resolveDisplayName(context: Context, modelPath: String, fallback: String): String {
+        val stored = get(context, modelPath).displayName?.trim()
+        return if (!stored.isNullOrEmpty()) stored else fallback
     }
 
     /** インポート GGUF のファイルリネーム後に設定キーを移す */

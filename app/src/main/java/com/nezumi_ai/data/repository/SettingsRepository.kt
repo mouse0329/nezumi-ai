@@ -171,13 +171,21 @@ class SettingsRepository(
         val customStopTokens = if (model.endsWith(".gguf", ignoreCase = true)) {
             getStopTokensForModel(model)
         } else emptyList()
+        val isLiteRtImported = isLiteRtImportedModel(model)
+        val enableToolCalling = when {
+            isGemma4 -> true
+            appContext != null && (isGguf || isLiteRtImported) ->
+                ImportedModelCapabilityStore.get(appContext, model).toolCallingEnabled
+            else -> false
+        }
         return base.copy(
             backendType = backend,
             contextWindow = contextWindow,
             enableThinking = enableThinking,
             enableSpeculativeDecoding = current.speculativeDecodingEnabled,
             requireMultimodal = requireMultimodalPref,
-            customStopTokens = customStopTokens
+            customStopTokens = customStopTokens,
+            enableToolCalling = enableToolCalling
         ).normalized()
     }
 
@@ -441,6 +449,12 @@ class SettingsRepository(
     private fun isGgufModel(model: String): Boolean {
         val t = model.trim()
         return t.lowercase().endsWith(".gguf") && java.io.File(t).isAbsolute
+    }
+
+    private fun isLiteRtImportedModel(model: String): Boolean {
+        val t = model.trim().lowercase()
+        return java.io.File(model).isAbsolute &&
+            (t.endsWith(".litertlm") || t.endsWith(".task"))
     }
 
     /** チャット画面の「このチャットでシンキングOFF」トグルを出すか（GGUF は設定で Thinking 有効時のみ） */

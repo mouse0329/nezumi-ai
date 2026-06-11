@@ -103,7 +103,8 @@ class LiteRtLmEngine(
     
     private data class ConversationKey(
         val sessionId: Long,
-        val enableThinking: Boolean
+        val enableThinking: Boolean,
+        val enableToolCalling: Boolean
     )
 
     /** セッション遷移検出用 */
@@ -239,7 +240,11 @@ class LiteRtLmEngine(
         config: InferenceConfig
     ): Conversation {
         val normalized = config.normalized()
-        val requestKey = ConversationKey(sessionId, normalized.enableThinking)
+        val requestKey = ConversationKey(
+            sessionId,
+            normalized.enableThinking,
+            normalized.enableToolCalling
+        )
         var convToAttach: Conversation? = null
         var created = false
         val maxAttempts = 6
@@ -278,13 +283,30 @@ class LiteRtLmEngine(
                     ExperimentalFlags.enableSpeculativeDecoding = canUseSpeculative
 
                     try {
-                        val conv = eng.createConversation(
-                            ConversationConfig(
-                                tools = buildEnabledToolProviders(appContext, alarmDao),
-                                samplerConfig = samplerConfig,
-                                automaticToolCalling = false
+                        val tools = if (normalized.enableToolCalling) {
+                            buildEnabledToolProviders(appContext, alarmDao)
+                        } else {
+                            emptyList()
+                        }
+                        val conv = try {
+                            eng.createConversation(
+                                ConversationConfig(
+                                    tools = tools,
+                                    samplerConfig = samplerConfig,
+                                    automaticToolCalling = false
+                                )
                             )
-                        )
+                        } catch (toolErr: Throwable) {
+                            if (tools.isEmpty()) throw toolErr
+                            Log.w(TAG, "createConversation with tools failed; retrying without tools", toolErr)
+                            eng.createConversation(
+                                ConversationConfig(
+                                    tools = emptyList(),
+                                    samplerConfig = samplerConfig,
+                                    automaticToolCalling = false
+                                )
+                            )
+                        }
                         activeLiteRtConversation = conv
                         activeLiteRtConversationKey = requestKey
                         convToAttach = conv
@@ -989,7 +1011,7 @@ class LiteRtLmEngine(
                     var tokenCount = 0f
                     var firstRequest = true
                     var pendingToolResponseMessage: Message? = null
-                    val maxToolRounds = 5
+                    val maxToolRounds = if (normalized.enableToolCalling) 5 else 1
                     var toolRound = 0
                     while (isActive && toolRound < maxToolRounds) {
                         toolRound++
@@ -1177,6 +1199,7 @@ class LiteRtLmEngine(
 
     override suspend fun unloadModel(): Result<Unit> {
         return try {
+            inferenceMutex.withLock {
             modelMutex.withLock {
                 Log.d(TAG, "Unloading LiteRT-LM engine with resource cleanup")
                 
@@ -1212,6 +1235,7 @@ class LiteRtLmEngine(
                 
                 Log.d(TAG, "LiteRT-LM engine unloaded with full resource cleanup")
                 Result.success(Unit)
+            }
             }
         } catch (t: Throwable) {
             val e = if (t is Exception) t else RuntimeException(t)

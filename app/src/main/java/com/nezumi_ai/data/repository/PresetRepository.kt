@@ -40,7 +40,7 @@ class PresetRepository(
             val fallback = dao.getDefault() ?: dao.getAll().firstOrNull(::shouldShowPreset)
             PreferencesHelper.setCurrentPresetId(context, fallback?.id.orEmpty())
             if (fallback != null) {
-                ToolPreferences(context).setActivePresetToolIds(fallback.enabledTools)
+                applyPresetTools(fallback)
             }
         }
         return true
@@ -49,8 +49,13 @@ class PresetRepository(
     suspend fun selectPreset(id: String): PresetEntity? {
         val preset = dao.getById(id) ?: return null
         PreferencesHelper.setCurrentPresetId(context, preset.id)
-        ToolPreferences(context).setActivePresetToolIds(preset.enabledTools)
+        applyPresetTools(preset)
         return preset
+    }
+
+    private fun applyPresetTools(preset: PresetEntity) {
+        val tools = if (preset.toolCallingEnabled) preset.enabledTools else "[]"
+        ToolPreferences(context).setActivePresetToolIds(tools)
     }
 
     suspend fun getCurrentPreset(): PresetEntity? {
@@ -74,7 +79,7 @@ class PresetRepository(
         dao.insertIgnore(defaults)
         ensurePlainPresetsForDownloadedModels()
         PreferencesHelper.setCurrentPresetId(context, DEFAULT_NEZUMI_AI_ID)
-        ToolPreferences(context).setActivePresetToolIds(defaults.first().enabledTools)
+        applyPresetTools(defaults.first())
     }
 
     suspend fun ensurePlainPresetsForDownloadedModels() {
@@ -108,14 +113,14 @@ class PresetRepository(
         if (stored.isNotBlank()) {
             val storedPreset = dao.getById(stored)
             if (storedPreset != null) {
-                ToolPreferences(context).setActivePresetToolIds(storedPreset.enabledTools)
+                applyPresetTools(storedPreset)
                 return
             }
         }
         val preset = dao.getDefault() ?: dao.getAll().firstOrNull(::shouldShowPreset)
         PreferencesHelper.setCurrentPresetId(context, preset?.id.orEmpty())
         if (preset != null) {
-            ToolPreferences(context).setActivePresetToolIds(preset.enabledTools)
+            applyPresetTools(preset)
         }
     }
 
@@ -132,7 +137,7 @@ class PresetRepository(
             dao.update(existing.copy(enabledTools = updatedTools, updatedAt = System.currentTimeMillis()))
             // 現在選択中のプリセットがデフォルトなら、ToolPreferences も更新
             if (PreferencesHelper.getCurrentPresetId(context) == DEFAULT_NEZUMI_AI_ID) {
-                ToolPreferences(context).setActivePresetToolIds(updatedTools)
+                applyPresetTools(existing.copy(enabledTools = updatedTools))
             }
         }
     }
@@ -154,7 +159,8 @@ class PresetRepository(
             updatedAt = now,
             isDefault = true,
             memoryEnabled = true,
-            description = "自由に使えるデフォルトプリセット"
+            description = "自由に使えるデフォルトプリセット",
+            toolCallingEnabled = true
         )
     }
 

@@ -24,11 +24,14 @@ import androidx.compose.material3.Divider
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -83,7 +86,7 @@ class PresetSettingsFragment : Fragment() {
     ) = ComposeView(requireContext()).apply {
         setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
         setContent {
-            MaterialTheme {
+            NezumiComposeTheme {
                 PresetScreen()
             }
         }
@@ -133,7 +136,7 @@ class PresetSettingsFragment : Fragment() {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .background(colorResource(id = R.color.bg_session_list)),
+                .background(MaterialTheme.colorScheme.background),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -149,13 +152,13 @@ class PresetSettingsFragment : Fragment() {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_back),
                                 contentDescription = "戻る",
-                                tint = colorResource(id = R.color.text_primary)
+                                tint = MaterialTheme.colorScheme.onBackground
                             )
                         }
                         Text(
                             text = "プリセット",
                             style = MaterialTheme.typography.headlineSmall,
-                            color = colorResource(id = R.color.text_primary),
+                            color = MaterialTheme.colorScheme.onBackground,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -230,7 +233,7 @@ class PresetSettingsFragment : Fragment() {
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onSelect),
-            colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.surface_card))
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
@@ -240,15 +243,15 @@ class PresetSettingsFragment : Fragment() {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "${preset.icon} ${preset.name}${if (preset.isLocked) "  🔒" else ""}",
-                            color = colorResource(id = R.color.text_primary),
+                            text = "${preset.icon} ${preset.name}",
+                            color = MaterialTheme.colorScheme.onSurface,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
                         if (preset.description.isNotBlank()) {
                             Text(
                                 text = preset.description,
-                                color = colorResource(id = R.color.text_secondary),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -256,15 +259,23 @@ class PresetSettingsFragment : Fragment() {
                     if (selected) {
                         Text(
                             text = "✓",
-                            color = colorResource(id = R.color.primary),
+                            color = MaterialTheme.colorScheme.primary,
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
                 Text(
-                    text = "${modelLabel(preset.modelId)} / メモリ ${if (preset.memoryEnabled) "ON" else "OFF"}",
-                    color = colorResource(id = R.color.text_secondary),
+                    text = buildString {
+                        append(modelLabel(preset.modelId))
+                        append(" / メモリ ${if (preset.memoryEnabled) "ON" else "OFF"}")
+                        if (preset.toolCallingEnabled) {
+                            append(" / ツール呼び出し ON")
+                            val toolLabels = formatToolLabels(preset.enabledTools)
+                            if (toolLabels.isNotEmpty()) append(" ($toolLabels)")
+                        }
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
                 if (!preset.isLocked) {
@@ -302,6 +313,9 @@ class PresetSettingsFragment : Fragment() {
             )
         }
         var memoryEnabled by remember { mutableStateOf(initialPreset?.memoryEnabled ?: true) }
+        var toolCallingEnabled by remember {
+            mutableStateOf(initialPreset?.toolCallingEnabled ?: false)
+        }
         var enabledTools by remember {
             mutableStateOf(parseToolIds(initialPreset?.enabledTools ?: PresetRepository.encodeToolIds(PresetConstants.allToolIds)))
         }
@@ -355,7 +369,7 @@ class PresetSettingsFragment : Fragment() {
                             if (availableModels.isEmpty()) {
                                 Text(
                                     text = "ダウンロード済みモデルがありません",
-                                    color = colorResource(id = R.color.text_secondary),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.bodySmall
                                 )
                             } else {
@@ -386,22 +400,44 @@ class PresetSettingsFragment : Fragment() {
                         }
                     }
                     item {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("ツール", fontWeight = FontWeight.Bold)
-                            toolOptions.forEach { option ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            enabledTools = toggleTool(enabledTools, option.id)
-                                        },
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Checkbox(
-                                        checked = option.id in enabledTools,
-                                        onCheckedChange = { enabledTools = toggleTool(enabledTools, option.id) }
-                                    )
-                                    Text(option.label)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("ツール呼び出し", fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = "有効時のみプリセットにツールを表示・適用します",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = toolCallingEnabled,
+                                onCheckedChange = { toolCallingEnabled = it }
+                            )
+                        }
+                    }
+                    if (toolCallingEnabled) {
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("ツール", fontWeight = FontWeight.Bold)
+                                toolOptions.forEach { option ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                enabledTools = toggleTool(enabledTools, option.id)
+                                            },
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Checkbox(
+                                            checked = option.id in enabledTools,
+                                            onCheckedChange = { enabledTools = toggleTool(enabledTools, option.id) }
+                                        )
+                                        Text(option.label)
+                                    }
                                 }
                             }
                         }
@@ -434,7 +470,8 @@ class PresetSettingsFragment : Fragment() {
                                 updatedAt = now,
                                 isDefault = initialPreset?.isDefault ?: false,
                                 memoryEnabled = memoryEnabled,
-                                isLocked = initialPreset?.isLocked ?: false
+                                isLocked = initialPreset?.isLocked ?: false,
+                                toolCallingEnabled = toolCallingEnabled
                             )
                         )
                     }
@@ -466,6 +503,11 @@ class PresetSettingsFragment : Fragment() {
         return if (id in current) current - id else current + id
     }
 
+    private fun formatToolLabels(enabledToolsJson: String): String {
+        val ids = parseToolIds(enabledToolsJson)
+        return toolOptions.filter { it.id in ids }.joinToString(", ") { it.label }
+    }
+
     private fun modelLabel(modelId: String): String =
         PresetModelCatalog.downloadedModels(requireContext()).firstOrNull { it.id == modelId }?.label
             ?: when (modelId) {
@@ -476,6 +518,68 @@ class PresetSettingsFragment : Fragment() {
     private fun toast(message: String) {
         if (!isAdded) return
         Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+    }
+
+    @Composable
+    private fun NezumiComposeTheme(content: @Composable () -> Unit) {
+        val bg = colorResource(id = R.color.bg_session_list)
+        val primary = colorResource(id = R.color.primary)
+        val onPrimary = colorResource(id = R.color.nezumi_on_primary)
+        val primaryContainer = colorResource(id = R.color.nezumi_primary_container)
+        val onPrimaryContainer = colorResource(id = R.color.nezumi_on_primary_container)
+        val surface = colorResource(id = R.color.surface_card)
+        val onSurface = colorResource(id = R.color.text_primary)
+        val onSurfaceVariant = colorResource(id = R.color.text_secondary)
+
+        val colorScheme = if (isSystemInDarkTheme()) {
+            darkColorScheme(
+                primary = primary,
+                onPrimary = onPrimary,
+                primaryContainer = primaryContainer,
+                onPrimaryContainer = onPrimaryContainer,
+                secondary = primary,
+                onSecondary = onPrimary,
+                secondaryContainer = primaryContainer,
+                onSecondaryContainer = onPrimaryContainer,
+                tertiary = primary,
+                onTertiary = onPrimary,
+                tertiaryContainer = primaryContainer,
+                onTertiaryContainer = onPrimaryContainer,
+                background = bg,
+                onBackground = onSurface,
+                surface = surface,
+                onSurface = onSurface,
+                surfaceVariant = surface,
+                onSurfaceVariant = onSurfaceVariant
+            )
+        } else {
+            lightColorScheme(
+                primary = primary,
+                onPrimary = onPrimary,
+                primaryContainer = primaryContainer,
+                onPrimaryContainer = onPrimaryContainer,
+                secondary = primary,
+                onSecondary = onPrimary,
+                secondaryContainer = primaryContainer,
+                onSecondaryContainer = onPrimaryContainer,
+                tertiary = primary,
+                onTertiary = onPrimary,
+                tertiaryContainer = primaryContainer,
+                onTertiaryContainer = onPrimaryContainer,
+                background = bg,
+                onBackground = onSurface,
+                surface = surface,
+                onSurface = onSurface,
+                surfaceVariant = surface,
+                onSurfaceVariant = onSurfaceVariant
+            )
+        }
+
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = MaterialTheme.typography,
+            content = content
+        )
     }
 
     private val toolOptions = listOf(

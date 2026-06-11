@@ -683,7 +683,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 isCompressingNow = compressing
                 // 抽出中・埋め込みダウンロード中は入力を無効化しないが、ダウンロード中は送信を防ぐ
                 binding.messageInput.isEnabled = !compressing && !downloading
-                binding.sendButton.isEnabled = !compressing && !downloading
+                binding.sendButton.isEnabled =
+                    isGenerating || (!compressing && !downloading && !isModelLoadingNow)
                 renderCompressButtonState()
                 renderSendButtonState()
                 if (isGenerating) {
@@ -815,6 +816,18 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.cpuCompatibilityWarning.collect { warning ->
                 if (warning != null) showCpuCompatibilityWarningDialog(warning)
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.modelLoadError.collect { error ->
+                if (error != null) showModelLoadErrorDialog(error)
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.inferenceError.collect { error ->
+                if (error != null) showModelLoadErrorDialog(error)
             }
         }
 
@@ -1161,7 +1174,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             options += ModelOption("Gemma4-4B", "Gemma 4 4B")
         }
         ModelFileManager.listImportedTaskModels(requireContext()).forEach { imported ->
-            options += ModelOption(imported.path, imported.shortDisplayName)
+            val label = ImportedModelCapabilityStore.resolveDisplayName(
+                requireContext(), imported.path, imported.shortDisplayName
+            )
+            options += ModelOption(imported.path, label)
         }
         return options
     }
@@ -1175,7 +1191,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         binding.sendButton.setImageResource(
             if (isGenerating) R.drawable.ic_stop else R.drawable.ic_send
         )
-        binding.sendButton.isEnabled = !isModelLoadingNow
+        binding.sendButton.isEnabled = isGenerating || !isModelLoadingNow
     }
 
     private fun updateMediaAvailability(modelKey: String) {
@@ -1563,6 +1579,26 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
             .setNegativeButton("キャンセル") { _, _ ->
                 viewModel.cancelCpuCompatibilityWarning()
+            }
+            .setCancelable(false)
+            .create()
+        alertDialog.show()
+    }
+
+    private fun showModelLoadErrorDialog(error: ChatViewModel.ModelLoadErrorInfo) {
+        val message = buildString {
+            append(error.message)
+            error.details?.takeIf { it.isNotBlank() }?.let {
+                append("\n\n")
+                append(it)
+            }
+        }
+        val alertDialog = androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle(error.title)
+            .setIcon(R.drawable.ic_nezumi_ai)
+            .setMessage(message)
+            .setPositiveButton("閉じる") { _, _ ->
+                viewModel.dismissModelLoadError()
             }
             .setCancelable(false)
             .create()

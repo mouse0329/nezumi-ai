@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -16,6 +17,8 @@ import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,10 +30,13 @@ import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.fragment.app.Fragment
 import com.nezumi_ai.data.memory.MemoryTextEmbedder
@@ -87,7 +93,7 @@ class SettingsComposeFragment : Fragment() {
     private var debugTextAInput by mutableStateOf("")
     private var debugTextBInput by mutableStateOf("")
     private var debugTextSimilarityResult by mutableStateOf<String?>(null)
-    private var debugTextErrorMessage by mutableStateOf<String?>(null)
+    private var modelErrorDialogMessage by mutableStateOf<String?>(null)
     private var mtpEnabled by mutableStateOf(false)
     private var mtpDraftTokens by mutableStateOf(5)
     private var flashAttentionEnabled by mutableStateOf(true)
@@ -130,21 +136,24 @@ class SettingsComposeFragment : Fragment() {
     @Composable
     private fun SettingsScreen() {
         errorDialogMessage?.let { message ->
-            AlertDialog(
-                onDismissRequest = { errorDialogMessage = null },
-                title = { Text("設定エラー") },
-                text = { Text(message) },
-                confirmButton = {
-                    Button(onClick = { errorDialogMessage = null }) {
-                        Text("OK")
-                    }
-                }
+            ErrorModalDialog(
+                title = "設定エラー",
+                message = message,
+                onDismiss = { errorDialogMessage = null }
             )
         }
 
         if (versionDialogVisible) {
             VersionInfoDialog(
                 onDismiss = { versionDialogVisible = false }
+            )
+        }
+        modelErrorDialogMessage?.let { message ->
+            ErrorModalDialog(
+                title = "エラー",
+                message = message,
+                onDismiss = { modelErrorDialogMessage = null },
+                onConfirm = { modelErrorDialogMessage = null }
             )
         }
         if (aboutDialogVisible) {
@@ -214,7 +223,6 @@ class SettingsComposeFragment : Fragment() {
                     0 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         GeneralSettingsCard()
                         WebSearchApiKeyCard()
-                        BackendCard()
                     }
                     1 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         InferenceParamsCard()
@@ -236,7 +244,6 @@ class SettingsComposeFragment : Fragment() {
                     else -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         GeneralSettingsCard()
                         WebSearchApiKeyCard()
-                        BackendCard()
                     }
                 }
             }
@@ -431,39 +438,6 @@ class SettingsComposeFragment : Fragment() {
                     )
                 }
 
-                // Backend Selection
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "バックエンド",
-                        color = colorResource(id = R.color.text_secondary),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        FilterChip(
-                            selected = backendType == "CPU",
-                            onClick = { backendType = "CPU" },
-                            label = { Text("CPU") },
-                            modifier = Modifier.weight(1f)
-                        )
-                        FilterChip(
-                            selected = backendType == "GPU",
-                            onClick = { backendType = "GPU" },
-                            label = { Text("GPU") },
-                            modifier = Modifier.weight(1f)
-                        )
-                        FilterChip(
-                            selected = backendType == "NPU",
-                            onClick = { backendType = "NPU" },
-                            label = { Text("NPU") },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-
                 // Temperature Slider
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(
@@ -639,7 +613,7 @@ class SettingsComposeFragment : Fragment() {
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = "${preloadMemoryWarningThresholdPercent}%",
+                            text = "${(preloadMemoryWarningThresholdPercent / 3f).roundToInt()}%",
                             color = colorResource(id = R.color.primary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
@@ -647,21 +621,20 @@ class SettingsComposeFragment : Fragment() {
                         )
                     }
                     Slider(
-                        value = preloadMemoryWarningThresholdPercent.toFloat(),
+                        value = (preloadMemoryWarningThresholdPercent / 3f).roundToInt().toFloat(),
                         onValueChange = { value ->
-                            preloadMemoryWarningThresholdPercent = value.roundToInt().coerceIn(
+                            preloadMemoryWarningThresholdPercent = (value.roundToInt() * 3).coerceIn(
                                 MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT,
                                 MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT
                             )
                         },
                         valueRange = MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT.toFloat()..
-                            MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT.toFloat(),
-                        steps = MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT -
-                            MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT - 1,
+                            100f,
+                        steps = 99,
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text(
-                        text = "モデルサイズが利用可能な空きメモリのこの割合を超えると警告します",
+                        text = "UI では 0-100、内部では 3 倍の 0-300 の値になります",
                         color = colorResource(id = R.color.text_secondary),
                         style = MaterialTheme.typography.labelSmall
                     )
@@ -1177,6 +1150,49 @@ class SettingsComposeFragment : Fragment() {
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(text = "LiteRT-LM 設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "バックエンド（LiteRT-LM 専用）",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "CPU / GPU / NPU の選択は LiteRT-LM モデルの推論にのみ適用されます。",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        FilterChip(
+                            selected = backendType == "CPU",
+                            onClick = { backendType = "CPU" },
+                            label = { Text("CPU") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = backendType == "GPU",
+                            onClick = { backendType = "GPU" },
+                            label = { Text("GPU") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = backendType == "NPU",
+                            onClick = { backendType = "NPU" },
+                            label = { Text("NPU") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+                TextButton(
+                    onClick = { versionDialogVisible = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("llama.cpp / LiteRT-LM バージョンを確認")
+                }
+                Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1541,31 +1557,31 @@ class SettingsComposeFragment : Fragment() {
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
-                        debugTextErrorMessage = null
+                        errorDialogMessage = null
                         debugTextSimilarityResult = null
                         if (debugTextAInput.isBlank()) {
-                            debugTextErrorMessage = "テキストAを入力してください。"
+                            errorDialogMessage = "テキストAを入力してください。"
                             return@Button
                         }
                         if (debugTextBInput.isBlank()) {
-                            debugTextErrorMessage = "テキストBを入力してください。"
+                            errorDialogMessage = "テキストBを入力してください。"
                             return@Button
                         }
                         MemoryTextEmbedder.initialize(localContext)
                         val embeddingA = MemoryTextEmbedder.embed(debugTextAInput)
                         val embeddingB = MemoryTextEmbedder.embed(debugTextBInput)
                         if (embeddingA.isEmpty() || embeddingB.isEmpty()) {
-                            debugTextErrorMessage = "埋め込みの計算に失敗しました。"
+                            errorDialogMessage = "埋め込みの計算に失敗しました。"
                             return@Button
                         }
                         if (embeddingA.size != embeddingB.size) {
-                            debugTextErrorMessage = "埋め込み次元が一致しません。"
+                            errorDialogMessage = "埋め込み次元が一致しません。"
                             return@Button
                         }
                         val normA = MemoryRepository.l2norm(embeddingA)
                         val normB = MemoryRepository.l2norm(embeddingB)
                         if (normA == 0f || normB == 0f) {
-                            debugTextErrorMessage = "埋め込みがゼロベクトルになりました。"
+                            errorDialogMessage = "埋め込みがゼロベクトルになりました。"
                             return@Button
                         }
                         val similarity = MemoryRepository.cosineSimilarity(embeddingA, normA, embeddingB, normB)
@@ -1577,17 +1593,132 @@ class SettingsComposeFragment : Fragment() {
                         debugTextAInput = ""
                         debugTextBInput = ""
                         debugTextSimilarityResult = null
-                        debugTextErrorMessage = null
+                        errorDialogMessage = null
                     }) {
                         Text("クリア")
                     }
                 }
 
-                debugTextErrorMessage?.let {
-                    Text(text = it, color = MaterialTheme.colorScheme.error)
-                }
                 debugTextSimilarityResult?.let {
                     Text(text = it, color = colorResource(id = R.color.primary))
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = {
+                    modelErrorDialogMessage = "モデルのロードに失敗しました。デバッグ用モーダルを表示しています。"
+                }) {
+                    Text("モデルエラーを表示")
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun ErrorModalDialog(
+        title: String,
+        message: String,
+        detail: String? = null,
+        onDismiss: () -> Unit,
+        onConfirm: (() -> Unit)? = null
+    ) {
+        Dialog(
+            onDismissRequest = onDismiss,
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                    .padding(horizontal = 16.dp, vertical = 16.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .wrapContentHeight()
+                        .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(
+                            width = 2.dp,
+                            color = MaterialTheme.colorScheme.error,
+                            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+                        )
+                        .padding(horizontal = 32.dp, vertical = 40.dp)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = title,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            letterSpacing = 1.1.sp
+                        )
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Text(
+                            text = message,
+                            fontSize = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 26.sp
+                        )
+                        detail?.let {
+                            Spacer(modifier = Modifier.height(24.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp))
+                                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                                    .padding(18.dp)
+                            ) {
+                                Text(
+                                    text = it,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    lineHeight = 20.sp,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 32.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        TextButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(56.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(14.dp)),
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Text(
+                                text = "閉じる",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        if (onConfirm != null) {
+                            TextButton(
+                                onClick = onConfirm,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(56.dp)
+                                    .background(MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(14.dp)),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text(
+                                    text = "再試行する",
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

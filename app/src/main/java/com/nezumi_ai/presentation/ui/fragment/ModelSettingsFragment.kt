@@ -31,6 +31,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -49,6 +50,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -86,6 +88,7 @@ import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.HfAuthManager
 import com.nezumi_ai.data.inference.HfOAuthManager
 import com.nezumi_ai.data.inference.MemoryObserver
+import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ProjectConfig
@@ -143,10 +146,11 @@ open class ModelSettingsFragment : Fragment() {
     private var importedTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
     private var importedMmprojTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
     private var isImportingModel by mutableStateOf(false)
-    private var capabilityDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
+    private var modelSettingsDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
     private var capabilityDialogImageEnabled by mutableStateOf(false)
     private var capabilityDialogAudioEnabled by mutableStateOf(false)
     private var capabilityDialogThinkingEnabled by mutableStateOf(false)
+    private var capabilityDialogToolCallingEnabled by mutableStateOf(false)
     private var capabilityDialogMmprojPath by mutableStateOf("")
     private var capabilityDialogCurrentCapabilities by mutableStateOf<ImportedModelCapabilities?>(null)
     private var capabilityDialogModelType by mutableStateOf<ModelType>(ModelType.LLM)
@@ -209,10 +213,8 @@ open class ModelSettingsFragment : Fragment() {
                 }
             }
         }
-    private var stopTokensDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
-    private var stopTokensDialogText by mutableStateOf("")
-    private var renameDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
-    private var renameDialogText by mutableStateOf("")
+    private var settingsDialogDisplayName by mutableStateOf("")
+    private var settingsDialogStopTokens by mutableStateOf("")
     private var expandedModelKey by mutableStateOf<String?>(null)
 
     private var sdModels by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
@@ -254,16 +256,7 @@ open class ModelSettingsFragment : Fragment() {
                         shortDisplayName = File(modelPath).nameWithoutExtension,
                         hfRepoQualifier = null
                     )
-                    capabilityDialogModel = imported
-                    capabilityDialogImageEnabled = false
-                    capabilityDialogAudioEnabled = false
-                    capabilityDialogThinkingEnabled = false
-                    capabilityDialogMmprojPath = ""
-                    capabilityDialogModelType = if (modelPath.lowercase().endsWith(".gguf")) {
-                        ModelType.LLM
-                    } else {
-                        ModelType.LLM
-                    }
+                    openModelSettingsDialog(imported)
                 } catch (e: Exception) {
                     toast("追加失敗: ${e.message}")
                 }
@@ -331,14 +324,8 @@ open class ModelSettingsFragment : Fragment() {
         hfFilePickerModel?.let { model ->
             HfFilePickerDialog(model)
         }
-        capabilityDialogModel?.let { model ->
-            ImportedCapabilityDialog(model)
-        }
-        stopTokensDialogModel?.let { model ->
-            StopTokensDialog(model)
-        }
-        renameDialogModel?.let { model ->
-            RenameImportedDialog(model)
+        modelSettingsDialogModel?.let { model ->
+            ImportedModelSettingsDialog(model)
         }
         if (hfSearchResultsDialogVisible) {
             HfSearchResultsContent()
@@ -414,10 +401,12 @@ open class ModelSettingsFragment : Fragment() {
                                 progress = state.progress,
                                 progressText = state.progressText,
                                 isMemoryLow = state.memoryWarning != null,
-                                isStorageLow = resourceCheck.isStorageLow
+                                isStorageLow = resourceCheck.isStorageLow,
+                                fileSizeLabel = formatBytes(sizeBytes)
                             )
                         }
                     }
+                    item { EmbeddingModelsCard() }
                     if (importedTasks.isNotEmpty()) {
                         item {
                             Text(
@@ -495,25 +484,34 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     @Composable
-    private fun ImportedCapabilityDialog(model: ModelFileManager.ImportedTaskModel) {
-        Dialog(onDismissRequest = {}) {
+    private fun ImportedModelSettingsDialog(model: ModelFileManager.ImportedTaskModel) {
+        val loweredPath = model.path.lowercase()
+        val isGguf = loweredPath.endsWith(".gguf")
+        val isLiteRt = loweredPath.endsWith(".litertlm") || loweredPath.endsWith(".task")
+        val supportsToolCalling = isGguf || isLiteRt
+        val dialogTitle = ImportedModelCapabilityStore.resolveDisplayName(
+            requireContext(), model.path, model.shortDisplayName
+        )
+        Dialog(onDismissRequest = { modelSettingsDialogModel = null }) {
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                 )
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        text = "追加モデルの機能設定",
+                        text = "設定",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = model.shortDisplayName,
+                        text = dialogTitle,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -524,6 +522,7 @@ open class ModelSettingsFragment : Fragment() {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    Divider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -535,51 +534,13 @@ open class ModelSettingsFragment : Fragment() {
                             onCheckedChange = { capabilityDialogImageEnabled = it }
                         )
                     }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("音声入力を有効化", color = MaterialTheme.colorScheme.onSurface)
-                        Switch(
-                            checked = capabilityDialogAudioEnabled,
-                            onCheckedChange = { capabilityDialogAudioEnabled = it }
-                        )
-                    }
-                    // thinking（GGUFのみ）
-                    if (capabilityDialogModel?.path?.lowercase()?.endsWith(".gguf") == true) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("推論（Thinking）を有効化", color = MaterialTheme.colorScheme.onSurface)
-                            Switch(
-                                checked = capabilityDialogThinkingEnabled,
-                                onCheckedChange = { capabilityDialogThinkingEnabled = it }
-                            )
-                        }
-                    }
-                    Text(
-                        text = "標準は画像・音声とも無効です",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    // mmproj設定（GGUFのみ）
-                    if (capabilityDialogModel?.path?.lowercase()?.endsWith(".gguf") == true) {
+                    if (isGguf && capabilityDialogImageEnabled) {
                         Text(
-                            text = "mmproj（マルチモーダル）",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
+                            text = "mmproj: ${capabilityDialogMmprojPath.takeIf { it.isNotBlank() }?.let { java.io.File(it).name } ?: "未選択"}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 8.dp)
                         )
-                        if (capabilityDialogMmprojPath.isNotBlank()) {
-                            Text(
-                                text = java.io.File(capabilityDialogMmprojPath).name,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
                         ExposedDropdownMenuBox(
                             expanded = mmprojDropdownExpanded,
                             onExpandedChange = { mmprojDropdownExpanded = it }
@@ -606,18 +567,12 @@ open class ModelSettingsFragment : Fragment() {
                                     }
                                 )
                                 if (capabilityDialogRepoMmprojLoading) {
-                                    DropdownMenuItem(
-                                        text = { Text("候補を取得中…") },
-                                        onClick = {}
-                                    )
+                                    DropdownMenuItem(text = { Text("候補を取得中…") }, onClick = {})
                                 } else {
-                                    // ローカル済み（同リポジトリのみ）
-                                    val repoQualifier = capabilityDialogModel?.hfRepoQualifier
+                                    val repoQualifier = model.hfRepoQualifier
                                     val localRepoMmprojTasks = if (repoQualifier != null) {
                                         importedMmprojTasks.filter { it.hfRepoQualifier == repoQualifier }
-                                    } else {
-                                        importedMmprojTasks
-                                    }
+                                    } else importedMmprojTasks
                                     localRepoMmprojTasks.forEach { mmprojModel ->
                                         DropdownMenuItem(
                                             text = { Text(mmprojModel.shortDisplayName) },
@@ -627,21 +582,24 @@ open class ModelSettingsFragment : Fragment() {
                                             }
                                         )
                                     }
-                                    // 未DLのリポジトリ内mmproj候補
                                     val localPaths = localRepoMmprojTasks.map { it.fileNameStem.substringAfter("__") }
-                                    val notYetDownloaded = capabilityDialogRepoMmprojCandidates.filter { candidate ->
+                                    capabilityDialogRepoMmprojCandidates.filter { candidate ->
                                         val candidateStem = candidate.path.replace('/', '_').replace(Regex("[^A-Za-z0-9._-]"), "_")
                                         localPaths.none { it == candidateStem || candidate.path.endsWith(it) }
-                                    }
-                                    notYetDownloaded.forEach { candidate ->
+                                    }.forEach { candidate ->
+                                        val localFile = model.hfRepoQualifier?.let {
+                                            ModelFileManager.hfModelIdFromRepoQualifier(it)
+                                        }?.let { hfId ->
+                                            ModelFileManager.huggingFaceImportedFile(requireContext(), hfId, candidate.path)
+                                        }
+                                        if (localFile != null && localFile.isFile) return@forEach
                                         val label = candidate.path.substringAfterLast("/") +
                                             (candidate.sizeBytes?.let { " (${it / 1024 / 1024}MB, 未DL)" } ?: " (未DL)")
                                         DropdownMenuItem(
                                             text = { Text(label) },
                                             onClick = {
                                                 mmprojDropdownExpanded = false
-                                                // DLキューに追加し、完了後に自動選択
-                                                val hfModelId = capabilityDialogModel?.hfRepoQualifier?.let {
+                                                val hfModelId = model.hfRepoQualifier?.let {
                                                     ModelFileManager.hfModelIdFromRepoQualifier(it)
                                                 }
                                                 if (hfModelId != null) {
@@ -650,6 +608,14 @@ open class ModelSettingsFragment : Fragment() {
                                                     )
                                                     if (enqueued) {
                                                         toast("mmproj のダウンロードを開始しました: ${candidate.path.substringAfterLast("/")}")
+                                                    } else if (ModelFileManager.huggingFaceImportedFile(
+                                                            requireContext(), hfModelId, candidate.path
+                                                        ).isFile
+                                                    ) {
+                                                        capabilityDialogMmprojPath =
+                                                            ModelFileManager.huggingFaceImportedFile(
+                                                                requireContext(), hfModelId, candidate.path
+                                                            ).absolutePath
                                                     }
                                                 }
                                             }
@@ -658,98 +624,124 @@ open class ModelSettingsFragment : Fragment() {
                                 }
                             }
                         }
-                        Text(
-                            text = "統合型（単一 GGUF）では未指定時に同じファイルからビジョンを初期化します。LLaVA 等は公式ペアの別 mmproj .gguf を指定してください。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Button(onClick = {
-                            ImportedModelCapabilityStore.set(
-                                requireContext(),
-                                model.path,
-                                ImportedModelCapabilities(
-                                    imageEnabled = capabilityDialogImageEnabled,
-                                    audioEnabled = capabilityDialogAudioEnabled,
-                                    mmprojPath = capabilityDialogMmprojPath.ifBlank { null },
-                                    thinkingEnabled = capabilityDialogThinkingEnabled
-                                )
-                            )
-                            capabilityDialogModel = null
-                            refreshImportedTasks()
-                            toast("モデル機能設定を保存しました")
-                        }) {
-                            Text("保存")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun StopTokensDialog(model: ModelFileManager.ImportedTaskModel) {
-        Dialog(onDismissRequest = { stopTokensDialogModel = null }) {
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = "ストップトークン",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = model.shortDisplayName,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    model.hfRepoQualifier?.let { repo ->
-                        Text(
-                            text = "HF: $repo",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        Text("音声入力を有効化", color = MaterialTheme.colorScheme.onSurface)
+                        Switch(
+                            checked = capabilityDialogAudioEnabled,
+                            onCheckedChange = { capabilityDialogAudioEnabled = it }
                         )
                     }
+                    if (isGguf) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("推論（Thinking）を有効化", color = MaterialTheme.colorScheme.onSurface)
+                            Switch(
+                                checked = capabilityDialogThinkingEnabled,
+                                onCheckedChange = { capabilityDialogThinkingEnabled = it }
+                            )
+                        }
+                    }
+                    if (supportsToolCalling) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("ツール呼び出しを有効化", color = MaterialTheme.colorScheme.onSurface)
+                                Text(
+                                    text = if (isLiteRt) "LiteRT-LM のツール呼び出しに対応します" else "GGUF / llama.rn のツール呼び出しに対応します",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = capabilityDialogToolCallingEnabled,
+                                onCheckedChange = { capabilityDialogToolCallingEnabled = it }
+                            )
+                        }
+                    }
+                    Divider()
+                    Text(
+                        text = "モデル表示名",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
                     OutlinedTextField(
                         modifier = Modifier.fillMaxWidth(),
-                        value = stopTokensDialogText,
-                        onValueChange = { stopTokensDialogText = it },
-                        label = { Text("トークン（カンマ区切り）") },
+                        value = settingsDialogDisplayName,
+                        onValueChange = { settingsDialogDisplayName = it },
+                        label = { Text("表示名") },
+                        singleLine = true
+                    )
+                    Text(
+                        text = "記号 \\ / : * ? \" < > | は使用できません。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Divider()
+                    Text(
+                        text = "ストップトークン（カンマ区切り）",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    OutlinedTextField(
+                        modifier = Modifier.fillMaxWidth(),
+                        value = settingsDialogStopTokens,
+                        onValueChange = { settingsDialogStopTokens = it },
+                        label = { Text("追加ストップトークン") },
                         placeholder = { Text("<|im_end|>,<|im_start|>") },
                         minLines = 2
                     )
                     Text(
-                        text = "カンマ区切りで複数指定できます。デフォルトのストップトークンに追加されます。",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall
+                        text = "デフォルトのストップトークンに追加されます。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
                     ) {
-                        TextButton(onClick = { stopTokensDialogModel = null }) { Text("キャンセル") }
+                        TextButton(onClick = { modelSettingsDialogModel = null }) { Text("キャンセル") }
                         Button(onClick = {
-                            val tokens = stopTokensDialogText
+                            val invalidChars = Regex("[\\\\/:*?\"<>|]")
+                            if (invalidChars.containsMatchIn(settingsDialogDisplayName)) {
+                                toast("表示名に使用できない記号が含まれています")
+                                return@Button
+                            }
+                            val tokens = settingsDialogStopTokens
                                 .split(',')
                                 .map { it.trim() }
                                 .filter { it.isNotEmpty() }
                             viewLifecycleOwner.lifecycleScope.launch {
                                 withContext(Dispatchers.IO) {
-                                    settingsRepository.updateStopTokensForModel(model.path, tokens)
+                                    ImportedModelCapabilityStore.set(
+                                        requireContext(),
+                                        model.path,
+                                        ImportedModelCapabilities(
+                                            imageEnabled = capabilityDialogImageEnabled,
+                                            audioEnabled = capabilityDialogAudioEnabled,
+                                            mmprojPath = capabilityDialogMmprojPath.ifBlank { null },
+                                            thinkingEnabled = capabilityDialogThinkingEnabled,
+                                            displayName = settingsDialogDisplayName.trim().ifBlank { null },
+                                            toolCallingEnabled = capabilityDialogToolCallingEnabled
+                                        )
+                                    )
+                                    if (isGguf) {
+                                        settingsRepository.updateStopTokensForModel(model.path, tokens)
+                                    }
                                 }
-                                toast("ストップトークンを保存しました")
-                                stopTokensDialogModel = null
+                                modelSettingsDialogModel = null
+                                refreshImportedTasks()
+                                toast("設定を保存しました")
                             }
                         }) { Text("保存") }
                     }
@@ -1402,7 +1394,8 @@ open class ModelSettingsFragment : Fragment() {
                     progress = state.progress,
                     progressText = state.progressText,
                     isMemoryLow = state.memoryWarning != null,
-                    isStorageLow = resourceCheck.isStorageLow
+                    isStorageLow = resourceCheck.isStorageLow,
+                    fileSizeLabel = formatBytes(sizeBytes)
                 )
             }
         }
@@ -1443,6 +1436,71 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
     
+    @Composable
+    private fun EmbeddingModelsCard() {
+        val ctx = requireContext()
+        val entries = remember { MemoryTextEmbedder.listEmbeddingFileEntries(ctx) }
+        val totalSize = entries.sumOf { it.sizeBytes }
+        val isReady = MemoryTextEmbedder.hasEmbeddingFiles(ctx)
+
+        Text(
+            text = "埋め込みモデル（メモリ検索用）",
+            style = MaterialTheme.typography.labelSmall,
+            color = colorResource(id = R.color.text_secondary),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = 8.dp)
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.surface_card)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "static-embedding-japanese",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (isReady) "✓ 利用可能" else "未ダウンロード",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isReady) colorResource(id = R.color.primary)
+                        else colorResource(id = R.color.text_secondary)
+                    )
+                }
+                if (entries.isEmpty()) {
+                    Text(
+                        text = "メモリ機能利用時に自動ダウンロードされます",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+                } else {
+                    entries.forEach { entry ->
+                        Text(
+                            text = "${entry.fileName}: ${formatBytes(entry.sizeBytes)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorResource(id = R.color.text_secondary)
+                        )
+                    }
+                    Text(
+                        text = "合計: ${formatBytes(totalSize)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colorResource(id = R.color.text_primary)
+                    )
+                }
+            }
+        }
+    }
+
     @Composable
     private fun MmprojFilesCard() {
         Text(
@@ -2090,6 +2148,7 @@ open class ModelSettingsFragment : Fragment() {
                         val state = modelStates[model] ?: continue
                         val modelKey = "builtin_${model.name}"
                         val isExpanded = expandedModelKey == modelKey
+                        val sizeBytes = getModelSizeBytes(model)
                         ModelAccordionItem(
                             title = state.title,
                             status = state.status,
@@ -2105,7 +2164,8 @@ open class ModelSettingsFragment : Fragment() {
                             isDownloading = state.isDownloading,
                             isDownloaded = state.isDownloaded,
                             progress = state.progress,
-                            progressText = state.progressText
+                            progressText = state.progressText,
+                            fileSizeLabel = formatBytes(sizeBytes)
                         )
                     }
                 }
@@ -2245,81 +2305,6 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     @Composable
-    private fun RenameImportedDialog(model: ModelFileManager.ImportedTaskModel) {
-        Dialog(onDismissRequest = { renameDialogModel = null }) {
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = "モデルファイル名の変更",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "拡張子は変わりません。記号 \\ / : * ? \" < > | は使えません。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = model.shortDisplayName,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    model.hfRepoQualifier?.let { repo ->
-                        Text(
-                            text = "HF: $repo",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    OutlinedTextField(
-                        modifier = Modifier.fillMaxWidth(),
-                        value = renameDialogText,
-                        onValueChange = { renameDialogText = it },
-                        label = { Text("新しい名前（拡張子なし）") },
-                        singleLine = true
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
-                    ) {
-                        TextButton(onClick = { renameDialogModel = null }) { Text("キャンセル") }
-                        Button(onClick = {
-                            val ctx = requireContext()
-                            val oldPath = model.path
-                            val stem = renameDialogText
-                            viewLifecycleOwner.lifecycleScope.launch {
-                                val renamed = withContext(Dispatchers.IO) {
-                                    ModelFileManager.renameImportedTask(ctx, oldPath, stem)
-                                }
-                                renamed.onSuccess { newFile ->
-                                    withContext(Dispatchers.IO) {
-                                        ImportedModelCapabilityStore.migrateModelPath(ctx, oldPath, newFile.absolutePath)
-                                        settingsRepository.remapImportedModelPath(oldPath, newFile.absolutePath)
-                                    }
-                                    renameDialogModel = null
-                                    expandedModelKey = null
-                                    refreshImportedTasks()
-                                    toast("名前を変更しました")
-                                }.onFailure {
-                                    toast("名前変更に失敗: ${it.message}")
-                                }
-                            }
-                        }) { Text("保存") }
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
     private fun ModelAccordionItem(
         title: String,
         status: String,
@@ -2332,7 +2317,8 @@ open class ModelSettingsFragment : Fragment() {
         progress: Float = 0f,
         progressText: String = "",
         isMemoryLow: Boolean = false,
-        isStorageLow: Boolean = false
+        isStorageLow: Boolean = false,
+        fileSizeLabel: String? = null
     ) {
         Card(
             modifier = Modifier
@@ -2350,6 +2336,14 @@ open class ModelSettingsFragment : Fragment() {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(text = title, fontWeight = FontWeight.SemiBold)
+                        fileSizeLabel?.let { size ->
+                            Text(
+                                text = size,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorResource(id = R.color.text_secondary),
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
                         // メモリ・ストレージ警告ラベルを名前の下に表示
                         if (isMemoryLow || isStorageLow) {
                             Row(
@@ -2481,10 +2475,24 @@ open class ModelSettingsFragment : Fragment() {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(text = model.shortDisplayName, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = ImportedModelCapabilityStore.resolveDisplayName(
+                                requireContext(), model.path, model.shortDisplayName
+                            ),
+                            fontWeight = FontWeight.SemiBold
+                        )
                         model.hfRepoQualifier?.let { repo ->
                             Text(
                                 text = "HF: $repo",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorResource(id = R.color.text_secondary),
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                        val fileSize = java.io.File(model.path).length()
+                        if (fileSize > 0L) {
+                            Text(
+                                text = formatBytes(fileSize),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colorResource(id = R.color.text_secondary),
                                 modifier = Modifier.padding(top = 2.dp)
@@ -2535,80 +2543,21 @@ open class ModelSettingsFragment : Fragment() {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(text = "追加済みモデル", style = MaterialTheme.typography.bodySmall, color = colorResource(id = R.color.text_secondary))
                     Spacer(modifier = Modifier.height(8.dp))
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.fillMaxWidth()
+                        TextButton(
+                            onClick = { openModelSettingsDialog(model) },
+                            modifier = Modifier.weight(1f)
                         ) {
-                            TextButton(
-                                onClick = {
-                                    val caps = ImportedModelCapabilityStore.get(requireContext(), model.path)
-                                    capabilityDialogImageEnabled = caps.imageEnabled
-                                    capabilityDialogAudioEnabled = caps.audioEnabled
-                                    capabilityDialogThinkingEnabled = caps.thinkingEnabled
-                                    capabilityDialogMmprojPath = caps.mmprojPath ?: ""
-                                    capabilityDialogCurrentCapabilities = caps
-                                    capabilityDialogModel = model
-                                    // 同リポジトリのmmproj候補を取得（HF由来GGUFのみ）
-                                    capabilityDialogRepoMmprojCandidates = emptyList()
-                                    val repoQualifier = model.hfRepoQualifier
-                                    if (repoQualifier != null && model.path.lowercase().endsWith(".gguf")) {
-                                        capabilityDialogRepoMmprojLoading = true
-                                        viewLifecycleOwner.lifecycleScope.launch {
-                                            val hfModelId = withContext(Dispatchers.IO) {
-                                                ModelFileManager.hfModelIdFromRepoQualifier(repoQualifier)
-                                            }
-                                            if (hfModelId != null) {
-                                                val result = withContext(Dispatchers.IO) {
-                                                    ModelFileManager.findMmprojCandidates(requireContext(), hfModelId)
-                                                }
-                                                capabilityDialogRepoMmprojCandidates = result.getOrNull() ?: emptyList()
-                                            }
-                                            capabilityDialogRepoMmprojLoading = false
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("機能設定", fontSize = androidx.compose.material3.LocalTextStyle.current.fontSize * 0.8f)
-                            }
-                            TextButton(
-                                onClick = {
-                                    renameDialogText = model.fileNameStem
-                                    renameDialogModel = model
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("名前変更", fontSize = androidx.compose.material3.LocalTextStyle.current.fontSize * 0.8f)
-                            }
+                            Text("設定", fontSize = androidx.compose.material3.LocalTextStyle.current.fontSize * 0.9f)
                         }
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.fillMaxWidth()
+                        TextButton(
+                            onClick = onDelete,
+                            modifier = Modifier.weight(1f)
                         ) {
-                            TextButton(
-                                onClick = {
-                                    viewLifecycleOwner.lifecycleScope.launch {
-                                        val tokens = withContext(Dispatchers.IO) {
-                                            settingsRepository.getStopTokensForModel(model.path)
-                                        }
-                                        stopTokensDialogText = tokens.joinToString(", ")
-                                        stopTokensDialogModel = model
-                                    }
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("ストップトークン", fontSize = androidx.compose.material3.LocalTextStyle.current.fontSize * 0.8f)
-                            }
-                            TextButton(
-                                onClick = onDelete,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(stringResource(id = R.string.delete), fontSize = androidx.compose.material3.LocalTextStyle.current.fontSize * 0.8f)
-                            }
+                            Text(stringResource(id = R.string.delete), fontSize = androidx.compose.material3.LocalTextStyle.current.fontSize * 0.9f)
                         }
                     }
                 }
@@ -2726,8 +2675,17 @@ open class ModelSettingsFragment : Fragment() {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(text = model.shortDisplayName, fontWeight = FontWeight.SemiBold)
+                        val modelDir = File(model.path)
+                        val dirSize = modelDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                        if (dirSize > 0L) {
+                            Text(
+                                text = formatBytes(dirSize),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorResource(id = R.color.text_secondary),
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
                         if (!isExpanded) {
-                            val modelDir = File(model.path)
                             val hasMnn = modelDir.listFiles()?.any { it.name.endsWith(".mnn") } == true
                             val hasQnn = modelDir.listFiles()?.any { it.name.endsWith(".bin") } == true
                             val backend = when {
@@ -3001,6 +2959,42 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
+    private fun openModelSettingsDialog(model: ModelFileManager.ImportedTaskModel) {
+        val caps = ImportedModelCapabilityStore.get(requireContext(), model.path)
+        capabilityDialogImageEnabled = caps.imageEnabled
+        capabilityDialogAudioEnabled = caps.audioEnabled
+        capabilityDialogThinkingEnabled = caps.thinkingEnabled
+        capabilityDialogToolCallingEnabled = caps.toolCallingEnabled
+        capabilityDialogMmprojPath = caps.mmprojPath ?: ""
+        capabilityDialogCurrentCapabilities = caps
+        settingsDialogDisplayName = caps.displayName ?: model.shortDisplayName
+        modelSettingsDialogModel = model
+        capabilityDialogRepoMmprojCandidates = emptyList()
+        viewLifecycleOwner.lifecycleScope.launch {
+            settingsDialogStopTokens = withContext(Dispatchers.IO) {
+                if (model.path.lowercase().endsWith(".gguf")) {
+                    settingsRepository.getStopTokensForModel(model.path).joinToString(", ")
+                } else {
+                    ""
+                }
+            }
+            val repoQualifier = model.hfRepoQualifier
+            if (repoQualifier != null && model.path.lowercase().endsWith(".gguf")) {
+                capabilityDialogRepoMmprojLoading = true
+                val hfModelId = withContext(Dispatchers.IO) {
+                    ModelFileManager.hfModelIdFromRepoQualifier(repoQualifier)
+                }
+                if (hfModelId != null) {
+                    val result = withContext(Dispatchers.IO) {
+                        ModelFileManager.findMmprojCandidates(requireContext(), hfModelId)
+                    }
+                    capabilityDialogRepoMmprojCandidates = result.getOrNull() ?: emptyList()
+                }
+                capabilityDialogRepoMmprojLoading = false
+            }
+        }
+    }
+
     private fun downloadHfModelFile(modelId: String, filePath: String) {
         hfDownloadingFilePath = filePath
         val enqueued = ModelDownloadWorker.enqueueCustomHf(requireContext(), modelId, filePath)
@@ -3015,27 +3009,34 @@ open class ModelSettingsFragment : Fragment() {
                     isActive = true
                 )
             }
-            // mmproj 候補があれば最も小さいものを自動でDLキューに追加
+            // mmproj 候補があれば最も小さいものを自動でDLキューに追加（ローカル既存はスキップ）
             val mmprojToDownload = hfMmprojCandidates
                 .filter { it.sizeBytes != null }
                 .minByOrNull { it.sizeBytes!! }
                 ?: hfMmprojCandidates.firstOrNull()
             if (mmprojToDownload != null) {
-                val mmprojEnqueued = ModelDownloadWorker.enqueueCustomHf(
+                val mmprojLocal = ModelFileManager.huggingFaceImportedFile(
                     requireContext(), modelId, mmprojToDownload.path
                 )
-                if (mmprojEnqueued &&
-                    hfQueuedDownloads.none { it.modelId == modelId && it.filePath == mmprojToDownload.path }) {
-                    hfQueuedDownloads = hfQueuedDownloads + HfQueuedDownloadUiState(
-                        modelId = modelId,
-                        filePath = mmprojToDownload.path,
-                        downloadedBytes = 0L,
-                        totalBytes = 0L,
-                        statusText = "待機中",
-                        isActive = true
+                if (mmprojLocal.isFile && mmprojLocal.canRead() && mmprojLocal.length() > 0L) {
+                    toast("ダウンロードキューに追加しました（mmproj は既に存在します）")
+                } else {
+                    val mmprojEnqueued = ModelDownloadWorker.enqueueCustomHf(
+                        requireContext(), modelId, mmprojToDownload.path
                     )
+                    if (mmprojEnqueued &&
+                        hfQueuedDownloads.none { it.modelId == modelId && it.filePath == mmprojToDownload.path }) {
+                        hfQueuedDownloads = hfQueuedDownloads + HfQueuedDownloadUiState(
+                            modelId = modelId,
+                            filePath = mmprojToDownload.path,
+                            downloadedBytes = 0L,
+                            totalBytes = 0L,
+                            statusText = "待機中",
+                            isActive = true
+                        )
+                    }
+                    toast("モデルと mmproj をダウンロードキューに追加しました")
                 }
-                toast("モデルと mmproj をダウンロードキューに追加しました")
             } else {
                 toast("ダウンロードキューに追加しました")
             }

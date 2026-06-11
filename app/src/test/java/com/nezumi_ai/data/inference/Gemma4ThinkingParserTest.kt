@@ -35,4 +35,26 @@ class Gemma4ThinkingParserTest {
         assertEquals("thinking body", result.thinking)
         assertEquals("answer body", result.answer)
     }
+
+    @Test
+    fun parseStreaming_truncatesThoughtOnBacktickAndKeepsAnswer() {
+        val result = Gemma4ThinkingParser.parseStreaming(
+            rawInput = "<|channel>thought\nfirst line`tool start{\"name\":\"foo\"}<channel|>final answer",
+            treatUnmarkedInputAsThinking = true
+        )
+
+        assertEquals("first line", result.thinking)
+        assertEquals("`tool start{\"name\":\"foo\"}<channel|>final answer", result.answer)
+    }
+
+    @Test
+    fun parseStreaming_truncatesThoughtOnBraceAndKeepsAnswer() {
+        val result = Gemma4ThinkingParser.parseStreaming(
+            rawInput = "<|channel>thought\nfirst line {tool} <channel|>answer",
+            treatUnmarkedInputAsThinking = true
+        )
+
+        assertEquals("first line", result.thinking)
+        assertEquals("{tool} <channel|>answer", result.answer)
+    }
 }

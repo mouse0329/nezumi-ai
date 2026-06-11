@@ -135,13 +135,6 @@ KEY_PASSWORD=your_key_password
 **復元方法**: ONNX Runtime 1.18.0 以降（16KB 対応版）へのアップグレード後、[VOICEVOX_RESTORE.md](docs/VOICEVOX_RESTORE.md) の手順に従ってください。
 
 詳細な開発計画については [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) を参照してください。
-       ↓
-[MediaPipe / TensorFlow Lite]
-       ↓
-[Native Bridge (JNI) → llama.cpp]
-       ↓
-[Room DB]
-```
 
 ### 主要レイヤー
 
@@ -237,9 +230,33 @@ KEY_PASSWORD=your_key_password
 | Coil (Image Loading) | Apache 2.0 |
 | AppAuth for Android | Apache 2.0 |
 
-### 使用モデル
+---
 
-- **Google Gemma 4** (2B / 4B) - [Gemma Terms](https://ai.google.dev/gemma/terms)
-- **Google Gemma 3n** (E2B / E4B) - [Gemma Terms](https://ai.google.dev/gemma/terms)
-- **Stable Diffusion 1.5** - [Stability AI License](https://github.com/Stability-AI/stablediffusion/blob/main/LICENSE-MODEL)
-- **Hugging Face Hub** - モデル配布ページ参照
+## 関連ドキュメント
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - アーキテクチャ詳細
+- [`docs/BUILD_ERROR_FIX.md`](docs/BUILD_ERROR_FIX.md) - ビルドエラー修正記録
+- [`docs/GGUF_ENGINE_STATUS.md`](docs/GGUF_ENGINE_STATUS.md) - GGUF エンジン状況
+- [`docs/LLAMA_OPTIMIZATION.md`](docs/LLAMA_OPTIMIZATION.md) - Llama 最適化ドキュメント
+- [`docs/OPTIMIZATION_COMPLETION_REPORT.md`](docs/OPTIMIZATION_COMPLETION_REPORT.md) - 最適化完了報告
+- [`docs/VOICEVOX_RESTORE.md`](docs/VOICEVOX_RESTORE.md) - VOICEVOX 復旧手順
+
+---
+
+## ライセンスについて
+
+このプロジェクトは **デュアルライセンス** で公開されています：
+
+1. **GNU Lesser General Public License v3.0 (LGPL v3)**
+   - オープンソース利用向け
+   - [LICENSE.md](LICENSE.md) または [LGPL_LICENSE](LGPL_LICENSE) を参照
+
+2. **商用ライセンス**
+   - 商用利用の場合は mouse0329 までお問い合わせください
+
+---
+
+## 貢献について
+
+バグ報告、機能リクエスト、プルリクエストを歓迎します。  
+コントリビュートの際は、コードの品質とパフォーマンスを維持してください。
