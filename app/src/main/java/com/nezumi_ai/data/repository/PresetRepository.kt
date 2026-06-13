@@ -6,6 +6,7 @@ import com.nezumi_ai.data.database.entity.PresetEntity
 import com.nezumi_ai.data.inference.ToolPreferences
 import com.nezumi_ai.data.preset.PresetConstants
 import com.nezumi_ai.data.preset.PresetModelCatalog
+import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import com.nezumi_ai.utils.PreferencesHelper
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -54,8 +55,37 @@ class PresetRepository(
     }
 
     private fun applyPresetTools(preset: PresetEntity) {
-        val tools = if (preset.toolCallingEnabled) preset.enabledTools else "[]"
+        val tools = if (isPresetToolCallingEnabled(preset)) preset.enabledTools else "[]"
         ToolPreferences(context).setActivePresetToolIds(tools)
+    }
+
+    private fun isPresetToolCallingEnabled(preset: PresetEntity): Boolean {
+        if (!preset.toolCallingEnabled) return false
+        return isModelToolCallingEnabled(preset.modelId)
+    }
+
+    private fun isModelToolCallingEnabled(modelId: String): Boolean {
+        val isImportedModel = modelId.contains('/') || modelId.contains('\\')
+        if (!isImportedModel) return true
+        return ImportedModelCapabilityStore.get(context, modelId).toolCallingEnabled
+    }
+
+    suspend fun countPresetsUsingModelWithToolCallingEnabled(modelId: String): Int {
+        return dao.getAll().count { it.modelId == modelId && it.toolCallingEnabled }
+    }
+
+    suspend fun disableToolCallingForPresetsUsingModel(modelId: String): Int {
+        val presets = dao.getAll().filter { it.modelId == modelId && it.toolCallingEnabled }
+        if (presets.isEmpty()) return 0
+        val now = System.currentTimeMillis()
+        presets.forEach { preset ->
+            dao.update(preset.copy(toolCallingEnabled = false, updatedAt = now))
+        }
+        val currentPresetId = PreferencesHelper.getCurrentPresetId(context)
+        if (currentPresetId.isNotBlank() && presets.any { it.id == currentPresetId }) {
+            dao.getById(currentPresetId)?.let { applyPresetTools(it) }
+        }
+        return presets.size
     }
 
     suspend fun getCurrentPreset(): PresetEntity? {

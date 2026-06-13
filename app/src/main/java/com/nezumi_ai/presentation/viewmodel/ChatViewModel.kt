@@ -134,7 +134,29 @@ class ChatViewModel(
             return errorMessage.contains("Cannot read", ignoreCase = true) ||
                 errorMessage.contains("not found", ignoreCase = true) ||
                 errorMessage.contains("corrupt", ignoreCase = true) ||
-                errorMessage.contains("invalid", ignoreCase = true)
+                errorMessage.contains("invalid", ignoreCase = true) ||
+                errorMessage.contains("llamaInit failed", ignoreCase = true)
+        }
+
+        private fun Throwable?.isMemoryLoadFailure(): Boolean {
+            if (this == null) return false
+            if (this is OutOfMemoryError) return true
+            val errorMsg = message?.lowercase() ?: ""
+            if (errorMsg.contains("out of memory") ||
+                errorMsg.contains("failed to allocate memory") ||
+                errorMsg.contains("memory allocation failed") ||
+                errorMsg.contains("memory usage is too high") ||
+                errorMsg.contains("memory pressure") ||
+                errorMsg.contains("memory limit")
+            ) {
+                return true
+            }
+            return cause.isMemoryLoadFailure()
+        }
+
+        private fun Throwable?.isModelLoadWarningMarker(): Boolean {
+            val errorMsg = message ?: return false
+            return errorMsg == "MEMORY_WARNING_SHOWN" || errorMsg == "CPU_COMPAT_WARNING_SHOWN"
         }
     }
 
@@ -656,28 +678,16 @@ class ChatViewModel(
                     return@launch
                 }
 
-                // メモリエラーを検出（実際の OOM エラー）
-                if (error?.message?.contains("memory", ignoreCase = true) == true) {
-                    val memStatus = MemoryObserver.getMemoryStatus(appContext)
-                    _memoryError.value = MemoryErrorInfo(
-                        usedPercent = memStatus.usedPercent,
-                        usedMB = memStatus.usedMB,
-                        totalMB = memStatus.maxMB
-                    )
-                    return@launch
-                }
-
-                // ファイル読み込みエラーを検出（PATH NOT FOUND など）
+                // ★ 修正: ファイル読み込みエラーを先に検出（PATH NOT FOUND など）
+                // これをメモリエラーより先にチェックすることで、ファイルロード失敗が正規のエラーモーダルで表示される
                 val errorMsg = error?.message ?: ""
                 if (shouldDeleteLocalModelFileOnLoadError(errorMsg)) {
-                    
                     Log.w(TAG, "モデルファイルの読み込みエラー: $normalizedModel")
                     _modelLoadError.value = ModelLoadErrorInfo(
                         title = "モデルロードエラー",
                         message = "モデルファイルが読み込めません。設定画面で再ダウンロードしてください。",
                         details = errorMsg
                     )
-                    
                     // ファイルを削除してリセット
                     try {
                         val modelEnum = when (normalizedModel.uppercase()) {
@@ -692,7 +702,28 @@ class ChatViewModel(
                     } catch (e: Exception) {
                         Log.e(TAG, "モデルファイルのクリアに失敗", e)
                     }
+                    return@launch
                 }
+
+                // メモリエラーを検出（実際の OOM エラー）
+                if (error?.message?.contains("memory", ignoreCase = true) == true) {
+                    val memStatus = MemoryObserver.getMemoryStatus(appContext)
+                    _memoryError.value = MemoryErrorInfo(
+                        usedPercent = memStatus.usedPercent,
+                        usedMB = memStatus.usedMB,
+                        totalMB = memStatus.maxMB
+                    )
+                    return@launch
+                }
+
+                // その他のモデルロードエラー
+                _modelLoadError.value = ModelLoadErrorInfo(
+                    title = "モデルロードエラー",
+                    message = "モデルのロードに失敗しました。",
+                    details = errorMsg
+                )
+                    
+
             }
         }
     }
@@ -715,11 +746,28 @@ class ChatViewModel(
                     return@launch
                 }
                 Log.e(TAG, "Failed to preload preset model: $selectedModel", error)
-                _modelLoadError.value = ModelLoadErrorInfo(
-                    title = "モデルロードエラー",
-                    message = "プリセットモデルのロードに失敗しました",
-                    details = error?.message
-                )
+                
+                val errorMsg = error?.message ?: ""
+                if (shouldDeleteLocalModelFileOnLoadError(errorMsg)) {
+                    _modelLoadError.value = ModelLoadErrorInfo(
+                        title = "モデルロードエラー",
+                        message = "プリセットモデルのロードに失敗しました。ファイルが見つかりません。",
+                        details = errorMsg
+                    )
+                } else if (error.isMemoryLoadFailure()) {
+                    val memStatus = MemoryObserver.getMemoryStatus(appContext)
+                    _memoryError.value = MemoryErrorInfo(
+                        usedPercent = memStatus.usedPercent,
+                        usedMB = memStatus.usedMB,
+                        totalMB = memStatus.maxMB
+                    )
+                } else {
+                    _modelLoadError.value = ModelLoadErrorInfo(
+                        title = "モデルロードエラー",
+                        message = "プリセットモデルのロードに失敗しました",
+                        details = error?.message
+                    )
+                }
             }
         }
     }
@@ -1037,13 +1085,13 @@ class ChatViewModel(
                 Log.e(TAG, "Model loading failed for $selectedModel: $errorMsg", error)
 
                 // ★ 警告ダイアログ表示中はユーザー操作を待つ
-                if (errorMsg == "MEMORY_WARNING_SHOWN" || errorMsg == "CPU_COMPAT_WARNING_SHOWN") {
+                if (error.isModelLoadWarningMarker()) {
                     Log.d(TAG, "Model warning shown - waiting for user action: $errorMsg")
                     return
                 }
 
                 // メモリエラーを検出（実際の OOM エラー）
-                if (errorMsg.contains("memory", ignoreCase = true)) {
+                if (error.isMemoryLoadFailure()) {
                     val memStatus = MemoryObserver.getMemoryStatus(appContext)
                     _memoryError.value = MemoryErrorInfo(
                         usedPercent = memStatus.usedPercent,

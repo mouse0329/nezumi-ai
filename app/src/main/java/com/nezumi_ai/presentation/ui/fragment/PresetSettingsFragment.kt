@@ -33,8 +33,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -56,6 +58,7 @@ import com.nezumi_ai.data.database.entity.PresetEntity
 import com.nezumi_ai.data.preset.PresetConstants
 import com.nezumi_ai.data.preset.PresetModelCatalog
 import com.nezumi_ai.data.repository.PresetRepository
+import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import com.nezumi_ai.utils.PreferencesHelper
 import java.util.UUID
 import kotlinx.coroutines.launch
@@ -320,6 +323,20 @@ class PresetSettingsFragment : Fragment() {
             mutableStateOf(parseToolIds(initialPreset?.enabledTools ?: PresetRepository.encodeToolIds(PresetConstants.allToolIds)))
         }
 
+        val selectedModelToolCallingAllowed by remember(modelId) {
+            derivedStateOf {
+                val isImportedModel = modelId.contains('/') || modelId.contains('\\')
+                if (!isImportedModel) return@derivedStateOf true
+                ImportedModelCapabilityStore.get(requireContext(), modelId).toolCallingEnabled
+            }
+        }
+
+        LaunchedEffect(selectedModelToolCallingAllowed) {
+            if (!selectedModelToolCallingAllowed) {
+                toolCallingEnabled = false
+            }
+        }
+
         AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text(if (initialPreset == null) "新しいプリセット" else "プリセット編集") },
@@ -412,10 +429,18 @@ class PresetSettingsFragment : Fragment() {
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                if (!selectedModelToolCallingAllowed) {
+                                    Text(
+                                        text = "選択中のモデルはツール呼び出しが無効です。モデル設定から有効化してください",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
                             }
                             Switch(
                                 checked = toolCallingEnabled,
-                                onCheckedChange = { toolCallingEnabled = it }
+                                onCheckedChange = { if (selectedModelToolCallingAllowed) toolCallingEnabled = it },
+                                enabled = selectedModelToolCallingAllowed
                             )
                         }
                     }
