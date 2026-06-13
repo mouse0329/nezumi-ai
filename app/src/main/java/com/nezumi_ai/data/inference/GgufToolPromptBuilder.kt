@@ -1,12 +1,14 @@
 package com.nezumi_ai.data.inference
 
 import android.content.Context
+import android.util.Log
 
 /**
  * GGUF / llama.rn 向けにツール定義をシステムプロンプトへ注入する。
  * LiteRT-LM の [buildEnabledToolProviders] と同じツールセットを [ToolPreferences] で絞り込む。
  */
 object GgufToolPromptBuilder {
+    private const val TAG = "GgufToolPromptBuilder"
 
     private data class ToolSchema(
         val name: String,
@@ -119,10 +121,16 @@ object GgufToolPromptBuilder {
                 add("list_timers")
             }
         }
-        if (enabledNames.isEmpty()) return systemPrompt
+        if (enabledNames.isEmpty()) {
+            Log.d(TAG, "GgufToolPromptBuilder: Skipped. Reason: No enabled tools selected.")
+            return systemPrompt
+        }
 
         val schemas = allSchemas.filter { it.name in enabledNames }
-        if (schemas.isEmpty()) return systemPrompt
+        if (schemas.isEmpty()) {
+            Log.d(TAG, "GgufToolPromptBuilder: Skipped. Reason: No matching tool schemas for enabled tools.")
+            return systemPrompt
+        }
 
         val toolsJson = schemas.joinToString("\n") { schema ->
             """{"type":"function","function":{"name":"${schema.name}","description":"${schema.description}","parameters":${schema.parametersJson}}}"""

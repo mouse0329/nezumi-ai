@@ -43,6 +43,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -83,6 +84,7 @@ import androidx.navigation.fragment.findNavController
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.nezumi_ai.MyApplication
+import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.R
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.HfAuthManager
@@ -145,9 +147,15 @@ open class ModelSettingsFragment : Fragment() {
     private val imageModelSucceededWorkIds = mutableSetOf<java.util.UUID>()
     private var importedTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
     private var importedMmprojTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
+    private lateinit var presetRepository: PresetRepository
     private var isImportingModel by mutableStateOf(false)
     private var modelSettingsDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
     private var capabilityDialogImageEnabled by mutableStateOf(false)
+    private var showToolCallingDisableConfirmDialog by mutableStateOf(false)
+    private var toolCallingDisableConfirmModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
+    private var toolCallingDisableConfirmNewCapabilities by mutableStateOf<ImportedModelCapabilities?>(null)
+    private var toolCallingDisableConfirmTokens by mutableStateOf<List<String>>(emptyList())
+    private var toolCallingDisableConflictCount by mutableStateOf(0)
     private var capabilityDialogAudioEnabled by mutableStateOf(false)
     private var capabilityDialogThinkingEnabled by mutableStateOf(false)
     private var capabilityDialogToolCallingEnabled by mutableStateOf(false)
@@ -274,6 +282,7 @@ open class ModelSettingsFragment : Fragment() {
         super.onCreate(savedInstanceState)
         val db = NezumiAiDatabase.getInstance(requireContext())
         settingsRepository = SettingsRepository.fromDatabase(db)
+        presetRepository = PresetRepository(db.presetDao(), requireContext().applicationContext)
         authService = AuthorizationService(requireContext())
         ModelFileManager.LocalModel.entries.forEach { modelStates[it] = ModelUiState(titleFor(it)) }
     }
@@ -721,32 +730,66 @@ open class ModelSettingsFragment : Fragment() {
                                 .split(',')
                                 .map { it.trim() }
                                 .filter { it.isNotEmpty() }
+                            val newCapabilities = ImportedModelCapabilities(
+                                imageEnabled = capabilityDialogImageEnabled,
+                                audioEnabled = capabilityDialogAudioEnabled,
+                                mmprojPath = capabilityDialogMmprojPath.ifBlank { null },
+                                thinkingEnabled = capabilityDialogThinkingEnabled,
+                                displayName = settingsDialogDisplayName.trim().ifBlank { null },
+                                toolCallingEnabled = capabilityDialogToolCallingEnabled
+                            )
                             viewLifecycleOwner.lifecycleScope.launch {
-                                withContext(Dispatchers.IO) {
-                                    ImportedModelCapabilityStore.set(
-                                        requireContext(),
-                                        model.path,
-                                        ImportedModelCapabilities(
-                                            imageEnabled = capabilityDialogImageEnabled,
-                                            audioEnabled = capabilityDialogAudioEnabled,
-                                            mmprojPath = capabilityDialogMmprojPath.ifBlank { null },
-                                            thinkingEnabled = capabilityDialogThinkingEnabled,
-                                            displayName = settingsDialogDisplayName.trim().ifBlank { null },
-                                            toolCallingEnabled = capabilityDialogToolCallingEnabled
-                                        )
-                                    )
-                                    if (isGguf) {
-                                        settingsRepository.updateStopTokensForModel(model.path, tokens)
+                                val requiresConfirmation = capabilityDialogCurrentCapabilities?.toolCallingEnabled == true &&
+                                    !newCapabilities.toolCallingEnabled
+                                if (requiresConfirmation) {
+                                    val affectedCount = withContext(Dispatchers.IO) {
+                                        presetRepository.countPresetsUsingModelWithToolCallingEnabled(model.path)
+                                    }
+                                    if (affectedCount > 0) {
+                                        toolCallingDisableConfirmModel = model
+                                        toolCallingDisableConfirmNewCapabilities = newCapabilities
+                                        toolCallingDisableConfirmTokens = tokens
+                                        toolCallingDisableConflictCount = affectedCount
+                                        showToolCallingDisableConfirmDialog = true
+                                        return@launch
                                     }
                                 }
-                                modelSettingsDialogModel = null
-                                refreshImportedTasks()
-                                toast("設定を保存しました")
+                                persistModelSettings(model, newCapabilities, isGguf, tokens)
                             }
                         }) { Text("保存") }
                     }
                 }
             }
+        }
+
+        if (showToolCallingDisableConfirmDialog && toolCallingDisableConfirmModel != null && toolCallingDisableConfirmNewCapabilities != null) {
+            AlertDialog(
+                onDismissRequest = { showToolCallingDisableConfirmDialog = false },
+                title = { Text("モデルツール呼び出しを無効化しますか？") },
+                text = {
+                    Text("このモデルを使用する $toolCallingDisableConflictCount 件のプリセットのツール呼び出し設定も無効になりますがよろしいですか？")
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        val modelForConfirm = toolCallingDisableConfirmModel ?: return@Button
+                        val newCapabilitiesForConfirm = toolCallingDisableConfirmNewCapabilities ?: return@Button
+                        val tokensForConfirm = toolCallingDisableConfirmTokens
+                        toolCallingDisableConfirmModel = null
+                        toolCallingDisableConfirmNewCapabilities = null
+                        toolCallingDisableConfirmTokens = emptyList()
+                        showToolCallingDisableConfirmDialog = false
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            withContext(Dispatchers.IO) {
+                                presetRepository.disableToolCallingForPresetsUsingModel(modelForConfirm.path)
+                            }
+                            persistModelSettings(modelForConfirm, newCapabilitiesForConfirm, isGguf, tokensForConfirm)
+                        }
+                    }) { Text("はい") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showToolCallingDisableConfirmDialog = false }) { Text("キャンセル") }
+                }
+            )
         }
     }
 
@@ -2993,6 +3036,27 @@ open class ModelSettingsFragment : Fragment() {
                 capabilityDialogRepoMmprojLoading = false
             }
         }
+    }
+
+    private suspend fun persistModelSettings(
+        model: ModelFileManager.ImportedTaskModel,
+        newCapabilities: ImportedModelCapabilities,
+        isGguf: Boolean,
+        stopTokens: List<String>
+    ) {
+        withContext(Dispatchers.IO) {
+            ImportedModelCapabilityStore.set(
+                requireContext(),
+                model.path,
+                newCapabilities
+            )
+            if (isGguf) {
+                settingsRepository.updateStopTokensForModel(model.path, stopTokens)
+            }
+        }
+        modelSettingsDialogModel = null
+        refreshImportedTasks()
+        toast("設定を保存しました")
     }
 
     private fun downloadHfModelFile(modelId: String, filePath: String) {
