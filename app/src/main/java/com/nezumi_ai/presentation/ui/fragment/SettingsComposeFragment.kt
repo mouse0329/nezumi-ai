@@ -41,6 +41,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.fragment.app.Fragment
 import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.fragment.findNavController
 import com.nezumi_ai.R
 import com.nezumi_ai.BuildConfig
@@ -52,6 +53,7 @@ import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 
 import com.nezumi_ai.utils.PreferencesHelper
+import com.nezumi_ai.presentation.ui.composable.ErrorModalDialog
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -126,6 +128,7 @@ class SettingsComposeFragment : Fragment() {
     override fun onViewCreated(view: android.view.View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         loadInferenceSettings()
+        // Note: modelErrorDialogMessage is handled by Compose UI in SettingsScreen()
     }
 
     override fun onResume() {
@@ -135,6 +138,9 @@ class SettingsComposeFragment : Fragment() {
 
     @Composable
     private fun SettingsScreen() {
+        val chatViewModel = ViewModelProvider(requireActivity()).get(com.nezumi_ai.presentation.viewmodel.ChatViewModel::class.java)
+        val sharedModelErrorMessage by chatViewModel.modelErrorDialogMessage.collectAsState()
+
         errorDialogMessage?.let { message ->
             ErrorModalDialog(
                 title = "設定エラー",
@@ -143,17 +149,23 @@ class SettingsComposeFragment : Fragment() {
             )
         }
 
+        sharedModelErrorMessage?.let { message ->
+            // Parse message to extract title, body, and details
+            val lines = message.split("\n\n")
+            val title = lines.getOrNull(0) ?: "エラー"
+            val body = lines.getOrNull(1) ?: lines.getOrNull(0) ?: message
+            val detail = lines.getOrNull(2)
+            ErrorModalDialog(
+                title = title,
+                message = body,
+                detail = detail,
+                onDismiss = { chatViewModel.dismissModelErrorDialogMessage() }
+            )
+        }
+
         if (versionDialogVisible) {
             VersionInfoDialog(
                 onDismiss = { versionDialogVisible = false }
-            )
-        }
-        modelErrorDialogMessage?.let { message ->
-            ErrorModalDialog(
-                title = "エラー",
-                message = message,
-                onDismiss = { modelErrorDialogMessage = null },
-                onConfirm = { modelErrorDialogMessage = null }
             )
         }
         if (aboutDialogVisible) {
@@ -1607,118 +1619,6 @@ class SettingsComposeFragment : Fragment() {
                     modelErrorDialogMessage = "モデルのロードに失敗しました。デバッグ用モーダルを表示しています。"
                 }) {
                     Text("モデルエラーを表示")
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun ErrorModalDialog(
-        title: String,
-        message: String,
-        detail: String? = null,
-        onDismiss: () -> Unit,
-        onConfirm: (() -> Unit)? = null
-    ) {
-        Dialog(
-            onDismissRequest = onDismiss,
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                    .padding(horizontal = 16.dp, vertical = 16.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .wrapContentHeight()
-                        .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-                        .background(MaterialTheme.colorScheme.surface)
-                        .border(
-                            width = 2.dp,
-                            color = MaterialTheme.colorScheme.error,
-                            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
-                        )
-                        .padding(horizontal = 32.dp, vertical = 40.dp)
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = title,
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            letterSpacing = 1.1.sp
-                        )
-                        Spacer(modifier = Modifier.height(20.dp))
-                        Text(
-                            text = message,
-                            fontSize = 15.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            lineHeight = 26.sp
-                        )
-                        detail?.let {
-                            Spacer(modifier = Modifier.height(24.dp))
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp))
-                                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
-                                    .padding(18.dp)
-                            ) {
-                                Text(
-                                    text = it,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    lineHeight = 20.sp,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 32.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        TextButton(
-                            onClick = onDismiss,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(56.dp)
-                                .background(MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(14.dp)),
-                            contentPadding = PaddingValues(0.dp)
-                        ) {
-                            Text(
-                                text = "閉じる",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                        if (onConfirm != null) {
-                            TextButton(
-                                onClick = onConfirm,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(56.dp)
-                                    .background(MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(14.dp)),
-                                contentPadding = PaddingValues(0.dp)
-                            ) {
-                                Text(
-                                    text = "再試行する",
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    }
                 }
             }
         }

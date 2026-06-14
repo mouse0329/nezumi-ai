@@ -48,8 +48,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import com.nezumi_ai.presentation.ui.composable.ErrorModalDialog
+import com.nezumi_ai.presentation.ui.composable.ErrorModalDialogContent
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -820,14 +823,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.modelLoadError.collect { error ->
-                if (error != null) showModelLoadErrorDialog(error)
-            }
-        }
-
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.inferenceError.collect { error ->
-                if (error != null) showModelLoadErrorDialog(error)
+            viewModel.modelErrorDialogMessage.collect { message ->
+                if (!message.isNullOrBlank()) showModelErrorDialog(message)
             }
         }
 
@@ -1585,24 +1582,43 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         alertDialog.show()
     }
 
-    private fun showModelLoadErrorDialog(error: ChatViewModel.ModelLoadErrorInfo) {
-        val message = buildString {
-            append(error.message)
-            error.details?.takeIf { it.isNotBlank() }?.let {
-                append("\n\n")
-                append(it)
+    private fun showModelErrorDialog(message: String) {
+        // Parse message to extract title, body, and details
+        val lines = message.split("\n\n")
+        val title = lines.getOrNull(0) ?: "エラー"
+        val body = lines.getOrNull(1) ?: lines.getOrNull(0) ?: message
+        val detail = lines.getOrNull(2)
+
+        val dialog = android.app.Dialog(requireContext()).apply {
+            requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+            setCancelable(true)
+            setCanceledOnTouchOutside(true)
+        }
+
+        val composeView = ComposeView(requireContext()).apply {
+            setViewTreeLifecycleOwner(viewLifecycleOwner)
+            setViewTreeViewModelStoreOwner(this@ChatFragment)
+            setViewTreeSavedStateRegistryOwner(this@ChatFragment)
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+            setContent {
+                NezumiComposeTheme {
+                    ErrorModalDialogContent(
+                        title = title,
+                        message = body,
+                        detail = detail,
+                        onDismiss = {
+                            viewModel.dismissModelErrorDialogMessage()
+                            dialog.dismiss()
+                        }
+                    )
+                }
             }
         }
-        val alertDialog = androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle(error.title)
-            .setIcon(R.drawable.ic_nezumi_ai)
-            .setMessage(message)
-            .setPositiveButton("閉じる") { _, _ ->
-                viewModel.dismissModelLoadError()
-            }
-            .setCancelable(false)
-            .create()
-        alertDialog.show()
+
+        dialog.setContentView(composeView)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.show()
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
     }
 
     @Composable
