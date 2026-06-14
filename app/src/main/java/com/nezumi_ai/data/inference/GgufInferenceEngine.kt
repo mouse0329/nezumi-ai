@@ -117,12 +117,12 @@ class GgufInferenceEngine(
          */
         private fun getAdaptiveGpuLayers(backendType: String): Int {
             if (backendType.uppercase() != "GPU") return 0
-            
+
             val runtime = Runtime.getRuntime()
             val maxMemory = runtime.maxMemory()
             val usedMemory = runtime.totalMemory() - runtime.freeMemory()
             val availableMemory = maxMemory - usedMemory
-            
+
             // 利用可能メモリに応じてGPU層数を調整
             return when {
                 availableMemory > 6L * 1024 * 1024 * 1024 -> 999  // 6GB以上: 全層
@@ -184,7 +184,7 @@ class GgufInferenceEngine(
 
                 val optimalThreads = getOptimalThreadCount()
                 val gpuLayers = getAdaptiveGpuLayers(normalized.backendType)
-                
+
                 if (!LlamaBridge.isLibraryLoaded()) {
                     return@withLock Result.failure(
                         IllegalStateException("GGUF native bridge not loaded: libllama_bridge.so unavailable")
@@ -192,6 +192,13 @@ class GgufInferenceEngine(
                 }
 
                 Log.i(TAG, "Loading GGUF model: $modelPath backend=${normalized.backendType} threads=$optimalThreads gpuLayers=$gpuLayers")
+
+                if (modelFile.extension.equals("gguf", ignoreCase = true) && !hasGgufMagicHeader(modelFile)) {
+                    return@withLock Result.failure(
+                        IllegalStateException("Invalid GGUF model file: magic header not found")
+                    )
+                }
+
                 val ctx = withContext(Dispatchers.IO) {
                     LlamaBridge.llamaInit(
                         modelPath = modelPath,
@@ -204,7 +211,7 @@ class GgufInferenceEngine(
 
                 if (ctx == 0L) {
                     return@withLock Result.failure(
-                        IllegalStateException("llamaInit failed — check model path and memory")
+                        IllegalStateException("llamaInit failed — invalid model file or insufficient memory")
                     )
                 }
 
@@ -610,5 +617,19 @@ class GgufInferenceEngine(
         // TODO: ModelFileManager に GGUF エントリを追加後、ここで解決する
         Log.w(TAG, "resolveModelFile: unsupported modelName format: $modelName")
         return null
+    }
+
+    private fun hasGgufMagicHeader(file: File): Boolean {
+        return try {
+            val header = ByteArray(4)
+            file.inputStream().use { it.read(header) }
+            header[0] == 'G'.code.toByte() &&
+                header[1] == 'G'.code.toByte() &&
+                header[2] == 'U'.code.toByte() &&
+                header[3] == 'F'.code.toByte()
+        } catch (e: Exception) {
+            Log.w(TAG, "hasGgufMagicHeader: failed to read header for ${file.absolutePath}", e)
+            false
+        }
     }
 }
