@@ -39,6 +39,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Gemma / LiteRT-LM 推論（[com.google.ai.edge.litertlm]）。
@@ -79,6 +80,9 @@ class LiteRtLmEngine(
     private val inferenceMutexHeld = AtomicBoolean(false)
     @Volatile private var npuNativeLibraryDirChecked = false
     @Volatile private var cachedNpuNativeLibraryDir: String? = null
+    // Timestamp (ms) of last critical engine init failure. Used to apply short backoff
+    private val lastCriticalInitFailureMs = AtomicLong(0)
+    private val ENGINE_INIT_BACKOFF_MS = 5_000L
     
     // ─────────────────────────────────────────────────────────────────────────
     // Phase 14: 抽出推論の割り込み検出メカニズム
@@ -632,6 +636,8 @@ class LiteRtLmEngine(
         Log.d(TAG, "loadModel START: modelName=$modelName backend=${normalizedConfig.backendType}")
         val modelStartTimeMs = System.currentTimeMillis()
 
+        
+
         val modelFile = resolveLocalModelFile(modelName)
         val resolveTimeMs = System.currentTimeMillis()
         Log.d(TAG, "loadModel RESOLVE: file=$modelFile duration=${resolveTimeMs - modelStartTimeMs}ms")
@@ -651,13 +657,46 @@ class LiteRtLmEngine(
             return Result.success(Unit)
         }
 
-        val effectiveBackendType = getOptimalBackendType(normalizedConfig.backendType)
+        // If a recent critical init failure occurred, avoid tight retry loops by forcing CPU-only init
+        val nowMs2 = System.currentTimeMillis()
+        val lastFail2 = lastCriticalInitFailureMs.get()
+        val forceCpuOnly = nowMs2 - lastFail2 < ENGINE_INIT_BACKOFF_MS
+        if (forceCpuOnly) {
+            Log.w(TAG, "Recent engine init failure detected (${nowMs2 - lastFail2}ms ago). Forcing CPU-only backend to avoid retry loop.")
+        }
+
+        val effectiveBackendType = if (forceCpuOnly) "CPU" else getOptimalBackendType(normalizedConfig.backendType)
         val preferredBackend = backendForConfig(effectiveBackendType)
         val cacheDir = resolveWritableXnnpackCacheDir()
         val cacheDirPath = cacheDir?.absolutePath
         val backendChanged = loadedBackend != null && loadedBackend != effectiveBackendType
         if (backendChanged) {
-            Log.i(TAG, "Backend changed from $loadedBackend to $effectiveBackendType. Clearing cache...")
+            Log.i(TAG, "Backend changed from $loadedBackend to $effectiveBackendType. Preparing safe cache swap...")
+        }
+
+        // Try to move existing cache to a backup location instead of immediate deletion.
+        var cacheBackupDir: File? = null
+        var initCacheDirForEngine: String? = cacheDirPath
+        if (backendChanged && !cacheDirPath.isNullOrBlank()) {
+            try {
+                val cacheDirFile = File(cacheDirPath)
+                if (cacheDirFile.exists() && cacheDirFile.isDirectory) {
+                    val backup = File(cacheDirFile.parentFile, cacheDirFile.name + ".backup_${System.currentTimeMillis()}")
+                    if (cacheDirFile.renameTo(backup)) {
+                        cacheBackupDir = backup
+                        initCacheDirForEngine = null
+                        Log.i(TAG, "Renamed cache dir to backup: ${backup.absolutePath}")
+                    } else {
+                        Log.w(TAG, "Failed to rename cache dir for backup: ${cacheDirFile.absolutePath}. Clearing instead.")
+                        clearBackendSpecificCache(cacheDirPath)
+                        initCacheDirForEngine = null
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error while backing up cache dir, will clear: $cacheDirPath", e)
+                clearBackendSpecificCache(cacheDirPath)
+                initCacheDirForEngine = null
+            }
         }
 
         runCatching { engine?.close() }
@@ -666,11 +705,14 @@ class LiteRtLmEngine(
         loadedConfig = null
         loadedBackend = null
 
-        if (backendChanged) {
-            clearBackendSpecificCache(cacheDirPath)
-        }
-
+        // Cache was backed up above if possible; avoid double-clearing here.
         Log.d(TAG, "loadModel CACHE_VALIDATE: path=$cacheDirPath")
+        // Ensure any bundled dispatch/native libs are extracted to files/models so LiteRT can find vendor dispatch .so files
+        runCatching {
+            ModelFileManager.ensureDispatchLibraries(appContext)
+        }.onFailure { e ->
+            Log.w(TAG, "Failed to ensure dispatch libraries in files/models", e)
+        }
         CacheManager.validateAndRepairCacheIfNeeded(cacheDirPath)
         CacheManager.cleanupCacheIfNeeded(appContext, modelFile.name.lowercase(), cacheDir)
         val validateTimeMs = System.currentTimeMillis()
@@ -691,31 +733,31 @@ class LiteRtLmEngine(
         suspend fun tryCreate(withVisionAudio: Boolean, backend: Backend): Engine {
             Log.d(
                 TAG,
-                "loadModel ENGINE_INIT: START - backend=${backend.javaClass.simpleName} maxNumTokens=${normalizedConfig.contextWindow} cacheDir=$cacheDirPath"
+                "loadModel ENGINE_INIT: START - backend=${backend.javaClass.simpleName} maxNumTokens=${normalizedConfig.contextWindow} cacheDir=$initCacheDirForEngine"
             )
 
-            var eng = newEngine(withVisionAudio, backend, cacheDirPath)
+            var eng = newEngine(withVisionAudio, backend, initCacheDirForEngine)
             val initStartMs = System.currentTimeMillis()
             try {
                 eng.initialize()
                 val initEndMs = System.currentTimeMillis()
                 Log.d(
                     TAG,
-                    "loadModel ENGINE_INIT: END - duration=${initEndMs - initStartMs}ms backend=${backend.javaClass.simpleName} cacheEnabled=${cacheDirPath != null}"
+                    "loadModel ENGINE_INIT: END - duration=${initEndMs - initStartMs}ms backend=${backend.javaClass.simpleName} cacheEnabled=${initCacheDirForEngine != null}"
                 )
                 return eng
             } catch (first: Throwable) {
                 runCatching { eng.close() }
 
                 // XNNPack cache mmap エラー時は cacheDir を無効化して再試行
-                if (cacheDirPath != null && isXnnpackMmapFailure(first)) {
+                if (initCacheDirForEngine != null && isXnnpackMmapFailure(first)) {
                     Log.w(
                         TAG,
-                        "Engine init failed with XNNPack cache. Retrying without cacheDir. cacheDir=$cacheDirPath",
+                        "Engine init failed with XNNPack cache. Retrying without cacheDir. cacheDir=$initCacheDirForEngine",
                         first
                     )
                     disableXnnpackCacheForProcess = true
-                    clearBackendSpecificCache(cacheDirPath)
+                    clearBackendSpecificCache(initCacheDirForEngine)
                     eng = newEngine(withVisionAudio, backend, null)
                     val retryStartMs = System.currentTimeMillis()
                     eng.initialize()
@@ -803,7 +845,36 @@ class LiteRtLmEngine(
         }
         Log.d(TAG, "Backend fallback chain: ${fallbackChain.map { it.javaClass.simpleName }}")
 
-        val (eng, withVA, usedBackend) = tryBackendChain(fallbackChain)
+        // Attempt backend initialization; on failure restore cache backup and rollback resources.
+        val engTriple = try {
+            tryBackendChain(fallbackChain)
+        } catch (e: Throwable) {
+            // record the failure timestamp to avoid aggressive reattempts
+            lastCriticalInitFailureMs.set(System.currentTimeMillis())
+            Log.w(TAG, "Backend initialization failed; attempting to restore cache and rollback", e)
+            // Restore cache backup if it exists
+            if (cacheBackupDir != null && !cacheDirPath.isNullOrBlank()) {
+                try {
+                    val original = File(cacheDirPath)
+                    if (cacheBackupDir!!.renameTo(original)) {
+                        Log.i(TAG, "Restored cache from backup: ${original.absolutePath}")
+                    } else {
+                        Log.w(TAG, "Failed to restore cache backup: ${cacheBackupDir!!.absolutePath} -> ${original.absolutePath}")
+                    }
+                } catch (ex: Exception) {
+                    Log.w(TAG, "Error while restoring cache backup", ex)
+                }
+            }
+            // Attempt to rollback any prepared backend state
+            try {
+                backendResourceManager.rollbackBackend(preferredBackend)
+            } catch (ex: Exception) {
+                Log.w(TAG, "Rollback of backend after failed init also failed", ex)
+            }
+            throw e
+        }
+
+        val (eng, withVA, usedBackend) = engTriple
 
         try {
             backendResourceManager.registerBackendEngine(eng, usedBackend)
@@ -816,6 +887,20 @@ class LiteRtLmEngine(
         loadedConfig = normalizedConfig
         loadedBackend = normalizedConfig.backendType
         loadedWithVisionAudio = withVA
+
+        // On success, remove the cache backup if present
+        if (cacheBackupDir != null) {
+            try {
+                if (cacheBackupDir!!.deleteRecursively()) {
+                    Log.i(TAG, "Deleted cache backup: ${cacheBackupDir!!.absolutePath}")
+                } else {
+                    Log.w(TAG, "Failed to delete cache backup: ${cacheBackupDir!!.absolutePath}")
+                }
+            } catch (ex: Exception) {
+                Log.w(TAG, "Error deleting cache backup", ex)
+            }
+        }
+
         val totalTimeMs = System.currentTimeMillis() - modelStartTimeMs
         Log.d(TAG, "loadModel SUCCESS: $modelPath backend=${normalizedConfig.backendType} totalDuration=${totalTimeMs}ms")
         return Result.success(Unit)

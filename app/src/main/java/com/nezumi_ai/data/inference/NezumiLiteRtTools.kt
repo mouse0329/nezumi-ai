@@ -554,8 +554,8 @@ internal class NezumiLiteRtToolExecutor(
             )
         }
 
-        // MemoryTextEmbedderの初期化を確認（初回のみ）
-        if (!MemoryTextEmbedder.initialize(context)) {
+        // MemoryTextEmbedderの初期化を確認（初回のみ、IOで実行）
+        if (!MemoryTextEmbedder.initializeAsync(context)) {
             Log.w(TOOL_TAG, "MemoryTextEmbedder initialization failed, using fallback")
         }
 

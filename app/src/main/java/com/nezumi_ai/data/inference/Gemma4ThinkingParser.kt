@@ -29,7 +29,15 @@ object Gemma4ThinkingParser {
         "<|eos|>",
         "<|eot_id|>",
         "<think>",
-        "</think>"
+        "</think>",
+        "<tool_call>",
+        "</tool_call>",
+        "<tool_result>",
+        "</tool_result>",
+        "<tools>",
+        "</tools>",
+        "<tool_response>",
+        "</tool_response>"
     )
 
     fun parse(
@@ -174,7 +182,20 @@ object Gemma4ThinkingParser {
     }
 
     private fun splitThinkingBySpecialToken(thinking: String): Pair<String, String> {
-        val splitIndex = listOf("```", "`", "{", "}", "<tool_call>", "</tool_call>", "<tool_result>", "</tool_result>")
+        val splitIndex = listOf(
+            "```",
+            "`",
+            "{",
+            "}",
+            "<tool_call>",
+            "</tool_call>",
+            "<tool_result>",
+            "</tool_result>",
+            "<tools>",
+            "</tools>",
+            "<tool_response>",
+            "</tool_response>"
+        )
             .mapNotNull { token -> thinking.indexOf(token).takeIf { it >= 0 } }
             .minOrNull() ?: -1
         return if (splitIndex >= 0) {
@@ -216,6 +237,7 @@ object Gemma4ThinkingParser {
     fun sanitizeVisibleText(text: String): String {
         var t = text.trim()
         if (t.isEmpty()) return ""
+        t = removeToolTagSegments(t)
         val original = t
         for (i in 0 until 64) {
             val before = t
@@ -223,12 +245,36 @@ object Gemma4ThinkingParser {
                 t = t.replace(seq, "")
             }
             t = t.replace(Regex("^[ \t]+$", RegexOption.MULTILINE), "")
+            t = t.replace(Regex("[ \t]{2,}"), " ")
+            t = t.replace(Regex("[ \t]+(?=\\n)|(?<=\\n)[ \t]+"), "")
             if (t == before) break
         }
         val final = t.replace(Regex("\n{3,}"), "\n\n").trim()
         if (BuildConfig.DEBUG && original.length != final.length) {
-            android.util.Log.d("Gemma4ThinkingParser", "SANITIZE: ${original.length} -> ${final.length} chars removed")
+            logDebug("Gemma4ThinkingParser", "SANITIZE: ${original.length} -> ${final.length} chars removed")
         }
         return final
+    }
+
+    private fun logDebug(tag: String, message: String) {
+        try {
+            android.util.Log.d(tag, message)
+        } catch (_: Throwable) {
+            // Android unit tests use a JVM environment where android.util.Log may not be mocked.
+        }
+    }
+
+    private fun removeToolTagSegments(text: String): String {
+        var t = text
+        val patterns = listOf(
+            Regex("(?is)<tool_call>.*?</tool_call>"),
+            Regex("(?is)<tool_result>.*?</tool_result>"),
+            Regex("(?is)<tool_response>.*?</tool_response>"),
+            Regex("(?is)<tools>.*?</tools>")
+        )
+        for (pattern in patterns) {
+            t = t.replace(pattern, "")
+        }
+        return t
     }
 }

@@ -32,6 +32,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -54,7 +56,9 @@ import com.nezumi_ai.data.repository.SettingsRepository
 
 import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.presentation.ui.composable.ErrorModalDialog
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 class SettingsComposeFragment : Fragment() {
@@ -280,6 +284,7 @@ class SettingsComposeFragment : Fragment() {
 
     @Composable
     private fun GeneralSettingsCard() {
+        val context = LocalContext.current
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -288,7 +293,7 @@ class SettingsComposeFragment : Fragment() {
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(text = "全般設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
-                
+
                 // Theme Mode Selection
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
@@ -337,13 +342,100 @@ class SettingsComposeFragment : Fragment() {
                         )
                     }
                 }
-                
+
                 Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
                 Text(
                     text = "テーマを切り替えて、アプリ表示モードを変更します。",
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodySmall
                 )
+
+                Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+
+                // シークレットモード設定
+                var pinDialogVisible by remember { mutableStateOf(false) }
+                var pinConfirmDialogVisible by remember { mutableStateOf(false) }
+                var tempPin by remember { mutableStateOf("") }
+                var isSecretModeEnabled by remember { mutableStateOf(PreferencesHelper.isSecretModeEnabled(context)) }
+                var hasSecretModePin by remember { mutableStateOf(PreferencesHelper.hasSecretModePin(context)) }
+
+                Text(
+                    text = "シークレットモード PIN",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Text(
+                    text = if (isSecretModeEnabled) "有効（PIN 設定済み）" else "無効",
+                    color = if (isSecretModeEnabled) colorResource(id = R.color.success) else colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Button(
+                        onClick = { pinDialogVisible = true },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(text = if (hasSecretModePin) "PIN 変更" else "PIN 設定")
+                    }
+
+                    if (isSecretModeEnabled) {
+                        Button(
+                            onClick = {
+                                PreferencesHelper.clearSecretModePin(context)
+                                PreferencesHelper.setSecretModeEnabled(context, false)
+                                hasSecretModePin = false
+                                isSecretModeEnabled = false
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = colorResource(id = R.color.error)
+                            ),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(text = "リセット")
+                        }
+                    }
+                }
+
+                Text(
+                    text = "4 桁の数字でシークレットモードを保護します。忘れた場合はリセットしてください（データは削除されます）。",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                if (pinDialogVisible) {
+                    PinSetupDialog(
+                        hasExistingPin = PreferencesHelper.hasSecretModePin(context),
+                        onPinSet = { pin ->
+                            tempPin = pin
+                            pinDialogVisible = false
+                            pinConfirmDialogVisible = true
+                        },
+                        onDismiss = { pinDialogVisible = false }
+                    )
+                }
+
+                if (pinConfirmDialogVisible) {
+                    PinConfirmDialog(
+                        expectedPin = tempPin,
+                        onConfirmed = {
+                            PreferencesHelper.setSecretModePin(context, tempPin)
+                            PreferencesHelper.setSecretModeEnabled(context, true)
+                            hasSecretModePin = true
+                            isSecretModeEnabled = true
+                            pinConfirmDialogVisible = false
+                        },
+                        onMismatch = {
+                            pinConfirmDialogVisible = false
+                            pinDialogVisible = true
+                        },
+                        onDismiss = { pinConfirmDialogVisible = false }
+                    )
+                }
             }
         }
     }
@@ -409,13 +501,13 @@ class SettingsComposeFragment : Fragment() {
     @Composable
     private fun InferenceParamsCard() {
         // モデル別のコンテキスト最大値
-        val maxContextWindow = if (selectedModel.equals("Gemma4-2B", ignoreCase = true) || 
+        val maxContextWindow = if (selectedModel.equals("Gemma4-2B", ignoreCase = true) ||
                                     selectedModel.equals("Gemma4-4B", ignoreCase = true)) {
             8192
         } else {
             4096
         }
-        
+
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -424,7 +516,7 @@ class SettingsComposeFragment : Fragment() {
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(text = "推論パラメータ", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
-                
+
                 // コンテキストサイズと最大トークン数を2列グリッド
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -479,7 +571,7 @@ class SettingsComposeFragment : Fragment() {
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
-                
+
                 // Top-K Slider
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(
@@ -651,7 +743,7 @@ class SettingsComposeFragment : Fragment() {
                         style = MaterialTheme.typography.labelSmall
                     )
                 }
-                
+
                 // GGUF / llama.cpp 固有設定は別のカードに移動しました
             }
         }
@@ -1266,7 +1358,7 @@ class SettingsComposeFragment : Fragment() {
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(text = "画像生成設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
-                
+
                 // ステップ数 Slider
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(
@@ -1296,7 +1388,7 @@ class SettingsComposeFragment : Fragment() {
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
-                
+
                 // CFG Scale Slider
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(
@@ -1579,25 +1671,31 @@ class SettingsComposeFragment : Fragment() {
                             errorDialogMessage = "テキストBを入力してください。"
                             return@Button
                         }
-                        MemoryTextEmbedder.initialize(localContext)
-                        val embeddingA = MemoryTextEmbedder.embed(debugTextAInput)
-                        val embeddingB = MemoryTextEmbedder.embed(debugTextBInput)
-                        if (embeddingA.isEmpty() || embeddingB.isEmpty()) {
-                            errorDialogMessage = "埋め込みの計算に失敗しました。"
-                            return@Button
+                        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                            MemoryTextEmbedder.initializeAsync(localContext)
+                            val embeddingA = MemoryTextEmbedder.embed(debugTextAInput)
+                            val embeddingB = MemoryTextEmbedder.embed(debugTextBInput)
+                            val normA = MemoryRepository.l2norm(embeddingA)
+                            val normB = MemoryRepository.l2norm(embeddingB)
+                            val similarity = runCatching {
+                                MemoryRepository.cosineSimilarity(embeddingA, normA, embeddingB, normB)
+                            }.getOrNull()
+                            withContext(Dispatchers.Main) {
+                                if (embeddingA.isEmpty() || embeddingB.isEmpty()) {
+                                    errorDialogMessage = "埋め込みの計算に失敗しました。"
+                                    return@withContext
+                                }
+                                if (embeddingA.size != embeddingB.size) {
+                                    errorDialogMessage = "埋め込み次元が一致しません。"
+                                    return@withContext
+                                }
+                                if (normA == 0f || normB == 0f) {
+                                    errorDialogMessage = "埋め込みがゼロベクトルになりました。"
+                                    return@withContext
+                                }
+                                debugTextSimilarityResult = String.format("モデル埋め込み類似度: %.6f", similarity ?: 0.0)
+                            }
                         }
-                        if (embeddingA.size != embeddingB.size) {
-                            errorDialogMessage = "埋め込み次元が一致しません。"
-                            return@Button
-                        }
-                        val normA = MemoryRepository.l2norm(embeddingA)
-                        val normB = MemoryRepository.l2norm(embeddingB)
-                        if (normA == 0f || normB == 0f) {
-                            errorDialogMessage = "埋め込みがゼロベクトルになりました。"
-                            return@Button
-                        }
-                        val similarity = MemoryRepository.cosineSimilarity(embeddingA, normA, embeddingB, normB)
-                        debugTextSimilarityResult = String.format("モデル埋め込み類似度: %.6f", similarity)
                     }) {
                         Text("モデルで計算する")
                     }
@@ -1634,14 +1732,14 @@ class SettingsComposeFragment : Fragment() {
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(text = "チャット履歴管理", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
-                
+
                 Text(
                     text = "履歴保存件数",
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold
                 )
-                
+
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -1753,7 +1851,7 @@ class SettingsComposeFragment : Fragment() {
             return "Max Tokens は ${InferenceConfig.MIN_MAX_TOKENS} - ${InferenceConfig.MAX_MAX_TOKENS} の範囲で入力してください"
         }
         // モデル別のコンテキストウィンドウ制限を確認
-        val maxContextWindow = if (selectedModel.equals("Gemma4-2B", ignoreCase = true) || 
+        val maxContextWindow = if (selectedModel.equals("Gemma4-2B", ignoreCase = true) ||
                                     selectedModel.equals("Gemma4-4B", ignoreCase = true)) {
             8192
         } else {
@@ -2077,5 +2175,174 @@ class SettingsComposeFragment : Fragment() {
             typography = MaterialTheme.typography,
             content = content
         )
+    }
+
+    @Composable
+    private fun PinSetupDialog(
+        hasExistingPin: Boolean,
+        onPinSet: (String) -> Unit,
+        onDismiss: () -> Unit
+    ) {
+        var pinInput by remember { mutableStateOf("") }
+
+        Dialog(
+            onDismissRequest = onDismiss,
+            properties = DialogProperties(dismissOnClickOutside = false)
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(0.9f),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = if (hasExistingPin) "PIN の変更" else "シークレットモード PIN 設定",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Text(
+                        text = "4 桁の数字を入力してください",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+
+                    OutlinedTextField(
+                        value = pinInput,
+                        onValueChange = {
+                            if (it.length <= 4 && it.all { char -> char.isDigit() }) {
+                                pinInput = it
+                            }
+                        },
+                        label = { Text("PIN") },
+                        placeholder = { Text("****") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.NumberPassword
+                        ),
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(),
+                        supportingText = {
+                            Text(
+                                text = "${pinInput.length}/4",
+                                color = if (pinInput.length == 4) colorResource(id = R.color.success) else colorResource(id = R.color.text_secondary)
+                            )
+                        }
+                    )
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        TextButton(onClick = onDismiss) {
+                            Text("キャンセル")
+                        }
+
+                        Button(
+                            onClick = { onPinSet(pinInput) },
+                            enabled = pinInput.length == 4,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("次へ")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun PinConfirmDialog(
+        expectedPin: String,
+        onConfirmed: () -> Unit,
+        onMismatch: () -> Unit,
+        onDismiss: () -> Unit
+    ) {
+        var confirmInput by remember { mutableStateOf("") }
+        var showError by remember { mutableStateOf(false) }
+
+        Dialog(
+            onDismissRequest = onDismiss,
+            properties = DialogProperties(dismissOnClickOutside = false)
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(0.9f),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = "確認用 PIN 入力",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Text(
+                        text = "同じ 4 桁の数字をもう一度入力してください",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+
+                    OutlinedTextField(
+                        value = confirmInput,
+                        onValueChange = {
+                            if (it.length <= 4 && it.all { char -> char.isDigit() }) {
+                                confirmInput = it
+                                showError = false
+                            }
+                            if (it.length == 4) {
+                                if (it == expectedPin) {
+                                    onConfirmed()
+                                } else {
+                                    showError = true
+                                }
+                            }
+                        },
+                        label = { Text("確認用 PIN") },
+                        placeholder = { Text("****") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.NumberPassword
+                        ),
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(),
+                        isError = showError,
+                        supportingText = {
+                            if (showError) {
+                                Text(
+                                    text = "PIN が一致しません",
+                                    color = colorResource(id = R.color.error)
+                                )
+                            } else {
+                                Text(
+                                    text = "${confirmInput.length}/4",
+                                    color = colorResource(id = R.color.text_secondary)
+                                )
+                            }
+                        }
+                    )
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        TextButton(onClick = onDismiss) {
+                            Text("キャンセル")
+                        }
+
+                        Button(
+                            onClick = onMismatch,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("やり直し")
+                        }
+                    }
+                }
+            }
+        }
     }
 }

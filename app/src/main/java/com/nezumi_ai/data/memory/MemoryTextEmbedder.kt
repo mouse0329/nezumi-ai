@@ -122,6 +122,14 @@ object MemoryTextEmbedder {
         }
     }
 
+    /**
+     * 非同期で IO コンテキスト上に初期化処理を移動するユーティリティ。
+     * 呼び出し元は `viewModelScope.launch(Dispatchers.IO) { ... }` ではなく
+     * こちらのサスペンド関数を使うことでメインスレッドのブロッキングを避けられます。
+     */
+    suspend fun initializeAsync(context: Context): Boolean = withContext(Dispatchers.IO) {
+        initialize(context)
+    }
     fun resetInitialization() {
         if (!useOnnx) {
             Log.d(TAG, "resetInitialization: clearing initialized flag for retry")

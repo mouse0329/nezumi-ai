@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.io.FileNotFoundException
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -19,6 +20,7 @@ import java.net.URLEncoder
 import java.nio.channels.FileLock
 import java.security.MessageDigest
 import java.util.zip.ZipFile
+import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.coroutines.coroutineContext
@@ -106,6 +108,9 @@ object ModelFileManager {
     private const val WARN_SMALL_IMPORTED_TASK_BYTES = 64L * 1024L
 
     private val UNSAFE_FILENAME_CHARS = Regex("""[/\\:*?"<>|\u0000-\u001f]""")
+
+    // キャッシュ: ファイルパス -> 検証結果
+    private val validationCache = ConcurrentHashMap<String, Result<File>>()
 
     private fun sanitizeImportedLeafFileName(leaf: String): String {
         val cleaned = UNSAFE_FILENAME_CHARS.replace(leaf.trim(), "_").trim()
@@ -210,6 +215,43 @@ object ModelFileManager {
             LocalModel.GEMMA4_4B -> GEMMA4_4B_FILENAME
         }
         return File(dir, filename)
+    }
+
+    /**
+     * Ensure any dispatch/native libs bundled in `assets/models/` are copied
+     * into `context.filesDir/models/` so LiteRT can discover vendor dispatch .so files.
+     * This is tolerant: if no assets/models exist or there are no .so files, it is a no-op.
+     */
+    suspend fun ensureDispatchLibraries(context: Context) = withContext(Dispatchers.IO) {
+        val targetDir = File(context.filesDir, "models").apply { if (!exists()) mkdirs() }
+        val assetDir = "models"
+        val assetList = runCatching { context.assets.list(assetDir)?.toList() ?: emptyList() }.getOrNull() ?: emptyList()
+        if (assetList.isEmpty()) {
+            Log.d(TAG, "ensureDispatchLibraries: no assets found in assets/$assetDir")
+            return@withContext
+        }
+
+        for (asset in assetList) {
+            try {
+                if (!asset.lowercase().endsWith(".so")) continue
+                val outFile = File(targetDir, asset)
+                if (outFile.exists()) {
+                    Log.d(TAG, "ensureDispatchLibraries: already exists: ${outFile.absolutePath}")
+                    continue
+                }
+                context.assets.open("$assetDir/$asset").use { input ->
+                    outFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                Log.i(TAG, "ensureDispatchLibraries: extracted $asset to ${outFile.absolutePath}")
+            } catch (e: FileNotFoundException) {
+                // asset missing; continue
+                Log.w(TAG, "ensureDispatchLibraries: asset not found: $asset", e)
+            } catch (e: Exception) {
+                Log.w(TAG, "ensureDispatchLibraries: failed to extract $asset", e)
+            }
+        }
     }
 
     /**
@@ -595,6 +637,8 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
             throw IllegalStateException("ファイルの削除に失敗しました")
         }
         runCatching { metadataFile(target).delete() }
+        // 検証キャッシュを無効化
+        validationCache.remove(target.absolutePath)
     }
 
     /**
@@ -638,6 +682,8 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
                 }.onFailure { Log.w(TAG, "Failed to migrate meta after rename", it) }
             }
         }
+        // 旧パスのキャッシュをクリアしてから検証（検証成功時に新しいキャッシュが作られる）
+        validationCache.remove(oldFile.absolutePath)
         validateImportedTaskFile(dest).getOrThrow()
         dest
     }
@@ -661,7 +707,10 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
      * MediaPipe LiteRT の .task ファイルはバイナリフォーマット（ZIP ではない）
      * したがって、ファイルサイズとアクセス権限のみ検証する
      */
-    fun validateImportedTaskFile(file: File): Result<File> = runCatching {
+    fun validateImportedTaskFile(file: File): Result<File> {
+        validationCache[file.absolutePath]?.let { return it }
+
+        val result = runCatching {
         if (!file.exists() || !file.isFile) {
             throw IllegalStateException("ファイルが見つかりません")
         }
@@ -698,9 +747,9 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
                     Log.e(TAG, "Web用モデル検出: ${file.absolutePath} はTFLite FlatBuffer形式(Web版)です")
                     throw IllegalStateException("Web用モデル: このファイルはMediaPipe Web用のモデルです。Androidアプリ用の.taskファイル（LiteRT形式）をご利用ください。")
                 }
-                
+
                 if (isZip) {
-                    Log.w(TAG, "Warning: .task file detected as ZIP format. This may not be a valid MediaPipe LiteRT model.")
+                    Log.d(TAG, ".task file appears to be ZIP; ignoring ZIP-warning for known task bundles: ${file.absolutePath}")
                 }
                 
                 Log.d(TAG, "Binary model file validated: ${file.absolutePath} (${size} bytes)")
@@ -721,14 +770,18 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
                         header[2] == 'U'.code.toByte() &&
                         header[3] == 'F'.code.toByte()
                 if (!isGguf) {
-                    Log.w(TAG, "GGUF magic header not found: ${file.absolutePath}")
+                    Log.d(TAG, "GGUF magic header not found (may be non-gguf): ${file.absolutePath}")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error reading GGUF header: ${e.message}", e)
             }
         }
         
-        file
+            file
+        }
+
+        validationCache[file.absolutePath] = result
+        return result
     }
 
     /**

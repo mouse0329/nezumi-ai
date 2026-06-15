@@ -44,7 +44,7 @@ class Gemma4ThinkingParserTest {
         )
 
         assertEquals("first line", result.thinking)
-        assertEquals("`tool start{\"name\":\"foo\"}<channel|>final answer", result.answer)
+        assertEquals("`tool start{\"name\":\"foo\"}final answer", result.answer)
     }
 
     @Test
@@ -55,6 +55,25 @@ class Gemma4ThinkingParserTest {
         )
 
         assertEquals("first line", result.thinking)
-        assertEquals("{tool} <channel|>answer", result.answer)
+        assertEquals("{tool} answer", result.answer)
+    }
+
+    @Test
+    fun sanitizeVisibleText_stripsToolCallTags() {
+        val input = "Some text <tool_call>{\"name\":\"search\"}</tool_call> after"
+        val output = Gemma4ThinkingParser.sanitizeVisibleText(input)
+
+        assertEquals("Some text after", output)
+    }
+
+    @Test
+    fun parseStreaming_removesEmbeddedToolTagsFromThinking() {
+        val result = Gemma4ThinkingParser.parseStreaming(
+            rawInput = "<|channel>thought\nfirst line <tool_call>{\"name\":\"foo\"}</tool_call><channel|>final answer",
+            treatUnmarkedInputAsThinking = true
+        )
+
+        assertEquals("first line", result.thinking)
+        assertEquals("final answer", result.answer)
     }
 }
