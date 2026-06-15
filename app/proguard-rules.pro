@@ -22,3 +22,24 @@
 
 # Suppress R8 warnings for Kotlin metadata from newer Kotlin versions.
 -dontwarn kotlin.Metadata
+
+# ============================================================================
+# ONNX Runtime - Keep all classes to prevent NoSuchMethodError
+# ============================================================================
+-keep class ai.onnxruntime.** { *; }
+-keep interface ai.onnxruntime.** { *; }
+-keepclassmembers class ai.onnxruntime.** { *; }
+-dontwarn ai.onnxruntime.**
+
+# ============================================================================
+# Google Play Services TFLite - Keep required classes
+# ============================================================================
+-keep class com.google.android.gms.tflite.** { *; }
+-dontwarn com.google.android.gms.tflite.**
+
+# ============================================================================
+# Kotlin Serialization - Required for kotlinx-serialization-json
+# ============================================================================
+-keep class kotlin.serialization.** { *; }
+-keepattributes RuntimeVisibleAnnotations
+-keepattributes RuntimeVisibleParameterAnnotations
