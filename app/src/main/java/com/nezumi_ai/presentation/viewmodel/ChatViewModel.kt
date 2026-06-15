@@ -2492,8 +2492,8 @@ class ChatViewModel(
             }
             Log.d(TAG, "MEMORY_INJECT: embedding files downloaded successfully")
         }
-        MemoryTextEmbedder.initialize(appContext)
-        Log.d(TAG, "MEMORY_INJECT: MemoryTextEmbedder initialized")
+        MemoryTextEmbedder.initializeAsync(appContext)
+        Log.d(TAG, "MEMORY_INJECT: MemoryTextEmbedder initialized (async)")
 
         val results = repo.search(
             queryEmbedding = MemoryTextEmbedder.embed(query),

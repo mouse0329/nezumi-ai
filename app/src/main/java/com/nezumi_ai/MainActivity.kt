@@ -38,6 +38,7 @@ import com.nezumi_ai.presentation.ui.adapter.DrawerHistoryItem
 import com.nezumi_ai.utils.PreferencesHelper
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
+import android.widget.Toast
 import androidx.recyclerview.widget.LinearLayoutManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -314,20 +315,23 @@ class MainActivity : AppCompatActivity() {
         // アプリがバックグラウンドに入ったことをマーク
         isAppInBackground = true
         Log.d(TAG, "App paused - marked as background")
-        
+
         // シークレットモードでない場合はFLAG_SECUREを削除
         if (!isIncognitoModeActive) {
             window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
             Log.d(TAG, "Cleared FLAG_SECURE on app pause")
         }
-        
-        // アプリがバックグラウンドに入ったときにシークレットセッションを削除
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                sessionRepository.deleteAllIncognitoSessions()
-                Log.d(TAG, "Cleaned up all incognito sessions on app pause")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to cleanup incognito sessions on pause", e)
+
+        // シークレットモード中の場合、バックグラウンド進入時に即時セッション削除は行わない
+        // ユーザーが明示的に終了するか、認証失敗/キャンセル時のみ削除する
+        if (!isIncognitoModeActive) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    sessionRepository.deleteAllIncognitoSessions()
+                    Log.d(TAG, "Cleaned up all incognito sessions on app pause")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to cleanup incognito sessions on pause", e)
+                }
             }
         }
     }
@@ -335,7 +339,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshDrawerDateLabels()
-        
+
         // バックグラウンドから復帰時に生体認証を実行
         if (isAppInBackground) {
             isAppInBackground = false
@@ -357,12 +361,13 @@ class MainActivity : AppCompatActivity() {
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 super.onAuthenticationError(errorCode, errString)
                 Log.d(TAG, "Biometric error: $errString (code: $errorCode)")
-                // ユーザーがキャンセルした場合（ERROR_NEGATIVE_BUTTON）
                 if (errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
-                    // ロック画面に留まる（オーバーレイは表示されたまま）
-                    Log.d(TAG, "User cancelled authentication - staying on lock screen")
+                    if (PreferencesHelper.hasSecretModePin(this@MainActivity)) {
+                        showPasswordUnlockDialog()
+                    } else {
+                        Log.d(TAG, "User cancelled authentication - staying on lock screen")
+                    }
                 } else {
-                    // その他のエラーの場合は再試行オプションを表示
                     Log.d(TAG, "Authentication error occurred")
                 }
             }
@@ -394,7 +399,9 @@ class MainActivity : AppCompatActivity() {
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
             .setTitle("生体認証")
             .setSubtitle("アプリの再開には生体認証が必要です")
-            .setNegativeButtonText("キャンセル")
+            .setNegativeButtonText(
+                if (PreferencesHelper.hasSecretModePin(this)) "PINで解除" else "キャンセル"
+            )
             .setConfirmationRequired(true)
             .build()
 
@@ -402,8 +409,40 @@ class MainActivity : AppCompatActivity() {
             biometricPrompt?.authenticate(promptInfo)
         } catch (e: Exception) {
             Log.w(TAG, "Biometric authentication not available", e)
-            // 生体認証が利用できない場合もロック画面に留まる
+            if (PreferencesHelper.hasSecretModePin(this)) {
+                showPasswordUnlockDialog()
+            }
         }
+    }
+
+    private fun showPasswordUnlockDialog() {
+        val ctx = this
+        val pinInput = TextInputEditText(ctx).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            hint = "4桁のPIN"
+            setText("")
+            maxLines = 1
+        }
+
+        MaterialAlertDialogBuilder(ctx)
+            .setTitle("PINで解除")
+            .setView(pinInput)
+            .setPositiveButton("解除") { _, _ ->
+                val pin = pinInput.text?.toString() ?: ""
+                if (pin.length == 4 && PreferencesHelper.verifySecretModePin(ctx, pin)) {
+                    removeAuthOverlay()
+                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                    Log.d(TAG, "PIN authentication succeeded")
+                } else {
+                    Toast.makeText(ctx, "PINが正しくありません", Toast.LENGTH_SHORT).show()
+                    showPasswordUnlockDialog()
+                }
+            }
+            .setNegativeButton("キャンセル", null)
+            .setOnDismissListener {
+                // ロック画面を維持するため、閉じてもオーバーレイはそのままにする
+            }
+            .show()
     }
 
     private fun createAndShowAuthOverlay() {
@@ -456,7 +495,7 @@ class MainActivity : AppCompatActivity() {
 
         // サブテキスト
         val subTextView = android.widget.TextView(this).apply {
-            text = "生体認証でロック解除"
+            text = "生体認証またはPINでロック解除"
             textSize = 14f
             setTextColor(android.graphics.Color.LTGRAY)
             gravity = android.view.Gravity.CENTER
@@ -500,6 +539,27 @@ class MainActivity : AppCompatActivity() {
             }
         }
         buttonContainer.addView(retryButton)
+
+        // 「PINで解除」ボタン
+        if (PreferencesHelper.hasSecretModePin(this)) {
+            val pinUnlockButton = android.widget.Button(this).apply {
+                text = "PINで解除"
+                textSize = 18f
+                setBackgroundColor(android.graphics.Color.parseColor("#6A5ACD"))
+                setTextColor(android.graphics.Color.WHITE)
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    56.dp()
+                ).apply {
+                    bottomMargin = 15.dp()
+                }
+                setOnClickListener {
+                    Log.d(TAG, "PIN unlock button pressed")
+                    showPasswordUnlockDialog()
+                }
+            }
+            buttonContainer.addView(pinUnlockButton)
+        }
 
         // 「シークレットモードを終了」ボタン
         val exitButton = android.widget.Button(this).apply {
@@ -545,15 +605,15 @@ class MainActivity : AppCompatActivity() {
     private fun exitIncognitoMode() {
         // シークレットモード終了
         isIncognitoModeActive = false
-        
+
         // オーバーレイを削除
         removeAuthOverlay()
-        
+
         // FLAG_SECURE を解除
         window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         PreferencesHelper.applyThemeMode(this)
         Log.d(TAG, "Exited incognito mode - FLAG_SECURE cleared")
-        
+
         // ホームに戻す
         val homeIntent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_HOME)
@@ -578,11 +638,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        
+
         // Register screen off receiver to stop generation when screen sleeps
         registerScreenOffReceiver()
         startDrawerDateRefreshTimer()
-        
+
         // Database 初期化をここで遅延実行（Binder 負荷軽減）
         if (!dbInitialized) {
             dbInitialized = true
@@ -600,7 +660,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
-        
+
         // Unregister screen off receiver
         unregisterScreenOffReceiver()
         stopDrawerDateRefreshTimer()
@@ -612,14 +672,14 @@ class MainActivity : AppCompatActivity() {
             Log.d(TAG, "Skipping incognito cleanup during configuration change")
             return
         }
-        
+
         // FLAG_SECURE と authOverlay を完全にクリア
         isIncognitoModeActive = false
         window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         removeAuthOverlay()
         PreferencesHelper.applyThemeMode(this)
         Log.d(TAG, "Cleared FLAG_SECURE and overlay on app destroy")
-        
+
         // アプリ終了時にシークレットセッションを全て削除
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -645,7 +705,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        
+
         val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
         try {
             registerReceiver(screenOffReceiver, filter, Context.RECEIVER_EXPORTED)
@@ -677,7 +737,7 @@ class MainActivity : AppCompatActivity() {
                 renderDrawerHistory(sessions)
             }
         }
-        
+
         // 現在のセッションIDの変更を監視
         lifecycleScope.launch {
             while (true) {
@@ -854,6 +914,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun createAndOpenIncognitoSession() {
         lifecycleScope.launch {
+            if (!ensureSecretModePinBeforeIncognito()) return@launch
+
             runCatching {
                 withContext(Dispatchers.IO) {
                     sessionRepository.createSession("シークレット", isIncognito = true)
@@ -863,7 +925,7 @@ class MainActivity : AppCompatActivity() {
                 isIncognitoModeActive = true
                 window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
                 Log.d(TAG, "Entered incognito mode - FLAG_SECURE set")
-                
+
                 val navController = findNavController(R.id.nav_host_fragment_content_main)
                 if (navController.currentDestination?.id == R.id.chatFragment) {
                     navController.popBackStack(R.id.chatFragment, true)
@@ -880,6 +942,24 @@ class MainActivity : AppCompatActivity() {
                 Log.e(TAG, "Failed to create incognito session", it)
             }
         }
+    }
+
+    private fun ensureSecretModePinBeforeIncognito(): Boolean {
+        if (PreferencesHelper.hasSecretModePin(this)) return true
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle("PIN を設定してください")
+            .setMessage("シークレットモードを使用するには 4 桁の PIN を設定する必要があります。設定画面で PIN を登録してください。")
+            .setNegativeButton("キャンセル", null)
+            .setPositiveButton("設定画面へ") { _, _ ->
+                val navController = findNavController(R.id.nav_host_fragment_content_main)
+                if (navController.currentDestination?.id != R.id.settingsFragment) {
+                    navController.navigate(R.id.settingsFragment)
+                }
+            }
+            .show()
+
+        return false
     }
 
     private suspend fun leaveIncognitoModeForNormalNavigation() {

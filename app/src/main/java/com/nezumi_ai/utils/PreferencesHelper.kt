@@ -3,6 +3,7 @@ package com.nezumi_ai.utils
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.appcompat.app.AppCompatDelegate
+import java.security.MessageDigest
 
 object PreferencesHelper {
     private const val PREF_NAME = "app_prefs"
@@ -17,6 +18,8 @@ object PreferencesHelper {
     private const val KEY_BRAVE_SEARCH_API_KEY = "brave_search_api_key"
     private const val KEY_ENABLE_THINKING = "enable_thinking"
     private const val KEY_REQUIRE_MULTIMODAL = "require_multimodal"
+    private const val KEY_SECRET_MODE_PIN_HASH = "secret_mode_pin_hash"
+    private const val KEY_SECRET_MODE_ENABLED = "secret_mode_enabled"
 
     const val THEME_SYSTEM = "SYSTEM"
     const val THEME_LIGHT = "LIGHT"
@@ -24,6 +27,12 @@ object PreferencesHelper {
 
     private fun getSharedPreferences(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+    }
+
+    private fun hashPin(pin: String): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        val digest = md.digest(pin.toByteArray())
+        return digest.joinToString("") { "%02x".format(it) }
     }
 
     fun isFirstLaunch(context: Context): Boolean {
@@ -143,5 +152,35 @@ object PreferencesHelper {
 
     fun setRequireMultimodal(context: Context, enabled: Boolean) {
         getSharedPreferences(context).edit().putBoolean(KEY_REQUIRE_MULTIMODAL, enabled).apply()
+    }
+
+    fun isSecretModeEnabled(context: Context): Boolean {
+        return getSharedPreferences(context).getBoolean(KEY_SECRET_MODE_ENABLED, false)
+    }
+
+    fun setSecretModeEnabled(context: Context, enabled: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_SECRET_MODE_ENABLED, enabled).apply()
+    }
+
+    fun setSecretModePin(context: Context, pin: String) {
+        val hash = hashPin(pin)
+        getSharedPreferences(context).edit().putString(KEY_SECRET_MODE_PIN_HASH, hash).apply()
+    }
+
+    fun verifySecretModePin(context: Context, pin: String): Boolean {
+        val prefs = getSharedPreferences(context)
+        val storedHash = prefs.getString(KEY_SECRET_MODE_PIN_HASH, null) ?: return false
+        return storedHash == hashPin(pin)
+    }
+
+    fun clearSecretModePin(context: Context) {
+        getSharedPreferences(context).edit()
+            .remove(KEY_SECRET_MODE_PIN_HASH)
+            .remove(KEY_SECRET_MODE_ENABLED)
+            .apply()
+    }
+
+    fun hasSecretModePin(context: Context): Boolean {
+        return getSharedPreferences(context).contains(KEY_SECRET_MODE_PIN_HASH)
     }
 }

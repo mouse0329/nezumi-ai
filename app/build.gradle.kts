@@ -41,8 +41,8 @@ android {
         applicationId = "com.nezumi_ai"
         minSdk = 30
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.0.0"
+        versionCode = 14
+        versionName = "2.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["appAuthRedirectScheme"] = "nezumiai"
@@ -143,6 +143,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation(platform("androidx.compose:compose-bom:2024.09.00"))
     implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-text-android")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")

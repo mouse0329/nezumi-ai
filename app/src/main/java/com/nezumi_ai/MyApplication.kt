@@ -50,11 +50,14 @@ class MyApplication : Application() {
         // 無効な URI や孤立したメディアファイルをクリーンアップ
         cleanupMediaOnStartup()
 
-        // Initialize embedding backend detection (ONNX model presence)
-        try {
-            com.nezumi_ai.data.memory.MemoryTextEmbedder.initialize(this)
-        } catch (e: Exception) {
-            Log.w(TAG, "MemoryTextEmbedder initialization failed", e)
+        // Initialize embedding backend detection (ONNX model presence) in background
+        applicationScope.launch(Dispatchers.IO) {
+            try {
+                com.nezumi_ai.data.memory.MemoryTextEmbedder.initializeAsync(this@MyApplication)
+                Log.d(TAG, "MemoryTextEmbedder initialized (background)")
+            } catch (e: Exception) {
+                Log.w(TAG, "MemoryTextEmbedder initialization failed", e)
+            }
         }
 
         initializePresetDefaults()

@@ -16,6 +16,8 @@
     <!-- Text Colors -->
     <color name="text_primary">#111827</color>
     <color name="text_secondary">#4B5563</color>
+    <color name="success">#22C55E</color>
+    <color name="error">#EF4444</color>
 
     <!-- Background Colors -->
     <color name="bg_session_list">#F5F6F8</color>

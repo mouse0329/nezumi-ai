@@ -390,9 +390,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         })
         
         // nav args から incognito フラグを適用
-        if (args.isIncognito) {
-            viewModel.setIncognitoMode(true)
-        }
+        viewModel.setIncognitoMode(args.isIncognito)
 
         // Observe incognito mode and apply security settings
         viewLifecycleOwner.lifecycleScope.launch {

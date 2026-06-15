@@ -447,12 +447,15 @@ class MessageAdapter(
                     }
                 }
 
+                val visibleContent = message.content.stripGemmaTokens()
+                val visibleThinking = thinking?.stripGemmaTokens()
+
                 when {
-                    message.isStreaming && message.content.isBlank() -> {
-                        renderPlaceholder(thinking)
+                    message.isStreaming && visibleContent.isBlank() -> {
+                        renderPlaceholder(visibleThinking)
                     }
                     else -> {
-                        renderMarkdown(message.content)
+                        renderMarkdown(visibleContent)
                     }
                 }
 
@@ -528,9 +531,9 @@ class MessageAdapter(
                 
                 copyMessageButton.setOnClickListener {
                     val text = if (thinkingVisible && !message.thinkingContent.isNullOrBlank()) {
-                        "【${binding.root.context.getString(R.string.gemma_thinking_section_title)}】\n${message.thinkingContent}\n\n【回答】\n${message.content}"
+                        "【${binding.root.context.getString(R.string.gemma_thinking_section_title)}】\n${message.thinkingContent?.stripGemmaTokens()}\n\n【回答】\n${message.content.stripGemmaTokens()}"
                     } else {
-                        message.content
+                        message.content.stripGemmaTokens()
                     }
                     copyAllToClipboard(binding.root.context, text)
                 }

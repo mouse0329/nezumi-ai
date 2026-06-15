@@ -12,8 +12,8 @@ class ChatChunkRepository(
     private val dao: ChatChunkDao,
     private val context: android.content.Context? = null
 ) {
-    private fun ensureEmbedderInitialized() {
-        context?.let { MemoryTextEmbedder.initialize(it) }
+    private suspend fun ensureEmbedderInitialized() {
+        context?.let { MemoryTextEmbedder.initializeAsync(it) }
     }
     /**
      * メッセージを句読点で分割してベクトル化・保存
