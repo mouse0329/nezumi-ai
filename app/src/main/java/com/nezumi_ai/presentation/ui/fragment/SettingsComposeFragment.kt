@@ -214,7 +214,7 @@ class SettingsComposeFragment : Fragment() {
                     selectedTabIndex = selectedSection,
                     edgePadding = 0.dp,
                     indicator = { tabPositions ->
-                        TabRowDefaults.Indicator(
+                        TabRowDefaults.SecondaryIndicator(
                             Modifier.tabIndicatorOffset(tabPositions[selectedSection]),
                             color = colorResource(id = R.color.primary)
                         )
@@ -343,14 +343,14 @@ class SettingsComposeFragment : Fragment() {
                     }
                 }
 
-                Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
                 Text(
                     text = "テーマを切り替えて、アプリ表示モードを変更します。",
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodySmall
                 )
 
-                Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
 
                 // シークレットモード設定
                 var pinDialogVisible by remember { mutableStateOf(false) }
@@ -767,7 +767,7 @@ class SettingsComposeFragment : Fragment() {
 
                 var basicExpanded by remember { mutableStateOf(true) }
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+                    HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -992,7 +992,7 @@ class SettingsComposeFragment : Fragment() {
 
                 var perfExpanded by remember { mutableStateOf(false) }
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+                    HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1296,7 +1296,7 @@ class SettingsComposeFragment : Fragment() {
                 ) {
                     Text("llama.cpp / LiteRT-LM バージョンを確認")
                 }
-                Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1565,7 +1565,7 @@ class SettingsComposeFragment : Fragment() {
                                 Text("削除")
                             }
                         }
-                        Divider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.14f), thickness = 1.dp)
+                        HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.14f), thickness = 1.dp)
                     }
                 }
             },

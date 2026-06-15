@@ -3593,7 +3593,7 @@ class ChatViewModel(
             }
             if (screenWakeLock == null || !screenWakeLock!!.isHeld) {
                 screenWakeLock = pm.newWakeLock(
-                    PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
+                    PowerManager.PARTIAL_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
                     "nezumiai:generation"
                 )
                 screenWakeLock?.acquire(60 * 60 * 1000) // 60分のタイムアウト

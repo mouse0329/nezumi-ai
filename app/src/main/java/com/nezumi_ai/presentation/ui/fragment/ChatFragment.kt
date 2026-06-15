@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
+import android.os.Build
 import android.content.ClipData
 import android.net.Uri
 import android.os.Bundle
@@ -14,6 +15,7 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -799,6 +801,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 renderSendButtonState()
                 renderCompressButtonState()
                 binding.messageInput.isEnabled = !loading
+                if (loading) {
+                    requireActivity().window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                } else {
+                    requireActivity().window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
             }
         }
 
@@ -1816,7 +1823,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         if (isRecordingAudio) {
             stopAudioRecording()
         }
-        
+
+        requireActivity().window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         super.onDestroyView()
         _binding = null
     }
@@ -1966,6 +1974,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         startAudioRecording()
     }
     
+    @Suppress("DEPRECATION")
     private fun startAudioRecording() {
         try {
             // 録音開始
@@ -1979,7 +1988,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             recordingFile = java.io.File(recordingDir, "REC_${System.currentTimeMillis()}.m4a")
             
             // MediaRecorderの初期化
-            mediaRecorder = MediaRecorder().apply {
+            mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(requireContext())
+            } else {
+                MediaRecorder()
+            }.apply {
                 setAudioSource(MediaRecorder.AudioSource.MIC)
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 setAudioEncoder(MediaRecorder.AudioEncoder.AAC)

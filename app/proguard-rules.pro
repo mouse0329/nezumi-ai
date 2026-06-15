@@ -19,3 +19,6 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Suppress R8 warnings for Kotlin metadata from newer Kotlin versions.
+-dontwarn kotlin.Metadata
