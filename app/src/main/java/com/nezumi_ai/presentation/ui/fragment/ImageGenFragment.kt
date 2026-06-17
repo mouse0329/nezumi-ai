@@ -31,23 +31,22 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Slider
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -79,7 +78,10 @@ import androidx.fragment.app.viewModels
 import androidx.navigation.fragment.findNavController
 import com.nezumi_ai.R
 import com.nezumi_ai.presentation.viewmodel.ImageGenViewModel
+import com.nezumi_ai.sd.safety.SafetyResult
 import java.io.File
+
+data class LibraryItem(val bitmap: Bitmap, val prompt: String, val timestamp: Long)
 
 class ImageGenFragment : Fragment() {
 
@@ -90,15 +92,8 @@ class ImageGenFragment : Fragment() {
         viewModel.refreshAvailableModels()
     }
 
-    override fun onPause() {
-        super.onPause()
-        // 画面が非表示になる時に生成をキャンセル
-        viewModel.cancel()
-    }
-
     override fun onDestroyView() {
         super.onDestroyView()
-        // Viewが破棄される時に生成をキャンセル
         viewModel.cancel()
     }
 
@@ -186,14 +181,19 @@ private fun ImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
     val bitmap by vm.resultBitmap.collectAsState()
     val loading by vm.loading.collectAsState()
     val snack by vm.snackbar.collectAsState()
+    val safetyVerdict by vm.safetyVerdict.collectAsState()
+    val safetyDownloading by vm.safetyDownloading.collectAsState()
+    val safetyProgress by vm.safetyProgress.collectAsState()
+    val safetyTotalBytes by vm.safetyTotalBytes.collectAsState()
     val availableModels by vm.availableModels.collectAsState()
     val selectedModelIndex by vm.selectedModelIndex.collectAsState()
     val currentStep by vm.currentStep.collectAsState()
     val backendInfo by vm.backendInfo.collectAsState()
+    val previewBitmap by vm.previewBitmap.collectAsState()
     
     var selectedTab by remember { mutableStateOf(0) }
-    val library = remember { mutableStateListOf<Pair<Bitmap, String>>() }
-    var viewerImage by remember { mutableStateOf<Pair<Bitmap, String>?>(null) }
+    val library = remember { mutableStateListOf<LibraryItem>() }
+    var viewerImage by remember { mutableStateOf<LibraryItem?>(null) }
     
     // ライブラリの初期化（永続化から読み込み）
     LaunchedEffect(Unit) {
@@ -220,9 +220,8 @@ private fun ImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
     
     LaunchedEffect(bitmap) {
         bitmap?.let { bmp ->
-            library.add(0, Pair(bmp, prompt))
-            // 画像を保存
-            saveImageToLibrary(ctx, bmp, prompt)
+            val ts = saveImageToLibrary(ctx, bmp, prompt)
+            library.add(0, LibraryItem(bmp, prompt, ts))
         }
     }
 
@@ -251,43 +250,21 @@ private fun ImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
         }
         
         // タブヘッダー
-        Column(Modifier.fillMaxWidth()) {
-            Row(Modifier.fillMaxWidth().background(Color(0xFF1E1E1E))) {
-                Box(
-                    Modifier.weight(1f).clickable { selectedTab = 0 }
-                        .padding(vertical = 15.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "生成",
-                        color = if (selectedTab == 0) Color(0xFF0084FF) else Color(0xFF999999),
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                        fontSize = 14.sp
-                    )
-                }
-                Box(
-                    Modifier.weight(1f).clickable { selectedTab = 1 }
-                        .padding(vertical = 15.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "ライブラリ",
-                        color = if (selectedTab == 1) Color(0xFF0084FF) else Color(0xFF999999),
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                        fontSize = 14.sp
-                    )
-                }
-            }
-            Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF333333)))
-            Row(Modifier.fillMaxWidth().height(3.dp)) {
-                if (selectedTab == 0) {
-                    Box(Modifier.width(100.dp).height(3.dp).background(Color(0xFF0084FF)))
-                    Spacer(Modifier.weight(1f))
-                } else {
-                    Spacer(Modifier.weight(1f))
-                    Box(Modifier.width(100.dp).height(3.dp).background(Color(0xFF0084FF)))
-                }
-            }
+        TabRow(
+            selectedTabIndex = selectedTab,
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.primary
+        ) {
+            Tab(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                text = { Text("生成") }
+            )
+            Tab(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                text = { Text("ライブラリ") }
+            )
         }
         
         // タブコンテンツ
@@ -382,11 +359,18 @@ private fun ImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Button(
                         onClick = { vm.generate() },
-                        enabled = !loading && modelFileOk && prompt.isNotBlank()
+                        enabled = !loading && !safetyDownloading && modelFileOk && prompt.isNotBlank()
                     ) {
                         Text(stringResource(R.string.image_gen_generate))
                     }
-                    if (loading) {
+                    if (safetyDownloading) {
+                        CircularProgressIndicator(Modifier.height(24.dp).width(24.dp), strokeWidth = 2.dp)
+                        Text(
+                            "セーフティモデル準備中…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else if (loading) {
                         CircularProgressIndicator(Modifier.height(36.dp))
                         Text(
                             "$currentStep / $steps",
@@ -398,13 +382,39 @@ private fun ImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
                         }
                     }
                 }
+                // 生成中プレビュー
+                if (loading) {
+                    val displayBmp = previewBitmap
+                    if (displayBmp != null) {
+                        Image(
+                            bitmap = displayBmp.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    } else {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
                 bitmap?.let { b ->
                     Image(
                         bitmap = b.asImageBitmap(),
                         contentDescription = null,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(320.dp)
+                            .aspectRatio(1f)
+                            .clip(RoundedCornerShape(8.dp))
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { vm.saveToGallery(ctx) }) {
@@ -415,54 +425,156 @@ private fun ImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
                         }
                     }
                 }
+                // Safety BLOCK プレースホルダー
+                if (bitmap == null && safetyVerdict == SafetyResult.Verdict.BLOCK) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(16.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_lock),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.height(40.dp).width(40.dp)
+                            )
+                            Text(
+                                "Google Playのポリシーに準拠するため、不適切な表現が含まれる\n可能性があるコンテンツの表示を制限しました",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+                }
             }
         } else {
             // ライブラリタブ
-            androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-                columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(2),
+            var deleteTarget by remember { mutableStateOf<LibraryItem?>(null) }
+
+            deleteTarget?.let { target ->
+                AlertDialog(
+                    onDismissRequest = { deleteTarget = null },
+                    title = { Text("削除の確認") },
+                    text = { Text("この画像をライブラリから削除しますか？") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val idx = library.indexOfFirst { it.timestamp == target.timestamp }
+                            deleteImageFromLibrary(ctx, target.timestamp)
+                            if (idx >= 0) library.removeAt(idx)
+                            if (viewerImage?.timestamp == target.timestamp) viewerImage = null
+                            deleteTarget = null
+                        }) { Text("削除", color = MaterialTheme.colorScheme.error) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { deleteTarget = null }) { Text("キャンセル") }
+                    }
+                )
+            }
+
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
                 contentPadding = PaddingValues(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.weight(1f)
             ) {
                 items(library.size) { idx ->
-                    val (bmp, libPrompt) = library[idx]
-                    Column(
-                        Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color(0xFF1E1E1E))
-                            .clickable { viewerImage = Pair(bmp, libPrompt) }
-                    ) {
-                        Image(
-                            bitmap = bmp.asImageBitmap(),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(1f),
-                            contentScale = ContentScale.Crop
-                        )
-                        Text(
-                            libPrompt,
-                            color = Color(0xFF999999),
-                            fontSize = 11.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(8.dp)
-                        )
+                    val item = library[idx]
+                    Box(Modifier.clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surface)) {
+                        Column(Modifier.clickable { viewerImage = item }) {
+                            Image(
+                                bitmap = item.bitmap.asImageBitmap(),
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+                                contentScale = ContentScale.Crop
+                            )
+                            Text(
+                                item.prompt,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = { deleteTarget = item },
+                            modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_delete),
+                                contentDescription = "Delete",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
             }
         }
     }
     
+    // セーフティモデルダウンロード中モーダル
+    if (safetyDownloading) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("セーフティモデルを準備中") },
+            text = {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (safetyProgress >= 0f) {
+                        val pct = (safetyProgress * 100).toInt().coerceIn(0, 100)
+                        val downloadedMb = safetyProgress * (safetyTotalBytes / (1024f * 1024f))
+                        val totalMb = safetyTotalBytes / (1024f * 1024f)
+                        Text(
+                            if (safetyTotalBytes > 0L)
+                                "$pct%  (${String.format("%.1f", downloadedMb)} / ${String.format("%.1f", totalMb)} MB)"
+                            else
+                                "$pct%",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { safetyProgress },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        CircularProgressIndicator()
+                    }
+                    Text(
+                        "安全フィルターをダウンロードしています。\n完了後に自動で生成を開始します。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            },
+            confirmButton = {}
+        )
+    }
+
     // ビューワーダイアログ
-    viewerImage?.let { (imgBitmap, imgPrompt) ->
+    viewerImage?.let { item ->
         androidx.compose.ui.window.Dialog(
             onDismissRequest = { viewerImage = null },
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
         ) {
             Box(
-                Modifier.fillMaxSize().background(Color(0xF2000000)).clickable { viewerImage = null }
+                Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.9f))
+                    .clickable { viewerImage = null }
                     .padding(20.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -471,48 +583,41 @@ private fun ImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
                     modifier = Modifier.clickable(enabled = false) {}
                 ) {
                     Image(
-                        bitmap = imgBitmap.asImageBitmap(),
+                        bitmap = item.bitmap.asImageBitmap(),
                         contentDescription = null,
                         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)),
                         contentScale = ContentScale.FillWidth
                     )
-                    
                     Text(
-                        "Prompt:\n$imgPrompt",
-                        color = Color(0xFFEEEEEE),
-                        fontSize = 14.sp,
+                        "Prompt:\n${item.prompt}",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(vertical = 20.dp)
                     )
-                    
                     Row(
                         Modifier.fillMaxWidth(0.8f),
-                        horizontalArrangement = Arrangement.spacedBy(15.dp)
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Button(
-                            onClick = { viewerImage?.first?.let { vm.saveBitmapToGallery(ctx, it) } },
+                            onClick = { vm.saveBitmapToGallery(ctx, item.bitmap) },
                             modifier = Modifier.weight(1f).height(48.dp),
-                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Color(0xFF0084FF)),
-                            shape = RoundedCornerShape(25.dp)
+                            shape = RoundedCornerShape(24.dp)
                         ) {
-                            Text("保存", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                            Text("保存")
                         }
                         Button(
-                            onClick = { viewerImage?.first?.let { vm.shareBitmap(ctx, it) } },
+                            onClick = { vm.shareBitmap(ctx, item.bitmap) },
                             modifier = Modifier.weight(1f).height(48.dp),
-                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Color(0xFF0084FF)),
-                            shape = RoundedCornerShape(25.dp)
+                            shape = RoundedCornerShape(24.dp)
                         ) {
-                            Text("共有", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                            Text("共有")
                         }
                     }
-                    
-                    Button(
+                    TextButton(
                         onClick = { viewerImage = null },
-                        modifier = Modifier.padding(top = 20.dp).width(160.dp),
-                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Color(0xFF444444)),
-                        shape = RoundedCornerShape(25.dp)
+                        modifier = Modifier.padding(top = 12.dp)
                     ) {
-                        Text("閉じる")
+                        Text("閉じる", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -521,7 +626,7 @@ private fun ImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
 }
 
 // ライブラリの永続化関数
-private fun saveImageToLibrary(context: android.content.Context, bitmap: Bitmap, prompt: String) {
+private fun saveImageToLibrary(context: android.content.Context, bitmap: Bitmap, prompt: String): Long {
     val libraryDir = File(context.filesDir, "library")
     if (!libraryDir.exists()) {
         libraryDir.mkdirs()
@@ -539,33 +644,55 @@ private fun saveImageToLibrary(context: android.content.Context, bitmap: Bitmap,
     val metadataFile = File(libraryDir, "metadata.txt")
     val metadata = "$timestamp|$prompt\n"
     metadataFile.appendText(metadata)
+    return timestamp
 }
 
-private fun loadLibrary(context: android.content.Context): List<Pair<Bitmap, String>> {
+private fun loadLibrary(context: android.content.Context): List<LibraryItem> {
     val libraryDir = File(context.filesDir, "library")
     if (!libraryDir.exists()) return emptyList()
     
     val metadataFile = File(libraryDir, "metadata.txt")
     if (!metadataFile.exists()) return emptyList()
     
-    val library = mutableListOf<Pair<Bitmap, String>>()
+    val library = mutableListOf<LibraryItem>()
     val lines = metadataFile.readText().split("\n").filter { it.isNotEmpty() }
-    
+
     for (line in lines.reversed()) { // 最新順に読み込み
         val parts = line.split("|", limit = 2)
         if (parts.size == 2) {
-            val timestamp = parts[0]
+            val timestamp = parts[0].toLongOrNull() ?: continue
             val libPrompt = parts[1]
-            val imageFile = File(libraryDir, "img_$timestamp.jpg")
-            
+            val imageFile = File(libraryDir, "img_${timestamp}.jpg")
+
             if (imageFile.exists()) {
                 val imageBitmap = BitmapFactory.decodeFile(imageFile.absolutePath)
                 if (imageBitmap != null) {
-                    library.add(Pair(imageBitmap, libPrompt))
+                    library.add(LibraryItem(imageBitmap, libPrompt, timestamp))
                 }
             }
         }
     }
-    
+
     return library
+}
+
+private fun deleteImageFromLibrary(context: android.content.Context, timestamp: Long) {
+    val libraryDir = File(context.filesDir, "library")
+    if (!libraryDir.exists()) return
+
+    val imageFile = File(libraryDir, "img_${timestamp}.jpg")
+    try {
+        if (imageFile.exists()) {
+            imageFile.delete()
+        }
+
+        val metadataFile = File(libraryDir, "metadata.txt")
+        if (metadataFile.exists()) {
+            val remaining = metadataFile.readText().split("\n").filter { it.isNotEmpty() }
+                .filterNot { it.startsWith("${timestamp}|") }
+            metadataFile.writeText(remaining.joinToString("\n") + if (remaining.isNotEmpty()) "\n" else "")
+        }
+    } catch (e: Exception) {
+        // ignore failure silently for now
+    }
 }

@@ -5,12 +5,17 @@ import android.graphics.Bitmap
 import android.os.Build
 import android.util.Base64
 import android.util.Log
+import com.nezumi_ai.sd.safety.ImageSafetyChecker
+import com.nezumi_ai.sd.safety.PromptFilter
+import com.nezumi_ai.sd.safety.SafetyResult
+import com.nezumi_ai.sd.safety.toBlurred
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.*
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 data class ProgressData(
     val step: Int,
@@ -20,6 +25,18 @@ data class ProgressData(
 )
 
 class LocalDreamModule(private val context: Context) {
+
+    // lazy ではなく毎回生成時に取得 — ファイル差し替え後も確実に反映される
+    private var _safetyChecker: ImageSafetyChecker? = null
+    private fun safetyChecker(): ImageSafetyChecker {
+        val existing = _safetyChecker
+        // モデルファイルが新たに存在するのに session が null なら再生成
+        if (existing != null && (existing.isAvailable || !com.nezumi_ai.data.inference.ModelDownloadWorker.isSafetyModelReady(context))) {
+            return existing
+        }
+        existing?.close()
+        return ImageSafetyChecker(context).also { _safetyChecker = it }
+    }
     
     companion object {
         private const val TAG = "LocalDreamModule"
@@ -34,6 +51,7 @@ class LocalDreamModule(private val context: Context) {
     private var isServerReady = false
     private var monitorJob: Job? = null
     private val coroutineScope = CoroutineScope(Dispatchers.Default + Job())
+    private val activeGenerationConn = AtomicReference<HttpURLConnection?>(null)
     
     private fun isNpuSupported(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -366,8 +384,14 @@ class LocalDreamModule(private val context: Context) {
         steps: Int,
         cfg: Float,
         seed: Long,
-        onProgress: (Int, Int, Float) -> Unit
+        onProgress: (Int, Int, Float, Bitmap?) -> Unit
     ): Bitmap? = withContext(Dispatchers.IO) {
+        // ── 前段：テキストガード ──────────────────────────────────
+        if (PromptFilter.check(prompt) == PromptFilter.Result.BLOCK) {
+            Log.w(TAG, "Prompt blocked by PromptFilter — skipping UNET inference")
+            return@withContext null
+        }
+        // ─────────────────────────────────────────────────────────
         if (!isServerReady || serverProcess?.isAlive != true) {
             Log.e(TAG, "Server is not running")
             return@withContext null
@@ -391,6 +415,7 @@ class LocalDreamModule(private val context: Context) {
             
             val url = URL("http://127.0.0.1:$SERVER_PORT/generate")
             val conn = url.openConnection() as HttpURLConnection
+            activeGenerationConn.set(conn)
             
             conn.requestMethod = "POST"
             conn.doOutput = true
@@ -407,6 +432,7 @@ class LocalDreamModule(private val context: Context) {
             val responseCode = conn.responseCode
             if (responseCode != 200) {
                 Log.e(TAG, "Server returned $responseCode")
+                activeGenerationConn.set(null)
                 return@withContext null
             }
             
@@ -414,8 +440,8 @@ class LocalDreamModule(private val context: Context) {
             var currentEventType = ""
             
             BufferedReader(InputStreamReader(conn.inputStream)).use { reader ->
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
+                var line: String? = null
+                while (isActive && reader.readLine().also { line = it } != null) {
                     val trimmed = line!!.trim()
                     
                     if (trimmed.startsWith("event: ")) {
@@ -431,7 +457,18 @@ class LocalDreamModule(private val context: Context) {
                             "progress" -> {
                                 val step = data.getInt("step")
                                 val totalSteps = data.getInt("total_steps")
-                                onProgress(step, totalSteps, 0f)
+                                val previewBmp = data.optString("preview", "").takeIf { it.isNotEmpty() }?.let {
+                                    runCatching { decodeRgbToBitmap(it, data.optInt("preview_width", width), data.optInt("preview_height", height)) }.getOrNull()
+                                }
+                                onProgress(step, totalSteps, 0f, previewBmp)
+                            }
+                            "preview" -> {
+                                val step = data.optInt("step", 0)
+                                val totalSteps = data.optInt("total_steps", steps)
+                                val previewBmp = data.optString("image", "").takeIf { it.isNotEmpty() }?.let {
+                                    runCatching { decodeRgbToBitmap(it, data.optInt("width", width), data.optInt("height", height)) }.getOrNull()
+                                }
+                                onProgress(step, totalSteps, 0f, previewBmp)
                             }
                             "complete" -> {
                                 completeData = data
@@ -446,18 +483,34 @@ class LocalDreamModule(private val context: Context) {
             }
             
             conn.disconnect()
+            activeGenerationConn.set(null)
+            
+            if (!isActive) {
+                Log.i(TAG, "Generation cancelled by coroutine")
+                return@withContext null
+            }
             
             completeData?.let { data ->
                 val imageBase64 = data.getString("image")
                 val w = data.getInt("width")
                 val h = data.getInt("height")
-                
-                decodeRgbToBitmap(imageBase64, w, h)
+
+                val raw = decodeRgbToBitmap(imageBase64, w, h) ?: return@let null
+                applySafetyFilter(raw)
             }
+        } catch (e: CancellationException) {
+            Log.i(TAG, "Generation cancelled")
+            activeGenerationConn.getAndSet(null)?.disconnect()
+            null
         } catch (e: Exception) {
             Log.e(TAG, "Generation error", e)
+            activeGenerationConn.set(null)
             null
         }
+    }
+    
+    fun cancelGeneration() {
+        activeGenerationConn.getAndSet(null)?.disconnect()
     }
     
     private fun decodeRgbToBitmap(base64Rgb: String, width: Int, height: Int): Bitmap? {
@@ -489,8 +542,35 @@ class LocalDreamModule(private val context: Context) {
         }
     }
     
+    // ---- Safety Layer ----
+
+    private suspend fun applySafetyFilter(bitmap: Bitmap): Bitmap? = withContext(Dispatchers.Default) {
+        val result = safetyChecker().check(bitmap)
+        if (result == null) {
+            Log.w(TAG, "Safety: check failed or model unavailable — BLOCK (fail-safe)")
+            bitmap.recycle()
+            return@withContext null
+        }
+        when (result.verdict) {
+            SafetyResult.Verdict.BLOCK -> {
+                Log.w(TAG, "Safety: BLOCK (nsfw=${result.nsfwScore})")
+                bitmap.recycle()
+                null
+            }
+            SafetyResult.Verdict.BLUR -> {
+                Log.i(TAG, "Safety: BLUR (nsfw=${result.nsfwScore})")
+                bitmap.toBlurred(radius = 25)
+            }
+            SafetyResult.Verdict.ALLOW -> {
+                Log.d(TAG, "Safety: ALLOW (nsfw=${result.nsfwScore})")
+                bitmap
+            }
+        }
+    }
+
     fun cleanup() {
         coroutineScope.cancel()
+        _safetyChecker?.close()
         stopServer()
     }
 }

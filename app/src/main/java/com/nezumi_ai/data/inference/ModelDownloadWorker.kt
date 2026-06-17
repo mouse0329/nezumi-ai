@@ -49,7 +49,65 @@ class ModelDownloadWorker(
         return when (downloadKind) {
             DOWNLOAD_KIND_HF_CUSTOM -> doCustomHfWork(startedAt)
             DOWNLOAD_KIND_IMAGE_MODEL -> doImageModelWork(startedAt)
+            DOWNLOAD_KIND_SAFETY_MODEL -> doSafetyModelWork()
             else -> doBuiltinModelWork(startedAt)
+        }
+    }
+
+    private suspend fun doSafetyModelWork(): Result {
+        val notificationId = 8001
+        setForeground(createForegroundInfo("Safety Model", 0L, -1L, notificationId))
+        val destFile = File(applicationContext.filesDir, SAFETY_MODEL_FILENAME)
+        if (destFile.exists() && destFile.length() > 0L) return Result.success()
+        val tempFile = File(applicationContext.cacheDir, "$SAFETY_MODEL_FILENAME.tmp")
+        return try {
+            withContext(Dispatchers.IO) {
+                val conn = (java.net.URL(SAFETY_MODEL_URL).openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 30_000
+                    readTimeout = 60_000
+                    instanceFollowRedirects = true
+                }
+                conn.connect()
+                if (conn.responseCode !in 200..299) {
+                    conn.disconnect()
+                    return@withContext Result.failure(workDataOf(KEY_ERROR_MESSAGE to "HTTP ${conn.responseCode}"))
+                }
+                val total = conn.contentLengthLong
+                conn.inputStream.use { input ->
+                    tempFile.outputStream().use { output ->
+                        val buf = ByteArray(8192)
+                        var downloaded = 0L
+                        var read: Int
+                        var lastProgressMs = 0L
+                        while (input.read(buf).also { read = it } != -1) {
+                            if (isStopped) throw CancellationException("cancelled")
+                            output.write(buf, 0, read)
+                            downloaded += read
+                            val now = System.currentTimeMillis()
+                            if (total > 0L && now - lastProgressMs >= 300L) {
+                                lastProgressMs = now
+                                setProgressAsync(workDataOf(
+                                    KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_SAFETY_MODEL,
+                                    KEY_DOWNLOADED_BYTES to downloaded,
+                                    KEY_TOTAL_BYTES to total
+                                ))
+                                setForegroundAsync(createForegroundInfo("Safety Model", downloaded, total, notificationId))
+                            }
+                        }
+                    }
+                }
+                conn.disconnect()
+                if (destFile.exists()) destFile.delete()
+                tempFile.renameTo(destFile)
+            }
+            Result.success()
+        } catch (e: CancellationException) {
+            tempFile.delete()
+            throw e
+        } catch (e: Exception) {
+            tempFile.delete()
+            if (runAttemptCount < 2) Result.retry()
+            else Result.failure(workDataOf(KEY_ERROR_MESSAGE to (e.message ?: "failed")))
         }
     }
     
@@ -426,6 +484,11 @@ class ModelDownloadWorker(
         const val KEY_IMAGE_MODEL_URL = "image_model_url"
         const val KEY_IMAGE_MODEL_FILENAME = "image_model_filename"
         const val KEY_IMAGE_MODEL_NAME = "image_model_name"
+        const val DOWNLOAD_KIND_SAFETY_MODEL = "safety_model"
+        const val SAFETY_MODEL_WORK_NAME = "safety_model_download"
+        const val SAFETY_MODEL_URL =
+            "https://huggingface.co/AdamCodd/vit-base-nsfw-detector/resolve/main/onnx/model.onnx?download=true"
+        const val SAFETY_MODEL_FILENAME = "safety.onnx"
         const val TAG_HF_CUSTOM_DOWNLOAD = "hf_custom_download"
         const val TAG_IMAGE_MODEL_DOWNLOAD = "image_model_download"
         private const val NOTIFICATION_CHANNEL_ID = "model_download_channel"
@@ -587,6 +650,30 @@ class ModelDownloadWorker(
         
         fun cancelImageModel(context: Context, modelId: String) {
             WorkManager.getInstance(context).cancelUniqueWork(imageModelWorkName(modelId))
+        }
+
+        fun safetyModelFile(context: Context): File =
+            File(context.filesDir, SAFETY_MODEL_FILENAME)
+
+        fun isSafetyModelReady(context: Context): Boolean =
+            safetyModelFile(context).let { it.exists() && it.length() > 0L }
+
+        fun enqueueSafetyModel(context: Context): Boolean {
+            if (isSafetyModelReady(context)) return false
+            val workManager = WorkManager.getInstance(context)
+            val hasActive = runCatching {
+                workManager.getWorkInfosForUniqueWork(SAFETY_MODEL_WORK_NAME)
+                    .get(2, TimeUnit.SECONDS)
+                    .any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.RUNNING }
+            }.getOrDefault(false)
+            if (hasActive) return false
+            val request = OneTimeWorkRequestBuilder<ModelDownloadWorker>()
+                .setInputData(workDataOf(KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_SAFETY_MODEL))
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
+                .build()
+            workManager.enqueueUniqueWork(SAFETY_MODEL_WORK_NAME, ExistingWorkPolicy.KEEP, request)
+            return true
         }
 
         fun cancel(context: Context, model: ModelFileManager.LocalModel) {

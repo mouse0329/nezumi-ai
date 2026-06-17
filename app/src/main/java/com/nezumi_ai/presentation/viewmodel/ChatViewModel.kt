@@ -1994,7 +1994,7 @@ class ChatViewModel(
                 steps = steps,
                 cfg = cfg,
                 seed = seed,
-                onProgress = { step, totalSteps, _ ->
+                onProgress = { step, totalSteps, _, _ ->
                     _imageGenProgress.value = Pair(step, totalSteps)
                 }
             )

@@ -88,4 +88,9 @@ object EngineManager {
             active = ActiveEngine.NONE
         }
     }
+
+    /** ミューテックス不要: 生成中のHTTP接続を即座に切断してSSEループを抜ける */
+    fun cancelCurrentGeneration() {
+        localDream?.cancelGeneration()
+    }
 }

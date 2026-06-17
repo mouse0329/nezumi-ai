@@ -13,9 +13,12 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.nezumi_ai.data.inference.EngineManager
+import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.inference.ModelFileManager
+import com.nezumi_ai.sd.safety.PromptFilter
 import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.sd.ProgressData
+import com.nezumi_ai.sd.safety.SafetyResult
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.data.database.NezumiAiDatabase
@@ -24,11 +27,14 @@ import com.nezumi_ai.utils.PreferencesHelper
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 
 class ImageGenViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -186,6 +192,9 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private val _resultBitmap = MutableStateFlow<Bitmap?>(null)
     val resultBitmap: StateFlow<Bitmap?> = _resultBitmap.asStateFlow()
 
+    private val _previewBitmap = MutableStateFlow<Bitmap?>(null)
+    val previewBitmap: StateFlow<Bitmap?> = _previewBitmap.asStateFlow()
+
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
@@ -197,6 +206,19 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
     private val _snackbar = MutableStateFlow<String?>(null)
     val snackbar: StateFlow<String?> = _snackbar.asStateFlow()
+
+    private val _safetyVerdict = MutableStateFlow<SafetyResult.Verdict?>(null)
+    val safetyVerdict: StateFlow<SafetyResult.Verdict?> = _safetyVerdict.asStateFlow()
+
+    private val _safetyDownloading = MutableStateFlow(false)
+    val safetyDownloading: StateFlow<Boolean> = _safetyDownloading.asStateFlow()
+
+    // 0f..1f、-1f = 不明
+    private val _safetyProgress = MutableStateFlow(-1f)
+    val safetyProgress: StateFlow<Float> = _safetyProgress.asStateFlow()
+
+    private val _safetyTotalBytes = MutableStateFlow(0L)
+    val safetyTotalBytes: StateFlow<Long> = _safetyTotalBytes.asStateFlow()
 
     private var lastSavedInternalUri: String? = null
     private var generateJob: Job? = null
@@ -263,6 +285,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         isCancelling = true
         Log.i(TAG, "[ImageGen] cancel() called")
         
+        // 先にHTTP接続を切断してSSEループを即座に抜ける
+        EngineManager.cancelCurrentGeneration()
         generateJob?.cancel()
         Log.i(TAG, "[ImageGen] generateJob cancelled")
         
@@ -285,9 +309,58 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_err_prompt_empty)
             return@launch
         }
+        // 前段：ViewModel 層でプロンプトを検査 — LocalDreamModule へ届く前にブロック
+        if (PromptFilter.check(pr) == PromptFilter.Result.BLOCK) {
+            Log.w(TAG, "[ImageGen] Prompt blocked by PromptFilter")
+            _safetyVerdict.value = SafetyResult.Verdict.BLOCK
+            _snackbar.value = "プロンプトにポリシー違反のキーワードが含まれています"
+            return@launch
+        }
+        // Safety model が未ダウンロードならダウンロード完了まで待つ
+        if (!ModelDownloadWorker.isSafetyModelReady(app)) {
+            ModelDownloadWorker.enqueueSafetyModel(app)
+            _safetyDownloading.value = true
+            _safetyProgress.value = -1f
+            _snackbar.value = "セーフティモデルをダウンロード中です…"
+            val workManager = WorkManager.getInstance(app)
+            val deadline = System.currentTimeMillis() + 5 * 60_000L
+            var success = false
+            while (System.currentTimeMillis() < deadline) {
+                delay(300)
+                if (ModelDownloadWorker.isSafetyModelReady(app)) {
+                    success = true
+                    break
+                }
+                val info = workManager
+                    .getWorkInfosForUniqueWork(ModelDownloadWorker.SAFETY_MODEL_WORK_NAME)
+                    .get().firstOrNull()
+                val state = info?.state
+                if (state == WorkInfo.State.FAILED || state == WorkInfo.State.CANCELLED) {
+                    _snackbar.value = "セーフティモデルのダウンロードに失敗しました"
+                    _safetyDownloading.value = false
+                    _safetyProgress.value = -1f
+                    return@launch
+                }
+                // progress 流し込み
+                val downloaded = info?.progress?.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L) ?: 0L
+                val total = info?.progress?.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L) ?: 0L
+                if (total > 0L) {
+                    _safetyTotalBytes.value = total
+                    _safetyProgress.value = downloaded.toFloat() / total.toFloat()
+                }
+            }
+            _safetyDownloading.value = false
+            _safetyProgress.value = -1f
+            if (!success) {
+                _snackbar.value = "セーフティモデルのダウンロードがタイムアウトしました"
+                return@launch
+            }
+        }
         _loading.value = true
         _resultBitmap.value = null
+        _previewBitmap.value = null
         _currentStep.value = 0
+        _safetyVerdict.value = null
         isCancelling = false
         val manager = ModelManager.getInstance(app)
         val threads = settingsRepository.getLlamaCppThreads().coerceAtLeast(1)
@@ -311,21 +384,30 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 steps = totalSteps,
                 cfg = _cfg.value,
                 seed = -1L,
-                onProgress = { step, steps, time ->
+                onProgress = { step, steps, time, previewBmp ->
                     _progressData.value = ProgressData(step, steps, time)
                     _currentStep.value = step.coerceAtMost(totalSteps)
+                    previewBmp?.let { _previewBitmap.value = it }
                 }
             )
             
             _currentStep.value = totalSteps
             _progressData.value = ProgressData(totalSteps, totalSteps, _progressData.value?.time ?: 0.0f)
             
-            if (bmp == null) {
-                wasCancelled = true
-                _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
-            } else {
-                _resultBitmap.value = bmp
-                lastSavedInternalUri = MessageMediaStore.savePngBitmap(app, bmp, "imagegen_${System.currentTimeMillis()}")
+            when {
+                bmp == null && isCancelling -> {
+                    wasCancelled = true
+                    _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
+                }
+                bmp == null -> {
+                    // Safety BLOCK: LocalDreamModule が null を返した = フィルタで破棄済み
+                    _safetyVerdict.value = SafetyResult.Verdict.BLOCK
+                    _snackbar.value = "不適切なコンテンツが検出されたため表示を制限しました"
+                }
+                else -> {
+                    _resultBitmap.value = bmp
+                    lastSavedInternalUri = MessageMediaStore.savePngBitmap(app, bmp, "imagegen_${System.currentTimeMillis()}")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "ImageGen failed", e)
@@ -333,6 +415,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         } finally {
             Log.i(TAG, "[ImageGen] finally block: cleaning up")
             isCancelling = false
+            _previewBitmap.value = null
             runCatching { EngineManager.releaseSdKeepNone() }
             runCatching { EngineManager.markLlmActive() }
             if (!wasCancelled) {
