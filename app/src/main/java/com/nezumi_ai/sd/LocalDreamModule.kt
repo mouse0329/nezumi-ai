@@ -497,7 +497,7 @@ class LocalDreamModule(private val context: Context) {
                 val h = data.getInt("height")
 
                 val raw = decodeRgbToBitmap(imageBase64, w, h) ?: return@let null
-                applySafetyFilter(raw)
+                return@withContext applySafetyFilter(raw)
             }
         } catch (e: CancellationException) {
             Log.i(TAG, "Generation cancelled")

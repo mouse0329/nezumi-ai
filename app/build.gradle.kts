@@ -59,8 +59,8 @@ android {
         // SAFETY_IMAGE_GUARD_ENABLED    : 後段画像ガード (ImageSafetyChecker / ONNX)
         // 両方 false のときは applicationId に .open が付く。
         // -----------------------------------------------------------------------
-        val safetyPromptEnabled = true
-        val safetyImageEnabled  = true
+        val safetyPromptEnabled = false
+        val safetyImageEnabled  = false
         buildConfigField("boolean", "SAFETY_PROMPT_FILTER_ENABLED", "$safetyPromptEnabled")
         buildConfigField("boolean", "SAFETY_IMAGE_GUARD_ENABLED",   "$safetyImageEnabled")
         if (!safetyPromptEnabled && !safetyImageEnabled) {
