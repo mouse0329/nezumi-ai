@@ -387,7 +387,8 @@ class LocalDreamModule(private val context: Context) {
         onProgress: (Int, Int, Float, Bitmap?) -> Unit
     ): Bitmap? = withContext(Dispatchers.IO) {
         // ── 前段：テキストガード ──────────────────────────────────
-        if (PromptFilter.check(prompt) == PromptFilter.Result.BLOCK) {
+        if (com.nezumi_ai.BuildConfig.SAFETY_PROMPT_FILTER_ENABLED &&
+            PromptFilter.check(prompt) == PromptFilter.Result.BLOCK) {
             Log.w(TAG, "Prompt blocked by PromptFilter — skipping UNET inference")
             return@withContext null
         }
@@ -545,6 +546,10 @@ class LocalDreamModule(private val context: Context) {
     // ---- Safety Layer ----
 
     private suspend fun applySafetyFilter(bitmap: Bitmap): Bitmap? = withContext(Dispatchers.Default) {
+        if (!com.nezumi_ai.BuildConfig.SAFETY_IMAGE_GUARD_ENABLED) {
+            Log.i(TAG, "Safety: image guard disabled by BuildConfig")
+            return@withContext bitmap
+        }
         val result = safetyChecker().check(bitmap)
         if (result == null) {
             Log.w(TAG, "Safety: check failed or model unavailable — BLOCK (fail-safe)")

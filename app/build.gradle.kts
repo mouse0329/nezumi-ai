@@ -50,6 +50,23 @@ android {
         buildConfigField("String", "LITERTLM_VERSION", "\"0.12.0\"")
         buildConfigField("String", "LLAMACPP_VERSION", "\"llama.rn 0.12.4\"")
 
+        // -----------------------------------------------------------------------
+        // Safety Layer フラグ
+        // 全層のセーフティガードを無効化する場合は下記の値を false に変更する。
+        // Google Play 审査やデバッグ目的以外は必ず true のままにすること。
+        //
+        // SAFETY_PROMPT_FILTER_ENABLED  : 前段テキストガード (PromptFilter)
+        // SAFETY_IMAGE_GUARD_ENABLED    : 後段画像ガード (ImageSafetyChecker / ONNX)
+        // 両方 false のときは applicationId に .open が付く。
+        // -----------------------------------------------------------------------
+        val safetyPromptEnabled = true
+        val safetyImageEnabled  = true
+        buildConfigField("boolean", "SAFETY_PROMPT_FILTER_ENABLED", "$safetyPromptEnabled")
+        buildConfigField("boolean", "SAFETY_IMAGE_GUARD_ENABLED",   "$safetyImageEnabled")
+        if (!safetyPromptEnabled && !safetyImageEnabled) {
+            applicationIdSuffix = ".open"
+        }
+
         ndk {
             abiFilters.add("arm64-v8a")
         }

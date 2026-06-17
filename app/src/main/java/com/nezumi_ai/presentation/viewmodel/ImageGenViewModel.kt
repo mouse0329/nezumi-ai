@@ -310,7 +310,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             return@launch
         }
         // 前段：ViewModel 層でプロンプトを検査 — LocalDreamModule へ届く前にブロック
-        if (PromptFilter.check(pr) == PromptFilter.Result.BLOCK) {
+        if (com.nezumi_ai.BuildConfig.SAFETY_PROMPT_FILTER_ENABLED &&
+            PromptFilter.check(pr) == PromptFilter.Result.BLOCK) {
             Log.w(TAG, "[ImageGen] Prompt blocked by PromptFilter")
             _safetyVerdict.value = SafetyResult.Verdict.BLOCK
             _snackbar.value = "プロンプトにポリシー違反のキーワードが含まれています"
