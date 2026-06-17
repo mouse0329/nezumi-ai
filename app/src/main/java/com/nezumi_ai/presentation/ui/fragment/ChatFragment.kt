@@ -1852,7 +1852,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             val imageFile = java.io.File(cameraDir, "IMG_${System.currentTimeMillis()}.jpg")
             val fileUri = androidx.core.content.FileProvider.getUriForFile(
                 requireContext(),
-                "com.nezumi_ai.fileprovider",
+                "${requireContext().packageName}.fileprovider",
                 imageFile
             )
             cameraImageUri = fileUri
@@ -1908,7 +1908,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                             // FileProviderでURIを取得
                             val fileUri = androidx.core.content.FileProvider.getUriForFile(
                                 requireContext(),
-                                "com.nezumi_ai.fileprovider",
+                                "${requireContext().packageName}.fileprovider",
                                 cachedFile
                             )
                             
@@ -2055,7 +2055,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     try {
                         val recordingUri = androidx.core.content.FileProvider.getUriForFile(
                             requireContext(),
-                            "com.nezumi_ai.fileprovider",
+                            "${requireContext().packageName}.fileprovider",
                             recordingFile!!
                         )
                         selectedAudioUri = recordingUri.toString()
