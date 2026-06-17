@@ -7,10 +7,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_library(LOG_LIB log)
 
-# --- rnllama sources (vendored from llama.rn 0.12.4) ---
+# =========================
+# GPU option (Vulkan)
+# =========================
+option(GGML_VULKAN "Enable Vulkan backend" ON)
+
+# =========================
+# rnllama sources
+# =========================
 set(RNLLAMA_DIR ${CMAKE_SOURCE_DIR}/llama_rn)
 
-# llama_rn のヘッダは rnllama ターゲットのみに付与する（stable-diffusion.cpp の ggml と混ざるのを防ぐ）
 set(RNLLAMA_INCLUDE_DIRS
         ${RNLLAMA_DIR}
         ${RNLLAMA_DIR}/common
@@ -19,7 +25,6 @@ set(RNLLAMA_INCLUDE_DIRS
         ${RNLLAMA_DIR}/tools/mtmd
 )
 
-# Use the same file grouping style as llama.rn's rnllama/CMakeLists.txt, but CPU-only.
 file(GLOB MODEL_FILES           ${RNLLAMA_DIR}/models/*.cpp)
 file(GLOB GGML_CPU_C_FILES      ${RNLLAMA_DIR}/ggml-cpu/*.c)
 file(GLOB GGML_CPU_CPP_FILES    ${RNLLAMA_DIR}/ggml-cpu/*.cpp)
@@ -67,10 +72,8 @@ set(RNLLAMA_SOURCE_FILES
 )
 
 set(RNLLAMA_ARCH_SOURCE_FILES "")
-set(RNLLAMA_CPU_FLAGS "")
 
 if (ANDROID_ABI STREQUAL "arm64-v8a")
-    # Enable AArch64 optimized quants/repack implementations
     list(APPEND RNLLAMA_ARCH_SOURCE_FILES
             ${RNLLAMA_DIR}/ggml-cpu/arch/arm/quants.c
             ${RNLLAMA_DIR}/ggml-cpu/arch/arm/repack.cpp
@@ -78,16 +81,22 @@ if (ANDROID_ABI STREQUAL "arm64-v8a")
     )
     set(RNLLAMA_CPU_FLAGS "-march=armv8.2-a")
 else()
-    # Fallback generic build
     add_compile_definitions(LM_GGML_CPU_GENERIC)
 endif()
 
-add_library(rnllama_core SHARED ${RNLLAMA_SOURCE_FILES} ${RNLLAMA_ARCH_SOURCE_FILES})
+# =========================
+# Core library
+# =========================
+add_library(rnllama_core SHARED
+        ${RNLLAMA_SOURCE_FILES}
+        ${RNLLAMA_ARCH_SOURCE_FILES}
+)
+
 target_include_directories(rnllama_core PRIVATE ${RNLLAMA_INCLUDE_DIRS})
-target_link_libraries(rnllama_core PRIVATE ${LOG_LIB} android)
+
+# CPU ALWAYS ON + optional GPU flag
 target_compile_options(rnllama_core PRIVATE
         -DLM_GGML_USE_CPU
-        -DLM_GGML_USE_CPU_REPACK
         -pthread
         -fvectorize
         -ffp-model=fast
@@ -98,36 +107,32 @@ target_compile_options(rnllama_core PRIVATE
         -O3
         -DNDEBUG
 )
+
+# =========================
+# Vulkan (only if exists)
+# =========================
+if(GGML_VULKAN)
+    target_compile_definitions(rnllama_core PRIVATE GGML_USE_VULKAN)
+    find_library(VULKAN_LIB vulkan)
+    if(VULKAN_LIB)
+        target_link_libraries(rnllama_core PRIVATE ${VULKAN_LIB})
+    endif()
+endif()
+
+target_link_libraries(rnllama_core PRIVATE ${LOG_LIB} android)
+
 target_link_options(rnllama_core PRIVATE
-        # 16KB page-size devices (Android 15+) compatibility
         -Wl,-z,max-page-size=16384
         -Wl,-z,common-page-size=16384
 )
 
-# --- Our minimal JNI bridge (no React / no JSI) ---
+# =========================
+# JNI bridges
+# =========================
 add_library(nezumi_rnllama_jni SHARED NezumiRnLlamaJni.cpp)
 target_include_directories(nezumi_rnllama_jni PRIVATE ${RNLLAMA_INCLUDE_DIRS})
 target_link_libraries(nezumi_rnllama_jni PRIVATE rnllama_core ${LOG_LIB} android)
-target_compile_options(nezumi_rnllama_jni PRIVATE -O3 -DNDEBUG -pthread)
-target_link_options(nezumi_rnllama_jni PRIVATE
-        -Wl,-z,max-page-size=16384
-        -Wl,-z,common-page-size=16384
-)
 
-# --- llama_bridge JNI wrapper (enabled) ---
-# Build a small JNI bridge that forwards calls to the rnllama_core target.
-# This uses the existing rnllama sources included above and produces
-# libllama_bridge.so which is loaded by LlamaBridge.kt at runtime.
 add_library(llama_bridge SHARED llama_bridge.cpp)
-
 target_include_directories(llama_bridge PRIVATE ${RNLLAMA_INCLUDE_DIRS})
-
-# Link against rnllama_core (provides llama/ggml symbols) and Android log
 target_link_libraries(llama_bridge PRIVATE rnllama_core ${LOG_LIB} android)
-
-target_compile_options(llama_bridge PRIVATE -O3 -DNDEBUG -pthread)
-target_link_options(llama_bridge PRIVATE
-        -Wl,-z,max-page-size=16384
-        -Wl,-z,common-page-size=16384
-)
-
