@@ -23,3 +23,10 @@ voicevox_android_report.md
 app/src/main/assets/voicevox/**
 !app/src/main/assets/voicevox/licenses/
 !app/src/main/assets/voicevox/licenses/**
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
