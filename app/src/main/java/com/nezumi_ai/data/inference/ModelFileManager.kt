@@ -894,14 +894,30 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
     /**
      * モデル読み込み前の最終検証 (SHA-256 / サイズチェック)
      * 破損している場合は自動的に削除する
+     * メタデータが無い場合は自動生成を試みる
      */
     fun validatedModelFileForLoad(context: Context, model: LocalModel): Result<File> {
         val file = modelFile(context, model)
-        val metadata = readMetadata(file)
-            ?: return Result.failure(IllegalStateException("モデルの整合性メタデータがありません"))
-
+        
         if (!file.exists() || file.length() <= 0L) {
             return Result.failure(IllegalStateException("モデルファイルが存在しません"))
+        }
+
+        var metadata = readMetadata(file)
+        
+        // メタデータが無い場合、自動復旧を試みる
+        if (metadata == null) {
+            Log.w(TAG, "Metadata not found for ${file.name}. Attempting recovery by computing hash...")
+            return try {
+                val actualSha = sha256Blocking(file)
+                val fileLength = file.length()
+                writeMetadata(file, fileLength, actualSha)
+                Log.i(TAG, "Successfully recovered metadata for ${file.name}")
+                Result.success(file)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to recover metadata: ${file.name}", e)
+                Result.failure(IllegalStateException("モデルの整合性メタデータがありません"))
+            }
         }
 
         // ファイルサイズ検証

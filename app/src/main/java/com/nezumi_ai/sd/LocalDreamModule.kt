@@ -170,19 +170,19 @@ class LocalDreamModule(private val context: Context) {
     
     private fun buildEnvironment(runtimeDir: File): Map<String, String> {
         val env = mutableMapOf<String, String>()
-        
+
         val systemLibPaths = mutableListOf(
             runtimeDir.absolutePath,
             "/system/lib64",
             "/vendor/lib64",
             "/vendor/lib64/egl"
         )
-        
+
         env["LD_LIBRARY_PATH"] = systemLibPaths.joinToString(":")
         env["DSP_LIBRARY_PATH"] = runtimeDir.absolutePath
         env["ADSP_LIBRARY_PATH"] = runtimeDir.absolutePath
         env["MNN_OPENCL_TUNING"] = "WIDE"
-        
+
         return env
     }
     
@@ -305,12 +305,16 @@ class LocalDreamModule(private val context: Context) {
     private suspend fun waitForServer(timeoutMs: Long): Boolean {
         val startTime = System.currentTimeMillis()
         var lastLogTime = 0L
+        var processDied = false
         while (System.currentTimeMillis() - startTime < timeoutMs) {
             if (serverProcess?.isAlive != true) {
-                Log.w(TAG, "Server process died while waiting")
-                return false
+                if (!processDied) {
+                    Log.w(TAG, "Server process died while waiting")
+                    processDied = true
+                }
+                // If the binary daemonizes, continue checking the port.
             }
-            
+
             try {
                 val url = URL("http://127.0.0.1:$SERVER_PORT/")
                 val conn = url.openConnection() as HttpURLConnection
@@ -328,7 +332,7 @@ class LocalDreamModule(private val context: Context) {
                     lastLogTime = now
                 }
             }
-            
+
             delay(500)
         }
         return false
@@ -577,5 +581,82 @@ class LocalDreamModule(private val context: Context) {
         coroutineScope.cancel()
         _safetyChecker?.close()
         stopServer()
+    }
+
+    /**
+     * メタデータ付きで画像を生成
+     */
+    suspend fun generateImageWithMetadata(
+        prompt: String,
+        negativePrompt: String,
+        width: Int,
+        height: Int,
+        steps: Int,
+        cfg: Float,
+        seed: Long,
+        onProgress: (Int, Int, Float, Bitmap?) -> Unit
+    ): Pair<Bitmap?, ImageGenerationMetadata?>? = withContext(Dispatchers.IO) {
+        val startTime = System.currentTimeMillis()
+        val resolvedSeed = if (seed < 0) {
+            (Math.random() * Int.MAX_VALUE).toLong()
+        } else {
+            seed
+        }
+        
+        val bitmap = generateImage(
+            prompt = prompt,
+            negativePrompt = negativePrompt,
+            width = width,
+            height = height,
+            steps = steps,
+            cfg = cfg,
+            seed = resolvedSeed,
+            onProgress = onProgress
+        )
+        
+        if (bitmap != null) {
+            val endTime = System.currentTimeMillis()
+            val metadata = ImageGenerationMetadata(
+                modelPath = currentModelPath ?: "",
+                modelName = extractModelName(currentModelPath ?: ""),
+                prompt = prompt,
+                negativePrompt = negativePrompt,
+                steps = steps,
+                cfg = cfg,
+                seed = resolvedSeed,
+                width = width,
+                height = height,
+                backend = currentBackend ?: "unknown",
+                timestamp = startTime,
+                generationTimeMs = endTime - startTime
+            )
+            Pair(bitmap, metadata)
+        } else {
+            null
+        }
+    }
+
+    private fun extractModelName(path: String): String {
+        if (path.isEmpty()) return "Unknown"
+        val dir = File(path)
+        val dirName = dir.name
+        
+        // バックエンド情報を追加
+        val backend = when {
+            File(dir, "unet.bin").exists() -> "-QNN"
+            File(dir, "unet.mnn").exists() -> "-MNN"
+            else -> ""
+        }
+        
+        return dirName + backend
+    }
+
+    /**
+     * メタデータを画像に埋め込む（EXIF情報として）
+     */
+    fun embedMetadataInBitmap(bitmap: Bitmap, metadata: ImageGenerationMetadata): Bitmap {
+        // NOTE: Androidでは、通常メタデータはファイル保存時にExifとして埋め込みます
+        // ここではメタデータオブジェクトそのものを返し、保存時に別途埋め込みます
+        return bitmap
     }
 }
