@@ -29,6 +29,9 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nezumi_ai.presentation.viewmodel.ImageGenViewModel
 import com.nezumi_ai.presentation.viewmodel.ImageGenViewModelFactory
+import com.nezumi_ai.sd.GenerationQueue
+import com.nezumi_ai.sd.GenerationQueueItem
+import com.nezumi_ai.sd.ImageGenerationMetadata
 
 data class GeneratedImage(val bitmap: Bitmap, val prompt: String, val timestamp: Long)
 
@@ -222,6 +225,153 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                 SizeTab("768x768", sizePx == 768) { vm.setSize(768) }
             }
         }
+        
+        // ============ 一括生成キュー機能 ============
+        val queueProgressState = vm.queueProgress.collectAsState()
+        val isQueueRunningState = vm.isQueueRunning.collectAsState()
+        val queueState = vm.generationQueue.collectAsState()
+        
+        val queueProgress = queueProgressState.value
+        val isQueueRunning = isQueueRunningState.value
+        val queue = queueState.value
+        
+        var showQueueDialog by remember { mutableStateOf(false) }
+        var batchCount by remember { mutableStateOf(1) }
+        
+        Divider(color = Color(0xFF333333), modifier = Modifier.padding(vertical = 16.dp))
+        
+        Text(
+            "一括生成",
+            color = Color(0xFF0084FF),
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp,
+            modifier = Modifier.padding(bottom = 12.dp)
+        )
+        
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFF2A2A2A)).padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("生成数:", color = Color(0xFF999999), fontSize = 12.sp)
+            
+            for (count in 1..10) {
+                Box(
+                    Modifier.weight(1f).clip(RoundedCornerShape(6.dp))
+                        .background(if (batchCount == count) Color(0xFF0084FF) else Color(0xFF1A1A1A))
+                        .clickable { batchCount = count }
+                        .padding(6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        count.toString(),
+                        color = if (batchCount == count) Color.White else Color(0xFF666666),
+                        fontSize = 11.sp,
+                        fontWeight = if (batchCount == count) FontWeight.Bold else FontWeight.Normal
+                    )
+                }
+            }
+        }
+        
+        Row(
+            Modifier.fillMaxWidth().padding(top = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Button(
+                onClick = { showQueueDialog = true },
+                modifier = Modifier.weight(1f).height(40.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0084FF)),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("キューに追加", fontSize = 12.sp)
+            }
+            
+            Button(
+                onClick = { 
+                    if (isQueueRunning) vm.cancelQueueExecution()
+                    else if (queue.items.isNotEmpty()) vm.startQueueGeneration()
+                },
+                modifier = Modifier.weight(1f).height(40.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isQueueRunning) Color(0xFF666666) else Color(0xFF00CC00)
+                ),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(if (isQueueRunning) "停止中..." else "実行", fontSize = 12.sp)
+            }
+        }
+        
+        if (queue.items.isNotEmpty()) {
+            Box(
+                Modifier.fillMaxWidth().padding(top = 12.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF1A1A1A))
+                    .padding(10.dp)
+            ) {
+                Column {
+                    Text(
+                        "キュー: ${queue.completedCount}/${queue.items.size}",
+                        color = Color(0xFF0084FF),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    
+                    queueProgress?.let { (current, total) ->
+                        LinearProgressIndicator(
+                            progress = { current.toFloat() / total.coerceAtLeast(1) },
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                            color = Color(0xFF00CC00)
+                        )
+                    }
+                }
+            }
+            
+            Button(
+                onClick = { vm.clearQueue() },
+                modifier = Modifier.padding(top = 8.dp).height(32.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF666666)),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("クリア", fontSize = 11.sp)
+            }
+        }
+        
+        // キューに追加ダイアログ
+        if (showQueueDialog) {
+            AlertDialog(
+                onDismissRequest = { showQueueDialog = false },
+                title = { Text("キューに追加", color = Color.White) },
+                text = {
+                    Text(
+                        "$batchCount 個の画像を生成キューに追加しますか？",
+                        color = Color(0xFF999999)
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (vm.createGenerationQueue(batchCount)) {
+                                showQueueDialog = false
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0084FF))
+                    ) {
+                        Text("追加")
+                    }
+                },
+                dismissButton = {
+                    Button(
+                        onClick = { showQueueDialog = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF666666))
+                    ) {
+                        Text("キャンセル")
+                    }
+                },
+                containerColor = Color(0xFF2A2A2A)
+            )
+        }
+        // ==========================================
         
         Button(
             onClick = { if (loading) vm.cancel() else vm.generate() },

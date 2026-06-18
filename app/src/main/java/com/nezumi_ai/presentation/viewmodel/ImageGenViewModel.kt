@@ -35,6 +35,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.nezumi_ai.sd.GenerationQueue
+import com.nezumi_ai.sd.GenerationQueueItem
+import com.nezumi_ai.sd.ImageGenerationMetadata
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.isActive
+import org.json.JSONObject
 
 class ImageGenViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -219,6 +225,19 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
     private val _safetyTotalBytes = MutableStateFlow(0L)
     val safetyTotalBytes: StateFlow<Long> = _safetyTotalBytes.asStateFlow()
+
+    // ============ 一括生成キュー機能 ============
+    private val _generationQueue = MutableStateFlow(GenerationQueue())
+    val generationQueue: StateFlow<GenerationQueue> = _generationQueue.asStateFlow()
+
+    private val _queueProgress = MutableStateFlow<Pair<Int, Int>?>(null)  // (現在, 合計)
+    val queueProgress: StateFlow<Pair<Int, Int>?> = _queueProgress.asStateFlow()
+
+    private val _isQueueRunning = MutableStateFlow(false)
+    val isQueueRunning: StateFlow<Boolean> = _isQueueRunning.asStateFlow()
+
+    private var queueRunJob: Job? = null
+    // ==========================================
 
     private var lastSavedInternalUri: String? = null
     private var generateJob: Job? = null
@@ -577,4 +596,278 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             }
         }
     }
+
+    // ============ 一括生成キュー機能 ============
+
+    /**
+     * 生成キューを作成（1～10枚まで）
+     */
+    fun createGenerationQueue(count: Int, seed: Long = -1L): Boolean {
+        val validCount = count.coerceIn(1, 10)
+        val basePrompt = _prompt.value.trim()
+        val baseNegPrompt = _negativePrompt.value
+
+        if (basePrompt.isEmpty()) {
+            _snackbar.value = "プロンプトを入力してください"
+            return false
+        }
+
+        val queueItems = mutableListOf<GenerationQueueItem>()
+        for (idx in 1..validCount) {
+            val itemSeed = if (seed >= 0) seed + idx else -1L
+            
+            queueItems.add(
+                GenerationQueueItem(
+                    count = idx,
+                    prompt = basePrompt,
+                    negativePrompt = baseNegPrompt,
+                    steps = _steps.value,
+                    cfg = _cfg.value,
+                    seed = itemSeed
+                )
+            )
+        }
+
+        _generationQueue.value = GenerationQueue(items = queueItems, currentIndex = 0, isRunning = false)
+        _snackbar.value = "$validCount 個の画像を生成キューに追加しました"
+        Log.d(TAG, "[Queue] Created queue with $validCount items")
+        return true
+    }
+
+    /**
+     * キューの実行を開始
+     */
+    fun startQueueGeneration() {
+        val queue = _generationQueue.value
+        if (queue.items.isEmpty()) {
+            _snackbar.value = "キューが空です"
+            return
+        }
+
+        if (_isQueueRunning.value) {
+            _snackbar.value = "キュー実行中です"
+            return
+        }
+
+        queueRunJob?.cancel()
+        queueRunJob = viewModelScope.launch(Dispatchers.IO) {
+            _isQueueRunning.value = true
+            val totalItems = queue.items.size
+            _queueProgress.value = Pair(0, totalItems)
+            
+            var completedCount = 0
+            var failedCount = 0
+            val currentQueue = queue.copy()
+
+            for (idx in currentQueue.items.indices) {
+                if (!isActive) {
+                    Log.i(TAG, "[Queue] Cancelled")
+                    _snackbar.value = "キュー生成がキャンセルされました"
+                    break
+                }
+
+                val item = currentQueue.items[idx]
+                Log.d(TAG, "[Queue] Processing ${idx + 1}/$totalItems")
+
+                _generationQueue.value = currentQueue.copy(currentIndex = idx)
+
+                val result = executeQueueItem(item)
+                if (result != null) {
+                    completedCount++
+                    Log.d(TAG, "[Queue] Item ${idx + 1} completed")
+                } else {
+                    failedCount++
+                    Log.w(TAG, "[Queue] Item ${idx + 1} failed")
+                }
+
+                _queueProgress.value = Pair(completedCount + failedCount, totalItems)
+
+                if (idx < totalItems - 1) {
+                    delay(500)
+                }
+            }
+
+            _isQueueRunning.value = false
+            _queueProgress.value = null
+            _snackbar.value = "完了: $completedCount 成功, $failedCount 失敗"
+            Log.i(TAG, "[Queue] Done: $completedCount succeeded, $failedCount failed")
+        }
+    }
+
+    /**
+     * キューのアイテム1つを実行
+     */
+    private suspend fun executeQueueItem(item: GenerationQueueItem): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val app = getApplication<Application>()
+            val path = _modelPath.value.trim()
+
+            if (path.isEmpty() || !File(path).isDirectory) {
+                Log.e(TAG, "[QueueItem] Invalid model path")
+                return@withContext false
+            }
+
+            runCatching { ModelManager.getInstance(app).unloadModel() }
+            val ld = EngineManager.acquireLocalDream(app, path, "auto")
+
+            val result = ld.generateImageWithMetadata(
+                prompt = item.prompt,
+                negativePrompt = item.negativePrompt,
+                width = 512,
+                height = 512,
+                steps = item.steps,
+                cfg = item.cfg,
+                seed = item.seed,
+                onProgress = { step, totalSteps, _, previewBmp ->
+                    _progressData.value = ProgressData(step, totalSteps, 0f)
+                    _currentStep.value = step.coerceAtMost(totalSteps)
+                    previewBmp?.let { _previewBitmap.value = it }
+                }
+            )
+
+            if (result != null) {
+                val (bmp, metadata) = result
+                if (bmp != null && metadata != null) {
+                    saveImageWithMetadata(app, bmp, metadata)
+                    return@withContext true
+                }
+            }
+            false
+        } catch (e: Exception) {
+            Log.e(TAG, "[QueueItem] Error", e)
+            false
+        }
+    }
+
+    /**
+     * メタデータ付きで画像を保存
+     */
+    private suspend fun saveImageWithMetadata(
+        context: Context,
+        bitmap: Bitmap,
+        metadata: ImageGenerationMetadata
+    ): String? = withContext(Dispatchers.IO) {
+        return@withContext try {
+            val filename = "sd_${metadata.timestamp}_${metadata.seed}.png"
+            val uri = MessageMediaStore.savePngBitmap(context, bitmap, filename)
+            
+            // メタデータをSharedPreferencesに保存（画像ファイルのメタデータとして）
+            // NOTE: 本来ならExifに埋め込むべきだが、ここではURIベースの管理を行う
+            val prefs = context.getSharedPreferences("image_metadata", Context.MODE_PRIVATE)
+            prefs.edit().putString(
+                "metadata_$uri",
+                buildMetadataJson(metadata)
+            ).apply()
+            
+            uri
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save image with metadata", e)
+            null
+        }
+    }
+
+    /**
+     * メタデータをJSON文字列に変換
+     */
+    private fun buildMetadataJson(metadata: ImageGenerationMetadata): String {
+        return org.json.JSONObject().apply {
+            put("modelPath", metadata.modelPath)
+            put("modelName", metadata.modelName)
+            put("prompt", metadata.prompt)
+            put("negativePrompt", metadata.negativePrompt)
+            put("steps", metadata.steps)
+            put("cfg", metadata.cfg)
+            put("seed", metadata.seed)
+            put("width", metadata.width)
+            put("height", metadata.height)
+            put("backend", metadata.backend)
+            put("timestamp", metadata.timestamp)
+            put("generationTimeMs", metadata.generationTimeMs)
+        }.toString()
+    }
+
+    /**
+     * キューをクリア
+     */
+    fun clearQueue() {
+        queueRunJob?.cancel()
+        _generationQueue.value = GenerationQueue()
+        _queueProgress.value = null
+        _isQueueRunning.value = false
+        _snackbar.value = "キューをクリアしました"
+    }
+
+    /**
+     * キュー実行をキャンセル
+     */
+    fun cancelQueueExecution() {
+        queueRunJob?.cancel()
+        _isQueueRunning.value = false
+        _snackbar.value = "キュー実行をキャンセルしました"
+    }
+
+    // ============ メタデータ永続化 ============
+
+    /**
+     * 画像のメタデータを取得
+     */
+    fun getImageMetadata(context: Context, uri: String?): ImageGenerationMetadata? {
+        if (uri == null) return null
+        val prefs = context.getSharedPreferences("image_metadata", Context.MODE_PRIVATE)
+        val json = prefs.getString("metadata_$uri", null) ?: return null
+        return parseMetadataJson(json)
+    }
+
+    /**
+     * 全ての保存されたメタデータを取得
+     */
+    fun getAllImageMetadata(context: Context): List<Pair<String, ImageGenerationMetadata>> {
+        val prefs = context.getSharedPreferences("image_metadata", Context.MODE_PRIVATE)
+        return prefs.all
+            .filter { it.key.startsWith("metadata_") }
+            .mapNotNull { (key, value) ->
+                val uri = key.removePrefix("metadata_")
+                val metadata = parseMetadataJson(value as? String ?: return@mapNotNull null)
+                if (metadata != null) Pair(uri, metadata) else null
+            }
+            .sortedByDescending { it.second.timestamp }
+    }
+
+    /**
+     * メタデータをJSON文字列からパース
+     */
+    private fun parseMetadataJson(json: String): ImageGenerationMetadata? {
+        return try {
+            val obj = org.json.JSONObject(json)
+            ImageGenerationMetadata(
+                modelPath = obj.getString("modelPath"),
+                modelName = obj.getString("modelName"),
+                prompt = obj.getString("prompt"),
+                negativePrompt = obj.getString("negativePrompt"),
+                steps = obj.getInt("steps"),
+                cfg = obj.getDouble("cfg").toFloat(),
+                seed = obj.getLong("seed"),
+                width = obj.getInt("width"),
+                height = obj.getInt("height"),
+                backend = obj.getString("backend"),
+                timestamp = obj.getLong("timestamp"),
+                generationTimeMs = obj.getLong("generationTimeMs")
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse metadata JSON", e)
+            null
+        }
+    }
+
+    /**
+     * キュー項目から生成条件を取得（再生成用）
+     */
+    fun getQueueItemAsNewPrompt(item: GenerationQueueItem) {
+        _prompt.value = item.prompt
+        _negativePrompt.value = item.negativePrompt
+        _steps.value = item.steps
+        _cfg.value = item.cfg
+    }
+
+    // ==========================================
 }
