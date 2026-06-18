@@ -158,6 +158,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var thinkingToggleChecked by mutableStateOf(false)
     private var thinkingToggleText by mutableStateOf("")
     private var currentToolCallState by mutableStateOf<ToolCallState?>(null)
+    private var currentImageGenProgress by mutableStateOf<Pair<Int, Int>?>(null)
     private var messagesIsEmpty by mutableStateOf(true)
     private var isUserAtBottom = true
     private var wasImeVisible = false
@@ -810,6 +811,18 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.toolCallState.collect { state ->
+                currentToolCallState = state
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.imageGenProgress.collect { progress ->
+                currentImageGenProgress = progress
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
             viewModel.memoryError.collect { error ->
                 if (error != null) showMemoryErrorDialog(error)
             }
@@ -1280,7 +1293,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
         )
         binding.toolCallProgressCompose.setContent {
-            // 空描画（ツール実行ポップアップを表示しない）
+            ToolCallProgressBar(
+                state = currentToolCallState,
+                imageGenProgress = currentImageGenProgress
+            )
         }
 
         binding.modelLoadingComposeOverlay.setViewCompositionStrategy(

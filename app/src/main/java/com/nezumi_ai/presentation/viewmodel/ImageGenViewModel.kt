@@ -201,6 +201,9 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private val _previewBitmap = MutableStateFlow<Bitmap?>(null)
     val previewBitmap: StateFlow<Bitmap?> = _previewBitmap.asStateFlow()
 
+    private val _queueResultBitmaps = MutableStateFlow<List<Bitmap>>(emptyList())
+    val queueResultBitmaps: StateFlow<List<Bitmap>> = _queueResultBitmaps.asStateFlow()
+
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
@@ -304,11 +307,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         isCancelling = true
         Log.i(TAG, "[ImageGen] cancel() called")
         
-        // 先にHTTP接続を切断してSSEループを即座に抜ける
         EngineManager.cancelCurrentGeneration()
         generateJob?.cancel()
-        Log.i(TAG, "[ImageGen] generateJob cancelled")
-        
+        queueRunJob?.cancel()
+        _isQueueRunning.value = false
+        _loading.value = false
         _currentStep.value = 0
         _progressData.value = null
         Log.i(TAG, "[ImageGen] cancel() completed")
@@ -650,6 +653,13 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         }
 
         queueRunJob?.cancel()
+        _loading.value = true
+        _resultBitmap.value = null
+        _previewBitmap.value = null
+        _currentStep.value = 0
+        _safetyVerdict.value = null
+
+        _queueResultBitmaps.value = emptyList()
         queueRunJob = viewModelScope.launch(Dispatchers.IO) {
             _isQueueRunning.value = true
             val totalItems = queue.items.size
@@ -657,7 +667,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             
             var completedCount = 0
             var failedCount = 0
-            val currentQueue = queue.copy()
+            var currentQueue = queue.copy()
 
             for (idx in currentQueue.items.indices) {
                 if (!isActive) {
@@ -669,14 +679,52 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 val item = currentQueue.items[idx]
                 Log.d(TAG, "[Queue] Processing ${idx + 1}/$totalItems")
 
-                _generationQueue.value = currentQueue.copy(currentIndex = idx)
+                currentQueue = currentQueue.copy(
+                    currentIndex = idx,
+                    items = currentQueue.items.mapIndexed { itemIndex, queueItem ->
+                        if (itemIndex == idx) queueItem.copy(status = GenerationQueueItem.GenerationStatus.RUNNING)
+                        else queueItem
+                    }
+                )
+                _generationQueue.value = currentQueue
+                _resultBitmap.value = null
+                _previewBitmap.value = null
 
-                val result = executeQueueItem(item)
-                if (result != null) {
+                val bmp = executeQueueItem(item)
+                
+                // セーフティ違反をチェック
+                if (_safetyVerdict.value == SafetyResult.Verdict.BLOCK) {
+                    Log.w(TAG, "[Queue] Safety violation detected at item ${idx + 1}")
+                    _snackbar.value = "不適切なコンテンツが検出されたため、キューを中止しました"
+                    _generationQueue.value = currentQueue.copy(
+                        items = currentQueue.items.mapIndexed { itemIndex, queueItem ->
+                            if (itemIndex > idx) queueItem.copy(status = GenerationQueueItem.GenerationStatus.CANCELLED)
+                            else queueItem
+                        }
+                    )
+                    break
+                }
+                
+                if (bmp != null) {
                     completedCount++
+                    _queueResultBitmaps.value = _queueResultBitmaps.value + bmp
+                    currentQueue = currentQueue.copy(
+                        items = currentQueue.items.mapIndexed { itemIndex, queueItem ->
+                            if (itemIndex == idx) queueItem.copy(status = GenerationQueueItem.GenerationStatus.COMPLETED)
+                            else queueItem
+                        }
+                    )
+                    _generationQueue.value = currentQueue
                     Log.d(TAG, "[Queue] Item ${idx + 1} completed")
                 } else {
                     failedCount++
+                    currentQueue = currentQueue.copy(
+                        items = currentQueue.items.mapIndexed { itemIndex, queueItem ->
+                            if (itemIndex == idx) queueItem.copy(status = GenerationQueueItem.GenerationStatus.FAILED)
+                            else queueItem
+                        }
+                    )
+                    _generationQueue.value = currentQueue
                     Log.w(TAG, "[Queue] Item ${idx + 1} failed")
                 }
 
@@ -689,32 +737,44 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
             _isQueueRunning.value = false
             _queueProgress.value = null
-            _snackbar.value = "完了: $completedCount 成功, $failedCount 失敗"
-            Log.i(TAG, "[Queue] Done: $completedCount succeeded, $failedCount failed")
+            _loading.value = false
+            _currentStep.value = 0
         }
     }
 
     /**
      * キューのアイテム1つを実行
      */
-    private suspend fun executeQueueItem(item: GenerationQueueItem): Boolean = withContext(Dispatchers.IO) {
+    private suspend fun executeQueueItem(item: GenerationQueueItem): Bitmap? = withContext(Dispatchers.IO) {
         try {
             val app = getApplication<Application>()
             val path = _modelPath.value.trim()
 
             if (path.isEmpty() || !File(path).isDirectory) {
                 Log.e(TAG, "[QueueItem] Invalid model path")
-                return@withContext false
+                return@withContext null
+            }
+
+            // プロンプトの前段フィルタリング
+            if (com.nezumi_ai.BuildConfig.SAFETY_PROMPT_FILTER_ENABLED &&
+                PromptFilter.check(item.prompt) == PromptFilter.Result.BLOCK) {
+                Log.w(TAG, "[QueueItem] Prompt blocked by PromptFilter")
+                _safetyVerdict.value = SafetyResult.Verdict.BLOCK
+                return@withContext null
             }
 
             runCatching { ModelManager.getInstance(app).unloadModel() }
             val ld = EngineManager.acquireLocalDream(app, path, "auto")
+            ld.clearLastSafetyVerdict()  // 前回の verdict をクリア
+
+            val width = _sizePx.value
+            val height = _sizePx.value
 
             val result = ld.generateImageWithMetadata(
                 prompt = item.prompt,
                 negativePrompt = item.negativePrompt,
-                width = 512,
-                height = 512,
+                width = width,
+                height = height,
                 steps = item.steps,
                 cfg = item.cfg,
                 seed = item.seed,
@@ -727,15 +787,32 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
             if (result != null) {
                 val (bmp, metadata) = result
-                if (bmp != null && metadata != null) {
-                    saveImageWithMetadata(app, bmp, metadata)
-                    return@withContext true
+                if (bmp != null) {
+                    _resultBitmap.value = bmp
+                    if (metadata != null) {
+                        saveImageWithMetadata(app, bmp, metadata)
+                    }
+                    return@withContext bmp
+                } else {
+                    // セーフティ違反（後段ガード）
+                    Log.w(TAG, "[QueueItem] Image blocked by safety guard")
+                    _safetyVerdict.value = SafetyResult.Verdict.BLOCK
+                    return@withContext null
                 }
+            } else {
+                // result == null のケース：セーフティ違反か生成失敗
+                val lastVerdict = ld.getLastSafetyVerdict()
+                if (lastVerdict == SafetyResult.Verdict.BLOCK) {
+                    Log.w(TAG, "[QueueItem] Image BLOCK by safety guard (verdict=${lastVerdict})")
+                    _safetyVerdict.value = SafetyResult.Verdict.BLOCK
+                } else {
+                    Log.w(TAG, "[QueueItem] Generation failed or safety check unavailable")
+                }
+                return@withContext null
             }
-            false
         } catch (e: Exception) {
             Log.e(TAG, "[QueueItem] Error", e)
-            false
+            null
         }
     }
 

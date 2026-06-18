@@ -18,16 +18,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
@@ -35,11 +40,13 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
@@ -47,6 +54,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.Slider
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -106,7 +114,7 @@ class ImageGenFragment : Fragment() {
                     Unit
                 }
                 NezumiImageGenTheme {
-                    ImageGenScreen(viewModel, onNavigateUp = navigateUp)
+                    LegacyImageGenScreen(viewModel, navigateUp)
                 }
             }
         }
@@ -171,7 +179,7 @@ private fun NezumiImageGenTheme(content: @Composable () -> Unit) {
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun ImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
+private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
     val ctx = LocalContext.current
     val prompt by vm.prompt.collectAsState()
     val neg by vm.negativePrompt.collectAsState()
@@ -190,6 +198,9 @@ private fun ImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
     val currentStep by vm.currentStep.collectAsState()
     val backendInfo by vm.backendInfo.collectAsState()
     val previewBitmap by vm.previewBitmap.collectAsState()
+    val queueResultBitmaps by vm.queueResultBitmaps.collectAsState()
+    val generationQueue by vm.generationQueue.collectAsState()
+    val isQueueRunning by vm.isQueueRunning.collectAsState()
     
     var selectedTab by remember { mutableStateOf(0) }
     val library = remember { mutableStateListOf<LibraryItem>() }
@@ -355,10 +366,32 @@ private fun ImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
                         }
                     }
                 }
+
+                var batchCount by remember { mutableStateOf(1) }
+                Column(Modifier.padding(top = 12.dp)) {
+                    Text(
+                        "生成数: $batchCount",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Slider(
+                        value = batchCount.toFloat(),
+                        onValueChange = { batchCount = it.toInt().coerceIn(1, 10) },
+                        valueRange = 1f..10f,
+                        steps = 8,
+                        enabled = !loading,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    )
+                }
+
                 val modelFileOk = availableModels.isNotEmpty() && selectedModelIndex in availableModels.indices && File(availableModels[selectedModelIndex]).isDirectory
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Button(
-                        onClick = { vm.generate() },
+                        onClick = {
+                            if (vm.createGenerationQueue(batchCount)) {
+                                vm.startQueueGeneration()
+                            }
+                        },
                         enabled = !loading && !safetyDownloading && modelFileOk && prompt.isNotBlank()
                     ) {
                         Text(stringResource(R.string.image_gen_generate))
@@ -382,76 +415,117 @@ private fun ImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
                         }
                     }
                 }
-                // 生成中プレビュー
-                if (loading) {
-                    val displayBmp = previewBitmap
-                    if (displayBmp != null) {
-                        Image(
-                            bitmap = displayBmp.asImageBitmap(),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                        )
-                    } else {
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+
+                if (generationQueue.items.isNotEmpty()) {
+                    Text(
+                        "現在 ${generationQueue.currentIndex + 1}/${generationQueue.items.size}  |  ステップ ${currentStep}/${steps}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+
+                // 画像表示エリア
+                val displayImages = when {
+                    queueResultBitmaps.isNotEmpty() -> queueResultBitmaps
+                    bitmap != null -> listOf(bitmap)
+                    else -> emptyList()
+                }.filterNotNull()
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
+                    when {
+                        // 画像がある、または生成中
+                        displayImages.isNotEmpty() || loading -> {
+                            LazyColumn(
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxSize().padding(8.dp)
+                            ) {
+                                items(displayImages) { itemBmp ->
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .aspectRatio(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+                                            .background(MaterialTheme.colorScheme.surface)
+                                    ) {
+                                        Image(
+                                            bitmap = itemBmp.asImageBitmap(),
+                                            contentDescription = null,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    }
+                                }
+                                if (loading && previewBitmap != null) {
+                                    previewBitmap?.let { previewBmp ->
+                                        item {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .aspectRatio(1f)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                                                    .background(MaterialTheme.colorScheme.surface)
+                                            ) {
+                                                Image(
+                                                    bitmap = previewBmp.asImageBitmap(),
+                                                    contentDescription = null,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Crop
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // セーフティ違反ブロック
+                        safetyVerdict == SafetyResult.Verdict.BLOCK -> {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.padding(16.dp)
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_lock),
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.height(40.dp).width(40.dp)
+                                )
+                                Text(
+                                    "不適切な表現が含まれる\n可能性があるコンテンツの表示を制限しました",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                        // デフォルト：プレースホルダー
+                        else -> {
+                            Text(
+                                "画像がここに表示されます",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall
+                            )
                         }
                     }
                 }
-                bitmap?.let { b ->
-                    Image(
-                        bitmap = b.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+
+                if (bitmap != null && !loading) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 12.dp)) {
                         Button(onClick = { vm.saveToGallery(ctx) }) {
                             Text(stringResource(R.string.image_gen_save_gallery))
                         }
                         Button(onClick = { vm.share(ctx) }) {
                             Text(stringResource(R.string.image_gen_share))
-                        }
-                    }
-                }
-                // Safety BLOCK プレースホルダー
-                if (bitmap == null && safetyVerdict == SafetyResult.Verdict.BLOCK) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.padding(16.dp)
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_lock),
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.height(40.dp).width(40.dp)
-                            )
-                            Text(
-                                "Google Playのポリシーに準拠するため、不適切な表現が含まれる\n可能性があるコンテンツの表示を制限しました",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                            )
                         }
                     }
                 }

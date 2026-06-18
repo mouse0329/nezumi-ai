@@ -53,14 +53,14 @@ android {
         // -----------------------------------------------------------------------
         // Safety Layer フラグ
         // 全層のセーフティガードを無効化する場合は下記の値を false に変更する。
-        // Google Play 审査やデバッグ目的以外は必ず true のままにすること。
+        // Google Play 審査やデバッグ目的以外は必ず true のままにすること。
         //
         // SAFETY_PROMPT_FILTER_ENABLED  : 前段テキストガード (PromptFilter)
         // SAFETY_IMAGE_GUARD_ENABLED    : 後段画像ガード (ImageSafetyChecker / ONNX)
         // 両方 false のときは applicationId に .open が付く。
         // -----------------------------------------------------------------------
         val safetyPromptEnabled = false
-        val safetyImageEnabled  = false
+        val safetyImageEnabled  = true
         buildConfigField("boolean", "SAFETY_PROMPT_FILTER_ENABLED", "$safetyPromptEnabled")
         buildConfigField("boolean", "SAFETY_IMAGE_GUARD_ENABLED",   "$safetyImageEnabled")
         if (!safetyPromptEnabled && !safetyImageEnabled) {
