@@ -28,6 +28,11 @@ class LocalDreamModule(private val context: Context) {
 
     // lazy ではなく毎回生成時に取得 — ファイル差し替え後も確実に反映される
     private var _safetyChecker: ImageSafetyChecker? = null
+    private var _lastSafetyVerdict: SafetyResult.Verdict? = null
+    
+    fun getLastSafetyVerdict(): SafetyResult.Verdict? = _lastSafetyVerdict
+    fun clearLastSafetyVerdict() { _lastSafetyVerdict = null }
+    
     private fun safetyChecker(): ImageSafetyChecker {
         val existing = _safetyChecker
         // モデルファイルが新たに存在するのに session が null なら再生成
@@ -557,21 +562,25 @@ class LocalDreamModule(private val context: Context) {
         val result = safetyChecker().check(bitmap)
         if (result == null) {
             Log.w(TAG, "Safety: check failed or model unavailable — BLOCK (fail-safe)")
+            _lastSafetyVerdict = SafetyResult.Verdict.BLOCK
             bitmap.recycle()
             return@withContext null
         }
         when (result.verdict) {
             SafetyResult.Verdict.BLOCK -> {
                 Log.w(TAG, "Safety: BLOCK (nsfw=${result.nsfwScore})")
+                _lastSafetyVerdict = SafetyResult.Verdict.BLOCK
                 bitmap.recycle()
                 null
             }
             SafetyResult.Verdict.BLUR -> {
                 Log.i(TAG, "Safety: BLUR (nsfw=${result.nsfwScore})")
+                _lastSafetyVerdict = SafetyResult.Verdict.BLUR
                 bitmap.toBlurred(radius = 25)
             }
             SafetyResult.Verdict.ALLOW -> {
                 Log.d(TAG, "Safety: ALLOW (nsfw=${result.nsfwScore})")
+                _lastSafetyVerdict = SafetyResult.Verdict.ALLOW
                 bitmap
             }
         }
