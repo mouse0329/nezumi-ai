@@ -104,7 +104,9 @@
     <string name="open_hf_approval_page">ページで承認</string>
     <string name="imported_task_title">追加済みモデルファイル (.task / .litertlm)</string>
     <string name="imported_task_empty">まだ追加されたモデルファイルはありません</string>
+    <string name="open_help_page">ヘルプ</string>
     <string name="open_license_page">License</string>
+    <string name="help_title">ヘルプ</string>
     <string name="license_title">License</string>
     <string name="license_body">This app includes open-source software.\n\nThis application uses multiple open-source libraries and models. Please review the license terms below before distribution.</string>
 

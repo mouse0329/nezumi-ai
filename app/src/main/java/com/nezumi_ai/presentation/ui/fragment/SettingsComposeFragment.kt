@@ -274,6 +274,9 @@ class SettingsComposeFragment : Fragment() {
                     }) {
                         Text(text = "セットアップを開く")
                     }
+                    TextButton(onClick = { findNavController().navigate(R.id.action_settingsFragment_to_helpFragment) }) {
+                        Text(text = stringResource(id = R.string.open_help_page))
+                    }
                     TextButton(onClick = { findNavController().navigate(R.id.action_settingsFragment_to_licenseFragment) }) {
                         Text(text = stringResource(id = R.string.open_license_page))
                     }
