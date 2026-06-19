@@ -45,10 +45,8 @@ android {
         versionName = "2.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        manifestPlaceholders["appAuthRedirectScheme"] = "nezumiai"
 
-        buildConfigField("String", "LITERTLM_VERSION", "\"0.12.0\"")
-        buildConfigField("String", "LLAMACPP_VERSION", "\"llama.rn 0.12.4\"")
+        manifestPlaceholders["appAuthRedirectScheme"] = "nezumiai"
 
         // -----------------------------------------------------------------------
         // Safety Layer フラグ
@@ -59,8 +57,12 @@ android {
         // SAFETY_IMAGE_GUARD_ENABLED    : 後段画像ガード (ImageSafetyChecker / ONNX)
         // 両方 false のときは applicationId に .open が付く。
         // -----------------------------------------------------------------------
-        val safetyPromptEnabled = false
+        val safetyPromptEnabled = true
         val safetyImageEnabled  = true
+        manifestPlaceholders["appName"] = if (!safetyPromptEnabled && !safetyImageEnabled) "ネズミAI open" else "ネズミAI"
+
+        buildConfigField("String", "LITERTLM_VERSION", "\"0.12.0\"")
+        buildConfigField("String", "LLAMACPP_VERSION", "\"llama.rn 0.12.4\"")
         buildConfigField("boolean", "SAFETY_PROMPT_FILTER_ENABLED", "$safetyPromptEnabled")
         buildConfigField("boolean", "SAFETY_IMAGE_GUARD_ENABLED",   "$safetyImageEnabled")
         if (!safetyPromptEnabled && !safetyImageEnabled) {
