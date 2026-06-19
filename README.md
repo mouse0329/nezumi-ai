@@ -11,10 +11,11 @@ nezumi-aiは、インターネット接続なしで動作するプライベー�
 
 - **完全オフライン動作**: ローカル推論で、サーバーへのデータ送信なし
 - **マルチモデル対応**: Gemma 4 2B (軽量) / 4B (高性能) + Gemma 3n の選択可能
-- **GPU/CPU自動切り替え**: 端末のハードウェア最適化による高速化
+- **GPU/CPU/NPU自動切り替え**: 端末のハードウェア最適化による高速化
 - **画像入力対応**: カメラ・ギャラリーから画像を取り込んでAIに解析させられる
 - **画像生成機能**: LocalDreamModule（MNN/QNN）による高速画像生成
 - **チャット履歴管理**: Room DBで会話履歴を永続化
+- **高度なツールコール**: AIが画像生成、アラーム設定、Web検索などのツールを自律的に呼び出し
 
 > **注意**: VOICEVOX音声読み上げ機能は、Android 15以降の16KBページサイズ端末との互換性問題のため、現在無効化されています。詳細は [VOICEVOX_RESTORE.md](docs/VOICEVOX_RESTORE.md) を参照してください。
 
@@ -27,7 +28,7 @@ nezumi-aiは、インターネット接続なしで動作するプライベー�
 | **Android Version** | 12 (API 30) | 14+ (API 34+) |
 | **RAM** | 6GB | 8GB以上 |
 | **ストレージ** | 4GB | 8GB以上 |
-| **GPU** | 任意 | Mali / Adreno推奨 |
+| **GPU/NPU** | 任意 | Snapdragon (QNN対応) / Mali / Adreno推奨 |
 
 ---
 
@@ -84,10 +85,11 @@ KEY_PASSWORD=your_key_password
 - **自動バックエンド選択**: QNN（NPU）→ MNN（CPU/OpenCL）の自動フォールバック
 - **AI自動生成**: Gemmaがツールとして画像生成を呼び出し（ユーザー承認制）
 
-### 4. GPU/CPU バックエンド切り替え（LLM）
+### 4. 推論バックエンド切り替え（LLM）
+- **NPU**: Snapdragon QNNによる超高速・低消費電力推論（LiteRT-LM）
 - **GPU**: 高速推論（互換性は端末依存）
 - **CPU**: 互換性重視（速度は低い）
-- 自動フォールバック: GPU失敗時にCPUに自動切り替え
+- 自動フォールバック: NPU/GPU失敗時にCPUに自動切り替え
 
 ### 5. チャット履歴
 - 会話履歴の永続化（Room DB）
@@ -95,21 +97,56 @@ KEY_PASSWORD=your_key_password
 
 ---
 
-## アーキテクチャ
+## システム構成と技術詳細
 
-```
-[UI Layer (Compose)]
-       ↓
-[ViewModel / StateFlow]
-       ↓
-[Repository]
-       ↓
-[UseCase / Inference Layer]
-       ↓
-[Engine Layer]
-├── LlmEngine (llama.cpp / LiteRT-LM)
-└── SdEngine (MNN/QNN Stable Diffusion)
-```
+`nezumi-ai`は、高度なローカル推論を実現するために最適化された多層アーキテクチャを採用しています。(拡張し続けたら勝手にできた)
+
+### アーキテクチャ概要
+
+<img width="3120" height="880" alt="image" src="https://github.com/user-attachments/assets/15b70f56-f39c-4310-acab-c1c183be97cb" />
+
+
+### 主要な推論エンジン
+
+本アプリは、モデルの特性に合わせて以下のエンジンを使い分けるハイブリッド構成となっています。
+
+1.  **GGUFエンジン (llama.cpp)**
+    - **用途**: 汎用的なGGUF形式モデル（Gemma 4 2B/4Bなど）の実行。
+    - **特徴**: JNI経由で`llama.cpp`を直接制御。16KBページサイズ対応、適応的GPU層数、サンプラーキャッシングなどの高度なネイティブ最適化が施されています。
+2.  **LiteRT-LMエンジン (Google LiteRT)**
+    - **用途**: Gemma 3nなどのTFLite形式モデルの実行。
+    - **特徴**: Googleの`litertlm`ライブラリを活用。特にSnapdragon搭載端末において、QNN（Qualcomm AI Stack）を通じた**NPUアクセラレーション**を強力にサポートし、低消費電力かつ高速なレスポンスを実現します。
+3.  **LocalDreamエンジン (MNN/QNN)**
+    - **用途**: 画像生成（Stable Diffusion 1.5）。
+    - **特徴**: `stable-diffusion.cpp`から移行し、MNN OpenCLおよびQNN NPUバックエンドを統合。Snapdragon 8 Gen 2クラスの端末では、数秒での画像生成が可能です。
+
+### セーフティ & メディア管理
+
+プライバシーと安全性を両立させるための専用レイヤーを備えています。
+
+-   **コンテンツフィルタリング**: `PromptFilter`による不適切なプロンプトの遮断。
+-   **画像セーフティチェック**: `ImageSafetyChecker`による生成画像のNSFW判定。不適切な場合は自動的にブロックまたはぼかし処理（Blur）を適用します。
+-   **セキュアなメディア保存**: `MessageMediaStore`と`FileProvider`を組み合わせ、生成されたメディアをアプリ専用領域に安全に永続化します。
+
+### 設定の永続化と管理
+
+`PreferencesHelper`を通じて、モデルパラメータ（Steps, CFG, Backend等）やUI設定を`SharedPreferences`に即座に反映・永続化します。これにより、ユーザーごとに最適化された推論環境を維持します。
+
+---
+
+## 開発ストーリー：技術的こだわり
+
+`nezumi-ai`は、単なるチャットアプリではなく、Androidデバイスの限界に挑むプロジェクトとして開発されています。
+
+-   **16KBページサイズへの挑戦**: Android 15以降を見据え、すべてのネイティブライブラリを16KBアライメントで最適化。VOICEVOX機能の一時停止も、この互換性を最優先した苦渋の決断であり、現在は復元に向けた調整が進んでいます。
+-   **NPUの真価を引き出す**: モバイルGPUだけでなく、NPU（Neural Processing Unit）を積極的に活用することで、スマートフォンの発熱を抑えつつ、デスクトップ級のAI体験を提供することを目指しています。
+-   **プライバシー・ファースト**: すべての推論、フィルタリング、保存プロセスをローカルで完結させることで、ユーザーのデータがデバイスの外に出ることは一切ありません。
+
+---
+
+## チームメッセージ
+
+「**プライバシーを守りながら、あなたの創造性を解き放つ。nezumi-aiは、手のひらで未来を動かすAIアシスタントです！**」
 
 ---
 
@@ -136,16 +173,6 @@ KEY_PASSWORD=your_key_password
 
 詳細な開発計画については [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) を参照してください。
 
-### 主要レイヤー
-
-| レイヤー | 責務 |
-|---------|------|
-| **Presentation** | Jetpack Compose UI, ViewModel |
-| **Domain** | ビジネスロジック, UseCase |
-| **Data** | Repository, Room DB, 設定保存 |
-| **Inference** | モデルロード, 推論実行, バックエンド選択 |
-| **Native** | JNI Bridge, llama.cpp バインディング |
-
 ---
 
 ## 依存ライブラリ
@@ -157,7 +184,7 @@ KEY_PASSWORD=your_key_password
 
 ### AI/ML
 - **MediaPipe Tasks**: オンデバイスML実行
-- **TensorFlow Lite**: 軽量推論エンジン
+- **TensorFlow Lite / LiteRT**: 軽量推論エンジン
 - **llama.cpp** (via JNI): LLM推論コア
 - **LocalDreamModule**: MNN/QNNベースの画像生成エンジン
 
@@ -179,7 +206,7 @@ KEY_PASSWORD=your_key_password
 ### 初回起動
 1. アプリを起動
 2. モデルを選択（Gemma 4 2B / 4B 推奨）
-3. バックエンド選択（GPU / CPU）
+3. バックエンド選択（NPU / GPU / CPU）
 4. モデルダウンロード開始
 
 ### チャット開始
@@ -225,7 +252,7 @@ KEY_PASSWORD=your_key_password
 | AndroidX / Jetpack Compose | Apache 2.0 |
 | Kotlin / Coroutines | Apache 2.0 |
 | MediaPipe Tasks (GenAI) | Apache 2.0 |
-| TensorFlow Lite | Apache 2.0 |
+| TensorFlow Lite / LiteRT | Apache 2.0 |
 | Halilibo Compose Richtext | Apache 2.0 |
 | Coil (Image Loading) | Apache 2.0 |
 | AppAuth for Android | Apache 2.0 |
@@ -240,19 +267,6 @@ KEY_PASSWORD=your_key_password
 - [`docs/LLAMA_OPTIMIZATION.md`](docs/LLAMA_OPTIMIZATION.md) - Llama 最適化ドキュメント
 - [`docs/OPTIMIZATION_COMPLETION_REPORT.md`](docs/OPTIMIZATION_COMPLETION_REPORT.md) - 最適化完了報告
 - [`docs/VOICEVOX_RESTORE.md`](docs/VOICEVOX_RESTORE.md) - VOICEVOX 復旧手順
-
----
-
-## ライセンスについて
-
-このプロジェクトは **デュアルライセンス** で公開されています：
-
-1. **GNU Lesser General Public License v3.0 (LGPL v3)**
-   - オープンソース利用向け
-   - [LICENSE.md](LICENSE.md) または [LGPL_LICENSE](LGPL_LICENSE) を参照
-
-2. **商用ライセンス**
-   - 商用利用の場合は mouse0329 までお問い合わせください
 
 ---
 
