@@ -1,4 +1,3 @@
-
 package com.nezumi_ai.presentation.viewmodel
 
 import android.content.Context
@@ -365,7 +364,15 @@ class ChatViewModel(
     private var streamingAssistantMessageIdForTools: Long? = null
 
     private val generateImageToolHandler = GenerateImageToolHandler { toolCall ->
-        invokeGenerateImageFromTool(toolCall)
+        // viewModelScope で実行して、coroutineScope のコンテキストを維持
+        viewModelScope.launch {
+            invokeGenerateImageFromTool(toolCall)
+        }
+        // 結果は待たずに即座に返す（実際の結果は後で UI に反映される）
+        ToolExecutionResult(
+            success = true,
+            payload = mapOf("success" to true, "message" to "image_generation_started")
+        )
     }
 
     data class MemoryWarningInfo(
@@ -1869,27 +1876,50 @@ class ChatViewModel(
     }
 
     private suspend fun awaitImageGenerationConfirmation(initialPrompt: String): String? =
-        suspendCancellableCoroutine { cont ->
-            imageGenConfirmCont = cont
-            _confirmationRequest.value = initialPrompt
-            cont.invokeOnCancellation {
-                imageGenConfirmCont = null
+        coroutineScope {
+            withTimeoutOrNull(120_000L) {  // 120 秒タイムアウトに延長
+                suspendCancellableCoroutine { cont ->
+                    imageGenConfirmCont = cont
+                    _confirmationRequest.value = initialPrompt
+                    Log.d(TAG, "awaitImageGenerationConfirmation: Waiting for user confirmation. Prompt: ${initialPrompt.take(50)}...")
+                    cont.invokeOnCancellation {
+                        Log.d(TAG, "awaitImageGenerationConfirmation: Coroutine cancelled")
+                        imageGenConfirmCont = null
+                        _confirmationRequest.value = null
+                    }
+                }
+            }.also { result ->
+                // タイムアウトまたは戻り値に関わらず、状態をクリア
+                Log.d(TAG, "awaitImageGenerationConfirmation: Completed with result: ${if (result == null) "null/cancelled" else "success (prompt=${result.take(30)}...)"}")
                 _confirmationRequest.value = null
+                imageGenConfirmCont = null
             }
         }
 
     fun onConfirmGenerateImage(editedPrompt: String) {
+        Log.d(TAG, "onConfirmGenerateImage: Called with prompt: ${editedPrompt.take(50)}...")
         _confirmationRequest.value = null
         val c = imageGenConfirmCont
         imageGenConfirmCont = null
-        c?.resume(editedPrompt.trim())
+        if (c != null) {
+            Log.d(TAG, "onConfirmGenerateImage: Resuming continuation")
+            c.resume(editedPrompt.trim())
+        } else {
+            Log.w(TAG, "onConfirmGenerateImage: No continuation to resume (already cleared?)")
+        }
     }
 
     fun onCancelGenerateImage() {
+        Log.d(TAG, "onCancelGenerateImage: Called")
         _confirmationRequest.value = null
         val c = imageGenConfirmCont
         imageGenConfirmCont = null
-        c?.resume(null)
+        if (c != null) {
+            Log.d(TAG, "onCancelGenerateImage: Resuming continuation with null")
+            c.resume(null)
+        } else {
+            Log.w(TAG, "onCancelGenerateImage: No continuation to resume (already cleared?)")
+        }
     }
 
     private suspend fun reloadChatModelAfterSd(manager: ModelManager) {
@@ -1937,6 +1967,14 @@ class ChatViewModel(
     private suspend fun invokeGenerateImageFromTool(toolCall: ToolCall): ToolExecutionResult {
         val prompt = toolCall.arguments["prompt"]?.toString()?.trim().orEmpty()
         if (prompt.isEmpty()) {
+            // UI通知：ツール実行開始
+            viewModelScope.launch {
+                _toolCallState.value = ToolCallState.Executing(
+                    toolName = "generate_image",
+                    elapsedMs = 0
+                )
+            }
+            _uiMessage.emit("🔧 generate_image を実行中...")
             return ToolExecutionResult(
                 success = false,
                 payload = mapOf("success" to false, "error" to "missing_prompt")
@@ -1959,6 +1997,15 @@ class ChatViewModel(
 
         val edited = awaitImageGenerationConfirmation(prompt)
         if (edited == null) {
+            // UI通知：キャンセル
+            viewModelScope.launch {
+                _toolCallState.value = ToolCallState.Result(
+                    toolName = "generate_image",
+                    status = "cancelled",
+                    resultMessage = "キャンセルしました"
+                )
+            }
+            _uiMessage.emit("❌ generate_image: キャンセルしました")
             return ToolExecutionResult(
                 success = true,
                 payload = mapOf("success" to true, "message" to "キャンセルしました")
@@ -1967,6 +2014,15 @@ class ChatViewModel(
 
         val sdPath = PreferencesHelper.getSdModelPath(appContext).trim()
         if (sdPath.isEmpty() || !File(sdPath).isDirectory) {
+            // UI通知：失敗
+            viewModelScope.launch {
+                _toolCallState.value = ToolCallState.Result(
+                    toolName = "generate_image",
+                    status = "error",
+                    resultMessage = "sd_model_path_missing"
+                )
+            }
+            _uiMessage.emit("❌ generate_image: SDモデルパスが見つかりません")
             return ToolExecutionResult(
                 success = false,
                 payload = mapOf("success" to false, "error" to "sd_model_path_missing")
@@ -1990,6 +2046,15 @@ class ChatViewModel(
             val loaded = localDream.loadModel(sdPath, backend)
             if (!loaded) {
                 Log.e(TAG, "invokeGenerateImageFromTool: SD model load failed - aborting generation")
+                // UI通知：失敗
+                viewModelScope.launch {
+                    _toolCallState.value = ToolCallState.Result(
+                        toolName = "generate_image",
+                        status = "error",
+                        resultMessage = "モデルロード失敗"
+                    )
+                }
+                _uiMessage.emit("❌ generate_image: モデルロード失敗")
                 return ToolExecutionResult(
                     success = false,
                     payload = mapOf("success" to false, "error" to "model_load_failed")
@@ -1997,6 +2062,16 @@ class ChatViewModel(
             }
 
             Log.d(TAG, "invokeGenerateImageFromTool: Model loaded successfully, starting image generation")
+            
+            // UI通知：実行中
+            viewModelScope.launch {
+                _toolCallState.value = ToolCallState.Executing(
+                    toolName = "generate_image",
+                    elapsedMs = SystemClock.elapsedRealtime()
+                )
+            }
+            _uiMessage.emit("🎨 画像生成中...")
+            
             val bmp = localDream.generateImage(
                 prompt = edited,
                 negativePrompt = neg,
@@ -2021,6 +2096,15 @@ class ChatViewModel(
 
             if (bmp == null) {
                 Log.w(TAG, "invokeGenerateImageFromTool: Image generation returned null")
+                // UI通知：失敗
+                viewModelScope.launch {
+                    _toolCallState.value = ToolCallState.Result(
+                        toolName = "generate_image",
+                        status = "error",
+                        resultMessage = "生成失敗"
+                    )
+                }
+                _uiMessage.emit("❌ generate_image: 画像生成失敗")
                 ToolExecutionResult(
                     success = true,
                     payload = mapOf("success" to false, "message" to "生成失敗")
@@ -2036,6 +2120,17 @@ class ChatViewModel(
                     }
                 }
                 Log.d(TAG, "invokeGenerateImageFromTool: ✓ Image generated successfully")
+                
+                // UI通知：成功
+                viewModelScope.launch {
+                    _toolCallState.value = ToolCallState.Result(
+                        toolName = "generate_image",
+                        status = "success",
+                        resultMessage = "画像を生成しました"
+                    )
+                }
+                _uiMessage.emit("✅ generate_image: 画像を生成しました")
+                
                 ToolExecutionResult(
                     success = true,
                     payload = mapOf(
@@ -2053,6 +2148,15 @@ class ChatViewModel(
             } catch (cleanupError: Exception) {
                 Log.e(TAG, "invokeGenerateImageFromTool: Cleanup failed", cleanupError)
             }
+            // UI通知：エラー
+            viewModelScope.launch {
+                _toolCallState.value = ToolCallState.Result(
+                    toolName = "generate_image",
+                    status = "error",
+                    resultMessage = e.message ?: "sd_error"
+                )
+            }
+            _uiMessage.emit("❌ generate_image: エラー - ${e.message ?: "不明なエラー"}")
             ToolExecutionResult(
                 success = false,
                 payload = mapOf("success" to false, "error" to (e.message ?: "sd_error"))

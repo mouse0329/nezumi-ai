@@ -108,13 +108,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.filterNotNull
 import kotlin.math.max
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 
 class ChatFragment : Fragment(R.layout.fragment_chat) {
-    
+
     companion object {
         private const val TAG = "ChatFragment"
         /** ドロップダウン・ヘッダーで長いラベルを省略するときの先頭文字数 */
@@ -124,11 +123,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private fun modelDisplaySuffix(label: String): String =
         if (label.length <= MODEL_NAME_DISPLAY_CHARS) label
         else label.take(MODEL_NAME_DISPLAY_CHARS).trimEnd() + "…"
-    
+
     private var _binding: FragmentChatBinding? = null
     private val binding get() = _binding!!
     private var defaultInputHint: CharSequence? = null
-    
+
     private lateinit var viewModel: ChatViewModel
     private lateinit var adapter: MessageAdapter
     private val args: ChatFragmentArgs by navArgs()
@@ -183,14 +182,14 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         autoScrollPosted = false
         followBottomAfterLayout()
     }
-    
+
     // Phase 11: 複数画像対応（Compose State管理で UI 再構成を自動化）
     private var selectedImageUrisList by mutableStateOf<List<String>>(emptyList())
     private var selectedAudioUri by mutableStateOf<String?>(null)  // State管理化
     private var cameraImageUri: Uri? = null
     private var imageInputEnabled = true
     private var audioInputEnabled = true
-    
+
     // 音声録音関連
     private var mediaRecorder: MediaRecorder? = null
     private var isRecordingAudio = false
@@ -203,7 +202,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var embeddingDownloadProgressTextView: TextView? = null
     private var embeddingDownloadProgressBar: ProgressBar? = null
 
-    
+
     // Phase 11: 複数画像選択
     private val imagePickerLauncher = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         if (!imageInputEnabled) {
@@ -217,7 +216,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             updateMediaPreview()
         }
     }
-    
+
     private val cameraLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) {
             // #10 fix: full-size image captured via EXTRA_OUTPUT is already saved to cameraImageUri
@@ -238,7 +237,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             Log.d("ChatFragment", "Camera cancelled by user")
         }
     }
-    
+
     private val audioPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (!audioInputEnabled) {
             Toast.makeText(requireContext(), "このモデルでは音声入力は無効です", Toast.LENGTH_SHORT).show()
@@ -250,7 +249,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             updateMediaPreview()
         }
     }
-    
+
     // 権限リクエストランチャー
     private val cameraPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
         if (isGranted) {
@@ -259,7 +258,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             Toast.makeText(requireContext(), "カメラの権限が必要です", Toast.LENGTH_SHORT).show()
         }
     }
-    
+
     private val recordPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
         if (isGranted) {
             startAudioRecording()
@@ -274,16 +273,16 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             viewModel.clearPendingMediaPreview()
             return
         }
-        
+
         // チャット欄への空メッセージ表示は不要（MediaPreviewBar で十分）
         // 画像と音声のプレビューは MediaPreviewBar（Compose）で入力欄上に直接表示
     }
-    
+
     // createMediaPreviewItem メソッドは削除されました（プレビュー機能廃止）
-    
+
     // removeMedia メソッドは削除されました（プレビュー機能廃止）
 
-    
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -292,7 +291,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         _binding = FragmentChatBinding.inflate(inflater, container, false)
         return binding.root
     }
-    
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         applyStatusBarInset()
@@ -302,7 +301,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         compressButtonText = getString(R.string.compress_context)
         thinkingToggleText = getString(R.string.chat_thinking_follow_settings)
         setupComposeIndicators()
-        
+
         // ViewModel初期化
         val database = NezumiAiDatabase.getInstance(requireContext())
         settingsRepository = SettingsRepository.fromDatabase(database)
@@ -327,7 +326,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         // 保存しておいたデフォルトの入力ヒントを保持（null で上書きしないようにするため）
         defaultInputHint = binding.messageInput.hint
-        
+
         // RecyclerView設定（adapterの初期化をStateFlowのcollect前に移動）
         adapter = MessageAdapter(
             onUserPromptRevoke = { message ->
@@ -349,7 +348,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
         binding.messagesRecyclerView.adapter = adapter
         (binding.messagesRecyclerView.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
-        
+
         // ★ バグ修正: RecyclerView のスクロール状態をリアルタイム監視
         binding.messagesRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
@@ -378,7 +377,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 updateScrollToBottomButtonVisibility()
             }
         })
-        
+
         // AdapterDataObserverを一度だけ登録（毎回登録するとメモリリーク）
         adapter.registerAdapterDataObserver(object : RecyclerView.AdapterDataObserver() {
             private fun maybeScrollToBottom() {
@@ -391,7 +390,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             override fun onItemRangeChanged(positionStart: Int, itemCount: Int) = maybeScrollToBottom()
             override fun onItemRangeChanged(positionStart: Int, itemCount: Int, payload: Any?) = maybeScrollToBottom()
         })
-        
+
         // nav args から incognito フラグを適用
         viewModel.setIncognitoMode(args.isIncognito)
 
@@ -403,8 +402,15 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
         }
 
+        var confirmationDialog: android.app.Dialog? = null
+
         viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.confirmationRequest.filterNotNull().collectLatest { initialPrompt ->
+            viewModel.confirmationRequest.collect { initialPrompt ->
+                if (initialPrompt == null) {
+                    confirmationDialog?.dismiss()
+                    confirmationDialog = null
+                    return@collect
+                }
                 withContext(Dispatchers.Main) {
                     val ctx = requireContext()
                     val edit = TextInputEditText(ctx).apply {
@@ -412,7 +418,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         minLines = 3
                         maxLines = 10
                     }
-                    MaterialAlertDialogBuilder(ctx)
+                    confirmationDialog = MaterialAlertDialogBuilder(ctx)
                         .setTitle(R.string.image_gen_confirm_title)
                         .setView(edit)
                         .setPositiveButton(R.string.image_gen_confirm_yes) { _, _ ->
@@ -421,8 +427,16 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         .setNegativeButton(R.string.image_gen_confirm_no) { _, _ ->
                             viewModel.onCancelGenerateImage()
                         }
-                        .setOnCancelListener { viewModel.onCancelGenerateImage() }
+                        .setOnCancelListener {
+                            viewModel.onCancelGenerateImage()
+                            confirmationDialog = null
+                        }
                         .show()
+
+                    // ダイアログが閉じられたときに確認
+                    confirmationDialog?.setOnDismissListener {
+                        confirmationDialog = null
+                    }
                 }
             }
         }
@@ -871,7 +885,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
         }
     }
-    
+
     private fun applyIncognitoModeSettings(isIncognito: Boolean) {
         if (isIncognito) {
             requireActivity().window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
@@ -889,18 +903,18 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         binding.mediaPreviewCompose.setBackgroundColor(headerColor)
         disableKeyboardLearning(isIncognito)
     }
-    
+
     private fun disableKeyboardLearning(disable: Boolean) {
         val imeOptions = if (disable) {
             android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
         } else {
             0
         }
-        
+
         // Find all EditText views and update IME options
         updateEditTextImeOptions(binding.root, imeOptions, disable)
     }
-    
+
     private fun updateEditTextImeOptions(view: View, imeOptions: Int, disable: Boolean) {
         if (view is ViewGroup) {
             for (i in 0 until view.childCount) {
@@ -925,7 +939,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
         }
     }
-    
+
     private fun updateIncognitoModeIndicator(isIncognito: Boolean) {
         if (isIncognito) {
             binding.backButton.setOnClickListener {
@@ -1420,13 +1434,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         val dialog = android.app.Dialog(requireContext())
         dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
         dialog.setCancelable(false)
-        
+
         val composeView = androidx.compose.ui.platform.ComposeView(requireContext()).apply {
             // ViewTreeLifecycleOwnerを明示的に設定
             setViewTreeLifecycleOwner(viewLifecycleOwner)
             setViewTreeViewModelStoreOwner(this@ChatFragment)
             setViewTreeSavedStateRegistryOwner(this@ChatFragment)
-            
+
             setContent {
                 NezumiComposeTheme {
                     MemoryWarningDialog(
@@ -1458,7 +1472,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 }
             }
         }
-        
+
         dialog.setContentView(composeView)
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
         dialog.show()
@@ -1822,7 +1836,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
         }
     }
-    
+
     override fun onDestroyView() {
         _binding?.messagesRecyclerView?.removeCallbacks(autoScrollRunnable)
         autoScrollPosted = false
@@ -1830,10 +1844,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         responseTypingAnimationJob = null
         recordingAnimationJob?.cancel()
         recordingAnimationJob = null
-        
+
         // 生成中の場合はキャンセル
         viewModel.stopGeneration()
-        
+
         // 録音中の場合は停止
         if (isRecordingAudio) {
             stopAudioRecording()
@@ -1857,7 +1871,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
         launchCameraInternal()
     }
-    
+
     private fun launchCameraInternal() {
         val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
         try {
@@ -1896,10 +1910,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         try {
             val clipboard = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
             val primaryClip = clipboard.primaryClip
-            
+
             if (primaryClip != null && primaryClip.itemCount > 0) {
                 val item = primaryClip.getItemAt(0)
-                
+
                 // Phase 11: 複数画像対応（最大5枚まで）
                 // URIが直接利用可能な場合
                 if (item.uri != null) {
@@ -1912,21 +1926,21 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                             if (!cacheDir.exists()) {
                                 cacheDir.mkdirs()
                             }
-                            
+
                             val cachedFile = java.io.File(cacheDir, "IMG_${System.currentTimeMillis()}.jpg")
                             val outputStream = java.io.FileOutputStream(cachedFile)
-                            
+
                             inputStream.copyTo(outputStream)
                             inputStream.close()
                             outputStream.close()
-                            
+
                             // FileProviderでURIを取得
                             val fileUri = androidx.core.content.FileProvider.getUriForFile(
                                 requireContext(),
                                 "${requireContext().packageName}.fileprovider",
                                 cachedFile
                             )
-                            
+
                             // 複数画像リストに追加（最大5枚まで）
                             if (selectedImageUrisList.size < 5) {
                                 selectedImageUrisList = selectedImageUrisList + fileUri.toString()
@@ -1985,23 +1999,23 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
-        
+
         startAudioRecording()
     }
-    
+
     @Suppress("DEPRECATION")
     private fun startAudioRecording() {
         try {
             // 録音開始
             isRecordingAudio = true
-            
+
             // 録音ファイルの作成
             val recordingDir = java.io.File(requireContext().cacheDir, "recordings")
             if (!recordingDir.exists()) {
                 recordingDir.mkdirs()
             }
             recordingFile = java.io.File(recordingDir, "REC_${System.currentTimeMillis()}.m4a")
-            
+
             // MediaRecorderの初期化
             mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 MediaRecorder(requireContext())
@@ -2017,7 +2031,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 prepare()
                 start()
             }
-            
+
             // 録音用モーダルを表示
             showAudioRecordingDialog()
             binding.sendButton.isEnabled = false
@@ -2026,7 +2040,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
             // 録音アニメーションを開始
             startRecordingAmplitudeAnimation()
-            
+
             Toast.makeText(requireContext(), "録音開始しました", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Log.e("ChatFragment", "Error starting audio recording", e)
@@ -2036,7 +2050,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             mediaRecorder = null
         }
     }
-    
+
     private fun stopAudioRecording() {
         try {
             if (mediaRecorder != null && isRecordingAudio) {
@@ -2050,21 +2064,21 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 }
                 mediaRecorder = null
                 isRecordingAudio = false
-                
+
                 // アニメーション停止
                 recordingAnimationJob?.cancel()
                 recordingAnimationJob = null
-                
+
                 // hintを元に戻す（cancelするとアニメJob内の後処理が走らないため明示的に戻す）
                 _binding?.messageInput?.hint = "メッセージを入力..."
-                
+
                 // 送信ボタンはモーダル停止ボタンで分離しているので、通常の送信UIに戻す
                 if (_binding != null) {
                     renderSendButtonState()
                 }
                 _binding?.messageInput?.isEnabled = true
                 _binding?.mediaMenuButton?.isEnabled = true
-                
+
                 // 録音ファイルをコンテキストに追加
                 if (recordingFile != null && recordingFile!!.exists()) {
                     try {
@@ -2128,10 +2142,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         recordingStatusTextView = null
         recordingWaveBars = emptyList()
     }
-    
+
     private fun startRecordingAmplitudeAnimation() {
         recordingAnimationJob?.cancel()
-        
+
         recordingAnimationJob = viewLifecycleOwner.lifecycleScope.launch {
             var dotCount = 0
             while (isRecordingAudio && mediaRecorder != null) {
@@ -2139,7 +2153,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     // ドット数を循環（1個 → 2個 → 3個 → 1個）
                     dotCount = (dotCount % 3) + 1
                     val dots = ".".repeat(dotCount)
-                    
+
                     withContext(Dispatchers.Main) {
                         recordingStatusTextView?.text = "録音中$dots"
                         val density = requireContext().resources.displayMetrics.density
@@ -2151,13 +2165,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                             bar.requestLayout()
                         }
                     }
-                    
+
                     delay(500) // 500msごとに更新
                 } catch (e: Exception) {
                     Log.d("ChatFragment", "Recording animation error", e)
                 }
             }
-            
+
             // アニメーション終了時にプレースホルダーを元に戻す
             withContext(Dispatchers.Main) {
                 _binding?.messageInput?.hint = "メッセージを入力..."
