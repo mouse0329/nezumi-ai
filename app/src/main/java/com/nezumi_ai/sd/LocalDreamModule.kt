@@ -70,35 +70,41 @@ class LocalDreamModule(private val context: Context) {
         val runtimeDir = File(context.filesDir, RUNTIME_DIR).apply {
             if (!exists()) mkdirs()
         }
-        
+        Log.d(TAG, "prepareRuntimeDir: runtimeDir=${runtimeDir.absolutePath}")
+
         try {
             val qnnLibs = context.assets.list("qnnlibs")
-            qnnLibs?.forEach { fileName ->
-                val targetLib = File(runtimeDir, fileName)
-                
-                val needsCopy = !targetLib.exists() || run {
-                    val assetInputStream = context.assets.open("qnnlibs/$fileName")
-                    val assetSize = assetInputStream.use { it.available().toLong() }
-                    targetLib.length() != assetSize
-                }
-                
-                if (needsCopy) {
-                    context.assets.open("qnnlibs/$fileName").use { input ->
-                        targetLib.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
+            if (qnnLibs == null || qnnLibs.isEmpty()) {
+                Log.w(TAG, "prepareRuntimeDir: assets/qnnlibs is empty or missing")
+            } else {
+                qnnLibs.forEach { fileName ->
+                    val targetLib = File(runtimeDir, fileName)
+
+                    val needsCopy = !targetLib.exists() || run {
+                        val assetInputStream = context.assets.open("qnnlibs/$fileName")
+                        val assetSize = assetInputStream.use { it.available().toLong() }
+                        targetLib.length() != assetSize
                     }
-                    Log.d(TAG, "Copied $fileName to runtime directory")
+
+                    if (needsCopy) {
+                        context.assets.open("qnnlibs/$fileName").use { input ->
+                            targetLib.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                        Log.d(TAG, "Copied $fileName to runtime directory")
+                    }
+
+                    targetLib.setReadable(true, true)
+                    targetLib.setExecutable(true, true)
+                    Log.d(TAG, "prepareRuntimeDir: targetLib=${targetLib.absolutePath} exists=${targetLib.exists()} canExecute=${targetLib.canExecute()} length=${targetLib.length()}")
                 }
-                
-                targetLib.setReadable(true, true)
-                targetLib.setExecutable(true, true)
+                Log.i(TAG, "QNN libraries prepared in: ${runtimeDir.absolutePath}")
             }
-            Log.i(TAG, "QNN libraries prepared in: ${runtimeDir.absolutePath}")
         } catch (e: IOException) {
             Log.w(TAG, "No QNN libraries found in assets: ${e.message}")
         }
-        
+
         runtimeDir.setReadable(true, true)
         runtimeDir.setExecutable(true, true)
         return runtimeDir
@@ -231,8 +237,12 @@ class LocalDreamModule(private val context: Context) {
             
             Log.d(TAG, "loadModel: Selected backend=$selectedBackend, modelDir=$modelDir")
             
-            if (currentModelPath == modelPath && serverProcess?.isAlive == true && isServerReady) {
-                Log.d(TAG, "loadModel: Model already loaded and server ready: $modelPath")
+            if (currentModelPath == modelPath && isServerReady) {
+                if (serverProcess?.isAlive != true) {
+                    Log.w(TAG, "loadModel: Previous server process is not alive but HTTP service is still marked ready. Reusing existing server for $modelPath.")
+                } else {
+                    Log.d(TAG, "loadModel: Model already loaded and server ready: $modelPath")
+                }
                 return@withContext true
             }
             
@@ -272,22 +282,46 @@ class LocalDreamModule(private val context: Context) {
         val nativeDir = context.applicationInfo.nativeLibraryDir
         val nativeDirFile = File(nativeDir, EXECUTABLE_NAME)
         val runtimeDirFile = File(runtimeDir, EXECUTABLE_NAME)
-        
+
         val executableFile = when {
-            nativeDirFile.exists() -> {
+            nativeDirFile.exists() && nativeDirFile.canExecute() -> {
                 Log.d(TAG, "Using executable from nativeLibraryDir: ${nativeDirFile.absolutePath}")
                 nativeDirFile
             }
-            runtimeDirFile.exists() -> {
+            runtimeDirFile.exists() && runtimeDirFile.canExecute() -> {
                 Log.d(TAG, "Using executable from runtime_libs: ${runtimeDirFile.absolutePath}")
+                runtimeDirFile
+            }
+            nativeDirFile.exists() -> {
+                Log.w(TAG, "nativeLibraryDir executable exists but is not executable: ${nativeDirFile.absolutePath}")
+                nativeDirFile.setExecutable(true, true)
+                Log.d(TAG, "nativeLibraryDir executable permission forced: canExecute=${nativeDirFile.canExecute()}")
+                if (nativeDirFile.canExecute()) {
+                    nativeDirFile
+                } else {
+                    Log.w(TAG, "nativeLibraryDir executable still not executable after chmod")
+                    if (runtimeDirFile.exists()) {
+                        Log.d(TAG, "Falling back to executable from runtime_libs")
+                        runtimeDirFile.setExecutable(true, true)
+                        runtimeDirFile
+                    } else {
+                        nativeDirFile
+                    }
+                }
+            }
+            runtimeDirFile.exists() -> {
+                Log.d(TAG, "Using executable from runtime_libs (exists but permission may not be set yet): ${runtimeDirFile.absolutePath}")
                 runtimeDirFile.setExecutable(true, true)
+                Log.d(TAG, "runtime_libs executable permission forced: canExecute=${runtimeDirFile.canExecute()}")
                 runtimeDirFile
             }
             else -> {
                 Log.e(TAG, "Executable not found")
+                Log.e(TAG, "nativeDirFile exists=${nativeDirFile.exists()}, runtimeDirFile exists=${runtimeDirFile.exists()}")
                 return false
             }
         }
+        Log.d(TAG, "tryStartServer: executableFile=${executableFile.absolutePath} exists=${executableFile.exists()} canExecute=${executableFile.canExecute()} length=${executableFile.length()}")
         
         val command = buildCommand(executableFile, modelDir, runtimeDir, isCpu)
         val env = buildEnvironment(runtimeDir)
@@ -303,16 +337,14 @@ class LocalDreamModule(private val context: Context) {
         
         Log.d(TAG, "tryStartServer: Spawning process...")
         serverProcess = processBuilder.start()
+        startMonitor()
         currentModelPath = modelPath
         currentBackend = backend
         isServerReady = false
         
-        startMonitor()
-        Log.d(TAG, "tryStartServer: Monitor started, waiting for server...")
-        
+        Log.d(TAG, "tryStartServer: serverProcess alive=${serverProcess?.isAlive}")
         val timeoutMs = if (isCpu) 180000L else 120000L
         val ready = waitForServer(timeoutMs)
-        
         if (ready) {
             isServerReady = true
             Log.i(TAG, "tryStartServer: ✓ Server is ready on port $SERVER_PORT (backend: $backend)")
@@ -332,7 +364,8 @@ class LocalDreamModule(private val context: Context) {
         Log.d(TAG, "waitForServer: Starting health checks, timeout=${timeoutMs}ms")
         
         while (System.currentTimeMillis() - startTime < timeoutMs) {
-            if (serverProcess?.isAlive != true) {
+            val alive = serverProcess?.isAlive == true
+            if (!alive) {
                 if (!processDied) {
                     Log.w(TAG, "waitForServer: Server process died while waiting (process=null or !isAlive)")
                     processDied = true
@@ -349,16 +382,17 @@ class LocalDreamModule(private val context: Context) {
                 val code = conn.responseCode
                 conn.disconnect()
                 portCheckCount++
-                Log.d(TAG, "waitForServer: Health check #$portCheckCount response: $code (elapsed=${System.currentTimeMillis()-startTime}ms)")
+                Log.d(TAG, "waitForServer: Health check #$portCheckCount response: $code (alive=$alive, elapsed=${System.currentTimeMillis()-startTime}ms)")
                 if (code == 200 || code == 404) {
                     Log.i(TAG, "waitForServer: Server is ready! (response=$code)")
                     return true
                 }
             } catch (e: Exception) {
-                val now = System.currentTimeMillis()
-                if (now - lastLogTime > 10000) {
-                    Log.d(TAG, "waitForServer: Still waiting... ${(now - startTime)/1000}s elapsed (${e.javaClass.simpleName}: ${e.message})")
-                    lastLogTime = now
+                portCheckCount++
+                Log.d(TAG, "waitForServer: Health check #$portCheckCount failed (alive=$alive, elapsed=${System.currentTimeMillis()-startTime}ms): ${e.javaClass.simpleName}: ${e.message}")
+                if (!alive && e is IOException) {
+                    // If the process died, log process state repeatedly for debugging.
+                    Log.w(TAG, "waitForServer: serverProcess state on failure: process=$serverProcess")
                 }
             }
 
@@ -428,9 +462,12 @@ class LocalDreamModule(private val context: Context) {
             return@withContext null
         }
         // ─────────────────────────────────────────────────────────
-        if (!isServerReady || serverProcess?.isAlive != true) {
-            Log.e(TAG, "Server is not running")
+        if (!isServerReady) {
+            Log.e(TAG, "Server is not ready")
             return@withContext null
+        }
+        if (serverProcess?.isAlive != true) {
+            Log.w(TAG, "Server process is not alive but service is marked ready; continuing with HTTP generation")
         }
         
         try {
@@ -466,6 +503,7 @@ class LocalDreamModule(private val context: Context) {
             }
             
             val responseCode = conn.responseCode
+            Log.d(TAG, "generateImage: POST /generate responseCode=$responseCode")
             if (responseCode != 200) {
                 Log.e(TAG, "Server returned $responseCode")
                 activeGenerationConn.set(null)

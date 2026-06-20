@@ -392,6 +392,7 @@ class ModelManager(
      * モデルをアンロード
      */
     suspend fun unloadModel(): Result<Unit> {
+        Log.d(TAG, "ModelManager.unloadModel: start")
         return loadMutex.withLock {
             try {
                 runCatching { activeEngine.cancelInference() }
@@ -400,6 +401,7 @@ class ModelManager(
                 val result = activeEngine.unloadModel()
                 currentModelName = null
                 currentConfig = null
+                Log.d(TAG, "ModelManager.unloadModel: completed success=${result.isSuccess}")
                 result
             } catch (t: Throwable) {
                 val e = if (t is Exception) t else RuntimeException(t)

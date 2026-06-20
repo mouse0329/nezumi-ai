@@ -56,7 +56,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -325,6 +326,9 @@ class ChatViewModel(
     private val _uiMessage = MutableSharedFlow<String>()
     val uiMessage: SharedFlow<String> = _uiMessage
 
+    private val _inferenceStream = MutableSharedFlow<String>()
+    val inferenceStream: SharedFlow<String> = _inferenceStream
+
     private val _navigationEvent = MutableSharedFlow<NavigationEvent>()
     val navigationEvent: SharedFlow<NavigationEvent> = _navigationEvent
 
@@ -364,15 +368,8 @@ class ChatViewModel(
     private var streamingAssistantMessageIdForTools: Long? = null
 
     private val generateImageToolHandler = GenerateImageToolHandler { toolCall ->
-        // viewModelScope で実行して、coroutineScope のコンテキストを維持
-        viewModelScope.launch {
-            invokeGenerateImageFromTool(toolCall)
-        }
-        // 結果は待たずに即座に返す（実際の結果は後で UI に反映される）
-        ToolExecutionResult(
-            success = true,
-            payload = mapOf("success" to true, "message" to "image_generation_started")
-        )
+        // ツール実行の完了を待機して結果を返すように変更
+        invokeGenerateImageFromTool(toolCall)
     }
 
     data class MemoryWarningInfo(
@@ -1255,8 +1252,18 @@ class ChatViewModel(
             // ストリーム内容を収集
             // タイムアウトは「最初の出力が来るまで」のみ有効。
             val firstTokenSeen = AtomicBoolean(false)
+
+            // ツール実行結果などの内部イベントも収集対象に含める
+            val combinedFlow = combine(aiResponseFlow, inferenceStream) { modelChunk, internalChunk ->
+                // internalChunk があれば優先的に処理（実際には Flow のマージが望ましいが、簡易的に実装）
+                modelChunk
+            }
+            // 実際には merge を使う
+            val mergedFlow = kotlinx.coroutines.flow.merge(aiResponseFlow, inferenceStream)
+
             val lastChunkAt = AtomicLong(SystemClock.elapsedRealtime())
             val wallEndAt = SystemClock.elapsedRealtime() + GENERATION_WALL_TIMEOUT_MS
+            val toolCallInProgress = AtomicBoolean(false)
             var streamAbortNote: String? = null
             var collectionCancelledByUser = false
             try {
@@ -1273,6 +1280,7 @@ class ChatViewModel(
                             while (isActive) {
                                 delay(GENERATION_STALL_CHECK_MS)
                                 if (!firstTokenSeen.get()) continue
+                                if (toolCallInProgress.get()) continue
                                 val idle = SystemClock.elapsedRealtime() - lastChunkAt.get()
                                 if (idle >= GENERATION_STALL_TIMEOUT_MS) {
                                     throw GenerationStalledException()
@@ -1299,7 +1307,7 @@ class ChatViewModel(
                         }
 
                         try {
-                            aiResponseFlow.collect { chunk ->
+                            mergedFlow.collect { chunk ->
                                 if (SystemClock.elapsedRealtime() > wallEndAt) {
                                     throw GenerationWallTimeoutException()
                                 }
@@ -1359,6 +1367,7 @@ class ChatViewModel(
                                             }
                                         }
                                         toolCallChunk != null -> {
+                                            toolCallInProgress.set(true)
                                             Log.d(TAG, "Tool call detected: $toolCallChunk")
                                             val toolNames = toolCallChunk.split(",").map { it.trim() }
                                             for (toolName in toolNames) {
@@ -1379,6 +1388,7 @@ class ChatViewModel(
                                             }
                                         }
                                         toolResultChunk != null -> {
+                                            toolCallInProgress.set(false)
                                             Log.d(TAG, "Tool result received: $toolResultChunk")
                                             val parts = toolResultChunk.split(":", limit = 2)
                                             if (parts.size >= 2) {
@@ -1401,6 +1411,7 @@ class ChatViewModel(
                                             }
                                         }
                                         toolResults != null -> {
+                                            toolCallInProgress.set(false)
                                             if (toolResults != "[]") {
                                                 toolResultsJson = toolResults
                                             }
@@ -2030,10 +2041,18 @@ class ChatViewModel(
         }
 
         val manager = requireModelManager()
+        Log.d(TAG, "invokeGenerateImageFromTool: requireModelManager succeeded")
 
         // LLMモデルを完全にアンロード
         Log.d(TAG, "invokeGenerateImageFromTool: Unloading LLM before SD")
-        manager.unloadModel()
+        val unloadResult = manager.unloadModel()
+        Log.d(
+            TAG,
+            "invokeGenerateImageFromTool: unloadModel result=${unloadResult.isSuccess} exception=${unloadResult.exceptionOrNull()}"
+        )
+        if (!unloadResult.isSuccess) {
+            Log.w(TAG, "invokeGenerateImageFromTool: unloadModel failed; continuing anyway")
+        }
 
         // メモリ安定化のため少し待機
         delay(300L)
@@ -2044,17 +2063,17 @@ class ChatViewModel(
 
             Log.d(TAG, "invokeGenerateImageFromTool: Loading SD model from $sdPath, backend=$backend")
             val loaded = localDream.loadModel(sdPath, backend)
+            Log.d(TAG, "invokeGenerateImageFromTool: LocalDream.loadModel returned $loaded")
             if (!loaded) {
                 Log.e(TAG, "invokeGenerateImageFromTool: SD model load failed - aborting generation")
                 // UI通知：失敗
-                viewModelScope.launch {
-                    _toolCallState.value = ToolCallState.Result(
-                        toolName = "generate_image",
-                        status = "error",
-                        resultMessage = "モデルロード失敗"
-                    )
-                }
+                _toolCallState.value = ToolCallState.Result(
+                    toolName = "generate_image",
+                    status = "error",
+                    resultMessage = "モデルロード失敗"
+                )
                 _uiMessage.emit("❌ generate_image: モデルロード失敗")
+
                 return ToolExecutionResult(
                     success = false,
                     payload = mapOf("success" to false, "error" to "model_load_failed")
@@ -2082,9 +2101,14 @@ class ChatViewModel(
                 seed = seed,
                 onProgress = { step, totalSteps, _, _ ->
                     _imageGenProgress.value = Pair(step, totalSteps)
+                    _toolCallState.value = ToolCallState.Executing(
+                        toolName = "generate_image",
+                        elapsedMs = SystemClock.elapsedRealtime()
+                    )
                     Log.d(TAG, "invokeGenerateImageFromTool: Progress $step/$totalSteps")
                 }
             )
+            // 完了後は progress を null に戻す
             _imageGenProgress.value = null
 
             Log.d(TAG, "invokeGenerateImageFromTool: Cleaning up SD (bmp=${bmp != null})")
@@ -2097,19 +2121,21 @@ class ChatViewModel(
             if (bmp == null) {
                 Log.w(TAG, "invokeGenerateImageFromTool: Image generation returned null")
                 // UI通知：失敗
-                viewModelScope.launch {
-                    _toolCallState.value = ToolCallState.Result(
-                        toolName = "generate_image",
-                        status = "error",
-                        resultMessage = "生成失敗"
-                    )
-                }
+                _toolCallState.value = ToolCallState.Result(
+                    toolName = "generate_image",
+                    status = "error",
+                    resultMessage = "生成失敗"
+                )
                 _uiMessage.emit("❌ generate_image: 画像生成失敗")
+
                 ToolExecutionResult(
-                    success = true,
-                    payload = mapOf("success" to false, "message" to "生成失敗")
+                    success = false,
+                    payload = mapOf("success" to false, "error" to "generation_failed")
                 )
             } else {
+                // ギャラリーへの保存（ライブラリへの保存要望に対応）
+                saveBitmapToGallery(bmp)
+
                 val msgId = streamingAssistantMessageIdForTools
                 if (msgId != null) {
                     val uri = MessageMediaStore.savePngBitmap(appContext, bmp, "chat_sd_$msgId")
@@ -2122,20 +2148,18 @@ class ChatViewModel(
                 Log.d(TAG, "invokeGenerateImageFromTool: ✓ Image generated successfully")
                 
                 // UI通知：成功
-                viewModelScope.launch {
-                    _toolCallState.value = ToolCallState.Result(
-                        toolName = "generate_image",
-                        status = "success",
-                        resultMessage = "画像を生成しました"
-                    )
-                }
+                _toolCallState.value = ToolCallState.Result(
+                    toolName = "generate_image",
+                    status = "success",
+                    resultMessage = "画像を生成しました"
+                )
                 _uiMessage.emit("✅ generate_image: 画像を生成しました")
-                
+
                 ToolExecutionResult(
                     success = true,
                     payload = mapOf(
                         "success" to true,
-                        "message" to "画像を生成しました",
+                        "message" to "画像を生成しました。ユーザーの画面に表示されています。",
                         "prompt" to edited
                     )
                 )
@@ -2149,14 +2173,17 @@ class ChatViewModel(
                 Log.e(TAG, "invokeGenerateImageFromTool: Cleanup failed", cleanupError)
             }
             // UI通知：エラー
-            viewModelScope.launch {
-                _toolCallState.value = ToolCallState.Result(
-                    toolName = "generate_image",
-                    status = "error",
-                    resultMessage = e.message ?: "sd_error"
-                )
-            }
+            _toolCallState.value = ToolCallState.Result(
+                toolName = "generate_image",
+                status = "error",
+                resultMessage = e.message ?: "sd_error"
+            )
             _uiMessage.emit("❌ generate_image: エラー - ${e.message ?: "不明なエラー"}")
+
+            // LLMへの報告をストリームに流す
+            viewModelScope.launch {
+                _inferenceStream.emit(InferenceStreamProtocol.encodeToolResultChunk("generate_image", "error"))
+            }
             ToolExecutionResult(
                 success = false,
                 payload = mapOf("success" to false, "error" to (e.message ?: "sd_error"))
@@ -3899,4 +3926,47 @@ class ChatViewModel(
             }
         }
     }
+
+    private fun saveBitmapToGallery(bmp: Bitmap) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val name = "nezumi_chat_sd_${System.currentTimeMillis()}.png"
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    val values = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name)
+                        put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")
+                        put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/NezumiAI")
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                            put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+                        }
+                    }
+                    val resolver = appContext.contentResolver
+                    val uri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                    if (uri != null) {
+                        resolver.openOutputStream(uri)?.use { out ->
+                            bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+                        }
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                            values.clear()
+                            values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
+                            resolver.update(uri, values, null, null)
+                        }
+                        Log.d(TAG, "Saved to gallery: $uri")
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    val uriStr = android.provider.MediaStore.Images.Media.insertImage(
+                        appContext.contentResolver,
+                        bmp,
+                        name,
+                        "nezumi-ai SD"
+                    )
+                    Log.d(TAG, "Saved to gallery (legacy): $uriStr")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save to gallery", e)
+            }
+        }
+    }
 }
+
