@@ -109,6 +109,39 @@ class LocalDreamModule(private val context: Context) {
         runtimeDir.setExecutable(true, true)
         return runtimeDir
     }
+
+    private fun prepareExecutable(runtimeDir: File): File? {
+        val nativeDir = context.applicationInfo.nativeLibraryDir
+        val nativeDirFile = File(nativeDir, EXECUTABLE_NAME)
+        val runtimeDirFile = File(runtimeDir, EXECUTABLE_NAME)
+
+        if (!nativeDirFile.exists()) {
+            Log.w(TAG, "prepareExecutable: executable not found in nativeLibraryDir=${nativeDirFile.absolutePath}")
+            return null
+        }
+
+        try {
+            if (!runtimeDirFile.exists() || runtimeDirFile.length() != nativeDirFile.length()) {
+                nativeDirFile.inputStream().use { input ->
+                    runtimeDirFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                runtimeDirFile.setReadable(true, false)
+                runtimeDirFile.setExecutable(true, false)
+                Log.d(TAG, "prepareExecutable: copied executable to runtimeDir=${runtimeDirFile.absolutePath}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "prepareExecutable: failed to copy executable to runtimeDir", e)
+        }
+
+        if (runtimeDirFile.exists() && !runtimeDirFile.canExecute()) {
+            runtimeDirFile.setExecutable(true, false)
+            Log.d(TAG, "prepareExecutable: setExecutable runtimeDirFile=${runtimeDirFile.absolutePath} canExecute=${runtimeDirFile.canExecute()}")
+        }
+
+        return if (runtimeDirFile.exists()) runtimeDirFile else nativeDirFile
+    }
     
     private fun resolveModelDir(dir: File, isCpu: Boolean): File? {
         val markerFile = if (isCpu) "unet.mnn" else "unet.bin"
@@ -154,8 +187,12 @@ class LocalDreamModule(private val context: Context) {
                 }
             }
         } else {
-            val hasMnnClip = File(modelDir, "clip.mnn").exists() || File(modelDir, "clip_v2.mnn").exists()
-            val clipFile = if (hasMnnClip) "clip.mnn" else "clip.bin"
+            val clipFile = when {
+                File(modelDir, "clip.mnn").exists() -> "clip.mnn"
+                File(modelDir, "clip_v2.mnn").exists() -> "clip_v2.mnn"
+                else -> "clip.bin"
+            }
+            val hasMnnClip = clipFile.endsWith(".mnn")
             
             mutableListOf(
                 executable.absolutePath,
@@ -179,20 +216,27 @@ class LocalDreamModule(private val context: Context) {
         }
     }
     
-    private fun buildEnvironment(runtimeDir: File): Map<String, String> {
+    private fun buildEnvironment(runtimeDir: File, nativeLibraryDir: String): Map<String, String> {
         val env = mutableMapOf<String, String>()
 
         val systemLibPaths = mutableListOf(
             runtimeDir.absolutePath,
+            nativeLibraryDir,
             "/system/lib64",
             "/vendor/lib64",
             "/vendor/lib64/egl"
         )
 
+        val inheritedLdLibraryPath = System.getenv("LD_LIBRARY_PATH")
+        if (!inheritedLdLibraryPath.isNullOrBlank()) {
+            systemLibPaths.add(inheritedLdLibraryPath)
+        }
+
         env["LD_LIBRARY_PATH"] = systemLibPaths.joinToString(":")
         env["DSP_LIBRARY_PATH"] = runtimeDir.absolutePath
         env["ADSP_LIBRARY_PATH"] = runtimeDir.absolutePath
         env["MNN_OPENCL_TUNING"] = "WIDE"
+        env["PATH"] = System.getenv("PATH") ?: ""
 
         return env
     }
@@ -278,12 +322,17 @@ class LocalDreamModule(private val context: Context) {
         Log.d(TAG, "tryStartServer: Starting (backend=$backend, isCpu=$isCpu)")
         
         val runtimeDir = prepareRuntimeDir()
+        val runtimeDirExecutable = prepareExecutable(runtimeDir)
         
         val nativeDir = context.applicationInfo.nativeLibraryDir
         val nativeDirFile = File(nativeDir, EXECUTABLE_NAME)
         val runtimeDirFile = File(runtimeDir, EXECUTABLE_NAME)
 
         val executableFile = when {
+            runtimeDirExecutable != null && runtimeDirExecutable.exists() && runtimeDirExecutable.canExecute() -> {
+                Log.d(TAG, "Using executable from runtime_libs: ${runtimeDirExecutable.absolutePath}")
+                runtimeDirExecutable
+            }
             nativeDirFile.exists() && nativeDirFile.canExecute() -> {
                 Log.d(TAG, "Using executable from nativeLibraryDir: ${nativeDirFile.absolutePath}")
                 nativeDirFile
@@ -324,7 +373,7 @@ class LocalDreamModule(private val context: Context) {
         Log.d(TAG, "tryStartServer: executableFile=${executableFile.absolutePath} exists=${executableFile.exists()} canExecute=${executableFile.canExecute()} length=${executableFile.length()}")
         
         val command = buildCommand(executableFile, modelDir, runtimeDir, isCpu)
-        val env = buildEnvironment(runtimeDir)
+        val env = buildEnvironment(runtimeDir, nativeDir)
         
         Log.d(TAG, "COMMAND: ${command.joinToString(" ")}")
         Log.d(TAG, "LD_LIBRARY_PATH=${env["LD_LIBRARY_PATH"]}")
@@ -336,7 +385,19 @@ class LocalDreamModule(private val context: Context) {
         }
         
         Log.d(TAG, "tryStartServer: Spawning process...")
-        serverProcess = processBuilder.start()
+        serverProcess = try {
+            processBuilder.start()
+        } catch (e: IOException) {
+            Log.w(TAG, "tryStartServer: direct exec failed, retrying with sh", e)
+            val shellCommand = listOf("sh", "-c", command.joinToString(" ") { arg ->
+                arg.replace("'", "'\\''").let { "'$it'" }
+            })
+            ProcessBuilder(shellCommand).apply {
+                directory(executableFile.parentFile)
+                redirectErrorStream(true)
+                environment().putAll(env)
+            }.start()
+        }
         startMonitor()
         currentModelPath = modelPath
         currentBackend = backend

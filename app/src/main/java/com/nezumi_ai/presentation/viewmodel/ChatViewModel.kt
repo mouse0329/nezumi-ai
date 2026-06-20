@@ -1979,6 +1979,7 @@ class ChatViewModel(
         val prompt = toolCall.arguments["prompt"]?.toString()?.trim().orEmpty()
         if (prompt.isEmpty()) {
             // UI通知：ツール実行開始
+            _imageGenProgress.value = null
             viewModelScope.launch {
                 _toolCallState.value = ToolCallState.Executing(
                     toolName = "generate_image",
@@ -2009,6 +2010,7 @@ class ChatViewModel(
         val edited = awaitImageGenerationConfirmation(prompt)
         if (edited == null) {
             // UI通知：キャンセル
+            _imageGenProgress.value = null
             viewModelScope.launch {
                 _toolCallState.value = ToolCallState.Result(
                     toolName = "generate_image",
@@ -2023,9 +2025,19 @@ class ChatViewModel(
             )
         }
 
+        // 初期状態を早期にセットして、チャット画面へ進捗表示を開始する
+        viewModelScope.launch {
+            _toolCallState.value = ToolCallState.Executing(
+                toolName = "generate_image",
+                elapsedMs = SystemClock.elapsedRealtime()
+            )
+            _imageGenProgress.value = Pair(0, steps)
+        }
+
         val sdPath = PreferencesHelper.getSdModelPath(appContext).trim()
         if (sdPath.isEmpty() || !File(sdPath).isDirectory) {
             // UI通知：失敗
+            _imageGenProgress.value = null
             viewModelScope.launch {
                 _toolCallState.value = ToolCallState.Result(
                     toolName = "generate_image",
@@ -2044,8 +2056,8 @@ class ChatViewModel(
         Log.d(TAG, "invokeGenerateImageFromTool: requireModelManager succeeded")
 
         // LLMモデルを完全にアンロード
-        Log.d(TAG, "invokeGenerateImageFromTool: Unloading LLM before SD")
-        val unloadResult = manager.unloadModel()
+        Log.d(TAG, "invokeGenerateImageFromTool: Unloading LLM before SD (skip cancel to avoid self-cancel)")
+        val unloadResult = manager.unloadModel(skipCancelInference = true)
         Log.d(
             TAG,
             "invokeGenerateImageFromTool: unloadModel result=${unloadResult.isSuccess} exception=${unloadResult.exceptionOrNull()}"
@@ -2067,6 +2079,7 @@ class ChatViewModel(
             if (!loaded) {
                 Log.e(TAG, "invokeGenerateImageFromTool: SD model load failed - aborting generation")
                 // UI通知：失敗
+                _imageGenProgress.value = null
                 _toolCallState.value = ToolCallState.Result(
                     toolName = "generate_image",
                     status = "error",
@@ -2173,6 +2186,7 @@ class ChatViewModel(
                 Log.e(TAG, "invokeGenerateImageFromTool: Cleanup failed", cleanupError)
             }
             // UI通知：エラー
+            _imageGenProgress.value = null
             _toolCallState.value = ToolCallState.Result(
                 toolName = "generate_image",
                 status = "error",

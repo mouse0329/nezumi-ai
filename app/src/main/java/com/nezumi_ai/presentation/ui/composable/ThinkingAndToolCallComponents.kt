@@ -218,13 +218,28 @@ fun ToolCallProgressBar(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            LinearProgressIndicator(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp),
-                color = color,
-                trackColor = color.copy(alpha = 0.2f)
-            )
+            val progressFraction = imageGenProgress?.let { (step, total) ->
+                if (total > 0) (step.toFloat() / total.toFloat()).coerceIn(0f, 1f) else null
+            }
+
+            if (progressFraction != null) {
+                LinearProgressIndicator(
+                    progress = progressFraction,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp),
+                    color = color,
+                    trackColor = color.copy(alpha = 0.2f)
+                )
+            } else {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp),
+                    color = color,
+                    trackColor = color.copy(alpha = 0.2f)
+                )
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
