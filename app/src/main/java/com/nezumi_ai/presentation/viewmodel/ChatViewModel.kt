@@ -1318,9 +1318,14 @@ class ChatViewModel(
                                     when {
                                         finalFromModel != null -> {
                                             Log.d(TAG, "FINAL received: length=${finalFromModel.length}")
-                                            finalFromModelGlobal = finalFromModel
+                                            val sanitizedFinal =
+                                                Gemma4ThinkingParser.sanitizeVisibleText(finalFromModel)
+                                            val resolvedFinal = sanitizedFinal.ifBlank {
+                                                lastPersistedContent.ifBlank { finalFromModel }
+                                            }
+                                            finalFromModelGlobal = resolvedFinal
                                             answerBuilder.clear()
-                                            answerBuilder.append(finalFromModel)
+                                            answerBuilder.append(resolvedFinal)
                                         }
                                         thinkDelta != null -> {
                                             if (!nativeThinkingStream && answerBuilder.isNotBlank()) {
@@ -1407,6 +1412,9 @@ class ChatViewModel(
                                                     _uiMessage.emit(toolListMsg)
                                                 }
                                             } else if (seg.isNotEmpty()) {
+                                                if (_toolCallState.value is ToolCallState.Result) {
+                                                    _toolCallState.value = ToolCallState.Responding
+                                                }
                                                 val currentContent = answerBuilder.toString()
                                                 if (BuildConfig.DEBUG) {
                                                     Log.d(TAG, "RAW_CHUNK: length=${seg.length} content='${seg.take(100)}'")
@@ -1591,6 +1599,8 @@ class ChatViewModel(
                 finalThinking =
                     Gemma4ThinkingParser.sanitizeVisibleText(thinkingBuilder.toString()).ifBlank { null }
             } else {
+                val sanitizedAnswer =
+                    Gemma4ThinkingParser.sanitizeVisibleText(answerBuilder.toString())
                 val finalParsed = Gemma4ThinkingParser.parse(
                     rawInput = answerBuilder.toString(),
                     treatUnmarkedInputAsThinking = config.enableThinking
@@ -1598,7 +1608,8 @@ class ChatViewModel(
                 completeResponse =
                     sanitizeAssistantOutputForModel(
                         engineModelName = engineModelName,
-                        text = finalParsed.answer
+                        text = sanitizedAnswer.ifBlank { finalParsed.answer }
+                            .ifBlank { lastPersistedContent }
                     )
                 finalThinking = finalParsed.thinking
             }
@@ -1975,17 +1986,17 @@ class ChatViewModel(
             val localDream = com.nezumi_ai.sd.LocalDreamModule(appContext)
             val backend = PreferencesHelper.getSdBackend(appContext)
 
-            Log.d(TAG, "invokeGenerateImageFromTool: Loading SD model")
+            Log.d(TAG, "invokeGenerateImageFromTool: Loading SD model from $sdPath, backend=$backend")
             val loaded = localDream.loadModel(sdPath, backend)
             if (!loaded) {
-                Log.e(TAG, "invokeGenerateImageFromTool: SD model load failed")
+                Log.e(TAG, "invokeGenerateImageFromTool: SD model load failed - aborting generation")
                 return ToolExecutionResult(
                     success = false,
                     payload = mapOf("success" to false, "error" to "model_load_failed")
                 )
             }
 
-            Log.d(TAG, "invokeGenerateImageFromTool: Generating image")
+            Log.d(TAG, "invokeGenerateImageFromTool: Model loaded successfully, starting image generation")
             val bmp = localDream.generateImage(
                 prompt = edited,
                 negativePrompt = neg,
@@ -1996,11 +2007,12 @@ class ChatViewModel(
                 seed = seed,
                 onProgress = { step, totalSteps, _, _ ->
                     _imageGenProgress.value = Pair(step, totalSteps)
+                    Log.d(TAG, "invokeGenerateImageFromTool: Progress $step/$totalSteps")
                 }
             )
             _imageGenProgress.value = null
 
-            Log.d(TAG, "invokeGenerateImageFromTool: Cleaning up SD")
+            Log.d(TAG, "invokeGenerateImageFromTool: Cleaning up SD (bmp=${bmp != null})")
             localDream.cleanup()
 
             // SD完全解放を確実に実行
@@ -2023,7 +2035,7 @@ class ChatViewModel(
                         }
                     }
                 }
-                Log.d(TAG, "invokeGenerateImageFromTool: Image generated successfully")
+                Log.d(TAG, "invokeGenerateImageFromTool: ✓ Image generated successfully")
                 ToolExecutionResult(
                     success = true,
                     payload = mapOf(

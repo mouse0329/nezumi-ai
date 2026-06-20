@@ -21,6 +21,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 
 private const val TOOL_TAG = "NezumiTools"
 
@@ -534,12 +535,23 @@ internal class NezumiLiteRtToolExecutor(
     }
 
     private suspend fun executeGenerateImage(toolCall: ToolCall): ToolExecutionResult {
+        Log.d(TOOL_TAG, "executeGenerateImage: dispatching to handler")
         val handler = GenerateImageToolBridge.handler
             ?: return ToolExecutionResult(
                 success = false,
                 payload = mapOf("success" to false, "error" to "generate_image_handler_missing")
             )
-        return handler.handle(toolCall)
+        try {
+            val res = handler.handle(toolCall)
+            Log.d(TOOL_TAG, "executeGenerateImage: handler returned: success=${res.success}")
+            return res
+        } catch (e: CancellationException) {
+            Log.w(TOOL_TAG, "executeGenerateImage: handler cancelled", e)
+            throw e
+        } catch (e: Exception) {
+            Log.e(TOOL_TAG, "executeGenerateImage: handler threw", e)
+            return ToolExecutionResult(success = false, payload = mapOf("success" to false, "error" to (e.message ?: "handler_error")))
+        }
     }
 
     private suspend fun executeSearchMemory(toolCall: ToolCall): ToolExecutionResult {

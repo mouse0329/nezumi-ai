@@ -49,6 +49,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Tab
@@ -79,6 +81,7 @@ import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.fragment.app.Fragment
@@ -397,20 +400,76 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                         Text(stringResource(R.string.image_gen_generate))
                     }
                     if (safetyDownloading) {
-                        CircularProgressIndicator(Modifier.height(24.dp).width(24.dp), strokeWidth = 2.dp)
-                        Text(
-                            "セーフティモデル準備中…",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    Modifier.height(20.dp).width(20.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Text(
+                                    "セーフティモデル準備中…",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            // ダウンロードプログレス表示
+                            if (safetyProgress >= 0f) {
+                                val pct = (safetyProgress * 100).toInt()
+                                LinearProgressIndicator(
+                                    progress = { safetyProgress },
+                                    modifier = Modifier.fillMaxWidth().height(4.dp),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = MaterialTheme.colorScheme.outlineVariant
+                                )
+                                Text(
+                                    "$pct%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                     } else if (loading) {
-                        CircularProgressIndicator(Modifier.height(36.dp))
-                        Text(
-                            "$currentStep / $steps",
-                            color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Button(onClick = { vm.cancel() }) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(Modifier.height(24.dp).width(24.dp), strokeWidth = 2.dp)
+                                Text(
+                                    "$currentStep / $steps",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "${if (steps > 0) (currentStep * 100 / steps) else 0}%",
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            LinearProgressIndicator(
+                                progress = { if (steps > 0) currentStep.toFloat() / steps else 0f },
+                                modifier = Modifier.fillMaxWidth().height(4.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.outlineVariant
+                            )
+                        }
+                        Button(
+                            onClick = { vm.cancel() },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error
+                            ),
+                            modifier = Modifier.height(40.dp)
+                        ) {
                             Text(stringResource(R.string.image_gen_cancel))
                         }
                     }
@@ -443,45 +502,88 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                     when {
                         // 画像がある、または生成中
                         displayImages.isNotEmpty() || loading -> {
-                            LazyColumn(
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxSize().padding(8.dp)
+                            Column(
+                                modifier = Modifier.fillMaxSize()
                             ) {
-                                items(displayImages) { itemBmp ->
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .aspectRatio(1f)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
-                                            .background(MaterialTheme.colorScheme.surface)
-                                    ) {
-                                        Image(
-                                            bitmap = itemBmp.asImageBitmap(),
-                                            contentDescription = null,
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentScale = ContentScale.Crop
-                                        )
+                                LazyColumn(
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth().weight(1f).padding(8.dp)
+                                ) {
+                                    items(displayImages) { itemBmp ->
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .aspectRatio(1f)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+                                                .background(MaterialTheme.colorScheme.surface)
+                                        ) {
+                                            Image(
+                                                bitmap = itemBmp.asImageBitmap(),
+                                                contentDescription = null,
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentScale = ContentScale.Crop
+                                            )
+                                        }
+                                    }
+                                    if (loading && previewBitmap != null) {
+                                        previewBitmap?.let { previewBmp ->
+                                            item {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .aspectRatio(1f)
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                                                        .background(MaterialTheme.colorScheme.surface)
+                                                ) {
+                                                    Image(
+                                                        bitmap = previewBmp.asImageBitmap(),
+                                                        contentDescription = null,
+                                                        modifier = Modifier.fillMaxSize(),
+                                                        contentScale = ContentScale.Crop
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                 }
-                                if (loading && previewBitmap != null) {
-                                    previewBitmap?.let { previewBmp ->
-                                        item {
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .aspectRatio(1f)
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
-                                                    .background(MaterialTheme.colorScheme.surface)
-                                            ) {
-                                                Image(
-                                                    bitmap = previewBmp.asImageBitmap(),
-                                                    contentDescription = null,
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    contentScale = ContentScale.Crop
-                                                )
-                                            }
+                                // 生成中のプログレスバー表示
+                                if (loading) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(MaterialTheme.colorScheme.surface)
+                                            .padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        // プログレッシングバー
+                                        val progressRatio = if (steps > 0) currentStep.toFloat() / steps else 0f
+                                        LinearProgressIndicator(
+                                            progress = { progressRatio },
+                                            modifier = Modifier.fillMaxWidth().height(6.dp),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            trackColor = MaterialTheme.colorScheme.outlineVariant
+                                        )
+                                        
+                                        // ステップ情報
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                "ステップ $currentStep / $steps",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Text(
+                                                "${(progressRatio * 100).toInt()}%",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold
+                                            )
                                         }
                                     }
                                 }
@@ -502,6 +604,27 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                                 )
                                 Text(
                                     "不適切な表現が含まれる\n可能性があるコンテンツの表示を制限しました",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                        // セーフティ警告：ブラー処理
+                        safetyVerdict == SafetyResult.Verdict.BLUR -> {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.padding(16.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Info,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.height(40.dp).width(40.dp)
+                                )
+                                Text(
+                                    "セーフティフィルター適用\n潜在的に不適切なコンテンツは\nぼかし処理されました",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center

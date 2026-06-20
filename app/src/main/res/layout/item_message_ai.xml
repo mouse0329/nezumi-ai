@@ -39,6 +39,8 @@
             </LinearLayout>
         </LinearLayout>
 
+        <androidx.compose.ui.platform.ComposeView android:id="@+id/ai_streaming_tool_call_compose" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone" android:layout_marginBottom="4dp" />
+
         <TextView android:id="@+id/ai_message_text" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="AI response" android:textSize="14sp" android:textColor="@color/text_primary" android:background="@drawable/bg_message_ai" android:padding="11dp" android:maxWidth="280dp" android:textIsSelectable="true" />
 
         <androidx.compose.ui.platform.ComposeView android:id="@+id/ai_message_markdown_compose" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone" />

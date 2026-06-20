@@ -38,7 +38,7 @@
 
                     <androidx.compose.ui.platform.ComposeView android:id="@+id/response_typing_compose" android:layout_width="match_parent" android:layout_height="wrap_content" />
 
-                    <androidx.compose.ui.platform.ComposeView android:id="@+id/tool_call_progress_compose" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                    <androidx.compose.ui.platform.ComposeView android:id="@+id/tool_call_progress_compose" android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone" />
                 </LinearLayout>
 
                 <androidx.compose.ui.platform.ComposeView android:id="@+id/scroll_to_bottom_compose" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_gravity="bottom" />

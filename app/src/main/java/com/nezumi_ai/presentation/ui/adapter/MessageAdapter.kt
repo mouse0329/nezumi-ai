@@ -48,6 +48,8 @@ import com.nezumi_ai.data.inference.stripGemmaTokens
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.halilibo.richtext.commonmark.Markdown
 import com.halilibo.richtext.ui.material3.RichText
+import com.nezumi_ai.data.inference.ToolCallState
+import com.nezumi_ai.presentation.ui.composable.StreamingToolCallIndicator
 import com.nezumi_ai.presentation.ui.composable.MarkdownLatexText
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -65,6 +67,8 @@ class MessageAdapter(
     private val thinkingExpandedByMessageId = mutableSetOf<Long>()
     private var thinkingVisible = true
     private var speakingMessageId: Long? = null
+    private var streamingMessageId: Long? = null
+    private var streamingToolCallState: ToolCallState? = null
 
     private enum class ContentRenderMode {
         Placeholder,
@@ -76,6 +80,16 @@ class MessageAdapter(
         if (oldId == messageId) return
         speakingMessageId = messageId
         notifyMessageChanged(oldId)
+        notifyMessageChanged(messageId)
+    }
+
+    fun setStreamingToolCallState(messageId: Long?, state: ToolCallState?) {
+        val oldId = streamingMessageId
+        streamingMessageId = messageId
+        streamingToolCallState = state
+        if (oldId != messageId) {
+            notifyMessageChanged(oldId)
+        }
         notifyMessageChanged(messageId)
     }
 
@@ -381,6 +395,9 @@ class MessageAdapter(
             binding.aiMessageMarkdownCompose.setViewCompositionStrategy(
                 ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool
             )
+            binding.aiStreamingToolCallCompose.setViewCompositionStrategy(
+                ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool
+            )
             binding.aiMessageMarkdownCompose.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
                 if (bottom - top != oldBottom - oldTop) {
                     onAiMessageLayoutChanged()
@@ -401,7 +418,7 @@ class MessageAdapter(
                 )
             }
             binding.apply {
-                val thinking = message.thinkingContent
+                val thinking = message.thinkingContent?.stripGemmaTokens()
                 if (thinkingVisible && !thinking.isNullOrBlank()) {
                     aiThinkingBlock.visibility = View.VISIBLE
                     if (thinking != lastRenderedThinking) {
@@ -448,7 +465,21 @@ class MessageAdapter(
                 }
 
                 val visibleContent = message.content.stripGemmaTokens()
-                val visibleThinking = thinking?.stripGemmaTokens()
+                val visibleThinking = thinking
+
+                val showStreamingToolCall = message.isStreaming &&
+                    message.id == streamingMessageId &&
+                    streamingToolCallState != null &&
+                    streamingToolCallState !is ToolCallState.Done
+                if (showStreamingToolCall) {
+                    aiStreamingToolCallCompose.visibility = View.VISIBLE
+                    val toolState = streamingToolCallState!!
+                    aiStreamingToolCallCompose.setContent {
+                        StreamingToolCallIndicator(state = toolState)
+                    }
+                } else {
+                    aiStreamingToolCallCompose.visibility = View.GONE
+                }
 
                 when {
                     message.isStreaming && visibleContent.isBlank() -> {
@@ -504,31 +535,10 @@ class MessageAdapter(
                     aiImagePreview.visibility = View.GONE
                 }
                 
-                // Tool Results
+                // Tool Results: UI カードは非表示（メッセージ内インジケータのみ使用）
                 toolResultsContainer.removeAllViews()
-                if (!message.toolResultsJson.isNullOrEmpty()) {
-                    val cards = com.nezumi_ai.data.inference.ToolResultCard.listFromJsonArray(message.toolResultsJson)
-                    if (cards.isNotEmpty()) {
-                        toolResultsContainer.visibility = View.VISIBLE
-                        for (card in cards) {
-                            val cardView = com.nezumi_ai.presentation.ui.component.ToolResultCardView(binding.root.context)
-                            cardView.bind(card)
-                            val params = LinearLayout.LayoutParams(
-                                LinearLayout.LayoutParams.MATCH_PARENT,
-                                LinearLayout.LayoutParams.WRAP_CONTENT
-                            ).apply {
-                                setMargins(0, 0, 0, 8) // bottom margin
-                            }
-                            cardView.layoutParams = params
-                            toolResultsContainer.addView(cardView)
-                        }
-                    } else {
-                        toolResultsContainer.visibility = View.GONE
-                    }
-                } else {
-                    toolResultsContainer.visibility = View.GONE
-                }
-                
+                toolResultsContainer.visibility = View.GONE
+
                 copyMessageButton.setOnClickListener {
                     val text = if (thinkingVisible && !message.thinkingContent.isNullOrBlank()) {
                         "【${binding.root.context.getString(R.string.gemma_thinking_section_title)}】\n${message.thinkingContent?.stripGemmaTokens()}\n\n【回答】\n${message.content.stripGemmaTokens()}"

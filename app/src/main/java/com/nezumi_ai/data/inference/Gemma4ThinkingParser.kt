@@ -232,12 +232,53 @@ object Gemma4ThinkingParser {
     }
 
     /**
+     * ツールラウンド継続用プロンプトからシンキングブロックのみ除去する。
+     * `<tool_call>` 等のツール呼び出し記録はモデル文脈として残す。
+     */
+    fun stripThinkingForModelPrompt(text: String): String {
+        var t = text
+        while (true) {
+            val start = t.indexOf(THINK_START)
+            if (start < 0) break
+            val end = t.indexOf(THINK_END, start)
+            if (end >= 0) {
+                t = t.removeRange(start, end + THINK_END.length)
+            } else {
+                t = t.removeRange(start, t.length)
+                break
+            }
+        }
+        if (THINKING_END in t) {
+            val parts = t.split(THINKING_END, limit = 2)
+            t = parts.getOrNull(1).orEmpty()
+        }
+        val channelStart = t.indexOf(THINKING_START)
+        if (channelStart >= 0) {
+            val afterChannel = t.substring(channelStart + THINKING_START.length)
+            val thoughtIdx = afterChannel.indexOf(THOUGHT_LABEL)
+            if (thoughtIdx >= 0) {
+                val afterThought = afterChannel.substring(thoughtIdx + THOUGHT_LABEL.length)
+                val endIdx = afterThought.indexOf(THINKING_END)
+                t = if (endIdx >= 0) {
+                    afterThought.substring(endIdx + THINKING_END.length)
+                } else {
+                    ""
+                }
+            }
+        }
+        return t.trim()
+    }
+
+    /**
      * 表示用テキストから Gemma / トークナイザ由来の制御トークンをすべて除去する。
      */
     fun sanitizeVisibleText(text: String): String {
         var t = text.trim()
         if (t.isEmpty()) return ""
         t = removeToolTagSegments(t)
+        t = removeRedactedThinkingBlocks(t)
+        t = stripLeadingControlPrefix(t)
+        t = removeTrailingIncompleteTags(t)
         val original = t
         for (i in 0 until 64) {
             val before = t
@@ -262,6 +303,45 @@ object Gemma4ThinkingParser {
         } catch (_: Throwable) {
             // Android unit tests use a JVM environment where android.util.Log may not be mocked.
         }
+    }
+
+    private fun removeRedactedThinkingBlocks(text: String): String {
+        var t = text
+        val closed = Regex("(?is)<think>.*?</think>")
+        while (closed.containsMatchIn(t)) {
+            t = t.replace(closed, "")
+        }
+        return t
+    }
+
+    /** 先頭に付いた tool / thinking 制御ブロックを除去し、後続の回答本文は残す。 */
+    private fun stripLeadingControlPrefix(text: String): String {
+        var t = text.trimStart()
+        repeat(16) {
+            val before = t
+            t = Regex("(?is)^<tool_call>\\s*").replace(t, "")
+            t = Regex("(?is)^</tool_call>\\s*").replace(t, "")
+            t = Regex("(?is)^<think>\\s*</think>\\s*").replace(t, "")
+            t = Regex("(?is)^<think>.*?</think>\\s*").replace(t, "")
+            t = Regex("(?is)^<\\|channel>thought\\n.*?(?:<channel\\|>\\s*)").replaceFirst(t, "")
+            if (t == before) return@repeat
+        }
+        return t
+    }
+
+    /** ストリーミング末尾の未閉じタグのみ除去（本文の後ろに付いた断片用）。 */
+    private fun removeTrailingIncompleteTags(text: String): String {
+        var t = text
+        for (tag in listOf("tool_call", "tool_result", "tool_response", "tools", "redacted_thinking")) {
+            val open = "<$tag>"
+            val close = "</$tag>"
+            val start = t.lastIndexOf(open)
+            if (start < 0) continue
+            if (!t.substring(start).contains(close)) {
+                t = t.removeRange(start, t.length).trimEnd()
+            }
+        }
+        return t
     }
 
     private fun removeToolTagSegments(text: String): String {

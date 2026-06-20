@@ -192,12 +192,16 @@ class LocalDreamModule(private val context: Context) {
     }
     
     suspend fun loadModel(modelPath: String, backend: String = "auto"): Boolean = withContext(Dispatchers.IO) {
+        Log.d(TAG, "loadModel: Starting (modelPath=$modelPath, backend=$backend)")
+        
         try {
             val rawModelDir = File(modelPath)
             if (!rawModelDir.exists() || !rawModelDir.isDirectory) {
-                Log.e(TAG, "Model directory not found: $modelPath")
+                Log.e(TAG, "loadModel: Model directory not found: $modelPath")
                 return@withContext false
             }
+            
+            Log.d(TAG, "loadModel: Model directory exists and is readable")
             
             val normalizedBackend = when (backend.lowercase()) {
                 "mnn", "cpu" -> "mnn"
@@ -209,6 +213,8 @@ class LocalDreamModule(private val context: Context) {
             val qnnModelDir = resolveModelDir(rawModelDir, false)
             val npuSupported = isNpuSupported()
             
+            Log.d(TAG, "loadModel: cpuModelDir=$cpuModelDir, qnnModelDir=$qnnModelDir, npuSupported=$npuSupported")
+            
             val (selectedBackend, modelDir) = when (normalizedBackend) {
                 "mnn" -> cpuModelDir?.let { "mnn" to it }
                 "qnn" -> qnnModelDir?.let { "qnn" to it }
@@ -219,29 +225,35 @@ class LocalDreamModule(private val context: Context) {
                     else -> null
                 }
             } ?: run {
-                Log.e(TAG, "Could not find model files in $modelPath")
+                Log.e(TAG, "loadModel: Could not find model files in $modelPath")
                 return@withContext false
             }
             
+            Log.d(TAG, "loadModel: Selected backend=$selectedBackend, modelDir=$modelDir")
+            
             if (currentModelPath == modelPath && serverProcess?.isAlive == true && isServerReady) {
-                Log.d(TAG, "Model already loaded: $modelPath")
+                Log.d(TAG, "loadModel: Model already loaded and server ready: $modelPath")
                 return@withContext true
             }
             
-            stopServer()
-            Log.d(TAG, "Loading model from: $modelPath, backend: $selectedBackend")
+            if (currentModelPath != modelPath || !isServerReady) {
+                Log.d(TAG, "loadModel: Stopping existing server before loading new model")
+                stopServer()
+            }
+            
+            Log.d(TAG, "loadModel: Starting server with selectedBackend=$selectedBackend")
             
             val result = tryStartServer(modelPath, modelDir, selectedBackend, selectedBackend == "mnn")
             
             if (!result && selectedBackend == "qnn" && cpuModelDir != null) {
-                Log.w(TAG, "QNN backend failed, falling back to MNN/CPU")
+                Log.w(TAG, "loadModel: QNN backend failed, falling back to MNN/CPU")
                 stopServer()
                 tryStartServer(modelPath, cpuModelDir, "mnn", true)
             } else {
                 result
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error loading model", e)
+            Log.e(TAG, "loadModel: Error loading model", e)
             stopServer()
             false
         }
@@ -253,6 +265,8 @@ class LocalDreamModule(private val context: Context) {
         backend: String,
         isCpu: Boolean
     ): Boolean {
+        Log.d(TAG, "tryStartServer: Starting (backend=$backend, isCpu=$isCpu)")
+        
         val runtimeDir = prepareRuntimeDir()
         
         val nativeDir = context.applicationInfo.nativeLibraryDir
@@ -287,21 +301,23 @@ class LocalDreamModule(private val context: Context) {
             environment().putAll(env)
         }
         
+        Log.d(TAG, "tryStartServer: Spawning process...")
         serverProcess = processBuilder.start()
         currentModelPath = modelPath
         currentBackend = backend
         isServerReady = false
         
         startMonitor()
+        Log.d(TAG, "tryStartServer: Monitor started, waiting for server...")
         
         val timeoutMs = if (isCpu) 180000L else 120000L
         val ready = waitForServer(timeoutMs)
         
         if (ready) {
             isServerReady = true
-            Log.i(TAG, "Server is ready on port $SERVER_PORT (backend: $backend)")
+            Log.i(TAG, "tryStartServer: ✓ Server is ready on port $SERVER_PORT (backend: $backend)")
         } else {
-            Log.e(TAG, "Server failed to start within ${timeoutMs/1000}s")
+            Log.e(TAG, "tryStartServer: ✗ Server failed to start within ${timeoutMs/1000}s")
         }
         
         return ready
@@ -311,10 +327,14 @@ class LocalDreamModule(private val context: Context) {
         val startTime = System.currentTimeMillis()
         var lastLogTime = 0L
         var processDied = false
+        var portCheckCount = 0
+        
+        Log.d(TAG, "waitForServer: Starting health checks, timeout=${timeoutMs}ms")
+        
         while (System.currentTimeMillis() - startTime < timeoutMs) {
             if (serverProcess?.isAlive != true) {
                 if (!processDied) {
-                    Log.w(TAG, "Server process died while waiting")
+                    Log.w(TAG, "waitForServer: Server process died while waiting (process=null or !isAlive)")
                     processDied = true
                 }
                 // If the binary daemonizes, continue checking the port.
@@ -328,18 +348,24 @@ class LocalDreamModule(private val context: Context) {
                 conn.requestMethod = "GET"
                 val code = conn.responseCode
                 conn.disconnect()
-                Log.d(TAG, "Health check response: $code")
-                if (code == 200 || code == 404) return true
+                portCheckCount++
+                Log.d(TAG, "waitForServer: Health check #$portCheckCount response: $code (elapsed=${System.currentTimeMillis()-startTime}ms)")
+                if (code == 200 || code == 404) {
+                    Log.i(TAG, "waitForServer: Server is ready! (response=$code)")
+                    return true
+                }
             } catch (e: Exception) {
                 val now = System.currentTimeMillis()
                 if (now - lastLogTime > 10000) {
-                    Log.d(TAG, "Waiting for server... ${(now - startTime)/1000}s elapsed (${e.javaClass.simpleName}: ${e.message})")
+                    Log.d(TAG, "waitForServer: Still waiting... ${(now - startTime)/1000}s elapsed (${e.javaClass.simpleName}: ${e.message})")
                     lastLogTime = now
                 }
             }
 
             delay(500)
         }
+        
+        Log.e(TAG, "waitForServer: Timeout! Failed to connect after ${System.currentTimeMillis()-startTime}ms, portCheckCount=$portCheckCount")
         return false
     }
     

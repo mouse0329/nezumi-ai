@@ -817,6 +817,15 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
+            combine(viewModel.messages, viewModel.toolCallState) { messages, toolState ->
+                val streamingId = messages.lastOrNull { it.isStreaming && it.role == "assistant" }?.id
+                streamingId to toolState
+            }.collect { (streamingId, toolState) ->
+                adapter.setStreamingToolCallState(streamingId, toolState)
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
             viewModel.imageGenProgress.collect { progress ->
                 currentImageGenProgress = progress
             }
@@ -1287,16 +1296,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         )
         binding.responseTypingCompose.setContent {
             ResponseTypingIndicator()
-        }
-
-        binding.toolCallProgressCompose.setViewCompositionStrategy(
-            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
-        )
-        binding.toolCallProgressCompose.setContent {
-            ToolCallProgressBar(
-                state = currentToolCallState,
-                imageGenProgress = currentImageGenProgress
-            )
         }
 
         binding.modelLoadingComposeOverlay.setViewCompositionStrategy(
