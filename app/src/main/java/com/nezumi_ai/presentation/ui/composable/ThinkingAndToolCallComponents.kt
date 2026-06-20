@@ -218,7 +218,17 @@ fun ToolCallProgressBar(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            val progressFraction = imageGenProgress?.let { (step, total) ->
+            // 画像生成ツール専用：進捗表示は generate_image ツールのみ
+            val progress = if (
+                state is ToolCallState.Executing &&
+                    state.toolName.equals("generate_image", ignoreCase = true)
+            ) {
+                imageGenProgress
+            } else {
+                null
+            }
+            
+            val progressFraction = progress?.let { (step, total) ->
                 if (total > 0) (step.toFloat() / total.toFloat()).coerceIn(0f, 1f) else null
             }
 
@@ -255,9 +265,9 @@ fun ToolCallProgressBar(
                     fontWeight = FontWeight.SemiBold
                 )
                 
-                if (imageGenProgress != null) {
+                if (progress != null) {
                     Text(
-                        text = "${imageGenProgress.first}/${imageGenProgress.second}",
+                        text = "${progress.first}/${progress.second}",
                         fontSize = 12.sp,
                         color = Color(0xFFFF6F00),
                         fontWeight = FontWeight.Bold

@@ -124,6 +124,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         if (label.length <= MODEL_NAME_DISPLAY_CHARS) label
         else label.take(MODEL_NAME_DISPLAY_CHARS).trimEnd() + "…"
 
+    private fun isImageGenerationToolState(state: ToolCallState?): Boolean =
+        when (state) {
+            is ToolCallState.Executing -> state.toolName.equals("generate_image", ignoreCase = true)
+            else -> false
+        }
+
     private var _binding: FragmentChatBinding? = null
     private val binding get() = _binding!!
     private var defaultInputHint: CharSequence? = null
@@ -827,9 +833,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.toolCallState.collect { state ->
                 currentToolCallState = state
-                // ツール実行中は進捗バーを表示
+                // 入力欄上のステータスバーは画像生成ツール専用
                 binding.toolCallProgressCompose.visibility =
-                    if (state != null && state !is ToolCallState.Done) View.VISIBLE else View.GONE
+                    if (isImageGenerationToolState(state)) View.VISIBLE else View.GONE
             }
         }
 
@@ -2254,6 +2260,3 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
     }
 }
-
-
-

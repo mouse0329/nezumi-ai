@@ -120,6 +120,31 @@ class MessageAdapter(
             }
         }
 
+        private fun loadImageIntoView(imageView: ImageView, uri: String) {
+            try {
+                val loadUri = MessageMediaStore.toUri(uri)
+                if (loadUri?.scheme == "file") {
+                    val path = loadUri.path
+                    if (path != null && java.io.File(path).exists()) {
+                        val bitmap = android.graphics.BitmapFactory.decodeFile(path)
+                        if (bitmap != null) {
+                            imageView.setImageBitmap(bitmap)
+                        } else {
+                            imageView.setImageResource(android.R.drawable.ic_menu_gallery)
+                        }
+                    } else {
+                        imageView.setImageResource(android.R.drawable.ic_menu_gallery)
+                    }
+                } else if (loadUri != null) {
+                    imageView.setImageURI(loadUri)
+                } else {
+                    imageView.setImageResource(android.R.drawable.ic_menu_gallery)
+                }
+            } catch (e: Exception) {
+                imageView.setImageResource(android.R.drawable.ic_menu_gallery)
+            }
+        }
+
         // Phase 11: 複数画像プレビュー用ヘルパー関数（送信前と統一）
         // Phase 14: file:// URI に対応して画像読み込み
         fun setupMultipleImagePreview(imageUris: List<String>, container: LinearLayout, context: Context) {
@@ -141,29 +166,7 @@ class MessageAdapter(
                     contentDescription = context.getString(R.string.message_image)
                 }
                 
-                // Phase 14: file:// と content:// 両対応
-                try {
-                    val loadUri = MessageMediaStore.toUri(uri)
-                    if (loadUri?.scheme == "file") {
-                        // file:// スキーム：直接ファイルから読み込み
-                        val path = loadUri?.path
-                        if (path != null && java.io.File(path).exists()) {
-                            val bitmap = android.graphics.BitmapFactory.decodeFile(path)
-                            if (bitmap != null) {
-                                imageView.setImageBitmap(bitmap)
-                            } else {
-                                imageView.setImageResource(android.R.drawable.ic_menu_gallery)
-                            }
-                        } else {
-                            imageView.setImageResource(android.R.drawable.ic_menu_gallery)
-                        }
-                    } else if (loadUri != null) {
-                        // content:// スキーム：contentResolver で読み込み
-                        imageView.setImageURI(loadUri)
-                    }
-                } catch (e: Exception) {
-                    imageView.setImageResource(android.R.drawable.ic_menu_gallery)
-                }
+                loadImageIntoView(imageView, uri)
                 
                 // タップしてモーダルで大きく表示
                 imageView.setOnClickListener {
@@ -187,31 +190,16 @@ class MessageAdapter(
                 setBackgroundColor(android.graphics.Color.BLACK)
                 contentDescription = context.getString(R.string.message_image)
             }
-            try {
-                val loadUri = MessageMediaStore.toUri(imageUri)
-                if (loadUri?.scheme == "file") {
-                    // file:// スキーム：直接ファイルから読み込み
-                    val path = loadUri?.path
-                    if (path != null && java.io.File(path).exists()) {
-                        val bitmap = android.graphics.BitmapFactory.decodeFile(path)
-                        if (bitmap != null) {
-                            imageView.setImageBitmap(bitmap)
-                        } else {
-                            imageView.setImageResource(android.R.drawable.ic_menu_gallery)
-                        }
-                    } else {
-                        imageView.setImageResource(android.R.drawable.ic_menu_gallery)
-                    }
-                } else {
-                    // content:// スキーム：contentResolver で読み込み
-                    imageView.setImageURI(loadUri)
-                }
-            } catch (e: Exception) {
-                imageView.setImageResource(android.R.drawable.ic_menu_gallery)
-            }
+            loadImageIntoView(imageView, imageUri)
             
             androidx.appcompat.app.AlertDialog.Builder(context)
                 .setView(imageView)
+                .setPositiveButton("フォルダ保存") { _, _ ->
+                    saveImageUriToPictures(context, imageUri)
+                }
+                .setNeutralButton("共有") { _, _ ->
+                    shareImageUri(context, imageUri)
+                }
                 .setNegativeButton("閉じる") { dialog, _ -> dialog.dismiss() }
                 .show()
                 .apply {
@@ -220,6 +208,66 @@ class MessageAdapter(
                         android.view.ViewGroup.LayoutParams.MATCH_PARENT
                     )
                 }
+        }
+
+        private fun saveImageUriToPictures(context: Context, imageUri: String) {
+            try {
+                val uri = MessageMediaStore.toUri(imageUri) ?: return
+                val name = "nezumi_ai_${System.currentTimeMillis()}.png"
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    val values = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name)
+                        put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")
+                        put(
+                            android.provider.MediaStore.Images.Media.RELATIVE_PATH,
+                            android.os.Environment.DIRECTORY_PICTURES + "/NezumiAI"
+                        )
+                        put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                    val resolver = context.contentResolver
+                    val outUri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                        ?: return
+                    openImageInputStream(context, uri)?.use { input ->
+                        resolver.openOutputStream(outUri)?.use { output -> input.copyTo(output) }
+                    }
+                    values.clear()
+                    values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
+                    resolver.update(outUri, values, null, null)
+                } else {
+                    val bitmap = openImageInputStream(context, uri)?.use {
+                        android.graphics.BitmapFactory.decodeStream(it)
+                    } ?: return
+                    @Suppress("DEPRECATION")
+                    android.provider.MediaStore.Images.Media.insertImage(
+                        context.contentResolver,
+                        bitmap,
+                        name,
+                        "nezumi-ai"
+                    )
+                }
+                Toast.makeText(context, "フォルダに保存しました", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "保存に失敗しました", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        private fun openImageInputStream(context: Context, uri: android.net.Uri): java.io.InputStream? {
+            return if (uri.scheme == "file") {
+                val path = uri.path ?: return null
+                java.io.File(path).inputStream()
+            } else {
+                context.contentResolver.openInputStream(uri)
+            }
+        }
+
+        private fun shareImageUri(context: Context, imageUri: String) {
+            val uri = MessageMediaStore.toUri(imageUri) ?: return
+            val share = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "image/*"
+                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(android.content.Intent.createChooser(share, "共有"))
         }
     }
     
@@ -296,11 +344,12 @@ class MessageAdapter(
                             userImagePreview.visibility = View.VISIBLE
                             audioPlaybackContainer.visibility = View.GONE
                             try {
-                                userImagePreview.setImageURI(
-                                    MessageMediaStore.toUri(message.imageUri!!)
-                                )
+                                loadImageIntoView(userImagePreview, message.imageUri!!)
                             } catch (e: Exception) {
                                 userImagePreview.setImageResource(android.R.drawable.ic_menu_gallery)
+                            }
+                            userImagePreview.setOnClickListener {
+                                showImageModal(binding.root.context, message.imageUri!!)
                             }
                         }
                     }
@@ -496,6 +545,7 @@ class MessageAdapter(
                 } else {
                     aiStreamingToolCallCompose.visibility = View.GONE
                     aiImagePreview.alpha = 1.0f
+                    aiImagePreview.setOnClickListener(null)
                 }
 
                 when {
@@ -530,11 +580,12 @@ class MessageAdapter(
                             aiImagePreview.visibility = View.VISIBLE
                             audioPlaybackContainer.visibility = View.GONE
                             try {
-                                aiImagePreview.setImageURI(
-                                    MessageMediaStore.toUri(message.imageUri!!)
-                                )
+                                loadImageIntoView(aiImagePreview, message.imageUri!!)
                             } catch (e: Exception) {
                                 aiImagePreview.setImageResource(android.R.drawable.ic_menu_gallery)
+                            }
+                            aiImagePreview.setOnClickListener {
+                                showImageModal(binding.root.context, message.imageUri!!)
                             }
                         }
                     }
@@ -738,7 +789,5 @@ class MessageAdapter(
     }
 
 }
-
-
 
 
