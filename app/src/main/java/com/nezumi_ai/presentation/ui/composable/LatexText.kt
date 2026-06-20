@@ -19,15 +19,28 @@ import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import ru.noties.jlatexmath.JLatexMathDrawable
 
-import com.halilibo.richtext.ui.material3.RichText
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import com.halilibo.richtext.commonmark.Markdown
+import com.halilibo.richtext.ui.RichTextStyle
+import com.halilibo.richtext.ui.material3.RichText
+import com.halilibo.richtext.ui.string.RichTextStringStyle
 
 private sealed class MixedPart {
     data class MarkdownPart(val content: String) : MixedPart()
     data class LatexBlockPart(val formula: String) : MixedPart()
     data class LatexInlinePart(val formula: String) : MixedPart()
+    data class ImagePart(val url: String) : MixedPart()
 }
 
 private fun parseMixed(text: String): List<MixedPart> {
@@ -35,6 +48,7 @@ private fun parseMixed(text: String): List<MixedPart> {
     val codeBlockRegex = Regex("""```[\s\S]*?```""")
     val blockLatexRegex = Regex("""\$\$(.+?)\$\$""", RegexOption.DOT_MATCHES_ALL)
     val inlineLatexRegex = Regex("""\$(.+?)\$""")
+    val imageRegex = Regex("""!\[.*?\]\((.*?)\)""")
     var remaining = text
 
     while (remaining.isNotEmpty()) {
@@ -47,9 +61,12 @@ private fun parseMixed(text: String): List<MixedPart> {
         val inlineLatexMatch = inlineLatexRegex.find(remaining)?.takeIf { match ->
             codeBlockMatch == null || match.range.first < codeBlockMatch.range.first
         }
+        val imageMatch = imageRegex.find(remaining)?.takeIf { match ->
+            codeBlockMatch == null || match.range.first < codeBlockMatch.range.first
+        }
 
         // 最初に出現する要素を決定
-        val firstMatch = listOfNotNull(codeBlockMatch, blockLatexMatch, inlineLatexMatch)
+        val firstMatch = listOfNotNull(codeBlockMatch, blockLatexMatch, inlineLatexMatch, imageMatch)
             .minByOrNull { it.range.first }
 
         if (firstMatch == null) {
@@ -62,8 +79,8 @@ private fun parseMixed(text: String): List<MixedPart> {
             val before = remaining.substring(0, firstMatch.range.first)
             val lastNewline = before.lastIndexOf('\n')
             
-            if (firstMatch == blockLatexMatch || firstMatch == inlineLatexMatch) {
-                // 数式の前は改行で分割
+            if (firstMatch == blockLatexMatch || firstMatch == inlineLatexMatch || firstMatch == imageMatch) {
+                // 数式や画像の前は改行で分割
                 if (lastNewline >= 0) {
                     parts.add(MixedPart.MarkdownPart(before.substring(0, lastNewline + 1)))
                     remaining = before.substring(lastNewline + 1) + remaining.substring(firstMatch.range.first)
@@ -108,6 +125,10 @@ private fun parseMixed(text: String): List<MixedPart> {
                 parts.add(MixedPart.LatexInlinePart(fullLine))
                 remaining = remaining.substring(lineEnd)
             }
+            firstMatch == imageMatch -> {
+                parts.add(MixedPart.ImagePart(imageMatch.groupValues[1]))
+                remaining = remaining.substring(firstMatch.range.last + 1)
+            }
         }
     }
 
@@ -118,7 +139,8 @@ private fun parseMixed(text: String): List<MixedPart> {
 fun MarkdownLatexText(
     text: String,
     modifier: Modifier = Modifier,
-    textSize: Float = 40f
+    textSize: Float = 40f,
+    linkStyle: TextLinkStyles? = null
 ) {
     val density = LocalDensity.current
     val contentColor = LocalContentColor.current
@@ -146,7 +168,11 @@ fun MarkdownLatexText(
                 is MixedPart.MarkdownPart -> {
                     // Markdownコンテンツが空でないか確認
                     if (part.content.isNotBlank()) {
-                        RichText {
+                        RichText(
+                            style = if (linkStyle != null) {
+                                RichTextStyle(stringStyle = RichTextStringStyle(linkStyle = linkStyle))
+                            } else null
+                        ) {
                             Markdown(content = part.content)
                         }
                     }
@@ -162,6 +188,13 @@ fun MarkdownLatexText(
                 }
                 is MixedPart.LatexInlinePart -> {
                     LatexText(text = part.formula, textSize = textSize)
+                }
+                is MixedPart.ImagePart -> {
+                    AsyncImage(
+                        model = part.url,
+                        contentDescription = "Markdown Image",
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
         }

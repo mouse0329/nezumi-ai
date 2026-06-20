@@ -56,11 +56,11 @@ object ImageViewerDialog {
         val topBar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(context, 16), dp(context, 10), dp(context, 16), dp(context, 10))
+            setPadding(dp(context, 16), dp(context, 24), dp(context, 16), dp(context, 10))
             background = ColorDrawable(Color.argb(210, 12, 16, 24))
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(context, 64),
+                dp(context, 84),
                 Gravity.TOP
             )
         }
