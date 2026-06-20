@@ -57,6 +57,27 @@ class LocalDreamModule(private val context: Context) {
     private var monitorJob: Job? = null
     private val coroutineScope = CoroutineScope(Dispatchers.Default + Job())
     private val activeGenerationConn = AtomicReference<HttpURLConnection?>(null)
+
+    private fun normalizeServerProgress(
+        serverStep: Int,
+        serverTotalSteps: Int,
+        requestedSteps: Int
+    ): Pair<Int, Int> {
+        val total = requestedSteps.coerceAtLeast(1)
+        if (serverTotalSteps <= total) {
+            return serverStep.coerceIn(0, total) to total
+        }
+
+        val extraSteps = serverTotalSteps - total
+        val normalizedStep = when {
+            // Some LocalDream server builds include setup/finalization events in total_steps.
+            extraSteps == 2 -> serverStep.coerceIn(0, total)
+            else -> ((serverStep.toFloat() / serverTotalSteps.toFloat()) * total)
+                .toInt()
+                .coerceIn(0, total)
+        }
+        return normalizedStep to total
+    }
     
     private fun isNpuSupported(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -110,37 +131,20 @@ class LocalDreamModule(private val context: Context) {
         return runtimeDir
     }
 
-    private fun prepareExecutable(runtimeDir: File): File? {
+    private fun resolveExecutable(): File? {
         val nativeDir = context.applicationInfo.nativeLibraryDir
         val nativeDirFile = File(nativeDir, EXECUTABLE_NAME)
-        val runtimeDirFile = File(runtimeDir, EXECUTABLE_NAME)
 
         if (!nativeDirFile.exists()) {
-            Log.w(TAG, "prepareExecutable: executable not found in nativeLibraryDir=${nativeDirFile.absolutePath}")
+            Log.w(TAG, "resolveExecutable: executable not found in nativeLibraryDir=${nativeDirFile.absolutePath}")
             return null
         }
 
-        try {
-            if (!runtimeDirFile.exists() || runtimeDirFile.length() != nativeDirFile.length()) {
-                nativeDirFile.inputStream().use { input ->
-                    runtimeDirFile.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                runtimeDirFile.setReadable(true, false)
-                runtimeDirFile.setExecutable(true, false)
-                Log.d(TAG, "prepareExecutable: copied executable to runtimeDir=${runtimeDirFile.absolutePath}")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "prepareExecutable: failed to copy executable to runtimeDir", e)
+        if (!nativeDirFile.canExecute()) {
+            nativeDirFile.setExecutable(true, true)
         }
-
-        if (runtimeDirFile.exists() && !runtimeDirFile.canExecute()) {
-            runtimeDirFile.setExecutable(true, false)
-            Log.d(TAG, "prepareExecutable: setExecutable runtimeDirFile=${runtimeDirFile.absolutePath} canExecute=${runtimeDirFile.canExecute()}")
-        }
-
-        return if (runtimeDirFile.exists()) runtimeDirFile else nativeDirFile
+        Log.d(TAG, "resolveExecutable: native executable=${nativeDirFile.absolutePath} canExecute=${nativeDirFile.canExecute()} length=${nativeDirFile.length()}")
+        return nativeDirFile
     }
     
     private fun resolveModelDir(dir: File, isCpu: Boolean): File? {
@@ -322,54 +326,9 @@ class LocalDreamModule(private val context: Context) {
         Log.d(TAG, "tryStartServer: Starting (backend=$backend, isCpu=$isCpu)")
         
         val runtimeDir = prepareRuntimeDir()
-        val runtimeDirExecutable = prepareExecutable(runtimeDir)
+        val executableFile = resolveExecutable() ?: return false
         
         val nativeDir = context.applicationInfo.nativeLibraryDir
-        val nativeDirFile = File(nativeDir, EXECUTABLE_NAME)
-        val runtimeDirFile = File(runtimeDir, EXECUTABLE_NAME)
-
-        val executableFile = when {
-            runtimeDirExecutable != null && runtimeDirExecutable.exists() && runtimeDirExecutable.canExecute() -> {
-                Log.d(TAG, "Using executable from runtime_libs: ${runtimeDirExecutable.absolutePath}")
-                runtimeDirExecutable
-            }
-            nativeDirFile.exists() && nativeDirFile.canExecute() -> {
-                Log.d(TAG, "Using executable from nativeLibraryDir: ${nativeDirFile.absolutePath}")
-                nativeDirFile
-            }
-            runtimeDirFile.exists() && runtimeDirFile.canExecute() -> {
-                Log.d(TAG, "Using executable from runtime_libs: ${runtimeDirFile.absolutePath}")
-                runtimeDirFile
-            }
-            nativeDirFile.exists() -> {
-                Log.w(TAG, "nativeLibraryDir executable exists but is not executable: ${nativeDirFile.absolutePath}")
-                nativeDirFile.setExecutable(true, true)
-                Log.d(TAG, "nativeLibraryDir executable permission forced: canExecute=${nativeDirFile.canExecute()}")
-                if (nativeDirFile.canExecute()) {
-                    nativeDirFile
-                } else {
-                    Log.w(TAG, "nativeLibraryDir executable still not executable after chmod")
-                    if (runtimeDirFile.exists()) {
-                        Log.d(TAG, "Falling back to executable from runtime_libs")
-                        runtimeDirFile.setExecutable(true, true)
-                        runtimeDirFile
-                    } else {
-                        nativeDirFile
-                    }
-                }
-            }
-            runtimeDirFile.exists() -> {
-                Log.d(TAG, "Using executable from runtime_libs (exists but permission may not be set yet): ${runtimeDirFile.absolutePath}")
-                runtimeDirFile.setExecutable(true, true)
-                Log.d(TAG, "runtime_libs executable permission forced: canExecute=${runtimeDirFile.canExecute()}")
-                runtimeDirFile
-            }
-            else -> {
-                Log.e(TAG, "Executable not found")
-                Log.e(TAG, "nativeDirFile exists=${nativeDirFile.exists()}, runtimeDirFile exists=${runtimeDirFile.exists()}")
-                return false
-            }
-        }
         Log.d(TAG, "tryStartServer: executableFile=${executableFile.absolutePath} exists=${executableFile.exists()} canExecute=${executableFile.canExecute()} length=${executableFile.length()}")
         
         val command = buildCommand(executableFile, modelDir, runtimeDir, isCpu)
@@ -590,16 +549,22 @@ class LocalDreamModule(private val context: Context) {
                         val data = JSONObject(trimmed.substring(6))
                         when (data.optString("type", currentEventType)) {
                             "progress" -> {
-                                val step = data.getInt("step")
-                                val totalSteps = data.getInt("total_steps")
+                                val (step, totalSteps) = normalizeServerProgress(
+                                    serverStep = data.getInt("step"),
+                                    serverTotalSteps = data.getInt("total_steps"),
+                                    requestedSteps = steps
+                                )
                                 val previewBmp = data.optString("preview", "").takeIf { it.isNotEmpty() }?.let {
                                     runCatching { decodeRgbToBitmap(it, data.optInt("preview_width", width), data.optInt("preview_height", height)) }.getOrNull()
                                 }
                                 onProgress(step, totalSteps, 0f, previewBmp)
                             }
                             "preview" -> {
-                                val step = data.optInt("step", 0)
-                                val totalSteps = data.optInt("total_steps", steps)
+                                val (step, totalSteps) = normalizeServerProgress(
+                                    serverStep = data.optInt("step", 0),
+                                    serverTotalSteps = data.optInt("total_steps", steps),
+                                    requestedSteps = steps
+                                )
                                 val previewBmp = data.optString("image", "").takeIf { it.isNotEmpty() }?.let {
                                     runCatching { decodeRgbToBitmap(it, data.optInt("width", width), data.optInt("height", height)) }.getOrNull()
                                 }
