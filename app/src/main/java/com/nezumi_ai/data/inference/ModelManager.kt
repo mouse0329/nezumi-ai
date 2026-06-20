@@ -391,13 +391,17 @@ class ModelManager(
     /**
      * モデルをアンロード
      */
-    suspend fun unloadModel(): Result<Unit> {
-        Log.d(TAG, "ModelManager.unloadModel: start")
+    suspend fun unloadModel(skipCancelInference: Boolean = false): Result<Unit> {
+        Log.d(TAG, "ModelManager.unloadModel: start skipCancelInference=$skipCancelInference")
         return loadMutex.withLock {
             try {
-                runCatching { activeEngine.cancelInference() }
-                    .onFailure { Log.w(TAG, "cancelInference before unload failed", it) }
-                delay(100)
+                if (!skipCancelInference) {
+                    runCatching { activeEngine.cancelInference() }
+                        .onFailure { Log.w(TAG, "cancelInference before unload failed", it) }
+                    delay(100)
+                } else {
+                    Log.d(TAG, "unloadModel: skipping cancelInference as requested")
+                }
                 val result = activeEngine.unloadModel()
                 currentModelName = null
                 currentConfig = null
