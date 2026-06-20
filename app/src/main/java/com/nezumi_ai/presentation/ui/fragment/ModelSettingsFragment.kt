@@ -98,6 +98,10 @@ import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.presentation.ui.helper.SettingsHelper
 import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.presentation.ui.composable.MarkdownLatexText
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.platform.LocalUriHandler
 import com.nezumi_ai.utils.ImportedModelCapabilities
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import com.nezumi_ai.voicevox.VoicevoxManager
@@ -3860,9 +3864,18 @@ open class ModelSettingsFragment : Fragment() {
     @Composable
     private fun HfReadmePage() {
         val isDark = isSystemInDarkTheme()
+        val textColor = colorResource(id = R.color.text_primary)
+        val linkSpan = SpanStyle(color = textColor, textDecoration = TextDecoration.Underline)
+        val linkStyle = TextLinkStyles(
+            style = linkSpan,
+            hoveredStyle = linkSpan,
+            pressedStyle = linkSpan,
+            focusedStyle = linkSpan
+        )
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
                 .background(colorResource(id = R.color.bg_session_list))
         ) {
             // Header
@@ -3931,7 +3944,8 @@ open class ModelSettingsFragment : Fragment() {
                     ) {
                         MarkdownLatexText(
                             text = hfReadmeText!!,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            linkStyle = linkStyle
                         )
                     }
                 }
