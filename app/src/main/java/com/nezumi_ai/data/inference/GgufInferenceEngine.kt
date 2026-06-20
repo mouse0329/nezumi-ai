@@ -351,7 +351,7 @@ class GgufInferenceEngine(
                 } else {
                     roundText
                 }
-                fullAnswer.append(visibleRoundText)
+                fullAnswer.append(Gemma4ThinkingParser.sanitizeVisibleText(visibleRoundText))
 
                 if (!toolCallingEnabled) break
 
@@ -396,7 +396,7 @@ class GgufInferenceEngine(
 
                 currentPrompt = buildString {
                     append(prompt)
-                    append(roundText)
+                    append(Gemma4ThinkingParser.stripThinkingForModelPrompt(roundText))
                     append(GgufToolCallParser.formatToolResults(toolResults))
                 }
                 withContext(Dispatchers.IO) {
@@ -420,7 +420,11 @@ class GgufInferenceEngine(
                 Log.i(TAG, "Performance: ${metrics.toLogString()}")
             }
 
-            trySend(InferenceStreamProtocol.encodeFinal(fullAnswer.toString()))
+            trySend(
+                InferenceStreamProtocol.encodeFinal(
+                    Gemma4ThinkingParser.sanitizeVisibleText(fullAnswer.toString())
+                )
+            )
             close()
         } catch (t: Throwable) {
             if (t is CancellationException) {

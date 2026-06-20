@@ -67,13 +67,34 @@ class Gemma4ThinkingParserTest {
     }
 
     @Test
-    fun parseStreaming_removesEmbeddedToolTagsFromThinking() {
-        val result = Gemma4ThinkingParser.parseStreaming(
-            rawInput = "<|channel>thought\nfirst line <tool_call>{\"name\":\"foo\"}</tool_call><channel|>final answer",
-            treatUnmarkedInputAsThinking = true
-        )
+    fun sanitizeVisibleText_keepsAnswerAfterLeadingToolAndThinkingTags() {
+        val input = "<tool_call><think>\n\n</think>\n\n2026年 6月 20日 7時 10分 34秒（日本標準時間）です。"
+        val output = Gemma4ThinkingParser.sanitizeVisibleText(input)
 
-        assertEquals("first line", result.thinking)
-        assertEquals("final answer", result.answer)
+        assertEquals("2026年 6月 20日 7時 10分 34秒（日本標準時間）です。", output)
+    }
+
+    @Test
+    fun sanitizeVisibleText_stripsPartialToolCallTags() {
+        val input = "Some text <tool_call>{\"name\":\"search\""
+        val output = Gemma4ThinkingParser.sanitizeVisibleText(input)
+
+        assertEquals("Some text", output)
+    }
+
+    @Test
+    fun stripThinkingForModelPrompt_removesRedactedThinkingButKeepsToolCall() {
+        val input = "<think>secret</think><tool_call>{\"name\":\"search\"}</tool_call>"
+        val output = Gemma4ThinkingParser.stripThinkingForModelPrompt(input)
+
+        assertEquals("<tool_call>{\"name\":\"search\"}</tool_call>", output)
+    }
+
+    @Test
+    fun stripThinkingForModelPrompt_removesUnclosedRedactedThinking() {
+        val input = "<think>still thinking"
+        val output = Gemma4ThinkingParser.stripThinkingForModelPrompt(input)
+
+        assertEquals("", output)
     }
 }

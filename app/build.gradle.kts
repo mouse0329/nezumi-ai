@@ -169,8 +169,8 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
-    implementation("com.halilibo.compose-richtext:richtext-commonmark:1.0.0-alpha02")
-    implementation("com.halilibo.compose-richtext:richtext-ui-material3:1.0.0-alpha02")
+    implementation(libs.compose.richtext.commonmark)
+    implementation(libs.compose.richtext.ui.material3)
     implementation("ru.noties:jlatexmath-android:0.2.0")
 
     implementation("androidx.navigation:navigation-fragment-ktx:2.6.0")

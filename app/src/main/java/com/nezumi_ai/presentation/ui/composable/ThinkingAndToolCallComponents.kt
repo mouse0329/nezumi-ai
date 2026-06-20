@@ -47,8 +47,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.stringResource
 import coil.compose.AsyncImage
 import com.nezumi_ai.data.inference.ToolCallState
+import com.nezumi_ai.R
 
 /**
  * 🧠 Thinking チャンネル折りたたみ表示コンポーネント
@@ -121,6 +124,44 @@ fun ExpandableThinkingBlock(
 }
 
 /**
+ * ストリーミング中の AI メッセージ内に表示するツール呼び出しインジケーター。
+ * 下部の ToolResultCard とは別に、出力欄内で呼び出しタイミングを示す。
+ */
+@Composable
+fun StreamingToolCallIndicator(state: ToolCallState) {
+    if (state is ToolCallState.Done) return
+
+    val label = when (state) {
+        is ToolCallState.Executing -> toolExecutingLabel(state.toolName)
+        is ToolCallState.Result -> when (state.status) {
+            "success" -> stringResource(R.string.tool_call_result_success, state.toolName)
+            else -> stringResource(R.string.tool_call_result_error, state.toolName)
+        }
+        ToolCallState.Responding -> stringResource(R.string.tool_call_responding)
+        else -> return
+    }
+
+    Text(
+        text = label,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 6.dp),
+        fontSize = 13.sp,
+        color = colorResource(id = R.color.text_secondary),
+        fontStyle = FontStyle.Italic
+    )
+}
+
+@Composable
+private fun toolExecutingLabel(toolName: String): String = when (toolName.lowercase()) {
+    "set_alarm" -> stringResource(R.string.tool_call_executing_alarm)
+    "send_message" -> stringResource(R.string.tool_call_executing_message)
+    "search", "web_search", "search_memory" -> stringResource(R.string.tool_call_executing_search)
+    "generate_image" -> stringResource(R.string.tool_call_executing_image)
+    else -> stringResource(R.string.tool_call_executing_generic, toolName)
+}
+
+/**
  * Tool Call 進捗表示コンポーネント
  *
  * 状態マシンの各段階で異なるUI表現を表示します。
@@ -140,6 +181,13 @@ fun ToolCallProgressBar(
     }
 
     val (icon, color, message) = when (state) {
+        is ToolCallState.Executing -> {
+            Triple(
+                "⏳",
+                colorResource(id = R.color.text_secondary),
+                toolExecutingLabel(state.toolName)
+            )
+        }
         is ToolCallState.Result -> {
             when (state.status) {
                 "success" -> Triple(
@@ -155,9 +203,9 @@ fun ToolCallProgressBar(
             }
         }
         ToolCallState.Responding -> {
-            Triple("学", Color(0xFF9C27B0), "回答を作成中...")
+            Triple("✍", colorResource(id = R.color.text_secondary), stringResource(R.string.tool_call_responding))
         }
-        else -> return // Done, その他のケース
+        else -> return
     }
 
     Card(
@@ -165,7 +213,7 @@ fun ToolCallProgressBar(
             .fillMaxWidth()
             .padding(8.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (imageGenProgress != null) Color(0xFFFFF3E0) else Color.White
+            containerColor = colorResource(id = R.color.surface_card)
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
