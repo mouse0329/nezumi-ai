@@ -827,6 +827,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.toolCallState.collect { state ->
                 currentToolCallState = state
+                // ツール実行中は進捗バーを表示
+                binding.toolCallProgressCompose.visibility =
+                    if (state != null && state !is ToolCallState.Done) View.VISIBLE else View.GONE
             }
         }
 
@@ -1366,6 +1369,18 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         )
         binding.emptyStateCompose.setContent {
             EmptyStateScreen()
+        }
+
+        binding.toolCallProgressCompose.setViewCompositionStrategy(
+            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+        )
+        binding.toolCallProgressCompose.setContent {
+            this@ChatFragment.NezumiComposeTheme {
+                ToolCallProgressBar(
+                    state = currentToolCallState,
+                    imageGenProgress = currentImageGenProgress
+                )
+            }
         }
     }
 
@@ -2239,3 +2254,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
     }
 }
+
+
+

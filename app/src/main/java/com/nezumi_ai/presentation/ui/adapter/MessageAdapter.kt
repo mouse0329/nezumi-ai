@@ -475,10 +475,27 @@ class MessageAdapter(
                     aiStreamingToolCallCompose.visibility = View.VISIBLE
                     val toolState = streamingToolCallState!!
                     aiStreamingToolCallCompose.setContent {
-                        StreamingToolCallIndicator(state = toolState)
+                        NezumiComposeTheme {
+                            StreamingToolCallIndicator(state = toolState)
+                        }
+                    }
+
+                    // 画像生成中の場合は、画像コンテナを表示して領域を確保
+                    val toolName = when (toolState) {
+                        is ToolCallState.Executing -> toolState.toolName
+                        is ToolCallState.Result -> toolState.toolName
+                        else -> null
+                    }
+                    if (toolName == "generate_image") {
+                        mediaContainer.visibility = View.VISIBLE
+                        singleImageContainer.visibility = View.VISIBLE
+                        aiImagePreview.visibility = View.VISIBLE
+                        aiImagePreview.setImageResource(R.drawable.ic_image)
+                        aiImagePreview.alpha = 0.3f
                     }
                 } else {
                     aiStreamingToolCallCompose.visibility = View.GONE
+                    aiImagePreview.alpha = 1.0f
                 }
 
                 when {
@@ -686,6 +703,22 @@ class MessageAdapter(
         }
     }
     
+    @Composable
+    private fun NezumiComposeTheme(content: @Composable () -> Unit) {
+        ProvideTextStyle(
+            value = TextStyle(
+                fontSize = 14.sp,
+                lineHeight = 21.sp,
+                color = colorResource(id = R.color.text_primary),
+                letterSpacing = 0.2.sp
+            )
+        ) {
+            MaterialTheme {
+                content()
+            }
+        }
+    }
+
     class MessageDiffCallback : DiffUtil.ItemCallback<MessageEntity>() {
         override fun areItemsTheSame(oldItem: MessageEntity, newItem: MessageEntity): Boolean =
             oldItem.id == newItem.id
@@ -705,3 +738,7 @@ class MessageAdapter(
     }
 
 }
+
+
+
+
