@@ -49,6 +49,7 @@ import com.nezumi_ai.data.media.MessageMediaStore
 import com.halilibo.richtext.commonmark.Markdown
 import com.halilibo.richtext.ui.material3.RichText
 import com.nezumi_ai.data.inference.ToolCallState
+import com.nezumi_ai.presentation.ui.component.ImageViewerDialog
 import com.nezumi_ai.presentation.ui.composable.StreamingToolCallIndicator
 import com.nezumi_ai.presentation.ui.composable.MarkdownLatexText
 import java.text.SimpleDateFormat
@@ -170,104 +171,12 @@ class MessageAdapter(
                 
                 // タップしてモーダルで大きく表示
                 imageView.setOnClickListener {
-                    showImageModal(context, uri)
+                    ImageViewerDialog.show(context, uri)
                 }
                 
                 cardView.addView(imageView)
                 container.addView(cardView)
             }
-        }
-        
-        // モーダルで画像をフルスクリーン表示
-        // Phase 14: file:// URI に対応
-        private fun showImageModal(context: Context, imageUri: String) {
-            val imageView = ImageView(context).apply {
-                layoutParams = android.view.ViewGroup.LayoutParams(
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                )
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                setBackgroundColor(android.graphics.Color.BLACK)
-                contentDescription = context.getString(R.string.message_image)
-            }
-            loadImageIntoView(imageView, imageUri)
-            
-            androidx.appcompat.app.AlertDialog.Builder(context)
-                .setView(imageView)
-                .setPositiveButton("フォルダ保存") { _, _ ->
-                    saveImageUriToPictures(context, imageUri)
-                }
-                .setNeutralButton("共有") { _, _ ->
-                    shareImageUri(context, imageUri)
-                }
-                .setNegativeButton("閉じる") { dialog, _ -> dialog.dismiss() }
-                .show()
-                .apply {
-                    window?.setLayout(
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                    )
-                }
-        }
-
-        private fun saveImageUriToPictures(context: Context, imageUri: String) {
-            try {
-                val uri = MessageMediaStore.toUri(imageUri) ?: return
-                val name = "nezumi_ai_${System.currentTimeMillis()}.png"
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                    val values = android.content.ContentValues().apply {
-                        put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name)
-                        put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")
-                        put(
-                            android.provider.MediaStore.Images.Media.RELATIVE_PATH,
-                            android.os.Environment.DIRECTORY_PICTURES + "/NezumiAI"
-                        )
-                        put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
-                    }
-                    val resolver = context.contentResolver
-                    val outUri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                        ?: return
-                    openImageInputStream(context, uri)?.use { input ->
-                        resolver.openOutputStream(outUri)?.use { output -> input.copyTo(output) }
-                    }
-                    values.clear()
-                    values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
-                    resolver.update(outUri, values, null, null)
-                } else {
-                    val bitmap = openImageInputStream(context, uri)?.use {
-                        android.graphics.BitmapFactory.decodeStream(it)
-                    } ?: return
-                    @Suppress("DEPRECATION")
-                    android.provider.MediaStore.Images.Media.insertImage(
-                        context.contentResolver,
-                        bitmap,
-                        name,
-                        "nezumi-ai"
-                    )
-                }
-                Toast.makeText(context, "フォルダに保存しました", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(context, "保存に失敗しました", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        private fun openImageInputStream(context: Context, uri: android.net.Uri): java.io.InputStream? {
-            return if (uri.scheme == "file") {
-                val path = uri.path ?: return null
-                java.io.File(path).inputStream()
-            } else {
-                context.contentResolver.openInputStream(uri)
-            }
-        }
-
-        private fun shareImageUri(context: Context, imageUri: String) {
-            val uri = MessageMediaStore.toUri(imageUri) ?: return
-            val share = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                type = "image/*"
-                putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            context.startActivity(android.content.Intent.createChooser(share, "共有"))
         }
     }
     
@@ -349,7 +258,7 @@ class MessageAdapter(
                                 userImagePreview.setImageResource(android.R.drawable.ic_menu_gallery)
                             }
                             userImagePreview.setOnClickListener {
-                                showImageModal(binding.root.context, message.imageUri!!)
+                                ImageViewerDialog.show(binding.root.context, message.imageUri!!)
                             }
                         }
                     }
@@ -585,7 +494,7 @@ class MessageAdapter(
                                 aiImagePreview.setImageResource(android.R.drawable.ic_menu_gallery)
                             }
                             aiImagePreview.setOnClickListener {
-                                showImageModal(binding.root.context, message.imageUri!!)
+                                ImageViewerDialog.show(binding.root.context, message.imageUri!!)
                             }
                         }
                     }
@@ -789,5 +698,4 @@ class MessageAdapter(
     }
 
 }
-
 
