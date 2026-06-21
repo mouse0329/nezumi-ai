@@ -35,12 +35,11 @@ class LocalDreamModule(private val context: Context) {
     
     private fun safetyChecker(): ImageSafetyChecker {
         val existing = _safetyChecker
-        // モデルファイルが新たに存在するのに session が null なら再生成
-        if (existing != null && (existing.isAvailable || !com.nezumi_ai.data.inference.ModelDownloadWorker.isSafetyModelReady(context))) {
+        if (existing != null && existing.isAvailable) {
             return existing
         }
         existing?.close()
-        return ImageSafetyChecker(context).also { _safetyChecker = it }
+        return ImageSafetyChecker.create(context).also { _safetyChecker = it }
     }
     
     companion object {
@@ -479,6 +478,13 @@ class LocalDreamModule(private val context: Context) {
         if (com.nezumi_ai.BuildConfig.SAFETY_PROMPT_FILTER_ENABLED &&
             PromptFilter.check(prompt) == PromptFilter.Result.BLOCK) {
             Log.w(TAG, "Prompt blocked by PromptFilter — skipping UNET inference")
+            return@withContext null
+        }
+        // 後段ガード有効時はセーフティモデル未準備なら UNET 推論前に中止
+        if (com.nezumi_ai.BuildConfig.SAFETY_IMAGE_GUARD_ENABLED &&
+            !com.nezumi_ai.data.inference.ModelDownloadWorker.isSafetyModelUsable(context)) {
+            Log.w(TAG, "Safety model not ready — aborting generation before UNET inference")
+            _lastSafetyVerdict = SafetyResult.Verdict.BLOCK
             return@withContext null
         }
         // ─────────────────────────────────────────────────────────

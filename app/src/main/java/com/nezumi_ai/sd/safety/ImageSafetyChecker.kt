@@ -10,48 +10,62 @@ import com.nezumi_ai.data.inference.ModelDownloadWorker
 import java.io.Closeable
 import java.nio.FloatBuffer
 
-class ImageSafetyChecker(private val context: Context) : Closeable {
+class ImageSafetyChecker private constructor(
+    private val env: OrtEnvironment,
+    private val session: OrtSession?,
+    private val inputIsNhwc: Boolean,
+    private val inputSize: Int
+) : Closeable {
 
     companion object {
         private const val TAG = "ImageSafetyChecker"
-        private const val INPUT_SIZE = 384
-        private val MEAN = floatArrayOf(0.485f, 0.456f, 0.406f)
-        private val STD  = floatArrayOf(0.229f, 0.224f, 0.225f)
-    }
+        private const val DEFAULT_INPUT_SIZE = 384
+        // AdamCodd/vit-base-nsfw-detector preprocessor_config.json
+        private val MEAN = floatArrayOf(0.5f, 0.5f, 0.5f)
+        private val STD = floatArrayOf(0.5f, 0.5f, 0.5f)
 
-    private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
+        fun canLoad(context: Context): Boolean {
+            if (!ModelDownloadWorker.isSafetyModelReady(context)) return false
+            return runCatching {
+                create(context).use { it.isAvailable }
+            }.getOrDefault(false)
+        }
 
-    private val session: OrtSession?
-    private val inputIsNhwc: Boolean  // true=NHWC, false=NCHW
-
-    init {
-        var sess: OrtSession? = null
-        var nhwc = false
-        runCatching {
+        fun create(context: Context): ImageSafetyChecker {
+            val env = OrtEnvironment.getEnvironment()
+            var sess: OrtSession? = null
+            var nhwc = false
+            var inputSize = DEFAULT_INPUT_SIZE
             val file = ModelDownloadWorker.safetyModelFile(context)
             if (!file.exists() || file.length() == 0L) {
                 Log.i(TAG, "safety.onnx not yet downloaded — safety checks skipped")
             } else {
-                val opts = OrtSession.SessionOptions().apply {
-                    setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-                    setIntraOpNumThreads(2)
+                runCatching {
+                    val opts = OrtSession.SessionOptions().apply {
+                        setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+                        setIntraOpNumThreads(2)
+                    }
+                    val s = env.createSession(file.absolutePath, opts)
+                    val inputInfo = s.inputInfo.values.firstOrNull()
+                    val shape = (inputInfo?.info as? ai.onnxruntime.TensorInfo)?.shape
+                    Log.i(TAG, "Model input shape: ${shape?.toList()}")
+                    if (shape != null && shape.size == 4) {
+                        nhwc = shape[3] == 3L
+                        inputSize = if (nhwc) {
+                            shape[1].toInt().coerceAtLeast(1)
+                        } else {
+                            shape[2].toInt().coerceAtLeast(1)
+                        }
+                    }
+                    Log.i(TAG, "Input format: ${if (nhwc) "NHWC" else "NCHW"}, size=$inputSize")
+                    sess = s
+                }.onFailure { e ->
+                    Log.w(TAG, "Failed to load safety.onnx: ${e.message}")
+                    runCatching { ModelDownloadWorker.safetyModelFile(context).delete() }
                 }
-                val s = env.createSession(file.absolutePath, opts)
-                // 入力形状を確認して NHWC / NCHW を自動判定
-                val inputInfo = s.inputInfo.values.firstOrNull()
-                val shape = (inputInfo?.info as? ai.onnxruntime.TensorInfo)?.shape
-                Log.i(TAG, "Model input shape: ${shape?.toList()}")
-                // shape[1] == 3 → NCHW, shape[3] == 3 → NHWC
-                nhwc = shape != null && shape.size == 4 && shape[3] == 3L
-                Log.i(TAG, "Input format: ${if (nhwc) "NHWC" else "NCHW"}")
-                sess = s
             }
-        }.onFailure { e ->
-            Log.w(TAG, "Failed to load safety.onnx: ${e.message}")
-            runCatching { ModelDownloadWorker.safetyModelFile(context).delete() }
+            return ImageSafetyChecker(env, sess, nhwc, inputSize)
         }
-        session = sess
-        inputIsNhwc = nhwc
     }
 
     val isAvailable: Boolean get() = session != null
@@ -78,49 +92,58 @@ class ImageSafetyChecker(private val context: Context) : Closeable {
         }
     }
 
-    /** NCHW: [1, 3, 224, 224] */
+    /** NCHW: [1, 3, H, W] */
     private fun preprocessNchw(src: Bitmap): OnnxTensor {
         val pixels = getScaledPixels(src)
-        val buf = FloatBuffer.allocate(1 * 3 * INPUT_SIZE * INPUT_SIZE)
-        val rCh = FloatArray(INPUT_SIZE * INPUT_SIZE)
-        val gCh = FloatArray(INPUT_SIZE * INPUT_SIZE)
-        val bCh = FloatArray(INPUT_SIZE * INPUT_SIZE)
+        val buf = FloatBuffer.allocate(1 * 3 * inputSize * inputSize)
+        val rCh = FloatArray(inputSize * inputSize)
+        val gCh = FloatArray(inputSize * inputSize)
+        val bCh = FloatArray(inputSize * inputSize)
         for (i in pixels.indices) {
             val px = pixels[i]
-            rCh[i] = (((px shr 16) and 0xFF) / 255f - MEAN[0]) / STD[0]
-            gCh[i] = (((px shr 8)  and 0xFF) / 255f - MEAN[1]) / STD[1]
-            bCh[i] = ((px          and 0xFF)  / 255f - MEAN[2]) / STD[2]
+            rCh[i] = normalizeChannel((px shr 16) and 0xFF, 0)
+            gCh[i] = normalizeChannel((px shr 8) and 0xFF, 1)
+            bCh[i] = normalizeChannel(px and 0xFF, 2)
         }
         buf.put(rCh); buf.put(gCh); buf.put(bCh)
         buf.rewind()
-        return OnnxTensor.createTensor(env, buf,
-            longArrayOf(1, 3, INPUT_SIZE.toLong(), INPUT_SIZE.toLong()))
+        return OnnxTensor.createTensor(
+            env,
+            buf,
+            longArrayOf(1, 3, inputSize.toLong(), inputSize.toLong())
+        )
     }
 
-    /** NHWC: [1, 224, 224, 3] */
+    /** NHWC: [1, H, W, 3] */
     private fun preprocessNhwc(src: Bitmap): OnnxTensor {
         val pixels = getScaledPixels(src)
-        val buf = FloatBuffer.allocate(1 * INPUT_SIZE * INPUT_SIZE * 3)
+        val buf = FloatBuffer.allocate(1 * inputSize * inputSize * 3)
         for (px in pixels) {
-            buf.put(((px shr 16) and 0xFF) / 255f - MEAN[0])
-            buf.put(((px shr 8)  and 0xFF) / 255f - MEAN[1])
-            buf.put( (px         and 0xFF)  / 255f - MEAN[2])
+            buf.put(normalizeChannel((px shr 16) and 0xFF, 0))
+            buf.put(normalizeChannel((px shr 8) and 0xFF, 1))
+            buf.put(normalizeChannel(px and 0xFF, 2))
         }
         buf.rewind()
-        return OnnxTensor.createTensor(env, buf,
-            longArrayOf(1, INPUT_SIZE.toLong(), INPUT_SIZE.toLong(), 3))
+        return OnnxTensor.createTensor(
+            env,
+            buf,
+            longArrayOf(1, inputSize.toLong(), inputSize.toLong(), 3)
+        )
+    }
+
+    private fun normalizeChannel(value: Int, channel: Int): Float {
+        return ((value / 255f) - MEAN[channel]) / STD[channel]
     }
 
     private fun getScaledPixels(src: Bitmap): IntArray {
-        val scaled = Bitmap.createScaledBitmap(src, INPUT_SIZE, INPUT_SIZE, true)
-        val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
-        scaled.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
+        val scaled = Bitmap.createScaledBitmap(src, inputSize, inputSize, true)
+        val pixels = IntArray(inputSize * inputSize)
+        scaled.getPixels(pixels, 0, inputSize, 0, 0, inputSize, inputSize)
         if (scaled != src) scaled.recycle()
         return pixels
     }
 
     override fun close() {
         runCatching { session?.close() }
-        runCatching { env.close() }
     }
 }

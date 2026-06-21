@@ -33,8 +33,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import androidx.work.WorkInfo
-import androidx.work.WorkManager
 import com.nezumi_ai.sd.GenerationQueue
 import com.nezumi_ai.sd.GenerationQueueItem
 import com.nezumi_ai.sd.ImageGenerationMetadata
@@ -62,7 +60,20 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     val selectedModelIndex: StateFlow<Int> = _selectedModelIndex.asStateFlow()
 
     init {
+        Log.d(TAG, "[ImageGen] init: Starting initialization")
         loadAvailableModels()
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                Log.d(TAG, "[ImageGen] init: Checking safety model readiness...")
+                if (!ensureSafetyModelReady(getApplication())) {
+                    Log.e(TAG, "[ImageGen] init: Safety model download failed or timeout")
+                } else {
+                    Log.d(TAG, "[ImageGen] init: Safety model is ready")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[ImageGen] init: Error during safety model check", e)
+            }
+        }
     }
 
     private val _backendInfo = MutableStateFlow("")
@@ -317,6 +328,34 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         Log.i(TAG, "[ImageGen] cancel() completed")
     }
 
+    private suspend fun ensureSafetyModelReady(app: Application): Boolean {
+        if (!com.nezumi_ai.BuildConfig.SAFETY_IMAGE_GUARD_ENABLED) return true
+        if (ModelDownloadWorker.isSafetyModelUsable(app)) return true
+
+        Log.i(TAG, "[ImageGen] Safety model missing, triggering download...")
+        _safetyDownloading.value = true
+        _safetyProgress.value = -1f
+        _snackbar.value = "セーフティモデルをダウンロード中です…"
+
+        val success = ModelDownloadWorker.awaitSafetyModelReady(
+            app,
+            onProgress = { downloaded, total ->
+                if (total > 0L) {
+                    _safetyTotalBytes.value = total
+                    _safetyProgress.value = downloaded.toFloat() / total.toFloat()
+                }
+            }
+        )
+
+        _safetyDownloading.value = false
+        _safetyProgress.value = -1f
+        if (!success) {
+            Log.e(TAG, "[ImageGen] Safety model download failed or timeout")
+            _snackbar.value = "セーフティモデルのダウンロードがタイムアウトしました"
+        }
+        return success
+    }
+
     fun generate() {
         generateJob?.cancel()
         generateJob = viewModelScope.launch(Dispatchers.IO) {
@@ -331,6 +370,9 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_err_prompt_empty)
             return@launch
         }
+
+        Log.d(TAG, "[ImageGen] generate() Safety Check: enabled=${com.nezumi_ai.BuildConfig.SAFETY_IMAGE_GUARD_ENABLED}")
+
         // 前段：ViewModel 層でプロンプトを検査 — LocalDreamModule へ届く前にブロック
         if (com.nezumi_ai.BuildConfig.SAFETY_PROMPT_FILTER_ENABLED &&
             PromptFilter.check(pr) == PromptFilter.Result.BLOCK) {
@@ -339,45 +381,9 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             _snackbar.value = "プロンプトにポリシー違反のキーワードが含まれています"
             return@launch
         }
-        // Safety model が未ダウンロードならダウンロード完了まで待つ
-        if (!ModelDownloadWorker.isSafetyModelReady(app)) {
-            ModelDownloadWorker.enqueueSafetyModel(app)
-            _safetyDownloading.value = true
-            _safetyProgress.value = -1f
-            _snackbar.value = "セーフティモデルをダウンロード中です…"
-            val workManager = WorkManager.getInstance(app)
-            val deadline = System.currentTimeMillis() + 5 * 60_000L
-            var success = false
-            while (System.currentTimeMillis() < deadline) {
-                delay(300)
-                if (ModelDownloadWorker.isSafetyModelReady(app)) {
-                    success = true
-                    break
-                }
-                val info = workManager
-                    .getWorkInfosForUniqueWork(ModelDownloadWorker.SAFETY_MODEL_WORK_NAME)
-                    .get().firstOrNull()
-                val state = info?.state
-                if (state == WorkInfo.State.FAILED || state == WorkInfo.State.CANCELLED) {
-                    _snackbar.value = "セーフティモデルのダウンロードに失敗しました"
-                    _safetyDownloading.value = false
-                    _safetyProgress.value = -1f
-                    return@launch
-                }
-                // progress 流し込み
-                val downloaded = info?.progress?.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L) ?: 0L
-                val total = info?.progress?.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L) ?: 0L
-                if (total > 0L) {
-                    _safetyTotalBytes.value = total
-                    _safetyProgress.value = downloaded.toFloat() / total.toFloat()
-                }
-            }
-            _safetyDownloading.value = false
-            _safetyProgress.value = -1f
-            if (!success) {
-                _snackbar.value = "セーフティモデルのダウンロードがタイムアウトしました"
-                return@launch
-            }
+        // Safety model が未ダウンロードならダウンロード完了まで待つ (画像ガード有効時のみ)
+        if (!ensureSafetyModelReady(app)) {
+            return@launch
         }
         _loading.value = true
         _resultBitmap.value = null
@@ -662,6 +668,15 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         _queueResultBitmaps.value = emptyList()
         queueRunJob = viewModelScope.launch(Dispatchers.IO) {
             _isQueueRunning.value = true
+            val app = getApplication<Application>()
+            if (com.nezumi_ai.BuildConfig.SAFETY_IMAGE_GUARD_ENABLED &&
+                !ensureSafetyModelReady(app)) {
+                _isQueueRunning.value = false
+                _loading.value = false
+                _snackbar.value = "セーフティモデルのダウンロードに失敗しました"
+                return@launch
+            }
+
             val totalItems = queue.items.size
             _queueProgress.value = Pair(0, totalItems)
             
@@ -752,6 +767,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
             if (path.isEmpty() || !File(path).isDirectory) {
                 Log.e(TAG, "[QueueItem] Invalid model path")
+                return@withContext null
+            }
+
+            if (!ensureSafetyModelReady(app)) {
+                Log.e(TAG, "[QueueItem] Safety model not ready")
                 return@withContext null
             }
 

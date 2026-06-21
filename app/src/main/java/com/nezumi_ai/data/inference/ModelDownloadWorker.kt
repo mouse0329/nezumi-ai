@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -45,7 +46,7 @@ class ModelDownloadWorker(
     override suspend fun doWork(): Result {
         val startedAt = System.currentTimeMillis()
         val downloadKind = inputData.getString(KEY_DOWNLOAD_KIND) ?: DOWNLOAD_KIND_BUILTIN
-        
+
         return when (downloadKind) {
             DOWNLOAD_KIND_HF_CUSTOM -> doCustomHfWork(startedAt)
             DOWNLOAD_KIND_IMAGE_MODEL -> doImageModelWork(startedAt)
@@ -57,60 +58,33 @@ class ModelDownloadWorker(
     private suspend fun doSafetyModelWork(): Result {
         val notificationId = 8001
         setForeground(createForegroundInfo("Safety Model", 0L, -1L, notificationId))
-        val destFile = File(applicationContext.filesDir, SAFETY_MODEL_FILENAME)
-        if (destFile.exists() && destFile.length() > 0L) return Result.success()
-        val tempFile = File(applicationContext.cacheDir, "$SAFETY_MODEL_FILENAME.tmp")
         return try {
-            withContext(Dispatchers.IO) {
-                val conn = (java.net.URL(SAFETY_MODEL_URL).openConnection() as java.net.HttpURLConnection).apply {
-                    connectTimeout = 30_000
-                    readTimeout = 60_000
-                    instanceFollowRedirects = true
-                }
-                conn.connect()
-                if (conn.responseCode !in 200..299) {
-                    conn.disconnect()
-                    return@withContext Result.failure(workDataOf(KEY_ERROR_MESSAGE to "HTTP ${conn.responseCode}"))
-                }
-                val total = conn.contentLengthLong
-                conn.inputStream.use { input ->
-                    tempFile.outputStream().use { output ->
-                        val buf = ByteArray(8192)
-                        var downloaded = 0L
-                        var read: Int
-                        var lastProgressMs = 0L
-                        while (input.read(buf).also { read = it } != -1) {
-                            if (isStopped) throw CancellationException("cancelled")
-                            output.write(buf, 0, read)
-                            downloaded += read
-                            val now = System.currentTimeMillis()
-                            if (total > 0L && now - lastProgressMs >= 300L) {
-                                lastProgressMs = now
-                                setProgressAsync(workDataOf(
-                                    KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_SAFETY_MODEL,
-                                    KEY_DOWNLOADED_BYTES to downloaded,
-                                    KEY_TOTAL_BYTES to total
-                                ))
-                                setForegroundAsync(createForegroundInfo("Safety Model", downloaded, total, notificationId))
-                            }
-                        }
-                    }
-                }
-                conn.disconnect()
-                if (destFile.exists()) destFile.delete()
-                tempFile.renameTo(destFile)
-            }
-            Result.success()
+            val ok = downloadSafetyModelBlocking(
+                applicationContext,
+                onProgress = { downloaded, total ->
+                    setProgressAsync(
+                        workDataOf(
+                            KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_SAFETY_MODEL,
+                            KEY_DOWNLOADED_BYTES to downloaded,
+                            KEY_TOTAL_BYTES to total
+                        )
+                    )
+                    setForegroundAsync(createForegroundInfo("Safety Model", downloaded, total, notificationId))
+                },
+                isCancelled = { isStopped }
+            )
+            if (ok) Result.success()
+            else if (runAttemptCount < 2) Result.retry()
+            else Result.failure(workDataOf(KEY_ERROR_MESSAGE to "Safety model download failed"))
         } catch (e: CancellationException) {
-            tempFile.delete()
             throw e
         } catch (e: Exception) {
-            tempFile.delete()
+            Log.e(TAG, "Safety model download failed: ${e.message}", e)
             if (runAttemptCount < 2) Result.retry()
             else Result.failure(workDataOf(KEY_ERROR_MESSAGE to (e.message ?: "failed")))
         }
     }
-    
+
     private suspend fun doBuiltinModelWork(startedAt: Long): Result {
 
         val modelName = inputData.getString(KEY_MODEL_NAME)
@@ -211,6 +185,7 @@ class ModelDownloadWorker(
 
             result.fold(
                 onSuccess = {
+                    doSafetyModelWork() // 画像生成モデルのダウンロード完了時にセーフティモデルも確保
                     showDownloadCompletedNotification(model, it.length(), notificationId)
                     Result.success(
                         workDataOf(
@@ -466,6 +441,8 @@ class ModelDownloadWorker(
     }
 
     companion object {
+        private const val TAG = "ModelDownloadWorker"
+
         const val KEY_MODEL_NAME = "model_name"
         const val KEY_DOWNLOAD_KIND = "download_kind"
         const val KEY_HF_MODEL_ID = "hf_model_id"
@@ -601,9 +578,9 @@ class ModelDownloadWorker(
             val outFile = ModelFileManager.huggingFaceImportedFile(context, modelId, filePath)
             runCatching { File("${outFile.absolutePath}.download").delete() }
         }
-        
+
         fun imageModelWorkName(modelId: String): String = "image_model_download_$modelId"
-        
+
         fun enqueueImageModel(context: Context, modelId: String, downloadUrl: String, fileName: String, modelName: String): Boolean {
             val workName = imageModelWorkName(modelId)
             android.util.Log.d("ModelDownloadWorker", "enqueueImageModel: modelId=$modelId, modelName=$modelName, fileName=$fileName")
@@ -618,7 +595,7 @@ class ModelDownloadWorker(
                     }
             }.getOrDefault(false)
             if (hasActive) return false
-            
+
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
@@ -647,7 +624,7 @@ class ModelDownloadWorker(
             )
             return true
         }
-        
+
         fun cancelImageModel(context: Context, modelId: String) {
             WorkManager.getInstance(context).cancelUniqueWork(imageModelWorkName(modelId))
         }
@@ -658,8 +635,78 @@ class ModelDownloadWorker(
         fun isSafetyModelReady(context: Context): Boolean =
             safetyModelFile(context).let { it.exists() && it.length() > 0L }
 
+        fun isSafetyModelUsable(context: Context): Boolean =
+            isSafetyModelReady(context) &&
+                com.nezumi_ai.sd.safety.ImageSafetyChecker.canLoad(context)
+
+        suspend fun downloadSafetyModelBlocking(
+            context: Context,
+            onProgress: ((downloaded: Long, total: Long) -> Unit)? = null,
+            isCancelled: () -> Boolean = { false }
+        ): Boolean = withContext(Dispatchers.IO) {
+            if (isSafetyModelUsable(context)) return@withContext true
+
+            val destFile = safetyModelFile(context)
+            val tempFile = File(context.cacheDir, "$SAFETY_MODEL_FILENAME.tmp")
+            tempFile.delete()
+            try {
+                val conn = (java.net.URL(SAFETY_MODEL_URL).openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 30_000
+                    readTimeout = 120_000
+                    instanceFollowRedirects = true
+                }
+                try {
+                    conn.connect()
+                    if (conn.responseCode !in 200..299) {
+                        Log.e(TAG, "Safety model download HTTP ${conn.responseCode}")
+                        return@withContext false
+                    }
+                    val total = conn.contentLengthLong
+                    conn.inputStream.use { input ->
+                        tempFile.outputStream().use { output ->
+                            val buf = ByteArray(8192)
+                            var downloaded = 0L
+                            var read: Int
+                            var lastProgressMs = 0L
+                            while (input.read(buf).also { read = it } != -1) {
+                                if (isCancelled()) throw CancellationException("cancelled")
+                                output.write(buf, 0, read)
+                                downloaded += read
+                                val now = System.currentTimeMillis()
+                                if (now - lastProgressMs >= 300L) {
+                                    lastProgressMs = now
+                                    onProgress?.invoke(downloaded, total)
+                                }
+                            }
+                        }
+                    }
+                    if (tempFile.length() == 0L) {
+                        Log.e(TAG, "Safety model download produced empty file")
+                        return@withContext false
+                    }
+                    if (destFile.exists()) destFile.delete()
+                    if (!tempFile.renameTo(destFile)) {
+                        Log.e(TAG, "Safety model download failed to rename temp file")
+                        return@withContext false
+                    }
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (e: CancellationException) {
+                tempFile.delete()
+                throw e
+            } catch (e: Exception) {
+                tempFile.delete()
+                Log.e(TAG, "Safety model download failed: ${e.message}", e)
+                return@withContext false
+            } finally {
+                if (tempFile.exists()) tempFile.delete()
+            }
+            isSafetyModelUsable(context)
+        }
+
         fun enqueueSafetyModel(context: Context): Boolean {
-            if (isSafetyModelReady(context)) return false
+            if (isSafetyModelUsable(context)) return false
             val workManager = WorkManager.getInstance(context)
             val hasActive = runCatching {
                 workManager.getWorkInfosForUniqueWork(SAFETY_MODEL_WORK_NAME)
@@ -674,6 +721,17 @@ class ModelDownloadWorker(
                 .build()
             workManager.enqueueUniqueWork(SAFETY_MODEL_WORK_NAME, ExistingWorkPolicy.KEEP, request)
             return true
+        }
+
+        suspend fun awaitSafetyModelReady(
+            context: Context,
+            timeoutMs: Long = 5 * 60_000L,
+            onProgress: ((downloaded: Long, total: Long) -> Unit)? = null
+        ): Boolean {
+            if (isSafetyModelUsable(context)) return true
+            Log.i(TAG, "Safety model missing or unloadable, starting direct download...")
+            enqueueSafetyModel(context)
+            return downloadSafetyModelBlocking(context, onProgress)
         }
 
         fun cancel(context: Context, model: ModelFileManager.LocalModel) {
@@ -903,7 +961,7 @@ class ModelDownloadWorker(
         }
         manager.createNotificationChannel(channel)
     }
-    
+
     private suspend fun doImageModelWork(startedAt: Long): Result {
         val modelId = inputData.getString(KEY_IMAGE_MODEL_ID)
             ?: return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "image model id is missing"))
@@ -913,20 +971,20 @@ class ModelDownloadWorker(
             ?: return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "filename is missing"))
         val modelName = inputData.getString(KEY_IMAGE_MODEL_NAME)
             ?: return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "model name is missing"))
-        
+
         android.util.Log.d("ModelDownloadWorker", "doImageModelWork: modelId=$modelId, modelName=$modelName, url=$downloadUrl")
-        
+
         val displayName = modelName
         val notificationId = 5000 + modelId.hashCode().absoluteValue % 500
         setForeground(createForegroundInfo(displayName, 0L, -1L, notificationId))
-        
+
         // Use modelId (not modelName) as directory name to ensure consistency
         val destDir = File(applicationContext.filesDir, "sd_models/$modelId")
         android.util.Log.d("ModelDownloadWorker", "doImageModelWork: destDir=${destDir.absolutePath}")
         if (!destDir.exists()) destDir.mkdirs()
-        
+
         val tempFile = File(applicationContext.cacheDir, "$fileName.tmp")
-        
+
         return try {
             var lastTime = System.currentTimeMillis()
             var lastDownloaded = 0L
@@ -935,37 +993,37 @@ class ModelDownloadWorker(
             var lastProgressUpdateTime = 0L
             var lastProgressDownloaded = -1L
             var reachedNearCompletion = false
-            
+
             withContext(Dispatchers.IO) {
                 val url = java.net.URL(downloadUrl)
                 val connection = url.openConnection()
                 connection.connectTimeout = 30000
                 connection.readTimeout = 30000
                 connection.connect()
-                
+
                 val totalBytes = connection.contentLengthLong
                 android.util.Log.d("ModelDownloadWorker", "doImageModelWork: totalBytes=$totalBytes")
-                
+
                 connection.getInputStream().use { input ->
                     tempFile.outputStream().use { output ->
                         val buffer = ByteArray(8192)
                         var downloaded = 0L
                         var read: Int
-                        
+
                         while (input.read(buffer).also { read = it } != -1) {
                             if (isStopped) {
                                 throw CancellationException("cancel requested")
                             }
                             output.write(buffer, 0, read)
                             downloaded += read
-                            
+
                             if (totalBytes > 0L && downloaded >= (totalBytes * 98L / 100L)) {
                                 reachedNearCompletion = true
                             }
-                            
+
                             val currentTime = System.currentTimeMillis()
                             val timeDeltaMs = currentTime - lastTime
-                            
+
                             if (!hasBaseline) {
                                 hasBaseline = true
                                 lastTime = currentTime
@@ -984,21 +1042,21 @@ class ModelDownloadWorker(
                                 lastForegroundUpdateTime = currentTime
                                 continue
                             }
-                            
+
                             val speedMbps = if (timeDeltaMs > 0) {
                                 val bytesDelta = (downloaded - lastDownloaded).coerceAtLeast(0L)
                                 (bytesDelta.toDouble() / (1024.0 * 1024.0)) / (timeDeltaMs.toDouble() / 1000.0)
                             } else {
                                 0.0
                             }
-                            
+
                             val reachedEnd = totalBytes > 0L && downloaded >= totalBytes
                             val elapsedSinceLastProgress = currentTime - lastProgressUpdateTime
                             val progressedBytes = (downloaded - lastProgressDownloaded).coerceAtLeast(0L)
                             val shouldPublishProgress = reachedEnd ||
                                 elapsedSinceLastProgress >= PROGRESS_UPDATE_INTERVAL_MS ||
                                 progressedBytes >= PROGRESS_UPDATE_MIN_BYTES
-                            
+
                             if (shouldPublishProgress) {
                                 val data = workDataOf(
                                     KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_IMAGE_MODEL,
@@ -1016,7 +1074,7 @@ class ModelDownloadWorker(
                                     lastForegroundUpdateTime = currentTime
                                 }
                             }
-                            
+
                             if (timeDeltaMs > 500) {
                                 lastTime = currentTime
                                 lastDownloaded = downloaded
@@ -1024,9 +1082,9 @@ class ModelDownloadWorker(
                         }
                     }
                 }
-                
+
                 android.util.Log.d("ModelDownloadWorker", "doImageModelWork: download complete, extracting zip")
-                
+
                 // Unzip
                 java.util.zip.ZipInputStream(tempFile.inputStream()).use { zis ->
                     var entry = zis.nextEntry
@@ -1048,15 +1106,16 @@ class ModelDownloadWorker(
                     }
                     android.util.Log.d("ModelDownloadWorker", "doImageModelWork: extracted $fileCount files")
                 }
-                
+
                 tempFile.delete()
-                
+
                 // List extracted files
                 destDir.listFiles()?.forEach { file ->
                     android.util.Log.d("ModelDownloadWorker", "doImageModelWork: extracted file: ${file.name}")
                 }
             }
-            
+
+            doSafetyModelWork()
             android.util.Log.d("ModelDownloadWorker", "doImageModelWork: SUCCESS")
             showImageModelDownloadCompletedNotification(modelName, destDir.length())
             Result.success(
@@ -1086,7 +1145,7 @@ class ModelDownloadWorker(
             }
         }
     }
-    
+
     private fun showImageModelDownloadCompletedNotification(modelName: String, sizeBytes: Long) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val hasPermission = ContextCompat.checkSelfPermission(
@@ -1121,7 +1180,7 @@ class ModelDownloadWorker(
         NotificationManagerCompat.from(applicationContext)
             .notify(6000 + modelName.hashCode().absoluteValue % 500, notification)
     }
-    
+
     private fun showImageModelDownloadFailedNotification(modelName: String, reason: String) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val hasPermission = ContextCompat.checkSelfPermission(
