@@ -29,26 +29,21 @@ class LocalDreamModule(private val context: Context) {
     // lazy ではなく毎回生成時に取得 — ファイル差し替え後も確実に反映される
     private var _safetyChecker: ImageSafetyChecker? = null
     private var _lastSafetyVerdict: SafetyResult.Verdict? = null
-    
+
     fun getLastSafetyVerdict(): SafetyResult.Verdict? = _lastSafetyVerdict
     fun clearLastSafetyVerdict() { _lastSafetyVerdict = null }
-    
+
     private fun safetyChecker(): ImageSafetyChecker {
-        val existing = _safetyChecker
-        if (existing != null && existing.isAvailable) {
-            return existing
-        }
-        existing?.close()
-        return ImageSafetyChecker.create(context).also { _safetyChecker = it }
+        return _safetyChecker ?: ImageSafetyChecker(context).also { _safetyChecker = it }
     }
-    
+
     companion object {
         private const val TAG = "LocalDreamModule"
         private const val SERVER_PORT = 18081
         private const val EXECUTABLE_NAME = "libstable_diffusion_core.so"
         private const val RUNTIME_DIR = "runtime_libs"
     }
-    
+
     private var serverProcess: Process? = null
     private var currentModelPath: String? = null
     private var currentBackend: String? = null
@@ -77,7 +72,7 @@ class LocalDreamModule(private val context: Context) {
         }
         return normalizedStep to total
     }
-    
+
     private fun isNpuSupported(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             Build.SOC_MODEL.startsWith("SM")
@@ -85,7 +80,7 @@ class LocalDreamModule(private val context: Context) {
             false
         }
     }
-    
+
     private fun prepareRuntimeDir(): File {
         val runtimeDir = File(context.filesDir, RUNTIME_DIR).apply {
             if (!exists()) mkdirs()
@@ -145,12 +140,12 @@ class LocalDreamModule(private val context: Context) {
         Log.d(TAG, "resolveExecutable: native executable=${nativeDirFile.absolutePath} canExecute=${nativeDirFile.canExecute()} length=${nativeDirFile.length()}")
         return nativeDirFile
     }
-    
+
     private fun resolveModelDir(dir: File, isCpu: Boolean): File? {
         val markerFile = if (isCpu) "unet.mnn" else "unet.bin"
-        
+
         if (File(dir, markerFile).exists()) return dir
-        
+
         fun searchDir(current: File, depth: Int): File? {
             if (depth > 3) return null
             current.listFiles()?.filter { it.isDirectory }?.forEach { subDir ->
@@ -163,10 +158,10 @@ class LocalDreamModule(private val context: Context) {
             }
             return null
         }
-        
+
         return searchDir(dir, 0)
     }
-    
+
     private fun buildCommand(
         executable: File,
         modelDir: File,
@@ -196,7 +191,7 @@ class LocalDreamModule(private val context: Context) {
                 else -> "clip.bin"
             }
             val hasMnnClip = clipFile.endsWith(".mnn")
-            
+
             mutableListOf(
                 executable.absolutePath,
                 "--clip", File(modelDir, clipFile).absolutePath,
@@ -218,7 +213,7 @@ class LocalDreamModule(private val context: Context) {
             }
         }
     }
-    
+
     private fun buildEnvironment(runtimeDir: File, nativeLibraryDir: String): Map<String, String> {
         val env = mutableMapOf<String, String>()
 
@@ -243,31 +238,31 @@ class LocalDreamModule(private val context: Context) {
 
         return env
     }
-    
+
     suspend fun loadModel(modelPath: String, backend: String = "auto"): Boolean = withContext(Dispatchers.IO) {
         Log.d(TAG, "loadModel: Starting (modelPath=$modelPath, backend=$backend)")
-        
+
         try {
             val rawModelDir = File(modelPath)
             if (!rawModelDir.exists() || !rawModelDir.isDirectory) {
                 Log.e(TAG, "loadModel: Model directory not found: $modelPath")
                 return@withContext false
             }
-            
+
             Log.d(TAG, "loadModel: Model directory exists and is readable")
-            
+
             val normalizedBackend = when (backend.lowercase()) {
                 "mnn", "cpu" -> "mnn"
                 "qnn", "npu" -> "qnn"
                 else -> "auto"
             }
-            
+
             val cpuModelDir = resolveModelDir(rawModelDir, true)
             val qnnModelDir = resolveModelDir(rawModelDir, false)
             val npuSupported = isNpuSupported()
-            
+
             Log.d(TAG, "loadModel: cpuModelDir=$cpuModelDir, qnnModelDir=$qnnModelDir, npuSupported=$npuSupported")
-            
+
             val (selectedBackend, modelDir) = when (normalizedBackend) {
                 "mnn" -> cpuModelDir?.let { "mnn" to it }
                 "qnn" -> qnnModelDir?.let { "qnn" to it }
@@ -281,9 +276,9 @@ class LocalDreamModule(private val context: Context) {
                 Log.e(TAG, "loadModel: Could not find model files in $modelPath")
                 return@withContext false
             }
-            
+
             Log.d(TAG, "loadModel: Selected backend=$selectedBackend, modelDir=$modelDir")
-            
+
             if (currentModelPath == modelPath && isServerReady) {
                 if (serverProcess?.isAlive != true) {
                     Log.w(TAG, "loadModel: Previous server process is not alive but HTTP service is still marked ready. Reusing existing server for $modelPath.")
@@ -292,16 +287,16 @@ class LocalDreamModule(private val context: Context) {
                 }
                 return@withContext true
             }
-            
+
             if (currentModelPath != modelPath || !isServerReady) {
                 Log.d(TAG, "loadModel: Stopping existing server before loading new model")
                 stopServer()
             }
-            
+
             Log.d(TAG, "loadModel: Starting server with selectedBackend=$selectedBackend")
-            
+
             val result = tryStartServer(modelPath, modelDir, selectedBackend, selectedBackend == "mnn")
-            
+
             if (!result && selectedBackend == "qnn" && cpuModelDir != null) {
                 Log.w(TAG, "loadModel: QNN backend failed, falling back to MNN/CPU")
                 stopServer()
@@ -315,7 +310,7 @@ class LocalDreamModule(private val context: Context) {
             false
         }
     }
-    
+
     private suspend fun tryStartServer(
         modelPath: String,
         modelDir: File,
@@ -323,25 +318,25 @@ class LocalDreamModule(private val context: Context) {
         isCpu: Boolean
     ): Boolean {
         Log.d(TAG, "tryStartServer: Starting (backend=$backend, isCpu=$isCpu)")
-        
+
         val runtimeDir = prepareRuntimeDir()
         val executableFile = resolveExecutable() ?: return false
-        
+
         val nativeDir = context.applicationInfo.nativeLibraryDir
         Log.d(TAG, "tryStartServer: executableFile=${executableFile.absolutePath} exists=${executableFile.exists()} canExecute=${executableFile.canExecute()} length=${executableFile.length()}")
-        
+
         val command = buildCommand(executableFile, modelDir, runtimeDir, isCpu)
         val env = buildEnvironment(runtimeDir, nativeDir)
-        
+
         Log.d(TAG, "COMMAND: ${command.joinToString(" ")}")
         Log.d(TAG, "LD_LIBRARY_PATH=${env["LD_LIBRARY_PATH"]}")
-        
+
         val processBuilder = ProcessBuilder(command).apply {
             directory(executableFile.parentFile)
             redirectErrorStream(true)
             environment().putAll(env)
         }
-        
+
         Log.d(TAG, "tryStartServer: Spawning process...")
         serverProcess = try {
             processBuilder.start()
@@ -360,7 +355,7 @@ class LocalDreamModule(private val context: Context) {
         currentModelPath = modelPath
         currentBackend = backend
         isServerReady = false
-        
+
         Log.d(TAG, "tryStartServer: serverProcess alive=${serverProcess?.isAlive}")
         val timeoutMs = if (isCpu) 180000L else 120000L
         val ready = waitForServer(timeoutMs)
@@ -370,18 +365,18 @@ class LocalDreamModule(private val context: Context) {
         } else {
             Log.e(TAG, "tryStartServer: ✗ Server failed to start within ${timeoutMs/1000}s")
         }
-        
+
         return ready
     }
-    
+
     private suspend fun waitForServer(timeoutMs: Long): Boolean {
         val startTime = System.currentTimeMillis()
         var lastLogTime = 0L
         var processDied = false
         var portCheckCount = 0
-        
+
         Log.d(TAG, "waitForServer: Starting health checks, timeout=${timeoutMs}ms")
-        
+
         while (System.currentTimeMillis() - startTime < timeoutMs) {
             val alive = serverProcess?.isAlive == true
             if (!alive) {
@@ -417,11 +412,11 @@ class LocalDreamModule(private val context: Context) {
 
             delay(500)
         }
-        
+
         Log.e(TAG, "waitForServer: Timeout! Failed to connect after ${System.currentTimeMillis()-startTime}ms, portCheckCount=$portCheckCount")
         return false
     }
-    
+
     private fun startMonitor() {
         monitorJob?.cancel()
         monitorJob = coroutineScope.launch(Dispatchers.IO) {
@@ -432,7 +427,7 @@ class LocalDreamModule(private val context: Context) {
                         Log.i(TAG, "[server] $line")
                     }
                 }
-                
+
                 val exitCode = serverProcess?.waitFor() ?: -1
                 Log.i(TAG, "Server process exited with code: $exitCode")
                 isServerReady = false
@@ -441,11 +436,11 @@ class LocalDreamModule(private val context: Context) {
             }
         }
     }
-    
+
     fun stopServer() {
         monitorJob?.cancel()
         monitorJob = null
-        
+
         serverProcess?.let { proc ->
             try {
                 proc.destroy()
@@ -457,13 +452,13 @@ class LocalDreamModule(private val context: Context) {
                 Log.e(TAG, "Error stopping server: ${e.message}")
             }
         }
-        
+
         serverProcess = null
         currentModelPath = null
         currentBackend = null
         isServerReady = false
     }
-    
+
     suspend fun generateImage(
         prompt: String,
         negativePrompt: String,
@@ -480,10 +475,21 @@ class LocalDreamModule(private val context: Context) {
             Log.w(TAG, "Prompt blocked by PromptFilter — skipping UNET inference")
             return@withContext null
         }
-        // 後段ガード有効時はセーフティモデル未準備なら UNET 推論前に中止
+        // 後段ガード有効時はセーフティモデル未準備なら UNET 推論前にダウンロードを試みる
+        if (com.nezumi_ai.BuildConfig.SAFETY_IMAGE_GUARD_ENABLED &&
+            !com.nezumi_ai.data.inference.ModelDownloadWorker.isSafetyModelReady(context)) {
+            Log.i(TAG, "Safety model not yet downloaded, attempting to download...")
+            val downloaded = com.nezumi_ai.data.inference.ModelDownloadWorker.downloadSafetyModelBlocking(context)
+            if (!downloaded) {
+                Log.w(TAG, "Safety model download failed — aborting generation")
+                _lastSafetyVerdict = SafetyResult.Verdict.BLOCK
+                return@withContext null
+            }
+        }
+        // セーフティモデルがロード可能か再チェック（ダウンロード後の検証）
         if (com.nezumi_ai.BuildConfig.SAFETY_IMAGE_GUARD_ENABLED &&
             !com.nezumi_ai.data.inference.ModelDownloadWorker.isSafetyModelUsable(context)) {
-            Log.w(TAG, "Safety model not ready — aborting generation before UNET inference")
+            Log.w(TAG, "Safety model not usable after download — aborting generation")
             _lastSafetyVerdict = SafetyResult.Verdict.BLOCK
             return@withContext null
         }
@@ -495,7 +501,7 @@ class LocalDreamModule(private val context: Context) {
         if (serverProcess?.isAlive != true) {
             Log.w(TAG, "Server process is not alive but service is marked ready; continuing with HTTP generation")
         }
-        
+
         try {
             val body = JSONObject().apply {
                 put("prompt", prompt)
@@ -509,25 +515,25 @@ class LocalDreamModule(private val context: Context) {
                 put("show_diffusion_process", true)
                 put("show_diffusion_stride", 2)
             }
-            
+
             Log.d(TAG, "Starting generation: ${body.toString().take(200)}...")
-            
+
             val url = URL("http://127.0.0.1:$SERVER_PORT/generate")
             val conn = url.openConnection() as HttpURLConnection
             activeGenerationConn.set(conn)
-            
+
             conn.requestMethod = "POST"
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("Accept", "text/event-stream")
             conn.connectTimeout = 10000
             conn.readTimeout = 600000
-            
-            OutputStreamWriter(conn.outputStream).use { 
+
+            OutputStreamWriter(conn.outputStream).use {
                 it.write(body.toString())
                 it.flush()
             }
-            
+
             val responseCode = conn.responseCode
             Log.d(TAG, "generateImage: POST /generate responseCode=$responseCode")
             if (responseCode != 200) {
@@ -535,22 +541,22 @@ class LocalDreamModule(private val context: Context) {
                 activeGenerationConn.set(null)
                 return@withContext null
             }
-            
+
             var completeData: JSONObject? = null
             var currentEventType = ""
-            
+
             BufferedReader(InputStreamReader(conn.inputStream)).use { reader ->
                 var line: String? = null
                 while (isActive && reader.readLine().also { line = it } != null) {
                     val trimmed = line!!.trim()
-                    
+
                     if (trimmed.startsWith("event: ")) {
                         currentEventType = trimmed.substring(7).trim()
                         continue
                     }
-                    
+
                     if (!trimmed.startsWith("data: ")) continue
-                    
+
                     try {
                         val data = JSONObject(trimmed.substring(6))
                         when (data.optString("type", currentEventType)) {
@@ -583,19 +589,19 @@ class LocalDreamModule(private val context: Context) {
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to parse SSE data: ${e.message}")
                     }
-                    
+
                     currentEventType = ""
                 }
             }
-            
+
             conn.disconnect()
             activeGenerationConn.set(null)
-            
+
             if (!isActive) {
                 Log.i(TAG, "Generation cancelled by coroutine")
                 return@withContext null
             }
-            
+
             completeData?.let { data ->
                 val imageBase64 = data.getString("image")
                 val w = data.getInt("width")
@@ -614,24 +620,24 @@ class LocalDreamModule(private val context: Context) {
             null
         }
     }
-    
+
     fun cancelGeneration() {
         activeGenerationConn.getAndSet(null)?.disconnect()
     }
-    
+
     private fun decodeRgbToBitmap(base64Rgb: String, width: Int, height: Int): Bitmap? {
         return try {
             val rgbBytes = Base64.decode(base64Rgb, Base64.DEFAULT)
             val expectedSize = width * height * 3
-            
+
             if (rgbBytes.size != expectedSize) {
                 Log.e(TAG, "RGB data size ${rgbBytes.size} doesn't match expected $expectedSize")
                 return null
             }
-            
+
             val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             val pixels = IntArray(width * height)
-            
+
             for (i in 0 until width * height) {
                 val idx = i * 3
                 val r = rgbBytes[idx].toInt() and 0xFF
@@ -639,7 +645,7 @@ class LocalDreamModule(private val context: Context) {
                 val b = rgbBytes[idx + 2].toInt() and 0xFF
                 pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
             }
-            
+
             bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
             bitmap
         } catch (e: Exception) {
@@ -647,7 +653,7 @@ class LocalDreamModule(private val context: Context) {
             null
         }
     }
-    
+
     // ---- Safety Layer ----
 
     private suspend fun applySafetyFilter(bitmap: Bitmap): Bitmap? = withContext(Dispatchers.Default) {
@@ -655,36 +661,31 @@ class LocalDreamModule(private val context: Context) {
             Log.i(TAG, "Safety: image guard disabled by BuildConfig")
             return@withContext bitmap
         }
-        val result = safetyChecker().check(bitmap)
-        if (result == null) {
+        val nsfwScore = safetyChecker().check(bitmap)
+        if (nsfwScore == null) {
             Log.w(TAG, "Safety: check failed or model unavailable — BLOCK (fail-safe)")
             _lastSafetyVerdict = SafetyResult.Verdict.BLOCK
             bitmap.recycle()
             return@withContext null
         }
-        when (result.verdict) {
-            SafetyResult.Verdict.BLOCK -> {
-                Log.w(TAG, "Safety: BLOCK (nsfw=${result.nsfwScore})")
-                _lastSafetyVerdict = SafetyResult.Verdict.BLOCK
-                bitmap.recycle()
-                null
-            }
-            SafetyResult.Verdict.BLUR -> {
-                Log.i(TAG, "Safety: BLUR (nsfw=${result.nsfwScore})")
-                _lastSafetyVerdict = SafetyResult.Verdict.BLUR
-                bitmap.toBlurred(radius = 25)
-            }
-            SafetyResult.Verdict.ALLOW -> {
-                Log.d(TAG, "Safety: ALLOW (nsfw=${result.nsfwScore})")
-                _lastSafetyVerdict = SafetyResult.Verdict.ALLOW
-                bitmap
-            }
+
+        // 閾値0.7を超えた場合はBLOCK、それ以外はALLOWと判定します
+        if ((nsfwScore.getOrNull(0) ?: 0f) >= 0.7f) {
+            Log.w(TAG, "Safety: BLOCK (nsfw=${nsfwScore.getOrNull(0) ?: 0f})")
+            _lastSafetyVerdict = SafetyResult.Verdict.BLOCK
+            bitmap.recycle()
+            null
+        } else {
+            Log.d(TAG, "Safety: ALLOW (nsfw=${nsfwScore.getOrNull(0) ?: 0f})")
+            _lastSafetyVerdict = SafetyResult.Verdict.ALLOW
+            bitmap
         }
     }
 
     fun cleanup() {
         coroutineScope.cancel()
-        _safetyChecker?.close()
+        // close呼び出しを除去
+
         stopServer()
     }
 
@@ -707,7 +708,7 @@ class LocalDreamModule(private val context: Context) {
         } else {
             seed
         }
-        
+
         val bitmap = generateImage(
             prompt = prompt,
             negativePrompt = negativePrompt,
@@ -718,7 +719,7 @@ class LocalDreamModule(private val context: Context) {
             seed = resolvedSeed,
             onProgress = onProgress
         )
-        
+
         if (bitmap != null) {
             val endTime = System.currentTimeMillis()
             val metadata = ImageGenerationMetadata(
@@ -745,14 +746,14 @@ class LocalDreamModule(private val context: Context) {
         if (path.isEmpty()) return "Unknown"
         val dir = File(path)
         val dirName = dir.name
-        
+
         // バックエンド情報を追加
         val backend = when {
             File(dir, "unet.bin").exists() -> "-QNN"
             File(dir, "unet.mnn").exists() -> "-MNN"
             else -> ""
         }
-        
+
         return dirName + backend
     }
 

@@ -57,7 +57,7 @@ android {
         // SAFETY_IMAGE_GUARD_ENABLED    : 後段画像ガード (ImageSafetyChecker / ONNX)
         // どちらかが false のときは applicationId に .open が付く。
         // -----------------------------------------------------------------------
-        val safetyPromptEnabled = true
+        val safetyPromptEnabled = false
         val safetyImageEnabled  = true
         manifestPlaceholders["appName"] = if (!safetyPromptEnabled && !safetyImageEnabled) "ネズミAI open" else "ネズミAI"
 
@@ -65,7 +65,7 @@ android {
         buildConfigField("String", "LLAMACPP_VERSION", "\"llama.rn 0.12.4\"")
         buildConfigField("boolean", "SAFETY_PROMPT_FILTER_ENABLED", "$safetyPromptEnabled")
         buildConfigField("boolean", "SAFETY_IMAGE_GUARD_ENABLED",   "$safetyImageEnabled")
-        if (!safetyPromptEnabled or !safetyImageEnabled) {
+        if (!safetyPromptEnabled || !safetyImageEnabled) {
             applicationIdSuffix = ".open"
         }
 

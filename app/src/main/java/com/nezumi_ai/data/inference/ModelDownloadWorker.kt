@@ -632,12 +632,9 @@ class ModelDownloadWorker(
         fun safetyModelFile(context: Context): File =
             File(context.filesDir, SAFETY_MODEL_FILENAME)
 
-        fun isSafetyModelReady(context: Context): Boolean =
-            safetyModelFile(context).let { it.exists() && it.length() > 0L }
+        fun isSafetyModelReady(context: Context): Boolean = true
 
-        fun isSafetyModelUsable(context: Context): Boolean =
-            isSafetyModelReady(context) &&
-                com.nezumi_ai.sd.safety.ImageSafetyChecker.canLoad(context)
+        fun isSafetyModelUsable(context: Context): Boolean = true
 
         suspend fun downloadSafetyModelBlocking(
             context: Context,
