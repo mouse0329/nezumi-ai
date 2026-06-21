@@ -25,6 +25,7 @@ import com.nezumi_ai.data.media.ImageLibraryStore
 import com.nezumi_ai.data.inference.CpuCompatibility
 import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.media.MessageMediaStore
+import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.data.inference.MemoryObserver
@@ -2127,6 +2128,19 @@ class ChatViewModel(
         seed: Long,
         sdPath: String
     ) {
+        if (BuildConfig.SAFETY_IMAGE_GUARD_ENABLED &&
+            !ModelDownloadWorker.awaitSafetyModelReady(appContext)) {
+            Log.e(TAG, "performGenerateImageFromTool: Safety model download failed or timeout")
+            _imageGenProgress.value = null
+            _toolCallState.value = ToolCallState.Result(
+                toolName = "generate_image",
+                status = "error",
+                resultMessage = "セーフティモデルDL失敗"
+            )
+            _uiMessage.emit("❌ generate_image: セーフティモデルのダウンロードに失敗しました")
+            return
+        }
+
         val manager = requireModelManager()
         Log.d(TAG, "performGenerateImageFromTool: requireModelManager succeeded")
 

@@ -177,6 +177,7 @@ open class ModelSettingsFragment : Fragment() {
     private var imageModelSearchQuery by mutableStateOf("")
     private var downloadingImageModelIds by mutableStateOf<Set<String>>(emptySet())
     private var imageModelDownloadStates by mutableStateOf<List<ImageModelDownloadUiState>>(emptyList())
+    private var safetyModelDownloadState by mutableStateOf<ImageModelDownloadUiState?>(null)
     private var voicevoxState by mutableStateOf(VoicevoxModelUiState())
     private var voicevoxInitializing by mutableStateOf(false)
     private var voicevoxDownloading by mutableStateOf(false)
@@ -313,6 +314,7 @@ open class ModelSettingsFragment : Fragment() {
         observeDownloadWork()
         observeCustomHfDownloadWork()
         observeImageModelDownloadWork()
+        observeSafetyModelDownloadWork()
         viewLifecycleOwner.lifecycleScope.launch {
             preloadMemoryWarningThresholdPercent = settingsRepository.getPreloadMemoryWarningThresholdPercent()
         }
@@ -1207,49 +1209,29 @@ open class ModelSettingsFragment : Fragment() {
             )
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 imageModelDownloadStates.forEach { item ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = colorResource(id = R.color.surface_card)
-                        )
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(text = item.modelName, fontWeight = FontWeight.SemiBold)
-                            if (item.totalBytes > 0L) {
-                                LinearProgressIndicator(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    progress = { item.progress },
-                                    color = colorResource(id = R.color.primary),
-                                    trackColor = colorResource(id = R.color.context_meter_track)
-                                )
-                            } else {
-                                LinearProgressIndicator(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    color = colorResource(id = R.color.primary),
-                                    trackColor = colorResource(id = R.color.context_meter_track)
-                                )
-                            }
-                            Text(text = item.statusText, color = colorResource(id = R.color.text_secondary), style = MaterialTheme.typography.bodySmall)
-                            if (item.isActive) {
-                                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                                    TextButton(onClick = {
-                                        ModelDownloadWorker.cancelImageModel(
-                                            requireContext(),
-                                            item.modelId
-                                        )
-                                    }) { Text("キャンセル") }
-                                }
-                            }
-                        }
+                    ModelDownloadProgressCard(item) {
+                        ModelDownloadWorker.cancelImageModel(requireContext(), item.modelId)
                     }
                 }
             }
         }
+
+        safetyModelDownloadState?.let { item ->
+            Text(
+                text = "セーフティモデル ダウンロード中",
+                style = MaterialTheme.typography.labelSmall,
+                color = colorResource(id = R.color.text_secondary),
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(
+                    start = 4.dp,
+                    bottom = 8.dp,
+                    top = if (hfQueuedDownloads.isNotEmpty() || imageModelDownloadStates.isNotEmpty()) 16.dp else 0.dp
+                )
+            )
+            ModelDownloadProgressCard(item)
+        }
         
-        if (hfQueuedDownloads.isEmpty() && imageModelDownloadStates.isEmpty()) {
+        if (hfQueuedDownloads.isEmpty() && imageModelDownloadStates.isEmpty() && safetyModelDownloadState == null) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -2141,46 +2123,21 @@ open class ModelSettingsFragment : Fragment() {
                     )
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.heightIn(max = 300.dp)) {
                         items(imageModelDownloadStates, key = { it.modelId }) { item ->
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = colorResource(id = R.color.surface_card)
-                                )
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Text(text = item.modelName, fontWeight = FontWeight.SemiBold)
-                                    if (item.totalBytes > 0L) {
-                                        LinearProgressIndicator(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            progress = { item.progress },
-                                            color = colorResource(id = R.color.primary),
-                                            trackColor = colorResource(id = R.color.context_meter_track)
-                                        )
-                                    } else {
-                                        LinearProgressIndicator(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            color = colorResource(id = R.color.primary),
-                                            trackColor = colorResource(id = R.color.context_meter_track)
-                                        )
-                                    }
-                                    Text(text = item.statusText, color = colorResource(id = R.color.text_secondary), style = MaterialTheme.typography.bodySmall)
-                                    if (item.isActive) {
-                                        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                                            TextButton(onClick = {
-                                                ModelDownloadWorker.cancelImageModel(
-                                                    requireContext(),
-                                                    item.modelId
-                                                )
-                                            }) { Text("キャンセル") }
-                                        }
-                                    }
-                                }
+                            ModelDownloadProgressCard(item) {
+                                ModelDownloadWorker.cancelImageModel(requireContext(), item.modelId)
                             }
                         }
                     }
+                }
+
+                safetyModelDownloadState?.let { item ->
+                    Text(
+                        text = "セーフティモデル ダウンロード中",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorResource(id = R.color.text_secondary),
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                    ModelDownloadProgressCard(item)
                 }
 
                 // 組み込みモデル
@@ -2853,8 +2810,10 @@ open class ModelSettingsFragment : Fragment() {
         val enqueued = ModelDownloadWorker.enqueueImageModel(requireContext(), model.id, model.downloadUrl, model.fileName, model.id)
         if (enqueued) {
             downloadingImageModelIds = downloadingImageModelIds + model.id
+            ModelDownloadWorker.enqueueSafetyModel(requireContext())
             toast("ダウンロードを開始しました")
         } else {
+            ModelDownloadWorker.enqueueSafetyModel(requireContext())
             toast("すでにダウンロード中です")
         }
     }
@@ -3329,6 +3288,54 @@ open class ModelSettingsFragment : Fragment() {
             }
     }
 
+    private fun observeSafetyModelDownloadWork() {
+        WorkManager.getInstance(requireContext())
+            .getWorkInfosForUniqueWorkLiveData(ModelDownloadWorker.SAFETY_MODEL_WORK_NAME)
+            .observe(viewLifecycleOwner) { infos ->
+                val info = infos.firstOrNull()
+                if (info == null) {
+                    safetyModelDownloadState = null
+                    return@observe
+                }
+                if (info.state == WorkInfo.State.SUCCEEDED &&
+                    ModelDownloadWorker.isSafetyModelReady(requireContext())) {
+                    safetyModelDownloadState = null
+                    return@observe
+                }
+                if (info.state == WorkInfo.State.FAILED || info.state == WorkInfo.State.CANCELLED) {
+                    safetyModelDownloadState = null
+                    return@observe
+                }
+                if (info.state != WorkInfo.State.ENQUEUED &&
+                    info.state != WorkInfo.State.RUNNING &&
+                    info.state != WorkInfo.State.BLOCKED) {
+                    safetyModelDownloadState = null
+                    return@observe
+                }
+                val downloaded = info.progress.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
+                val total = info.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L)
+                val status = when (info.state) {
+                    WorkInfo.State.ENQUEUED -> "待機中"
+                    WorkInfo.State.RUNNING -> if (total > 0L) {
+                        val percent = ((downloaded * 100L) / total).toInt().coerceIn(0, 100)
+                        "ダウンロード中 $percent% (${formatBytes(downloaded)} / ${formatBytes(total)})"
+                    } else {
+                        "ダウンロード中"
+                    }
+                    WorkInfo.State.BLOCKED -> "待機中"
+                    else -> "ダウンロード中"
+                }
+                safetyModelDownloadState = ImageModelDownloadUiState(
+                    modelId = ModelDownloadWorker.SAFETY_MODEL_WORK_NAME,
+                    modelName = "セーフティモデル (NSFW検出)",
+                    downloadedBytes = downloaded,
+                    totalBytes = total,
+                    statusText = status,
+                    isActive = true
+                )
+            }
+    }
+
     private fun initializeVoicevoxFromSettings() {
         if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) return
         voicevoxInitializing = true
@@ -3761,6 +3768,50 @@ open class ModelSettingsFragment : Fragment() {
             }
     }
     
+    @Composable
+    private fun ModelDownloadProgressCard(
+        item: ImageModelDownloadUiState,
+        onCancel: (() -> Unit)? = null
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.surface_card)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(text = item.modelName, fontWeight = FontWeight.SemiBold)
+                if (item.totalBytes > 0L) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        progress = { item.progress },
+                        color = colorResource(id = R.color.primary),
+                        trackColor = colorResource(id = R.color.context_meter_track)
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = colorResource(id = R.color.primary),
+                        trackColor = colorResource(id = R.color.context_meter_track)
+                    )
+                }
+                Text(
+                    text = item.statusText,
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                if (item.isActive && onCancel != null) {
+                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                        TextButton(onClick = onCancel) { Text("キャンセル") }
+                    }
+                }
+            }
+        }
+    }
+
     private data class ImageModelDownloadUiState(
         val modelId: String,
         val modelName: String,
