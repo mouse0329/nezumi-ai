@@ -46,6 +46,7 @@ class ImageSafetyChecker(private val context: Context) {
             for (x in 0 until 224) {
                 val px = resized.getPixel(x, y)
 
+                // The model has baked-in normalization, expects 0-255 range
                 input[r++] = ((px shr 16) and 0xFF).toFloat()
                 input[g++] = ((px shr 8) and 0xFF).toFloat()
                 input[b++] = (px and 0xFF).toFloat()
