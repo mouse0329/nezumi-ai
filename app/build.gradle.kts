@@ -41,8 +41,8 @@ android {
         applicationId = "com.nezumi_ai"
         minSdk = 30
         targetSdk = 36
-        versionCode = 15
-        versionName = "2.0.1"
+        versionCode = 16
+        versionName = "2.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -57,8 +57,8 @@ android {
         // SAFETY_IMAGE_GUARD_ENABLED    : 後段画像ガード (ImageSafetyChecker / ONNX)
         // どちらかが false のときは applicationId に .open が付く。
         // -----------------------------------------------------------------------
-        val safetyPromptEnabled = false
-        val safetyImageEnabled  = false
+        val safetyPromptEnabled = true
+        val safetyImageEnabled  = true
         manifestPlaceholders["appName"] = if (!safetyPromptEnabled && !safetyImageEnabled) "ネズミAI open" else "ネズミAI"
 
         buildConfigField("String", "LITERTLM_VERSION", "\"0.12.0\"")
