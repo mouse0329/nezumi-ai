@@ -669,14 +669,22 @@ class LocalDreamModule(private val context: Context) {
             return@withContext null
         }
 
-        // 閾値0.7を超えた場合はBLOCK、それ以外はALLOWと判定します
-        if ((nsfwScore.getOrNull(0) ?: 0f) >= 0.7f) {
-            Log.w(TAG, "Safety: BLOCK (nsfw=${nsfwScore.getOrNull(0) ?: 0f})")
+        // OwenElliott/image-safety-classifier-xs labels: [0: NSFL, 1: NSFW, 2: SFW]
+        val nsflProb = nsfwScore.getOrNull(0) ?: 0f
+        val nsfwProb = nsfwScore.getOrNull(1) ?: 0f
+        val sfwProb  = nsfwScore.getOrNull(2) ?: 0f
+
+        // 判定基準の強化: NSFW/NSFLが一定以上、またはSFWが一定以下の場合はBLOCK
+        // 閾値を0.7から0.4に下げて感度を上げ、SFWの低さもチェック対象に含める
+        val isUnsafe = nsfwProb >= 0.4f || nsflProb >= 0.4f || sfwProb <= 0.5f
+
+        if (isUnsafe) {
+            Log.w(TAG, "Safety: BLOCK (sfw=$sfwProb, nsfw=$nsfwProb, nsfl=$nsflProb)")
             _lastSafetyVerdict = SafetyResult.Verdict.BLOCK
             bitmap.recycle()
             null
         } else {
-            Log.d(TAG, "Safety: ALLOW (nsfw=${nsfwScore.getOrNull(0) ?: 0f})")
+            Log.d(TAG, "Safety: ALLOW (sfw=$sfwProb, nsfw=$nsfwProb, nsfl=$nsflProb)")
             _lastSafetyVerdict = SafetyResult.Verdict.ALLOW
             bitmap
         }

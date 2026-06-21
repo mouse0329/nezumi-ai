@@ -42,7 +42,7 @@ android {
         minSdk = 30
         targetSdk = 36
         versionCode = 16
-        versionName = "2.1.0"
+        versionName = "2.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -55,19 +55,33 @@ android {
         //
         // SAFETY_PROMPT_FILTER_ENABLED  : 前段テキストガード (PromptFilter)
         // SAFETY_IMAGE_GUARD_ENABLED    : 後段画像ガード (ImageSafetyChecker / ONNX)
-        // どちらかが false のときは applicationId に .open が付く。
         // -----------------------------------------------------------------------
+
         val safetyPromptEnabled = false
         val safetyImageEnabled  = true
-        manifestPlaceholders["appName"] = if (!safetyPromptEnabled && !safetyImageEnabled) "ネズミAI open" else "ネズミAI"
 
-        buildConfigField("String", "LITERTLM_VERSION", "\"0.12.0\"")
-        buildConfigField("String", "LLAMACPP_VERSION", "\"llama.rn 0.12.4\"")
-        buildConfigField("boolean", "SAFETY_PROMPT_FILTER_ENABLED", "$safetyPromptEnabled")
-        buildConfigField("boolean", "SAFETY_IMAGE_GUARD_ENABLED",   "$safetyImageEnabled")
+        buildConfigField(
+            "boolean",
+            "SAFETY_PROMPT_FILTER_ENABLED",
+            "$safetyPromptEnabled"
+        )
+
+        buildConfigField(
+            "boolean",
+            "SAFETY_IMAGE_GUARD_ENABLED",
+            "$safetyImageEnabled"
+        )
+
+        // appNameはビルド状態に依存させず固定（UIと安全機構を分離）
+        manifestPlaceholders["appName"] = "ネズミAI"
+
+        // openビルド判定はビルド識別として扱う（安全フラグとは分離）
         if (!safetyPromptEnabled || !safetyImageEnabled) {
             applicationIdSuffix = ".open"
         }
+
+        buildConfigField("String", "LITERTLM_VERSION", "\"0.12.0\"")
+        buildConfigField("String", "LLAMACPP_VERSION", "\"llama.rn 0.12.4\"")
 
         ndk {
             abiFilters.add("arm64-v8a")
@@ -95,17 +109,21 @@ android {
         debug {
             isMinifyEnabled = false
         }
+
         release {
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             } else {
                 println("Release signing config not found. Building unsigned release APK.")
             }
+
             isMinifyEnabled = true
             isShrinkResources = true
+
             ndk {
                 debugSymbolLevel = "NONE"
             }
+
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -121,6 +139,7 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+
             // VOICEVOX 無効化期間中は 4KB アライン SO を除外する。
             // VoicevoxFeatureFlag.ENABLED = true に戻す際はこの excludes を削除すること。
             excludes += setOf(
@@ -159,7 +178,9 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.10.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+
     implementation("androidx.activity:activity-compose:1.9.2")
+
     implementation(platform("androidx.compose:compose-bom:2024.09.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-text-android")
@@ -167,8 +188,10 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
+
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+
     implementation(libs.compose.richtext.commonmark)
     implementation(libs.compose.richtext.ui.material3)
     implementation("ru.noties:jlatexmath-android:0.2.0")
@@ -180,43 +203,23 @@ dependencies {
     implementation("androidx.room:room-ktx:2.7.0")
     ksp("androidx.room:room-compiler:2.7.0")
 
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-process:2.7.0")
-
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-    implementation("androidx.work:work-runtime-ktx:2.9.0")
 
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
 
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.12.0")
-    implementation("com.google.android.gms:play-services-tflite-java:16.5.0")
-    implementation("com.google.android.gms:play-services-tflite-gpu:16.5.0")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.26.0")
 
     implementation("androidx.biometric:biometric:1.1.0")
-
     implementation("net.openid:appauth:0.11.1")
 
     implementation("io.coil-kt:coil-compose:2.6.0")
-
-    // HTTP client for Brave Search API
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
-
-    // VOICEVOX integration
-    // -----------------------------------------------------------------------
-    // DISABLED: voicevoxcore-android-0.16.4.aar に同梱の
-    //   libvoicevox_onnxruntime.so が ORT v1.17.3 ベース (4KB アライン) のため
-    //   Android 15 以降の 16KB ページサイズデバイスで dlopen 失敗 / Play 拒否。
-    //   VoicevoxFeatureFlag.ENABLED = true に戻す際は下行のコメントを外すこと。
-    // -----------------------------------------------------------------------
-    // implementation(files("libs/voicevoxcore-android-0.16.4.aar"))
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    androidTestImplementation(platform("androidx.compose:compose-bom:2024.09.00"))
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
