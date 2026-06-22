@@ -76,6 +76,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
+import android.widget.EditText
+import android.view.inputmethod.EditorInfo
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.foundation.border
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
@@ -339,30 +344,50 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                         modifier = Modifier.padding(start = 4.dp)
                     )
                 }
-                OutlinedTextField(
-                    value = prompt,
-                    onValueChange = vm::setPrompt,
-                    label = { Text(stringResource(R.string.image_gen_prompt_hint)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 3,
-                    colors = fieldColors,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        imeAction = androidx.compose.ui.text.input.ImeAction.Default,
-                        autoCorrectEnabled = !isStopKeyboardLearning,
-                        keyboardType = if (isStopKeyboardLearning) {
-                            // Passwordは日本語入力を制限する場合があるが、学習停止を優先
-                            // 日本語入力を維持しつつ学習を止めるにはIME側の対応が必要
-                            androidx.compose.ui.text.input.KeyboardType.Password
-                        } else {
-                            androidx.compose.ui.text.input.KeyboardType.Text
+                if (isStopKeyboardLearning) {
+                    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
+                    val hintColor = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
+                    val hintText = stringResource(R.string.image_gen_prompt_hint)
+                    AndroidView(
+                        modifier = Modifier.fillMaxWidth().height(120.dp).border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp)).padding(8.dp),
+                        factory = { context ->
+                            EditText(context).apply {
+                                setHint(hintText)
+                                setHintTextColor(hintColor)
+                                setTextColor(textColor)
+                                setBackground(null)
+                                gravity = android.view.Gravity.TOP
+                                imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+                                addTextChangedListener(object : android.text.TextWatcher {
+                                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                                        vm.setPrompt(s?.toString() ?: "")
+                                    }
+                                    override fun afterTextChanged(s: android.text.Editable?) {}
+                                })
+                            }
+                        },
+                        update = { editText ->
+                            if (editText.text.toString() != prompt) {
+                                editText.setText(prompt)
+                            }
                         }
-                    ),
-                    visualTransformation = if (isStopKeyboardLearning) {
-                        androidx.compose.ui.text.input.VisualTransformation.None
-                    } else {
-                        androidx.compose.ui.text.input.VisualTransformation.None
-                    }
-                )
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = prompt,
+                        onValueChange = vm::setPrompt,
+                        label = { Text(stringResource(R.string.image_gen_prompt_hint)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 3,
+                        colors = fieldColors,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Default,
+                            autoCorrectEnabled = true,
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Text
+                        )
+                    )
+                }
                 var negExpanded by remember { mutableStateOf(false) }
                 TextButton(onClick = { negExpanded = !negExpanded }) {
                     Text(
@@ -371,28 +396,50 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                     )
                 }
                 if (negExpanded) {
-                    OutlinedTextField(
-                        value = neg,
-                        onValueChange = vm::setNegativePrompt,
-                        label = { Text(stringResource(R.string.image_gen_neg_hint)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 2,
-                        colors = fieldColors,
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                            imeAction = androidx.compose.ui.text.input.ImeAction.Default,
-                            autoCorrectEnabled = !isStopKeyboardLearning,
-                            keyboardType = if (isStopKeyboardLearning) {
-                                androidx.compose.ui.text.input.KeyboardType.Password
-                            } else {
-                                androidx.compose.ui.text.input.KeyboardType.Text
-                            }
-                        ),
-                        visualTransformation = if (isStopKeyboardLearning) {
-                            androidx.compose.ui.text.input.VisualTransformation.None
+                        if (isStopKeyboardLearning) {
+                            val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
+                            val hintColor = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
+                            val hintText = stringResource(R.string.image_gen_neg_hint)
+                            AndroidView(
+                                modifier = Modifier.fillMaxWidth().height(80.dp).border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp)).padding(8.dp),
+                                factory = { context ->
+                                    EditText(context).apply {
+                                        setHint(hintText)
+                                        setHintTextColor(hintColor)
+                                        setTextColor(textColor)
+                                        setBackground(null)
+                                        gravity = android.view.Gravity.TOP
+                                        imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+                                        addTextChangedListener(object : android.text.TextWatcher {
+                                            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                                            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                                                vm.setNegativePrompt(s?.toString() ?: "")
+                                            }
+                                            override fun afterTextChanged(s: android.text.Editable?) {}
+                                        })
+                                    }
+                                },
+                                update = { editText ->
+                                    if (editText.text.toString() != neg) {
+                                        editText.setText(neg)
+                                    }
+                                }
+                            )
                         } else {
-                            androidx.compose.ui.text.input.VisualTransformation.None
+                            OutlinedTextField(
+                                value = neg,
+                                onValueChange = vm::setNegativePrompt,
+                                label = { Text(stringResource(R.string.image_gen_neg_hint)) },
+                                modifier = Modifier.fillMaxWidth(),
+                                minLines = 2,
+                                colors = fieldColors,
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                    imeAction = androidx.compose.ui.text.input.ImeAction.Default,
+                                    autoCorrectEnabled = true,
+                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Text
+                                )
+                            )
                         }
-                    )
                 }
                 Text("サイズ: ${size}x$size", color = MaterialTheme.colorScheme.onSurface)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
