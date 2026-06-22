@@ -62,6 +62,7 @@ class MainActivity : AppCompatActivity() {
     private var dbInitialized = false
     private var screenOffReceiver: BroadcastReceiver? = null
     private var isAppInBackground = false
+    private var isFirstResume = true
     private var isIncognitoModeActive = false
     private var biometricPrompt: BiometricPrompt? = null
     private var authOverlayView: android.view.View? = null
@@ -340,15 +341,22 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         refreshDrawerDateLabels()
 
-        // バックグラウンドから復帰時に生体認証を実行
-        if (isAppInBackground) {
+        // アプリ起動時（初回 onResume）またはバックグラウンドから復帰時に生体認証を実行
+        val shouldLock = if (isFirstResume) {
+            isFirstResume = false
+            // 初回起動時: 常時ロックが有効な場合のみ認証を要求
+            PreferencesHelper.isAlwaysLockEnabled(this)
+        } else if (isAppInBackground) {
             isAppInBackground = false
-            // シークレットモード中または常時ロック有効時にFLAG_SECUREを設定し認証を表示
-            if (isIncognitoModeActive || PreferencesHelper.isAlwaysLockEnabled(this)) {
-                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-                Log.d(TAG, "Added FLAG_SECURE on resume (incognito mode or always lock)")
-                showBiometricPrompt()
-            }
+            // バックグラウンドからの復帰: シークレットモード中または常時ロック有効時
+            isIncognitoModeActive || PreferencesHelper.isAlwaysLockEnabled(this)
+        } else {
+            false
+        }
+        if (shouldLock) {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            Log.d(TAG, "Added FLAG_SECURE on resume (incognito mode or always lock)")
+            showBiometricPrompt()
         }
     }
 

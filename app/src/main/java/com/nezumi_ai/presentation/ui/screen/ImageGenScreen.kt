@@ -20,6 +20,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
+import android.widget.EditText
+import android.view.inputmethod.EditorInfo
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.foundation.border
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -172,20 +177,48 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
         }
         
         FieldGroup("プロンプト") {
-            OutlinedTextField(
-                value = prompt,
-                onValueChange = vm::setPrompt,
-                modifier = Modifier.fillMaxWidth().height(80.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
-                    focusedContainerColor = Color(0xFF2A2A2A),
-                    unfocusedContainerColor = Color(0xFF2A2A2A),
-                    focusedBorderColor = Color(0xFF0084FF),
-                    unfocusedBorderColor = Color(0xFF444444)
-                ),
-                shape = RoundedCornerShape(8.dp)
-            )
+            val isStopKeyboardLearning = remember { com.nezumi_ai.utils.PreferencesHelper.isStopKeyboardLearningEnabled(context) }
+            if (isStopKeyboardLearning) {
+                AndroidView(
+                    modifier = Modifier.fillMaxWidth().height(80.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF2A2A2A)).border(1.dp, Color(0xFF444444), RoundedCornerShape(8.dp)).padding(8.dp),
+                    factory = { context ->
+                        EditText(context).apply {
+                            setTextColor(android.graphics.Color.WHITE)
+                            setHintTextColor(android.graphics.Color.GRAY)
+                            setBackground(null)
+                            gravity = android.view.Gravity.TOP
+                            imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+                            addTextChangedListener(object : android.text.TextWatcher {
+                                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                                    vm.setPrompt(s?.toString() ?: "")
+                                }
+                                override fun afterTextChanged(s: android.text.Editable?) {}
+                            })
+                        }
+                    },
+                    update = { editText ->
+                        if (editText.text.toString() != prompt) {
+                            editText.setText(prompt)
+                        }
+                    }
+                )
+            } else {
+                OutlinedTextField(
+                    value = prompt,
+                    onValueChange = vm::setPrompt,
+                    modifier = Modifier.fillMaxWidth().height(80.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedContainerColor = Color(0xFF2A2A2A),
+                        unfocusedContainerColor = Color(0xFF2A2A2A),
+                        focusedBorderColor = Color(0xFF0084FF),
+                        unfocusedBorderColor = Color(0xFF444444)
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                )
+            }
         }
         
         TextButton(onClick = { negExpanded = !negExpanded }) {
@@ -197,21 +230,50 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
         }
         
         AnimatedVisibility(negExpanded) {
-            OutlinedTextField(
-                value = negPrompt,
-                onValueChange = vm::setNegativePrompt,
-                placeholder = { Text("low quality, blurry...", color = Color(0xFF666666)) },
-                modifier = Modifier.fillMaxWidth().height(80.dp).padding(bottom = 15.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
-                    focusedContainerColor = Color(0xFF2A2A2A),
-                    unfocusedContainerColor = Color(0xFF2A2A2A),
-                    focusedBorderColor = Color(0xFF0084FF),
-                    unfocusedBorderColor = Color(0xFF444444)
-                ),
-                shape = RoundedCornerShape(8.dp)
-            )
+            val isStopKeyboardLearning = remember { com.nezumi_ai.utils.PreferencesHelper.isStopKeyboardLearningEnabled(context) }
+            if (isStopKeyboardLearning) {
+                AndroidView(
+                    modifier = Modifier.fillMaxWidth().height(80.dp).padding(bottom = 15.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF2A2A2A)).border(1.dp, Color(0xFF444444), RoundedCornerShape(8.dp)).padding(8.dp),
+                    factory = { context ->
+                        EditText(context).apply {
+                            setHint("low quality, blurry...")
+                            setTextColor(android.graphics.Color.WHITE)
+                            setHintTextColor(android.graphics.Color.GRAY)
+                            setBackground(null)
+                            gravity = android.view.Gravity.TOP
+                            imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+                            addTextChangedListener(object : android.text.TextWatcher {
+                                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                                    vm.setNegativePrompt(s?.toString() ?: "")
+                                }
+                                override fun afterTextChanged(s: android.text.Editable?) {}
+                            })
+                        }
+                    },
+                    update = { editText ->
+                        if (editText.text.toString() != negPrompt) {
+                            editText.setText(negPrompt)
+                        }
+                    }
+                )
+            } else {
+                OutlinedTextField(
+                    value = negPrompt,
+                    onValueChange = vm::setNegativePrompt,
+                    placeholder = { Text("low quality, blurry...", color = Color(0xFF666666)) },
+                    modifier = Modifier.fillMaxWidth().height(80.dp).padding(bottom = 15.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedContainerColor = Color(0xFF2A2A2A),
+                        unfocusedContainerColor = Color(0xFF2A2A2A),
+                        focusedBorderColor = Color(0xFF0084FF),
+                        unfocusedBorderColor = Color(0xFF444444)
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                )
+            }
         }
         
         FieldGroup("サイズ") {
