@@ -914,14 +914,16 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun disableKeyboardLearning(disable: Boolean) {
-        val imeOptions = if (disable) {
+        val isStopKeyboardLearning = PreferencesHelper.isStopKeyboardLearningEnabled(requireContext())
+        val shouldDisable = disable || isStopKeyboardLearning
+        val imeOptions = if (shouldDisable) {
             android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
         } else {
             0
         }
 
         // Find all EditText views and update IME options
-        updateEditTextImeOptions(binding.root, imeOptions, disable)
+        updateEditTextImeOptions(binding.root, imeOptions, shouldDisable)
     }
 
     private fun updateEditTextImeOptions(view: View, imeOptions: Int, disable: Boolean) {
@@ -966,6 +968,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     override fun onResume() {
         super.onResume()
+        // 設定が変更されている可能性があるため、キーボード学習停止設定を再適用
+        disableKeyboardLearning(viewModel.isIncognitoMode.value)
+
         modelOptions = buildDownloadedModelOptions()
         updateModelNameText(viewModel.selectedModel.value)
         refreshCurrentBackendType()
