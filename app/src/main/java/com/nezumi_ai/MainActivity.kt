@@ -343,10 +343,10 @@ class MainActivity : AppCompatActivity() {
         // バックグラウンドから復帰時に生体認証を実行
         if (isAppInBackground) {
             isAppInBackground = false
-            // シークレットモード中の場合のみFLAG_SECUREを設定
-            if (isIncognitoModeActive) {
+            // シークレットモード中または常時ロック有効時にFLAG_SECUREを設定し認証を表示
+            if (isIncognitoModeActive || PreferencesHelper.isAlwaysLockEnabled(this)) {
                 window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-                Log.d(TAG, "Added FLAG_SECURE on resume (incognito mode)")
+                Log.d(TAG, "Added FLAG_SECURE on resume (incognito mode or always lock)")
                 showBiometricPrompt()
             }
         }
@@ -561,22 +561,24 @@ class MainActivity : AppCompatActivity() {
             buttonContainer.addView(pinUnlockButton)
         }
 
-        // 「シークレットモードを終了」ボタン
-        val exitButton = android.widget.Button(this).apply {
-            text = "シークレットモードを終了"
-            textSize = 18f
-            setBackgroundColor(android.graphics.Color.parseColor("#E24A4A"))
-            setTextColor(android.graphics.Color.WHITE)
-            layoutParams = android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                56.dp()
-            )
-            setOnClickListener {
-                Log.d(TAG, "Exit incognito mode button pressed")
-                exitIncognitoMode()
+        // 「シークレットモードを終了」ボタン（シークレットモード時のみ表示）
+        if (isIncognitoModeActive) {
+            val exitButton = android.widget.Button(this).apply {
+                text = "シークレットモードを終了"
+                textSize = 18f
+                setBackgroundColor(android.graphics.Color.parseColor("#E24A4A"))
+                setTextColor(android.graphics.Color.WHITE)
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    56.dp()
+                )
+                setOnClickListener {
+                    Log.d(TAG, "Exit incognito mode button pressed")
+                    exitIncognitoMode()
+                }
             }
+            buttonContainer.addView(exitButton)
         }
-        buttonContainer.addView(exitButton)
 
         overlayContainer.addView(buttonContainer)
 

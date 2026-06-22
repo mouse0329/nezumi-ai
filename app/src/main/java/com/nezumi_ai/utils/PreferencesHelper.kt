@@ -20,6 +20,8 @@ object PreferencesHelper {
     private const val KEY_REQUIRE_MULTIMODAL = "require_multimodal"
     private const val KEY_SECRET_MODE_PIN_HASH = "secret_mode_pin_hash"
     private const val KEY_SECRET_MODE_ENABLED = "secret_mode_enabled"
+    private const val KEY_ALWAYS_LOCK_ENABLED = "always_lock_enabled"
+    private const val KEY_STOP_KEYBOARD_LEARNING = "stop_keyboard_learning"
 
     const val THEME_SYSTEM = "SYSTEM"
     const val THEME_LIGHT = "LIGHT"
@@ -183,4 +185,21 @@ object PreferencesHelper {
     fun hasSecretModePin(context: Context): Boolean {
         return getSharedPreferences(context).contains(KEY_SECRET_MODE_PIN_HASH)
     }
+
+    fun isAlwaysLockEnabled(context: Context): Boolean {
+        return getSharedPreferences(context).getBoolean(KEY_ALWAYS_LOCK_ENABLED, false)
+    }
+
+    fun setAlwaysLockEnabled(context: Context, enabled: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_ALWAYS_LOCK_ENABLED, enabled).apply()
+    }
+
+    fun isStopKeyboardLearningEnabled(context: Context): Boolean {
+        return getSharedPreferences(context).getBoolean(KEY_STOP_KEYBOARD_LEARNING, false)
+    }
+
+    fun setStopKeyboardLearningEnabled(context: Context, enabled: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_STOP_KEYBOARD_LEARNING, enabled).apply()
+    }
 }
+

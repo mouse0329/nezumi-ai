@@ -89,6 +89,7 @@ import androidx.fragment.app.viewModels
 import androidx.navigation.fragment.findNavController
 import com.nezumi_ai.R
 import com.nezumi_ai.presentation.viewmodel.ImageGenViewModel
+import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.sd.safety.SafetyResult
 import java.io.File
 
@@ -214,6 +215,8 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
         val savedLibrary = loadLibrary(ctx)
         library.addAll(savedLibrary)
     }
+
+    val isStopKeyboardLearning: Boolean = remember { PreferencesHelper.isStopKeyboardLearningEnabled(ctx) }
 
     val fieldColors = OutlinedTextFieldDefaults.colors(
         focusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -342,7 +345,23 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                     label = { Text(stringResource(R.string.image_gen_prompt_hint)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3,
-                    colors = fieldColors
+                    colors = fieldColors,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Default,
+                        autoCorrectEnabled = !isStopKeyboardLearning,
+                        keyboardType = if (isStopKeyboardLearning) {
+                            // Passwordは日本語入力を制限する場合があるが、学習停止を優先
+                            // 日本語入力を維持しつつ学習を止めるにはIME側の対応が必要
+                            androidx.compose.ui.text.input.KeyboardType.Password
+                        } else {
+                            androidx.compose.ui.text.input.KeyboardType.Text
+                        }
+                    ),
+                    visualTransformation = if (isStopKeyboardLearning) {
+                        androidx.compose.ui.text.input.VisualTransformation.None
+                    } else {
+                        androidx.compose.ui.text.input.VisualTransformation.None
+                    }
                 )
                 var negExpanded by remember { mutableStateOf(false) }
                 TextButton(onClick = { negExpanded = !negExpanded }) {
@@ -358,7 +377,21 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                         label = { Text(stringResource(R.string.image_gen_neg_hint)) },
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 2,
-                        colors = fieldColors
+                        colors = fieldColors,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Default,
+                            autoCorrectEnabled = !isStopKeyboardLearning,
+                            keyboardType = if (isStopKeyboardLearning) {
+                                androidx.compose.ui.text.input.KeyboardType.Password
+                            } else {
+                                androidx.compose.ui.text.input.KeyboardType.Text
+                            }
+                        ),
+                        visualTransformation = if (isStopKeyboardLearning) {
+                            androidx.compose.ui.text.input.VisualTransformation.None
+                        } else {
+                            androidx.compose.ui.text.input.VisualTransformation.None
+                        }
                     )
                 }
                 Text("サイズ: ${size}x$size", color = MaterialTheme.colorScheme.onSurface)

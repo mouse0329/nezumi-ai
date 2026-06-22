@@ -90,6 +90,7 @@ class SettingsComposeFragment : Fragment() {
     private var llamaCppNKeep by mutableStateOf(0)
     private var llamaCppRopeFreqBase by mutableStateOf(0.0f)
     private var llamaCppRopeFreqScale by mutableStateOf(1.0f)
+    private var ropeFreqBaseInput by mutableStateOf("0.0")
     private var memorySaveMode by mutableStateOf(MemorySaveMode.LLM.name)
     private var chatHistoryLimit by mutableStateOf(30)
     private var sdSteps by mutableStateOf(8)
@@ -237,7 +238,224 @@ class SettingsComposeFragment : Fragment() {
             item {
                 when (selectedSection) {
                     0 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        GeneralSettingsCard()
+                        // 強制的にUIをここに展開
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = colorResource(id = R.color.primary_light)
+                            )
+                        ) {
+                            val context = LocalContext.current
+                            var pinDialogVisible by remember { mutableStateOf(false) }
+                            var pinConfirmDialogVisible by remember { mutableStateOf(false) }
+                            var tempPin by remember { mutableStateOf("") }
+                            var isSecretModeEnabled by remember { mutableStateOf(PreferencesHelper.isSecretModeEnabled(context)) }
+                            var hasSecretModePin by remember { mutableStateOf(PreferencesHelper.hasSecretModePin(context)) }
+                            var isAlwaysLockEnabled by remember { mutableStateOf(PreferencesHelper.isAlwaysLockEnabled(context)) }
+                            var isStopKeyboardLearning by remember { mutableStateOf(PreferencesHelper.isStopKeyboardLearningEnabled(context)) }
+                            var pendingAlwaysLockEnable by remember { mutableStateOf(false) }
+
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text(text = "全般設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+
+                                // テーマ設定セクション
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        text = "テーマ (現在: ${when(themeMode) {
+                                            PreferencesHelper.THEME_LIGHT -> "ライト"
+                                            PreferencesHelper.THEME_DARK -> "ダーク"
+                                            else -> "システム"
+                                        }})",
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        FilterChip(
+                                            selected = themeMode == PreferencesHelper.THEME_SYSTEM,
+                                            onClick = {
+                                                themeMode = PreferencesHelper.THEME_SYSTEM
+                                                PreferencesHelper.setThemeMode(context, PreferencesHelper.THEME_SYSTEM)
+                                                PreferencesHelper.applyThemeMode(context)
+                                            },
+                                            label = { Text("システム") },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        FilterChip(
+                                            selected = themeMode == PreferencesHelper.THEME_LIGHT,
+                                            onClick = {
+                                                themeMode = PreferencesHelper.THEME_LIGHT
+                                                PreferencesHelper.setThemeMode(context, PreferencesHelper.THEME_LIGHT)
+                                                PreferencesHelper.applyThemeMode(context)
+                                            },
+                                            label = { Text("ライト") },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        FilterChip(
+                                            selected = themeMode == PreferencesHelper.THEME_DARK,
+                                            onClick = {
+                                                themeMode = PreferencesHelper.THEME_DARK
+                                                PreferencesHelper.setThemeMode(context, PreferencesHelper.THEME_DARK)
+                                                PreferencesHelper.applyThemeMode(context)
+                                            },
+                                            label = { Text("ダーク") },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+
+                                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+
+                                // アプリロック設定
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "アプリロックを常に有効化",
+                                            color = colorResource(id = R.color.text_primary),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Text(
+                                            text = "アプリ再開時に常に認証を求めます",
+                                            color = colorResource(id = R.color.text_secondary),
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                    Switch(
+                                        checked = isAlwaysLockEnabled || (pinDialogVisible && pendingAlwaysLockEnable),
+                                        onCheckedChange = { checked ->
+                                            if (checked && !hasSecretModePin) {
+                                                pendingAlwaysLockEnable = true
+                                                pinDialogVisible = true
+                                            } else {
+                                                isAlwaysLockEnabled = checked
+                                                PreferencesHelper.setAlwaysLockEnabled(context, checked)
+                                                if (!checked) pendingAlwaysLockEnable = false
+                                            }
+                                        }
+                                    )
+                                }
+
+                                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+
+                                // キーボード学習停止設定
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "キーボードの学習を停止",
+                                            color = colorResource(id = R.color.text_primary),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Text(
+                                            text = "ネズミAIでの入力をキーボードに学習させないようにします",
+                                            color = colorResource(id = R.color.text_secondary),
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                    Switch(
+                                        checked = isStopKeyboardLearning,
+                                        onCheckedChange = { checked ->
+                                            isStopKeyboardLearning = checked
+                                            PreferencesHelper.setStopKeyboardLearningEnabled(context, checked)
+                                        }
+                                    )
+                                }
+
+                                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+
+                                // シークレットモード設定
+                                Text(
+                                    text = "シークレットモード PIN",
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = if (isSecretModeEnabled) "有効（PIN 設定済み）" else "無効",
+                                    color = if (isSecretModeEnabled) colorResource(id = R.color.success) else colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Button(
+                                        onClick = { pinDialogVisible = true },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(text = if (hasSecretModePin) "PIN 変更" else "PIN 設定")
+                                    }
+                                    if (isSecretModeEnabled) {
+                                        Button(
+                                            onClick = {
+                                                PreferencesHelper.clearSecretModePin(context)
+                                                PreferencesHelper.setSecretModeEnabled(context, false)
+                                                hasSecretModePin = false
+                                                isSecretModeEnabled = false
+                                            },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = colorResource(id = R.color.error)
+                                            ),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text(text = "リセット")
+                                        }
+                                    }
+                                }
+
+                                if (pinDialogVisible) {
+                                    PinSetupDialog(
+                                        hasExistingPin = hasSecretModePin,
+                                        onPinSet = { pin ->
+                                            tempPin = pin
+                                            pinDialogVisible = false
+                                            pinConfirmDialogVisible = true
+                                        },
+                                        onDismiss = {
+                                            pinDialogVisible = false
+                                            pendingAlwaysLockEnable = false
+                                        }
+                                    )
+                                }
+
+                                if (pinConfirmDialogVisible) {
+                                    PinConfirmDialog(
+                                        expectedPin = tempPin,
+                                        onConfirmed = {
+                                            PreferencesHelper.setSecretModePin(context, tempPin)
+                                            if (pendingAlwaysLockEnable) {
+                                                isAlwaysLockEnabled = true
+                                                PreferencesHelper.setAlwaysLockEnabled(context, true)
+                                                pendingAlwaysLockEnable = false
+                                            } else {
+                                                isSecretModeEnabled = true
+                                                PreferencesHelper.setSecretModeEnabled(context, true)
+                                            }
+                                            hasSecretModePin = true
+                                            pinConfirmDialogVisible = false
+                                        },
+                                        onMismatch = {
+                                            pinConfirmDialogVisible = false
+                                            pinDialogVisible = true
+                                        },
+                                        onDismiss = {
+                                            pinConfirmDialogVisible = false
+                                            pendingAlwaysLockEnable = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
                         WebSearchApiKeyCard()
                     }
                     1 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -257,10 +475,7 @@ class SettingsComposeFragment : Fragment() {
                     5 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         DebugSettingsCard()
                     }
-                    else -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        GeneralSettingsCard()
-                        WebSearchApiKeyCard()
-                    }
+                    else -> {}
                 }
             }
             item {
@@ -285,163 +500,7 @@ class SettingsComposeFragment : Fragment() {
         }
     }
 
-    @Composable
-    private fun GeneralSettingsCard() {
-        val context = LocalContext.current
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = colorResource(id = R.color.primary_light)
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = "全般設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
 
-                // Theme Mode Selection
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "テーマ (現在: ${when(themeMode) {
-                            PreferencesHelper.THEME_LIGHT -> "ライト"
-                            PreferencesHelper.THEME_DARK -> "ダーク"
-                            else -> "システム"
-                        }})",
-                        color = colorResource(id = R.color.text_secondary),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        FilterChip(
-                            selected = themeMode == PreferencesHelper.THEME_SYSTEM,
-                            onClick = {
-                                themeMode = PreferencesHelper.THEME_SYSTEM
-                                PreferencesHelper.setThemeMode(requireContext(), PreferencesHelper.THEME_SYSTEM)
-                                PreferencesHelper.applyThemeMode(requireContext())
-                            },
-                            label = { Text("システム") },
-                            modifier = Modifier.weight(1f)
-                        )
-                        FilterChip(
-                            selected = themeMode == PreferencesHelper.THEME_LIGHT,
-                            onClick = {
-                                themeMode = PreferencesHelper.THEME_LIGHT
-                                PreferencesHelper.setThemeMode(requireContext(), PreferencesHelper.THEME_LIGHT)
-                                PreferencesHelper.applyThemeMode(requireContext())
-                            },
-                            label = { Text("ライト") },
-                            modifier = Modifier.weight(1f)
-                        )
-                        FilterChip(
-                            selected = themeMode == PreferencesHelper.THEME_DARK,
-                            onClick = {
-                                themeMode = PreferencesHelper.THEME_DARK
-                                PreferencesHelper.setThemeMode(requireContext(), PreferencesHelper.THEME_DARK)
-                                PreferencesHelper.applyThemeMode(requireContext())
-                            },
-                            label = { Text("ダーク") },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-
-                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
-                Text(
-                    text = "テーマを切り替えて、アプリ表示モードを変更します。",
-                    color = colorResource(id = R.color.text_secondary),
-                    style = MaterialTheme.typography.bodySmall
-                )
-
-                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
-
-                // シークレットモード設定
-                var pinDialogVisible by remember { mutableStateOf(false) }
-                var pinConfirmDialogVisible by remember { mutableStateOf(false) }
-                var tempPin by remember { mutableStateOf("") }
-                var isSecretModeEnabled by remember { mutableStateOf(PreferencesHelper.isSecretModeEnabled(context)) }
-                var hasSecretModePin by remember { mutableStateOf(PreferencesHelper.hasSecretModePin(context)) }
-
-                Text(
-                    text = "シークレットモード PIN",
-                    color = colorResource(id = R.color.text_secondary),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                Text(
-                    text = if (isSecretModeEnabled) "有効（PIN 設定済み）" else "無効",
-                    color = if (isSecretModeEnabled) colorResource(id = R.color.success) else colorResource(id = R.color.text_secondary),
-                    style = MaterialTheme.typography.bodySmall
-                )
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Button(
-                        onClick = { pinDialogVisible = true },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(text = if (hasSecretModePin) "PIN 変更" else "PIN 設定")
-                    }
-
-                    if (isSecretModeEnabled) {
-                        Button(
-                            onClick = {
-                                PreferencesHelper.clearSecretModePin(context)
-                                PreferencesHelper.setSecretModeEnabled(context, false)
-                                hasSecretModePin = false
-                                isSecretModeEnabled = false
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = colorResource(id = R.color.error)
-                            ),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(text = "リセット")
-                        }
-                    }
-                }
-
-                Text(
-                    text = "4 桁の数字でシークレットモードを保護します。忘れた場合はリセットしてください（データは削除されます）。",
-                    color = colorResource(id = R.color.text_secondary),
-                    style = MaterialTheme.typography.bodySmall
-                )
-
-                if (pinDialogVisible) {
-                    PinSetupDialog(
-                        hasExistingPin = PreferencesHelper.hasSecretModePin(context),
-                        onPinSet = { pin ->
-                            tempPin = pin
-                            pinDialogVisible = false
-                            pinConfirmDialogVisible = true
-                        },
-                        onDismiss = { pinDialogVisible = false }
-                    )
-                }
-
-                if (pinConfirmDialogVisible) {
-                    PinConfirmDialog(
-                        expectedPin = tempPin,
-                        onConfirmed = {
-                            PreferencesHelper.setSecretModePin(context, tempPin)
-                            PreferencesHelper.setSecretModeEnabled(context, true)
-                            hasSecretModePin = true
-                            isSecretModeEnabled = true
-                            pinConfirmDialogVisible = false
-                        },
-                        onMismatch = {
-                            pinConfirmDialogVisible = false
-                            pinDialogVisible = true
-                        },
-                        onDismiss = { pinConfirmDialogVisible = false }
-                    )
-                }
-            }
-        }
-    }
 
     @Composable
     private fun WebSearchApiKeyCard() {
@@ -720,7 +779,7 @@ class SettingsComposeFragment : Fragment() {
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = "${(preloadMemoryWarningThresholdPercent / 3f).roundToInt()}%",
+                            text = "${preloadMemoryWarningThresholdPercent}%",
                             color = colorResource(id = R.color.primary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
@@ -728,16 +787,12 @@ class SettingsComposeFragment : Fragment() {
                         )
                     }
                     Slider(
-                        value = (preloadMemoryWarningThresholdPercent / 3f).roundToInt().toFloat(),
+                        value = preloadMemoryWarningThresholdPercent.toFloat(),
                         onValueChange = { value ->
-                            preloadMemoryWarningThresholdPercent = (value.roundToInt() * 3).coerceIn(
-                                MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT,
-                                MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT
-                            )
+                            preloadMemoryWarningThresholdPercent = value.roundToInt().coerceIn(0, 100)
                         },
-                        valueRange = MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT.toFloat()..
-                            100f,
-                        steps = 99,
+                        valueRange = 0f..100f,
+                        steps = 100,
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text(
@@ -942,12 +997,14 @@ class SettingsComposeFragment : Fragment() {
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 OutlinedTextField(
-                                    value = String.format("%.1f", llamaCppRopeFreqBase),
+                                    value = ropeFreqBaseInput,
                                     onValueChange = { newValue ->
+                                        ropeFreqBaseInput = newValue
                                         newValue.toFloatOrNull()?.let { llamaCppRopeFreqBase = it }
                                     },
                                     modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                                 )
                                 Text(
                                     text = "0 = 自動設定",
@@ -1817,6 +1874,7 @@ class SettingsComposeFragment : Fragment() {
             llamaCppNKeep = nKeep
             llamaCppRopeFreqBase = ropeFreqBase
             llamaCppRopeFreqScale = ropeFreqScale
+            ropeFreqBaseInput = String.format("%.1f", ropeFreqBase)
             chatHistoryLimit = historyLimit
             sdSteps = PreferencesHelper.getSdSteps(requireContext())
             sdCfg = PreferencesHelper.getSdCfg(requireContext())
@@ -1877,11 +1935,11 @@ class SettingsComposeFragment : Fragment() {
     }
 
     private suspend fun persistSettings() {
-        val temperature = temperatureInput.toFloat()
-        val topP = topPInput.toFloat()
-        val topK = topkInput.toInt()
-        val maxTokens = maxTokensInput.toInt()
-        val contextWindow = contextWindowInput.toInt()
+        val temperature = temperatureInput.toFloatOrNull() ?: 0.7f
+        val topP = topPInput.toFloatOrNull() ?: 0.95f
+        val topK = topkInput.toIntOrNull() ?: 40
+        val maxTokens = maxTokensInput.toIntOrNull() ?: 1024
+        val contextWindow = contextWindowInput.toIntOrNull() ?: 4096
 
         settingsRepository.updateInferenceConfig(
             contextCompressionEnabled = contextCompressionEnabled,
@@ -1894,6 +1952,9 @@ class SettingsComposeFragment : Fragment() {
             backendType = backendType,
             backendTargetModel = "ALL"
         )
+        settingsRepository.updateLlamaCppRopeFreqBase(llamaCppRopeFreqBase)
+        settingsRepository.updateLlamaCppRopeFreqScale(llamaCppRopeFreqScale)
+        settingsRepository.updatePreloadMemoryWarningThresholdPercent(preloadMemoryWarningThresholdPercent)
         settingsRepository.updateSpeculativeDecodingEnabled(speculativeDecodingEnabled)
         PreferencesHelper.setRequireMultimodal(requireContext(), requireMultimodal)
         settingsRepository.updatePreloadMemoryWarningThresholdPercent(preloadMemoryWarningThresholdPercent)
