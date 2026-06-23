@@ -8,7 +8,7 @@ import java.nio.FloatBuffer
 
 /**
  * Yahoo Open NSFW (ResNet-50) モデルを使用した画像セーフティチェッカー
- * 入力: 224x224, NHWC (RGB)
+ * 入力: 224x224, NHWC (BGR)
  * 出力: [0: Safe, 1: NSFW]
  */
 class ImageSafetyChecker(private val context: Context) {
@@ -45,15 +45,24 @@ class ImageSafetyChecker(private val context: Context) {
         // 入力形式は NHWC [1, 224, 224, 3]
         val input = FloatArray(1 * 224 * 224 * 3)
 
+        // Yahoo Open NSFW (Caffe) の平均値 (BGR順)
+        val meanB = 104.0f
+        val meanG = 117.0f
+        val meanR = 123.0f
+
         var i = 0
         for (y in 0 until 224) {
             for (x in 0 until 224) {
                 val px = resized.getPixel(x, y)
 
-                // Yahooモデルは正規化なしの 0-255 RGB を期待する
-                input[i++] = ((px shr 16) and 0xFF).toFloat() // R
-                input[i++] = ((px shr 8) and 0xFF).toFloat()  // G
-                input[i++] = (px and 0xFF).toFloat()         // B
+                val r = ((px shr 16) and 0xFF).toFloat()
+                val g = ((px shr 8) and 0xFF).toFloat()
+                val b = (px and 0xFF).toFloat()
+
+                // 仕様: BGR順に並べ、各チャンネルから平均値を引く
+                input[i++] = b - meanB
+                input[i++] = g - meanG
+                input[i++] = r - meanR
             }
         }
 
