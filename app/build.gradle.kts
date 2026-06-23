@@ -58,7 +58,7 @@ android {
         // -----------------------------------------------------------------------
 
         val safetyPromptEnabled = false
-        val safetyImageEnabled  = true
+        val safetyImageEnabled  = false
 
         buildConfigField(
             "boolean",

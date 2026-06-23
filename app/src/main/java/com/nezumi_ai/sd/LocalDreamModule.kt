@@ -14,6 +14,8 @@ import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.*
 import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.URL
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -48,7 +50,8 @@ class LocalDreamModule(private val context: Context) {
     private var serverProcess: Process? = null
     private var currentModelPath: String? = null
     private var currentBackend: String? = null
-    private var isServerReady = false
+    var isServerReady = false
+        private set
     private var monitorJob: Job? = null
     private val coroutineScope = CoroutineScope(Dispatchers.Default + Job())
     private val activeGenerationConn = AtomicReference<HttpURLConnection?>(null)
@@ -82,7 +85,7 @@ class LocalDreamModule(private val context: Context) {
         }
     }
 
-    private fun prepareRuntimeDir(): File {
+    private suspend fun prepareRuntimeDir(): File = withContext(Dispatchers.IO) {
         val runtimeDir = File(context.filesDir, RUNTIME_DIR).apply {
             if (!exists()) mkdirs()
         }
@@ -123,7 +126,7 @@ class LocalDreamModule(private val context: Context) {
 
         runtimeDir.setReadable(true, true)
         runtimeDir.setExecutable(true, true)
-        return runtimeDir
+        runtimeDir
     }
 
     private fun resolveExecutable(): File? {
@@ -389,18 +392,33 @@ class LocalDreamModule(private val context: Context) {
             }
 
             try {
-                val url = URL("http://127.0.0.1:$SERVER_PORT/")
-                val conn = url.openConnection() as HttpURLConnection
-                conn.connectTimeout = 1000
-                conn.readTimeout = 1000
-                conn.requestMethod = "GET"
-                val code = conn.responseCode
-                conn.disconnect()
-                portCheckCount++
-                Log.d(TAG, "waitForServer: Health check #$portCheckCount response: $code (alive=$alive, elapsed=${System.currentTimeMillis()-startTime}ms)")
-                if (code == 200 || code == 404) {
-                    Log.i(TAG, "waitForServer: Server is ready! (response=$code)")
-                    return true
+                // 軽量なSocketでポート開放を先に出口調査してフリーズを防ぐ
+                val isPortOpen = Socket().use { socket ->
+                    try {
+                        socket.connect(InetSocketAddress("127.0.0.1", SERVER_PORT), 150)
+                        true
+                    } catch (e: Exception) {
+                        false
+                    }
+                }
+
+                if (isPortOpen) {
+                    val url = URL("http://127.0.0.1:$SERVER_PORT/")
+                    val conn = url.openConnection() as HttpURLConnection
+                    conn.connectTimeout = 300
+                    conn.readTimeout = 300
+                    conn.requestMethod = "GET"
+                    val code = conn.responseCode
+                    conn.disconnect()
+                    portCheckCount++
+                    Log.d(TAG, "waitForServer: Health check #$portCheckCount response:$code (alive=$alive, elapsed=${System.currentTimeMillis()-startTime}ms)")
+                    if (code == 200 || code == 404) {
+                        Log.i(TAG, "waitForServer: Server is ready! (response=$code)")
+                        return true
+                    }
+                } else {
+                    portCheckCount++
+                    Log.d(TAG, "waitForServer: Health check #$portCheckCount - Port not open yet (alive=$alive, elapsed=${System.currentTimeMillis()-startTime}ms)")
                 }
             } catch (e: Exception) {
                 portCheckCount++
@@ -547,6 +565,7 @@ class LocalDreamModule(private val context: Context) {
             var completeData: JSONObject? = null
             var currentEventType = ""
 
+            var lastProgressTime = 0L
             BufferedReader(InputStreamReader(conn.inputStream)).use { reader ->
                 var line: String? = null
                 while (isActive && reader.readLine().also { line = it } != null) {
@@ -568,10 +587,15 @@ class LocalDreamModule(private val context: Context) {
                                     serverTotalSteps = data.getInt("total_steps"),
                                     requestedSteps = steps
                                 )
-                                val previewBmp = data.optString("preview", "").takeIf { it.isNotEmpty() }?.let {
-                                    runCatching { decodeRgbToBitmap(it, data.optInt("preview_width", width), data.optInt("preview_height", height)) }.getOrNull()
+                                val now = System.currentTimeMillis()
+                                // 200ms間隔で進捗を通知し、UIスレッドの過負荷を防ぐ
+                                if (now - lastProgressTime > 200 || step == totalSteps) {
+                                    val previewBmp = data.optString("preview", "").takeIf { it.isNotEmpty() }?.let {
+                                        runCatching { decodeRgbToBitmap(it, data.optInt("preview_width", width), data.optInt("preview_height", height)) }.getOrNull()
+                                    }
+                                    onProgress(step, totalSteps, 0f, previewBmp)
+                                    lastProgressTime = now
                                 }
-                                onProgress(step, totalSteps, 0f, previewBmp)
                             }
                             "preview" -> {
                                 val (step, totalSteps) = normalizeServerProgress(
@@ -579,10 +603,14 @@ class LocalDreamModule(private val context: Context) {
                                     serverTotalSteps = data.optInt("total_steps", steps),
                                     requestedSteps = steps
                                 )
-                                val previewBmp = data.optString("image", "").takeIf { it.isNotEmpty() }?.let {
-                                    runCatching { decodeRgbToBitmap(it, data.optInt("width", width), data.optInt("height", height)) }.getOrNull()
+                                val now = System.currentTimeMillis()
+                                if (now - lastProgressTime > 200 || step == totalSteps) {
+                                    val previewBmp = data.optString("image", "").takeIf { it.isNotEmpty() }?.let {
+                                        runCatching { decodeRgbToBitmap(it, data.optInt("width", width), data.optInt("height", height)) }.getOrNull()
+                                    }
+                                    onProgress(step, totalSteps, 0f, previewBmp)
+                                    lastProgressTime = now
                                 }
-                                onProgress(step, totalSteps, 0f, previewBmp)
                             }
                             "complete" -> {
                                 completeData = data
@@ -613,9 +641,13 @@ class LocalDreamModule(private val context: Context) {
                 return@withContext applySafetyFilter(raw)
             }
         } catch (e: CancellationException) {
-            Log.i(TAG, "Generation cancelled")
+            Log.i(TAG, "Generation cancelled via coroutine")
             activeGenerationConn.getAndSet(null)?.disconnect()
-            null
+            throw e // ViewModel 側でハンドリングさせる
+        } catch (e: java.net.SocketException) {
+            Log.i(TAG, "Socket closed during generation (likely due to cancellation)")
+            activeGenerationConn.getAndSet(null)?.disconnect()
+            throw e // ViewModel 側でハンドリングさせる
         } catch (e: Exception) {
             Log.e(TAG, "Generation error", e)
             activeGenerationConn.set(null)
@@ -774,3 +806,5 @@ class LocalDreamModule(private val context: Context) {
         return bitmap
     }
 }
+
+
