@@ -9,6 +9,7 @@ import com.nezumi_ai.sd.safety.ImageSafetyChecker
 import com.nezumi_ai.sd.safety.PromptFilter
 import com.nezumi_ai.sd.safety.SafetyResult
 import com.nezumi_ai.sd.safety.toBlurred
+import com.nezumi_ai.utils.PreferencesHelper
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.*
@@ -512,6 +513,7 @@ class LocalDreamModule(private val context: Context) {
                 put("cfg", cfg)
                 put("seed", if (seed < 0) (Math.random() * Int.MAX_VALUE).toInt() else seed)
                 put("scheduler", "dpm")
+                put("use_opencl", PreferencesHelper.isSdUseOpenCL(context))
                 put("show_diffusion_process", true)
                 put("show_diffusion_stride", 2)
             }
