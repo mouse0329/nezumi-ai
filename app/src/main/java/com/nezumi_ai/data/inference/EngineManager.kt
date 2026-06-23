@@ -23,7 +23,6 @@ object EngineManager {
 
     private val mutex = Mutex()
     private val cancelMutex = Mutex()
-    private val cancelMutex = Mutex()
     private var active: ActiveEngine = ActiveEngine.NONE
     private var localDream: LocalDreamModule? = null
     private var sdModelPath: String? = null

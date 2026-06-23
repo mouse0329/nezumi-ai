@@ -74,7 +74,11 @@ android {
         )
 
         // appNameはビルド状態に依存させず固定（UIと安全機構を分離）
-        manifestPlaceholders["appName"] = "ネズミAI"
+        if (safetyPromptEnabled && safetyImageEnabled) {
+            manifestPlaceholders["appName"] = "ネズミAI"
+        } else {
+            manifestPlaceholders["appName"] = "ネズミAI Open"
+        }
 
         // openビルド判定はビルド識別として扱う（安全フラグとは分離）
         if (!safetyPromptEnabled || !safetyImageEnabled) {
