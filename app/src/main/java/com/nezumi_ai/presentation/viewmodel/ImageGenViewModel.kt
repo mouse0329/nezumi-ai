@@ -334,7 +334,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         isCancelling = true
         Log.i(TAG, "[ImageGen] cancel() called")
         
-        EngineManager.cancelCurrentGeneration()
+        EngineManager.cancelCurrentGeneration(viewModelScope)
         generateJob?.cancel()
         queueRunJob?.cancel()
         _isQueueRunning.value = false
@@ -462,6 +462,14 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
             }
+        } catch (e: CancellationException) {
+            Log.i(TAG, "[ImageGen] generate() job was cancelled")
+            wasCancelled = true
+            _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
+        } catch (e: java.net.SocketException) {
+            Log.e(TAG, "[ImageGen] Socket closed during generation (likely due to cancellation)", e)
+            wasCancelled = true
+            _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
         } catch (e: Exception) {
             Log.e(TAG, "ImageGen failed", e)
             _snackbar.value = e.message ?: "error"
@@ -854,6 +862,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 }
                 return@withContext null
             }
+        } catch (e: CancellationException) {
+            Log.i(TAG, "[QueueItem] Job was cancelled")
+            throw e
+        } catch (e: java.net.SocketException) {
+            Log.e(TAG, "[QueueItem] Socket closed during generation (likely due to cancellation)", e)
+            null
         } catch (e: Exception) {
             Log.e(TAG, "[QueueItem] Error", e)
             null

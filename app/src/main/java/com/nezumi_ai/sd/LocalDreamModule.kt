@@ -48,7 +48,8 @@ class LocalDreamModule(private val context: Context) {
     private var serverProcess: Process? = null
     private var currentModelPath: String? = null
     private var currentBackend: String? = null
-    private var isServerReady = false
+    var isServerReady = false
+        private set
     private var monitorJob: Job? = null
     private val coroutineScope = CoroutineScope(Dispatchers.Default + Job())
     private val activeGenerationConn = AtomicReference<HttpURLConnection?>(null)
@@ -613,9 +614,13 @@ class LocalDreamModule(private val context: Context) {
                 return@withContext applySafetyFilter(raw)
             }
         } catch (e: CancellationException) {
-            Log.i(TAG, "Generation cancelled")
+            Log.i(TAG, "Generation cancelled via coroutine")
             activeGenerationConn.getAndSet(null)?.disconnect()
-            null
+            throw e // ViewModel 側でハンドリングさせる
+        } catch (e: java.net.SocketException) {
+            Log.i(TAG, "Socket closed during generation (likely due to cancellation)")
+            activeGenerationConn.getAndSet(null)?.disconnect()
+            throw e // ViewModel 側でハンドリングさせる
         } catch (e: Exception) {
             Log.e(TAG, "Generation error", e)
             activeGenerationConn.set(null)
