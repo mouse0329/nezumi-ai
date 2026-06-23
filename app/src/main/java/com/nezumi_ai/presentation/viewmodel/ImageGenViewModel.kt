@@ -79,6 +79,9 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private val _backendInfo = MutableStateFlow("")
     val backendInfo: StateFlow<String> = _backendInfo.asStateFlow()
 
+    private val _selectedBackend = MutableStateFlow(PreferencesHelper.getSdBackend(application))
+    val selectedBackend: StateFlow<String> = _selectedBackend.asStateFlow()
+
     private fun loadAvailableModels() {
         viewModelScope.launch(Dispatchers.IO) {
             val models = mutableListOf<String>()
@@ -206,6 +209,9 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private val _sizePx = MutableStateFlow(512)
     val sizePx: StateFlow<Int> = _sizePx.asStateFlow()
 
+    private val _seed = MutableStateFlow(-1L)
+    val seed: StateFlow<Long> = _seed.asStateFlow()
+
     private val _resultBitmap = MutableStateFlow<Bitmap?>(null)
     val resultBitmap: StateFlow<Bitmap?> = _resultBitmap.asStateFlow()
 
@@ -253,7 +259,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private var queueRunJob: Job? = null
     // ==========================================
 
-    private var lastSavedInternalUri: String? = null
+    var lastSavedInternalUri: String? = null
     private var generateJob: Job? = null
 
     fun refreshAvailableModels() {
@@ -268,6 +274,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             PreferencesHelper.setSdModelPath(getApplication(), path)
             updateBackendInfo()
         }
+    }
+
+    fun setSelectedBackend(backend: String) {
+        _selectedBackend.value = backend
+        PreferencesHelper.setSdBackend(getApplication(), backend)
+        updateBackendInfo()
     }
 
     fun setModelPath(p: String) {
@@ -302,6 +314,10 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
     fun setSize(s: Int) {
         _sizePx.value = listOf(256, 512, 768).minByOrNull { kotlin.math.abs(it - s) } ?: 512
+    }
+
+    fun setSeed(s: Long) {
+        _seed.value = s
     }
 
     private var isCancelling = false
@@ -400,25 +416,28 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             runCatching { manager.unloadModel() }
             Log.i(TAG, "[ImageGen] generate() starting, acquiring LocalDream engine")
             
-            val ld = EngineManager.acquireLocalDream(app, path, "auto")
+            val backend = _selectedBackend.value
+            val ld = EngineManager.acquireLocalDream(app, path, backend)
             
             _currentStep.value = 0
             _progressData.value = ProgressData(0, totalSteps, 0.0f)
             
-            val bmp = ld.generateImage(
+            val result = ld.generateImageWithMetadata(
                 prompt = pr,
                 negativePrompt = _negativePrompt.value,
                 width = sz,
                 height = sz,
                 steps = totalSteps,
                 cfg = _cfg.value,
-                seed = -1L,
+                seed = _seed.value,
                 onProgress = { step, steps, time, previewBmp ->
                     _progressData.value = ProgressData(step, steps, time)
                     _currentStep.value = step.coerceAtMost(totalSteps)
                     previewBmp?.let { _previewBitmap.value = it }
                 }
             )
+            val bmp = result?.first
+            val metadata = result?.second
             
             _currentStep.value = totalSteps
             _progressData.value = ProgressData(totalSteps, totalSteps, _progressData.value?.time ?: 0.0f)
@@ -435,7 +454,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 }
                 else -> {
                     _resultBitmap.value = bmp
-                    lastSavedInternalUri = MessageMediaStore.savePngBitmap(app, bmp, "imagegen_${System.currentTimeMillis()}")
+                    val uri = MessageMediaStore.savePngBitmap(app, bmp, "imagegen_${System.currentTimeMillis()}")
+                    lastSavedInternalUri = uri
+                    if (uri != null && metadata != null) {
+                        val prefs = app.getSharedPreferences("image_metadata", Context.MODE_PRIVATE)
+                        prefs.edit().putString("metadata_$uri", buildMetadataJson(metadata)).apply()
+                    }
                 }
             }
         } catch (e: Exception) {

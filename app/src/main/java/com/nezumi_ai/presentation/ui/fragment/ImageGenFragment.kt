@@ -98,7 +98,14 @@ import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.sd.safety.SafetyResult
 import java.io.File
 
-data class LibraryItem(val bitmap: Bitmap, val prompt: String, val timestamp: Long)
+data class LibraryItem(
+    val bitmap: Bitmap,
+    val prompt: String,
+    val timestamp: Long,
+    val negativePrompt: String? = null,
+    val steps: Int? = null,
+    val seed: Long? = null
+)
 
 class ImageGenFragment : Fragment() {
 
@@ -195,6 +202,7 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
     val steps by vm.steps.collectAsState()
     val cfg by vm.cfg.collectAsState()
     val size by vm.sizePx.collectAsState()
+    val seedValue by vm.seed.collectAsState()
     val bitmap by vm.resultBitmap.collectAsState()
     val loading by vm.loading.collectAsState()
     val snack by vm.snackbar.collectAsState()
@@ -206,6 +214,7 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
     val selectedModelIndex by vm.selectedModelIndex.collectAsState()
     val currentStep by vm.currentStep.collectAsState()
     val backendInfo by vm.backendInfo.collectAsState()
+    val selectedBackend by vm.selectedBackend.collectAsState()
     val previewBitmap by vm.previewBitmap.collectAsState()
     val queueResultBitmaps by vm.queueResultBitmaps.collectAsState()
     val generationQueue by vm.generationQueue.collectAsState()
@@ -242,8 +251,9 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
     
     LaunchedEffect(bitmap) {
         bitmap?.let { bmp ->
-            val ts = saveImageToLibrary(ctx, bmp, prompt)
-            library.add(0, LibraryItem(bmp, prompt, ts))
+            val meta = vm.getImageMetadata(ctx, vm.lastSavedInternalUri)
+            val ts = saveImageToLibrary(ctx, bmp, prompt, meta?.negativePrompt, meta?.steps, meta?.seed)
+            library.add(0, LibraryItem(bmp, prompt, ts, meta?.negativePrompt, meta?.steps, meta?.seed))
         }
     }
 
@@ -336,6 +346,60 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                     }
                 }
                 
+                // シード値設定
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = if (seedValue == -1L) "" else seedValue.toString(),
+                        onValueChange = {
+                            val s = it.toLongOrNull() ?: -1L
+                            vm.setSeed(s)
+                        },
+                        label = { Text("シード値 (-1でランダム)") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                        ),
+                        colors = fieldColors
+                    )
+                    Button(
+                        onClick = { vm.setSeed(-1L) },
+                        enabled = seedValue != -1L,
+                        modifier = Modifier.height(56.dp)
+                    ) {
+                        Text("リセット")
+                    }
+                }
+
+                // バックエンド選択
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "バックエンド:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    listOf("auto" to "自動", "qnn" to "GPU/NPU", "mnn" to "CPU").forEach { (value, label) ->
+                        val selected = selectedBackend == value
+                        androidx.compose.material3.FilterChip(
+                            selected = selected,
+                            onClick = { vm.setSelectedBackend(value) },
+                            label = { Text(label) },
+                            colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                            )
+                        )
+                    }
+                }
+
                 if (backendInfo.isNotEmpty()) {
                     Text(
                         "📡 $backendInfo",
@@ -774,14 +838,46 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                                 modifier = Modifier.fillMaxWidth().aspectRatio(1f),
                                 contentScale = ContentScale.Crop
                             )
-                            Text(
-                                item.prompt,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(8.dp)
-                            )
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                Text(
+                                    item.prompt,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (!item.negativePrompt.isNullOrEmpty()) {
+                                    Text(
+                                        "Neg: ${item.negativePrompt}",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    if (item.steps != null) {
+                                        Text(
+                                            "Steps: ${item.steps}",
+                                            color = MaterialTheme.colorScheme.primary,
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                    if (item.seed != null) {
+                                        Text(
+                                            "Seed: ${item.seed}",
+                                            color = MaterialTheme.colorScheme.secondary,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+                            }
                         }
                         IconButton(
                             onClick = { deleteTarget = item },
@@ -865,12 +961,71 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)),
                         contentScale = ContentScale.FillWidth
                     )
-                    Text(
-                        "Prompt:\n${item.prompt}",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(vertical = 20.dp)
-                    )
+                    Column(
+                        modifier = Modifier
+                            .padding(vertical = 16.dp)
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "Prompt:",
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        Text(
+                            item.prompt,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        
+                        if (!item.negativePrompt.isNullOrEmpty()) {
+                            Text(
+                                "Negative Prompt:",
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                            Text(
+                                item.negativePrompt,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            if (item.steps != null) {
+                                Column {
+                                    Text(
+                                        "Steps:",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.labelLarge
+                                    )
+                                    Text(
+                                        item.steps.toString(),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                }
+                            }
+                            if (item.seed != null) {
+                                Column {
+                                    Text(
+                                        "Seed:",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.labelLarge
+                                    )
+                                    Text(
+                                        item.seed.toString(),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                }
+                            }
+                        }
+                    }
                     Row(
                         Modifier.fillMaxWidth(0.8f),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -903,7 +1058,14 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
 }
 
 // ライブラリの永続化関数
-private fun saveImageToLibrary(context: android.content.Context, bitmap: Bitmap, prompt: String): Long {
+private fun saveImageToLibrary(
+    context: android.content.Context,
+    bitmap: Bitmap,
+    prompt: String,
+    negativePrompt: String? = null,
+    steps: Int? = null,
+    seed: Long? = null
+): Long {
     val libraryDir = File(context.filesDir, "library")
     if (!libraryDir.exists()) {
         libraryDir.mkdirs()
@@ -919,8 +1081,14 @@ private fun saveImageToLibrary(context: android.content.Context, bitmap: Bitmap,
     
     // メタデータを保存
     val metadataFile = File(libraryDir, "metadata.txt")
-    val metadata = "$timestamp|$prompt\n"
-    metadataFile.appendText(metadata)
+    val json = org.json.JSONObject().apply {
+        put("timestamp", timestamp)
+        put("prompt", prompt)
+        put("negativePrompt", negativePrompt ?: "")
+        put("steps", steps ?: 0)
+        put("seed", seed ?: -1L)
+    }
+    metadataFile.appendText(json.toString() + "\n")
     return timestamp
 }
 
@@ -933,20 +1101,41 @@ private fun loadLibrary(context: android.content.Context): List<LibraryItem> {
     
     val library = mutableListOf<LibraryItem>()
     val lines = metadataFile.readText().split("\n").filter { it.isNotEmpty() }
-
+    
     for (line in lines.reversed()) { // 最新順に読み込み
-        val parts = line.split("|", limit = 2)
-        if (parts.size == 2) {
-            val timestamp = parts[0].toLongOrNull() ?: continue
-            val libPrompt = parts[1]
-            val imageFile = File(libraryDir, "img_${timestamp}.jpg")
-
-            if (imageFile.exists()) {
-                val imageBitmap = BitmapFactory.decodeFile(imageFile.absolutePath)
-                if (imageBitmap != null) {
-                    library.add(LibraryItem(imageBitmap, libPrompt, timestamp))
+        try {
+            if (line.startsWith("{")) {
+                val obj = org.json.JSONObject(line)
+                val timestamp = obj.getLong("timestamp")
+                val libPrompt = obj.getString("prompt")
+                val negPrompt = obj.optString("negativePrompt").takeIf { it.isNotEmpty() }
+                val steps = obj.optInt("steps").takeIf { it > 0 }
+                val seed = obj.optLong("seed").takeIf { it != -1L }
+                
+                val imageFile = File(libraryDir, "img_${timestamp}.jpg")
+                if (imageFile.exists()) {
+                    val imageBitmap = BitmapFactory.decodeFile(imageFile.absolutePath)
+                    if (imageBitmap != null) {
+                        library.add(LibraryItem(imageBitmap, libPrompt, timestamp, negPrompt, steps, seed))
+                    }
+                }
+            } else {
+                // 以前の形式との互換性
+                val parts = line.split("|", limit = 2)
+                if (parts.size == 2) {
+                    val timestamp = parts[0].toLongOrNull() ?: continue
+                    val libPrompt = parts[1]
+                    val imageFile = File(libraryDir, "img_${timestamp}.jpg")
+                    if (imageFile.exists()) {
+                        val imageBitmap = BitmapFactory.decodeFile(imageFile.absolutePath)
+                        if (imageBitmap != null) {
+                            library.add(LibraryItem(imageBitmap, libPrompt, timestamp))
+                        }
+                    }
                 }
             }
+        } catch (e: Exception) {
+            // Skip invalid lines
         }
     }
 
@@ -966,7 +1155,15 @@ private fun deleteImageFromLibrary(context: android.content.Context, timestamp: 
         val metadataFile = File(libraryDir, "metadata.txt")
         if (metadataFile.exists()) {
             val remaining = metadataFile.readText().split("\n").filter { it.isNotEmpty() }
-                .filterNot { it.startsWith("${timestamp}|") }
+                .filterNot { line ->
+                    if (line.startsWith("{")) {
+                        try {
+                            org.json.JSONObject(line).getLong("timestamp") == timestamp
+                        } catch (e: Exception) { false }
+                    } else {
+                        line.startsWith("${timestamp}|")
+                    }
+                }
             metadataFile.writeText(remaining.joinToString("\n") + if (remaining.isNotEmpty()) "\n" else "")
         }
     } catch (e: Exception) {
