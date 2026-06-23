@@ -398,7 +398,8 @@ class ModelManager(
                 if (!skipCancelInference) {
                     runCatching { activeEngine.cancelInference() }
                         .onFailure { Log.w(TAG, "cancelInference before unload failed", it) }
-                    delay(100)
+                    // 確実にキャンセルがネイティブ層に伝播するよう少し長めに待機
+                    delay(200)
                 } else {
                     Log.d(TAG, "unloadModel: skipping cancelInference as requested")
                 }
