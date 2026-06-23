@@ -22,6 +22,7 @@ object PreferencesHelper {
     private const val KEY_SECRET_MODE_ENABLED = "secret_mode_enabled"
     private const val KEY_ALWAYS_LOCK_ENABLED = "always_lock_enabled"
     private const val KEY_STOP_KEYBOARD_LEARNING = "stop_keyboard_learning"
+    private const val KEY_SD_USE_OPENCL = "sd_use_opencl"
 
     const val THEME_SYSTEM = "SYSTEM"
     const val THEME_LIGHT = "LIGHT"
@@ -200,6 +201,14 @@ object PreferencesHelper {
 
     fun setStopKeyboardLearningEnabled(context: Context, enabled: Boolean) {
         getSharedPreferences(context).edit().putBoolean(KEY_STOP_KEYBOARD_LEARNING, enabled).apply()
+    }
+
+    fun isSdUseOpenCL(context: Context): Boolean {
+        return getSharedPreferences(context).getBoolean(KEY_SD_USE_OPENCL, true)
+    }
+
+    fun setSdUseOpenCL(context: Context, enabled: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_SD_USE_OPENCL, enabled).apply()
     }
 }
 
