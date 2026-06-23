@@ -57,8 +57,9 @@ android {
         // SAFETY_IMAGE_GUARD_ENABLED    : 後段画像ガード (ImageSafetyChecker / ONNX)
         // -----------------------------------------------------------------------
 
-        val safetyPromptEnabled = false
-        val safetyImageEnabled  = false
+
+        val safetyPromptEnabled = true
+        val safetyImageEnabled  = true
 
         buildConfigField(
             "boolean",
