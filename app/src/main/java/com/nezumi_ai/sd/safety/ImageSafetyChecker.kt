@@ -6,13 +6,19 @@ import ai.onnxruntime.*
 import java.io.File
 import java.nio.FloatBuffer
 
+/**
+ * Yahoo Open NSFW (ResNet-50) モデルを使用した画像セーフティチェッカー
+ * 入力: 224x224, NHWC (RGB)
+ * 出力: [0: Safe, 1: NSFW]
+ */
 class ImageSafetyChecker(private val context: Context) {
 
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
     private var session: OrtSession? = null
 
     init {
-        val modelFile = copyAssetToCache("image-safety-classifier-xs.onnx")
+        // モデルファイル名は適宜変更してください
+        val modelFile = copyAssetToCache("open_nsfw.onnx")
         val opts = OrtSession.SessionOptions()
         opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
         session = env.createSession(modelFile.absolutePath, opts)
@@ -33,23 +39,21 @@ class ImageSafetyChecker(private val context: Context) {
     fun check(bitmap: Bitmap): FloatArray? {
         val sess = session ?: return null
 
+        // Yahoo Open NSFW モデルの入力サイズは 224x224
         val resized = Bitmap.createScaledBitmap(bitmap, 224, 224, true)
 
-        val input = FloatArray(1 * 3 * 224 * 224)
+        // 入力形式は NHWC [1, 224, 224, 3]
+        val input = FloatArray(1 * 224 * 224 * 3)
 
-        val plane = 224 * 224
-        var r = 0
-        var g = plane
-        var b = plane * 2
-
+        var i = 0
         for (y in 0 until 224) {
             for (x in 0 until 224) {
                 val px = resized.getPixel(x, y)
 
-                // The model has baked-in normalization, expects 0-255 range
-                input[r++] = ((px shr 16) and 0xFF).toFloat()
-                input[g++] = ((px shr 8) and 0xFF).toFloat()
-                input[b++] = (px and 0xFF).toFloat()
+                // Yahooモデルは正規化なしの 0-255 RGB を期待する
+                input[i++] = ((px shr 16) and 0xFF).toFloat() // R
+                input[i++] = ((px shr 8) and 0xFF).toFloat()  // G
+                input[i++] = (px and 0xFF).toFloat()         // B
             }
         }
 
@@ -58,7 +62,7 @@ class ImageSafetyChecker(private val context: Context) {
         val tensor = OnnxTensor.createTensor(
             env,
             FloatBuffer.wrap(input),
-            longArrayOf(1, 3, 224, 224)
+            longArrayOf(1, 224, 224, 3)
         )
 
         val inputName = sess.inputNames.first()
@@ -67,6 +71,7 @@ class ImageSafetyChecker(private val context: Context) {
         val outputName = sess.outputNames.first()
         val outputTensor = result[outputName].orElse(null)
 
+        // 出力は [Safe, NSFW] の確率
         val probs = (outputTensor?.value as? Array<FloatArray>)?.get(0)
         ?: return null
 
