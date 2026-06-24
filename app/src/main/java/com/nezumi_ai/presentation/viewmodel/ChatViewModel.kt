@@ -465,11 +465,48 @@ class ChatViewModel(
                 // 最後のユーザーメッセージに対応するアシスタント応答がなければ推論実行
                 if (lastAssistant == null || lastAssistant.timestamp < lastUser.timestamp) {
                     _isLoading.value = true
-                    generateAIResponse(
-                        sessionId = sessionId,
-                        userMessage = lastUser.content,
-                        currentTurnMessageId = lastUser.id
-                    )
+
+                    val resumedImages = mutableListOf<Bitmap>()
+                    val resumedAudioClips = mutableListOf<ByteArray>()
+                    try {
+                        lastUser.imageUri
+                            ?.split(",")
+                            ?.map { it.trim() }
+                            ?.filter { it.isNotEmpty() }
+                            ?.forEach { uriStr ->
+                                val uri = MessageMediaStore.toUri(uriStr) ?: return@forEach
+                                val bitmap = loadBitmapFromUri(uri) ?: return@forEach
+                                val scaled = scaleBitmapTo1024(bitmap)
+                                if (scaled !== bitmap) bitmap.recycle()
+                                resumedImages.add(scaled)
+                                Log.d(TAG, "Reloaded image for resumed inference: $uriStr (${resumedImages.size}/5)")
+                            }
+
+                        lastUser.audioUri?.let { uriStr ->
+                            val uri = MessageMediaStore.toUri(uriStr)
+                            if (uri != null) {
+                                val audioBytes = loadAudioBytesFromUri(uri)
+                                if (audioBytes != null) {
+                                    resumedAudioClips.add(audioBytes)
+                                    Log.d(TAG, "Reloaded audio for resumed inference: $uriStr")
+                                }
+                            }
+                        }
+
+                        generateAIResponse(
+                            sessionId = sessionId,
+                            userMessage = lastUser.content,
+                            images = resumedImages,
+                            audioClips = resumedAudioClips,
+                            currentTurnMessageId = lastUser.id
+                        )
+                    } finally {
+                        resumedImages.forEach { bitmap ->
+                            if (!bitmap.isRecycled) {
+                                bitmap.recycle()
+                            }
+                        }
+                    }
                 }
             }
         }
