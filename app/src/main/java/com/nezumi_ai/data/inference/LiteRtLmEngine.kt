@@ -69,6 +69,22 @@ class LiteRtLmEngine(
         }
     }
 
+    private fun backendTypeLabel(backend: Backend): String {
+        return when (backend) {
+            is Backend.GPU -> "GPU"
+            is Backend.NPU -> "NPU"
+            else -> "CPU"
+        }
+    }
+
+    private fun multimodalUnavailableException(detail: String): IllegalStateException {
+        return IllegalStateException(
+            "LiteRT-LM multimodal is unavailable: $detail. " +
+                "Android では visionBackend=GPU を優先し、AndroidManifest.xml の <uses-native-library> に " +
+                "libvndksupport.so / libOpenCL.so（NPU 利用時は libcdsprpc.so も）を宣言してください。"
+        )
+    }
+
     private var engine: Engine? = null
     private var loadedModelPath: String? = null
     private var loadedConfig: InferenceConfig? = null
@@ -785,6 +801,11 @@ class LiteRtLmEngine(
             
             return runCatching { tryCreate(withVisionAudio = tryWithVisionAudio, backend) to tryWithVisionAudio }
                 .getOrElse { first ->
+                    if (normalizedConfig.requireMultimodal) {
+                        throw multimodalUnavailableException(
+                            "backend=${backendTypeLabel(backend)} init failed: ${first.message ?: first.javaClass.simpleName}"
+                        )
+                    }
                     Log.w(TAG, "Engine init with vision/audio=${tryWithVisionAudio} failed, retrying text-only", first)
                     tryCreate(withVisionAudio = false, backend) to false
                 }
@@ -885,7 +906,7 @@ class LiteRtLmEngine(
         engine = eng
         loadedModelPath = modelPath
         loadedConfig = normalizedConfig
-        loadedBackend = normalizedConfig.backendType
+        loadedBackend = effectiveBackendType
         loadedWithVisionAudio = withVA
 
         // On success, remove the cache backup if present
