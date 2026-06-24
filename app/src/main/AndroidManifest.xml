@@ -38,6 +38,11 @@
 
     <application android:name=".MyApplication" android:allowBackup="true" android:dataExtractionRules="@xml/data_extraction_rules" android:fullBackupContent="@xml/backup_rules" android:icon="@mipmap/ic_launcher" android:label="${appName}" android:supportsRtl="true" android:theme="@style/Theme.Nezumiai" android:largeHeap="true" android:enableOnBackInvokedCallback="true" android:networkSecurityConfig="@xml/network_security_config">
 
+        <!-- LiteRT-LM GPU/NPU バックエンド用。未宣言だと API 28+ で vendor driver 読み込みがブロックされる。 -->
+        <uses-native-library android:name="libvndksupport.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <uses-native-library android:name="libcdsprpc.so" android:required="false" />
+
         <!-- WorkManager は MyApplication で手動初期化（Binder スレッド負荷軽減） -->
         <service android:name="androidx.work.impl.foreground.SystemForegroundService" android:foregroundServiceType="dataSync" tools:node="merge" />
 
