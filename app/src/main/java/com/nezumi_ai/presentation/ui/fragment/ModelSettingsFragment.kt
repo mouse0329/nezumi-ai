@@ -30,7 +30,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import com.nezumi_ai.presentation.ui.composable.SvgSpinner
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -485,9 +485,8 @@ open class ModelSettingsFragment : Fragment() {
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        color = colorResource(id = R.color.primary)
+                    SvgSpinner(
+                        modifier = Modifier.size(20.dp)
                     )
                     Text(
                         text = stringResource(id = R.string.import_task_loading),
@@ -1717,7 +1716,7 @@ open class ModelSettingsFragment : Fragment() {
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    SvgSpinner(modifier = Modifier.size(24.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("モデル一覧を取得中...")
                 }
@@ -1897,7 +1896,7 @@ open class ModelSettingsFragment : Fragment() {
                                     .padding(vertical = 12.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                CircularProgressIndicator()
+                                SvgSpinner()
                             }
                         }
                     }
@@ -1948,7 +1947,7 @@ open class ModelSettingsFragment : Fragment() {
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                            SvgSpinner(modifier = Modifier.size(18.dp))
                             Text("ファイル一覧を取得中...")
                         }
                     } else if (hfFilePickerFiles.isEmpty() && hfMmprojCandidates.isEmpty()) {
@@ -3970,7 +3969,7 @@ open class ModelSettingsFragment : Fragment() {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    CircularProgressIndicator()
+                    SvgSpinner()
                     Text("READMEを読み込み中...", modifier = Modifier.padding(top = 8.dp), color = if (isDark) Color.White else LocalContentColor.current)
                 }
             } else if (hfReadmeError != null) {

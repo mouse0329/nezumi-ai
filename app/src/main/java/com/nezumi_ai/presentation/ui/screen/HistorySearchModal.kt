@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import com.nezumi_ai.presentation.ui.composable.SvgSpinner
 import com.nezumi_ai.R
 import com.nezumi_ai.presentation.viewmodel.ChatSessionListViewModel
 
@@ -95,7 +96,7 @@ fun HistorySearchModal(
             when {
                 isSearching -> {
                     Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = colorResource(id = R.color.primary))
+                        SvgSpinner(modifier = Modifier.size(48.dp))
                     }
                 }
                 query.isNotEmpty() && grouped.isEmpty() -> {
