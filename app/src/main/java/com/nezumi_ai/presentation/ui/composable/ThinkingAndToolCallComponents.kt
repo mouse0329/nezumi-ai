@@ -51,6 +51,7 @@ import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.stringResource
 import coil.compose.AsyncImage
 import com.nezumi_ai.data.inference.ToolCallState
+import com.nezumi_ai.data.inference.ToolResultCard
 import com.nezumi_ai.R
 
 /**
@@ -127,6 +128,37 @@ fun ExpandableThinkingBlock(
  * ストリーミング中の AI メッセージ内に表示するツール呼び出しインジケーター。
  * 下部の ToolResultCard とは別に、出力欄内で呼び出しタイミングを示す。
  */
+/**
+ * 生成完了後も履歴に残すツール呼び出しインジケーター。
+ * ストリーミング中の [StreamingToolCallIndicator] と同じ位置・スタイルで表示する。
+ */
+@Composable
+fun PersistedToolCallIndicators(cards: List<ToolResultCard>) {
+    if (cards.isEmpty()) return
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        cards.forEach { card ->
+            val label = if (card.success) {
+                stringResource(R.string.tool_call_result_success, card.toolName)
+            } else {
+                stringResource(R.string.tool_call_result_error, card.toolName)
+            }
+            Text(
+                text = label,
+                modifier = Modifier.fillMaxWidth(),
+                fontSize = 13.sp,
+                color = colorResource(id = R.color.text_secondary),
+                fontStyle = FontStyle.Italic
+            )
+        }
+    }
+}
+
 @Composable
 fun StreamingToolCallIndicator(state: ToolCallState) {
     if (state is ToolCallState.Done) return
