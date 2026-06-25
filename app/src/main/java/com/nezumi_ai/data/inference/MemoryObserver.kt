@@ -44,7 +44,7 @@ object MemoryObserver {
     //   モデルサイズ × thresholdPercent% のメモリが必要。
     //   例: 100% → 3GB モデルなら 3.0GB の空きメモリが必要。
     //   ダウンロード時は総メモリ、ロード時は空きメモリで判定。
-    const val DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT = 100
+    const val DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT = 60
     const val MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT = 0
     const val MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT = 300
 

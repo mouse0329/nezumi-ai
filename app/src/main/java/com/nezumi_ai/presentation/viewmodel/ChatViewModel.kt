@@ -1128,11 +1128,10 @@ class ChatViewModel(
             val modelLoadStartMs = System.currentTimeMillis()
             Log.d(TAG, "generateAIResponse LOAD_START: model=$selectedModel")
 
-            // ★ バグ修正: ロード済みモデルの場合はメモリ警告をスキップ
-            // generateAIResponse は毎回呼ばれるが、モデルが既にロード済みなら
-            // 不要な警告を避けるため skipMemoryWarning=true
+            // チャット推論時はメモリ警告を出さずロードを続行する。
+            // 警告はモデルダウンロード・設定画面側に限定し、会話のたびにブロックしない。
             val isModelAlreadyLoaded = manager.isModelLoaded(engineModelName, config)
-            val skipMemoryWarning = isModelAlreadyLoaded
+            val skipMemoryWarning = true
             Log.d(
                 TAG,
                 "generateAIResponse: engineModelName=$engineModelName isModelAlreadyLoaded=$isModelAlreadyLoaded skipMemoryWarning=$skipMemoryWarning"

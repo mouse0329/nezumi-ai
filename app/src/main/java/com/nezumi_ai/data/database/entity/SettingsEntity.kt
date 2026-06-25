@@ -14,7 +14,7 @@ data class SettingsEntity(
     val contextWindowMap: String = "", // E2B=4096;E4B=4096;IMPORTED=4096
     val contextCompressionEnabled: Boolean = false,
     val contextCompressionThresholdPercent: Int = 70,
-    val preloadMemoryWarningThresholdPercent: Int = 100,
+    val preloadMemoryWarningThresholdPercent: Int = 60,
     val temperature: Float = 0.7f,
     val topP: Float = 0.95f,
     val maxTopK: Int = 40,
