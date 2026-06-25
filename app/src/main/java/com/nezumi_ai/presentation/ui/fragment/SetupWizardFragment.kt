@@ -26,7 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import com.nezumi_ai.presentation.ui.composable.SvgSpinner
 import androidx.compose.material3.Divider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -677,10 +677,8 @@ class SetupWizardFragment : Fragment() {
                     enabled = canFinishWithoutSkip() && !isCompleting
                 ) {
                     if (isCompleting) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = colorResource(id = R.color.nezumi_on_primary)
+                        SvgSpinner(
+                            modifier = Modifier.size(18.dp)
                         )
                     } else {
                         Text("チャットへ")

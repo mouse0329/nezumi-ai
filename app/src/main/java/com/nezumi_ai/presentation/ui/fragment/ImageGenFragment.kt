@@ -39,7 +39,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import com.nezumi_ai.presentation.ui.composable.SvgSpinner
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -552,9 +552,8 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                CircularProgressIndicator(
-                                    Modifier.height(20.dp).width(20.dp),
-                                    strokeWidth = 2.dp
+                                SvgSpinner(
+                                    Modifier.size(20.dp)
                                 )
                                 Text(
                                     "セーフティモデル準備中…",
@@ -587,7 +586,7 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                CircularProgressIndicator(Modifier.height(24.dp).width(24.dp), strokeWidth = 2.dp)
+                                SvgSpinner(Modifier.size(24.dp))
                                 Text(
                                     "$currentStep / $steps",
                                     color = MaterialTheme.colorScheme.primary,
@@ -923,7 +922,7 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                             modifier = Modifier.fillMaxWidth()
                         )
                     } else {
-                        CircularProgressIndicator()
+                        SvgSpinner()
                     }
                     Text(
                         "安全フィルターをダウンロードしています。\n完了後に自動で生成を開始します。",

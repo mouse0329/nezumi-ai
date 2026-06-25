@@ -37,8 +37,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
+import com.nezumi_ai.presentation.ui.composable.SvgSpinner
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
@@ -1748,9 +1748,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Start
         ) {
-            CircularProgressIndicator(
-                modifier = Modifier.padding(end = 8.dp),
-                color = colorResource(id = R.color.primary)
+            SvgSpinner(
+                modifier = Modifier.padding(end = 8.dp).size(24.dp)
             )
             Text(
                 text = responseTypingText,
@@ -1773,7 +1772,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                CircularProgressIndicator(color = colorResource(id = R.color.primary))
+                SvgSpinner(modifier = Modifier.size(48.dp))
                 Text(
                     text = modelLoadingText,
                     color = colorResource(id = R.color.text_primary),
