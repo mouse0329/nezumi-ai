@@ -205,8 +205,8 @@ private class GenerateImageSchema : ToolSet {
     fun generateImage(
         @ToolParam(description = "English image generation prompt, detailed and descriptive") prompt: String,
         @ToolParam(description = "Things to avoid in the image (optional)") negativePrompt: String?,
-        @ToolParam(description = "256, 512, or 768 (default 512)") width: Int?,
-        @ToolParam(description = "256, 512, or 768 (default 512)") height: Int?
+        @ToolParam(description = "256, 512, or 768 (default 256)") width: Int?,
+        @ToolParam(description = "256, 512, or 768 (default 256)") height: Int?
     ): Map<String, Any?> = emptyMap()
 }
 

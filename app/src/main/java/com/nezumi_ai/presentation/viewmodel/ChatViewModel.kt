@@ -2007,6 +2007,71 @@ class ChatViewModel(
         }
     }
 
+    private fun findAvailableSdModelPath(): String {
+        // First try the saved preference path
+        val savedPath = PreferencesHelper.getSdModelPath(appContext).trim()
+        if (savedPath.isNotEmpty() && File(savedPath).isDirectory && isProbableSdModelDir(File(savedPath))) {
+            return savedPath
+        }
+
+        // Search in standard directories (same logic as ImageGenViewModel.loadAvailableModels)
+        val models = mutableListOf<String>()
+        
+        // sd_models directory
+        val sdModelsDir = File(appContext.filesDir, "sd_models")
+        sdModelsDir.listFiles()?.forEach { file ->
+            if (isProbableSdModelDir(file)) {
+                models.add(file.absolutePath)
+            }
+        }
+        
+        // App external files directory
+        val appDir = appContext.getExternalFilesDir(null)
+        appDir?.listFiles()?.forEach { file ->
+            if (isProbableSdModelDir(file)) {
+                models.add(file.absolutePath)
+            }
+        }
+        
+        // Imported models directory
+        val importedDir = File(appContext.filesDir, "models/imported")
+        importedDir.listFiles()?.forEach { file ->
+            if (isProbableSdModelDir(file)) {
+                models.add(file.absolutePath)
+            }
+        }
+        
+        // Return first found model, or empty string if none
+        return models.firstOrNull() ?: ""
+    }
+
+    private fun isProbableSdModelDir(file: File): Boolean {
+        if (!file.isDirectory) {
+            return false
+        }
+        
+        val files = file.listFiles()
+        
+        // Handle nested structure
+        if (files != null && files.size == 1 && files[0].isDirectory) {
+            return isProbableSdModelDir(files[0])
+        }
+        
+        // Check for MNN format
+        val hasMnnFiles = File(file, "unet.mnn").exists() && 
+                         (File(file, "clip.mnn").exists() || File(file, "clip_v2.mnn").exists()) &&
+                         File(file, "vae_decoder.mnn").exists() &&
+                         File(file, "tokenizer.json").exists()
+        
+        // Check for QNN format
+        val hasQnnFiles = File(file, "unet.bin").exists() &&
+                         (File(file, "clip.bin").exists() || File(file, "clip.mnn").exists()) &&
+                         File(file, "vae_decoder.bin").exists() &&
+                         File(file, "tokenizer.json").exists()
+        
+        return hasMnnFiles || hasQnnFiles
+    }
+
     private suspend fun invokeGenerateImageFromTool(toolCall: ToolCall): ToolExecutionResult {
         val prompt = toolCall.arguments["prompt"]?.toString()?.trim().orEmpty()
         if (prompt.isEmpty()) {
@@ -2028,8 +2093,8 @@ class ChatViewModel(
             toolCall.arguments["negativePrompt"]
                 ?: toolCall.arguments["negative_prompt"]
         )?.toString()?.trim().orEmpty()
-        var w = (toolCall.arguments["width"] as? Number)?.toInt() ?: 512
-        var h = (toolCall.arguments["height"] as? Number)?.toInt() ?: 512
+        var w = (toolCall.arguments["width"] as? Number)?.toInt() ?: 256
+        var h = (toolCall.arguments["height"] as? Number)?.toInt() ?: 256
         val allowed = listOf(256, 512, 768)
         w = allowed.minByOrNull { kotlin.math.abs(it - w) } ?: 512
         h = allowed.minByOrNull { kotlin.math.abs(it - h) } ?: 512
@@ -2066,8 +2131,8 @@ class ChatViewModel(
             _imageGenProgress.value = Pair(0, steps)
         }
 
-        val sdPath = PreferencesHelper.getSdModelPath(appContext).trim()
-        if (sdPath.isEmpty() || !File(sdPath).isDirectory) {
+        val sdPath = findAvailableSdModelPath()
+        if (sdPath.isEmpty()) {
             // UI通知：失敗
             _imageGenProgress.value = null
             viewModelScope.launch {
@@ -2209,25 +2274,9 @@ class ChatViewModel(
         Log.d(TAG, "performGenerateImageFromTool: Starting image generation server...")
 
         try {
-            val localDream = com.nezumi_ai.sd.LocalDreamModule(appContext)
-            val backend = PreferencesHelper.getSdBackend(appContext)
+            val localDream = EngineManager.acquireLocalDream(appContext, sdPath, "auto")
 
-            Log.d(TAG, "performGenerateImageFromTool: Loading SD model from $sdPath, backend=$backend")
-            val loaded = localDream.loadModel(sdPath, backend)
-            Log.d(TAG, "performGenerateImageFromTool: LocalDream.loadModel returned $loaded")
-            if (!loaded) {
-                Log.e(TAG, "performGenerateImageFromTool: SD model load failed - aborting generation")
-                // UI通知：失敗
-                _imageGenProgress.value = null
-                _toolCallState.value = ToolCallState.Result(
-                    toolName = "generate_image",
-                    status = "error",
-                    resultMessage = "モデルロード失敗"
-                )
-                _uiMessage.emit("❌ generate_image: モデルロード失敗")
-                return
-            }
-
+            Log.d(TAG, "performGenerateImageFromTool: LocalDream acquired successfully")
             Log.d(TAG, "performGenerateImageFromTool: Model loaded successfully, starting image generation")
             
             // UI通知：実行中
@@ -2260,8 +2309,6 @@ class ChatViewModel(
             _imageGenProgress.value = null
 
             Log.d(TAG, "performGenerateImageFromTool: Cleaning up SD (bmp=${bmp != null})")
-            localDream.cleanup()
-
             // SD完全解放を確実に実行
             EngineManager.releaseSdKeepNone()
             delay(500L)  // メモリ安定化待機
