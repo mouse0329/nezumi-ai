@@ -101,7 +101,6 @@ target_compile_options(rnllama_core PRIVATE
         -fvectorize
         -ffp-model=fast
         -fno-finite-math-only
-        -flto
         -D_GNU_SOURCE
         ${RNLLAMA_CPU_FLAGS}
         -O3
