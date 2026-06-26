@@ -155,7 +155,25 @@ class LocalDreamModule(private val context: Context) {
             current.listFiles()?.filter { it.isDirectory }?.forEach { subDir ->
                 if (File(subDir, markerFile).exists()) {
                     Log.d(TAG, "Found $markerFile in: ${subDir.absolutePath}")
-                    return subDir
+                    // マーカーファイルは見つかったが、他の必須ファイルも存在するか簡易チェック
+                    // CPU の場合: unet.mnn, clip.mnn, vae_decoder.mnn
+                    // QNN の場合: unet.bin, clip.bin (or clip_v2.mnn), vae_decoder.bin
+                    val hasRequiredFiles = if (isCpu) {
+                        File(subDir, "unet.mnn").exists() &&
+                        (File(subDir, "clip.mnn").exists() || File(subDir, "clip_v2.mnn").exists()) &&
+                        File(subDir, "vae_decoder.mnn").exists()
+                    } else {
+                        File(subDir, "unet.bin").exists() &&
+                        (File(subDir, "clip.bin").exists() || File(subDir, "clip_v2.mnn").exists()) &&
+                        File(subDir, "vae_decoder.bin").exists()
+                    }
+
+                    if (hasRequiredFiles) {
+                        return subDir
+                    } else {
+                        Log.w(TAG, "resolveModelDir: Found $markerFile but missing other required files in ${subDir.absolutePath}")
+                        // 必須ファイルが足りない場合は探索を続ける
+                    }
                 }
                 val deeper = searchDir(subDir, depth + 1)
                 if (deeper != null) return deeper
@@ -806,5 +824,3 @@ class LocalDreamModule(private val context: Context) {
         return bitmap
     }
 }
-
-
