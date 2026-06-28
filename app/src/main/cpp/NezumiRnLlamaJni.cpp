@@ -31,6 +31,12 @@ namespace
 
         std::atomic<bool> is_released{false};
         int active_completions = 0;
+
+        // Logged once per context when sendToken() is asked to deliver a
+        // token but no TokenCallback is registered. Avoids flooding logcat
+        // (would otherwise fire once per generated token, which on a vision
+        // model can be hundreds of times in a single call).
+        std::atomic<bool> stream_warning_logged{false};
     };
 
     static std::mutex g_mutex;
@@ -236,6 +242,21 @@ namespace
         {
             if (callback)
                 env->DeleteLocalRef(callback);
+            // Defense-in-depth: warn once so the very obscure "UI seems to
+            // freeze during image analysis and the whole reply appears at
+            // the end" symptom becomes greppable in logcat. Without a
+            // registered TokenCallback, every token is silently dropped
+            // here and the caller only ever sees the final accumulated
+            // string returned from nativeComplete[WithMedia].
+            if (holder && !holder->stream_warning_logged.exchange(true))
+            {
+                __android_log_print(
+                    ANDROID_LOG_WARN, TAG,
+                    "sendToken: no TokenCallback registered — streaming disabled, "
+                    "caller will only receive the final string. "
+                    "Call RnLlamaContext.setTokenCallback(...) (or pass onToken= to "
+                    "completeWithMedia) before invoking nativeComplete*.");
+            }
             return;
         }
 
@@ -527,6 +548,10 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeSetTokenCallback(
     }
     if (callback)
     {
+        // Re-arm the missing-callback warning so that if the next call
+        // forgets to register a callback again, sendToken() will warn once.
+        holder->stream_warning_logged.store(false);
+
         holder->token_callback = env->NewGlobalRef(callback);
         jclass cls = env->GetObjectClass(holder->token_callback);
         if (cls)
