@@ -1,5 +1,6 @@
 package com.nezumi_ai.data.inference
 
+import android.content.Context
 import com.nezumi_ai.data.database.entity.MessageEntity
 
 object PromptBuilder {
@@ -23,8 +24,25 @@ object PromptBuilder {
         systemPrompt: String,
         injectGemmaThinkTrigger: Boolean,
         compressedSummary: String? = null,
-        sanitizeMessageContent: (MessageEntity) -> String
+        sanitizeMessageContent: (MessageEntity) -> String,
+        appContext: Context? = null,
+        modelPath: String = ""
     ): String {
+        // ユーザーがカスタム / ビルトインテンプレートを設定している場合はそちらを優先
+        val customTemplate = appContext?.let { ctx ->
+            if (modelPath.isNotBlank()) PromptTemplateStore.resolveTemplate(ctx, modelPath) else null
+        }
+        if (customTemplate != null) {
+            return buildWithCustomTemplate(
+                template = customTemplate,
+                messages = messages,
+                systemPrompt = systemPrompt,
+                compressedSummary = compressedSummary,
+                enableThinking = injectGemmaThinkTrigger,
+                sanitizeMessageContent = sanitizeMessageContent
+            )
+        }
+
         val contextBuilder = StringBuilder()
         if (injectGemmaThinkTrigger) {
             contextBuilder.append("<|think|>\n")
@@ -60,10 +78,72 @@ object PromptBuilder {
         format: GgufPromptFormat = GgufPromptFormat.CHATML,
         enableThinking: Boolean = false,
         modelPath: String = "",
+        sanitizeMessageContent: (MessageEntity) -> String,
+        appContext: Context? = null
+    ): String {
+        // ユーザー設定のテンプレ（カスタム / ビルトイン）があればそれを優先
+        val customTemplate = appContext?.let { ctx ->
+            if (modelPath.isNotBlank()) PromptTemplateStore.resolveTemplate(ctx, modelPath) else null
+        }
+        if (customTemplate != null) {
+            return buildWithCustomTemplate(
+                template = customTemplate,
+                messages = messages,
+                systemPrompt = systemPrompt,
+                compressedSummary = compressedSummary,
+                enableThinking = enableThinking,
+                sanitizeMessageContent = sanitizeMessageContent
+            )
+        }
+
+        return when (format) {
+            GgufPromptFormat.GEMMA_CHAT -> buildForGgufGemma(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
+            GgufPromptFormat.CHATML     -> buildForGgufChatMl(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
+        }
+    }
+
+    /**
+     * カスタム / ビルトインテンプレートで実際にプロンプトを構築する共通ルート。
+     *
+     * ここで圧縮済みサマリーをシステムプロンプトに前置きし、
+     * 履歴メッセージは role + sanitized content の形で [PromptTemplateEngine] に渡す。
+     */
+    private fun buildWithCustomTemplate(
+        template: String,
+        messages: List<MessageEntity>,
+        systemPrompt: String,
+        compressedSummary: String?,
+        enableThinking: Boolean,
         sanitizeMessageContent: (MessageEntity) -> String
-    ): String = when (format) {
-        GgufPromptFormat.GEMMA_CHAT -> buildForGgufGemma(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
-        GgufPromptFormat.CHATML     -> buildForGgufChatMl(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
+    ): String {
+        val systemFinal = buildString {
+            if (systemPrompt.isNotEmpty()) append(systemPrompt)
+            if (!compressedSummary.isNullOrBlank()) {
+                if (isNotEmpty()) append("\n\n")
+                append(COMPRESSED_CONTEXT_HEADER).append('\n').append(compressedSummary)
+            }
+        }
+        val history = messages.mapNotNull { msg ->
+            val content = sanitizeMessageContent(msg)
+            if (content.isBlank()) return@mapNotNull null
+            val role = if (msg.role == "assistant") "assistant" else "user"
+            PromptTemplateEngine.HistoryMessage(role = role, content = content)
+        }
+        val lastUserContent = history.lastOrNull { it.role == "user" }?.content.orEmpty()
+        val lastAssistantContent = history.lastOrNull { it.role == "assistant" }?.content.orEmpty()
+        val ctx = PromptTemplateEngine.PromptContext(
+            system = systemFinal,
+            prompt = lastUserContent,
+            response = lastAssistantContent,
+            thinking = enableThinking,
+            history = history
+        )
+        return try {
+            PromptTemplateEngine.render(template, ctx)
+        } catch (e: Exception) {
+            // フォールバック: テンプレ崩壊時は ChatML で構築（最悪でもプロンプトが消えないようにする）
+            buildForGgufChatMl(messages, systemPrompt, compressedSummary, enableThinking, "", sanitizeMessageContent)
+        }
     }
 
     private fun shouldUseQwenInstantDirective(modelPath: String): Boolean {

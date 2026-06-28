@@ -3261,7 +3261,8 @@ class ChatViewModel(
                 format = PromptBuilder.detectGgufFormat(engineModelName),
                 enableThinking = enableThinkingForPrompt,
                 modelPath = engineModelName,
-                sanitizeMessageContent = ::sanitizeMessageContentForPrompt
+                sanitizeMessageContent = ::sanitizeMessageContentForPrompt,
+                appContext = appContext
             )
         } else {
             PromptBuilder.buildForLiteRt(
@@ -3269,7 +3270,9 @@ class ChatViewModel(
                 systemPrompt = systemPrompt,
                 injectGemmaThinkTrigger = enableThinkingForPrompt && settingsRepository.shouldInjectGemmaThinkTrigger(),
                 compressedSummary = compressedSummary,
-                sanitizeMessageContent = ::sanitizeMessageContentForPrompt
+                sanitizeMessageContent = ::sanitizeMessageContentForPrompt,
+                appContext = appContext,
+                modelPath = engineModelName
             )
         }
     }
@@ -3335,14 +3338,17 @@ class ChatViewModel(
                 format = PromptBuilder.detectGgufFormat(engineModelName),
                 enableThinking = enableThinkingForPrompt,
                 modelPath = engineModelName,
-                sanitizeMessageContent = sanitizer
+                sanitizeMessageContent = sanitizer,
+                appContext = appContext
             )
         } else {
             PromptBuilder.buildForLiteRt(
                 messages = filteredMessages,
                 systemPrompt = systemPrompt,
                 injectGemmaThinkTrigger = enableThinkingForPrompt && settingsRepository.shouldInjectGemmaThinkTrigger(),
-                sanitizeMessageContent = sanitizer
+                sanitizeMessageContent = sanitizer,
+                appContext = appContext,
+                modelPath = engineModelName
             )
         }
     }
