@@ -2575,9 +2575,16 @@ class ChatViewModel(
                 ?: 0
             val imageTokens: String = when {
                 imageCount <= 0 -> ""
-                // GGUF + current turn: embed <image> token (1:1 match with completeWithMedia)
+                // GGUF + current turn: embed mtmd default media marker so that
+                // native processMedia() finds it inside the user turn instead of
+                // appending one at the very end (which would land after the
+                // "<|im_start|>assistant\n" prefix and immediately trigger EOS).
+                // The marker MUST be "<__media__>" — see mtmd_default_marker()
+                // in tools/mtmd/mtmd.cpp. The previous "<image>" string was just
+                // plain text from the model's point of view and was silently
+                // ignored by mtmd_tokenize().
                 isGgufEngine && isCurrentTurn ->
-                    List(imageCount) { "<image>" }.joinToString(separator = "\n")
+                    List(imageCount) { "<__media__>" }.joinToString(separator = "\n")
                 // GGUF past turns or all LiteRt turns: use imageDescription as fallback
                 else ->
                     msg.imageDescription?.takeIf { it.isNotBlank() }
