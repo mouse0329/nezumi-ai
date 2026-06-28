@@ -397,10 +397,41 @@ inline void llama_rn_context_mtmd::processMedia(
     // Multimodal path
     std::string full_prompt = prompt;
     auto default_media_marker = mtmd_default_marker();
-    // Add media marker if it doesn't already exist
+    // Add media marker if it doesn't already exist.
+    //
+    // IMPORTANT: A naive `full_prompt += marker` at the very end places the
+    // image AFTER the assistant role prefix (e.g. "<|im_start|>assistant\n"
+    // or "<start_of_turn>model\n"). The model then sees the image inside the
+    // assistant turn with no real user request — it answers with an immediate
+    // EOS and we get an empty payload ("画像・音声を読み込んで推論しましたが、
+    // 本文が得られませんでした。"). To stay robust against callers that
+    // forgot to embed the marker, insert it just BEFORE the trailing
+    // assistant/model role header when we can find one.
     if (full_prompt.find(default_media_marker) == std::string::npos) {
-        full_prompt += " ";
-        full_prompt += default_media_marker;
+        static const char * const kAssistantHeaders[] = {
+            "<|im_start|>assistant\n",     // ChatML (Qwen, Mistral, Bonsai, …)
+            "<start_of_turn>model\n",      // Gemma
+            "<|start_header_id|>assistant<|end_header_id|>\n\n", // Llama 3
+        };
+        size_t insert_pos = std::string::npos;
+        for (const char * header : kAssistantHeaders) {
+            size_t p = full_prompt.rfind(header);
+            if (p != std::string::npos) {
+                insert_pos = p;
+                break;
+            }
+        }
+        std::string marker_block = std::string("\n") + default_media_marker + "\n";
+        if (insert_pos != std::string::npos) {
+            full_prompt.insert(insert_pos, marker_block);
+            LOG_INFO("[DEBUG] Inserted media marker before assistant header at pos %zu", insert_pos);
+        } else {
+            // Fallback: append at end (legacy behavior). At minimum we still
+            // get image tokens in, even if positioning is suboptimal.
+            full_prompt += " ";
+            full_prompt += default_media_marker;
+            LOG_INFO("[DEBUG] No assistant header found; appended media marker at end (fallback)");
+        }
     }
 
     LOG_INFO("[DEBUG] Processing message with role=user, content=%s", full_prompt.c_str());
