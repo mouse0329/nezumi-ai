@@ -138,18 +138,13 @@ object PromptTemplateStore {
         BuiltinTemplate(
             id = "qwen_thinking",
             displayName = "Qwen (thinking / no_think)",
-            description = "ChatML + 末尾に /no_think または <think> を制御",
+            description = "ChatML 本体。/think / /no_think の付与は PromptBuilder 側でモデル別に制御",
             template = """{{ if .System }}<|im_start|>system
 {{ .System }}<|im_end|>
 {{ end }}{{ range .History }}<|im_start|>{{ .Role }}
 {{ .Content }}<|im_end|>
 {{ end }}<|im_start|>assistant
-{{ if .Thinking }}<think>
-{{ else }}<think>
-
-</think>
-
-{{ end }}"""
+"""
         ),
         BuiltinTemplate(
             id = "alpaca",

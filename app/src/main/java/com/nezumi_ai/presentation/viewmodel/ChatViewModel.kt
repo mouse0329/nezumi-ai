@@ -1277,6 +1277,17 @@ class ChatViewModel(
             val answerBuilder = StringBuilder()
             val thinkingBuilder = StringBuilder()
             var nativeThinkingStream = false
+            // Only seed a synthetic `<think>` opener when the selected model family actually uses
+            // assistant-side `<think>...</think>` prefilling. Qwen uses `/think` appended to the
+            // last user turn, and Gemma uses a global `<|think|>` prefix instead; seeding `<think>`
+            // for those models would misparse their outputs.
+            val implicitThinkPrefill =
+                config.enableThinking &&
+                    isGgufEngineModel(engineModelName) &&
+                    PromptBuilder.usesAssistantThinkingPrefill(engineModelName)
+            if (implicitThinkPrefill) {
+                answerBuilder.append("<think>\n")
+            }
             var lastPersistedContent = ""
             var lastPersistedThinking: String? = null
             var lastPersistAt = 0L
@@ -1522,10 +1533,14 @@ class ChatViewModel(
                                             Log.d(TAG, "CONTENT_THINKING_STATE: content_len=${contentForUi.length} thinking_len=${thinkingForUi?.length ?: 0}")
                                         }
                                     } else {
+                                        // With the `<think>` prefill seeded in answerBuilder, the
+                                        // parser can detect thinking boundaries natively. We no
+                                        // longer need `treatUnmarkedInputAsThinking`, which caused
+                                        // unmarked answers to be misclassified as thinking.
                                         val parsedStream =
                                             Gemma4ThinkingParser.parseStreaming(
                                                 rawInput = answerBuilder.toString(),
-                                                treatUnmarkedInputAsThinking = config.enableThinking
+                                                treatUnmarkedInputAsThinking = false
                                             )
                                         contentForUi =
                                             sanitizeAssistantOutputForModel(
@@ -1651,9 +1666,11 @@ class ChatViewModel(
             } else {
                 val sanitizedAnswer =
                     Gemma4ThinkingParser.sanitizeVisibleText(answerBuilder.toString())
+                // See the comment near answerBuilder initialization: with the `<think>` prefill
+                // applied, raw text without tags is always a real answer, never thinking.
                 val finalParsed = Gemma4ThinkingParser.parse(
                     rawInput = answerBuilder.toString(),
-                    treatUnmarkedInputAsThinking = config.enableThinking
+                    treatUnmarkedInputAsThinking = false
                 )
                 completeResponse =
                     sanitizeAssistantOutputForModel(
@@ -1661,7 +1678,21 @@ class ChatViewModel(
                         text = sanitizedAnswer.ifBlank { finalParsed.answer }
                             .ifBlank { lastPersistedContent }
                     )
-                finalThinking = finalParsed.thinking
+                // Guard against the duplicate-payload bug: when the model never emitted `</think>`
+                // but produced a real answer, the parser may return both `thinking` and `answer`
+                // pointing to the same text (because the prefilled `<think>` was never closed).
+                // In that case we treat the model as having skipped thinking and keep only the
+                // visible answer, otherwise the UI shows the answer twice (once in the Thinking
+                // disclosure and once as the final message).
+                val parsedThinking = finalParsed.thinking
+                val parsedThinkingSanitized = parsedThinking?.let {
+                    Gemma4ThinkingParser.sanitizeVisibleText(it)
+                }
+                finalThinking = when {
+                    parsedThinkingSanitized.isNullOrBlank() -> null
+                    parsedThinkingSanitized == completeResponse -> null
+                    else -> parsedThinking
+                }
             }
             val note = streamAbortNote
             val stoppedWithoutPayload =
