@@ -56,6 +56,7 @@
 struct NezumiLlamaCtx
 {
     llama_model *model = nullptr;
+    llama_model *mmproj_model = nullptr; // マルチモーダルプロジェクションモデル
     llama_context *ctx = nullptr;
     llama_sampler *sampler = nullptr;
     llama_batch batch = {};
@@ -79,7 +80,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     jint n_ctx,
     jint n_threads,
     jint n_gpu_layers,
-    jint seed)
+    jint seed,
+    jstring j_mmproj_path)
 {
     llama_backend_init();
 
@@ -97,6 +99,26 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
         return 0L;
     }
 
+    // mmprojモデルのロード（マルチモーダル対応）
+    llama_model *mmproj_model = nullptr;
+    if (j_mmproj_path != nullptr)
+    {
+        const char *mmproj_path = env->GetStringUTFChars(j_mmproj_path, nullptr);
+        llama_model_params mmproj_params = llama_model_default_params();
+        mmproj_params.n_gpu_layers = n_gpu_layers;
+        mmproj_model = llama_model_load_from_file(mmproj_path, mmproj_params);
+        env->ReleaseStringUTFChars(j_mmproj_path, mmproj_path);
+
+        if (!mmproj_model)
+        {
+            LOGW("llamaInit: failed to load mmproj model, continuing with text-only mode");
+        }
+        else
+        {
+            LOGI("llamaInit: mmproj model loaded successfully");
+        }
+    }
+
     llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx = static_cast<uint32_t>(n_ctx);
     cparams.n_threads = static_cast<int32_t>(n_threads);
@@ -109,18 +131,20 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     {
         LOGE("llamaInit: failed to create context");
         llama_model_free(model);
+        if (mmproj_model) llama_model_free(mmproj_model);
         return 0L;
     }
 
     auto *nc = new NezumiLlamaCtx();
     nc->model = model;
+    nc->mmproj_model = mmproj_model;
     nc->ctx = ctx;
     nc->n_ctx = n_ctx;
     nc->n_batch = (n_ctx > 2048) ? 512 : 256;        // コンテキストサイズに応じて調整
     nc->batch = llama_batch_init(nc->n_batch, 0, 1); // バッチを事前確保
     // sampler は llamaSample() の呼び出し時に生成する（パラメータを受け取るため）
 
-    LOGI("llamaInit: OK n_ctx=%d n_gpu_layers=%d n_batch=%d", n_ctx, n_gpu_layers, nc->n_batch);
+    LOGI("llamaInit: OK n_ctx=%d n_gpu_layers=%d n_batch=%d mmproj=%s", n_ctx, n_gpu_layers, nc->n_batch, mmproj_model ? "loaded" : "none");
     return reinterpret_cast<jlong>(nc);
 }
 
@@ -143,6 +167,11 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaFree(
     {
         llama_free(nc->ctx);
         nc->ctx = nullptr;
+    }
+    if (nc->mmproj_model)
+    {
+        llama_model_free(nc->mmproj_model);
+        nc->mmproj_model = nullptr;
     }
     if (nc->model)
     {

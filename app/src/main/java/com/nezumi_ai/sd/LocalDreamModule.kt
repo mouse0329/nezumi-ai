@@ -550,8 +550,7 @@ class LocalDreamModule(private val context: Context) {
                 put("seed", if (seed < 0) (Math.random() * Int.MAX_VALUE).toInt() else seed)
                 put("scheduler", "dpm")
                 put("use_opencl", PreferencesHelper.isSdUseOpenCL(context))
-                put("show_diffusion_process", true)
-                put("show_diffusion_stride", 2)
+                put("show_diffusion_process", false)
             }
 
             Log.d(TAG, "Starting generation: ${body.toString().take(200)}...")
