@@ -242,6 +242,14 @@ class GgufInferenceEngine(
 
     override suspend fun unloadModel(): Result<Unit> {
         cancelFlag.set(true)
+        // モデル切り替え時の生成停止バグ修正:
+        //   nativeComplete / nativeCompleteWithMedia は JNI レベルで blocking なため、
+        //   Kotlin 側の cancelFlag だけだとネイティブループは止まらず、
+        //   inferenceMutex を取れずに unloadModel が永遠にブロックしてしまう。
+        //   ctx.interrupt() (= nativeInterrupt) を先に呼んでネイティブの
+        //   is_interrupted フラグを立てることで、生成ループを即座に脱出させる。
+        runCatching { rnllamaCtx?.interrupt() }
+            .onFailure { Log.w(TAG, "interrupt() before unload failed", it) }
         return try {
             inferenceMutex.withLock {
                 modelMutex.withLock {
@@ -273,8 +281,18 @@ class GgufInferenceEngine(
     // ─── キャンセル ───────────────────────────────────────────────
 
     override suspend fun cancelInference() {
-        Log.d(TAG, "cancelInference: setting cancelFlag")
+        Log.d(TAG, "cancelInference: setting cancelFlag and interrupting native completion")
         cancelFlag.set(true)
+        // 「止めるボタン」 / モデル切り替えが効かなくなっていたバグ修正:
+        //   nativeComplete / nativeCompleteWithMedia は JNI レベルで blocking なため、
+        //   Kotlin 側の cancelFlag をいくら立てても、ネイティブの生成ループ
+        //   (NezumiRnLlamaJni.cpp) はそれを見ていない。ネイティブは
+        //   completion->is_interrupted だけをチェックしているため、
+        //   ctx.interrupt() (= nativeInterrupt) を呼ばないと生成が自然
+        //   終了するまで止まらず、ストップボタンもモデル切り替えも
+        //   体感上効かなく見える。
+        runCatching { rnllamaCtx?.interrupt() }
+            .onFailure { Log.w(TAG, "interrupt() failed", it) }
     }
 
     // ─── 推論 ─────────────────────────────────────────────────────
@@ -426,10 +444,14 @@ class GgufInferenceEngine(
                 )
             }
 
-            val metrics = PerformanceMonitor.endInference(sessionId)
-            if (metrics != null) {
-                Log.i(TAG, "Performance: ${metrics.toLogString()}")
-            }
+            // ネイティブ timings から t/s を送出 (UI 表示用)。
+            // トークン数・時間ともに llama.cpp が測っているため、
+            // Kotlin 側の概算よりも正確。
+            runCatching {
+                ctx.getLastTimings()?.decodeTokensPerSecond?.let { tps ->
+                    if (tps > 0f) trySend(InferenceStreamProtocol.encodeTps(tps))
+                }
+            }.onFailure { Log.w(TAG, "emit TPS failed", it) }
 
             trySend(
                 InferenceStreamProtocol.encodeFinal(
@@ -439,6 +461,12 @@ class GgufInferenceEngine(
             close()
         } catch (t: Throwable) {
             if (t is CancellationException) {
+                // キャンセル時も可能なら timings を送出しておく
+                runCatching {
+                    rnllamaCtx?.getLastTimings()?.decodeTokensPerSecond?.let { tps ->
+                        if (tps > 0f) trySend(InferenceStreamProtocol.encodeTps(tps))
+                    }
+                }
                 // キャンセル時も final を送出（LiteRT 側と同じ挙動）
                 trySend(InferenceStreamProtocol.encodeFinal(""))
                 close()
@@ -447,12 +475,29 @@ class GgufInferenceEngine(
                 close(if (t is Exception) t else RuntimeException(t))
             }
         } finally {
+            // 本来の終了処理が起きないバグ修正:
+            //   以前は endInference() が try ブロックの正常パスにしか置かれておらず、
+            //   キャンセル例外や他の例外で抹けると PerformanceMonitor の
+            //   activeMetrics にセッションが残留し、以降の推論で
+            //   getLastCompletedTokenCount() が間違ったセッションの値を
+            //   返して、ChatViewModel 側の t/s 計算がずれる。
+            //   finally に移して必ず 1 回呼ぶ。
+            runCatching {
+                val metrics = PerformanceMonitor.endInference(sessionId)
+                if (metrics != null) {
+                    Log.i(TAG, "Performance: ${metrics.toLogString()}")
+                }
+            }.onFailure { Log.w(TAG, "endInference failed", it) }
             releaseInferenceMutex()
         }
 
         awaitClose {
             Log.d(TAG, "awaitClose: session=$sessionId")
             cancelFlag.set(true)
+            // Flow が消費側からキャンセルされたとき（ストップボタン等）も
+            // ネイティブの blocking JNI 呼び出しを即座に脱出させる。
+            runCatching { rnllamaCtx?.interrupt() }
+                .onFailure { Log.w(TAG, "awaitClose interrupt() failed", it) }
         }
     }.flowOn(Dispatchers.IO)
 
@@ -491,41 +536,66 @@ class GgufInferenceEngine(
         }
 
         // 推論実行（ブロッキング呼び出し）
+        //
+        // ストリーミング対応:
+        //   nativeComplete() / nativeCompleteWithMedia() は JNI レベルでは
+        //   blocking だが、内部で sendToken() を介して 1 トークンずつ
+        //   token_callback を呼んでくれる。ここで onToken ラムダを渡すと
+        //   各トークンがそのまま emitChunk() に流れるため、UI 側は
+        //   推論完了を待たずにリアルタイムで応答を表示できる。
+        //
+        //   以前はコールバックを設定せず、推論完了後に result 文字列を
+        //   CHUNK_SIZE 単位で疑似ストリーム化していたため、特に画像入力時は
+        //   何分もの間 UI がフリーズして見えていた (= リアルタイム応答が
+        //   出力されないバグ)。コールバック経由に切り替えたので、戻り値の
+        //   result はもう UI には流さない。
         Log.d(TAG, "generateRound: Starting inference, imagePaths.size=${imagePaths.size}, prompt.length=${prompt.length}")
-        val result = if (imagePaths.isNotEmpty()) {
-            ctx.completeWithMedia(
-                prompt = prompt,
-                nPredict = maxTokens,
-                temperature = config.temperature,
-                topP = config.topP,
-                topK = config.maxTopK,
-                stopWords = stopSequences.toTypedArray(),
-                mediaPaths = imagePaths
-            )
-        } else {
-            ctx.complete(
-                prompt = prompt,
-                nPredict = maxTokens,
-                temperature = config.temperature,
-                topP = config.topP,
-                topK = config.maxTopK,
-                stopWords = stopSequences.toTypedArray()
-            )
+        // t/s (トークン/秒) が表示されないバグ修正:
+        //   以前は streamCallback から PerformanceMonitor.recordToken() を
+        //   一切呼んでいなかったため、totalTokens がずっと 0 のままだった。
+        //   ChatViewModel 側は manager.getLastGenerationTokenCount() の値で
+        //   t/s を計算しているため、トークン数が 0 だと計算結果が
+        //   null になり、MessageAdapter で "t/s" ラベルが表示されない。
+        //   ストリーミングコールバックでトークンをカウントするようにした。
+        val streamCallback: (String) -> Unit = { token ->
+            if (isActive && token.isNotEmpty()) {
+                PerformanceMonitor.recordToken(sessionId)
+                emitChunk(token)
+            }
+        }
+        val result = try {
+            if (imagePaths.isNotEmpty()) {
+                ctx.completeWithMedia(
+                    prompt = prompt,
+                    nPredict = maxTokens,
+                    temperature = config.temperature,
+                    topP = config.topP,
+                    topK = config.maxTopK,
+                    stopWords = stopSequences.toTypedArray(),
+                    mediaPaths = imagePaths,
+                    onToken = streamCallback
+                )
+            } else {
+                ctx.setTokenCallback(streamCallback)
+                try {
+                    ctx.complete(
+                        prompt = prompt,
+                        nPredict = maxTokens,
+                        temperature = config.temperature,
+                        topP = config.topP,
+                        topK = config.maxTopK,
+                        stopWords = stopSequences.toTypedArray()
+                    )
+                } finally {
+                    // 古いラムダが次ラウンドに残らないよう確実にクリア。
+                    ctx.setTokenCallback(null)
+                }
+            }
+        } finally {
+            // 一時ファイルを削除（例外/キャンセル時にも必ず実行）
+            imagePaths.forEach { File(it).delete() }
         }
         Log.d(TAG, "generateRound: Inference completed, result.length=${result.length}")
-
-        // 一時ファイルを削除
-        imagePaths.forEach { File(it).delete() }
-
-        // 結果をチャンクして送信
-        var offset = 0
-        val chunkSize = CHUNK_SIZE
-        while (offset < result.length) {
-            if (!isActive) break
-            val chunk = result.substring(offset, minOf(offset + chunkSize, result.length))
-            emitChunk(chunk)
-            offset += chunkSize
-        }
 
         result
     }
