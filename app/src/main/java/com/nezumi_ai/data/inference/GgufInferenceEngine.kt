@@ -7,6 +7,9 @@ import com.google.ai.edge.litertlm.ToolCall
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import com.nezumi_ai.data.repository.MemoryRepository
+import com.nezumi_ai.data.inference.rnllama.RnLlamaContext
+import com.nezumi_ai.data.inference.rnllama.RnLlamaNative
+import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -139,8 +142,8 @@ class GgufInferenceEngine(
     private val inferenceMutex = Mutex()
     private val inferenceMutexHeld = AtomicBoolean(false)
 
-    /** llama_context* をラップした Long ポインタ。0 = 未ロード */
-    @Volatile private var nativeCtx: Long = 0L
+    /** llama.cpp コンテキスト（rnllama経由） */
+    @Volatile private var rnllamaCtx: RnLlamaContext? = null
 
     @Volatile private var loadedModelPath: String? = null
     @Volatile private var loadedConfig: InferenceConfig? = null
@@ -171,7 +174,8 @@ class GgufInferenceEngine(
                     )
 
                 val modelPath = modelFile.absolutePath
-                if (nativeCtx != 0L &&
+                if (rnllamaCtx != null &&
+                    rnllamaCtx!!.isValid &&
                     loadedModelPath == modelPath &&
                     loadedConfig == normalized
                 ) {
@@ -185,9 +189,9 @@ class GgufInferenceEngine(
                 val optimalThreads = getOptimalThreadCount()
                 val gpuLayers = getAdaptiveGpuLayers(normalized.backendType)
 
-                if (!LlamaBridge.isLibraryLoaded()) {
+                if (!RnLlamaNative.loadLibraryIfNeeded()) {
                     return@withLock Result.failure(
-                        IllegalStateException("GGUF native bridge not loaded: libllama_bridge.so unavailable")
+                        IllegalStateException("RnLlamaNative library not loaded: libnezumi_rnllama_jni.so unavailable")
                     )
                 }
 
@@ -199,27 +203,35 @@ class GgufInferenceEngine(
                     )
                 }
 
+                // mmprojパスを取得
+                val mmprojPath = ImportedModelCapabilityStore.get(appContext, modelPath).mmprojPath
+                if (mmprojPath != null) {
+                    Log.i(TAG, "Using mmproj: $mmprojPath")
+                }
+
                 val ctx = withContext(Dispatchers.IO) {
-                    LlamaBridge.llamaInit(
+                    RnLlamaContext(
                         modelPath = modelPath,
                         nCtx = normalized.contextWindow,
+                        nBatch = 512,
+                        nUbatch = 512,
                         nThreads = optimalThreads,
                         nGpuLayers = gpuLayers,
-                        seed = -1  // ランダムシード
+                        mmprojPath = mmprojPath
                     )
                 }
 
-                if (ctx == 0L) {
+                if (!ctx.isValid) {
                     return@withLock Result.failure(
-                        IllegalStateException("llamaInit failed — invalid model file or insufficient memory")
+                        IllegalStateException("RnLlamaContext failed to initialize — invalid model file or insufficient memory")
                     )
                 }
 
-                nativeCtx = ctx
+                rnllamaCtx = ctx
                 loadedModelPath = modelPath
                 loadedConfig = normalized
                 lastSessionId = null  // セッションリセット
-                Log.i(TAG, "GGUF model loaded: $modelPath llama.cpp ${LlamaBridge.llamaVersion()}")
+                Log.i(TAG, "GGUF model loaded: $modelPath using rnllama backend")
                 Result.success(Unit)
             } catch (t: Throwable) {
                 Log.e(TAG, "loadModel failed", t)
@@ -230,6 +242,14 @@ class GgufInferenceEngine(
 
     override suspend fun unloadModel(): Result<Unit> {
         cancelFlag.set(true)
+        // モデル切り替え時の生成停止バグ修正:
+        //   nativeComplete / nativeCompleteWithMedia は JNI レベルで blocking なため、
+        //   Kotlin 側の cancelFlag だけだとネイティブループは止まらず、
+        //   inferenceMutex を取れずに unloadModel が永遠にブロックしてしまう。
+        //   ctx.interrupt() (= nativeInterrupt) を先に呼んでネイティブの
+        //   is_interrupted フラグを立てることで、生成ループを即座に脱出させる。
+        runCatching { rnllamaCtx?.interrupt() }
+            .onFailure { Log.w(TAG, "interrupt() before unload failed", it) }
         return try {
             inferenceMutex.withLock {
                 modelMutex.withLock {
@@ -252,20 +272,27 @@ class GgufInferenceEngine(
     }
 
     private fun freeNativeCtx() {
-        val ctx = nativeCtx
-        if (ctx != 0L) {
-            LlamaBridge.llamaFree(ctx)
-            nativeCtx = 0L
-            loadedModelPath = null
-            loadedConfig = null
-        }
+        rnllamaCtx?.release()
+        rnllamaCtx = null
+        loadedModelPath = null
+        loadedConfig = null
     }
 
     // ─── キャンセル ───────────────────────────────────────────────
 
     override suspend fun cancelInference() {
-        Log.d(TAG, "cancelInference: setting cancelFlag")
+        Log.d(TAG, "cancelInference: setting cancelFlag and interrupting native completion")
         cancelFlag.set(true)
+        // 「止めるボタン」 / モデル切り替えが効かなくなっていたバグ修正:
+        //   nativeComplete / nativeCompleteWithMedia は JNI レベルで blocking なため、
+        //   Kotlin 側の cancelFlag をいくら立てても、ネイティブの生成ループ
+        //   (NezumiRnLlamaJni.cpp) はそれを見ていない。ネイティブは
+        //   completion->is_interrupted だけをチェックしているため、
+        //   ctx.interrupt() (= nativeInterrupt) を呼ばないと生成が自然
+        //   終了するまで止まらず、ストップボタンもモデル切り替えも
+        //   体感上効かなく見える。
+        runCatching { rnllamaCtx?.interrupt() }
+            .onFailure { Log.w(TAG, "interrupt() failed", it) }
     }
 
     // ─── 推論 ─────────────────────────────────────────────────────
@@ -297,8 +324,8 @@ class GgufInferenceEngine(
         inferenceMutexHeld.set(true)
         cancelFlag.set(false)
 
-        val ctx = nativeCtx
-        if (ctx == 0L) {
+        val ctx = rnllamaCtx
+        if (ctx == null || !ctx.isValid) {
             releaseInferenceMutex()
             close(IllegalStateException("Model not loaded. Call loadModel() first."))
             return@callbackFlow
@@ -311,12 +338,12 @@ class GgufInferenceEngine(
             if (lastSessionId != sessionId) {
                 Log.d(TAG, "Session changed: $lastSessionId → $sessionId, clearing KV cache")
                 withContext(Dispatchers.IO) {
-                    LlamaBridge.llamaClearKvCache(ctx)
+                    ctx.clearKvCache()
                 }
                 lastSessionId = sessionId
             }
 
-            Log.d(TAG, "GGUF inference start: session=$sessionId promptLen=${prompt.length}")
+            Log.d(TAG, "GGUF inference start: session=$sessionId promptLen=${prompt.length} images=${images.size}")
 
             val fullAnswer = StringBuilder()
             var currentPrompt = prompt
@@ -334,7 +361,9 @@ class GgufInferenceEngine(
                     prompt = currentPrompt,
                     config = normalized,
                     isFirstRound = isFirstGenerationRound,
-                    emitChunk = { chunk -> trySend(chunk) }
+                    emitChunk = { chunk -> trySend(chunk) },
+                    images = images,
+                    audioClips = audioClips
                 )
                 isFirstGenerationRound = false
 
@@ -400,7 +429,7 @@ class GgufInferenceEngine(
                     append(GgufToolCallParser.formatToolResults(toolResults))
                 }
                 withContext(Dispatchers.IO) {
-                    LlamaBridge.llamaClearKvCache(ctx)
+                    ctx.clearKvCache()
                 }
                 lastSessionId = null
             }
@@ -415,10 +444,14 @@ class GgufInferenceEngine(
                 )
             }
 
-            val metrics = PerformanceMonitor.endInference(sessionId)
-            if (metrics != null) {
-                Log.i(TAG, "Performance: ${metrics.toLogString()}")
-            }
+            // ネイティブ timings から t/s を送出 (UI 表示用)。
+            // トークン数・時間ともに llama.cpp が測っているため、
+            // Kotlin 側の概算よりも正確。
+            runCatching {
+                ctx.getLastTimings()?.decodeTokensPerSecond?.let { tps ->
+                    if (tps > 0f) trySend(InferenceStreamProtocol.encodeTps(tps))
+                }
+            }.onFailure { Log.w(TAG, "emit TPS failed", it) }
 
             trySend(
                 InferenceStreamProtocol.encodeFinal(
@@ -428,6 +461,12 @@ class GgufInferenceEngine(
             close()
         } catch (t: Throwable) {
             if (t is CancellationException) {
+                // キャンセル時も可能なら timings を送出しておく
+                runCatching {
+                    rnllamaCtx?.getLastTimings()?.decodeTokensPerSecond?.let { tps ->
+                        if (tps > 0f) trySend(InferenceStreamProtocol.encodeTps(tps))
+                    }
+                }
                 // キャンセル時も final を送出（LiteRT 側と同じ挙動）
                 trySend(InferenceStreamProtocol.encodeFinal(""))
                 close()
@@ -436,122 +475,129 @@ class GgufInferenceEngine(
                 close(if (t is Exception) t else RuntimeException(t))
             }
         } finally {
+            // 本来の終了処理が起きないバグ修正:
+            //   以前は endInference() が try ブロックの正常パスにしか置かれておらず、
+            //   キャンセル例外や他の例外で抹けると PerformanceMonitor の
+            //   activeMetrics にセッションが残留し、以降の推論で
+            //   getLastCompletedTokenCount() が間違ったセッションの値を
+            //   返して、ChatViewModel 側の t/s 計算がずれる。
+            //   finally に移して必ず 1 回呼ぶ。
+            runCatching {
+                val metrics = PerformanceMonitor.endInference(sessionId)
+                if (metrics != null) {
+                    Log.i(TAG, "Performance: ${metrics.toLogString()}")
+                }
+            }.onFailure { Log.w(TAG, "endInference failed", it) }
             releaseInferenceMutex()
         }
 
         awaitClose {
             Log.d(TAG, "awaitClose: session=$sessionId")
             cancelFlag.set(true)
+            // Flow が消費側からキャンセルされたとき（ストップボタン等）も
+            // ネイティブの blocking JNI 呼び出しを即座に脱出させる。
+            runCatching { rnllamaCtx?.interrupt() }
+                .onFailure { Log.w(TAG, "awaitClose interrupt() failed", it) }
         }
     }.flowOn(Dispatchers.IO)
 
     // ─── ユーティリティ ──────────────────────────────────────────
 
-    override suspend fun isAvailable(): Boolean = nativeCtx != 0L
+    override suspend fun isAvailable(): Boolean = rnllamaCtx?.isValid == true
 
     private suspend fun generateRound(
-        ctx: Long,
+        ctx: RnLlamaContext,
         sessionId: Long,
         prompt: String,
         config: InferenceConfig,
         isFirstRound: Boolean,
-        emitChunk: (String) -> Unit
+        emitChunk: (String) -> Unit,
+        images: List<Bitmap>,
+        audioClips: List<ByteArray>
     ): String = withContext(Dispatchers.IO) {
-        val promptTokenCount = LlamaBridge.llamaTokenize(ctx, prompt, addBos = true)?.size ?: 0
         if (isFirstRound) {
-            PerformanceMonitor.startInference(sessionId, config.backendType, promptTokenCount)
+            PerformanceMonitor.startInference(sessionId, config.backendType, 0)
         }
 
-        val tokens = LlamaBridge.llamaTokenize(ctx, prompt, addBos = true)
-            ?: throw IllegalStateException("Tokenization failed")
-        decodePromptTokens(ctx, tokens)
-
-        val answerAccum = StringBuilder()
-        val chunkBuffer = StringBuilder()
-        var lastSendTime = System.currentTimeMillis()
-        var firstTokenTime: Long? = null
-        val eosToken = LlamaBridge.llamaEosToken(ctx)
-        var generatedCount = 0
-        var tokensSinceLastSend = 0
         val stopSequences = effectiveStopSequences(config)
         val maxTokens = config.maxTokens.coerceAtMost(MAX_NEW_TOKENS)
+        
+        Log.d(TAG, "generateRound: maxTokens=$maxTokens, temperature=${config.temperature}, topP=${config.topP}, topK=${config.maxTopK}")
 
-        while (isActive && !cancelFlag.get() && generatedCount < maxTokens) {
-            val token = LlamaBridge.llamaSample(
-                ctx = ctx,
-                temperature = config.temperature,
-                topP = config.topP,
-                topK = config.maxTopK,
-                repeatPenalty = DEFAULT_REPEAT_PENALTY
-            )
-            if (token == eosToken) break
+        // 画像を一時ファイルに保存
+        val imagePaths = if (images.isNotEmpty()) {
+            images.mapIndexed { index, bitmap ->
+                val tempFile = File(appContext.cacheDir, "temp_img_${System.currentTimeMillis()}_$index.jpg")
+                tempFile.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+                tempFile.absolutePath
+            }.toTypedArray()
+        } else {
+            emptyArray()
+        }
 
-            val piece = LlamaBridge.llamaTokenToPiece(ctx, token)
-            if (piece.isNotEmpty()) {
-                if (firstTokenTime == null) firstTokenTime = System.currentTimeMillis()
-                answerAccum.append(piece)
-                chunkBuffer.append(piece)
-                tokensSinceLastSend++
+        // 推論実行（ブロッキング呼び出し）
+        //
+        // ストリーミング対応:
+        //   nativeComplete() / nativeCompleteWithMedia() は JNI レベルでは
+        //   blocking だが、内部で sendToken() を介して 1 トークンずつ
+        //   token_callback を呼んでくれる。ここで onToken ラムダを渡すと
+        //   各トークンがそのまま emitChunk() に流れるため、UI 側は
+        //   推論完了を待たずにリアルタイムで応答を表示できる。
+        //
+        //   以前はコールバックを設定せず、推論完了後に result 文字列を
+        //   CHUNK_SIZE 単位で疑似ストリーム化していたため、特に画像入力時は
+        //   何分もの間 UI がフリーズして見えていた (= リアルタイム応答が
+        //   出力されないバグ)。コールバック経由に切り替えたので、戻り値の
+        //   result はもう UI には流さない。
+        Log.d(TAG, "generateRound: Starting inference, imagePaths.size=${imagePaths.size}, prompt.length=${prompt.length}")
+        // t/s (トークン/秒) が表示されないバグ修正:
+        //   以前は streamCallback から PerformanceMonitor.recordToken() を
+        //   一切呼んでいなかったため、totalTokens がずっと 0 のままだった。
+        //   ChatViewModel 側は manager.getLastGenerationTokenCount() の値で
+        //   t/s を計算しているため、トークン数が 0 だと計算結果が
+        //   null になり、MessageAdapter で "t/s" ラベルが表示されない。
+        //   ストリーミングコールバックでトークンをカウントするようにした。
+        val streamCallback: (String) -> Unit = { token ->
+            if (isActive && token.isNotEmpty()) {
                 PerformanceMonitor.recordToken(sessionId)
-            }
-
-            val accumulated = answerAccum.toString()
-            if (GgufToolCallParser.hasToolCalls(accumulated)) {
-                if (chunkBuffer.isNotEmpty()) {
-                    val parsed = GgufToolCallParser.parse(accumulated)
-                    val safePrefix = parsed.textBeforeTools
-                    val alreadyEmittedLength = accumulated.length - chunkBuffer.length
-                    val safeRemaining = (safePrefix.length - alreadyEmittedLength)
-                        .coerceAtLeast(0)
-                        .coerceAtMost(chunkBuffer.length)
-                    if (safeRemaining > 0) {
-                        emitChunk(chunkBuffer.substring(0, safeRemaining))
-                    }
-                }
-                break
-            }
-
-            val hitStop = stopSequences.any { stop -> accumulated.endsWith(stop) }
-            if (hitStop) {
-                val matchedStop = stopSequences.first { stop -> accumulated.endsWith(stop) }
-                val trimmed = chunkBuffer.toString().removeSuffix(matchedStop)
-                if (trimmed.isNotEmpty()) emitChunk(trimmed)
-                answerAccum.setLength(answerAccum.length - matchedStop.length)
-                break
-            }
-
-            val now = System.currentTimeMillis()
-            if (tokensSinceLastSend >= CHUNK_SIZE || (now - lastSendTime) >= 100) {
-                if (chunkBuffer.isNotEmpty()) {
-                    emitChunk(chunkBuffer.toString())
-                    chunkBuffer.clear()
-                    tokensSinceLastSend = 0
-                    lastSendTime = now
-                }
-                if (generatedCount > 0 && generatedCount % 10 == 0 && firstTokenTime != null) {
-                    val elapsed = now - firstTokenTime
-                    if (elapsed > 0) {
-                        val tps = (generatedCount * 1000f) / elapsed
-                        emitChunk(InferenceStreamProtocol.encodeTps(tps))
-                    }
-                }
-            }
-
-            LlamaBridge.llamaDecode(ctx, intArrayOf(token))
-            generatedCount++
-        }
-
-        if (chunkBuffer.isNotEmpty()) {
-            emitChunk(chunkBuffer.toString())
-        }
-        if (generatedCount > 0 && firstTokenTime != null) {
-            val finalElapsed = System.currentTimeMillis() - firstTokenTime
-            if (finalElapsed > 0) {
-                val finalTps = (generatedCount * 1000f) / finalElapsed
-                emitChunk(InferenceStreamProtocol.encodeTps(finalTps))
+                emitChunk(token)
             }
         }
-        answerAccum.toString()
+        val result = try {
+            if (imagePaths.isNotEmpty()) {
+                ctx.completeWithMedia(
+                    prompt = prompt,
+                    nPredict = maxTokens,
+                    temperature = config.temperature,
+                    topP = config.topP,
+                    topK = config.maxTopK,
+                    stopWords = stopSequences.toTypedArray(),
+                    mediaPaths = imagePaths,
+                    onToken = streamCallback
+                )
+            } else {
+                ctx.setTokenCallback(streamCallback)
+                try {
+                    ctx.complete(
+                        prompt = prompt,
+                        nPredict = maxTokens,
+                        temperature = config.temperature,
+                        topP = config.topP,
+                        topK = config.maxTopK,
+                        stopWords = stopSequences.toTypedArray()
+                    )
+                } finally {
+                    // 古いラムダが次ラウンドに残らないよう確実にクリア。
+                    ctx.setTokenCallback(null)
+                }
+            }
+        } finally {
+            // 一時ファイルを削除（例外/キャンセル時にも必ず実行）
+            imagePaths.forEach { File(it).delete() }
+        }
+        Log.d(TAG, "generateRound: Inference completed, result.length=${result.length}")
+
+        result
     }
 
     private fun anyToJsonElementMap(values: Map<String, Any?>): Map<String, JsonElement> {
@@ -582,22 +628,6 @@ class GgufInferenceEngine(
         }
     }
 
-    private fun decodePromptTokens(ctx: Long, tokens: IntArray) {
-        if (tokens.isEmpty()) return
-        val batchCapacity = LlamaBridge.llamaGetBatchCapacity(ctx).coerceAtLeast(1)
-        var offset = 0
-        while (offset < tokens.size) {
-            val end = minOf(offset + batchCapacity, tokens.size)
-            val chunk = tokens.copyOfRange(offset, end)
-            val result = LlamaBridge.llamaDecode(ctx, chunk)
-            if (result != 0) {
-                throw IllegalStateException(
-                    "llamaDecode failed: $result (chunk ${offset + 1}..$end / capacity=$batchCapacity)"
-                )
-            }
-            offset = end
-        }
-    }
 
     private fun releaseInferenceMutex() {
         if (inferenceMutexHeld.compareAndSet(true, false)) {

@@ -501,6 +501,8 @@ completion_token_output llama_rn_context_completion::nextTokenMTP() {
 
 completion_token_output llama_rn_context_completion::nextToken()
 {
+    LOG_INFO("[DEBUG] nextToken: n_past=%d, embd.size=%zu, has_next_token=%d", n_past, embd.size(), has_next_token);
+    
     if (shouldUseMTP()) {
         return nextTokenMTP();
     }
@@ -597,6 +599,7 @@ completion_token_output llama_rn_context_completion::nextToken()
         if (llama_vocab_is_eog(vocab, new_token_id)) {
             has_next_token = false;
             stopped_eos = true;
+            LOG_INFO("[DEBUG] EOS token generated: %d", new_token_id);
             LOG_VERBOSE("EOS: %s", common_token_to_piece(parent_ctx->ctx, new_token_id).c_str());
             return result;
         }
@@ -623,6 +626,8 @@ completion_token_output llama_rn_context_completion::nextToken()
     --n_remain;
 
     has_next_token = parent_ctx->params.n_predict == -1 || n_remain != 0;
+    LOG_INFO("[DEBUG] Token generated: id=%d, n_remain=%d, has_next_token=%d, stopped_eos=%d, stopped_limit=%d, context_full=%d", 
+             result.tok, n_remain, has_next_token, stopped_eos, stopped_limit, context_full);
     return result;
 }
 

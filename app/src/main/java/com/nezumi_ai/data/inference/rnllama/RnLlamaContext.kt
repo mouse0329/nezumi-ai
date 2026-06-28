@@ -84,20 +84,46 @@ class RnLlamaContext(
         topP: Float,
         topK: Int,
         stopWords: Array<String>,
-        mediaPaths: Array<String>
+        mediaPaths: Array<String>,
+        // Optional per-token streaming callback.
+        //
+        // IMPORTANT: nativeCompleteWithMedia() is a blocking JNI call that
+        // internally pushes each generated token into `sendToken()`
+        // (NezumiRnLlamaJni.cpp). `sendToken()` is a no-op unless
+        // `holder->token_callback` has been installed beforehand via
+        // nativeSetTokenCallback(). If we don't register a callback here,
+        // every token is dropped on the native side and the only output the
+        // caller ever sees is the final `out` string that is returned at the
+        // end of generation — i.e. the UI appears frozen during image
+        // analysis and the entire reply pops in at once after the model
+        // finishes (often minutes later for vision models).
+        //
+        // Pass a non-null `onToken` to get real-time streaming.
+        onToken: ((String) -> Unit)? = null
     ): String {
         val p = ptr
         if (p == 0L) return ""
-        return RnLlamaNative.nativeCompleteWithMedia(
-            p,
-            prompt,
-            nPredict,
-            temperature,
-            topP,
-            topK,
-            stopWords,
-            mediaPaths
-        )
+        if (onToken != null) {
+            setTokenCallback(onToken)
+        }
+        return try {
+            RnLlamaNative.nativeCompleteWithMedia(
+                p,
+                prompt,
+                nPredict,
+                temperature,
+                topP,
+                topK,
+                stopWords,
+                mediaPaths
+            )
+        } finally {
+            if (onToken != null) {
+                // Always clear the callback so a stale lambda doesn't capture
+                // a cancelled Flow / closed channel on the next round.
+                setTokenCallback(null)
+            }
+        }
     }
 
     fun getLastTimings(): LastTimings? {
