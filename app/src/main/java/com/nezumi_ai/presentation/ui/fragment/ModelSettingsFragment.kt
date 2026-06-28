@@ -102,6 +102,8 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.platform.LocalUriHandler
+import com.nezumi_ai.data.inference.PromptTemplateEngine
+import com.nezumi_ai.data.inference.PromptTemplateStore
 import com.nezumi_ai.utils.ImportedModelCapabilities
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import com.nezumi_ai.voicevox.VoicevoxManager
@@ -169,6 +171,12 @@ open class ModelSettingsFragment : Fragment() {
     private var mmprojDropdownExpanded by mutableStateOf(false)
     private var capabilityDialogRepoMmprojCandidates by mutableStateOf<List<ModelFileManager.HfModelFile>>(emptyList())
     private var capabilityDialogRepoMmprojLoading by mutableStateOf(false)
+
+    // --- プロンプトテンプレート設定（Issue #31 / #32） ---
+    private var capabilityDialogTemplateMode by mutableStateOf(PromptTemplateStore.MODE_AUTO)
+    private var capabilityDialogTemplateCustom by mutableStateOf("")
+    private var capabilityDialogTemplateError by mutableStateOf<String?>(null)
+    private var capabilityDialogTemplateExpanded by mutableStateOf(false)
     
     private var imageModelsLoading by mutableStateOf(false)
     private var imageModelsError by mutableStateOf<String?>(null)
@@ -443,6 +451,7 @@ open class ModelSettingsFragment : Fragment() {
                                     val result = ModelFileManager.deleteImportedTask(requireContext(), model.path)
                                     result.onSuccess {
                                         ImportedModelCapabilityStore.clear(requireContext(), model.path)
+                                        PromptTemplateStore.clear(requireContext(), model.path)
                                         toast("削除しました")
                                         refreshImportedTasks()
                                         expandedModelKey = null
@@ -701,6 +710,106 @@ open class ModelSettingsFragment : Fragment() {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (isGguf) {
+                        Divider()
+                        Text(
+                            text = "プロンプトテンプレート",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "モデルごとのチャットテンプレートを選択します。「自動検出」ではモデル名から ChatML / Gemma を推定します。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        val templateOptions = remember {
+                            buildList {
+                                add(PromptTemplateStore.MODE_AUTO to "自動検出")
+                                PromptTemplateStore.BUILTIN_TEMPLATES.forEach { b ->
+                                    add(b.id to b.displayName)
+                                }
+                                add(PromptTemplateStore.MODE_CUSTOM to "カスタム...")
+                            }
+                        }
+                        val currentLabel = templateOptions.firstOrNull { it.first == capabilityDialogTemplateMode }?.second
+                            ?: "自動検出"
+                        ExposedDropdownMenuBox(
+                            expanded = capabilityDialogTemplateExpanded,
+                            onExpandedChange = { capabilityDialogTemplateExpanded = it }
+                        ) {
+                            OutlinedTextField(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .menuAnchor(),
+                                value = currentLabel,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("チャットテンプレート") },
+                                trailingIcon = {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = capabilityDialogTemplateExpanded)
+                                }
+                            )
+                            ExposedDropdownMenu(
+                                expanded = capabilityDialogTemplateExpanded,
+                                onDismissRequest = { capabilityDialogTemplateExpanded = false }
+                            ) {
+                                templateOptions.forEach { (id, label) ->
+                                    DropdownMenuItem(
+                                        text = { Text(label) },
+                                        onClick = {
+                                            val previousMode = capabilityDialogTemplateMode
+                                            capabilityDialogTemplateMode = id
+                                            capabilityDialogTemplateExpanded = false
+                                            capabilityDialogTemplateError = null
+                                            // 初めてカスタムを選んだとき、ビルトインを雛型としてコピー
+                                            if (id == PromptTemplateStore.MODE_CUSTOM && capabilityDialogTemplateCustom.isBlank()) {
+                                                val seed = PromptTemplateStore.BUILTIN_TEMPLATES.firstOrNull {
+                                                    it.id == previousMode
+                                                }?.template
+                                                    ?: PromptTemplateStore.BUILTIN_TEMPLATES.firstOrNull { it.id == "chatml" }?.template
+                                                    ?: ""
+                                                capabilityDialogTemplateCustom = seed
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        // ビルトイン選択時は説明を表示
+                        PromptTemplateStore.BUILTIN_TEMPLATES.firstOrNull { it.id == capabilityDialogTemplateMode }?.let { b ->
+                            Text(
+                                text = b.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (capabilityDialogTemplateMode == PromptTemplateStore.MODE_CUSTOM) {
+                            OutlinedTextField(
+                                modifier = Modifier.fillMaxWidth(),
+                                value = capabilityDialogTemplateCustom,
+                                onValueChange = {
+                                    capabilityDialogTemplateCustom = it
+                                    capabilityDialogTemplateError = null
+                                },
+                                label = { Text("カスタムテンプレート") },
+                                placeholder = { Text("{{ if .System }}...{{ end }}{{ range .History }}...{{ end }}") },
+                                minLines = 5,
+                                isError = capabilityDialogTemplateError != null
+                            )
+                            Text(
+                                text = "利用可能な変数: {{ .System }} / {{ .Prompt }} / {{ .Response }} / {{ .Thinking }} / {{ range .History }} {{ .Role }} {{ .Content }} {{ end }}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            capabilityDialogTemplateError?.let { err ->
+                                Text(
+                                    text = err,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
                     Divider()
                     Text(
                         text = "ストップトークン（カンマ区切り）",
@@ -730,6 +839,15 @@ open class ModelSettingsFragment : Fragment() {
                             if (invalidChars.containsMatchIn(settingsDialogDisplayName)) {
                                 toast("表示名に使用できない記号が含まれています")
                                 return@Button
+                            }
+                            // カスタムテンプレートのバリデーション
+                            if (capabilityDialogTemplateMode == PromptTemplateStore.MODE_CUSTOM) {
+                                val err = PromptTemplateEngine.validate(capabilityDialogTemplateCustom)
+                                if (err != null) {
+                                    capabilityDialogTemplateError = err
+                                    toast("テンプレートにエラーがあります: $err")
+                                    return@Button
+                                }
                             }
                             val tokens = settingsDialogStopTokens
                                 .split(',')
@@ -1452,6 +1570,7 @@ open class ModelSettingsFragment : Fragment() {
                         val result = ModelFileManager.deleteImportedTask(requireContext(), model.path)
                         result.onSuccess {
                             ImportedModelCapabilityStore.clear(requireContext(), model.path)
+                                        PromptTemplateStore.clear(requireContext(), model.path)
                             toast("削除しました")
                             refreshImportedTasks()
                             expandedModelKey = null
@@ -2241,6 +2360,7 @@ open class ModelSettingsFragment : Fragment() {
                                     val result = ModelFileManager.deleteImportedTask(requireContext(), model.path)
                                     result.onSuccess {
                                         ImportedModelCapabilityStore.clear(requireContext(), model.path)
+                                        PromptTemplateStore.clear(requireContext(), model.path)
                                         toast("削除しました")
                                         refreshImportedTasks()
                                         expandedModelKey = null
@@ -2975,6 +3095,12 @@ open class ModelSettingsFragment : Fragment() {
         settingsDialogDisplayName = caps.displayName ?: model.shortDisplayName
         modelSettingsDialogModel = model
         capabilityDialogRepoMmprojCandidates = emptyList()
+        // プロンプトテンプレート選択をロード
+        val tplSel = PromptTemplateStore.getSelection(requireContext(), model.path)
+        capabilityDialogTemplateMode = tplSel.mode
+        capabilityDialogTemplateCustom = tplSel.customTemplate
+        capabilityDialogTemplateError = null
+        capabilityDialogTemplateExpanded = tplSel.mode != PromptTemplateStore.MODE_AUTO
         viewLifecycleOwner.lifecycleScope.launch {
             settingsDialogStopTokens = withContext(Dispatchers.IO) {
                 if (model.path.lowercase().endsWith(".gguf")) {
@@ -3006,6 +3132,10 @@ open class ModelSettingsFragment : Fragment() {
         isGguf: Boolean,
         stopTokens: List<String>
     ) {
+        val templateSelection = PromptTemplateStore.TemplateSelection(
+            mode = capabilityDialogTemplateMode,
+            customTemplate = capabilityDialogTemplateCustom
+        )
         withContext(Dispatchers.IO) {
             ImportedModelCapabilityStore.set(
                 requireContext(),
@@ -3015,6 +3145,12 @@ open class ModelSettingsFragment : Fragment() {
             if (isGguf) {
                 settingsRepository.updateStopTokensForModel(model.path, stopTokens)
             }
+            // プロンプトテンプレート選択を保存（GGUF 以外でも設定可能）
+            PromptTemplateStore.setSelection(
+                requireContext(),
+                model.path,
+                templateSelection
+            )
         }
         modelSettingsDialogModel = null
         refreshImportedTasks()
