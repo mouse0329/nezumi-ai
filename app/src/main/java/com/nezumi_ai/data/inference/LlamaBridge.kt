@@ -42,6 +42,7 @@ object LlamaBridge {
      * @param nThreads CPU スレッド数
      * @param nGpuLayers GPU オフロード層数（Vulkan / OpenCL 対応ビルド時のみ有効）
      * @param seed 乱数シード（-1 でランダム）
+     * @param mmprojPath マルチモーダルプロジェクションファイルのパス（nullでテキストのみ）
      * @return ネイティブコンテキストポインタ（0 = 失敗）
      */
     external fun llamaInit(
@@ -49,7 +50,8 @@ object LlamaBridge {
         nCtx: Int,
         nThreads: Int,
         nGpuLayers: Int,
-        seed: Int
+        seed: Int,
+        mmprojPath: String?
     ): Long
 
     /**
