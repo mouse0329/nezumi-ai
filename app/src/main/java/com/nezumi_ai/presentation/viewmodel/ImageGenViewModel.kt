@@ -277,9 +277,18 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun setSelectedBackend(backend: String) {
+        val previous = _selectedBackend.value
         _selectedBackend.value = backend
         PreferencesHelper.setSdBackend(getApplication(), backend)
         updateBackendInfo()
+        // ★ Bug fix: backend を切り替えたら即座に既存の LocalDream サーバーを停止し、
+        //   次回 generate() 時に新 backend で起動し直されるようにする。
+        //   これをしないと「CPU に切り替えても GPU のまま」バグが再発する。
+        if (!previous.equals(backend, ignoreCase = true)) {
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { EngineManager.releaseSdKeepNone() }
+            }
+        }
     }
 
     fun setModelPath(p: String) {
@@ -313,7 +322,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun setSize(s: Int) {
-        _sizePx.value = listOf(256, 512, 768).minByOrNull { kotlin.math.abs(it - s) } ?: 512
+        // ★ 768 は LocalDream / ggml バックエンドが未対応のため選択値から除外し、512 に丸める。
+        _sizePx.value = listOf(256, 512).minByOrNull { kotlin.math.abs(it - s) } ?: 512
     }
 
     fun setSeed(s: Long) {
@@ -433,7 +443,19 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 onProgress = { step, steps, time, previewBmp ->
                     _progressData.value = ProgressData(step, steps, time)
                     _currentStep.value = step.coerceAtMost(totalSteps)
-                    previewBmp?.let { _previewBitmap.value = it }
+                    // ★ Bug fix: 512x512 で生成するとステップごとに UI が重くなっていた。
+                    //   原因は previewBitmap を _previewBitmap.value に毎回代入しても
+                    //   古い Bitmap が recycle() されず Java ヒープ上で GC 待ちになり、
+                    //   ステップが進むごとにモリショクでストップザ・ザ・ワールドが起きていたため。
+                    //   現状 ImageGenScreen は previewBitmap を UI に表示していないので、
+                    //   古い Bitmap を recycle してすぐに手放し、メモリプレッシャーを軽減する。
+                    if (previewBmp != null) {
+                        val old = _previewBitmap.value
+                        _previewBitmap.value = previewBmp
+                        if (old != null && old !== previewBmp && !old.isRecycled) {
+                            runCatching { old.recycle() }
+                        }
+                    }
                 }
             )
             val bmp = result?.first
@@ -476,6 +498,10 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         } finally {
             Log.i(TAG, "[ImageGen] finally block: cleaning up")
             isCancelling = false
+            // ★ Bug fix: クリーンアップ時も古い preview Bitmap を recycle してメモリを解放する。
+            _previewBitmap.value?.let { old ->
+                if (!old.isRecycled) runCatching { old.recycle() }
+            }
             _previewBitmap.value = null
             runCatching { EngineManager.releaseSdKeepNone() }
             runCatching { EngineManager.markLlmActive() }
@@ -816,7 +842,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             }
 
             runCatching { ModelManager.getInstance(app).unloadModel() }
-            val ld = EngineManager.acquireLocalDream(app, path, "auto")
+            // ★ Bug fix: 以前は "auto" を渡していたため LocalDream が GPU にフォールバックしやすく、
+            //   ユーザーが CPU を選んでも GPU で動作していた。
+            //   キュー生成も通常生成と同じくユーザー選択の backend を使うようにする。
+            val queueBackend = _selectedBackend.value
+            val ld = EngineManager.acquireLocalDream(app, path, queueBackend)
             ld.clearLastSafetyVerdict()  // 前回の verdict をクリア
 
             val width = _sizePx.value
@@ -833,7 +863,14 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 onProgress = { step, totalSteps, _, previewBmp ->
                     _progressData.value = ProgressData(step, totalSteps, 0f)
                     _currentStep.value = step.coerceAtMost(totalSteps)
-                    previewBmp?.let { _previewBitmap.value = it }
+                    // ★ Bug fix: キュー実行時も preview Bitmap を古いものを recycle してメモリを解放する。
+                    if (previewBmp != null) {
+                        val old = _previewBitmap.value
+                        _previewBitmap.value = previewBmp
+                        if (old != null && old !== previewBmp && !old.isRecycled) {
+                            runCatching { old.recycle() }
+                        }
+                    }
                 }
             )
 

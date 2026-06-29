@@ -301,17 +301,22 @@ class LocalDreamModule(private val context: Context) {
 
             Log.d(TAG, "loadModel: Selected backend=$selectedBackend, modelDir=$modelDir")
 
-            if (currentModelPath == modelPath && isServerReady) {
+            // ★ Bug fix: 以前はモデルパスだけでキャッシュ判定していたため、
+            //   ユーザーが CPU→GPU や GPU→CPU に切り替えても同じパスなら
+            //   サーバーが再起動されず、前回の backend のまま動作し続けるバグがあった。
+            //   現在の currentBackend と今回選ばれた selectedBackend を比較し、
+            //   一致した場合のみサーバーを再利用する。
+            if (currentModelPath == modelPath && isServerReady && currentBackend == selectedBackend) {
                 if (serverProcess?.isAlive != true) {
                     Log.w(TAG, "loadModel: Previous server process is not alive but HTTP service is still marked ready. Reusing existing server for $modelPath.")
                 } else {
-                    Log.d(TAG, "loadModel: Model already loaded and server ready: $modelPath")
+                    Log.d(TAG, "loadModel: Model already loaded and server ready: $modelPath (backend=$currentBackend)")
                 }
                 return@withContext true
             }
 
-            if (currentModelPath != modelPath || !isServerReady) {
-                Log.d(TAG, "loadModel: Stopping existing server before loading new model")
+            if (currentModelPath != modelPath || !isServerReady || currentBackend != selectedBackend) {
+                Log.d(TAG, "loadModel: Stopping existing server before loading new model (backendChange: $currentBackend -> $selectedBackend)")
                 stopServer()
             }
 
@@ -605,12 +610,13 @@ class LocalDreamModule(private val context: Context) {
                                     requestedSteps = steps
                                 )
                                 val now = System.currentTimeMillis()
-                                // 200ms間隔で進捗を通知し、UIスレッドの過負荷を防ぐ
-                                if (now - lastProgressTime > 200 || step == totalSteps) {
-                                    val previewBmp = data.optString("preview", "").takeIf { it.isNotEmpty() }?.let {
-                                        runCatching { decodeRgbToBitmap(it, data.optInt("preview_width", width), data.optInt("preview_height", height)) }.getOrNull()
-                                    }
-                                    onProgress(step, totalSteps, 0f, previewBmp)
+                                // ★ Bug fix: 512x512 生成時にステップごとに preview Bitmap をデコードし
+                                //   _previewBitmap に代入していたため、古い Bitmap が GC 待ちとなり
+                                //   UI を計算する Compose スレッドが重くなり続けていた。
+                                //   現状 preview は UI に使われていないため、デコード自体をスキップして
+                                //   進捗ステップのみ通知する。間隔も 200ms → 400ms に伸ばして UI 負荷を軽減。
+                                if (now - lastProgressTime > 400 || step == totalSteps) {
+                                    onProgress(step, totalSteps, 0f, null)
                                     lastProgressTime = now
                                 }
                             }
@@ -621,11 +627,10 @@ class LocalDreamModule(private val context: Context) {
                                     requestedSteps = steps
                                 )
                                 val now = System.currentTimeMillis()
-                                if (now - lastProgressTime > 200 || step == totalSteps) {
-                                    val previewBmp = data.optString("image", "").takeIf { it.isNotEmpty() }?.let {
-                                        runCatching { decodeRgbToBitmap(it, data.optInt("width", width), data.optInt("height", height)) }.getOrNull()
-                                    }
-                                    onProgress(step, totalSteps, 0f, previewBmp)
+                                // ★ Bug fix: preview デコードをスキップし、進捗のみを通知して
+                                //   ステップごとの Bitmap 生成/メモリプレッシャーを防ぐ。
+                                if (now - lastProgressTime > 400 || step == totalSteps) {
+                                    onProgress(step, totalSteps, 0f, null)
                                     lastProgressTime = now
                                 }
                             }

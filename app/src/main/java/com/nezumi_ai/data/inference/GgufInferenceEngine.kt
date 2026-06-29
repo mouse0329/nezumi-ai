@@ -295,6 +295,18 @@ class GgufInferenceEngine(
         loadedConfig = null
     }
 
+    /**
+     * ★ 外部から KV キャッシュを強制クリアするための公開 API。
+     * Thinking トグルやセッション切り替え時に前コンテキストが残って交互動作が崩れるのを防ぐ。
+     */
+    fun clearKvCacheIfLoaded() {
+        val ctx = rnllamaCtx ?: return
+        if (!ctx.isValid) return
+        runCatching { ctx.clearKvCache() }
+            .onFailure { Log.w(TAG, "clearKvCacheIfLoaded failed", it) }
+        lastSessionId = null
+    }
+
     // ─── キャンセル ───────────────────────────────────────────────
 
     override suspend fun cancelInference() {
