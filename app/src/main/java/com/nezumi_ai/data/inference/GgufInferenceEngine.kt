@@ -84,9 +84,26 @@ class GgufInferenceEngine(
             " アシスタント:"
         )
 
+        /**
+         * Gemma4 GGUF 対策の追加 stop。
+         *
+         * llama.cpp の Gemma4 テンプレ / パーサーには F16 GGUF で
+         * Thinking ON 時に `<unused49>` トークンをコンテキスト上限まで連打してしまうバグがある
+         * (ggml-org/llama.cpp#21338・#24170)。このケースには client 側 stop でブレークする。
+         * 入れすぎると本文を誤って打ち切ってしまうより、実際にバグレポートされた `<unused49>` と、
+         * Gemma トークナイザ仕様上隣接している ±2 本だけに限定してその他トークンストリームへの影響を最小化する。
+         */
+        internal val GEMMA4_UNUSED_STOP_SEQUENCES: List<String> = listOf(
+            "<unused47>",
+            "<unused48>",
+            "<unused49>",
+            "<unused50>",
+            "<unused51>"
+        )
+
         private fun effectiveStopSequences(config: InferenceConfig): List<String> {
             val custom = config.customStopTokens.map { it.trim() }.filter { it.isNotEmpty() }
-            return DEFAULT_STOP_SEQUENCES + custom
+            return DEFAULT_STOP_SEQUENCES + GEMMA4_UNUSED_STOP_SEQUENCES + custom
         }
 
         /**

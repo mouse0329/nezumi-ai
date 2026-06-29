@@ -11,9 +11,27 @@ object PromptBuilder {
     private const val QWEN_NO_THINK_COMMAND = "/no_think"
 
     enum class ThinkingPromptStyle {
+        /**
+         * Gemma 3 (litert / 旧 GGUF) 系: プロンプト最先頭に `<|think|>\n` を1度だけ置く。
+         * 思考本文は `<|channel>thought\n ... <channel|>` で出力される。
+         */
         GEMMA_PREFIX,
+        /**
+         * Qwen 系: 直近 user ターン末尾に `/think` または `/no_think` を付与する。
+         */
         QWEN_COMMAND,
-        ASSISTANT_TAG
+        /**
+         * llama.cpp で標準的に使われる `<think>...</think>` プレフィル方式。
+         * Gemma 4 GGUF も llama.cpp 上ではこの方式で thinking を吐く（公式 chat-template-kwargs
+         * の enable_thinking=true 相当）。
+         */
+        ASSISTANT_TAG,
+        /**
+         * Gemma 4 専用: Google AI 公式仕様の thinking 構造（`<|think|>` をシステムターン内に置き、
+         * assistant 側で `<think>...</think>` プレフィルもする）を実装する。
+         * llama.cpp の F16 で `<unused49>` flood する既知バグ対策として stop に対応。
+         */
+        GEMMA4_CHANNEL
     }
 
     /** GGUF モデルのプロンプトフォーマット */
@@ -33,14 +51,38 @@ object PromptBuilder {
         val name = modelPath.lowercase()
         return when {
             Regex("(^|[^a-z0-9])(qwen|qwq)([^a-z0-9]|$)").containsMatchIn(name) -> ThinkingPromptStyle.QWEN_COMMAND
+            // Gemma4 (GGUF / litert) は thinking 構造が Gemma3 と異なるため専用スタイルへ振り分ける。
+            // 一致条件: "gemma4", "gemma-4", "gemma_4", e2b/e4b/26b-a4b など Gemma4 サイズ識別子。
+            isGemma4ModelName(name) -> ThinkingPromptStyle.GEMMA4_CHANNEL
             "gemma" in name -> ThinkingPromptStyle.GEMMA_PREFIX
             else -> ThinkingPromptStyle.ASSISTANT_TAG
         }
     }
 
-    fun usesAssistantThinkingPrefill(modelPath: String): Boolean {
-        return resolveThinkingPromptStyle(modelPath) == ThinkingPromptStyle.ASSISTANT_TAG
+    private fun isGemma4ModelName(loweredName: String): Boolean {
+        if ("gemma" !in loweredName) return false
+        // "gemma4", "gemma-4", "gemma_4", "gemma 4" などの直接表記
+        if (Regex("gemma[\\-_ ]?4(?![0-9])").containsMatchIn(loweredName)) return true
+        // E2B / E4B / 12B-A4B / 26B-A4B / 31B-A4B など Gemma4 サイズ識別子
+        if (Regex("(^|[^a-z0-9])(e2b|e4b)([^a-z0-9]|$)").containsMatchIn(loweredName)) return true
+        if (Regex("(^|[^a-z0-9])(12b|26b|31b)[\\-_]?a4b([^a-z0-9]|$)").containsMatchIn(loweredName)) return true
+        return false
     }
+
+    /**
+     * `<think>\n` を assistant 開始タグ直後にプレフィルすべきかどうか。
+     *
+     * 旧実装は ASSISTANT_TAG のみだったが、Gemma4 GGUF (llama.cpp) も `<think>...</think>` 形式で
+     * thinking を吐くため、`GEMMA4_CHANNEL` でも assistant 側 prefill を必要とする。
+     */
+    fun usesAssistantThinkingPrefill(modelPath: String): Boolean {
+        val style = resolveThinkingPromptStyle(modelPath)
+        return style == ThinkingPromptStyle.ASSISTANT_TAG ||
+            style == ThinkingPromptStyle.GEMMA4_CHANNEL
+    }
+
+    /** モデル名から Gemma4 系かどうかを判定する公開ヘルパー（パーサ / ストップシーケンス側で参照）。 */
+    fun isGemma4Model(modelPath: String): Boolean = isGemma4ModelName(modelPath.lowercase())
 
     fun buildForLiteRt(
         messages: List<MessageEntity>,
@@ -175,6 +217,8 @@ object PromptBuilder {
     }
 
     private fun thinkingGlobalPrefix(style: ThinkingPromptStyle, enableThinking: Boolean): String {
+        // GEMMA_PREFIX のみグローバルプレフィックスを使う。
+        // GEMMA4_CHANNEL はシステムターン内に <|think|> を埋め込むため、グローバルには付けない。
         return if (enableThinking && style == ThinkingPromptStyle.GEMMA_PREFIX) GEMMA_THINK_PREFIX else ""
     }
 
@@ -212,8 +256,15 @@ object PromptBuilder {
         val lastUserMessage = messages.indexOfLast { it.role == "user" && sanitizeMessageContent(it).isNotBlank() }
         sb.append(thinkingGlobalPrefix(style, enableThinking))
         val hasPrelude = systemPrompt.isNotEmpty() || !compressedSummary.isNullOrBlank()
-        if (hasPrelude) {
+        // Gemma4: Google 公式テンプレ仕様に従い、thinking ON 時はシステムターンの先頭に `<|think|>` を埋め込む。
+        // システムプロンプトが空の場合でも、Gemma4 では thinking ON のときだけ `<|think|>` 専用システムターンを生成する。
+        val isGemma4Channel = style == ThinkingPromptStyle.GEMMA4_CHANNEL
+        if (hasPrelude || (isGemma4Channel && enableThinking)) {
             sb.append("<start_of_turn>user\n")
+            if (isGemma4Channel && enableThinking) {
+                sb.append("<|think|>")
+                if (systemPrompt.isNotEmpty() || !compressedSummary.isNullOrBlank()) sb.append('\n')
+            }
             if (systemPrompt.isNotEmpty()) sb.append(systemPrompt)
             if (!compressedSummary.isNullOrBlank()) {
                 if (systemPrompt.isNotEmpty()) sb.append("\n\n")
@@ -233,7 +284,12 @@ object PromptBuilder {
                 .append(content).append('\n').append("<end_of_turn>\n")
         }
         sb.append("<start_of_turn>model\n")
-        if (enableThinking && style == ThinkingPromptStyle.ASSISTANT_TAG) {
+        // assistant 側プレフィル:
+        //  - ASSISTANT_TAG: 旧来通り `<think>\n`
+        //  - GEMMA4_CHANNEL: llama.cpp Gemma4 GGUF は `<think>...</think>` を吐くため、
+        //    thinking ON 時は assistant 開始直後に `<think>\n` を入れて確実に思考モードへ遷移させる。
+        if (enableThinking && (style == ThinkingPromptStyle.ASSISTANT_TAG ||
+                style == ThinkingPromptStyle.GEMMA4_CHANNEL)) {
             sb.append(ASSISTANT_THINK_PREFILL)
         }
         return sb.toString()
@@ -258,8 +314,17 @@ object PromptBuilder {
                 append(COMPRESSED_CONTEXT_HEADER).append('\n').append(compressedSummary)
             }
         }
-        if (systemContent.isNotEmpty()) {
-            sb.append("<|im_start|>system\n").append(systemContent).append("\n<|im_end|>\n")
+        // Gemma4 が ChatML テンプレ経由（ユーザーが手動で chatml 選択した場合等）で来た場合も
+        // システムターンに <|think|> を埋め込んで thinking を発火させる。
+        val isGemma4Channel = style == ThinkingPromptStyle.GEMMA4_CHANNEL
+        if (systemContent.isNotEmpty() || (isGemma4Channel && enableThinking)) {
+            sb.append("<|im_start|>system\n")
+            if (isGemma4Channel && enableThinking) {
+                sb.append("<|think|>")
+                if (systemContent.isNotEmpty()) sb.append('\n')
+            }
+            if (systemContent.isNotEmpty()) sb.append(systemContent)
+            sb.append("\n<|im_end|>\n")
         }
         for (index in messages.indices) {
             val msg = messages[index]
@@ -273,7 +338,8 @@ object PromptBuilder {
                 .append(content).append("\n<|im_end|>\n")
         }
         sb.append("<|im_start|>assistant\n")
-        if (enableThinking && style == ThinkingPromptStyle.ASSISTANT_TAG) {
+        if (enableThinking && (style == ThinkingPromptStyle.ASSISTANT_TAG ||
+                style == ThinkingPromptStyle.GEMMA4_CHANNEL)) {
             sb.append(ASSISTANT_THINK_PREFILL)
         }
         return sb.toString()

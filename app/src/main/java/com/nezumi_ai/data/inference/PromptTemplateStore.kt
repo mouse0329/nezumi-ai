@@ -124,6 +124,24 @@ object PromptTemplateStore {
 {{ end }}"""
         ),
         BuiltinTemplate(
+            id = "gemma4_thinking",
+            displayName = "Gemma 4 (thinking)",
+            description = "Gemma 4 公式 thinking 仕様。Thinking ON 時にシステムターンへ <|think|> を振り分け、" +
+                " llama.cpp の <think>...</think> 出力に合わせて assistant 側に <think> をプレフィルする。",
+            template = """{{ if .Thinking }}<start_of_turn>user
+<|think|>
+{{ if .System }}{{ .System }}
+{{ end }}<end_of_turn>
+{{ else }}{{ if .System }}<start_of_turn>user
+{{ .System }}
+<end_of_turn>
+{{ end }}{{ end }}{{ range .History }}<start_of_turn>{{ .Role }}
+{{ .Content }}<end_of_turn>
+{{ end }}<start_of_turn>model
+{{ if .Thinking }}<think>
+{{ end }}"""
+        ),
+        BuiltinTemplate(
             id = "chatml",
             displayName = "ChatML (Qwen / Mistral / Bonsai)",
             description = "<|im_start|> / <|im_end|>",

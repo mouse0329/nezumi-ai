@@ -160,8 +160,12 @@ class SettingsRepository(
         val isGguf = isGgufModel(model)
         val enableThinkingPref = appContext?.let { PreferencesHelper.isEnableThinking(it) } ?: false
         val requireMultimodalPref = appContext?.let { PreferencesHelper.isRequireMultimodal(it) } ?: false
+        // GGUF インポートモデルでもファイル名から Gemma4 とわかるものは、
+        // capability ストアで thinkingEnabled が未設定でも thinking をサポート扱いにする。
+        val isGemma4Gguf = isGguf &&
+            com.nezumi_ai.data.inference.PromptBuilder.isGemma4Model(model)
         val ggufThinking = isGguf && appContext != null &&
-            ImportedModelCapabilityStore.get(appContext, model).thinkingEnabled
+            (isGemma4Gguf || ImportedModelCapabilityStore.get(appContext, model).thinkingEnabled)
         val enableThinking = when {
             isGemma4 -> enableThinkingPref
             isGguf -> enableThinkingPref && ggufThinking
@@ -462,6 +466,10 @@ class SettingsRepository(
         if (isBuiltinGemma4Model(model)) return true
         if (!isGgufModel(model)) return false
         val ctx = appContext ?: return false
+        // ファイル名から Gemma4 と判定されるインポートモデルは、
+        // ユーザーが capability ストアで手動設定をしていなくても Thinking をサポート扱いにする。
+        // (例: gemma-4-12b-it-Q4_K_M.gguf / gemma-4-26B-A4B-it-Q4_K_M.gguf など)
+        if (com.nezumi_ai.data.inference.PromptBuilder.isGemma4Model(model)) return true
         return ImportedModelCapabilityStore.get(ctx, model).thinkingEnabled
     }
 
