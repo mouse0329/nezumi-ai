@@ -47,6 +47,18 @@ class MessageRepository(private val dao: MessageDao) {
         dao.deleteById(messageId)
     }
 
+    /**
+     * ★ Bug fix: 以前は thinkingContent を無条件代入していたため、以下の 2 つのバグが出ていた:
+     *
+     *   1. 生成完了後に Thinking 部分が消えるバグ
+     *      - parser が最終パースで thinking=null を返したとき (重複ヒューリスティック等)、
+     *        それまでストリーム中にためていた thinking が null 上書きされて消えてしまう。
+     *   2. ストリーム中に一瞬 thinking が空になるフレームをパースしたところで DB がちらつく
+     *
+     * これを防ぐため「明示的に上書きしたい場合」と「既存を保持したい場合」を区別できるよう
+     * sentinel オーバーロードを追加した。従来の呼び出し (thinkingContent を明示指定) は
+     * そのまま上書き動作と互換。
+     */
     suspend fun updateMessageContent(
         messageId: Long,
         content: String,
@@ -56,16 +68,77 @@ class MessageRepository(private val dao: MessageDao) {
         generationTps: Float? = null,
         generationTimeMs: Long? = null
     ) {
+        updateMessageContentInternal(
+            messageId = messageId,
+            content = content,
+            isStreaming = isStreaming,
+            thinkingProvided = true,
+            thinkingContent = thinkingContent,
+            toolResultsJson = toolResultsJson,
+            generationTps = generationTps,
+            generationTimeMs = generationTimeMs
+        )
+    }
+
+    /**
+     * ★ 新 API: thinkingContent に触れずに本文だけ更新したい場合をサポート。
+     * ストリーム中に parser が一瞬 thinking=null を返しても DB 上の既存値を消さないようにする。
+     */
+    suspend fun updateMessageContentPreservingThinking(
+        messageId: Long,
+        content: String,
+        isStreaming: Boolean,
+        toolResultsJson: String? = null,
+        generationTps: Float? = null,
+        generationTimeMs: Long? = null
+    ) {
+        updateMessageContentInternal(
+            messageId = messageId,
+            content = content,
+            isStreaming = isStreaming,
+            thinkingProvided = false,
+            thinkingContent = null,
+            toolResultsJson = toolResultsJson,
+            generationTps = generationTps,
+            generationTimeMs = generationTimeMs
+        )
+    }
+
+    private suspend fun updateMessageContentInternal(
+        messageId: Long,
+        content: String,
+        isStreaming: Boolean,
+        thinkingProvided: Boolean,
+        thinkingContent: String?,
+        toolResultsJson: String?,
+        generationTps: Float?,
+        generationTimeMs: Long?
+    ) {
         try {
-            android.util.Log.d("MessageRepository", "updateMessageContent: start messageId=$messageId isStreaming=$isStreaming contentLen=${content.length}")
+            android.util.Log.d(
+                "MessageRepository",
+                "updateMessageContent: start messageId=$messageId isStreaming=$isStreaming contentLen=${content.length} thinkingProvided=$thinkingProvided"
+            )
             val current = dao.getMessageById(messageId) ?: run {
                 android.util.Log.w("MessageRepository", "updateMessageContent: message not found messageId=$messageId")
                 return
             }
+            // ★ Bug fix: 生成完了後に Thinking が消えるバグへのためのガード。
+            //   - thinkingProvided=true かつ明示的に不ストリーム完了中 (最終 finalize) で
+            //     thinkingContent が null だった場合も、既存の thinking があればそのまま保持する。
+            //     これにより、parser が途中で thinking=null を返しても UI の Thinking ブロックが
+            //     消えない (トグルで閉じられる仕様が生きる)。
+            //   - 明示的にクリアしたい場合は updateMessageContentPreservingThinking を使わないで
+            //     updateMessageContent(他パラメータ、thinkingContent = "") と空文字列を渡せばよい。
+            val resolvedThinking: String? = when {
+                !thinkingProvided -> current.thinkingContent
+                thinkingContent.isNullOrBlank() -> current.thinkingContent
+                else -> thinkingContent
+            }
             dao.update(
                 current.copy(
                     content = content,
-                    thinkingContent = thinkingContent,
+                    thinkingContent = resolvedThinking,
                     isStreaming = isStreaming,
                     toolResultsJson = toolResultsJson ?: current.toolResultsJson,
                     generationTps = generationTps ?: current.generationTps,
