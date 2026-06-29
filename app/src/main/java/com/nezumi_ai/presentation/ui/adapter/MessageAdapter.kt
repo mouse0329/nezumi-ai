@@ -69,6 +69,12 @@ class MessageAdapter(
 
     /** ユーザーが明示的に展開したメッセージ ID（生成中は常に自動展開） */
     private val thinkingExpandedByMessageId = mutableSetOf<Long>()
+    /**
+     * ★ Bug fix: ユーザーが明示的に「閉じた」 Thinking ブロックのメッセージ ID。
+     * 生成完了後もデフォルトではブロックを「残して開いたまま」にしたいため、
+     * 閉じたときだけこのセットに加えて状態を記憶する。
+     */
+    private val thinkingCollapsedByMessageId = mutableSetOf<Long>()
     private var thinkingVisible = true
     private var speakingMessageId: Long? = null
     private var streamingMessageId: Long? = null
@@ -388,13 +394,19 @@ class MessageAdapter(
                     }
                 } else {
                     thinkingExpandedByMessageId.remove(message.id)
+                    thinkingCollapsedByMessageId.remove(message.id)
                     aiThinkingBlock.visibility = View.GONE
                     lastRenderedThinking = null
                 }
 
                 val hasThinking = thinkingVisible && !thinking.isNullOrBlank()
                 val streamThinking = message.isStreaming && hasThinking
-                val expanded = streamThinking || message.id in thinkingExpandedByMessageId
+                // ★ Bug fix: 生成完了後も Thinking ブロックは「残す」仕様にしたいので、
+                //   トグルを明示的に閉じていない限りデフォルトで展開を保持する。
+                //   thinkingCollapsedByMessageId に明示的に閉じたメッセージ ID を保持し、
+                //   それ以外は生成中も生成後も展開しておく。
+                val expanded = streamThinking ||
+                    (message.id !in thinkingCollapsedByMessageId)
                 if (hasThinking) {
                     aiThinkingBody.visibility = if (expanded) View.VISIBLE else View.GONE
                     aiThinkingChevron.text = if (expanded) "▲" else "▼"
@@ -408,6 +420,8 @@ class MessageAdapter(
                         if (message.isStreaming && hasThinking) return@setOnClickListener
                         val nowOpen = aiThinkingBody.visibility == View.VISIBLE
                         if (nowOpen) {
+                            // ★ Bug fix: 明示閉じたことを記録し、以降は閉じた状態を保持。
+                            thinkingCollapsedByMessageId.add(message.id)
                             thinkingExpandedByMessageId.remove(message.id)
                             aiThinkingBody.visibility = View.GONE
                             aiThinkingChevron.text = "▼"
@@ -415,6 +429,8 @@ class MessageAdapter(
                             aiThinkingToggleRow.contentDescription =
                                 root.context.getString(R.string.gemma_show_thinking)
                         } else {
+                            // ★ ユーザーが手動で開いた→閉じフラグを解除、明示展開フラグも立てる。
+                            thinkingCollapsedByMessageId.remove(message.id)
                             thinkingExpandedByMessageId.add(message.id)
                             aiThinkingBody.visibility = View.VISIBLE
                             aiThinkingChevron.text = "▲"

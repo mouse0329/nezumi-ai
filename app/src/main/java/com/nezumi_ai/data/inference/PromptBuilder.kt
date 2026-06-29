@@ -81,6 +81,15 @@ object PromptBuilder {
             style == ThinkingPromptStyle.GEMMA4_CHANNEL
     }
 
+    /**
+     * ★ モデル名から Qwen 3 系かを判定し、non-thinking jinja 相当の空 <think></think>
+     * プレフィルを使うべきかを返す。ユーザーが Thinking OFF にしたのに
+     * モデルが chat_template の関係で <think> を吐くケースの最強の抑止手段。
+     */
+    fun usesQwenStyleThinking(modelPath: String): Boolean {
+        return resolveThinkingPromptStyle(modelPath) == ThinkingPromptStyle.QWEN_COMMAND
+    }
+
     /** モデル名から Gemma4 系かどうかを判定する公開ヘルパー（パーサ / ストップシーケンス側で参照）。 */
     fun isGemma4Model(modelPath: String): Boolean = isGemma4ModelName(modelPath.lowercase())
 
@@ -209,7 +218,12 @@ object PromptBuilder {
             history = history
         )
         return try {
-            thinkingGlobalPrefix(style, enableThinking) + PromptTemplateEngine.render(template, ctx)
+            val rendered = PromptTemplateEngine.render(template, ctx)
+            // ★ Bug fix: Qwen OFF 時はレンダー結果末尾に「空 <think></think>」を追記して
+            //   思考を抑止する (カスタムテンプレがこれを扱える保証がないため)。
+            val qwenOffSuffix =
+                if (style == ThinkingPromptStyle.QWEN_COMMAND && !enableThinking) QWEN_EMPTY_THINK_PREFILL else ""
+            thinkingGlobalPrefix(style, enableThinking) + rendered + qwenOffSuffix
         } catch (e: Exception) {
             // フォールバック: テンプレ崩壊時は ChatML で構築（最悪でもプロンプトが消えないようにする）
             buildForGgufChatMl(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
@@ -220,6 +234,25 @@ object PromptBuilder {
         // GEMMA_PREFIX のみグローバルプレフィックスを使う。
         // GEMMA4_CHANNEL はシステムターン内に <|think|> を埋め込むため、グローバルには付けない。
         return if (enableThinking && style == ThinkingPromptStyle.GEMMA_PREFIX) GEMMA_THINK_PREFIX else ""
+    }
+
+    /**
+     * ★ assistant 開始タグの直後に挿入すべきプレフィル文字列を返す。
+     * モデルごとに Thinking ON/OFF を正しく効かせるための中枢ロジック:
+     *   - QWEN_COMMAND + OFF → Qwen3 公式 non-thinking jinja と同じ「空 <think>\n\n</think>\n\n」
+     *     (デフォルトの chat_template が <think> を吐きそうになっても、これを先に置くことで
+     *     モデルは「もう思考は終わった」と認識し、思考をスキップする)
+     *   - QWEN_COMMAND + ON  → prefill なし (Qwen はデフォルトで thinking モード)
+     *   - ASSISTANT_TAG/GEMMA4_CHANNEL + ON → `<think>\n` を付ける
+     *   - それ以外 → 何もしない　
+     */
+    private fun assistantPrefillFor(style: ThinkingPromptStyle, enableThinking: Boolean): String {
+        return when {
+            style == ThinkingPromptStyle.QWEN_COMMAND && !enableThinking -> QWEN_EMPTY_THINK_PREFILL
+            enableThinking && (style == ThinkingPromptStyle.ASSISTANT_TAG ||
+                style == ThinkingPromptStyle.GEMMA4_CHANNEL) -> ASSISTANT_THINK_PREFILL
+            else -> ""
+        }
     }
 
     private fun decorateHistoryForThinkingStyle(
@@ -284,14 +317,9 @@ object PromptBuilder {
                 .append(content).append('\n').append("<end_of_turn>\n")
         }
         sb.append("<start_of_turn>model\n")
-        // assistant 側プレフィル:
-        //  - ASSISTANT_TAG: 旧来通り `<think>\n`
-        //  - GEMMA4_CHANNEL: llama.cpp Gemma4 GGUF は `<think>...</think>` を吐くため、
-        //    thinking ON 時は assistant 開始直後に `<think>\n` を入れて確実に思考モードへ遷移させる。
-        if (enableThinking && (style == ThinkingPromptStyle.ASSISTANT_TAG ||
-                style == ThinkingPromptStyle.GEMMA4_CHANNEL)) {
-            sb.append(ASSISTANT_THINK_PREFILL)
-        }
+        // ★ Bug fix: assistant 側プレフィルを assistantPrefillFor() で一元化。
+        //   Qwen OFF 時に「空 <think>\n\n</think>\n\n」をプレフィルして thinking を抑止する。
+        sb.append(assistantPrefillFor(style, enableThinking))
         return sb.toString()
     }
 
@@ -338,10 +366,8 @@ object PromptBuilder {
                 .append(content).append("\n<|im_end|>\n")
         }
         sb.append("<|im_start|>assistant\n")
-        if (enableThinking && (style == ThinkingPromptStyle.ASSISTANT_TAG ||
-                style == ThinkingPromptStyle.GEMMA4_CHANNEL)) {
-            sb.append(ASSISTANT_THINK_PREFILL)
-        }
+        // ★ Bug fix: Qwen OFF 時の「空 <think></think>」も含めてスタイル別に適用。
+        sb.append(assistantPrefillFor(style, enableThinking))
         return sb.toString()
     }
 }
