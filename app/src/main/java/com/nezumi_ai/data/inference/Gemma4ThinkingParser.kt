@@ -28,6 +28,7 @@ object Gemma4ThinkingParser {
         "<eos>",
         "<|eos|>",
         "<|eot_id|>",
+        "<|think|>",            // Gemma4 の thinking トリガが可視出力に漏れた場合の防護
         "<think>",
         "</think>",
         "<tool_call>",
@@ -39,6 +40,9 @@ object Gemma4ThinkingParser {
         "<tool_response>",
         "</tool_response>"
     )
+
+    /** llama.cpp の Gemma4 F16 バグで flood する <unusedNN> を一括除去するためのパターン。 */
+    private val UNUSED_TOKEN_REGEX: Regex = Regex("<unused\\d+>")
 
     fun parse(
         rawInput: String,
@@ -275,6 +279,11 @@ object Gemma4ThinkingParser {
     fun sanitizeVisibleText(text: String): String {
         var t = text.trim()
         if (t.isEmpty()) return ""
+        // Gemma4 GGUF (F16) で thinking ON 時に連打される <unusedNN> トークンを一括削除。
+        if (UNUSED_TOKEN_REGEX.containsMatchIn(t)) {
+            t = UNUSED_TOKEN_REGEX.replace(t, "").trim()
+            if (t.isEmpty()) return ""
+        }
         t = removeToolTagSegments(t)
         t = removeRedactedThinkingBlocks(t)
         t = stripLeadingControlPrefix(t)
