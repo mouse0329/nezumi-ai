@@ -1043,6 +1043,12 @@ class ChatViewModel(
             } else {
                 manager.cancelInference()
             }
+            // ★ Bug fix: ユーザー停止 / 取り消し後は DB 上の履歴とネイティブ KV キャッシュが
+            //   乖離しやすい。特に Qwen の `/think` `/no_think` 切替後に途中停止すると、
+            //   次の送信でキャッシュ側に残った中途半端な assistant ターンが再利用され、
+            //   「こんにちは」に対して `2.0.0 ...` のような壊れた出力を返すことがあった。
+            //   停止時点で KV を明示的にクリアして、次回は DB 履歴から組み直す。
+            manager.clearKvCache()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to cancel inference", e)
         }
@@ -1069,7 +1075,10 @@ class ChatViewModel(
     }
 
     private suspend fun revokePromptFromMessageInternal(sessionId: Long, promptMessageId: Long) {
-        stopGeneration()
+        // ★ Bug fix: 非同期 stopGeneration() だと、取り消し処理が message delete より先に終わる保証がなく、
+        //   停止中のストリームが削除済みメッセージへ後から書き戻してしまうレースがあった。
+        //   ここでは suspend 版を直接呼び、停止完了後に削除する。
+        stopGenerationInternal()
         val messages = messageRepository.getMessagesForSessionOnce(sessionId)
         val targetIndex = messages.indexOfFirst { it.id == promptMessageId && it.role == "user" }
         if (targetIndex < 0) {
@@ -1084,6 +1093,8 @@ class ChatViewModel(
             messageRepository.deleteMessageById(msg.id)
         }
         compressedContextCache.remove(sessionId)
+        runCatching { requireModelManager().clearKvCache() }
+            .onFailure { Log.w(TAG, "clearKvCache after revoke failed", it) }
         sessionRepository.updateSessionLastUpdated(sessionId)
         _uiMessage.emit("プロンプトを取り消しました")
     }
