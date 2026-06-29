@@ -26,16 +26,37 @@ object EngineManager {
     private var active: ActiveEngine = ActiveEngine.NONE
     private var localDream: LocalDreamModule? = null
     private var sdModelPath: String? = null
+    // ★ Bug fix: 以前はキャッシュ判定に backend を含めていなかったため、
+    //   一度 GPU で起動した後にユーザーが CPU を選んでも、同じモデルパスならそのまま
+    //   GPU インスタンスが使い回されてしまう「CPU/GPU 切り替えが GPU 常時」バグがあった。
+    //   読み込み済み backend を保持し、一致しない場合はロードし直す。
+    private var sdBackend: String? = null
 
     suspend fun acquireLocalDream(context: Context, modelPath: String, backend: String = "auto"): LocalDreamModule = mutex.withLock {
         // 前回のキャンセル処理が完了するまで待機するが、このメソッド自体が mutex.withLock 内にあるため
         // cancelCurrentGeneration が cancelMutex を取得している間にここが呼ばれると
         // cancelMutex.withLock で待機する。
         cancelMutex.withLock {
-            if (active == ActiveEngine.SD && localDream != null && sdModelPath == modelPath && localDream?.isServerReady == true) {
+            // ★ Bug fix: backend が一致している場合のみ再利用する。
+            //   normalize して "auto" / "cpu" / "gpu" の表記揺れを吸収。
+            val requestedBackend = backend.trim().lowercase().ifBlank { "auto" }
+            val cachedBackend = sdBackend?.trim()?.lowercase()
+            if (active == ActiveEngine.SD &&
+                localDream != null &&
+                sdModelPath == modelPath &&
+                cachedBackend == requestedBackend &&
+                localDream?.isServerReady == true
+            ) {
                 return localDream!!
             }
+            if (cachedBackend != null && cachedBackend != requestedBackend) {
+                Log.i(TAG, "LocalDream backend changed: $cachedBackend -> $requestedBackend. Restarting server.")
+            }
             localDream?.stopServer()
+            localDream?.cleanup()
+            localDream = null
+            sdModelPath = null
+            sdBackend = null
             val ld = LocalDreamModule(context)
             val loaded = ld.loadModel(modelPath, backend)
             if (!loaded) {
@@ -43,8 +64,9 @@ object EngineManager {
             }
             localDream = ld
             sdModelPath = modelPath
+            sdBackend = requestedBackend
             active = ActiveEngine.SD
-            Log.i(TAG, "LocalDream acquired path=$modelPath backend=$backend")
+            Log.i(TAG, "LocalDream acquired path=$modelPath backend=$backend (normalized=$requestedBackend)")
             ld
         }
     }
@@ -55,12 +77,14 @@ object EngineManager {
             localDream?.cleanup()
             localDream = null
             sdModelPath = null
+            sdBackend = null
             active = ActiveEngine.NONE
             Log.i(TAG, "SD released and cleaned up")
         } catch (e: Exception) {
             Log.e(TAG, "Error during SD release", e)
             localDream = null
             sdModelPath = null
+            sdBackend = null
             active = ActiveEngine.NONE
         }
     }
@@ -71,12 +95,14 @@ object EngineManager {
             localDream?.cleanup()
             localDream = null
             sdModelPath = null
+            sdBackend = null
             active = ActiveEngine.LLM
             Log.i(TAG, "Marked LLM active, SD resources released")
         } catch (e: Exception) {
             Log.e(TAG, "Error during markLlmActive", e)
             localDream = null
             sdModelPath = null
+            sdBackend = null
             active = ActiveEngine.LLM
         }
     }
@@ -87,12 +113,14 @@ object EngineManager {
             localDream?.cleanup()
             localDream = null
             sdModelPath = null
+            sdBackend = null
             active = ActiveEngine.NONE
             Log.i(TAG, "All engines released")
         } catch (e: Exception) {
             Log.e(TAG, "Error during releaseAll", e)
             localDream = null
             sdModelPath = null
+            sdBackend = null
             active = ActiveEngine.NONE
         }
     }

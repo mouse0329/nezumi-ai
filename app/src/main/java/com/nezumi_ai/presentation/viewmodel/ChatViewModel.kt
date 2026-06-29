@@ -633,6 +633,7 @@ class ChatViewModel(
     }
 
     suspend fun setCurrentSession(sessionId: Long) {
+        val previousSessionId = _currentSessionId.value
         _currentSessionId.value = sessionId
         if (lastThinkingSessionId != sessionId) {
             hasUserToggledThinking = false
@@ -643,6 +644,14 @@ class ChatViewModel(
         if (!hasUserToggledThinking) {
             _chatSessionDisableThinking.value = true
             _chatSessionThinkingEnabledOverride.value = false
+        }
+
+        // ★ Bug fix: セッションを作り直した / 切り替えた際に KV キャッシュをクリアして
+        //   前セッションの Thinking コンテキストが残るのを防ぐ。
+        //   （「セッションを作り直すと OFF にしても Thinking される」バグの修正）
+        if (previousSessionId != sessionId) {
+            runCatching { ModelManager.getInstance(appContext).clearKvCache() }
+                .onFailure { Log.w(TAG, "clearKvCache on session change failed", it) }
         }
 
         stopGenerationInternal()
@@ -711,9 +720,21 @@ class ChatViewModel(
         // 設定値のみ更新。モデルリロードは行わない。
         // 次のメッセージ送信時に新しい設定が自動的に適用される。
         Log.d(TAG, "setChatSessionDisableThinking: disabled=$disabled")
+        val previousDisabled = _chatSessionDisableThinking.value
+        val previousOverride = _chatSessionThinkingEnabledOverride.value
         hasUserToggledThinking = true
         _chatSessionDisableThinking.value = disabled
         _chatSessionThinkingEnabledOverride.value = !disabled
+        // ★ Qwen 等の `/think` `/no_think` directive はチャットテンプレ自体を切り替える効果を
+        //   持つため、KV キャッシュに前モードの状態が残っているとトグル直後の生成が崩壊する。
+        //   Thinking トグルが実際に切り替わったタイミングで KV キャッシュをクリアする。
+        val effectiveChanged = previousDisabled != disabled || previousOverride == disabled
+        if (effectiveChanged) {
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { ModelManager.getInstance(appContext).clearKvCache() }
+                    .onFailure { Log.w(TAG, "clearKvCache on thinking toggle failed", it) }
+            }
+        }
         viewModelScope.launch {
             _uiMessage.emit(if (disabled) "このチャットでシンキング: OFF" else "このチャットでシンキング: ON")
         }
@@ -2427,14 +2448,14 @@ class ChatViewModel(
         val base = settingsRepository.getInferenceConfigForModel(model, appContext)
         val disableThinking = _chatSessionDisableThinking.value
         val thinkingEnabledOverride = _chatSessionThinkingEnabledOverride.value
+        // ★ Bug fix: 以前は modelSupportsGemmaThinking() でしか override を受け付けないため、
+        //   Qwen 系 GGUF などで「このチャットで Thinking: ON」にしても enable_thinking が
+        //   反映されず、結果として `/no_think` directive のままユーザーには Thinking 表示だけ
+        //   ONになるという矛盾が発生していた。Thinking のオーバーライドはモデル種別に依らず
+        //   常に enableThinking を上書きする (チャットテンプレ側で `/think` `/no_think` を
+        //   正しく付け替える)。
         val result = when {
-            thinkingEnabledOverride -> {
-                if (settingsRepository.modelSupportsGemmaThinking(model, appContext)) {
-                    base.copy(enableThinking = true)
-                } else {
-                    base
-                }
-            }
+            thinkingEnabledOverride -> base.copy(enableThinking = true)
             disableThinking -> base.copy(enableThinking = false)
             else -> base
         }

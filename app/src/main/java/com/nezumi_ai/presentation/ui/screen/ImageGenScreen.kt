@@ -277,6 +277,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
         }
         
         FieldGroup("サイズ") {
+            // ★ 768x768 は LocalDream / ggml バックエンドが未対応のため UI から削除した。
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
                     .background(Color(0xFF2A2A2A)).padding(4.dp),
@@ -284,7 +285,6 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             ) {
                 SizeTab("256x256", sizePx == 256) { vm.setSize(256) }
                 SizeTab("512x512", sizePx == 512) { vm.setSize(512) }
-                SizeTab("768x768", sizePx == 768) { vm.setSize(768) }
             }
         }
         

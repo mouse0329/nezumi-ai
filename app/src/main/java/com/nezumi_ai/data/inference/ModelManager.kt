@@ -99,6 +99,16 @@ class ModelManager(
         return if (engine is GgufInferenceEngine) "GGUF" else "LiteRtLm"
     }
 
+    /**
+     * ★ もしロード済みの GGUF エンジンがあれば KV キャッシュをクリアする。
+     * Thinking トグルやセッション切り替え時に前コンテキストを消して
+     * Qwen 等の `/think` `/no_think` directive が正しく作用するようにする。
+     */
+    fun clearKvCache() {
+        runCatching { ggufEngine?.clearKvCacheIfLoaded() }
+            .onFailure { Log.w(TAG, "clearKvCache failed on GGUF engine", it) }
+    }
+
     private fun isCompiledModelInvokeFailure(t: Throwable): Boolean {
         var cur: Throwable? = t
         repeat(8) {
