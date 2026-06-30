@@ -10,6 +10,14 @@ object PromptBuilder {
     private const val QWEN_THINK_COMMAND = "/think"
     private const val QWEN_NO_THINK_COMMAND = "/no_think"
 
+    /**
+     * ★ Qwen3 公式 non-thinking jinja と同じ「空 <think></think>」プレフィル文字列。
+     * Thinking OFF のときに assistant ターン直後 (またはレンダー結果末尾) に注入することで、
+     * モデルが chat_template の関係で <think> を吐こうとするのを「もう思考は終わった」と
+     * 認識させて思考をスキップさせる。
+     */
+    private const val QWEN_EMPTY_THINK_PREFILL = "<think>\n\n</think>\n\n"
+
     enum class ThinkingPromptStyle {
         /**
          * Gemma 3 (litert / 旧 GGUF) 系: プロンプト最先頭に `<|think|>\n` を1度だけ置く。
