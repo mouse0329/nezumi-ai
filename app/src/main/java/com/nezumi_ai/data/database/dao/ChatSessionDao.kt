@@ -43,7 +43,18 @@ interface ChatSessionDao {
     
     @Query("SELECT COUNT(*) FROM chat_session")
     suspend fun getSessionCount(): Int
-    
-    @Query("DELETE FROM chat_session WHERE id IN (SELECT id FROM chat_session ORDER BY lastUpdated ASC LIMIT :limit)")
+
+    /**
+     * ピン留め・incognito を除いた「通常保存対象」セッション数を返す。
+     * Bug fix: 最大保存数はピン留め・incognito を除いたセッションに適用されるべき。
+     */
+    @Query("SELECT COUNT(*) FROM chat_session WHERE isIncognito = 0 AND isPinned = 0")
+    suspend fun getRegularSessionCount(): Int
+
+    /**
+     * 古い順のセッションを削除する。
+     * Bug fix: ピン留め・incognito を対象外とし、 lastUpdated 昇順で古いものから削除する。
+     */
+    @Query("DELETE FROM chat_session WHERE id IN (SELECT id FROM chat_session WHERE isIncognito = 0 AND isPinned = 0 ORDER BY lastUpdated ASC LIMIT :limit)")
     suspend fun deleteOldestSessions(limit: Int)
 }

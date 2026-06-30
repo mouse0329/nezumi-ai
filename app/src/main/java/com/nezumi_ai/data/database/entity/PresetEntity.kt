@@ -29,5 +29,18 @@ data class PresetEntity(
     @ColumnInfo(name = "is_locked")
     val isLocked: Boolean = false,
     @ColumnInfo(name = "tool_calling_enabled")
-    val toolCallingEnabled: Boolean = false
+    val toolCallingEnabled: Boolean = false,
+    /**
+     * プリセット一覧でのユーザー並び順・タグ付け用ソート順。
+     * 小さいほど上に表示される。高値デフォルトで「未設定」を示し、
+     * 未設定同士は従来と同じ created_at でソートされる。
+     */
+    @ColumnInfo(name = "sort_order")
+    val sortOrder: Long = Long.MAX_VALUE,
+    /**
+     * タグやグループ名を CSV で保持するシンプルな仕分け。
+     * ひとまず「名前検索 + 並び替え + タグフィルタ」のためのストレージ。
+     */
+    @ColumnInfo(name = "tags_csv")
+    val tagsCsv: String = ""
 )

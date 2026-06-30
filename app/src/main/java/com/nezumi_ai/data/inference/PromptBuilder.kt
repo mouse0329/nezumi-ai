@@ -227,11 +227,14 @@ object PromptBuilder {
         )
         return try {
             val rendered = PromptTemplateEngine.render(template, ctx)
-            // ★ Bug fix: Qwen OFF 時はレンダー結果末尾に「空 <think></think>」を追記して
-            //   思考を抑止する (カスタムテンプレがこれを扱える保証がないため)。
-            val qwenOffSuffix =
-                if (style == ThinkingPromptStyle.QWEN_COMMAND && !enableThinking) QWEN_EMPTY_THINK_PREFILL else ""
-            thinkingGlobalPrefix(style, enableThinking) + rendered + qwenOffSuffix
+            // Bug fix(#10): テンプレ末尾の assistant 開始部分と thinking prefill の衝突を防ぐため、
+            // 同じ prefill が rendered に既に含まれているかをチェックして二重追加を避ける。
+            // Qwen OFF 時の「空 <think></think>」、 ASSISTANT_TAG/GEMMA4_CHANNEL ON 時の <think>\n を
+            // この一本で一元管理する。
+            val prefill = assistantPrefillFor(style, enableThinking)
+            val needsSuffix = prefill.isNotEmpty() && !rendered.trimEnd().endsWith(prefill.trimEnd())
+            val suffix = if (needsSuffix) prefill else ""
+            thinkingGlobalPrefix(style, enableThinking) + rendered + suffix
         } catch (e: Exception) {
             // フォールバック: テンプレ崩壊時は ChatML で構築（最悪でもプロンプトが消えないようにする）
             buildForGgufChatMl(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)

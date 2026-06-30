@@ -67,6 +67,13 @@ class MessageAdapter(
     private val viewModelStoreOwner: ViewModelStoreOwner? = null
 ) : ListAdapter<MessageEntity, RecyclerView.ViewHolder>(MessageDiffCallback()) {
 
+    /**
+     * 生成中フラグ。true の間は「取り消しボタン」を非表示にする。
+     * Bug fix: 生成中に取り消しボタンが表示されると、推論中の KV キャッシュと
+     * メッセージストアの整合が崩れるため、UI 上で一切押させないようにする。
+     */
+    private var isGenerating: Boolean = false
+
     /** ユーザーが明示的に展開したメッセージ ID（生成中は常に自動展開） */
     private val thinkingExpandedByMessageId = mutableSetOf<Long>()
     /**
@@ -83,6 +90,17 @@ class MessageAdapter(
     private enum class ContentRenderMode {
         Placeholder,
         Markdown
+    }
+
+    /**
+     * 生成状態をセットし、UI を再描画して取り消しボタンの表示/非表示を切り替える。
+     */
+    fun setIsGenerating(generating: Boolean) {
+        if (isGenerating == generating) return
+        isGenerating = generating
+        // ユーザーメッセージの取り消しボタン表示を全体で再評価させるため、
+        // リスト全体を invalidate する。件数は一般的に多くないため cost は軽い。
+        notifyDataSetChanged()
     }
 
     fun setSpeakingMessageId(messageId: Long?) {
@@ -196,7 +214,7 @@ class MessageAdapter(
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
         return if (viewType == VIEW_TYPE_USER) {
             val binding = ItemMessageUserBinding.inflate(LayoutInflater.from(parent.context), parent, false)
-            UserMessageViewHolder(binding, onUserPromptRevoke)
+            UserMessageViewHolder(binding, onUserPromptRevoke) { isGenerating }
         } else {
             val binding = ItemMessageAiBinding.inflate(LayoutInflater.from(parent.context), parent, false)
             AiMessageViewHolder(binding, onAiMessageLayoutChanged, lifecycleOwner, viewModelStoreOwner)
@@ -227,7 +245,8 @@ class MessageAdapter(
     
     class UserMessageViewHolder(
         private val binding: ItemMessageUserBinding,
-        private val onUserPromptRevoke: (MessageEntity) -> Unit
+        private val onUserPromptRevoke: (MessageEntity) -> Unit,
+        private val isGeneratingProvider: () -> Boolean = { false }
     ) :
         RecyclerView.ViewHolder(binding.root) {
         
@@ -288,7 +307,13 @@ class MessageAdapter(
                 copyMessageButton.setOnClickListener {
                     copyAllToClipboard(binding.root.context, message.content)
                 }
+                // Bug fix: 生成中に取り消しボタンが見えてしまう不具合への対処。
+                // bind のたびにジェネレート状態を参照して可視性を制御する。
+                val generating = isGeneratingProvider()
+                revokePromptButton.visibility = if (generating) View.GONE else View.VISIBLE
+                revokePromptButton.isEnabled = !generating
                 revokePromptButton.setOnClickListener {
+                    if (isGeneratingProvider()) return@setOnClickListener
                     onUserPromptRevoke(message)
                 }
             }

@@ -22,6 +22,39 @@ class PresetRepository(
 
     suspend fun getPreset(id: String): PresetEntity? = dao.getById(id)
 
+    /**
+     * プリセット仕分け・並び替え用の追加 API。
+     *
+     * - [reorder]は UI 上でドラッグ&ドロップによって得た並び順を、
+     *   sort_order を一括更新して永続化する。使われないプリセットはそのまま。
+     * - [setTags] はジャンル・タグを保存するための API。
+     */
+    suspend fun reorder(orderedIds: List<String>) {
+        val now = System.currentTimeMillis()
+        // 連番で sort_order を振る（ステップ 1）。難しい計算は不要。
+        orderedIds.forEachIndexed { index, id ->
+            dao.updateSortOrder(id = id, sortOrder = (index + 1).toLong(), updatedAt = now)
+        }
+    }
+
+    suspend fun setTags(id: String, tags: List<String>) {
+        val csv = tags.map { it.trim() }.filter { it.isNotEmpty() }.joinToString(",")
+        dao.updateTagsCsv(id = id, tagsCsv = csv, updatedAt = System.currentTimeMillis())
+    }
+
+    /**
+     * 名前検索・タグ検索を LIKE クエリで行う。 query が空のときは observePresets() と同じ振る舞い。
+     */
+    fun searchPresets(query: String): Flow<List<PresetEntity>> {
+        val q = query.trim()
+        return if (q.isEmpty()) {
+            observePresets()
+        } else {
+            val pattern = "%${q.replace("%", "\\%").replace("_", "\\_")}%"
+            dao.searchByNameOrTag(pattern).map { presets -> presets.filter(::shouldShowPreset) }
+        }
+    }
+
     suspend fun createPreset(preset: PresetEntity) {
         dao.insert(preset.copy(updatedAt = System.currentTimeMillis()))
     }

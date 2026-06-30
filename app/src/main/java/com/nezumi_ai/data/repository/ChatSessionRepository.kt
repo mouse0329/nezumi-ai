@@ -24,7 +24,13 @@ class ChatSessionRepository(
             selectedModel = "E2B",
             isIncognito = isIncognito
         )
-        return dao.insert(session)
+        val newId = dao.insert(session)
+        // Bug fix: 新規セッション作成時に最大保存数を強制して古いセッションを古い順に削除させる。
+        // 作成したばかりのセッションを誤って消さないよう、 incognito 以外のときだけ実行する。
+        if (!isIncognito) {
+            runCatching { settingsRepository?.enforceChatHistoryLimit() }
+        }
+        return newId
     }
     
     suspend fun updateSessionLastUpdated(sessionId: Long) {

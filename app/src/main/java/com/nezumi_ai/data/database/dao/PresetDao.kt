@@ -23,11 +23,28 @@ interface PresetDao {
     @Delete
     suspend fun delete(preset: PresetEntity)
 
-    @Query("SELECT * FROM preset ORDER BY is_default DESC, is_locked ASC, created_at ASC")
+    /**
+     * 並び順: デフォルトプリセットを先頭に、 sort_order 昇順、
+     * 不明ときは created_at 昇順を使う。ジャンル仕分け・タグ付けをしたときに
+     * 「意図した順番」で表示されるように、従来の is_locked より sort_order を優先する。
+     */
+    @Query("SELECT * FROM preset ORDER BY is_default DESC, sort_order ASC, is_locked ASC, created_at ASC")
     fun observeAll(): Flow<List<PresetEntity>>
 
-    @Query("SELECT * FROM preset ORDER BY is_default DESC, is_locked ASC, created_at ASC")
+    @Query("SELECT * FROM preset ORDER BY is_default DESC, sort_order ASC, is_locked ASC, created_at ASC")
     suspend fun getAll(): List<PresetEntity>
+
+    /** 名前検索・タグフィルタ用（UI 側で差分ストリームを処理するために Flow も提供）。 */
+    @Query("SELECT * FROM preset WHERE name LIKE :pattern OR tags_csv LIKE :pattern ORDER BY is_default DESC, sort_order ASC, is_locked ASC, created_at ASC")
+    fun searchByNameOrTag(pattern: String): Flow<List<PresetEntity>>
+
+    /** 並び替え UI 向けに sort_order を一括更新するための軽量クエリ。 */
+    @Query("UPDATE preset SET sort_order = :sortOrder, updated_at = :updatedAt WHERE id = :id")
+    suspend fun updateSortOrder(id: String, sortOrder: Long, updatedAt: Long)
+
+    /** タグ保存用の軽量クエリ。 */
+    @Query("UPDATE preset SET tags_csv = :tagsCsv, updated_at = :updatedAt WHERE id = :id")
+    suspend fun updateTagsCsv(id: String, tagsCsv: String, updatedAt: Long)
 
     @Query("SELECT * FROM preset WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): PresetEntity?
