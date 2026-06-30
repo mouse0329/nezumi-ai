@@ -104,6 +104,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.platform.LocalUriHandler
 import com.nezumi_ai.data.inference.PromptTemplateEngine
 import com.nezumi_ai.data.inference.PromptTemplateStore
+import com.nezumi_ai.utils.GgufMetadataReader
 import com.nezumi_ai.utils.ImportedModelCapabilities
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import com.nezumi_ai.voicevox.VoicevoxManager
@@ -243,6 +244,7 @@ open class ModelSettingsFragment : Fragment() {
     private var selectedTab by mutableStateOf(ModelType.LLM)
 
     private val modelStates = mutableStateMapOf<ModelFileManager.LocalModel, ModelUiState>()
+    private val ggufCardMetadataStates = mutableStateMapOf<String, GgufCardMetadataUiState>()
 
     private val authLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -2583,6 +2585,31 @@ open class ModelSettingsFragment : Fragment() {
         onToggle: () -> Unit,
         onDelete: () -> Unit,
     ) {
+        val isGguf = model.path.lowercase().endsWith(".gguf")
+        val ggufMetadataState = ggufCardMetadataStates[model.path]
+        LaunchedEffect(isExpanded, model.path) {
+            if (isExpanded && isGguf && ggufCardMetadataStates[model.path] == null) {
+                ggufCardMetadataStates[model.path] = GgufCardMetadataUiState(loading = true)
+                val nextState = withContext(Dispatchers.IO) {
+                    runCatching {
+                        GgufMetadataReader.readSummary(File(model.path))
+                    }.fold(
+                        onSuccess = {
+                            GgufCardMetadataUiState(
+                                architecture = it.architecture,
+                                parameterCount = it.parameterCount,
+                            )
+                        },
+                        onFailure = {
+                            GgufCardMetadataUiState(
+                                errorMessage = it.message ?: "GGUF メタデータを読み取れませんでした"
+                            )
+                        }
+                    )
+                }
+                ggufCardMetadataStates[model.path] = nextState
+            }
+        }
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2662,6 +2689,45 @@ open class ModelSettingsFragment : Fragment() {
                             style = MaterialTheme.typography.labelSmall,
                             color = colorResource(id = R.color.text_secondary)
                         )
+                    }
+                    if (isGguf) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(colorResource(id = R.color.bg_session_list))
+                                .padding(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            when {
+                                ggufMetadataState?.loading == true -> {
+                                    Text(
+                                        text = "GGUF メタデータを読み込み中...",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorResource(id = R.color.text_secondary)
+                                    )
+                                }
+                                ggufMetadataState?.errorMessage != null -> {
+                                    Text(
+                                        text = "GGUF メタデータ: ${ggufMetadataState.errorMessage}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorResource(id = R.color.text_secondary)
+                                    )
+                                }
+                                ggufMetadataState != null -> {
+                                    Text(
+                                        text = "アーキテクチャ: ${ggufMetadataState.architecture ?: "不明"}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorResource(id = R.color.text_primary)
+                                    )
+                                    Text(
+                                        text = "パラメータ数: ${formatParameterCount(ggufMetadataState.parameterCount)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorResource(id = R.color.text_primary)
+                                    )
+                                }
+                            }
+                        }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(text = "追加済みモデル", style = MaterialTheme.typography.bodySmall, color = colorResource(id = R.color.text_secondary))
@@ -2902,6 +2968,11 @@ open class ModelSettingsFragment : Fragment() {
         Log.d("ModelSettings", "refreshImportedTasks: called")
         importedTasks = ModelFileManager.listImportedTaskModels(requireContext())
         importedMmprojTasks = ModelFileManager.listImportedMmprojModels(requireContext())
+        val validImportedPaths = importedTasks.mapTo(mutableSetOf()) { it.path }
+        ggufCardMetadataStates.keys
+            .toList()
+            .filter { it !in validImportedPaths }
+            .forEach { ggufCardMetadataStates.remove(it) }
         refreshSdModels()
         Log.d("ModelSettings", "refreshImportedTasks: completed, sdModels.size=${sdModels.size}")
     }
@@ -3853,6 +3924,23 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
+    private fun formatParameterCount(parameterCount: Long?): String {
+        val count = parameterCount ?: return "不明"
+        if (count <= 0L) return "不明"
+        val (divisor, suffix) = when {
+            count >= 1_000_000_000_000L -> 1_000_000_000_000.0 to "T"
+            count >= 1_000_000_000L -> 1_000_000_000.0 to "B"
+            count >= 1_000_000L -> 1_000_000.0 to "M"
+            count >= 1_000L -> 1_000.0 to "K"
+            else -> 1.0 to ""
+        }
+        return if (suffix.isEmpty()) {
+            String.format(Locale.US, "%,d", count)
+        } else {
+            String.format(Locale.US, "%.2f%s (%,d)", count / divisor, suffix, count)
+        }
+    }
+
     private fun titleFor(model: ModelFileManager.LocalModel): String {
         return when (model) {
             ModelFileManager.LocalModel.GEMMA3N_2B -> "Gemma 3n E2B"
@@ -3876,6 +3964,13 @@ open class ModelSettingsFragment : Fragment() {
         authService = null
         super.onDestroyView()
     }
+
+    private data class GgufCardMetadataUiState(
+        val loading: Boolean = false,
+        val architecture: String? = null,
+        val parameterCount: Long? = null,
+        val errorMessage: String? = null,
+    )
 
     private class ModelUiState(val title: String) {
         var status by mutableStateOf("未ダウンロード")
