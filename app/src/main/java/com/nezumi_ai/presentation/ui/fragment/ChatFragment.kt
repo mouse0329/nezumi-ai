@@ -658,6 +658,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             viewLifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.isLoading.collect { isLoading ->
                     isGenerating = isLoading
+                    // ユーザーメッセージの取り消しボタンを生成中は隠す。
+                    // Bug fix: 生成中に取り消しして KV キャッシュと不整合を起こさないため。
+                    adapter.setIsGenerating(isLoading)
                     renderSendButtonState()
                     if (isLoading) {
                         userScrolledAwayDuringGeneration = false

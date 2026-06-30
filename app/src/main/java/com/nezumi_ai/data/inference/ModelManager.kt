@@ -41,6 +41,14 @@ class ModelManager(
     
     // Phase 15: LiteRtLm と GGUF エンジンの両方を搭載（モデルごとに切替）
     private val liteRtEngine: AIInferenceEngine = LiteRtLmEngine(context)
+
+    /**
+     * Bug fix(#5): LiteRT エンジンへ「このセッションは media を含む」と伝えるための
+     * アクセサ。 LiteRtLmEngine 型を露出させ、可変フラグの設定をしてもらう。
+     * GGUF モードやエンジン未初期化時は null。
+     */
+    fun liteRtEngineForMultiTurnMedia(): LiteRtLmEngine? =
+        liteRtEngine as? LiteRtLmEngine
     /** GGUF は初回利用時まで遅延初期化し、nezumi_rnllama_jni を起動直後にロードしない（SD ggml と共存しやすくする） */
     private var ggufEngine: GgufInferenceEngine? = null
 

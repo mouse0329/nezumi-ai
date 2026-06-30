@@ -764,13 +764,16 @@ class SettingsRepository(
                 lastModified = System.currentTimeMillis()
             )
         )
+        // Bug fix: 上限を変更した直後に最新の上限で古いセッションを即時削除させる。
+        runCatching { enforceChatHistoryLimit() }
     }
 
     suspend fun enforceChatHistoryLimit() {
         val limit = getChatHistoryLimit()
         if (limit <= 0) return // -1 means unlimited
-        
-        val currentCount = chatSessionDao.getSessionCount()
+
+        // Bug fix: ピン留め・incognito を除いた「保存対象」セッション数で上限を判定する。
+        val currentCount = chatSessionDao.getRegularSessionCount()
         if (currentCount > limit) {
             val toDelete = currentCount - limit
             chatSessionDao.deleteOldestSessions(toDelete)

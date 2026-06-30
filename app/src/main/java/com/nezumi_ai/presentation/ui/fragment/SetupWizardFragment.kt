@@ -904,6 +904,21 @@ class SetupWizardFragment : Fragment() {
                         settingsRepository.updateModel(modelToApply)
                     }
 
+                    // Bug fix: static-embedding-japanese をセットアップ段階で強制ダウンロードさせる。
+                    // 検索機能やメモリ機能で embedding ファイルが必須のため、初期セットアップ時点で確保しておく。
+                    // 失敗してもセットアップ自体は進める（オフライン起動したいユーザーもいるため）。
+                    runCatching {
+                        com.nezumi_ai.data.memory.MemoryTextEmbedder.ensureEmbeddingFilesDownloaded(
+                            requireContext().applicationContext
+                        )
+                    }.onFailure {
+                        android.util.Log.w(
+                            "SetupWizardFragment",
+                            "Embedding files download failed during setup; will retry on first use",
+                            it
+                        )
+                    }
+
                     PreferencesHelper.markInitialSetupCompleted(requireContext())
                     val sessionId = sessionRepository.createSession("新しいチャット")
                     if (!modelToApply.isNullOrBlank()) {

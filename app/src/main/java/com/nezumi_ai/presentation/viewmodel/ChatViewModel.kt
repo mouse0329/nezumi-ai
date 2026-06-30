@@ -1109,6 +1109,9 @@ class ChatViewModel(
         var streamingMessageId: Long? = null
         var currentHasMediaInput = false
         var currentEngineModelName: String? = null
+        // Bug fix(#5): 過去ターンの media を LiteRT に再添付する際に生成する Bitmap を保持し、
+        // finally で確実に recycle するため try の外側にスコープを出しておく。
+        val pastHistoryBitmapsToRecycle = mutableListOf<Bitmap>()
         val aiStartMs = System.currentTimeMillis()  // Phase 11: 全体ロード時間を計測開始
         try {
             // Acquire WakeLock to prevent screen sleep during generation
@@ -1273,16 +1276,77 @@ class ChatViewModel(
 
             // GGUF マルチモーダル: JNI が mmproj 未指定時もベース GGUF から clip/mtmd を初期化する（単一ファイル統合型）
 
+            // Bug fix(#5): LiteRT-LM では会話の KV キャッシュを再利用するため、以前のターンで渡した
+            // 画像/音声をモデルが参照できない。以前ターンの media を送信履歴から採集し、今ターンの
+            // images/audioClips の先頭に追加することで、マルチターンでも画像/音声を参照できるようにする。
+            // GGUF エンジンは現状 mtmd 側の仕様上マルチターン参照をサポートしていないため、
+            // LiteRT エンジン使用時のみ過去 media を取り込む。
+            val isLiteRtEngine = !isGgufEngineModel(engineModelName)
+            val combinedImages = mutableListOf<Bitmap>().also { it.addAll(images) }
+            val combinedAudio = mutableListOf<ByteArray>().also { it.addAll(audioClips) }
+            if (isLiteRtEngine) {
+                runCatching {
+                    val historyMessages = messageRepository.getMessagesForSessionOnce(sessionId)
+                    // 今ターンの user メッセージを除外するため currentTurnMessageId より古いものだけを対象にする。
+                    val pastMessages = if (currentTurnMessageId != null) {
+                        historyMessages.filter { it.id != currentTurnMessageId && it.timestamp <
+                            (historyMessages.firstOrNull { m -> m.id == currentTurnMessageId }?.timestamp ?: Long.MAX_VALUE) }
+                    } else {
+                        historyMessages.dropLast(1)
+                    }
+                    // 過去の user メッセージの画像/音声を古い順に読み込んで先頭にプレフィックスする。
+                    val historicalImages = mutableListOf<Bitmap>()
+                    val historicalAudio = mutableListOf<ByteArray>()
+                    for (m in pastMessages.filter { it.role == "user" }) {
+                        m.imageUri
+                            ?.split(",")
+                            ?.map { it.trim() }
+                            ?.filter { it.isNotEmpty() }
+                            ?.forEach { uriStr ->
+                                val uri = MessageMediaStore.toUri(uriStr) ?: return@forEach
+                                val bmp = loadBitmapFromUri(uri) ?: return@forEach
+                                val scaled = scaleBitmapTo1024(bmp)
+                                if (scaled !== bmp) bmp.recycle()
+                                historicalImages.add(scaled)
+                                pastHistoryBitmapsToRecycle.add(scaled)
+                            }
+                        m.audioUri?.let { uriStr ->
+                            val uri = MessageMediaStore.toUri(uriStr) ?: return@let
+                            val bytes = loadAudioBytesFromUri(uri) ?: return@let
+                            historicalAudio.add(bytes)
+                        }
+                    }
+                    if (historicalImages.isNotEmpty() || historicalAudio.isNotEmpty()) {
+                        combinedImages.addAll(0, historicalImages)
+                        combinedAudio.addAll(0, historicalAudio)
+                        Log.d(
+                            TAG,
+                            "LiteRT multi-turn media replay: addedImages=${historicalImages.size} addedAudio=${historicalAudio.size}"
+                        )
+                    }
+                }.onFailure {
+                    Log.w(TAG, "Failed to load past-turn media for LiteRT replay", it)
+                }
+            }
+            val effectiveHasMediaInput = combinedImages.isNotEmpty() || combinedAudio.isNotEmpty()
+            if (effectiveHasMediaInput && isLiteRtEngine) {
+                // LiteRT 側に「このセッションで media を取り扱う」と伝え、 KV キャッシュ再利用ではなく
+                // 毎ターン conversation を作り直すようにさせる。
+                runCatching {
+                    requireModelManager().liteRtEngineForMultiTurnMedia()?.markSessionHasMedia(sessionId)
+                }
+            }
+
             // ストリーミング推論を実行（マルチモーダル対応）
             val aiResponseFlow: Flow<String> = withContext(Dispatchers.IO) {
-                if (hasMediaInput) {
+                if (effectiveHasMediaInput) {
                     // マルチモーダル推論
-                    Log.d(TAG, "Using multimodal inference: ${images.size} images, ${audioClips.size} audio clips")
+                    Log.d(TAG, "Using multimodal inference: ${combinedImages.size} images, ${combinedAudio.size} audio clips (incl. past turns)")
                     manager.runInferenceWithMedia(
                         sessionId = sessionId,
                         prompt = promptForModel,
-                        images = images,
-                        audioClips = audioClips,
+                        images = combinedImages,
+                        audioClips = combinedAudio,
                         config = config
                     )
                 } else {
@@ -1516,7 +1580,12 @@ class ChatViewModel(
                                                 if (merged != currentContent && merged.length >= currentContent.length) {
                                                     answerBuilder.clear()
                                                     answerBuilder.append(merged)
-                                                    tokenCount += TextTokenEstimator.estimateOutputTokens(seg)
+                                                    // Bug fix(#6): 以前は seg 全体を estimateOutputTokens に渡していたため、
+                                                    // LiteRT から「累積テキスト」が送られたケースで token 数が過大計上されていた。
+                                                    // merged と currentContent の実際の差分文字列を使ってトークン数を加算し、
+                                                    // TPS 表示を実態に一致させる。
+                                                    val deltaText = merged.substring(currentContent.length)
+                                                    tokenCount += TextTokenEstimator.estimateOutputTokens(deltaText)
                                                     if (tokenCount >= 10f && firstOutputAtMs != null) {
                                                         val elapsed = SystemClock.elapsedRealtime() - firstOutputAtMs
                                                         if (elapsed > 0) {
@@ -1990,6 +2059,14 @@ class ChatViewModel(
                         Log.e(TAG, "Failed to clear streaming flag on message $streamingMessageId", t)
                     }
                 }
+
+                // Bug fix(#5): 過去ターンの画像をロードした Bitmap を recycle する。
+                pastHistoryBitmapsToRecycle.forEach { bmp ->
+                    if (!bmp.isRecycled) {
+                        runCatching { bmp.recycle() }
+                    }
+                }
+                pastHistoryBitmapsToRecycle.clear()
 
                 // Gallery パターン: 全パスで _isLoading を false にする
                 Log.d(TAG, "Generation concluded, setting isLoading=false")

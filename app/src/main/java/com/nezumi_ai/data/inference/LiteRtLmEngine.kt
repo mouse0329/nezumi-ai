@@ -254,6 +254,22 @@ class LiteRtLmEngine(
      * @param config 推論設定（サンプラーパラメータなど）
      * @return Conversation インスタンス
      */
+    /**
+     * Bug fix(#5): マルチモーダル入力が含まれたセッションでは KV キャッシュを使い回すと
+     * 過去ターンの画像/音声が参照できなくなる。「一度でも media を受け取ったセッション」では
+     * conversation を毎ターン作り直す。 ChatViewModel 側から過去の media を再添付して
+     * 多ターン参照できるようにする。
+     */
+    private val sessionsWithMediaHistory = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
+
+    fun markSessionHasMedia(sessionId: Long) {
+        sessionsWithMediaHistory.add(sessionId)
+    }
+
+    fun clearSessionMediaHistory(sessionId: Long) {
+        sessionsWithMediaHistory.remove(sessionId)
+    }
+
     private suspend fun getOrCreateConversation(
         sessionId: Long,
         eng: Engine,
@@ -265,6 +281,8 @@ class LiteRtLmEngine(
             normalized.enableThinking,
             normalized.enableToolCalling
         )
+        // Bug fix(#5): media を含むセッションでは KV キャッシュ再利用をやめる。
+        val mustRecreateForMedia = sessionsWithMediaHistory.contains(sessionId)
         var convToAttach: Conversation? = null
         var created = false
         val maxAttempts = 6
@@ -286,7 +304,7 @@ class LiteRtLmEngine(
 
             activeConversationLock.withLock {
                 // セッションIDまたはThinking設定が変わった場合は新しいConversationを作成
-                if (activeLiteRtConversation == null || activeLiteRtConversationKey != requestKey) {
+                if (activeLiteRtConversation == null || activeLiteRtConversationKey != requestKey || mustRecreateForMedia) {
                     val samplerConfig = if (normalized.backendType.uppercase() == "NPU") {
                         null
                     } else {
@@ -1156,8 +1174,15 @@ class LiteRtLmEngine(
                                     Log.d(TAG, "TTFT: ${ttft}ms session=$sessionId")
                                 }
                                 
-                                // トークン数カウント
-                                tokenCount += TextTokenEstimator.estimateOutputTokens(text)
+                                // Bug fix(#6): LiteRT から送られる text は「逐次更新されるメッセージ全文」であり\u3001
+                                // 単純に加算すると token 数が雪ダマ式に過大計上されてしまう。
+                                // 累積の answerAccum との差分を取って実際のデルタテキストを求め\u3001その分だけ token 化して加算する。
+                                val deltaText = if (text.startsWith(answerAccum.toString())) {
+                                    text.substring(answerAccum.length)
+                                } else text
+                                if (deltaText.isNotEmpty()) {
+                                    tokenCount += TextTokenEstimator.estimateOutputTokens(deltaText)
+                                }
                                 
                                 // TPS ログ
                                 if (tokenCount.toInt() % 10 == 0) {

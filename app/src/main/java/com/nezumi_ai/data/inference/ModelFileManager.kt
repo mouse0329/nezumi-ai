@@ -388,9 +388,15 @@ object ModelFileManager {
             val normalized = modelId.trim()
             if (normalized.isBlank()) return@runCatching emptyList()
 
+            // Bug fix: モデル管理画面を開くたびに HF へ API コールしていたため、
+            // 詳細表示までにラグが出ていた。レスポンス本文をキャッシュして
+            // 2 回目以降はローカルで即時返すようにする。
             val repoPath = encodeRepoPath(normalized)
             val url = "https://huggingface.co/api/models/$repoPath/tree/main?recursive=1&expand=1"
-            val response = httpGetText(context, url)
+            val cacheKey = "tree:$normalized"
+            val response = com.nezumi_ai.utils.HfMetadataCache.getOrLoad(context, cacheKey) {
+                httpGetText(context, url)
+            }
             val siblings = JSONArray(response)
             buildList {
                 for (i in 0 until siblings.length()) {
@@ -422,13 +428,18 @@ object ModelFileManager {
         runCatching {
             val normalized = modelId.trim()
             if (normalized.isBlank()) return@runCatching ""
+            // Bug fix: README もモデル詳細を開くたび取得していたものをキャッシュさせる。
+            val cacheKey = "readme:$normalized"
+            com.nezumi_ai.utils.HfMetadataCache.get(context, cacheKey)?.let { return@runCatching it }
             val repoPath = encodeRepoPath(normalized)
             val candidates = listOf("README.md", "README")
             var lastException: Exception? = null
             for (candidate in candidates) {
                 try {
                     val url = "https://huggingface.co/$repoPath/raw/main/$candidate"
-                    return@runCatching httpGetText(context, url)
+                    val body = httpGetText(context, url)
+                    com.nezumi_ai.utils.HfMetadataCache.put(context, cacheKey, body)
+                    return@runCatching body
                 } catch (e: Exception) {
                     lastException = e
                 }

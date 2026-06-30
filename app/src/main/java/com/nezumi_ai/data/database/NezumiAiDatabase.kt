@@ -32,7 +32,7 @@ import com.nezumi_ai.data.database.entity.SettingsEntity
         MemoryEntity::class,
         MemorySessionEntity::class
     ],
-    version = 25,
+    version = 26,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
@@ -57,7 +57,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                     NezumiAiDatabase::class.java,
                     "nezumi_ai.db"
                 )
-                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25)
+                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26)
                     // 開発中: スキーマ不一致時は再作成して起動クラッシュを回避
                     .fallbackToDestructiveMigration()
                     .build()
@@ -100,6 +100,21 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                 )
                 database.execSQL(
                     "UPDATE preset SET tool_calling_enabled = 1 WHERE id = 'default_nezumi_ai'"
+                )
+            }
+        }
+
+        /**
+         * Bug fix(#7): プリセットに sort_order / tags_csv カラムを追加し、
+         * 「並び替え・タグフィルタ・名前検索」を DB レベルでサポートする。
+         */
+        private val MIGRATION_25_26 = object : androidx.room.migration.Migration(25, 26) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE preset ADD COLUMN sort_order INTEGER NOT NULL DEFAULT " + Long.MAX_VALUE.toString()
+                )
+                database.execSQL(
+                    "ALTER TABLE preset ADD COLUMN tags_csv TEXT NOT NULL DEFAULT ''"
                 )
             }
         }

@@ -508,9 +508,14 @@ function addMessage(role, text, stats = null) {
 
   if (role === 'user') {
     const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'msg-action-btn';
+    cancelBtn.className = 'msg-action-btn revoke-prompt-btn';
     cancelBtn.textContent = '取り消し';
     cancelBtn.addEventListener('click', () => removeLastUserMessage(row));
+    // 生成中は取り消しボタンを非表示にする（bug fix: 生成中に取り消すと
+    // 推論との整合が崩れるため、UI 上でも操作させない）。
+    if (state.isGenerating) {
+      cancelBtn.style.display = 'none';
+    }
     actions.appendChild(cancelBtn);
   }
 
@@ -538,6 +543,14 @@ function removeLastUserMessage(row) {
   if (idx !== -1) state.messages.splice(idx, 1);
   row.remove();
   if (state.messages.length === 0) showEmptyState();
+}
+
+// ===== 生成状態に応じて取り消しボタンを表示/非表示 =====
+function updateRevokeButtonsVisibility() {
+  const buttons = document.querySelectorAll('.revoke-prompt-btn');
+  buttons.forEach(btn => {
+    btn.style.display = state.isGenerating ? 'none' : '';
+  });
 }
 
 // ===== タイピングインジケーター =====
@@ -688,6 +701,7 @@ async function send() {
   resizeTextarea();
   state.isGenerating = true;
   setSendBtnState(false);
+  updateRevokeButtonsVisibility();
 
   // UIにユーザーバブルを表示（state.messagesへの追加はinference.generate呼び出し後）
   hideEmptyState();
@@ -749,6 +763,7 @@ async function send() {
   } finally {
     state.isGenerating = false;
     setSendBtnState(true);
+    updateRevokeButtonsVisibility();
   }
 }
 
@@ -796,6 +811,7 @@ function setSendBtnState(enabled) {
       hideTyping();
       state.isGenerating = false;
       setSendBtnState(true);
+      updateRevokeButtonsVisibility();
     };
   }
 }
