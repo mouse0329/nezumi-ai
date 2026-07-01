@@ -154,6 +154,23 @@ open class ModelSettingsFragment : Fragment() {
     private val imageModelSucceededWorkIds = mutableSetOf<java.util.UUID>()
     private var importedTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
     private var importedMmprojTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
+
+    // ★ ローカルインポートモデルの「整理」UI 状態
+    //   - 検索欄
+    //   - 並び替えキー（名前 / 更新 / サイズ）
+    //   - 昇順 / 降順
+    //   これらは importedTasks が空かどうかに関係なく常表示し、
+    //   importedTasks が 0 件の場合も「検索・ソートの位置」を見えるようにする。
+    private var importedSearchQuery by mutableStateOf("")
+    private var importedSortKey by mutableStateOf(ImportedSortKey.NAME)
+    private var importedSortDescending by mutableStateOf(false)
+    private var importedSortMenuExpanded by mutableStateOf(false)
+
+    private enum class ImportedSortKey(val label: String) {
+        NAME("名前順"),
+        UPDATED("更新順"),
+        SIZE("サイズ順")
+    }
     private lateinit var presetRepository: PresetRepository
     private var isImportingModel by mutableStateOf(false)
     private var modelSettingsDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
@@ -361,6 +378,12 @@ open class ModelSettingsFragment : Fragment() {
             return
         }
 
+        val displayedImportedTasks = remember(
+            importedTasks, importedSearchQuery, importedSortKey, importedSortDescending
+        ) {
+            applyImportedModelFilters(importedTasks)
+        }
+
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -432,17 +455,41 @@ open class ModelSettingsFragment : Fragment() {
                         }
                     }
                     item { EmbeddingModelsCard() }
-                    if (importedTasks.isNotEmpty()) {
+                    // ★ 「カスタムモデル」見出しと整理 UI（検索 / 並び替え）を、
+                    //   importedTasks が 0 件でも常に表示される位置に出す。
+                    //   以前は if (importedTasks.isNotEmpty()) { … } の中に入れていたため、
+                    //   件数が 0 だと「見えない」状態になっていた。
+                    item {
+                        Text(
+                            text = "カスタムモデル",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colorResource(id = R.color.text_secondary),
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(start = 4.dp, bottom = 4.dp, top = 12.dp)
+                        )
+                    }
+                    item { ImportedModelsFilterBar() }
+                    
+                    if (importedTasks.isEmpty()) {
                         item {
                             Text(
-                                text = "カスタムモデル",
-                                style = MaterialTheme.typography.labelSmall,
+                                text = "カスタムモデルはまだインポートされていません。",
+                                style = MaterialTheme.typography.bodySmall,
                                 color = colorResource(id = R.color.text_secondary),
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = 8.dp)
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
                             )
                         }
-                        items(importedTasks) { model ->
+                    } else if (displayedImportedTasks.isEmpty()) {
+                        item {
+                            Text(
+                                text = "検索条件に一致するカスタムモデルがありません。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorResource(id = R.color.text_secondary),
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+                            )
+                        }
+                    } else {
+                        items(displayedImportedTasks) { model ->
                             val modelKey = "imported_${model.path}"
                             val isExpanded = expandedModelKey == modelKey
                             ImportedModelAccordionItem(
@@ -4232,5 +4279,87 @@ open class ModelSettingsFragment : Fragment() {
                 }
             }
         }
+    }
+
+    /**
+     * ★ ローカルインポートモデルの「検索＋並び替え」バー。
+     *
+     * importedTasks が 0 件のときも表示されるように、表示条件不要で常設。
+     */
+    @Composable
+    private fun ImportedModelsFilterBar() {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = importedSearchQuery,
+                onValueChange = { importedSearchQuery = it },
+                label = { Text("カスタムモデルを検索") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                trailingIcon = {
+                    if (importedSearchQuery.isNotEmpty()) {
+                        IconButton(onClick = { importedSearchQuery = "" }) {
+                            Icon(Icons.Filled.Close, contentDescription = "クリア")
+                        }
+                    }
+                }
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        // 名前順 → 更新順 → サイズ順 をトグル循環
+                        importedSortKey = when (importedSortKey) {
+                            ImportedSortKey.NAME -> ImportedSortKey.UPDATED
+                            ImportedSortKey.UPDATED -> ImportedSortKey.SIZE
+                            ImportedSortKey.SIZE -> ImportedSortKey.NAME
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("並び替え: ${importedSortKey.label}")
+                }
+                OutlinedButton(
+                    onClick = { importedSortDescending = !importedSortDescending }
+                ) {
+                    Text(if (importedSortDescending) "降順" else "昇順")
+                }
+            }
+        }
+    }
+
+    /**
+     * ★ importedTasks に「検索クエリ」と「並び替え」を適用して返す。
+     *
+     * - 検索: shortDisplayName / fileNameStem / hfRepoQualifier に部分一致（大文字小文字無視）
+     * - 並び替え: NAME / UPDATED (lastModified) / SIZE (length) × 昇順 / 降順
+     */
+    private fun applyImportedModelFilters(
+        tasks: List<ModelFileManager.ImportedTaskModel>
+    ): List<ModelFileManager.ImportedTaskModel> {
+        val q = importedSearchQuery.trim()
+        val filtered = if (q.isEmpty()) {
+            tasks
+        } else {
+            tasks.filter { m ->
+                m.shortDisplayName.contains(q, ignoreCase = true) ||
+                    m.fileNameStem.contains(q, ignoreCase = true) ||
+                    (m.hfRepoQualifier?.contains(q, ignoreCase = true) == true)
+            }
+        }
+        val comparator: Comparator<ModelFileManager.ImportedTaskModel> = when (importedSortKey) {
+            ImportedSortKey.NAME -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.shortDisplayName }
+            ImportedSortKey.UPDATED -> compareBy { runCatching { java.io.File(it.path).lastModified() }.getOrDefault(0L) }
+            ImportedSortKey.SIZE -> compareBy { runCatching { java.io.File(it.path).length() }.getOrDefault(0L) }
+        }
+        val sorted = filtered.sortedWith(comparator)
+        return if (importedSortDescending) sorted.reversed() else sorted
     }
 }

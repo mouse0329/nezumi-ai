@@ -35,7 +35,12 @@
 
                 <View android:layout_width="2dp" android:layout_height="match_parent" android:layout_marginEnd="10dp" android:background="@color/text_secondary" android:alpha="0.35" />
 
-                <TextView android:id="@+id/ai_thinking_text" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:textColor="@color/text_secondary" android:textSize="13sp" android:textIsSelectable="true" android:lineSpacingMultiplier="1.05" />
+                <androidx.compose.ui.platform.ComposeView
+                    android:id="@+id/ai_thinking_markdown_compose"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:visibility="gone" />
             </LinearLayout>
         </LinearLayout>
 

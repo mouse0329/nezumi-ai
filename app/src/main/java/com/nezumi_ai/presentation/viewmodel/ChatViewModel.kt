@@ -1049,6 +1049,12 @@ class ChatViewModel(
             //   「こんにちは」に対して `2.0.0 ...` のような壊れた出力を返すことがあった。
             //   停止時点で KV を明示的にクリアして、次回は DB 履歴から組み直す。
             manager.clearKvCache()
+            // ★ GGUF では cancelInference() だけではネイティブ KV に途中トークンが
+            //   残るケースがあるため、次回推論開始前の force-clear もリクエストしておく。
+            //   manager 側は GGUF / LiteRT を含めてエンジンチェーンを踏んだ
+            //   ため、未対応エンジンではこの呼び出しは no-op として育てる。
+            runCatching { manager.requestForceClearBeforeNextInference() }
+                .onFailure { Log.w(TAG, "requestForceClearBeforeNextInference (stopGenerationInternal) failed", it) }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to cancel inference", e)
         }
@@ -1968,11 +1974,15 @@ class ChatViewModel(
                         // ★ 既存の内容を取得して保存（上書きしない）
                         val current = messageRepository.getMessageById(id)
                         val existingContent = current?.content?.trim() ?: ""
+                        // ★ 停止時の「途中 assistant 出力」を表示上閉じるための終端補完。
+                        //   コードフェンスの未閉鎖によるレンダリング崩れを防ぐ。
                         val finalContent = if (existingContent.isNotEmpty()) {
-                            existingContent  // 既存の内容をそのまま保存
+                            closePartialAssistantContent(existingContent)
                         } else {
                             ""  // 空の場合は空文字列（後でフォールバックメッセージに置換）
                         }
+                        // ★ thinking ブロックも未閉鎖のまま残っていたら、閉じタグを補う。
+                        val finalThinking = closePartialThinking(current?.thinkingContent)
 
                         val updatedToolResultsJson = withUserStopCard(current?.toolResultsJson)
 
@@ -1980,11 +1990,16 @@ class ChatViewModel(
                             messageId = id,
                             content = finalContent,
                             isStreaming = false,
-                            thinkingContent = current?.thinkingContent,
+                            thinkingContent = finalThinking,
                             toolResultsJson = updatedToolResultsJson
                         )
                     }
                 }
+                // ★ 停止直後はネイティブ KV に途中トークンが残っているため、
+                //   次回推論開始前に必ずクリアさせる。実際のクリアは stopGenerationInternal
+                //   と、次回 inference へのエントリで二重に守られる。
+                runCatching { requireModelManager().requestForceClearBeforeNextInference() }
+                    .onFailure { Log.w(TAG, "requestForceClearBeforeNextInference (on cancel) failed", it) }
                 Log.d(TAG, "Generation cancelled: ${t.message}")
                 return
             }
@@ -2084,6 +2099,55 @@ class ChatViewModel(
                 releaseScreenWakeLock()
             }
         }
+    }
+
+    /**
+     * ★ ユーザー停止 / 例外で生成が途中で折れた場合に、partial assistant 出力を
+     *   表示上「安全に閉じる」ための軽量な終端補完。
+     *
+     * モデル言語の終端トークン (`<end_of_turn>` / `<|im_end|>` など) は
+     * チャットテンプレート侧で扱うため、ここでは保存される本文に
+     * そのまま追記しない（追記するとコピーや読み上げにノイズとして出てしまう）。
+     *
+     * 代わりに、UI / Markdown レンダラーにとって未閉鎖のままだと
+     * 表示が壊れる「途中のコードフェンス」を軽く閉じるだけに留める。
+     */
+    private fun closePartialAssistantContent(content: String): String {
+        if (content.isBlank()) return content
+        var result = content
+        // コードフェンスが奇数個 = 未閉鎖 → 閉じる。
+        val codeFenceCount = Regex("```").findAll(result).count()
+        if (codeFenceCount % 2 == 1) {
+            if (!result.endsWith("\n")) result += "\n"
+            result += "```"
+        }
+        return result
+    }
+
+    /**
+     * ★ 途中で折れた thinking ブロックの終端補完。
+     *
+     * `<think>` / `<|think|>` を開いたまま \</think> を出さずに生成が
+     * 折れると、後続の MessageAdapter 側で thinking トークン除去が不完全に
+     * なり、本文と thinking が交ざって見えるケースがある。そのため
+     * 未閉じのタグを検出したら末尾に閉じタグを付ける。
+     */
+    private fun closePartialThinking(thinking: String?): String? {
+        if (thinking.isNullOrBlank()) return thinking
+        var result = thinking
+        // <think> / </think>
+        val openCount = Regex("(?i)<think>").findAll(result).count()
+        val closeCount = Regex("(?i)</think>").findAll(result).count()
+        if (openCount > closeCount) {
+            result += "</think>"
+        }
+        // <|think|> / <|/think|>
+        val openCount2 = Regex("<\\|think\\|>").findAll(result).count()
+        val closeCount2 = Regex("<\\|/think\\|>").findAll(result).count()
+        if (openCount2 > closeCount2) {
+            result += "<|/think|>"
+        }
+        return result
     }
 
     private fun withUserStopCard(toolResultsJson: String?): String {
@@ -2901,7 +2965,8 @@ class ChatViewModel(
 
         val isGgufEngine = isGgufEngineModel(engineModelName)
         val memoryBlock = buildRelevantMemoryBlock(messages, sessionId, config.contextWindow)
-        val enableThinkingForPrompt = config.enableThinking && !config.enableToolCalling
+        // Tool calling should not suppress GGUF thinking directives such as Qwen /think.
+        val enableThinkingForPrompt = config.enableThinking
         val fullPrompt = buildPromptFromMessages(
             messages = messages,
             isGgufEngine = isGgufEngine,
@@ -3463,7 +3528,8 @@ class ChatViewModel(
         if (isGgufEngine && enableToolCalling) {
             systemPrompt = GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt)
         }
-        val enableThinkingForPrompt = enableThinking && !enableToolCalling
+        // Tool calling can coexist with thinking directives; do not suppress thinking when tool calling is enabled.
+        val enableThinkingForPrompt = enableThinking
         return if (isGgufEngine) {
             PromptBuilder.buildForGguf(
                 messages = recentMessages,
@@ -3541,7 +3607,8 @@ class ChatViewModel(
 
         val sanitizer = makeSanitizer(isGgufEngine, currentTurnMessageId)
 
-        val enableThinkingForPrompt = enableThinking && !enableToolCalling
+        // Tool calling can coexist with thinking directives; do not suppress thinking when tool calling is enabled.
+        val enableThinkingForPrompt = enableThinking
         return if (isGgufEngine) {
             PromptBuilder.buildForGguf(
                 messages = filteredMessages,

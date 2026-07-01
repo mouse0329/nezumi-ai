@@ -117,6 +117,22 @@ class ModelManager(
             .onFailure { Log.w(TAG, "clearKvCache failed on GGUF engine", it) }
     }
 
+    /**
+     * ★ 「次回推論開始前に KV を強制クリア」フラグをセットする。
+     *
+     * ユーザー停止直後は、GGUF ネイティブの KV キャッシュに途中までの assistant トークンが
+     * 終端トークンなしで残ることがあり、それが次回推論で prompt prefix として
+     * 混ざると "2.0.0 ..." のような壊れた出力になることがある。
+     *
+     * そこで、stopGeneration / revoke 時にこの API を呼んでおくと、次回の
+     * GgufInferenceEngine.inferenceWithMedia 開始直後に一度だけ KV と lastSessionId を
+     * リセットしてから生成を始める。LiteRT や未ロード時は何もしない。
+     */
+    fun requestForceClearBeforeNextInference() {
+        runCatching { ggufEngine?.requestForceClearBeforeNextInference() }
+            .onFailure { Log.w(TAG, "requestForceClearBeforeNextInference failed on GGUF engine", it) }
+    }
+
     private fun isCompiledModelInvokeFailure(t: Throwable): Boolean {
         var cur: Throwable? = t
         repeat(8) {
