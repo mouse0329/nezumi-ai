@@ -95,6 +95,12 @@ class PresetSettingsFragment : Fragment() {
         }
     }
 
+    private enum class PresetSortKey(val label: String) {
+        NAME("名前順"),
+        UPDATED("更新順"),
+        CREATED("作成順")
+    }
+
     @Composable
     private fun PresetScreen() {
         val scope = rememberCoroutineScope()
@@ -104,6 +110,32 @@ class PresetSettingsFragment : Fragment() {
         }
         var editingPreset by remember { mutableStateOf<PresetEntity?>(null) }
         var showCreateDialog by remember { mutableStateOf(false) }
+
+        // ★ プリセット一覧の「検索＋並び替え」ストート。
+        //   件数が 0 でも表示されるよう、LazyColumn item として常設にしている。
+        var presetSearchQuery by remember { mutableStateOf("") }
+        // ★ v5.1 fix: 以前は DEFAULT を初期値にしていたが、PresetEntity.sortOrder は
+        //   デフォルトで Long.MAX_VALUE で隅てるため、項目を追加しても
+        //   並び順が見た目「変わらない」ように見えていた。
+        //   初期値を NAME (名前順) に変更し、ユーザーがボタンを押すと
+        //   NAME → UPDATED → CREATED と明らかに順番が入れ替わるようにする。
+        var presetSortKey by remember { mutableStateOf(PresetSortKey.NAME) }
+        var presetSortDescending by remember { mutableStateOf(false) }
+        val displayedPresets = remember(presets, presetSearchQuery, presetSortKey, presetSortDescending) {
+            val q = presetSearchQuery.trim()
+            val filtered = if (q.isEmpty()) presets else presets.filter { p ->
+                p.name.contains(q, ignoreCase = true) ||
+                    p.description.contains(q, ignoreCase = true) ||
+                    p.tagsCsv.contains(q, ignoreCase = true)
+            }
+            val cmp: Comparator<PresetEntity> = when (presetSortKey) {
+                PresetSortKey.NAME -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }
+                PresetSortKey.UPDATED -> compareBy { it.updatedAt }
+                PresetSortKey.CREATED -> compareBy { it.createdAt }
+            }
+            val sorted = filtered.sortedWith(cmp)
+            if (presetSortDescending) sorted.reversed() else sorted
+        }
 
         if (showCreateDialog) {
             PresetEditDialog(
@@ -187,8 +219,57 @@ class PresetSettingsFragment : Fragment() {
                 }
             }
 
-            items(presets.size) { index ->
-                val preset = presets[index]
+            // ★ 検索バーと並び替えを「プリセット一覧の上」に常時表示。
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = presetSearchQuery,
+                        onValueChange = { presetSearchQuery = it },
+                        label = { Text("プリセットを検索") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = {
+                                presetSortKey = when (presetSortKey) {
+                                    PresetSortKey.NAME -> PresetSortKey.UPDATED
+                                    PresetSortKey.UPDATED -> PresetSortKey.CREATED
+                                    PresetSortKey.CREATED -> PresetSortKey.NAME
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("並び替え: ${presetSortKey.label}")
+                        }
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = { presetSortDescending = !presetSortDescending }
+                        ) {
+                            Text(if (presetSortDescending) "降順" else "昇順")
+                        }
+                    }
+                    if (presets.isEmpty()) {
+                        Text(
+                            text = "プリセットはまだありません。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else if (displayedPresets.isEmpty()) {
+                        Text(
+                            text = "検索条件に一致するプリセットがありません。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            items(displayedPresets.size) { index ->
+                val preset = displayedPresets[index]
                 PresetRow(
                     preset = preset,
                     selected = preset.id == currentPresetId,

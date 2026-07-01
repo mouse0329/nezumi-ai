@@ -74,15 +74,15 @@ class MessageAdapter(
      */
     private var isGenerating: Boolean = false
 
-    /** ユーザーが明示的に展開したメッセージ ID（生成中は常に自動展開） */
+    // ★ v5.1 Thinking 表示仕様：
+    //   - 設定の Thinking スイッチ (OFF/ON) に依存しない。
+    //     OFF のときに誤って生成された場合も「隠さず表示」する。
+    //     (以前の thinkingVisible フラグは一切参照しない)
+    //   - 生成中 (isStreaming = true) は常に展開、閉じトグルは表示しない。
+    //   - ★ v5.2 仕様変更: 生成完了後は「自動的に閉じる」。
+    //     ユーザーが明示的に「開いた」メッセージ ID だけを thinkingExpandedByMessageId に保持し、
+    //     それ以外はデフォルトで折りたたまれた状態にする。
     private val thinkingExpandedByMessageId = mutableSetOf<Long>()
-    /**
-     * ★ Bug fix: ユーザーが明示的に「閉じた」 Thinking ブロックのメッセージ ID。
-     * 生成完了後もデフォルトではブロックを「残して開いたまま」にしたいため、
-     * 閉じたときだけこのセットに加えて状態を記憶する。
-     */
-    private val thinkingCollapsedByMessageId = mutableSetOf<Long>()
-    private var thinkingVisible = true
     private var speakingMessageId: Long? = null
     private var streamingMessageId: Long? = null
     private var streamingToolCallState: ToolCallState? = null
@@ -237,11 +237,6 @@ class MessageAdapter(
         }
     }
 
-    fun setThinkingVisible(visible: Boolean) {
-        if (thinkingVisible == visible) return
-        thinkingVisible = visible
-        notifyDataSetChanged()
-    }
     
     class UserMessageViewHolder(
         private val binding: ItemMessageUserBinding,
@@ -383,14 +378,21 @@ class MessageAdapter(
                 binding.root.setViewTreeViewModelStoreOwner(it)
             }
             binding.aiMessageText.movementMethod = LinkMovementMethod.getInstance()
-            binding.aiThinkingText.movementMethod = LinkMovementMethod.getInstance()
             binding.aiMessageMarkdownCompose.setViewCompositionStrategy(
+                ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool
+            )
+            binding.aiThinkingMarkdownCompose.setViewCompositionStrategy(
                 ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool
             )
             binding.aiStreamingToolCallCompose.setViewCompositionStrategy(
                 ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool
             )
             binding.aiMessageMarkdownCompose.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+                if (bottom - top != oldBottom - oldTop) {
+                    onAiMessageLayoutChanged()
+                }
+            }
+            binding.aiThinkingMarkdownCompose.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
                 if (bottom - top != oldBottom - oldTop) {
                     onAiMessageLayoutChanged()
                 }
@@ -410,60 +412,66 @@ class MessageAdapter(
                 )
             }
             binding.apply {
+                // ★ v5.1 Thinking 表示仕様：
+                //   - 設定スイッチの ON/OFF に一切依存せず、thinkingContent が非空であれば表示。
+                //     (OFF のときに誤って生成されたものもバックグラウンド実行のるつぼとして「隠さず」出す)
+                //   - 生成中は常に展開、閉じトグルは表示しない。
+                //   - 生成完了後は閉じトグルを表示し、ユーザーが閉じた ID を記録して保持。
                 val thinking = message.thinkingContent?.stripGemmaTokens()
-                if (thinkingVisible && !thinking.isNullOrBlank()) {
+                val hasThinking = !thinking.isNullOrBlank()
+                if (hasThinking) {
                     aiThinkingBlock.visibility = View.VISIBLE
                     if (thinking != lastRenderedThinking) {
-                        aiThinkingText.text = thinking
+                        renderThinkingMarkdown(thinking)
                         lastRenderedThinking = thinking
                     }
-                } else {
-                    thinkingExpandedByMessageId.remove(message.id)
-                    thinkingCollapsedByMessageId.remove(message.id)
-                    aiThinkingBlock.visibility = View.GONE
-                    lastRenderedThinking = null
-                }
 
-                val hasThinking = thinkingVisible && !thinking.isNullOrBlank()
-                val streamThinking = message.isStreaming && hasThinking
-                // ★ Bug fix: 生成完了後も Thinking ブロックは「残す」仕様にしたいので、
-                //   トグルを明示的に閉じていない限りデフォルトで展開を保持する。
-                //   thinkingCollapsedByMessageId に明示的に閉じたメッセージ ID を保持し、
-                //   それ以外は生成中も生成後も展開しておく。
-                val expanded = streamThinking ||
-                    (message.id !in thinkingCollapsedByMessageId)
-                if (hasThinking) {
+                    val isStreaming = message.isStreaming
+                    // ★ v5.2: 生成中は常に展開、生成後は「明示的に開いた」ものだけを展開（デフォルト自動閉じ）
+                    val expanded = isStreaming || (message.id in thinkingExpandedByMessageId)
                     aiThinkingBody.visibility = if (expanded) View.VISIBLE else View.GONE
-                    aiThinkingChevron.text = if (expanded) "▲" else "▼"
-                    aiThinkingToggleLabel.setText(
-                        if (expanded) R.string.gemma_hide_thinking else R.string.gemma_show_thinking
-                    )
-                    aiThinkingToggleRow.contentDescription = root.context.getString(
-                        if (expanded) R.string.gemma_hide_thinking else R.string.gemma_show_thinking
-                    )
-                    aiThinkingToggleRow.setOnClickListener {
-                        if (message.isStreaming && hasThinking) return@setOnClickListener
-                        val nowOpen = aiThinkingBody.visibility == View.VISIBLE
-                        if (nowOpen) {
-                            // ★ Bug fix: 明示閉じたことを記録し、以降は閉じた状態を保持。
-                            thinkingCollapsedByMessageId.add(message.id)
-                            thinkingExpandedByMessageId.remove(message.id)
-                            aiThinkingBody.visibility = View.GONE
-                            aiThinkingChevron.text = "▼"
-                            aiThinkingToggleLabel.setText(R.string.gemma_show_thinking)
-                            aiThinkingToggleRow.contentDescription =
-                                root.context.getString(R.string.gemma_show_thinking)
-                        } else {
-                            // ★ ユーザーが手動で開いた→閉じフラグを解除、明示展開フラグも立てる。
-                            thinkingCollapsedByMessageId.remove(message.id)
-                            thinkingExpandedByMessageId.add(message.id)
-                            aiThinkingBody.visibility = View.VISIBLE
-                            aiThinkingChevron.text = "▲"
-                            aiThinkingToggleLabel.setText(R.string.gemma_hide_thinking)
-                            aiThinkingToggleRow.contentDescription =
-                                root.context.getString(R.string.gemma_hide_thinking)
+                    aiThinkingMarkdownCompose.visibility = if (expanded) View.VISIBLE else View.GONE
+
+                    if (isStreaming) {
+                        // 生成中はトグルを出さない。付けるとチャタリ領域を誤タップしやすいため。
+                        aiThinkingToggleRow.visibility = View.GONE
+                        aiThinkingToggleRow.setOnClickListener(null)
+                    } else {
+                        // 生成完了後は閉じトグルを表示してユーザーに閉じさせられるようにする。
+                        aiThinkingToggleRow.visibility = View.VISIBLE
+                        aiThinkingChevron.text = if (expanded) "▲" else "▼"
+                        aiThinkingToggleLabel.setText(
+                            if (expanded) R.string.gemma_hide_thinking else R.string.gemma_show_thinking
+                        )
+                        aiThinkingToggleRow.contentDescription = root.context.getString(
+                            if (expanded) R.string.gemma_hide_thinking else R.string.gemma_show_thinking
+                        )
+                        aiThinkingToggleRow.setOnClickListener {
+                            val nowOpen = aiThinkingBody.visibility == View.VISIBLE
+                            if (nowOpen) {
+                                thinkingExpandedByMessageId.remove(message.id)
+                                aiThinkingBody.visibility = View.GONE
+                                aiThinkingMarkdownCompose.visibility = View.GONE
+                                aiThinkingChevron.text = "▼"
+                                aiThinkingToggleLabel.setText(R.string.gemma_show_thinking)
+                                aiThinkingToggleRow.contentDescription =
+                                    root.context.getString(R.string.gemma_show_thinking)
+                            } else {
+                                thinkingExpandedByMessageId.add(message.id)
+                                aiThinkingBody.visibility = View.VISIBLE
+                                aiThinkingMarkdownCompose.visibility = View.VISIBLE
+                                aiThinkingChevron.text = "▲"
+                                aiThinkingToggleLabel.setText(R.string.gemma_hide_thinking)
+                                aiThinkingToggleRow.contentDescription =
+                                    root.context.getString(R.string.gemma_hide_thinking)
+                            }
                         }
                     }
+                } else {
+                    aiThinkingBlock.visibility = View.GONE
+                    aiThinkingBody.visibility = View.GONE
+                    aiThinkingMarkdownCompose.visibility = View.GONE
+                    lastRenderedThinking = null
                 }
 
                 val visibleContent = message.content.stripGemmaTokens()
@@ -593,7 +601,7 @@ class MessageAdapter(
                 }
 
                 copyMessageButton.setOnClickListener {
-                    val text = if (thinkingVisible && !message.thinkingContent.isNullOrBlank()) {
+                    val text = if (!message.thinkingContent.isNullOrBlank()) {
                         "【${binding.root.context.getString(R.string.gemma_thinking_section_title)}】\n${message.thinkingContent?.stripGemmaTokens()}\n\n【回答】\n${message.content.stripGemmaTokens()}"
                     } else {
                         message.content.stripGemmaTokens()
@@ -667,12 +675,26 @@ class MessageAdapter(
 
             binding.aiMessageText.visibility = View.GONE
             binding.aiMessageMarkdownCompose.visibility = View.VISIBLE
-            
+
             binding.aiMessageMarkdownCompose.setContent {
                 GalleryMarkdownText(content = content)
             }
             binding.aiMessageMarkdownCompose.post { onAiMessageLayoutChanged() }
             lastRenderedContent = content
+            lastRenderedContentMode = ContentRenderMode.Markdown
+        }
+
+        private fun renderThinkingMarkdown(content: String) {
+            if (lastRenderedThinking == content &&
+                lastRenderedContentMode == ContentRenderMode.Markdown
+            ) return
+
+            binding.aiThinkingMarkdownCompose.visibility = View.VISIBLE
+
+            binding.aiThinkingMarkdownCompose.setContent {
+                GalleryMarkdownText(content = content)
+            }
+            binding.aiThinkingMarkdownCompose.post { onAiMessageLayoutChanged() }
             lastRenderedContentMode = ContentRenderMode.Markdown
         }
 

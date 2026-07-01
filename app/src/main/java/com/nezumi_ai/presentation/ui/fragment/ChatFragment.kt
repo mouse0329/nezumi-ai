@@ -450,7 +450,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         viewLifecycleOwner.lifecycleScope.launch {
             settingsRepository.getSettings().collect { settings ->
                 contextCompressionEnabled = settings?.contextCompressionEnabled == true
-                adapter.setThinkingVisible(true)
+                // ★ Thinking 表示はアダプタ側で「常時表示」に固定済み。
+                //   そのため adapter.setThinkingVisible(true) の呼び出しは不要になり、完全に廃止された。
                 updateThinkingToggleVisibility()
                 renderCompressButtonState()
             }

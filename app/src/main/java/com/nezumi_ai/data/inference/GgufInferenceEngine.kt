@@ -171,6 +171,22 @@ class GgufInferenceEngine(
     /** 推論ループへのキャンセルシグナル */
     private val cancelFlag = AtomicBoolean(false)
 
+    /**
+     * ★ 「次回推論開始前に KV を強制クリアする」フラグ。
+     *
+     * GGUF では、ユーザーが生成途中で停止ボタンを押すと、その時点で
+     * `nativeInterrupt()` が出ても、ネイティブの KV キャッシュには
+     * 途中までの assistant トークンが残っている。チャットテンプレート上の
+     * `<end_of_turn>` / `<|im_end|>` などの終端トークンが記録されず「漏れたターン」
+     * として残るため、次回推論でそのごみが prompt prefix として使われて
+     * 「2.0.0 …」 のような壊れた出力を引き起こすケースがある。
+     *
+     * そのため、停止時 / 取り消し時にこのフラグを立てておき、
+     * 次回の [inferenceWithMedia] 開始直後に一度だけ KV をクリアしてから
+     * 生成を始める。
+     */
+    private val forceClearBeforeNextInference = AtomicBoolean(false)
+
     private val alarmDao by lazy { NezumiAiDatabase.getInstance(appContext).alarmDao() }
     private val memoryRepository by lazy {
         MemoryRepository(NezumiAiDatabase.getInstance(appContext).memoryDao())
@@ -307,6 +323,17 @@ class GgufInferenceEngine(
         lastSessionId = null
     }
 
+    /**
+     * ★ 「次回推論開始前に KV を強制クリア」フラグを立てる。
+     *
+     * ユーザー停止 / revoke 直後の「壊れた状態」に備えてコンテキストを一旦リセットさせる。
+     * 次回 [inferenceWithMedia] の入り口でこのフラグを見て、立っていたら
+     * `lastSessionId` を含めて KV を全クリアしてから生成を始める。
+     */
+    fun requestForceClearBeforeNextInference() {
+        forceClearBeforeNextInference.set(true)
+    }
+
     // ─── キャンセル ───────────────────────────────────────────────
 
     override suspend fun cancelInference() {
@@ -322,6 +349,13 @@ class GgufInferenceEngine(
         //   体感上効かなく見える。
         runCatching { rnllamaCtx?.interrupt() }
             .onFailure { Log.w(TAG, "interrupt() failed", it) }
+        // ★ v5.1 fix: ここで forceClearBeforeNextInference を自動セットしてしまうと、
+        //   ユーザー停止だけでなく、モデル切替や unload、推論コードパス内部での
+        //   cancelInference() も含めて「本来意図しないケース」で KV がクリアされ、
+        //   Thinking やターン間のコンテキスト保持が壊れて
+        //   「GGUF で Thinking が出ない」不具合につながる。
+        //   force-clear は、ユーザー停止パス (ChatViewModel.stopGenerationInternal) から
+        //   明示的に requestForceClearBeforeNextInference() を呼んでもらうパスに限定する。
     }
 
     // ─── 推論 ─────────────────────────────────────────────────────
@@ -363,6 +397,19 @@ class GgufInferenceEngine(
         val normalized = config.normalized()
 
         try {
+            // ★ 前回推論がユーザー停止 / revoke / 例外で途中で折れた場合に備えて、
+            //   「次回の推論では必ずコンテキストを一旦リセット」してから始める。
+            //   途中までの assistant 出力とその終端トークン欠落による「壊れた出力」を防ぐため、
+            //   このフラグが立っていたら無条件で KV と lastSessionId をリセットする。
+            if (forceClearBeforeNextInference.getAndSet(false)) {
+                Log.d(TAG, "forceClearBeforeNextInference flag set, clearing KV cache before inference")
+                withContext(Dispatchers.IO) {
+                    runCatching { ctx.clearKvCache() }
+                        .onFailure { Log.w(TAG, "force clearKvCache before inference failed", it) }
+                }
+                lastSessionId = null
+            }
+
             // セッション変更時は KV キャッシュをクリア
             if (lastSessionId != sessionId) {
                 Log.d(TAG, "Session changed: $lastSessionId → $sessionId, clearing KV cache")
