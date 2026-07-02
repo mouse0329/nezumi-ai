@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -131,6 +132,11 @@ class PresetSettingsFragment : Fragment() {
         var dragIndex by remember { mutableIntStateOf(-1) }
         var dragOffsetY by remember { mutableFloatStateOf(0f) }
         var autoScrollJob by remember { mutableStateOf<Job?>(null) }
+        // ★ 自動スクロールの、ループ内で参照される最新のポインタY位置と方向。
+        // onDrag のローカル変数を while(true) のコルーチン内で参照しても stale になるので、
+        // 毎回 onDrag で mutableStateOf に上書きして共有する。
+        var autoScrollDirection by remember { mutableIntStateOf(0) } // -1: up, 0: none, 1: down
+        var autoScrollDistance by remember { mutableFloatStateOf(0f) } // edge への食い込み量(0..edgeThreshold)
         // ★ 並び替え確定後、DB からの新しい順序が Flow で届くまで表示する"暫定並び順"。
         //   これがある間は displayedPresets(=DBの古い順序) を上書きし、
         //   "決定時に一瞬前の状態が表示される" フリッカーを防ぐ。
@@ -290,7 +296,7 @@ class PresetSettingsFragment : Fragment() {
                         dragOffsetY = 0f
                         draggingList = visibleList.toMutableList()
                     },
-                    onDrag = { dy, pointerY, threshold ->
+                    onDrag = { dy, pointerYInViewport, threshold ->
                         dragOffsetY += dy
                         when {
                             dragOffsetY > threshold && dragIndex < (draggingList?.lastIndex ?: 0) -> {
@@ -309,34 +315,63 @@ class PresetSettingsFragment : Fragment() {
                             }
                         }
 
+                        // ★ 自動スクロール:
+                        //   ・従来の while(true){ scrollToItem() } は 1item ごとにジャンプしてカクついていた。
+                        //     animateScrollBy と小さめの幅で連続スクロールさせることで滑らかにする。
+                        //   ・edge 判定をー pointerYInViewport は Card 内座標なので、
+                        //     LazyColumn の viewport 基準に変換してから判定する。
                         val viewportHeight = listState.layoutInfo.viewportSize.height
+                        // ドラッグ中の item は itemsIndexed により LazyList の index は
+                        // 前置アイテム(Spacer / ヘッダ / 検索欄) の分だけオフセットする。
+                        // 確実に見つけるため、検索欄とヘッダーを除いた"data item"の相対位置を見る。
+                        val leadingItemCount = 3 // Spacer + Header + Search
                         val currentItemInfo = listState.layoutInfo.visibleItemsInfo
-                            .find { it.index == dragIndex + 3 }
-                        if (currentItemInfo != null) {
-                            val itemTopInViewport = currentItemInfo.offset + dragOffsetY
-                            val itemBottomInViewport = itemTopInViewport + currentItemInfo.size
-                            val edgeThreshold = 150f
-                            val shouldScrollUp = pointerY < edgeThreshold
-                            val shouldScrollDown = pointerY > viewportHeight - edgeThreshold
-                            if (shouldScrollUp || shouldScrollDown) {
-                                autoScrollJob?.cancel()
+                            .find { it.index == dragIndex + leadingItemCount }
+                        val pointerYInList: Float = if (currentItemInfo != null) {
+                            // Card の上端（viewport 基準） + drag offset + ポインタのCard内Y
+                            currentItemInfo.offset + dragOffsetY + pointerYInViewport
+                        } else {
+                            pointerYInViewport
+                        }
+                        val edgeThreshold = 150f
+                        val shouldScrollUp = pointerYInList < edgeThreshold
+                        val shouldScrollDown = pointerYInList > viewportHeight - edgeThreshold
+
+                        // 最新の方向と食い込み量を State へ書き込み、自動スクロールループから参照させる。
+                        val newDirection = when {
+                            shouldScrollDown -> 1
+                            shouldScrollUp -> -1
+                            else -> 0
+                        }
+                        autoScrollDirection = newDirection
+                        autoScrollDistance = when (newDirection) {
+                            1 -> (pointerYInList - (viewportHeight - edgeThreshold)).coerceAtLeast(0f)
+                            -1 -> (edgeThreshold - pointerYInList).coerceAtLeast(0f)
+                            else -> 0f
+                        }
+
+                        if (newDirection != 0) {
+                            // 既にジョブが回っているなら手を付けない（キャンセル→再起動の回避）。
+                            val running = autoScrollJob?.isActive == true
+                            if (!running) {
                                 autoScrollJob = scope.launch {
-                                    while (true) {
-                                        if (shouldScrollDown) {
-                                            listState.scrollToItem(listState.firstVisibleItemIndex + 1)
-                                        } else if (shouldScrollUp) {
-                                            listState.scrollToItem((listState.firstVisibleItemIndex - 1).coerceAtLeast(0))
-                                        }
+                                    while (autoScrollDirection != 0) {
+                                        val speedFactor = (autoScrollDistance / edgeThreshold).coerceIn(0.1f, 1f)
+                                        val pixelsPerFrame = 24f * speedFactor // 1frameあたり最大24px
+                                        val delta = pixelsPerFrame * autoScrollDirection
+                                        listState.scrollBy(delta)
                                         delay(16)
                                     }
                                 }
-                            } else {
-                                autoScrollJob?.cancel()
-                                autoScrollJob = null
                             }
+                        } else {
+                            autoScrollJob?.cancel()
+                            autoScrollJob = null
                         }
                     },
                     onDragEnd = {
+                        autoScrollDirection = 0
+                        autoScrollDistance = 0f
                         autoScrollJob?.cancel()
                         autoScrollJob = null
                         val finalList = draggingList
