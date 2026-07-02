@@ -981,5 +981,13 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeClearKvCache(
         {
             __android_log_print(ANDROID_LOG_WARN, TAG, "nativeClearKvCache: llama_get_memory returned null for context %p", (void *)holder->ctx->ctx);
         }
+        // Also reset the completion's embd and n_past so that find_common_prefix_length()
+        // in loadPrompt() does not reuse stale tokens from a previous session and
+        // compute a non-zero n_past against an already-cleared KV cache.
+        if (holder->completion)
+        {
+            holder->completion->embd.clear();
+            holder->completion->n_past = 0;
+        }
     }
 }
