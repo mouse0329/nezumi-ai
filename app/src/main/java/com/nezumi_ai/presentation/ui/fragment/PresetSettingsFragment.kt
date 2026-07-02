@@ -131,9 +131,38 @@ class PresetSettingsFragment : Fragment() {
         var dragIndex by remember { mutableIntStateOf(-1) }
         var dragOffsetY by remember { mutableFloatStateOf(0f) }
         var autoScrollJob by remember { mutableStateOf<Job?>(null) }
+        // ★ 並び替え確定後、DB からの新しい順序が Flow で届くまで表示する"暫定並び順"。
+        //   これがある間は displayedPresets(=DBの古い順序) を上書きし、
+        //   "決定時に一瞬前の状態が表示される" フリッカーを防ぐ。
+        var pendingOrderIds by remember { mutableStateOf<List<String>?>(null) }
 
-        // ドラッグ中は draggingList を使い、それ以外は DB の順序を使う
-        val visibleList = draggingList ?: displayedPresets
+        // pendingOrderIds に基づいて displayedPresets を並び替えた最終表示リスト。
+        // DB からの新しい順序と pendingOrderIds が一致したら pendingOrderIds を解除する。
+        val sortedDisplayed = remember(displayedPresets, pendingOrderIds) {
+            val pending = pendingOrderIds
+            if (pending == null) {
+                displayedPresets
+            } else {
+                val byId = displayedPresets.associateBy { it.id }
+                val reordered = pending.mapNotNull { byId[it] }
+                // pending に含まれない新規/検索でフィルタされた項目はそのまま末尾に追加
+                val remaining = displayedPresets.filter { it.id !in pending }
+                reordered + remaining
+            }
+        }
+
+        // DB の順序が pending と一致したら pending を解除する（Flow が追いついた合図）。
+        LaunchedEffect(displayedPresets, pendingOrderIds) {
+            val pending = pendingOrderIds ?: return@LaunchedEffect
+            val actualIdsInPendingOrder = displayedPresets.map { it.id }
+                .filter { it in pending }
+            if (actualIdsInPendingOrder == pending.filter { it in displayedPresets.map { p -> p.id } }) {
+                pendingOrderIds = null
+            }
+        }
+
+        // ドラッグ中は draggingList を使い、それ以外は sortedDisplayed を使う
+        val visibleList = draggingList ?: sortedDisplayed
 
         if (showCreateDialog) {
             PresetEditDialog(
@@ -313,16 +342,26 @@ class PresetSettingsFragment : Fragment() {
                         val finalList = draggingList
                         dragIndex = -1
                         dragOffsetY = 0f
-                        draggingList = null
                         if (finalList != null) {
+                            // ★ フリッカー防止:
+                            //   draggingList を null に戻す前に、確定した順序を pendingOrderIds に登録する。
+                            //   これにより、DB Flow が更新後の順序を配信するまでの間も、
+                            //   sortedDisplayed が pendingOrderIds に従って並ぶ。
+                            val finalIds = finalList.map { it.id }
+                            pendingOrderIds = finalIds
+                            draggingList = null
                             scope.launch {
                                 try {
-                                    presetRepository.reorder(finalList.map { it.id })
+                                    presetRepository.reorder(finalIds)
                                     android.util.Log.d("PresetReorder", "success: ${finalList.map { it.name }}")
                                 } catch (e: Exception) {
                                     android.util.Log.e("PresetReorder", "failed", e)
+                                    // 失敗時は pending を解除して DB の順序に戻す
+                                    pendingOrderIds = null
                                 }
                             }
+                        } else {
+                            draggingList = null
                         }
                     },
                     onMoveUp = {
