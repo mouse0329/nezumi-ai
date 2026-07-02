@@ -1947,39 +1947,37 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 // URIが直接利用可能な場合
                 if (item.uri != null) {
                     val uri = item.uri
-                    // キャッシュディレクトリにコピー
+                    // ★ 5枚制限に達している場合は、キャッシュファイルを作らずに返す
+                    if (selectedImageUrisList.size >= 5) {
+                        Toast.makeText(requireContext(), "Max 5 images allowed", Toast.LENGTH_SHORT).show()
+                        return
+                    }
+                    // キャッシュディレクトリにコピー (use ブロックで IS/OS リークを防ぐ)
                     try {
+                        val cacheDir = java.io.File(requireContext().cacheDir, "clipboard")
+                        if (!cacheDir.exists()) cacheDir.mkdirs()
+                        val cachedFile = java.io.File(cacheDir, "IMG_${System.currentTimeMillis()}.jpg")
                         val inputStream = requireContext().contentResolver.openInputStream(uri)
-                        if (inputStream != null) {
-                            val cacheDir = java.io.File(requireContext().cacheDir, "clipboard")
-                            if (!cacheDir.exists()) {
-                                cacheDir.mkdirs()
-                            }
-
-                            val cachedFile = java.io.File(cacheDir, "IMG_${System.currentTimeMillis()}.jpg")
-                            val outputStream = java.io.FileOutputStream(cachedFile)
-
-                            inputStream.copyTo(outputStream)
-                            inputStream.close()
-                            outputStream.close()
-
-                            // FileProviderでURIを取得
-                            val fileUri = androidx.core.content.FileProvider.getUriForFile(
-                                requireContext(),
-                                "${requireContext().packageName}.fileprovider",
-                                cachedFile
-                            )
-
-                            // 複数画像リストに追加（最大5枚まで）
-                            if (selectedImageUrisList.size < 5) {
-                                selectedImageUrisList = selectedImageUrisList + fileUri.toString()
-                                updateMediaPreview()
-                                Toast.makeText(requireContext(), "クリップボードから画像を貼り付けました (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
-                                Log.d("ChatFragment", "Image pasted from clipboard: ${cachedFile.absolutePath}")
-                            } else {
-                                Toast.makeText(requireContext(), "Max 5 images allowed", Toast.LENGTH_SHORT).show()
+                        if (inputStream == null) {
+                            Toast.makeText(requireContext(), "クリップボードから画像を取得できませんでした", Toast.LENGTH_SHORT).show()
+                            return
+                        }
+                        inputStream.use { input ->
+                            java.io.FileOutputStream(cachedFile).use { output ->
+                                input.copyTo(output)
                             }
                         }
+
+                        // FileProviderでURIを取得
+                        val fileUri = androidx.core.content.FileProvider.getUriForFile(
+                            requireContext(),
+                            "${requireContext().packageName}.fileprovider",
+                            cachedFile
+                        )
+                        selectedImageUrisList = selectedImageUrisList + fileUri.toString()
+                        updateMediaPreview()
+                        Toast.makeText(requireContext(), "クリップボードから画像を貼り付けました (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
+                        Log.d("ChatFragment", "Image pasted from clipboard: ${cachedFile.absolutePath}")
                     } catch (e: Exception) {
                         Log.e("ChatFragment", "Error processing clipboard URI", e)
                         Toast.makeText(requireContext(), "クリップボードから画像を取得できませんでした", Toast.LENGTH_SHORT).show()
