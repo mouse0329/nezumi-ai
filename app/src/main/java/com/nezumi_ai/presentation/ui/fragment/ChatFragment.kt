@@ -304,7 +304,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         responseTypingText = getString(R.string.response_generating)
         modelLoadingText = getString(R.string.model_loading)
         contextMeterText = getString(R.string.context_meter_format, 0, 0)
-        compressButtonText = getString(R.string.compress_context)
+        compressButtonText = ""
         thinkingToggleText = getString(R.string.chat_thinking_follow_settings)
         setupComposeIndicators()
 
@@ -449,7 +449,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         viewLifecycleOwner.lifecycleScope.launch {
             settingsRepository.getSettings().collect { settings ->
-                contextCompressionEnabled = settings?.contextCompressionEnabled == true
+                contextCompressionEnabled = settings?.contextCompressionEnabled == true && BuildConfig.CONTEXT_COMPRESSION_ENABLED
                 // ★ Thinking 表示はアダプタ側で「常時表示」に固定済み。
                 //   そのため adapter.setThinkingVisible(true) の呼び出しは不要になり、完全に廃止された。
                 updateThinkingToggleVisibility()
@@ -717,7 +717,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 renderSendButtonState()
                 if (isGenerating) {
                     responseTypingText = when {
-                        compressing -> getString(R.string.response_compressing)
+                        compressing -> ""
                         downloading -> "埋め込みファイルをダウンロード中..."
                         else -> getString(R.string.response_generating)
                     }
@@ -1272,11 +1272,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private fun renderCompressButtonState() {
         val enabled = !isModelLoadingNow && !isGenerating && contextUsageCharsNow > 0
-        compressButtonVisible = contextCompressionEnabled && !isCompressingNow
+        compressButtonVisible = BuildConfig.CONTEXT_COMPRESSION_ENABLED && contextCompressionEnabled && !isCompressingNow
         compressButtonEnabled = enabled
-        compressButtonText =
-            if (isCompressingNow) getString(R.string.compress_context_busy)
-            else getString(R.string.compress_context)
+        compressButtonText = ""
         // シンキングON/OFFはチャット生成中でも切り替え可能にする（次回送信から反映）
         thinkingToggleEnabled = !isModelLoadingNow && thinkingToggleVisible
     }
@@ -1304,7 +1302,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             while (true) {
                 val dots = ".".repeat(dotCount)
                 val base = if (isCompressingNow) {
-                    getString(R.string.response_compressing)
+                    ""
                 } else {
                     getString(R.string.response_generating)
                 }

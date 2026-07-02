@@ -559,6 +559,7 @@ class LocalDreamModule(private val context: Context) {
             }
 
             Log.d(TAG, "Starting generation: ${body.toString().take(200)}...")
+            Log.d(TAG, "[LocalDream] request size=${width}x${height}")
 
             val url = URL("http://127.0.0.1:$SERVER_PORT/generate")
             val conn = url.openConnection() as HttpURLConnection
@@ -659,6 +660,7 @@ class LocalDreamModule(private val context: Context) {
                 val w = data.getInt("width")
                 val h = data.getInt("height")
 
+                Log.d(TAG, "[LocalDream] response size=${w}x${h}")
                 val raw = decodeRgbToBitmap(imageBase64, w, h) ?: return@let null
                 return@withContext applySafetyFilter(raw)
             }

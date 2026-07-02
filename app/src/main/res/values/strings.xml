@@ -47,10 +47,7 @@
     <string name="model_loading">モデルをロード中...</string>
     <string name="context_meter_format">コンテキスト使用量: %1$d / %2$d tokens</string>
     <string name="response_generating">応答中</string>
-    <string name="response_compressing">圧縮中</string>
     <string name="response_extracting">⟳ 記憶を整理中...</string>
-    <string name="compress_context">圧縮</string>
-    <string name="compress_context_busy">圧縮中</string>
     <string name="chat_thinking_follow_settings">シンキング:ON</string>
     <string name="chat_thinking_off_for_session">シンキング:OFF</string>
     <string name="scroll_to_bottom">一番下へ</string>
@@ -70,8 +67,6 @@
     <string name="context_window_fixed">コンテキスト: 4096 (固定)</string>
     <string name="context_window_label">コンテキスト</string>
     <string name="context_window_hint">コンテキスト (512 - 8192)</string>
-    <string name="context_compression_label">コンテキスト圧縮ベータ版（標準OFF）</string>
-    <string name="context_compression_threshold_format">自動圧縮しきい値: %1$d%%</string>
     <string name="temperature_label">温度</string>
     <string name="temperature_hint">温度 (0.0 - 2.0)</string>
     <string name="topk_label">Top-K</string>
