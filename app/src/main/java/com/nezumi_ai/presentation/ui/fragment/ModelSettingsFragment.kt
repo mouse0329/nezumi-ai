@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -51,7 +52,11 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -1994,7 +1999,31 @@ open class ModelSettingsFragment : Fragment() {
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodySmall
                 )
+                val listState = rememberLazyListState()
+                // ★ 次ページの自動読み込み:
+                //   旧: LaunchedEffect(hfSearchResults.size) → trigger item が
+                //       LazyColumn に compose された瞬間に発火していたため、
+                //       ユーザーがスクロールしていなくても全ページを一気に取得してしまう。
+                //   新: リストの末尾付近が実際に表示されたときだけ loadMore を呼ぶ。
+                LaunchedEffect(listState) {
+                    snapshotFlow {
+                        val info = listState.layoutInfo
+                        val total = info.totalItemsCount
+                        val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+                        // 末尾に多少余裕を持たせる (2item 手前からプリフェッチ)
+                        total > 0 && lastVisible >= total - 2
+                    }
+                        .distinctUntilChanged()
+                        .filter { it }
+                        .collect {
+                            val nextUrl = hfSearchNextPageUrl
+                            if (nextUrl != null && !hfSearchLoadingMore) {
+                                loadMoreHfResults(nextUrl)
+                            }
+                        }
+                }
                 LazyColumn(
+                    state = listState,
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(hfSearchResults, key = { it.id }) { result ->
@@ -2049,15 +2078,10 @@ open class ModelSettingsFragment : Fragment() {
                             }
                         }
                     }
-                    // 次ページ読み込みトリガー
+                    // ★ 次ページプレースホルダー: スピナーのみ。loadMore のトリガーは
+                    //   上の snapshotFlow 監視で行うので、この item は "現在ロード中に見える" 存在だけ。
                     item {
-                        val nextUrl = hfSearchNextPageUrl
-                        if (nextUrl != null) {
-                            LaunchedEffect(hfSearchResults.size) {
-                                if (!hfSearchLoadingMore) {
-                                    loadMoreHfResults(nextUrl)
-                                }
-                            }
+                        if (hfSearchNextPageUrl != null && hfSearchLoadingMore) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -2066,6 +2090,9 @@ open class ModelSettingsFragment : Fragment() {
                             ) {
                                 SvgSpinner()
                             }
+                        } else if (hfSearchNextPageUrl != null) {
+                            // 候補があるが未ロードのときもプレースホルダーだけ支持しておく（高さは保つ）
+                            Spacer(modifier = Modifier.height(24.dp))
                         }
                     }
                 }
