@@ -56,7 +56,8 @@ class PresetRepository(
     }
 
     suspend fun createPreset(preset: PresetEntity) {
-        dao.insert(preset.copy(updatedAt = System.currentTimeMillis()))
+        val maxOrder = dao.getAll().maxOfOrNull { it.sortOrder.takeIf { o -> o != Long.MAX_VALUE } ?: 0L } ?: 0L
+        dao.insert(preset.copy(sortOrder = maxOrder + 1, updatedAt = System.currentTimeMillis()))
     }
 
     suspend fun updatePreset(preset: PresetEntity): Boolean {

@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -15,6 +16,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -37,13 +41,18 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
@@ -61,8 +70,10 @@ import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import com.nezumi_ai.utils.PreferencesHelper
 import java.util.UUID
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 
@@ -95,12 +106,6 @@ class PresetSettingsFragment : Fragment() {
         }
     }
 
-    private enum class PresetSortKey(val label: String) {
-        NAME("名前順"),
-        UPDATED("更新順"),
-        CREATED("作成順")
-    }
-
     @Composable
     private fun PresetScreen() {
         val scope = rememberCoroutineScope()
@@ -110,32 +115,25 @@ class PresetSettingsFragment : Fragment() {
         }
         var editingPreset by remember { mutableStateOf<PresetEntity?>(null) }
         var showCreateDialog by remember { mutableStateOf(false) }
-
-        // ★ プリセット一覧の「検索＋並び替え」ストート。
-        //   件数が 0 でも表示されるよう、LazyColumn item として常設にしている。
         var presetSearchQuery by remember { mutableStateOf("") }
-        // ★ v5.1 fix: 以前は DEFAULT を初期値にしていたが、PresetEntity.sortOrder は
-        //   デフォルトで Long.MAX_VALUE で隅てるため、項目を追加しても
-        //   並び順が見た目「変わらない」ように見えていた。
-        //   初期値を NAME (名前順) に変更し、ユーザーがボタンを押すと
-        //   NAME → UPDATED → CREATED と明らかに順番が入れ替わるようにする。
-        var presetSortKey by remember { mutableStateOf(PresetSortKey.NAME) }
-        var presetSortDescending by remember { mutableStateOf(false) }
-        val displayedPresets = remember(presets, presetSearchQuery, presetSortKey, presetSortDescending) {
+        val displayedPresets = remember(presets, presetSearchQuery) {
             val q = presetSearchQuery.trim()
-            val filtered = if (q.isEmpty()) presets else presets.filter { p ->
+            if (q.isEmpty()) presets
+            else presets.filter { p ->
                 p.name.contains(q, ignoreCase = true) ||
                     p.description.contains(q, ignoreCase = true) ||
                     p.tagsCsv.contains(q, ignoreCase = true)
             }
-            val cmp: Comparator<PresetEntity> = when (presetSortKey) {
-                PresetSortKey.NAME -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }
-                PresetSortKey.UPDATED -> compareBy { it.updatedAt }
-                PresetSortKey.CREATED -> compareBy { it.createdAt }
-            }
-            val sorted = filtered.sortedWith(cmp)
-            if (presetSortDescending) sorted.reversed() else sorted
         }
+
+        // ドラッグ並び替え状態
+        var draggingList by remember { mutableStateOf<List<PresetEntity>?>(null) }
+        var dragIndex by remember { mutableIntStateOf(-1) }
+        var dragOffsetY by remember { mutableFloatStateOf(0f) }
+        var autoScrollJob by remember { mutableStateOf<Job?>(null) }
+
+        // ドラッグ中は draggingList を使い、それ以外は DB の順序を使う
+        val visibleList = draggingList ?: displayedPresets
 
         if (showCreateDialog) {
             PresetEditDialog(
@@ -168,7 +166,9 @@ class PresetSettingsFragment : Fragment() {
             )
         }
 
+        val listState = rememberLazyListState()
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background),
@@ -219,7 +219,6 @@ class PresetSettingsFragment : Fragment() {
                 }
             }
 
-            // ★ 検索バーと並び替えを「プリセット一覧の上」に常時表示。
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
@@ -229,29 +228,6 @@ class PresetSettingsFragment : Fragment() {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        androidx.compose.material3.OutlinedButton(
-                            onClick = {
-                                presetSortKey = when (presetSortKey) {
-                                    PresetSortKey.NAME -> PresetSortKey.UPDATED
-                                    PresetSortKey.UPDATED -> PresetSortKey.CREATED
-                                    PresetSortKey.CREATED -> PresetSortKey.NAME
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("並び替え: ${presetSortKey.label}")
-                        }
-                        androidx.compose.material3.OutlinedButton(
-                            onClick = { presetSortDescending = !presetSortDescending }
-                        ) {
-                            Text(if (presetSortDescending) "降順" else "昇順")
-                        }
-                    }
                     if (presets.isEmpty()) {
                         Text(
                             text = "プリセットはまだありません。",
@@ -268,11 +244,101 @@ class PresetSettingsFragment : Fragment() {
                 }
             }
 
-            items(displayedPresets.size) { index ->
-                val preset = displayedPresets[index]
+            itemsIndexed(
+                items = visibleList,
+                key = { _, preset -> preset.id }
+            ) { index, preset ->
+                val isDragging = index == dragIndex
                 PresetRow(
                     preset = preset,
                     selected = preset.id == currentPresetId,
+                    canMoveUp = index > 0,
+                    canMoveDown = index < visibleList.lastIndex,
+                    isDragging = isDragging,
+                    dragOffsetY = if (isDragging) dragOffsetY else 0f,
+                    onDragStart = {
+                        dragIndex = index
+                        dragOffsetY = 0f
+                        draggingList = visibleList.toMutableList()
+                    },
+                    onDrag = { dy, pointerY, threshold ->
+                        dragOffsetY += dy
+                        when {
+                            dragOffsetY > threshold && dragIndex < (draggingList?.lastIndex ?: 0) -> {
+                                val list = draggingList!!.toMutableList()
+                                val tmp = list[dragIndex + 1]; list[dragIndex + 1] = list[dragIndex]; list[dragIndex] = tmp
+                                draggingList = list
+                                dragIndex++
+                                dragOffsetY -= threshold
+                            }
+                            dragOffsetY < -threshold && dragIndex > 0 -> {
+                                val list = draggingList!!.toMutableList()
+                                val tmp = list[dragIndex - 1]; list[dragIndex - 1] = list[dragIndex]; list[dragIndex] = tmp
+                                draggingList = list
+                                dragIndex--
+                                dragOffsetY += threshold
+                            }
+                        }
+
+                        val viewportHeight = listState.layoutInfo.viewportSize.height
+                        val currentItemInfo = listState.layoutInfo.visibleItemsInfo
+                            .find { it.index == dragIndex + 3 }
+                        if (currentItemInfo != null) {
+                            val itemTopInViewport = currentItemInfo.offset + dragOffsetY
+                            val itemBottomInViewport = itemTopInViewport + currentItemInfo.size
+                            val edgeThreshold = 150f
+                            val shouldScrollUp = pointerY < edgeThreshold
+                            val shouldScrollDown = pointerY > viewportHeight - edgeThreshold
+                            if (shouldScrollUp || shouldScrollDown) {
+                                autoScrollJob?.cancel()
+                                autoScrollJob = scope.launch {
+                                    while (true) {
+                                        if (shouldScrollDown) {
+                                            listState.scrollToItem(listState.firstVisibleItemIndex + 1)
+                                        } else if (shouldScrollUp) {
+                                            listState.scrollToItem((listState.firstVisibleItemIndex - 1).coerceAtLeast(0))
+                                        }
+                                        delay(16)
+                                    }
+                                }
+                            } else {
+                                autoScrollJob?.cancel()
+                                autoScrollJob = null
+                            }
+                        }
+                    },
+                    onDragEnd = {
+                        autoScrollJob?.cancel()
+                        autoScrollJob = null
+                        val finalList = draggingList
+                        dragIndex = -1
+                        dragOffsetY = 0f
+                        draggingList = null
+                        if (finalList != null) {
+                            scope.launch {
+                                try {
+                                    presetRepository.reorder(finalList.map { it.id })
+                                    android.util.Log.d("PresetReorder", "success: ${finalList.map { it.name }}")
+                                } catch (e: Exception) {
+                                    android.util.Log.e("PresetReorder", "failed", e)
+                                }
+                            }
+                        }
+                    },
+                    onMoveUp = {
+                        scope.launch {
+                            val ids = visibleList.toMutableList()
+                            val tmp = ids[index - 1]; ids[index - 1] = ids[index]; ids[index] = tmp
+                            presetRepository.reorder(ids.map { it.id })
+                        }
+                    },
+                    onMoveDown = {
+                        scope.launch {
+                            val ids = visibleList.toMutableList()
+                            val tmp = ids[index + 1]; ids[index + 1] = ids[index]; ids[index] = tmp
+                            presetRepository.reorder(ids.map { it.id })
+                        }
+                    },
                     onSelect = {
                         scope.launch {
                             presetRepository.selectPreset(preset.id)
@@ -309,15 +375,45 @@ class PresetSettingsFragment : Fragment() {
     private fun PresetRow(
         preset: PresetEntity,
         selected: Boolean,
+        canMoveUp: Boolean,
+        canMoveDown: Boolean,
+        isDragging: Boolean,
+        dragOffsetY: Float,
+        onDragStart: () -> Unit,
+        onDrag: (Float, Float, Float) -> Unit,
+        onDragEnd: () -> Unit,
+        onMoveUp: () -> Unit,
+        onMoveDown: () -> Unit,
         onSelect: () -> Unit,
         onEdit: () -> Unit,
         onDelete: () -> Unit
     ) {
+        var itemHeightPx by remember { mutableFloatStateOf(0f) }
+        val thresholdPx = if (itemHeightPx > 0f) itemHeightPx else 120f
+
         Card(
             modifier = Modifier
                 .fillMaxWidth()
+                .zIndex(if (isDragging) 1f else 0f)
+                .graphicsLayer { translationY = dragOffsetY }
+                .onGloballyPositioned { coordinates ->
+                    itemHeightPx = coordinates.size.height.toFloat()
+                }
+                .pointerInput(Unit) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { onDragStart() },
+                        onDrag = { change, dragAmount -> onDrag(dragAmount.y, change.position.y, thresholdPx) },
+                        onDragEnd = { onDragEnd() },
+                        onDragCancel = { onDragEnd() }
+                    )
+                }
                 .clickable(onClick = onSelect),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            colors = CardDefaults.cardColors(
+                containerColor = if (isDragging)
+                    MaterialTheme.colorScheme.surfaceVariant
+                else
+                    MaterialTheme.colorScheme.surface
+            )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
@@ -340,13 +436,22 @@ class PresetSettingsFragment : Fragment() {
                             )
                         }
                     }
-                    if (selected) {
-                        Text(
-                            text = "✓",
-                            color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (selected) {
+                            Text(
+                                text = "✓",
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(end = 4.dp)
+                            )
+                        }
+                        IconButton(onClick = onMoveUp, enabled = canMoveUp) {
+                            Text("↑", color = if (canMoveUp) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton(onClick = onMoveDown, enabled = canMoveDown) {
+                            Text("↓", color = if (canMoveDown) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
                 Text(

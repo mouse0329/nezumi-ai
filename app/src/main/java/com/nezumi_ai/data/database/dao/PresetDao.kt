@@ -24,18 +24,17 @@ interface PresetDao {
     suspend fun delete(preset: PresetEntity)
 
     /**
-     * 並び順: デフォルトプリセットを先頭に、 sort_order 昇順、
-     * 不明ときは created_at 昇順を使う。ジャンル仕分け・タグ付けをしたときに
-     * 「意図した順番」で表示されるように、従来の is_locked より sort_order を優先する。
+     * 並び順: sort_order 昇順を最優先に、不明ときは created_at 昇順を使う。
+     * ドラッグ&ドロップで自由に並び替えられるように、is_default による固定は行わない。
      */
-    @Query("SELECT * FROM preset ORDER BY is_default DESC, sort_order ASC, is_locked ASC, created_at ASC")
+    @Query("SELECT * FROM preset ORDER BY sort_order ASC, is_locked ASC, created_at ASC")
     fun observeAll(): Flow<List<PresetEntity>>
 
-    @Query("SELECT * FROM preset ORDER BY is_default DESC, sort_order ASC, is_locked ASC, created_at ASC")
+    @Query("SELECT * FROM preset ORDER BY sort_order ASC, is_locked ASC, created_at ASC")
     suspend fun getAll(): List<PresetEntity>
 
     /** 名前検索・タグフィルタ用（UI 側で差分ストリームを処理するために Flow も提供）。 */
-    @Query("SELECT * FROM preset WHERE name LIKE :pattern OR tags_csv LIKE :pattern ORDER BY is_default DESC, sort_order ASC, is_locked ASC, created_at ASC")
+    @Query("SELECT * FROM preset WHERE name LIKE :pattern OR tags_csv LIKE :pattern ORDER BY sort_order ASC, is_locked ASC, created_at ASC")
     fun searchByNameOrTag(pattern: String): Flow<List<PresetEntity>>
 
     /** 並び替え UI 向けに sort_order を一括更新するための軽量クエリ。 */
