@@ -322,8 +322,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun setSize(s: Int) {
-        // ★ 768 は LocalDream / ggml バックエンドが未対応のため選択値から除外し、512 に丸める。
-        _sizePx.value = listOf(256, 512).minByOrNull { kotlin.math.abs(it - s) } ?: 512
+        val supportedSizes = listOf(128, 192, 256, 320, 384, 448, 512)
+        _sizePx.value = supportedSizes.minByOrNull { kotlin.math.abs(it - s) } ?: 512
     }
 
     fun setSeed(s: Long) {
@@ -421,6 +421,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         val threads = settingsRepository.getLlamaCppThreads().coerceAtLeast(1)
         val sz = _sizePx.value
         val totalSteps = _steps.value
+        Log.d(TAG, "[ImageGen] requested size=$sz x $sz")
         var wasCancelled = false
         try {
             runCatching { manager.unloadModel() }

@@ -97,6 +97,10 @@ data class InferenceConfig(
         }
     }
 
+    fun isContextCompressionEnabledForRuntime(): Boolean {
+        return com.nezumi_ai.BuildConfig.CONTEXT_COMPRESSION_ENABLED && contextCompressionEnabled
+    }
+
     fun normalized(): InferenceConfig {
         val normalizedContext = contextWindow.coerceIn(MIN_CONTEXT_WINDOW, MAX_CONTEXT_WINDOW)
         val normalizedCompressionThreshold =

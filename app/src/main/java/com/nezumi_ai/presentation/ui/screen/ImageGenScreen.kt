@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -277,14 +278,53 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
         }
         
         FieldGroup("サイズ") {
-            // ★ 768x768 は LocalDream / ggml バックエンドが未対応のため UI から削除した。
-            Row(
+            val sizeOptions = listOf(128, 192, 256, 320, 384, 448, 512)
+            val selectedIndex = sizeOptions.indexOf(sizePx).coerceAtLeast(0)
+
+            Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF2A2A2A)).padding(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    .background(Color(0xFF2A2A2A)).padding(12.dp)
             ) {
-                SizeTab("256x256", sizePx == 256) { vm.setSize(256) }
-                SizeTab("512x512", sizePx == 512) { vm.setSize(512) }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("生成サイズ", color = Color(0xFF999999), fontSize = 12.sp)
+                    Text(
+                        "${sizePx}x$sizePx",
+                        color = Color(0xFF0084FF),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Slider(
+                    value = selectedIndex.toFloat(),
+                    onValueChange = { index ->
+                        val snapped = sizeOptions.getOrElse(index.roundToInt()) { sizeOptions.last() }
+                        vm.setSize(snapped)
+                    },
+                    valueRange = 0f..(sizeOptions.size - 1).toFloat(),
+                    steps = sizeOptions.size - 2,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color(0xFF0084FF),
+                        activeTrackColor = Color(0xFF0084FF),
+                        inactiveTrackColor = Color(0xFF444444),
+                        activeTickColor = Color.White,
+                        inactiveTickColor = Color(0xFF666666)
+                    )
+                )
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    sizeOptions.forEach { size ->
+                        Text(size.toString(), color = Color(0xFF999999), fontSize = 11.sp)
+                    }
+                }
             }
         }
         

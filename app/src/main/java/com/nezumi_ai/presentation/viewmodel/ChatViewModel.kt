@@ -2985,7 +2985,7 @@ class ChatViewModel(
 
         // Phase 16: GPU時のコンテキスト圧縮を無効化（メモリ競合防止）
         // GPU推論中に別の圧縮推論を走らせるとメモリ OOM リスクが高い
-        val effectiveCompressionEnabled = config.contextCompressionEnabled && config.backendType != "GPU"
+        val effectiveCompressionEnabled = config.isContextCompressionEnabledForRuntime() && config.backendType != "GPU"
 
         if (!effectiveCompressionEnabled) {
             return trimPromptToWindow(fullPrompt, config.contextWindow)
@@ -3456,7 +3456,7 @@ class ChatViewModel(
         val basePromptSize = trimPromptToWindow(basePrompt, config.contextWindow).length
 
         // コンテキスト圧縮が無効な場合、またはGPU使用時は未圧縮のサイズをそのまま返す
-        if (!config.contextCompressionEnabled || config.backendType == "GPU") {
+        if (!config.isContextCompressionEnabledForRuntime() || config.backendType == "GPU") {
             return basePromptSize
         }
 

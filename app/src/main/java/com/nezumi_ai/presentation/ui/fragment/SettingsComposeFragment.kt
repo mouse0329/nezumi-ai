@@ -72,6 +72,7 @@ class SettingsComposeFragment : Fragment() {
     private var maxTokensInput by mutableStateOf("1024")
     private var contextCompressionEnabled by mutableStateOf(false)
     private var contextCompressionThresholdPercent by mutableStateOf(70)
+    private val contextCompressionUiEnabled = BuildConfig.CONTEXT_COMPRESSION_ENABLED
     private var speculativeDecodingEnabled by mutableStateOf(false)
     private var requireMultimodal by mutableStateOf(false)
     private var preloadMemoryWarningThresholdPercent by mutableStateOf(MemoryObserver.DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT)
@@ -696,75 +697,77 @@ class SettingsComposeFragment : Fragment() {
 
 
 
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-    // 自動圧縮トグル
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = "自動圧縮",
-            color = colorResource(id = R.color.text_secondary),
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.weight(1f)
-        )
-        Switch(
-            checked = contextCompressionEnabled,
-            onCheckedChange = { contextCompressionEnabled = it }
-        )
-    }
-    Text(
-        text = "有効にすると指定した割合を超えたときに自動的に圧縮します",
-        color = colorResource(id = R.color.text_secondary),
-        style = MaterialTheme.typography.bodySmall
-    )
+                if (contextCompressionUiEnabled) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        // 自動圧縮トグル
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "自動圧縮",
+                                color = colorResource(id = R.color.text_secondary),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Switch(
+                                checked = contextCompressionEnabled,
+                                onCheckedChange = { contextCompressionEnabled = it }
+                            )
+                        }
+                        Text(
+                            text = "有効にすると指定した割合を超えたときに自動的に圧縮します",
+                            color = colorResource(id = R.color.text_secondary),
+                            style = MaterialTheme.typography.bodySmall
+                        )
 
-    // 圧縮しきい値（animatedAlphaとかで無効時は薄くしてもいい）
-    if (contextCompressionEnabled) {
-        Spacer(modifier = Modifier.height(4.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "圧縮しきい値",
-                color = colorResource(id = R.color.text_secondary),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                text = "${contextCompressionThresholdPercent}%",
-                color = colorResource(id = R.color.primary),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-            )
-        }
-        Slider(
-            value = contextCompressionThresholdPercent.toFloat(),
-            onValueChange = { value ->
-                contextCompressionThresholdPercent = value.roundToInt()
-                    .coerceIn(
-                        InferenceConfig.MIN_COMPRESSION_THRESHOLD,
-                        InferenceConfig.MAX_COMPRESSION_THRESHOLD
-                    )
-            },
-            valueRange = InferenceConfig.MIN_COMPRESSION_THRESHOLD.toFloat()..
-                InferenceConfig.MAX_COMPRESSION_THRESHOLD.toFloat(),
-            steps = InferenceConfig.MAX_COMPRESSION_THRESHOLD -
-                InferenceConfig.MIN_COMPRESSION_THRESHOLD - 1,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Text(
-            text = "メモリ使用量がこの割合を超えると自動圧縮します",
-            color = colorResource(id = R.color.text_secondary),
-            style = MaterialTheme.typography.labelSmall
-        )
-    }
-}
+                        // 圧縮しきい値（animatedAlphaとかで無効時は薄くしてもいい）
+                        if (contextCompressionEnabled) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "圧縮しきい値",
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "${contextCompressionThresholdPercent}%",
+                                    color = colorResource(id = R.color.primary),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                )
+                            }
+                            Slider(
+                                value = contextCompressionThresholdPercent.toFloat(),
+                                onValueChange = { value ->
+                                    contextCompressionThresholdPercent = value.roundToInt()
+                                        .coerceIn(
+                                            InferenceConfig.MIN_COMPRESSION_THRESHOLD,
+                                            InferenceConfig.MAX_COMPRESSION_THRESHOLD
+                                        )
+                                },
+                                valueRange = InferenceConfig.MIN_COMPRESSION_THRESHOLD.toFloat()..
+                                    InferenceConfig.MAX_COMPRESSION_THRESHOLD.toFloat(),
+                                steps = InferenceConfig.MAX_COMPRESSION_THRESHOLD -
+                                    InferenceConfig.MIN_COMPRESSION_THRESHOLD - 1,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                text = "メモリ使用量がこの割合を超えると自動圧縮します",
+                                color = colorResource(id = R.color.text_secondary),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                }
 
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(
@@ -2063,7 +2066,7 @@ class SettingsComposeFragment : Fragment() {
                     AboutSection(title = "主な機能") {
                         AboutBullet("Gemma 系モデルのローカルチャット")
                         AboutBullet("GGUF モデル、画像・音声入力、シンキング表示")
-                        AboutBullet("メモリ抽出、会話履歴、コンテキスト圧縮")
+                        AboutBullet("メモリ抽出、会話履歴、各種ツール連携")
                         AboutBullet("Web 検索、アラーム、画像生成などのツール連携")
                     }
 

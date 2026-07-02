@@ -506,11 +506,34 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                             )
                         }
                 }
-                Text("サイズ: ${size}x$size", color = MaterialTheme.colorScheme.onSurface)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(256, 512, 768).forEach { s ->
-                        Button(onClick = { vm.setSize(s) }, enabled = !loading) {
-                            Text("${s}x$s")
+                val sizeOptions = listOf(128, 192, 256, 320, 384, 448, 512)
+                val selectedSizeIndex = sizeOptions.indexOf(size).coerceAtLeast(0)
+                Column(Modifier.fillMaxWidth()) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("サイズ", color = MaterialTheme.colorScheme.onSurface)
+                        Text("${size}x$size", color = MaterialTheme.colorScheme.primary)
+                    }
+                    Slider(
+                        value = selectedSizeIndex.toFloat(),
+                        onValueChange = { index ->
+                            val snapped = sizeOptions.getOrElse(index.toInt()) { sizeOptions.last() }
+                            vm.setSize(snapped)
+                        },
+                        valueRange = 0f..(sizeOptions.size - 1).toFloat(),
+                        steps = sizeOptions.size - 2,
+                        enabled = !loading,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    )
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        sizeOptions.forEach { s ->
+                            Text(s.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
