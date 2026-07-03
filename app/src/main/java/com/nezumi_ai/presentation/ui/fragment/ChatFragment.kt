@@ -44,12 +44,16 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -1817,13 +1821,27 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 .padding(start = 12.dp, end = 12.dp, bottom = bottomPadding),
             horizontalArrangement = Arrangement.Center
         ) {
-            TextButton(onClick = {
-                val lastIndex = adapter.itemCount - 1
-                if (lastIndex >= 0) {
-                    scrollToBottom(lastIndex)
-                }
-            }) {
-                Text(text = getString(R.string.scroll_to_bottom_icon))
+            // ★ 「下に戻る」ボタン：太い白い矢印 + 黒縁取りで見やすくする。
+            //   Compose には Text の outline 描画が直接ないので、
+            //   同位置に「太い黒い矢印（stroke）」を下に、「白い矢印」を上に重ねて描く。
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clickable {
+                        val lastIndex = adapter.itemCount - 1
+                        if (lastIndex >= 0) {
+                            scrollToBottom(lastIndex)
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                val iconTint = if (isSystemInDarkTheme()) Color.White else Color.Black
+                Image(
+                    painter = painterResource(id = R.drawable.arrow_downward_alt_24),
+                    contentDescription = getString(R.string.scroll_to_bottom),
+                    modifier = Modifier.size(28.dp),
+                    colorFilter = ColorFilter.tint(iconTint)
+                )
             }
         }
     }

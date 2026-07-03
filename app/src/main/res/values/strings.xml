@@ -51,7 +51,7 @@
     <string name="chat_thinking_follow_settings">シンキング:ON</string>
     <string name="chat_thinking_off_for_session">シンキング:OFF</string>
     <string name="scroll_to_bottom">一番下へ</string>
-    <string name="scroll_to_bottom_icon">↓</string>
+    <string name="scroll_to_bottom_icon">⬇</string>
     <string name="revoke_prompt">取り消し</string>
     <string name="copy_all">コピー</string>
     <string name="copied_to_clipboard">コピーしました</string>
