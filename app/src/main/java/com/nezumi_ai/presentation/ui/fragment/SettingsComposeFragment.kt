@@ -56,6 +56,7 @@ import com.nezumi_ai.data.repository.SettingsRepository
 
 import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.presentation.ui.composable.ErrorModalDialog
+import com.nezumi_ai.presentation.ui.composable.SvgSpinner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1649,7 +1650,10 @@ class SettingsComposeFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = "デバッグ", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(text = "デバッグ", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                    SvgSpinner(modifier = Modifier.size(32.dp))
+                }
                 Text(
                     text = "モデル埋め込みによる類似度",
                     fontWeight = FontWeight.SemiBold,

@@ -66,6 +66,7 @@ import com.nezumi_ai.data.repository.MessageRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.data.inference.MemoryObserver
+import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -79,6 +80,9 @@ class SetupWizardFragment : Fragment() {
     private var currentStep by mutableStateOf(0)
     private var selectedBackend by mutableStateOf("CPU")
     private var selectedModel by mutableStateOf<String?>(null)
+    private var embeddingDownloaded by mutableStateOf(false)
+    private var embeddingDownloading by mutableStateOf(false)
+    private var embeddingProgress by mutableStateOf("")
     private var preloadMemoryWarningThresholdPercent by mutableStateOf(MemoryObserver.DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT)
     private var pendingDownloadModel: ModelFileManager.LocalModel? = null
     private var isCompleting by mutableStateOf(false)
@@ -134,11 +138,9 @@ class SetupWizardFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        // ★ MainActivity で既にセットアップ完了チェックされているため、ここでの重複チェック不要
-        // セットアップ画面が一瞬表示される問題を回避
-
         refreshModelStatus()
         observeDownloadWork()
+        embeddingDownloaded = MemoryTextEmbedder.hasEmbeddingFiles(requireContext())
 
         viewLifecycleOwner.lifecycleScope.launch {
             selectedBackend = settingsRepository.getBackendForModel(settingsRepository.getSelectedModel())
@@ -195,6 +197,7 @@ class SetupWizardFragment : Fragment() {
                             when (currentStep) {
                                 0 -> WelcomeStep(textPrimary, textSecondary)
                                 1 -> BackendStep(accent, textPrimary, textSecondary)
+                                2 -> EmbeddingStep(accent, textPrimary, textSecondary)
                                 else -> ModelStep(accent, textPrimary, textSecondary)
                             }
                         }
@@ -393,18 +396,22 @@ class SetupWizardFragment : Fragment() {
         textPrimary: androidx.compose.ui.graphics.Color,
         textSecondary: androidx.compose.ui.graphics.Color
     ) {
-        val labels = listOf("ウェルカム", "バックエンド", "モデル")
+        val labels = listOf("ウェルカム", "バックエンド", "メモリ", "モデル")
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(
                 text = "Step ${currentStep + 1} / ${labels.size}",
                 color = textSecondary,
                 style = MaterialTheme.typography.labelLarge
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 labels.forEachIndexed { index, label ->
                     val active = index == currentStep
                     val completed = index < currentStep
                     Card(
+                        modifier = Modifier.weight(1f),
                         colors = CardDefaults.cardColors(
                             containerColor = when {
                                 active -> accent
@@ -416,9 +423,14 @@ class SetupWizardFragment : Fragment() {
                     ) {
                         Text(
                             text = label,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            modifier = Modifier
+                                .padding(horizontal = 6.dp, vertical = 8.dp)
+                                .fillMaxWidth(),
                             color = if (active) colorResource(id = R.color.nezumi_on_primary) else textPrimary,
-                            style = MaterialTheme.typography.labelLarge
+                            style = MaterialTheme.typography.labelSmall,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -662,7 +674,7 @@ class SetupWizardFragment : Fragment() {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TextButton(onClick = { currentStep = 1 }, enabled = !isCompleting) {
+            TextButton(onClick = { currentStep = 2 }, enabled = !isCompleting) {
                 Text("戻る")
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -676,14 +688,100 @@ class SetupWizardFragment : Fragment() {
                     onClick = { completeSetup(skipModelSelection = false) },
                     enabled = canFinishWithoutSkip() && !isCompleting
                 ) {
-                    if (isCompleting) {
-                        SvgSpinner(
-                            modifier = Modifier.size(18.dp)
+                    if (isCompleting) SvgSpinner(modifier = Modifier.size(18.dp))
+                    else Text("チャットへ")
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun EmbeddingStep(
+        accent: androidx.compose.ui.graphics.Color,
+        textPrimary: androidx.compose.ui.graphics.Color,
+        textSecondary: androidx.compose.ui.graphics.Color
+    ) {
+        Text(
+            text = "メモリ検索モデル",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = textPrimary
+        )
+        Text(
+            text = "メモリ機能・セマンティック検索に使う埋め込みモデルです。約 30MB のダウンロードが必要です。",
+            color = textSecondary
+        )
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.surface_card)),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "static-embedding-japanese",
+                            color = textPrimary,
+                            fontWeight = FontWeight.SemiBold
                         )
-                    } else {
-                        Text("チャットへ")
+                        Text(
+                            text = "hotchpotch/static-embedding-japanese · 約30MB",
+                            color = textSecondary,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Text(
+                        text = when {
+                            embeddingDownloaded -> "準備OK"
+                            embeddingDownloading -> "取得中"
+                            else -> "未取得"
+                        },
+                        color = if (embeddingDownloaded) accent else textSecondary
+                    )
+                }
+                if (embeddingDownloading) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    if (embeddingProgress.isNotBlank()) {
+                        Text(
+                            text = embeddingProgress,
+                            color = textSecondary,
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                 }
+                if (!embeddingDownloaded) {
+                    Button(
+                        onClick = { startEmbeddingDownload() },
+                        enabled = !embeddingDownloading,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (embeddingDownloading) "ダウンロード中..." else "ダウンロード")
+                    }
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = { currentStep = 1 }, enabled = !isCompleting) {
+                Text("戻る")
+            }
+            Button(
+                onClick = { currentStep = 3 },
+                enabled = embeddingDownloaded && !isCompleting
+            ) {
+                Text("次へ")
             }
         }
     }
@@ -845,6 +943,24 @@ class SetupWizardFragment : Fragment() {
         }
     }
 
+    private fun startEmbeddingDownload() {
+        embeddingDownloading = true
+        embeddingProgress = "準備中..."
+        viewLifecycleOwner.lifecycleScope.launch {
+            val ok = runCatching {
+                MemoryTextEmbedder.ensureEmbeddingFilesDownloaded(
+                    requireContext().applicationContext
+                ) { file, downloaded, total ->
+                    val pct = if (total > 0) (downloaded * 100 / total).toInt() else 0
+                    embeddingProgress = "$file: $pct%"
+                }
+            }.getOrDefault(false)
+            embeddingDownloading = false
+            embeddingDownloaded = ok
+            if (!ok) toast("ダウンロードに失敗しました")
+        }
+    }
+
     private fun canFinishWithoutSkip(): Boolean {
         val selected = selectedModel ?: return false
         val option = builtinModelOptions().firstOrNull { it.settingValue == selected } ?: return false
@@ -902,21 +1018,6 @@ class SetupWizardFragment : Fragment() {
                     }
                     if (!modelToApply.isNullOrBlank()) {
                         settingsRepository.updateModel(modelToApply)
-                    }
-
-                    // Bug fix: static-embedding-japanese をセットアップ段階で強制ダウンロードさせる。
-                    // 検索機能やメモリ機能で embedding ファイルが必須のため、初期セットアップ時点で確保しておく。
-                    // 失敗してもセットアップ自体は進める（オフライン起動したいユーザーもいるため）。
-                    runCatching {
-                        com.nezumi_ai.data.memory.MemoryTextEmbedder.ensureEmbeddingFilesDownloaded(
-                            requireContext().applicationContext
-                        )
-                    }.onFailure {
-                        android.util.Log.w(
-                            "SetupWizardFragment",
-                            "Embedding files download failed during setup; will retry on first use",
-                            it
-                        )
                     }
 
                     PreferencesHelper.markInitialSetupCompleted(requireContext())
