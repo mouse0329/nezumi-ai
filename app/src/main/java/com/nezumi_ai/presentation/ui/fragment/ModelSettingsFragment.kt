@@ -2859,6 +2859,15 @@ open class ModelSettingsFragment : Fragment() {
                                 modifier = Modifier.padding(top = 2.dp)
                             )
                         }
+                        val fileSize = File(model.path).length()
+                        if (fileSize > 0L) {
+                            Text(
+                                text = formatBytes(fileSize),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorResource(id = R.color.text_secondary),
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
                     }
                     if (!isExpanded) {
                         Text(
