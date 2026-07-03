@@ -1,5 +1,10 @@
 package com.nezumi_ai.data.inference
 
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.decodeFromString
+
+@Serializable
 data class ImageModel(
     val id: String,
     val name: String,
@@ -76,17 +81,19 @@ object ImageModelBrowser {
         models
     }
     
+    @Serializable
     private data class TreeEntry(
         val type: String,
         val path: String,
         val size: Long,
         val lfs: LfsInfo? = null
     )
-    
+
+    @Serializable
     private data class LfsInfo(
-        val oid: String,
-        val size: Long,
-        val pointerSize: Long
+        val oid: String? = null,
+        val size: Long = 0,
+        val pointerSize: Long = 0
     )
     
     private data class ParsedModel(
@@ -102,9 +109,8 @@ object ImageModelBrowser {
             connectTimeout = 15000
             readTimeout = 15000
         }.getInputStream().bufferedReader().use { it.readText() }
-        
-        val gson = com.google.gson.Gson()
-        gson.fromJson(response, Array<TreeEntry>::class.java).toList()
+        val json = Json { ignoreUnknownKeys = true }
+        json.decodeFromString<Array<TreeEntry>>(response).toList()
     }
     
     private fun parseFileName(fileName: String, backend: String): ParsedModel? {

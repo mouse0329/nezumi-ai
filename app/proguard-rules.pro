@@ -43,3 +43,11 @@
 -keep class kotlin.serialization.** { *; }
 -keepattributes RuntimeVisibleAnnotations
 -keepattributes RuntimeVisibleParameterAnnotations
+
+# ============================================================================
+# Keep model classes parsed by Gson to prevent R8 from making them
+# abstract/obfuscated in a way that breaks reflection-based deserialization.
+# Adjust if you add other Gson-parsed data classes in different packages.
+# ============================================================================
+# Keep nested data classes inside ImageModelBrowser (TreeEntry, LfsInfo)
+-keep class com.nezumi_ai.data.inference.ImageModelBrowser$* { *; }
