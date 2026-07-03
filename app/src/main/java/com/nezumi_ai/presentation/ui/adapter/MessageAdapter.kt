@@ -392,11 +392,11 @@ class MessageAdapter(
                     onAiMessageLayoutChanged()
                 }
             }
-            binding.aiThinkingMarkdownCompose.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
-                if (bottom - top != oldBottom - oldTop) {
-                    onAiMessageLayoutChanged()
-                }
-            }
+            // ★ Scroll fix: aiThinkingMarkdownCompose の layoutChangeListener は
+            //   Thinking ブロックの展開/折りたたみやトークン追加のたびに冗長発火し、
+            //   自動追従スクロールを不安定化させる原因になっていたため削除。
+            //   本文 (aiMessageMarkdownCompose / aiMessageText) の高さ変化だけで
+            //   下端追従判定は十分機能する。
             binding.aiMessageText.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
                 if (bottom - top != oldBottom - oldTop) {
                     onAiMessageLayoutChanged()
@@ -685,17 +685,18 @@ class MessageAdapter(
         }
 
         private fun renderThinkingMarkdown(content: String) {
-            if (lastRenderedThinking == content &&
-                lastRenderedContentMode == ContentRenderMode.Markdown
-            ) return
-
-            binding.aiThinkingMarkdownCompose.visibility = View.VISIBLE
+            // ★ Scroll fix:
+            //   - early-return 判定は lastRenderedThinking の同値だけで十分。
+            //     lastRenderedContentMode は「本文」用のフラグなのでここで参照/更新しない。
+            //   - aiThinkingMarkdownCompose の visibility は呼び出し元の展開/折りたたみロジックが管理する。
+            //     ここで強制 VISIBLE にすると自動閉じ後に再描画が入ったとき勝手に開いてしまう。
+            //   - onAiMessageLayoutChanged() は呼ばない。Thinking ブロックのレイアウト変化で
+            //     毎トークン自動スクロールが再スケジュールされ、追従が乱れるため。
+            if (lastRenderedThinking == content) return
 
             binding.aiThinkingMarkdownCompose.setContent {
                 GalleryMarkdownText(content = content)
             }
-            binding.aiThinkingMarkdownCompose.post { onAiMessageLayoutChanged() }
-            lastRenderedContentMode = ContentRenderMode.Markdown
         }
 
         @Composable
