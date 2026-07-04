@@ -277,6 +277,15 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         val previous = _selectedBackend.value
         _selectedBackend.value = backend
         PreferencesHelper.setSdBackend(getApplication(), backend)
+        // ★ Bug fix (SD hang): CPU バックエンドを選んだときに use_opencl が true のままだと
+        //   UNET だけモバイル GPU に逃げてカーネル JIT で 30〜60秒ハングする。
+        //   backend 選択と OpenCL フラグをリンクさせて食い違いを防ぐ。
+        when (backend.lowercase()) {
+            "mnn", "cpu" -> PreferencesHelper.setSdUseOpenCL(getApplication(), false)
+            "qnn", "gpu", "npu" -> PreferencesHelper.setSdUseOpenCL(getApplication(), true)
+            // "auto" はユーザーの既存設定を尊重
+            else -> {}
+        }
         updateBackendInfo()
         // ★ Bug fix: backend を切り替えたら即座に既存の LocalDream サーバーを停止し、
         //   次回 generate() 時に新 backend で起動し直されるようにする。
@@ -438,8 +447,15 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 cfg = _cfg.value,
                 seed = _seed.value,
                 onProgress = { step, steps, time ->
-                    _progressData.value = ProgressData(step, steps, time)
-                    _currentStep.value = step.coerceAtMost(totalSteps)
+                    // 同じ step の連続更新で不必要な recomposition を避ける
+                    val clamped = step.coerceAtMost(totalSteps)
+                    if (_currentStep.value != clamped) {
+                        _currentStep.value = clamped
+                    }
+                    val prev = _progressData.value
+                    if (prev == null || prev.step != step || prev.totalSteps != steps || prev.time != time) {
+                        _progressData.value = ProgressData(step, steps, time)
+                    }
                 }
             )
             val bmp = result?.first
@@ -838,8 +854,14 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 cfg = item.cfg,
                 seed = item.seed,
                 onProgress = { step, totalSteps, _ ->
-                    _progressData.value = ProgressData(step, totalSteps, 0f)
-                    _currentStep.value = step.coerceAtMost(totalSteps)
+                    val clamped = step.coerceAtMost(totalSteps)
+                    if (_currentStep.value != clamped) {
+                        _currentStep.value = clamped
+                    }
+                    val prev = _progressData.value
+                    if (prev == null || prev.step != step || prev.totalSteps != totalSteps) {
+                        _progressData.value = ProgressData(step, totalSteps, 0f)
+                    }
                 }
             )
 

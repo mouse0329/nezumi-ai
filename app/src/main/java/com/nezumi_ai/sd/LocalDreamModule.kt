@@ -545,6 +545,17 @@ class LocalDreamModule(private val context: Context) {
         }
 
         try {
+            // ※ use_opencl は「CPU サーバ (`--cpu`) で起動しているときだけ UNET を
+            //   OpenCL に逃がす」ハイブリッドフラグだが、モバイル GPU の OpenCL カーネル
+            //   JIT + 重み転送で初回に数十秒のストールを引き起こす。
+            //   ユーザーがバックエンドを CPU にした場合はこの旗を強制的に切り、
+            //   UI の OpenCL トグルとバックエンド選択の食い違いを Module 層で吸収する。
+            val userWantsOpenCL = PreferencesHelper.isSdUseOpenCL(context)
+            val effectiveUseOpenCL = userWantsOpenCL && currentBackend != "mnn"
+            if (userWantsOpenCL && !effectiveUseOpenCL) {
+                Log.w(TAG, "generateImage: use_opencl=true を無視しました (currentBackend=$currentBackend, CPU サーバ上で UNET を GPU に逃がすと初回が極端に重いため)")
+            }
+
             val body = JSONObject().apply {
                 put("prompt", prompt)
                 put("negative_prompt", negativePrompt)
@@ -554,7 +565,7 @@ class LocalDreamModule(private val context: Context) {
                 put("cfg", cfg)
                 put("seed", if (seed < 0) (Math.random() * Int.MAX_VALUE).toInt() else seed)
                 put("scheduler", "dpm")
-                put("use_opencl", PreferencesHelper.isSdUseOpenCL(context))
+                put("use_opencl", effectiveUseOpenCL)
                 put("show_diffusion_process", false)
             }
 
