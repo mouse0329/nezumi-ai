@@ -215,9 +215,6 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private val _resultBitmap = MutableStateFlow<Bitmap?>(null)
     val resultBitmap: StateFlow<Bitmap?> = _resultBitmap.asStateFlow()
 
-    private val _previewBitmap = MutableStateFlow<Bitmap?>(null)
-    val previewBitmap: StateFlow<Bitmap?> = _previewBitmap.asStateFlow()
-
     private val _queueResultBitmaps = MutableStateFlow<List<Bitmap>>(emptyList())
     val queueResultBitmaps: StateFlow<List<Bitmap>> = _queueResultBitmaps.asStateFlow()
 
@@ -413,7 +410,6 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         }
         _loading.value = true
         _resultBitmap.value = null
-        _previewBitmap.value = null
         _currentStep.value = 0
         _safetyVerdict.value = null
         isCancelling = false
@@ -441,22 +437,9 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 steps = totalSteps,
                 cfg = _cfg.value,
                 seed = _seed.value,
-                onProgress = { step, steps, time, previewBmp ->
+                onProgress = { step, steps, time ->
                     _progressData.value = ProgressData(step, steps, time)
                     _currentStep.value = step.coerceAtMost(totalSteps)
-                    // ★ Bug fix: 512x512 で生成するとステップごとに UI が重くなっていた。
-                    //   原因は previewBitmap を _previewBitmap.value に毎回代入しても
-                    //   古い Bitmap が recycle() されず Java ヒープ上で GC 待ちになり、
-                    //   ステップが進むごとにモリショクでストップザ・ザ・ワールドが起きていたため。
-                    //   現状 ImageGenScreen は previewBitmap を UI に表示していないので、
-                    //   古い Bitmap を recycle してすぐに手放し、メモリプレッシャーを軽減する。
-                    if (previewBmp != null) {
-                        val old = _previewBitmap.value
-                        _previewBitmap.value = previewBmp
-                        if (old != null && old !== previewBmp && !old.isRecycled) {
-                            runCatching { old.recycle() }
-                        }
-                    }
                 }
             )
             val bmp = result?.first
@@ -499,11 +482,6 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         } finally {
             Log.i(TAG, "[ImageGen] finally block: cleaning up")
             isCancelling = false
-            // ★ Bug fix: クリーンアップ時も古い preview Bitmap を recycle してメモリを解放する。
-            _previewBitmap.value?.let { old ->
-                if (!old.isRecycled) runCatching { old.recycle() }
-            }
-            _previewBitmap.value = null
             runCatching { EngineManager.releaseSdKeepNone() }
             runCatching { EngineManager.markLlmActive() }
             if (!wasCancelled) {
@@ -720,7 +698,6 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         queueRunJob?.cancel()
         _loading.value = true
         _resultBitmap.value = null
-        _previewBitmap.value = null
         _currentStep.value = 0
         _safetyVerdict.value = null
 
@@ -762,7 +739,6 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 )
                 _generationQueue.value = currentQueue
                 _resultBitmap.value = null
-                _previewBitmap.value = null
 
                 val bmp = executeQueueItem(item)
                 
@@ -861,17 +837,9 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 steps = item.steps,
                 cfg = item.cfg,
                 seed = item.seed,
-                onProgress = { step, totalSteps, _, previewBmp ->
+                onProgress = { step, totalSteps, _ ->
                     _progressData.value = ProgressData(step, totalSteps, 0f)
                     _currentStep.value = step.coerceAtMost(totalSteps)
-                    // ★ Bug fix: キュー実行時も preview Bitmap を古いものを recycle してメモリを解放する。
-                    if (previewBmp != null) {
-                        val old = _previewBitmap.value
-                        _previewBitmap.value = previewBmp
-                        if (old != null && old !== previewBmp && !old.isRecycled) {
-                            runCatching { old.recycle() }
-                        }
-                    }
                 }
             )
 

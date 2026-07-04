@@ -509,7 +509,7 @@ class LocalDreamModule(private val context: Context) {
         steps: Int,
         cfg: Float,
         seed: Long,
-        onProgress: (Int, Int, Float, Bitmap?) -> Unit
+        onProgress: (Int, Int, Float) -> Unit
     ): Bitmap? = withContext(Dispatchers.IO) {
         // ── 前段：テキストガード ──────────────────────────────────
         if (com.nezumi_ai.BuildConfig.SAFETY_PROMPT_FILTER_ENABLED &&
@@ -604,34 +604,15 @@ class LocalDreamModule(private val context: Context) {
                     try {
                         val data = JSONObject(trimmed.substring(6))
                         when (data.optString("type", currentEventType)) {
-                            "progress" -> {
+                            "progress", "preview" -> {
                                 val (step, totalSteps) = normalizeServerProgress(
-                                    serverStep = data.getInt("step"),
-                                    serverTotalSteps = data.getInt("total_steps"),
-                                    requestedSteps = steps
-                                )
-                                val now = System.currentTimeMillis()
-                                // ★ Bug fix: 512x512 生成時にステップごとに preview Bitmap をデコードし
-                                //   _previewBitmap に代入していたため、古い Bitmap が GC 待ちとなり
-                                //   UI を計算する Compose スレッドが重くなり続けていた。
-                                //   現状 preview は UI に使われていないため、デコード自体をスキップして
-                                //   進捗ステップのみ通知する。間隔も 200ms → 400ms に伸ばして UI 負荷を軽減。
-                                if (now - lastProgressTime > 400 || step == totalSteps) {
-                                    onProgress(step, totalSteps, 0f, null)
-                                    lastProgressTime = now
-                                }
-                            }
-                            "preview" -> {
-                                val (step, totalSteps) = normalizeServerProgress(
-                                    serverStep = data.optInt("step", 0),
+                                    serverStep = data.optInt("step", data.optInt("step", 0)),
                                     serverTotalSteps = data.optInt("total_steps", steps),
                                     requestedSteps = steps
                                 )
                                 val now = System.currentTimeMillis()
-                                // ★ Bug fix: preview デコードをスキップし、進捗のみを通知して
-                                //   ステップごとの Bitmap 生成/メモリプレッシャーを防ぐ。
                                 if (now - lastProgressTime > 400 || step == totalSteps) {
-                                    onProgress(step, totalSteps, 0f, null)
+                                    onProgress(step, totalSteps, 0f)
                                     lastProgressTime = now
                                 }
                             }
@@ -764,7 +745,7 @@ class LocalDreamModule(private val context: Context) {
         steps: Int,
         cfg: Float,
         seed: Long,
-        onProgress: (Int, Int, Float, Bitmap?) -> Unit
+        onProgress: (Int, Int, Float) -> Unit
     ): Pair<Bitmap?, ImageGenerationMetadata?>? = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
         val resolvedSeed = if (seed < 0) {

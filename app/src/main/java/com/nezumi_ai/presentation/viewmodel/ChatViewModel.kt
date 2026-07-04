@@ -2551,7 +2551,7 @@ class ChatViewModel(
                 steps = steps,
                 cfg = cfg,
                 seed = seed,
-                onProgress = { step, totalSteps, _, _ ->
+                onProgress = { step, totalSteps, _ ->
                     _imageGenProgress.value = Pair(step, totalSteps)
                     _toolCallState.value = ToolCallState.Executing(
                         toolName = "generate_image",
