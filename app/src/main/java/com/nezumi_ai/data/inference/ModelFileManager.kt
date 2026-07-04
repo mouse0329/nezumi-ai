@@ -117,6 +117,17 @@ object ModelFileManager {
         return cleaned.ifBlank { "custom_model.task" }
     }
 
+    private fun safeLog(tag: String, message: String, level: Int, throwable: Throwable? = null) {
+        runCatching {
+            when (level) {
+                1 -> Log.d(tag, message)
+                2 -> Log.w(tag, message)
+                3 -> if (throwable == null) Log.e(tag, message) else Log.e(tag, message, throwable)
+                else -> Log.d(tag, message)
+            }
+        }
+    }
+
     private fun sanitizeImportedStemOnly(raw: String): String {
         val leaf = raw.trim().substringAfterLast('/').substringAfterLast('\\').trim()
         val withoutExt = leaf.substringBeforeLast('.', leaf)
@@ -527,22 +538,22 @@ object ModelFileManager {
             val isMmproj = lowerOut.contains("mmproj")
             when {
                 lowerOut.endsWith(".task") || lowerOut.endsWith(".litertlm") -> {
-                    validateImportedTaskFile(outFile).getOrElse { reason ->
+                    validateModelFileForUse(outFile).getOrElse { reason ->
                         outFile.delete()
                         throw IllegalStateException("ダウンロードしたモデルを読み込めません: ${reason.message}")
                     }
                 }
                 lowerOut.endsWith(".gguf") || lowerOut.endsWith(".mmproj") || lowerOut.endsWith(".safetensors") -> {
-                    if (!outFile.isFile || !outFile.canRead() || outFile.length() <= 0L) {
+                    validateModelFileForUse(outFile).getOrElse { reason ->
                         outFile.delete()
-                        throw IllegalStateException("ダウンロードしたファイルが無効です")
+                        throw IllegalStateException("ダウンロードしたファイルを読み込めません: ${reason.message}")
                     }
                     if (isMmproj) {
                         linkMmprojToModel(context, outFile, normalizedModelId)
                     }
                 }
                 else -> {
-                    validateImportedTaskFile(outFile).getOrElse { reason ->
+                    validateModelFileForUse(outFile).getOrElse { reason ->
                         outFile.delete()
                         throw IllegalStateException("ダウンロードしたモデルを読み込めません: ${reason.message}")
                     }
@@ -722,57 +733,55 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         validationCache[file.absolutePath]?.let { return it }
 
         val result = runCatching {
-        if (!file.exists() || !file.isFile) {
-            throw IllegalStateException("ファイルが見つかりません")
+            validateModelFileForUse(file).getOrThrow()
         }
-        if (!file.canRead()) {
-            throw IllegalStateException("ファイルを読み取れません")
-        }
-        val size = file.length()
-        if (size <= 0L) {
-            throw IllegalStateException("ファイルが空です")
-        }
-        // MediaPipe LiteRT モデルの最小サイズをチェック（通常は 100MB 以上）
-        if (size < WARN_SMALL_IMPORTED_TASK_BYTES) {
-            Log.w(TAG, "Imported task is very small: ${file.absolutePath} (${size} bytes)")
-        }
-        
-        val lower = file.name.lowercase()
-        
-        if (lower.endsWith(".task") || lower.endsWith(".litertlm")) {
-            try {
+
+        validationCache[file.absolutePath] = result
+        return result
+    }
+
+    fun validateModelFileForUse(file: File): Result<File> {
+        return runCatching {
+            if (!file.exists() || !file.isFile) {
+                throw IllegalStateException("ファイルが見つかりません")
+            }
+            if (!file.canRead()) {
+                throw IllegalStateException("ファイルを読み取れません")
+            }
+            val size = file.length()
+            if (size <= 0L) {
+                throw IllegalStateException("ファイルが空です")
+            }
+            if (size < WARN_SMALL_IMPORTED_TASK_BYTES) {
+                safeLog(TAG, "Model file is very small: ${file.absolutePath} (${size} bytes)", 2)
+            }
+
+            val lower = file.name.lowercase()
+            if (lower.endsWith(".task") || lower.endsWith(".litertlm")) {
                 val header = ByteArray(8)
                 file.inputStream().use { stream ->
                     stream.read(header)
                 }
-                
+
                 val isZip = header[0] == 0x50.toByte() && header[1] == 0x4B.toByte()
-                
-                // TFLite FlatBuffer (Web版) のマジックナンバー: バイト4〜7が "TFL3"
                 val isTfliteFlatbuffer = header[4] == 'T'.code.toByte() &&
                     header[5] == 'F'.code.toByte() &&
                     header[6] == 'L'.code.toByte() &&
                     header[7] == '3'.code.toByte()
-                
+
                 if (isTfliteFlatbuffer) {
-                    Log.e(TAG, "Web用モデル検出: ${file.absolutePath} はTFLite FlatBuffer形式(Web版)です")
+                    safeLog(TAG, "Web用モデル検出: ${file.absolutePath} はTFLite FlatBuffer形式(Web版)です", 3)
                     throw IllegalStateException("Web用モデル: このファイルはMediaPipe Web用のモデルです。Androidアプリ用の.taskファイル（LiteRT形式）をご利用ください。")
                 }
 
                 if (isZip) {
-                    Log.d(TAG, ".task file appears to be ZIP; ignoring ZIP-warning for known task bundles: ${file.absolutePath}")
+                    safeLog(TAG, ".task file appears to be ZIP; ignoring ZIP-warning for known task bundles: ${file.absolutePath}", 1)
                 }
-                
-                Log.d(TAG, "Binary model file validated: ${file.absolutePath} (${size} bytes)")
-            } catch (e: IllegalStateException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Error reading model file header: ${e.message}", e)
-            }
-        }
 
-        if (lower.endsWith(".gguf")) {
-            try {
+                safeLog(TAG, "Binary model file validated: ${file.absolutePath} (${size} bytes)", 1)
+            }
+
+            if (lower.endsWith(".gguf")) {
                 val header = ByteArray(4)
                 file.inputStream().use { stream -> stream.read(header) }
                 val isGguf =
@@ -781,18 +790,12 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
                         header[2] == 'U'.code.toByte() &&
                         header[3] == 'F'.code.toByte()
                 if (!isGguf) {
-                    Log.d(TAG, "GGUF magic header not found (may be non-gguf): ${file.absolutePath}")
+                    safeLog(TAG, "GGUF magic header not found (may be non-gguf): ${file.absolutePath}", 1)
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error reading GGUF header: ${e.message}", e)
             }
-        }
-        
+
             file
         }
-
-        validationCache[file.absolutePath] = result
-        return result
     }
 
     /**
