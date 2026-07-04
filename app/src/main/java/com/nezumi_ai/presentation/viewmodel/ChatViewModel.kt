@@ -103,7 +103,6 @@ class ChatViewModel(
         /** ストリーム中の Room 更新間隔（Gallery レベル：高速更新） */
         private const val STREAM_PERSIST_INTERVAL_MS = 100L
         private const val STREAM_PERSIST_INTERVAL_TABLE_MS = 50L
-        private const val DEFAULT_SESSION_TITLE = "新しいチャット"
         /** Phase 14: トークン数と文字数の変換比率（1トークン ≈ 3.5～4文字）*/
         private const val TOKEN_TO_CHAR_RATIO = 4
         private const val COMPRESSION_RECENT_MESSAGE_COUNT = 6
@@ -888,6 +887,9 @@ class ChatViewModel(
 
                 // セッションの lastUpdated を更新
                 sessionRepository.updateSessionLastUpdated(sessionId)
+
+                // セッション名を送信直後に反映
+                maybeUpdateSessionTitleFromUserMessage(sessionId, userMessage)
 
                 // 入力フィールドをクリア
                 _inputText.value = ""
@@ -2733,6 +2735,16 @@ class ChatViewModel(
         _sessionTitle.value = session.name
     }
 
+    private suspend fun maybeUpdateSessionTitleFromUserMessage(sessionId: Long, userMessage: String) {
+        if (userMessage.isBlank()) return
+        val session = sessionRepository.getSessionById(sessionId) ?: return
+        if (session.name.trim() != DEFAULT_SESSION_TITLE) return
+        val title = buildSessionTitle(userMessage, "")
+        if (title.isBlank() || title == DEFAULT_SESSION_TITLE) return
+        sessionRepository.updateSessionName(sessionId, title)
+        _sessionTitle.value = title
+    }
+
     private suspend fun maybeGenerateSessionTitle(
         sessionId: Long,
         userMessage: String,
@@ -2746,18 +2758,6 @@ class ChatViewModel(
         _sessionTitle.value = title
     }
 
-    private fun buildSessionTitle(userMessage: String, aiResponse: String): String {
-        val source = sequenceOf(aiResponse, userMessage)
-            .map { it.trim().replace("\n", " ") }
-            .firstOrNull { it.isNotBlank() }
-            ?: return DEFAULT_SESSION_TITLE
-        val cleaned = source
-            .replace(Regex("^[「『\"'\\s]+"), "")
-            .replace(Regex("[」』\"'\\s]+$"), "")
-            .replace(Regex("\\s+"), " ")
-        val maxLen = 28
-        return if (cleaned.length <= maxLen) cleaned else cleaned.take(maxLen).trimEnd() + "..."
-    }
 
     private fun stripSyntheticRoleLoopTail(text: String): String {
         val normalized = text.trim()
@@ -3982,6 +3982,11 @@ class ChatViewModel(
                     )
                     sessionRepository.updateSessionLastUpdated(sessionId)
                     messageId
+                }
+
+                // セッション名を送信直後に反映
+                withContext(Dispatchers.IO) {
+                    maybeUpdateSessionTitleFromUserMessage(sessionId, userMessage)
                 }
 
                 // ★ DB保存後にpendingをクリア（messagesフローが更新済みのタイミング）
