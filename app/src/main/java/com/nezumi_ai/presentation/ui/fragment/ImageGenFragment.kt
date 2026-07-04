@@ -216,7 +216,6 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
     val currentStep by vm.currentStep.collectAsState()
     val backendInfo by vm.backendInfo.collectAsState()
     val selectedBackend by vm.selectedBackend.collectAsState()
-    val previewBitmap by vm.previewBitmap.collectAsState()
     val queueResultBitmaps by vm.queueResultBitmaps.collectAsState()
     val generationQueue by vm.generationQueue.collectAsState()
     val isQueueRunning by vm.isQueueRunning.collectAsState()
