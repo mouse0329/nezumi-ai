@@ -204,7 +204,11 @@ object PreferencesHelper {
     }
 
     fun isSdUseOpenCL(context: Context): Boolean {
-        return getSharedPreferences(context).getBoolean(KEY_SD_USE_OPENCL, true)
+        // NOTE: 既定値は false。CPU 版 MNN モデル (`*_cpu`) を使うユーザーが
+        // 暗黙で UNET だけ OpenCL に逃がされ、モバイル GPU 上でカーネル JIT +
+        // 重み転送が発生し初回 1 ステップに数十秒かかる事故を防ぐ。
+        // 明示的に QNN/GPU を選択したユーザーだけ true にする運用に統一する。
+        return getSharedPreferences(context).getBoolean(KEY_SD_USE_OPENCL, false)
     }
 
     fun setSdUseOpenCL(context: Context, enabled: Boolean) {
