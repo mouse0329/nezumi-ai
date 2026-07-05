@@ -2,12 +2,16 @@ package com.nezumi_ai.utils
 
 import java.io.File
 import java.io.RandomAccessFile
+import java.util.concurrent.ConcurrentHashMap
 
 object GgufMetadataReader {
     data class Summary(
         val architecture: String,
         val parameterCount: Long,
     )
+
+    private data class CacheEntry(val summary: Summary, val lastModified: Long)
+    private val cache = ConcurrentHashMap<String, CacheEntry>()
 
     private const val GGUF_MAGIC = 0x46554747
 
@@ -27,6 +31,18 @@ object GgufMetadataReader {
 
     fun readSummary(file: File): Summary {
         require(file.isFile) { "GGUF ファイルが見つかりません" }
+        val lastModified = file.lastModified()
+        cache[file.absolutePath]?.let { entry ->
+            if (entry.lastModified == lastModified) return entry.summary
+        }
+        val summary = readSummaryFromFile(file)
+        cache[file.absolutePath] = CacheEntry(summary, lastModified)
+        return summary
+    }
+
+    fun invalidate(path: String): Boolean = cache.remove(path) != null
+
+    private fun readSummaryFromFile(file: File): Summary {
         RandomAccessFile(file, "r").use { raf ->
             val magic = raf.readLittleInt()
             require(magic == GGUF_MAGIC) { "GGUF ヘッダーではありません" }

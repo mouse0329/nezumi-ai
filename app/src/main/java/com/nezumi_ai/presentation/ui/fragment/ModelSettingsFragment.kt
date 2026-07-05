@@ -291,7 +291,9 @@ open class ModelSettingsFragment : Fragment() {
             viewLifecycleOwner.lifecycleScope.launch {
                 try {
                     val modelPath = withContext(Dispatchers.IO) {
-                        ModelFileManager.importTaskFromUri(requireContext(), uri).getOrThrow().absolutePath
+                        val file = ModelFileManager.importTaskFromUri(requireContext(), uri).getOrThrow()
+                        if (file.name.lowercase().endsWith(".gguf")) runCatching { GgufMetadataReader.readSummary(file) }
+                        file.absolutePath
                     }
                     toast("モデルを追加しました: ${File(modelPath).name}")
                     refreshImportedTasks()
