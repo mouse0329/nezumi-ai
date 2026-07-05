@@ -1636,15 +1636,8 @@ class ChatViewModel(
                                                 text = Gemma4ThinkingParser.sanitizeVisibleText(answerBuilder.toString())
                                             )
                                         thinkingForUi =
-                                            if (!config.enableThinking) {
-                                                // ★ Bug fix: Thinking OFF なのに GGUF モデル (特に Qwen) が
-                                                //   chat_template_kwargs を見て負に負 <think> を吐くケースが
-                                                //   あるので、UI/DB 上の thinking は完全に破棄して可視本文だけ残す。
-                                                null
-                                            } else {
-                                                Gemma4ThinkingParser.sanitizeVisibleText(thinkingBuilder.toString())
-                                                    .ifBlank { null }
-                                            }
+                                            Gemma4ThinkingParser.sanitizeVisibleText(thinkingBuilder.toString())
+                                                .ifBlank { null }
                                         if (BuildConfig.DEBUG && (contentForUi.isNotEmpty() || !thinkingForUi.isNullOrBlank())) {
                                             Log.d(TAG, "CONTENT_THINKING_STATE: content_len=${contentForUi.length} thinking_len=${thinkingForUi?.length ?: 0}")
                                         }
@@ -1658,29 +1651,28 @@ class ChatViewModel(
                                                 rawInput = answerBuilder.toString(),
                                                 treatUnmarkedInputAsThinking = false
                                             )
-                                        // ★ Bug fix: Thinking OFF のときは parser が <think>...</think> を
-                                        //   見つけても思考として抽出しない。モデルが chat_template の
-                                        //   都合で勝手に <think> を吐いても、ユーザー設定に忠実に OFF を
-                                        //   貫く (ストリーム中はそのまま表示し、手動ボタンと同じ動作になる)。
+                                        // Instant / Thinking OFF 中でも、モデルが実際に <think> を吐いた場合は
+                                        // それを捨てずに UI へ表示する。本文側は従来どおり visible answer のみを使う。
+                                        val extractedThinking = parsedStream.thinking?.let {
+                                            Gemma4ThinkingParser.sanitizeVisibleText(it)
+                                        }?.ifBlank { null }
                                         if (config.enableThinking) {
                                             contentForUi =
                                                 sanitizeAssistantOutputForModel(
                                                     engineModelName = engineModelName,
                                                     text = parsedStream.answer
                                                 )
-                                            thinkingForUi = parsedStream.thinking
+                                            thinkingForUi = extractedThinking
                                         } else {
-                                            // Thinking OFF: thinking は捨て、visible answer だけ使う。
-                                            // ただしまだ </think> が来ていない途中のストリームでは
-                                            // parsedStream.answer が空だが、これより answerBuilder 生値から
-                                            // <think>タグを取り除いたものを使った方が UX がよい。
+                                            // Thinking OFF 中は本文から <think> ブロックだけ除去し、
+                                            // もしモデルが思考を漏らしたら disclosure 側へそのまま載せる。
                                             val rawNoThink = stripThinkSectionsForDisplay(answerBuilder.toString())
                                             contentForUi =
                                                 sanitizeAssistantOutputForModel(
                                                     engineModelName = engineModelName,
                                                     text = Gemma4ThinkingParser.sanitizeVisibleText(rawNoThink)
                                                 )
-                                            thinkingForUi = null
+                                            thinkingForUi = extractedThinking
                                         }
                                     }
                                     val now = SystemClock.elapsedRealtime()
@@ -1793,8 +1785,7 @@ class ChatViewModel(
                 val rawAnswer = if (config.enableThinking) {
                     answerBuilder.toString()
                 } else {
-                    // ★ Bug fix: Thinking OFF のときは answerBuilder に混ざった <think>...</think>
-                    //   を事前に取り除く。
+                    // Thinking OFF 中も本文には visible answer だけを残す。
                     stripThinkSectionsForDisplay(answerBuilder.toString())
                 }
                 completeResponse =
@@ -1802,11 +1793,8 @@ class ChatViewModel(
                         engineModelName = engineModelName,
                         text = Gemma4ThinkingParser.sanitizeVisibleText(rawAnswer)
                     )
-                finalThinking = if (!config.enableThinking) {
-                    null
-                } else {
+                finalThinking =
                     Gemma4ThinkingParser.sanitizeVisibleText(thinkingBuilder.toString()).ifBlank { null }
-                }
             } else {
                 val sanitizedAnswer =
                     Gemma4ThinkingParser.sanitizeVisibleText(answerBuilder.toString())
@@ -1817,8 +1805,7 @@ class ChatViewModel(
                     treatUnmarkedInputAsThinking = false
                 )
                 if (!config.enableThinking) {
-                    // ★ Bug fix: Thinking OFF のときは、モデルが <think>...</think> を吐いていても
-                    //   それを思考として保存せず、可視本文にマージする。
+                    // Instant / Thinking OFF 中でも、漏れ出た <think> は本文へ混ぜずに別表示する。
                     val visibleOnly = stripThinkSectionsForDisplay(answerBuilder.toString())
                     completeResponse =
                         sanitizeAssistantOutputForModel(
@@ -1827,7 +1814,14 @@ class ChatViewModel(
                                 .ifBlank { sanitizedAnswer.ifBlank { finalParsed.answer } }
                                 .ifBlank { lastPersistedContent }
                         )
-                    finalThinking = null
+                    val parsedThinkingSanitized = finalParsed.thinking?.let {
+                        Gemma4ThinkingParser.sanitizeVisibleText(it)
+                    }
+                    finalThinking = when {
+                        parsedThinkingSanitized.isNullOrBlank() -> null
+                        parsedThinkingSanitized == completeResponse -> null
+                        else -> parsedThinkingSanitized
+                    }
                 } else {
                     completeResponse =
                         sanitizeAssistantOutputForModel(
@@ -1848,7 +1842,7 @@ class ChatViewModel(
                     finalThinking = when {
                         parsedThinkingSanitized.isNullOrBlank() -> null
                         parsedThinkingSanitized == completeResponse -> null
-                        else -> parsedThinking
+                        else -> parsedThinkingSanitized
                     }
                 }
             }
@@ -2792,9 +2786,9 @@ class ChatViewModel(
     }
 
     /**
-     * ★ Bug fix: Thinking OFF のときにモデルが負に負 <think>...</think> を吐いた場合を
-     * 表示用にタグごと取り除く。</think> がまだ来ていない途中のストリームでは
-     * <think> 以降をすべて推論とみなして除去する。
+     * 可視本文用に <think>...</think> ブロックだけを取り除く。
+     * </think> がまだ来ていない途中のストリームでは <think> 以降を一時的に非表示にし、
+     * Thinking 本体は別 UI ブロックで表示する。
      */
     private fun stripThinkSectionsForDisplay(raw: String): String {
         if (raw.isEmpty()) return raw

@@ -39,7 +39,11 @@ object PromptBuilder {
          * assistant 側で `<think>...</think>` プレフィルもする）を実装する。
          * llama.cpp の F16 で `<unused49>` flood する既知バグ対策として stop に対応。
          */
-        GEMMA4_CHANNEL
+        GEMMA4_CHANNEL,
+        /**
+         * GPT-2 のような plain completion モデル。chat/thinking 制御タグは注入しない。
+         */
+        PLAIN_COMPLETION
     }
 
     /** GGUF モデルのプロンプトフォーマット */
@@ -48,16 +52,23 @@ object PromptBuilder {
         GEMMA_CHAT,
         /** Llama 3 / Mistral / Bonsai 等: <|im_start|> / <|im_end|> ChatML */
         CHATML,
+        /** GPT-2 など: プレーンな completion プロンプト */
+        PLAIN_COMPLETION,
     }
 
     fun detectGgufFormat(modelPath: String): GgufPromptFormat {
         val name = modelPath.lowercase()
-        return if ("gemma" in name) GgufPromptFormat.GEMMA_CHAT else GgufPromptFormat.CHATML
+        return when {
+            isGpt2Model(modelPath) -> GgufPromptFormat.PLAIN_COMPLETION
+            "gemma" in name -> GgufPromptFormat.GEMMA_CHAT
+            else -> GgufPromptFormat.CHATML
+        }
     }
 
     fun resolveThinkingPromptStyle(modelPath: String): ThinkingPromptStyle {
         val name = modelPath.lowercase()
         return when {
+            isGpt2Model(modelPath) -> ThinkingPromptStyle.PLAIN_COMPLETION
             Regex("(^|[^a-z0-9])(qwen|qwq)([^a-z0-9]|$)").containsMatchIn(name) -> ThinkingPromptStyle.QWEN_COMMAND
             // Gemma4 (GGUF / litert) は thinking 構造が Gemma3 と異なるため専用スタイルへ振り分ける。
             // 一致条件: "gemma4", "gemma-4", "gemma_4", e2b/e4b/26b-a4b など Gemma4 サイズ識別子。
@@ -75,6 +86,25 @@ object PromptBuilder {
         if (Regex("(^|[^a-z0-9])(e2b|e4b)([^a-z0-9]|$)").containsMatchIn(loweredName)) return true
         if (Regex("(^|[^a-z0-9])(12b|26b|31b)[\\-_]?a4b([^a-z0-9]|$)").containsMatchIn(loweredName)) return true
         return false
+    }
+
+    private fun isGpt2ModelName(loweredName: String): Boolean {
+        return Regex("(^|[^a-z0-9])gpt[\\-_ ]?2([^a-z0-9]|$)").containsMatchIn(loweredName)
+    }
+
+    private fun isGpt2Architecture(modelPath: String): Boolean {
+        val lowered = modelPath.lowercase()
+        if (!lowered.endsWith(".gguf")) return false
+        val file = java.io.File(modelPath)
+        if (!file.isFile) return false
+        return runCatching {
+            com.nezumi_ai.utils.GgufMetadataReader.readSummary(file).architecture.lowercase()
+        }.getOrNull() == "gpt2"
+    }
+
+    private fun isGpt2Model(modelPath: String): Boolean {
+        val lowered = modelPath.lowercase()
+        return isGpt2ModelName(lowered) || isGpt2Architecture(modelPath)
     }
 
     /**
@@ -183,6 +213,7 @@ object PromptBuilder {
         return when (format) {
             GgufPromptFormat.GEMMA_CHAT -> buildForGgufGemma(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
             GgufPromptFormat.CHATML -> buildForGgufChatMl(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
+            GgufPromptFormat.PLAIN_COMPLETION -> buildForGgufPlainCompletion(messages, systemPrompt, compressedSummary, sanitizeMessageContent)
         }
     }
 
@@ -236,8 +267,12 @@ object PromptBuilder {
             val suffix = if (needsSuffix) prefill else ""
             thinkingGlobalPrefix(style, enableThinking) + rendered + suffix
         } catch (e: Exception) {
-            // フォールバック: テンプレ崩壊時は ChatML で構築（最悪でもプロンプトが消えないようにする）
-            buildForGgufChatMl(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
+            // フォールバック: テンプレ崩壊時もモデル種別に応じた既定フォーマットで再構築する。
+            when (detectGgufFormat(modelPath)) {
+                GgufPromptFormat.GEMMA_CHAT -> buildForGgufGemma(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
+                GgufPromptFormat.CHATML -> buildForGgufChatMl(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
+                GgufPromptFormat.PLAIN_COMPLETION -> buildForGgufPlainCompletion(messages, systemPrompt, compressedSummary, sanitizeMessageContent)
+            }
         }
     }
 
@@ -379,6 +414,31 @@ object PromptBuilder {
         sb.append("<|im_start|>assistant\n")
         // ★ Bug fix: Qwen OFF 時の「空 <think></think>」も含めてスタイル別に適用。
         sb.append(assistantPrefillFor(style, enableThinking))
+        return sb.toString()
+    }
+
+    private fun buildForGgufPlainCompletion(
+        messages: List<MessageEntity>,
+        systemPrompt: String,
+        compressedSummary: String?,
+        sanitizeMessageContent: (MessageEntity) -> String
+    ): String {
+        val sb = StringBuilder()
+        if (systemPrompt.isNotBlank()) {
+            sb.append(systemPrompt.trim()).append("\n\n")
+        }
+        if (!compressedSummary.isNullOrBlank()) {
+            sb.append(COMPRESSED_CONTEXT_HEADER).append('\n')
+                .append(compressedSummary.trim())
+                .append("\n\n")
+        }
+        for (msg in messages) {
+            val content = sanitizeMessageContent(msg)
+            if (content.isBlank()) continue
+            val role = if (msg.role == "assistant") "assistant" else "user"
+            sb.append(role).append(": ").append(content.trim()).append("\n\n")
+        }
+        sb.append("assistant:")
         return sb.toString()
     }
 }

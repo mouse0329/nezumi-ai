@@ -74,14 +74,11 @@ class MessageAdapter(
      */
     private var isGenerating: Boolean = false
 
-    // ★ v5.1 Thinking 表示仕様：
+    // ★ Thinking 表示仕様：
     //   - 設定の Thinking スイッチ (OFF/ON) に依存しない。
-    //     OFF のときに誤って生成された場合も「隠さず表示」する。
-    //     (以前の thinkingVisible フラグは一切参照しない)
-    //   - 生成中 (isStreaming = true) は常に展開、閉じトグルは表示しない。
-    //   - ★ v5.2 仕様変更: 生成完了後は「自動的に閉じる」。
-    //     ユーザーが明示的に「開いた」メッセージ ID だけを thinkingExpandedByMessageId に保持し、
-    //     それ以外はデフォルトで折りたたまれた状態にする。
+    //     OFF / Instant モード中でもモデルが思考を出したら隠さず表示する。
+    //   - 生成中/生成後を問わず、Thinking ブロックは常に展開したまま表示する。
+    //   - そのため、旧「展開状態を覚える」集合は互換のため残すが現在は使わない。
     private val thinkingExpandedByMessageId = mutableSetOf<Long>()
     private var speakingMessageId: Long? = null
     private var streamingMessageId: Long? = null
@@ -426,47 +423,10 @@ class MessageAdapter(
                         lastRenderedThinking = thinking
                     }
 
-                    val isStreaming = message.isStreaming
-                    // ★ v5.2: 生成中は常に展開、生成後は「明示的に開いた」ものだけを展開（デフォルト自動閉じ）
-                    val expanded = isStreaming || (message.id in thinkingExpandedByMessageId)
-                    aiThinkingBody.visibility = if (expanded) View.VISIBLE else View.GONE
-                    aiThinkingMarkdownCompose.visibility = if (expanded) View.VISIBLE else View.GONE
-
-                    if (isStreaming) {
-                        // 生成中はトグルを出さない。付けるとチャタリ領域を誤タップしやすいため。
-                        aiThinkingToggleRow.visibility = View.GONE
-                        aiThinkingToggleRow.setOnClickListener(null)
-                    } else {
-                        // 生成完了後は閉じトグルを表示してユーザーに閉じさせられるようにする。
-                        aiThinkingToggleRow.visibility = View.VISIBLE
-                        aiThinkingChevron.text = if (expanded) "▲" else "▼"
-                        aiThinkingToggleLabel.setText(
-                            if (expanded) R.string.gemma_hide_thinking else R.string.gemma_show_thinking
-                        )
-                        aiThinkingToggleRow.contentDescription = root.context.getString(
-                            if (expanded) R.string.gemma_hide_thinking else R.string.gemma_show_thinking
-                        )
-                        aiThinkingToggleRow.setOnClickListener {
-                            val nowOpen = aiThinkingBody.visibility == View.VISIBLE
-                            if (nowOpen) {
-                                thinkingExpandedByMessageId.remove(message.id)
-                                aiThinkingBody.visibility = View.GONE
-                                aiThinkingMarkdownCompose.visibility = View.GONE
-                                aiThinkingChevron.text = "▼"
-                                aiThinkingToggleLabel.setText(R.string.gemma_show_thinking)
-                                aiThinkingToggleRow.contentDescription =
-                                    root.context.getString(R.string.gemma_show_thinking)
-                            } else {
-                                thinkingExpandedByMessageId.add(message.id)
-                                aiThinkingBody.visibility = View.VISIBLE
-                                aiThinkingMarkdownCompose.visibility = View.VISIBLE
-                                aiThinkingChevron.text = "▲"
-                                aiThinkingToggleLabel.setText(R.string.gemma_hide_thinking)
-                                aiThinkingToggleRow.contentDescription =
-                                    root.context.getString(R.string.gemma_hide_thinking)
-                            }
-                        }
-                    }
+                    aiThinkingBody.visibility = View.VISIBLE
+                    aiThinkingMarkdownCompose.visibility = View.VISIBLE
+                    aiThinkingToggleRow.visibility = View.GONE
+                    aiThinkingToggleRow.setOnClickListener(null)
                 } else {
                     aiThinkingBlock.visibility = View.GONE
                     aiThinkingBody.visibility = View.GONE
