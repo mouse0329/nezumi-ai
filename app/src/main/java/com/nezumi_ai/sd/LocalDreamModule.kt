@@ -45,6 +45,13 @@ class LocalDreamModule(private val context: Context) {
         private const val SERVER_PORT = 18081
         private const val EXECUTABLE_NAME = "libstable_diffusion_core.so"
         private const val RUNTIME_DIR = "runtime_libs"
+
+        internal fun resolveEffectiveUseOpenCL(
+            userWantsOpenCL: Boolean,
+            currentBackend: String?
+        ): Boolean {
+            return userWantsOpenCL
+        }
     }
 
     private var serverProcess: Process? = null
@@ -297,8 +304,22 @@ class LocalDreamModule(private val context: Context) {
             Log.d(TAG, "loadModel: cpuModelDir=$cpuModelDir, qnnModelDir=$qnnModelDir, npuSupported=$npuSupported")
 
             val (selectedBackend, modelDir) = when (normalizedBackend) {
-                "mnn" -> cpuModelDir?.let { "mnn" to it }
-                "qnn" -> qnnModelDir?.let { "qnn" to it }
+                "mnn" -> when {
+                    cpuModelDir != null -> "mnn" to cpuModelDir
+                    qnnModelDir != null -> {
+                        Log.w(TAG, "loadModel: CPU/MNN was requested but only QNN model files exist. Falling back to QNN.")
+                        "qnn" to qnnModelDir
+                    }
+                    else -> null
+                }
+                "qnn" -> when {
+                    qnnModelDir != null -> "qnn" to qnnModelDir
+                    cpuModelDir != null -> {
+                        Log.w(TAG, "loadModel: QNN/NPU was requested but this model only has CPU/MNN files. Falling back to MNN/CPU.")
+                        "mnn" to cpuModelDir
+                    }
+                    else -> null
+                }
                 else -> when {
                     qnnModelDir != null && npuSupported -> "qnn" to qnnModelDir
                     cpuModelDir != null -> "mnn" to cpuModelDir
@@ -306,17 +327,12 @@ class LocalDreamModule(private val context: Context) {
                     else -> null
                 }
             } ?: run {
-                Log.e(TAG, "loadModel: Could not find model files in $modelPath")
+                Log.e(TAG, "loadModel: Could not find usable model files in $modelPath (backend=$backend)")
                 return@withContext false
             }
 
             Log.d(TAG, "loadModel: Selected backend=$selectedBackend, modelDir=$modelDir")
 
-            // ★ Bug fix: 以前はモデルパスだけでキャッシュ判定していたため、
-            //   ユーザーが CPU→GPU や GPU→CPU に切り替えても同じパスなら
-            //   サーバーが再起動されず、前回の backend のまま動作し続けるバグがあった。
-            //   現在の currentBackend と今回選ばれた selectedBackend を比較し、
-            //   一致した場合のみサーバーを再利用する。
             if (currentModelPath == modelPath && isServerReady && currentBackend == selectedBackend) {
                 if (serverProcess?.isAlive != true) {
                     Log.w(TAG, "loadModel: Previous server process is not alive but HTTP service is still marked ready. Reusing existing server for $modelPath.")
@@ -348,7 +364,6 @@ class LocalDreamModule(private val context: Context) {
             false
         }
     }
-
     private suspend fun tryStartServer(
         modelPath: String,
         modelDir: File,
@@ -571,15 +586,10 @@ class LocalDreamModule(private val context: Context) {
         }
 
         try {
-            // ※ use_opencl は「CPU サーバ (`--cpu`) で起動しているときだけ UNET を
-            //   OpenCL に逃がす」ハイブリッドフラグだが、モバイル GPU の OpenCL カーネル
-            //   JIT + 重み転送で初回に数十秒のストールを引き起こす。
-            //   ユーザーがバックエンドを CPU にした場合はこの旗を強制的に切り、
-            //   UI の OpenCL トグルとバックエンド選択の食い違いを Module 層で吸収する。
             val userWantsOpenCL = PreferencesHelper.isSdUseOpenCL(context)
-            val effectiveUseOpenCL = userWantsOpenCL && currentBackend != "mnn"
-            if (userWantsOpenCL && !effectiveUseOpenCL) {
-                Log.w(TAG, "generateImage: use_opencl=true を無視しました (currentBackend=$currentBackend, CPU サーバ上で UNET を GPU に逃がすと初回が極端に重いため)")
+            val effectiveUseOpenCL = resolveEffectiveUseOpenCL(userWantsOpenCL, currentBackend)
+            if (userWantsOpenCL != effectiveUseOpenCL) {
+                Log.w(TAG, "generateImage: use_opencl の解決結果が期待値と異なりました (requested=$userWantsOpenCL, effective=$effectiveUseOpenCL)")
             }
 
             val body = JSONObject().apply {

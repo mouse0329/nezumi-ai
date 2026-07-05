@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import com.nezumi_ai.sd.LocalDreamModule
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -60,7 +59,7 @@ object EngineManager {
             val ld = LocalDreamModule(context)
             val loaded = ld.loadModel(modelPath, backend)
             if (!loaded) {
-                throw IllegalStateException("Failed to load LocalDream model: $modelPath")
+                throw IllegalStateException("画像生成モデルの読み込みに失敗しました: backend=$backend, path=$modelPath")
             }
             localDream = ld
             sdModelPath = modelPath
