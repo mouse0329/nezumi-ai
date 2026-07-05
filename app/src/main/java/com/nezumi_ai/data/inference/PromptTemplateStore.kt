@@ -6,7 +6,7 @@ import java.io.File
 /**
  * モデルごとのカスタム / ビルトインプロンプトテンプレートを保存するストア。
  *
- * - ビルトインテンプレートは [BUILTIN_TEMPLATES] で定義（Llama 3 / Gemma / Qwen / ChatML / Alpaca）。
+ * - ビルトインテンプレートは [BUILTIN_TEMPLATES] で定義（Llama 3 / Gemma / Qwen / ChatML / Alpaca / GPT-2 completion）。
  * - ユーザーは各モデルに対して以下を選択できる:
  *     - "auto"  : 既存のヒューリスティック判定 (PromptBuilder.detectGgufFormat) に従う
  *     - "<builtin id>" : ビルトインテンプレート（例 "llama3", "gemma_chat"）
@@ -175,6 +175,16 @@ object PromptTemplateStore {
 
 {{ end }}{{ end }}### Response:
 """
+        ),
+        BuiltinTemplate(
+            id = "gpt2_completion",
+            displayName = "GPT-2 / completion",
+            description = "プレーンテキスト completion。chat/thinking 制御タグを使わない。",
+            template = """{{ if .System }}{{ .System }}
+
+{{ end }}{{ range .History }}{{ .Role }}: {{ .Content }}
+
+{{ end }}assistant:"""
         ),
         BuiltinTemplate(
             id = "phi3",
