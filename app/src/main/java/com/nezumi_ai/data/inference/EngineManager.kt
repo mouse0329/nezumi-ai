@@ -127,25 +127,27 @@ object EngineManager {
 
     /**
      * 生成中のHTTP接続を即座に切断してSSEループを抜ける。
-     * コルーチンで非同期に実行され、クリーンアップ完了までロックする。
+     *
+     * Perf fix / クラッシュ対策:
+     *   旧実装は cancel のたびに LocalDream プロセスを完全に停止していたため、
+     *   中断→再生成のたびにモデルをロードし直し (CPU で UNET/CLIP/VAE の
+     *   .mnn を mmap し直す) 数十秒待たされる上、 SIGKILL した直後の
+     *   再入で OpenCL context 初期化が失敗してクラッシュするケースがあった。
+     *
+     *   local-dream の BackendService と同じ思想で、cancel は HTTP 切断だけ
+     *   を行い、サーバープロセスはなるべく生かしておいて次の generate() で
+     *   再利用する。バックエンドを別の backend/model に切り替える際だけ
+     *   acquireLocalDream() の mutex の中で stopServer() が呼ばれる。
      */
     fun cancelCurrentGeneration(scope: kotlinx.coroutines.CoroutineScope) {
-        // UIスレッドをブロックしないよう、即座にバックグラウンドで実行
         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            // mutex.withLock は使用せず、即座に HTTP 切断を試みる
-            localDream?.cancelGeneration()
-            
-            // 重いクリーンアップ処理（サーバー停止など）を排他的に行う
             try {
                 cancelMutex.withLock {
-                    Log.i(TAG, "Starting cancellation and resource cleanup...")
-                    // サーバー停止。内部で waitFor(5s) を持っているが、
-                    // ここがロックされている間は acquireLocalDream が待機する。
-                    localDream?.stopServer()
-                    Log.i(TAG, "Cancellation and resource cleanup completed.")
+                    Log.i(TAG, "Cancelling current generation (HTTP disconnect only, keeping backend warm)")
+                    localDream?.cancelGeneration()
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error during cancellation lock", e)
+                Log.e(TAG, "Error during cancellation", e)
             }
         }
     }

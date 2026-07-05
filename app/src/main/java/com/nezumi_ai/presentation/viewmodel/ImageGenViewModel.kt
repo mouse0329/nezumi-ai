@@ -82,41 +82,54 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private val _selectedBackend = MutableStateFlow(PreferencesHelper.getSdBackend(application))
     val selectedBackend: StateFlow<String> = _selectedBackend.asStateFlow()
 
-    private fun loadAvailableModels() {
-        viewModelScope.launch(Dispatchers.IO) {
+    // Perf fix: 开発ビルド以外ではホットパスのログを抑制する。
+    //   isProbableSdModelDir は何百行も logcat に刷き、main thread を圧迫していた。
+    //   (ログ情報は isDebugLoggable() の内側に既に集約されているとしても
+     //   BuildConfig.DEBUG のときだけ verbose にする。)
+    private val verboseModelScan = com.nezumi_ai.BuildConfig.DEBUG
+
+    // Perf fix: フラグメント復帰 (onResume) の度にフルスキャンされると、
+    //   生成直前に重い File スキャンが走り UI がジャンクしていた (Davey! 800ms)。
+    //   一定間隔以内の連続呼び出しをデバウンスする。
+    @Volatile private var lastModelScanAtMs: Long = 0L
+    private var pendingScanJob: kotlinx.coroutines.Job? = null
+
+    private fun loadAvailableModels(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastModelScanAtMs < 1500L && _availableModels.value.isNotEmpty()) {
+            // 直近 1.5s 以内で既にスキャン済みならスキップ
+            return
+        }
+        pendingScanJob?.cancel()
+        pendingScanJob = viewModelScope.launch(Dispatchers.IO) {
             val models = mutableListOf<String>()
-            Log.d(TAG, "[loadAvailableModels] Starting model search")
+            if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] Starting model search")
             // ダウンロード済み画像生成モデルディレクトリ
             val sdModelsDir = File(getApplication<Application>().filesDir, "sd_models")
-            Log.d(TAG, "[loadAvailableModels] Checking sd_models: ${sdModelsDir.absolutePath}, exists=${sdModelsDir.exists()}")
             sdModelsDir.listFiles()?.forEach { file ->
-                Log.d(TAG, "[loadAvailableModels] Checking file: ${file.name}, isDir=${file.isDirectory}")
                 if (isProbableSdModelDir(file)) {
-                    Log.d(TAG, "[loadAvailableModels] ✓ Added: ${file.absolutePath}")
+                    if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] ✓ ${file.absolutePath}")
                     models.add(file.absolutePath)
-                } else {
-                    Log.d(TAG, "[loadAvailableModels] ✗ Rejected: ${file.absolutePath}")
                 }
             }
             // アプリ専用ディレクトリ
             val appDir = getApplication<Application>().getExternalFilesDir(null)
-            Log.d(TAG, "[loadAvailableModels] Checking appDir: ${appDir?.absolutePath}")
             appDir?.listFiles()?.forEach { file ->
                 if (isProbableSdModelDir(file)) {
-                    Log.d(TAG, "[loadAvailableModels] ✓ Added from appDir: ${file.absolutePath}")
+                    if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] ✓ appDir: ${file.absolutePath}")
                     models.add(file.absolutePath)
                 }
             }
             // インポート済みモデルディレクトリ
             val importedDir = File(getApplication<Application>().filesDir, "models/imported")
-            Log.d(TAG, "[loadAvailableModels] Checking importedDir: ${importedDir.absolutePath}")
             importedDir.listFiles()?.forEach { file ->
                 if (isProbableSdModelDir(file)) {
-                    Log.d(TAG, "[loadAvailableModels] ✓ Added from importedDir: ${file.absolutePath}")
+                    if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] ✓ imported: ${file.absolutePath}")
                     models.add(file.absolutePath)
                 }
             }
-            Log.d(TAG, "[loadAvailableModels] Total models found: ${models.size}")
+            Log.i(TAG, "[loadAvailableModels] Total models found: ${models.size}")
+            lastModelScanAtMs = System.currentTimeMillis()
             _availableModels.value = models
             // 現在のモデルパスが一覧にあればインデックスを設定
             val currentPath = _modelPath.value
@@ -137,35 +150,30 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun isProbableSdModelDir(file: File): Boolean {
-        if (!file.isDirectory) {
-            Log.d(TAG, "[isProbableSdModelDir] ${file.name}: not a directory")
-            return false
-        }
-        
-        Log.d(TAG, "[isProbableSdModelDir] Checking ${file.absolutePath}")
-        val files = file.listFiles()
-        Log.d(TAG, "[isProbableSdModelDir] Files in ${file.name}: ${files?.map { it.name }?.joinToString(", ")}")
-        
+        if (!file.isDirectory) return false
+
+        val files = file.listFiles() ?: return false
         // ネスト構造チェック: 1つのサブディレクトリのみの場合、そちらを使う
-        if (files != null && files.size == 1 && files[0].isDirectory) {
-            Log.d(TAG, "[isProbableSdModelDir] Detected nested structure, checking ${files[0].absolutePath}")
+        if (files.size == 1 && files[0].isDirectory) {
             return isProbableSdModelDir(files[0])
         }
-        
+
         // MNN形式チェック
-        val hasMnnFiles = File(file, "unet.mnn").exists() && 
+        val hasMnnFiles = File(file, "unet.mnn").exists() &&
                          (File(file, "clip.mnn").exists() || File(file, "clip_v2.mnn").exists()) &&
                          File(file, "vae_decoder.mnn").exists() &&
                          File(file, "tokenizer.json").exists()
-        
+
         // QNN形式チェック
         val hasQnnFiles = File(file, "unet.bin").exists() &&
                          (File(file, "clip.bin").exists() || File(file, "clip.mnn").exists()) &&
                          File(file, "vae_decoder.bin").exists() &&
                          File(file, "tokenizer.json").exists()
-        
+
         val result = hasMnnFiles || hasQnnFiles
-        Log.d(TAG, "[isProbableSdModelDir] ${file.name}: hasMnn=$hasMnnFiles, hasQnn=$hasQnnFiles, result=$result")
+        if (verboseModelScan) {
+            Log.d(TAG, "[isProbableSdModelDir] ${file.name}: mnn=$hasMnnFiles qnn=$hasQnnFiles -> $result")
+        }
         return result
     }
     
@@ -429,9 +437,14 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         Log.d(TAG, "[ImageGen] requested size=$sz x $sz")
         var wasCancelled = false
         try {
-            runCatching { manager.unloadModel() }
+            // Perf fix: EngineManager.acquireLocalDream() 内部で markSdActive 相当の処理が
+            //   行われ、さらに LLM 側は下の finally で markLlmActive() によりクリーンアップされる。
+            //   ここで unloadModel() を呼ぶと SD プロセスと LLM ネイティブの両方が
+            //   連続して free ・ reload し、page-fault ソーシャルで 4~5GB の入れ替えが
+            //   発生するため CPU バックエンドで UNET step が斜めに遅くなる。
+            //   markLlmActive() の際にアンロードされるのでここでは呼ばない。
             Log.i(TAG, "[ImageGen] generate() starting, acquiring LocalDream engine")
-            
+
             val backend = _selectedBackend.value
             val ld = EngineManager.acquireLocalDream(app, path, backend)
             
@@ -498,10 +511,22 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         } finally {
             Log.i(TAG, "[ImageGen] finally block: cleaning up")
             isCancelling = false
-            runCatching { EngineManager.releaseSdKeepNone() }
-            runCatching { EngineManager.markLlmActive() }
+            // Perf fix / クラッシュ対策:
+            //   旧実装は、キャンセルされたときですら releaseSdKeepNone() を呼び SD プロセスを
+            //   destroy し、直後に LLM をリロードしていた。この式だと cancel を押すタイミングで
+            //   OpenCL context の破棄と LLM の mmap がぶつかりスパイクし、末尾ログ
+            //   "Starting cancellation and resource cleanup..." の直後に OOM/SIGABRT で
+            //   プロセスが落ちるケースがあった。
+            //
+            //   キャンセルされた場合は、バックエンドを生かしたままにして LLM のリロードも
+            //   スキップする (ユーザーは膡しいターンで SD をやり直したいはず)。
+            //   正常完了時のみ LLM をリロードし、SD は keep-warm。
             if (!wasCancelled) {
+                runCatching { EngineManager.releaseSdKeepNone() }
+                runCatching { EngineManager.markLlmActive() }
                 runCatching { reloadChatModel(manager) }
+            } else {
+                Log.i(TAG, "[ImageGen] finally: cancelled path - keeping SD backend warm")
             }
             _loading.value = false
             _currentStep.value = 0
@@ -801,6 +826,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 }
             }
 
+            // Perf fix: キューが完全に終了したところで初めて SD バックエンドをリリースし、
+            //   チャット側の LLM を復帰させる。キュー途中で SD をリリースしていた旧実装では
+            //   毎アイテムで acquireLocalDream() がフルロードしていたことになるが、現在は
+            //   同じ backend/model であれば EngineManager のキャッシュを使い回すので不要。
+            runCatching { EngineManager.releaseSdKeepNone() }
+            runCatching { EngineManager.markLlmActive() }
             _isQueueRunning.value = false
             _queueProgress.value = null
             _loading.value = false
@@ -834,10 +865,10 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 return@withContext null
             }
 
-            runCatching { ModelManager.getInstance(app).unloadModel() }
-            // ★ Bug fix: 以前は "auto" を渡していたため LocalDream が GPU にフォールバックしやすく、
-            //   ユーザーが CPU を選んでも GPU で動作していた。
-            //   キュー生成も通常生成と同じくユーザー選択の backend を使うようにする。
+            // Perf fix: キュー内は 1 枚ごとに LLM を unload/reload する必要はない。
+            //   初回 acquireLocalDream() が EngineManager の mutex 内で SD に切り替える際、
+            //   LLM 側はすでにリリースされる。キューの 2 枚目以降は同じ backend/model であれば
+            //   サーバーを使い回し、余分なロードを避ける。
             val queueBackend = _selectedBackend.value
             val ld = EngineManager.acquireLocalDream(app, path, queueBackend)
             ld.clearLastSafetyVerdict()  // 前回の verdict をクリア

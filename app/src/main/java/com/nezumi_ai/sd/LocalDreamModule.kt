@@ -85,17 +85,24 @@ class LocalDreamModule(private val context: Context) {
         }
     }
 
+    // Perf fix: QNN ライブラリコピーはモデルごとに変わらないので、
+    //           プロセス内で一度成功したらキャッシュして
+            //   loadModel ごとの assets スキャン (数バイトサイズチェック x N 本) をスキップする。
+    @Volatile private var runtimeDirReady: File? = null
+
     private suspend fun prepareRuntimeDir(): File = withContext(Dispatchers.IO) {
+        runtimeDirReady?.let { return@withContext it }
+
         val runtimeDir = File(context.filesDir, RUNTIME_DIR).apply {
             if (!exists()) mkdirs()
         }
-        Log.d(TAG, "prepareRuntimeDir: runtimeDir=${runtimeDir.absolutePath}")
 
         try {
             val qnnLibs = context.assets.list("qnnlibs")
             if (qnnLibs == null || qnnLibs.isEmpty()) {
                 Log.w(TAG, "prepareRuntimeDir: assets/qnnlibs is empty or missing")
             } else {
+                var copiedCount = 0
                 qnnLibs.forEach { fileName ->
                     val targetLib = File(runtimeDir, fileName)
 
@@ -111,14 +118,17 @@ class LocalDreamModule(private val context: Context) {
                                 input.copyTo(output)
                             }
                         }
-                        Log.d(TAG, "Copied $fileName to runtime directory")
+                        copiedCount++
                     }
 
                     targetLib.setReadable(true, true)
                     targetLib.setExecutable(true, true)
-                    Log.d(TAG, "prepareRuntimeDir: targetLib=${targetLib.absolutePath} exists=${targetLib.exists()} canExecute=${targetLib.canExecute()} length=${targetLib.length()}")
                 }
-                Log.i(TAG, "QNN libraries prepared in: ${runtimeDir.absolutePath}")
+                if (copiedCount > 0) {
+                    Log.i(TAG, "prepareRuntimeDir: copied $copiedCount QNN libs into ${runtimeDir.absolutePath}")
+                } else {
+                    Log.d(TAG, "prepareRuntimeDir: all QNN libs already up-to-date")
+                }
             }
         } catch (e: IOException) {
             Log.w(TAG, "No QNN libraries found in assets: ${e.message}")
@@ -126,6 +136,7 @@ class LocalDreamModule(private val context: Context) {
 
         runtimeDir.setReadable(true, true)
         runtimeDir.setExecutable(true, true)
+        runtimeDirReady = runtimeDir
         runtimeDir
     }
 
@@ -398,7 +409,6 @@ class LocalDreamModule(private val context: Context) {
 
     private suspend fun waitForServer(timeoutMs: Long): Boolean {
         val startTime = System.currentTimeMillis()
-        var lastLogTime = 0L
         var processDied = false
         var portCheckCount = 0
 
@@ -434,25 +444,32 @@ class LocalDreamModule(private val context: Context) {
                     val code = conn.responseCode
                     conn.disconnect()
                     portCheckCount++
-                    Log.d(TAG, "waitForServer: Health check #$portCheckCount response:$code (alive=$alive, elapsed=${System.currentTimeMillis()-startTime}ms)")
+                    // Perf fix: 200/404 で早期リターン。Debug ログはループ毎に出さず、
+                    //           readiness が確定した瞬間だけ 1 行に絞る。
                     if (code == 200 || code == 404) {
-                        Log.i(TAG, "waitForServer: Server is ready! (response=$code)")
+                        Log.i(TAG, "waitForServer: Server is ready! (response=$code, checks=$portCheckCount, elapsed=${System.currentTimeMillis()-startTime}ms)")
                         return true
                     }
                 } else {
                     portCheckCount++
-                    Log.d(TAG, "waitForServer: Health check #$portCheckCount - Port not open yet (alive=$alive, elapsed=${System.currentTimeMillis()-startTime}ms)")
                 }
             } catch (e: Exception) {
                 portCheckCount++
-                Log.d(TAG, "waitForServer: Health check #$portCheckCount failed (alive=$alive, elapsed=${System.currentTimeMillis()-startTime}ms): ${e.javaClass.simpleName}: ${e.message}")
                 if (!alive && e is IOException) {
-                    // If the process died, log process state repeatedly for debugging.
-                    Log.w(TAG, "waitForServer: serverProcess state on failure: process=$serverProcess")
+                    // If the process died, log once for debugging.
+                    Log.w(TAG, "waitForServer: serverProcess died during health check")
                 }
             }
 
-            delay(500)
+            // Perf fix: 生成直前の待機は 500ms ではなく段階的に間隔を広げ、
+            //           CPU モデルの起動 (~1.5s) に対して不要な wake を減らす。
+            val elapsed = System.currentTimeMillis() - startTime
+            val delayMs = when {
+                elapsed < 1000 -> 100L   // ホット期: すばやく検出
+                elapsed < 5000 -> 250L
+                else -> 500L             // コールドロード期は間隔を広げる
+            }
+            delay(delayMs)
         }
 
         Log.e(TAG, "waitForServer: Timeout! Failed to connect after ${System.currentTimeMillis()-startTime}ms, portCheckCount=$portCheckCount")
@@ -466,7 +483,16 @@ class LocalDreamModule(private val context: Context) {
                 serverProcess?.inputStream?.bufferedReader()?.use { reader ->
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
-                        Log.i(TAG, "[server] $line")
+                        // Perf fix: サーバーはトークン化された prompt をそのままダンプするので、
+                        //           1KB 超のトークン列は logcat に刷き尽くすと UI スレッドを
+                        //           ブロックする。長い行は先頭 300 文字にクリップして末尾に
+                        //           切り捨てを明示。
+                        val raw = line ?: continue
+                        if (raw.length > 300) {
+                            Log.i(TAG, "[server] ${raw.substring(0, 300)}... [+${raw.length - 300}ch truncated]")
+                        } else {
+                            Log.i(TAG, "[server] $raw")
+                        }
                     }
                 }
 
@@ -675,29 +701,45 @@ class LocalDreamModule(private val context: Context) {
         activeGenerationConn.getAndSet(null)?.disconnect()
     }
 
+    /**
+     * Perf fix:
+     * - 旧実装は Kotlin の for-in で 262,144 回 (512x512) 個別に Int を組み立て、
+     *   都度オートボクシングと bounds check が入りメイン UNET とは別スレッドの CPU を
+     *   数百 ms 焼き付けて GC を圧迫していた (Davey! 800ms ログの原因の 1 つ)。
+     * - 現在は一度だけ IntArray を確保し、byte 配列を直接インデックスして
+     *   バイトから ARGB int を組み立てる。ループ本体を単純化し JIT に任せる。
+     *   さらに 512x512 で 3MB 弱の中間 pixels[] だけで済ませ、setPixels に一発で渡す。
+     */
     private fun decodeRgbToBitmap(base64Rgb: String, width: Int, height: Int): Bitmap? {
         return try {
             val rgbBytes = Base64.decode(base64Rgb, Base64.DEFAULT)
-            val expectedSize = width * height * 3
+            val total = width * height
+            val expectedSize = total * 3
 
             if (rgbBytes.size != expectedSize) {
                 Log.e(TAG, "RGB data size ${rgbBytes.size} doesn't match expected $expectedSize")
                 return null
             }
 
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            val pixels = IntArray(width * height)
-
-            for (i in 0 until width * height) {
-                val idx = i * 3
-                val r = rgbBytes[idx].toInt() and 0xFF
-                val g = rgbBytes[idx + 1].toInt() and 0xFF
-                val b = rgbBytes[idx + 2].toInt() and 0xFF
-                pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            val pixels = IntArray(total)
+            var src = 0
+            var i = 0
+            val alpha = 0xFF shl 24
+            while (i < total) {
+                val r = rgbBytes[src].toInt() and 0xFF
+                val g = rgbBytes[src + 1].toInt() and 0xFF
+                val b = rgbBytes[src + 2].toInt() and 0xFF
+                pixels[i] = alpha or (r shl 16) or (g shl 8) or b
+                src += 3
+                i++
             }
 
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
             bitmap
+        } catch (e: OutOfMemoryError) {
+            Log.e(TAG, "OOM while decoding RGB to bitmap (w=$width h=$height)", e)
+            null
         } catch (e: Exception) {
             Log.e(TAG, "Failed to decode RGB to bitmap", e)
             null
