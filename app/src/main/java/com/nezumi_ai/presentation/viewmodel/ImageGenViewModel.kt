@@ -285,15 +285,6 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         val previous = _selectedBackend.value
         _selectedBackend.value = backend
         PreferencesHelper.setSdBackend(getApplication(), backend)
-        // ★ Bug fix (SD hang): CPU バックエンドを選んだときに use_opencl が true のままだと
-        //   UNET だけモバイル GPU に逃げてカーネル JIT で 30〜60秒ハングする。
-        //   backend 選択と OpenCL フラグをリンクさせて食い違いを防ぐ。
-        when (backend.lowercase()) {
-            "mnn", "cpu" -> PreferencesHelper.setSdUseOpenCL(getApplication(), false)
-            "qnn", "gpu", "npu" -> PreferencesHelper.setSdUseOpenCL(getApplication(), true)
-            // "auto" はユーザーの既存設定を尊重
-            else -> {}
-        }
         updateBackendInfo()
         // ★ Bug fix: backend を切り替えたら即座に既存の LocalDream サーバーを停止し、
         //   次回 generate() 時に新 backend で起動し直されるようにする。
@@ -348,6 +339,16 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
     fun clearSnackbar() {
         _snackbar.value = null
+    }
+
+    /**
+     * 既存の snackbar 表示機構をそのまま使い、同一メッセージでも再表示できるようにする。
+     */
+    private fun showImageGenError(message: String) {
+        if (_snackbar.value == message) {
+            _snackbar.value = null
+        }
+        _snackbar.value = message
     }
 
     fun cancel() {
@@ -483,9 +484,13 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
                 }
                 bmp == null -> {
-                    // Safety BLOCK: LocalDreamModule が null を返した = フィルタで破棄済み
-                    _safetyVerdict.value = SafetyResult.Verdict.BLOCK
-                    _snackbar.value = "不適切なコンテンツが検出されたため表示を制限しました"
+                    val lastVerdict = ld.getLastSafetyVerdict()
+                    if (lastVerdict == SafetyResult.Verdict.BLOCK) {
+                        _safetyVerdict.value = SafetyResult.Verdict.BLOCK
+                        showImageGenError("不適切なコンテンツが検出されたため表示を制限しました")
+                    } else {
+                        showImageGenError("画像生成に失敗しました")
+                    }
                 }
                 else -> {
                     _resultBitmap.value = bmp
@@ -507,7 +512,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
         } catch (e: Exception) {
             Log.e(TAG, "ImageGen failed", e)
-            _snackbar.value = e.message ?: "error"
+            showImageGenError(e.message ?: "画像生成に失敗しました")
         } finally {
             Log.i(TAG, "[ImageGen] finally block: cleaning up")
             isCancelling = false
@@ -849,11 +854,13 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
             if (path.isEmpty() || !File(path).isDirectory) {
                 Log.e(TAG, "[QueueItem] Invalid model path")
+                showImageGenError(app.getString(com.nezumi_ai.R.string.image_gen_err_model_missing))
                 return@withContext null
             }
 
             if (!ensureSafetyModelReady(app)) {
                 Log.e(TAG, "[QueueItem] Safety model not ready")
+                showImageGenError("セーフティモデルの準備に失敗しました")
                 return@withContext null
             }
 
@@ -862,6 +869,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 PromptFilter.check(item.prompt) == PromptFilter.Result.BLOCK) {
                 Log.w(TAG, "[QueueItem] Prompt blocked by PromptFilter")
                 _safetyVerdict.value = SafetyResult.Verdict.BLOCK
+                showImageGenError("プロンプトにポリシー違反のキーワードが含まれています")
                 return@withContext null
             }
 
@@ -908,6 +916,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     // セーフティ違反（後段ガード）
                     Log.w(TAG, "[QueueItem] Image blocked by safety guard")
                     _safetyVerdict.value = SafetyResult.Verdict.BLOCK
+                    showImageGenError("不適切なコンテンツが検出されたため表示を制限しました")
                     return@withContext null
                 }
             } else {
@@ -916,8 +925,10 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 if (lastVerdict == SafetyResult.Verdict.BLOCK) {
                     Log.w(TAG, "[QueueItem] Image BLOCK by safety guard (verdict=${lastVerdict})")
                     _safetyVerdict.value = SafetyResult.Verdict.BLOCK
+                    showImageGenError("不適切なコンテンツが検出されたため表示を制限しました")
                 } else {
                     Log.w(TAG, "[QueueItem] Generation failed or safety check unavailable")
+                    showImageGenError("画像生成に失敗しました")
                 }
                 return@withContext null
             }
@@ -926,9 +937,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             throw e
         } catch (e: java.net.SocketException) {
             Log.e(TAG, "[QueueItem] Socket closed during generation (likely due to cancellation)", e)
+            showImageGenError(e.message ?: "画像生成中に接続が切断されました")
             null
         } catch (e: Exception) {
             Log.e(TAG, "[QueueItem] Error", e)
+            showImageGenError(e.message ?: "画像生成に失敗しました")
             null
         }
     }
