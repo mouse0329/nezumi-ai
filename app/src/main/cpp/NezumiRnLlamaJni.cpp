@@ -361,7 +361,9 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
     jboolean useMlock,
     jfloat ropeFreqBase,
     jfloat ropeFreqScale,
-    jstring mmprojPath)
+    jstring mmprojPath,
+    jboolean flashAttentionEnabled,
+    jboolean contextShiftEnabled)
 {
     if (!modelPath)
         return 0;
@@ -390,19 +392,24 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
     params.use_mlock = (useMlock == JNI_TRUE);
     params.rope_freq_base = ropeFreqBase;
     params.rope_freq_scale = ropeFreqScale;
-    params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
+    params.flash_attn_type = (flashAttentionEnabled == JNI_TRUE)
+                                 ? LLAMA_FLASH_ATTN_TYPE_AUTO
+                                 : LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    params.ctx_shift = (contextShiftEnabled == JNI_TRUE);
     params.n_parallel = 1;
     params.kv_unified = true;
     params.no_perf = false;
 
     __android_log_print(ANDROID_LOG_INFO, TAG,
-                        "nativeCreateContext: path='%s' n_ctx=%d n_batch=%d n_threads=%d ngl=%d use_mmap=%d",
+                        "nativeCreateContext: path='%s' n_ctx=%d n_batch=%d n_threads=%d ngl=%d use_mmap=%d flash_attn=%d ctx_shift=%d",
                         params.model.path.c_str(),
                         params.n_ctx,
                         params.n_batch,
                         params.cpuparams.n_threads,
                         params.n_gpu_layers,
-                        params.use_mmap ? 1 : 0);
+                        params.use_mmap ? 1 : 0,
+                        params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_DISABLED ? 0 : 1,
+                        params.ctx_shift ? 1 : 0);
 
     bool ok = false;
     try

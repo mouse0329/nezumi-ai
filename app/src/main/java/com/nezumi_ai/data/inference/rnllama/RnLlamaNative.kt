@@ -52,7 +52,9 @@ object RnLlamaNative {
         useMlock: Boolean,
         ropeFreqBase: Float,
         ropeFreqScale: Float,
-        mmprojPath: String?
+        mmprojPath: String?,
+        flashAttentionEnabled: Boolean,
+        contextShiftEnabled: Boolean
     ): Long
 
     /**
