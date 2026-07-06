@@ -8,12 +8,12 @@ class RnLlamaContext(
     nThreads: Int,
     nGpuLayers: Int,
     mmprojPath: String? = null,
+    val flashAttentionEnabled: Boolean = true,
+    val contextShiftEnabled: Boolean = true,
     // Performance optimization parameters
     val mtpEnabled: Boolean = false,
     val mtpDraftTokens: Int = 5,
-    val flashAttentionEnabled: Boolean = true,
     val kvCacheOptimizationEnabled: Boolean = true,
-    val contextShiftEnabled: Boolean = true,
     ropeFreqBase: Float = 0f,
     ropeFreqScale: Float = 1f
 ) {
@@ -32,7 +32,9 @@ class RnLlamaContext(
                 useMlock = false,
                 ropeFreqBase = ropeFreqBase,
                 ropeFreqScale = ropeFreqScale,
-                mmprojPath = mmprojPath
+                mmprojPath = mmprojPath,
+                flashAttentionEnabled = flashAttentionEnabled,
+                contextShiftEnabled = contextShiftEnabled
             )
         } else {
             0L

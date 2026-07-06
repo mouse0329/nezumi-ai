@@ -55,6 +55,34 @@ class GgufInferenceEngine(
     companion object {
         private const val TAG = "GgufInferenceEngine"
 
+        internal data class NativeGenerationSettings(
+            val batchSize: Int,
+            val ubatchSize: Int,
+            val flashAttentionEnabled: Boolean,
+            val contextShiftEnabled: Boolean,
+            val maxTokensCap: Int
+        )
+
+        internal fun tryClearKvCacheWithInferenceLock(
+            inferenceMutex: Mutex,
+            action: () -> Unit
+        ): Boolean {
+            if (!inferenceMutex.tryLock()) {
+                logDebug("Skipping KV cache clear because inference is active")
+                return false
+            }
+            return try {
+                action()
+                true
+            } finally {
+                inferenceMutex.unlock()
+            }
+        }
+
+        private fun logDebug(message: String) {
+            runCatching { Log.d(TAG, message) }
+        }
+
         // llama.cpp デフォルト値
         private const val DEFAULT_REPEAT_PENALTY = 1.1f
         private const val MAX_NEW_TOKENS = 4096
@@ -115,6 +143,30 @@ class GgufInferenceEngine(
             val physicalCores = (cores / 2).coerceAtLeast(1)
             // 推論には物理コア数 - 1 を使用（UIスレッド用に1コア残す）
             return (physicalCores - 1).coerceAtLeast(2).coerceAtMost(8)
+        }
+
+        internal fun resolveNativeGenerationSettings(
+            modelPath: String,
+            config: InferenceConfig
+        ): NativeGenerationSettings {
+            val isGpt2Model = PromptBuilder.detectGgufFormat(modelPath) == PromptBuilder.GgufPromptFormat.PLAIN_COMPLETION
+            return if (isGpt2Model) {
+                NativeGenerationSettings(
+                    batchSize = 32,
+                    ubatchSize = 32,
+                    flashAttentionEnabled = false,
+                    contextShiftEnabled = false,
+                    maxTokensCap = 512
+                )
+            } else {
+                NativeGenerationSettings(
+                    batchSize = config.llamaCppBatchSize.coerceAtMost(512),
+                    ubatchSize = config.llamaCppUBatchSize.coerceAtMost(512),
+                    flashAttentionEnabled = config.flashAttentionEnabled,
+                    contextShiftEnabled = config.contextShiftEnabled,
+                    maxTokensCap = MAX_NEW_TOKENS
+                )
+            }
         }
 
         // チャットテンプレート（Gemma / ChatML 等に応じて変更）
@@ -199,7 +251,18 @@ class GgufInferenceEngine(
 
     override suspend fun loadModel(modelName: String, config: InferenceConfig): Result<Unit> {
         return modelMutex.withLock {
+            var inferenceLockAcquired = false
             try {
+                // 推論中にモデル切り替え / release が走ると native context が壊れうるため、
+                // ロード前に推論 mutex を確保しておく。これにより unload / clearKvCache との競合を抑える。
+                inferenceLockAcquired = withContext(Dispatchers.IO) {
+                    runCatching { inferenceMutex.tryLock() }.getOrDefault(false)
+                }
+                if (!inferenceLockAcquired) {
+                    Log.w(TAG, "loadModel deferred because inference is active")
+                    return@withLock Result.failure(IllegalStateException("Inference is active; try again later"))
+                }
+
                 val normalized = config.normalized()
                 val modelFile = resolveModelFile(modelName)
                     ?: return@withLock Result.failure(
@@ -221,6 +284,10 @@ class GgufInferenceEngine(
 
                 val optimalThreads = getOptimalThreadCount()
                 val gpuLayers = getAdaptiveGpuLayers(normalized.backendType)
+                val nativeSettings = resolveNativeGenerationSettings(modelPath, normalized)
+                if (nativeSettings.batchSize <= 0 || nativeSettings.ubatchSize <= 0) {
+                    return@withLock Result.failure(IllegalStateException("Invalid GGUF batch size configuration"))
+                }
 
                 if (!RnLlamaNative.loadLibraryIfNeeded()) {
                     return@withLock Result.failure(
@@ -228,6 +295,9 @@ class GgufInferenceEngine(
                     )
                 }
 
+                if (PromptBuilder.detectGgufFormat(modelPath) == PromptBuilder.GgufPromptFormat.PLAIN_COMPLETION) {
+                    Log.w(TAG, "Using conservative native settings for GPT-2 model: batch=${nativeSettings.batchSize}, ubatch=${nativeSettings.ubatchSize}, flashAttention=${nativeSettings.flashAttentionEnabled}, ctxShift=${nativeSettings.contextShiftEnabled}")
+                }
                 Log.i(TAG, "Loading GGUF model: $modelPath backend=${normalized.backendType} threads=$optimalThreads gpuLayers=$gpuLayers")
 
                 if (modelFile.extension.equals("gguf", ignoreCase = true) && !hasGgufMagicHeader(modelFile)) {
@@ -246,11 +316,13 @@ class GgufInferenceEngine(
                     RnLlamaContext(
                         modelPath = modelPath,
                         nCtx = normalized.contextWindow,
-                        nBatch = 512,
-                        nUbatch = 512,
+                        nBatch = nativeSettings.batchSize,
+                        nUbatch = nativeSettings.ubatchSize,
                         nThreads = optimalThreads,
                         nGpuLayers = gpuLayers,
-                        mmprojPath = mmprojPath
+                        mmprojPath = mmprojPath,
+                        flashAttentionEnabled = nativeSettings.flashAttentionEnabled,
+                        contextShiftEnabled = nativeSettings.contextShiftEnabled
                     )
                 }
 
@@ -269,6 +341,10 @@ class GgufInferenceEngine(
             } catch (t: Throwable) {
                 Log.e(TAG, "loadModel failed", t)
                 Result.failure(if (t is Exception) t else RuntimeException(t))
+            } finally {
+                if (inferenceLockAcquired) {
+                    inferenceMutex.unlock()
+                }
             }
         }
     }
@@ -318,9 +394,13 @@ class GgufInferenceEngine(
     fun clearKvCacheIfLoaded() {
         val ctx = rnllamaCtx ?: return
         if (!ctx.isValid) return
-        runCatching { ctx.clearKvCache() }
-            .onFailure { Log.w(TAG, "clearKvCacheIfLoaded failed", it) }
-        lastSessionId = null
+        val didClear = tryClearKvCacheWithInferenceLock(inferenceMutex) {
+            runCatching { ctx.clearKvCache() }
+                .onFailure { Log.w(TAG, "clearKvCacheIfLoaded failed", it) }
+        }
+        if (didClear) {
+            lastSessionId = null
+        }
     }
 
     /**
@@ -596,8 +676,9 @@ class GgufInferenceEngine(
         }
 
         val stopSequences = effectiveStopSequences(config)
-        val maxTokens = config.maxTokens.coerceAtMost(MAX_NEW_TOKENS)
-        
+        val nativeSettings = resolveNativeGenerationSettings(ctx.modelPath, config)
+        val maxTokens = config.maxTokens.coerceAtMost(nativeSettings.maxTokensCap)
+
         Log.d(TAG, "generateRound: maxTokens=$maxTokens, temperature=${config.temperature}, topP=${config.topP}, topK=${config.maxTopK}")
 
         // 画像を一時ファイルに保存
