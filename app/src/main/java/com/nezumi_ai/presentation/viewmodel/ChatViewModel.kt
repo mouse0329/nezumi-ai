@@ -254,11 +254,12 @@ class ChatViewModel(
 
     private val memoryExtractionWorker: com.nezumi_ai.data.memory.MemoryExtractionWorker? by lazy {
         val repo = memoryRepository ?: return@lazy null
+        val db = com.nezumi_ai.data.database.NezumiAiDatabase.getInstance(appContext)
         val sessionRepo = com.nezumi_ai.data.repository.MemorySessionRepository(
-            com.nezumi_ai.data.database.NezumiAiDatabase.getInstance(appContext).memorySessionDao()
+            db.memorySessionDao()
         )
         val chunkRepo = com.nezumi_ai.data.repository.ChatChunkRepository(
-            com.nezumi_ai.data.database.NezumiAiDatabase.getInstance(appContext).chatChunkDao(), appContext
+            db.chatChunkDao(), appContext
         )
         com.nezumi_ai.data.memory.MemoryExtractionWorker(repo, sessionRepo, chunkRepo).also { worker ->
             // isExtracting を Worker の StateFlow に橋渡し

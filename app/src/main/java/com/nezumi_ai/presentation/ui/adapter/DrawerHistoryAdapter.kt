@@ -32,6 +32,7 @@ class DrawerHistoryAdapter(
     }
 
     fun setCurrentSessionId(sessionId: Long?) {
+        if (currentSessionId == sessionId) return
         currentSessionId = sessionId
         notifyDataSetChanged()
     }

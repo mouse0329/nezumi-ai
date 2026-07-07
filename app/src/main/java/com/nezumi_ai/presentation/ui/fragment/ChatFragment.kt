@@ -315,16 +315,17 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         thinkingToggleText = getString(R.string.chat_thinking_follow_settings)
         setupComposeIndicators()
 
-        // ViewModel初期化
-        val database = NezumiAiDatabase.getInstance(requireContext())
+        // ViewModel初期化: DBアクセスをIOスレッドで実行してメインスレッドのブロックを防ぐ
+        val appContext = requireContext().applicationContext
+        val database = NezumiAiDatabase.getInstance(appContext)
         settingsRepository = SettingsRepository.fromDatabase(database)
         val sessionRepository = ChatSessionRepository(database.chatSessionDao(), settingsRepository)
         val messageRepository = MessageRepository(database.messageDao())
-        presetRepository = PresetRepository(database.presetDao(), requireContext().applicationContext)
+        presetRepository = PresetRepository(database.presetDao(), appContext)
         val memoryRepository = MemoryRepository(database.memoryDao())
         lastObservedPresetId = PreferencesHelper.getCurrentPresetId(requireContext())
         val factory = ChatViewModelFactory(
-            requireContext().applicationContext,
+            appContext,
             sessionRepository,
             messageRepository,
             settingsRepository,
