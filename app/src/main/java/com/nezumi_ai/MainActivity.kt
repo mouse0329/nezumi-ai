@@ -60,6 +60,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var settingsRepository: SettingsRepository
     private lateinit var drawerHistoryAdapter: DrawerHistoryAdapter
     private var dbInitialized = false
+    private var repositoriesReady = false
     private var screenOffReceiver: BroadcastReceiver? = null
     private var isAppInBackground = false
     private var isFirstResume = true
@@ -82,38 +83,43 @@ class MainActivity : AppCompatActivity() {
             binding.toolbar.visibility = android.view.View.GONE
             binding.fab.hide()
 
-            // DB / リポジトリは onPause などで必須。NavHost の準備後にドロワーとセットアップ遷移を行う
-            val database = NezumiAiDatabase.getInstance(this)
-            settingsRepository = SettingsRepository.fromDatabase(database)
-            val messageRepository = com.nezumi_ai.data.repository.MessageRepository(database.messageDao())
-            sessionRepository = ChatSessionRepository(database.chatSessionDao(), settingsRepository, messageRepository)
-            if (!isIncognitoModeActive) {
-                lifecycleScope.launch(Dispatchers.IO) {
-                    runCatching {
-                        sessionRepository.deleteAllIncognitoSessions()
-                        Log.d(TAG, "Cleaned up stale incognito sessions on startup")
-                    }.onFailure {
-                        Log.e(TAG, "Failed to cleanup stale incognito sessions on startup", it)
-                    }
-                }
-            }
-            binding.root.post {
-                try {
-                    val navController = findNavController(R.id.nav_host_fragment_content_main)
-                    setupDrawer(navController)
-                    observeDrawerHistory()
-                    if (!PreferencesHelper.isInitialSetupCompleted(this@MainActivity)) {
-                        Log.d(TAG, "Initial setup not completed - navigating to setup wizard")
-                        navController.navigate(R.id.setupWizardFragment)
-                    } else {
-                        ensureCurrentSessionExists()
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to setup drawer navigation or setup wizard", e)
-                }
-            }
-
             PreferencesHelper.isFirstLaunch(this)
+
+            // DB初期化をIOスレッドで実行してメインスレッドのブロックを防ぐ
+            lifecycleScope.launch(Dispatchers.IO) {
+                runCatching {
+                    val database = NezumiAiDatabase.getInstance(this@MainActivity)
+                    val sr = SettingsRepository.fromDatabase(database)
+                    val messageRepository = com.nezumi_ai.data.repository.MessageRepository(database.messageDao())
+                    val cr = ChatSessionRepository(database.chatSessionDao(), sr, messageRepository)
+                    withContext(Dispatchers.Main) {
+                        settingsRepository = sr
+                        sessionRepository = cr
+                        repositoriesReady = true
+                    }
+                    if (!isIncognitoModeActive) {
+                        runCatching {
+                            cr.deleteAllIncognitoSessions()
+                            Log.d(TAG, "Cleaned up stale incognito sessions on startup")
+                        }.onFailure {
+                            Log.e(TAG, "Failed to cleanup stale incognito sessions on startup", it)
+                        }
+                    }
+                    withContext(Dispatchers.Main) {
+                        val navController = findNavController(R.id.nav_host_fragment_content_main)
+                        setupDrawer(navController)
+                        observeDrawerHistory()
+                        if (!PreferencesHelper.isInitialSetupCompleted(this@MainActivity)) {
+                            Log.d(TAG, "Initial setup not completed - navigating to setup wizard")
+                            navController.navigate(R.id.setupWizardFragment)
+                        } else {
+                            ensureCurrentSessionExists()
+                        }
+                    }
+                }.onFailure { t ->
+                    Log.e(TAG, "Fatal error in DB initialization", t)
+                }
+            }
         } catch (t: Throwable) {
             Log.e(TAG, "Fatal error in onCreate", t)
             throw t
@@ -122,7 +128,7 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun showHistorySearchModal() {
-        val database = NezumiAiDatabase.getInstance(this)
+        val database = NezumiAiDatabase.getInstance(applicationContext)
         val repository = ChatSessionRepository(database.chatSessionDao())
         val chunkRepository = ChatChunkRepository(database.chatChunkDao(), this)
         val factory = ChatSessionListViewModelFactory(repository, chunkRepository)
@@ -255,6 +261,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun ensureCurrentSessionExists() {
+        if (!repositoriesReady) return
         lifecycleScope.launch(Dispatchers.IO) {
             if (isIncognitoModeActive) return@launch
 
@@ -324,8 +331,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // シークレットモード中の場合、バックグラウンド進入時に即時セッション削除は行わない
-        // ユーザーが明示的に終了するか、認証失敗/キャンセル時のみ削除する
-        if (!isIncognitoModeActive) {
+        if (!isIncognitoModeActive && repositoriesReady) {
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
                     sessionRepository.deleteAllIncognitoSessions()
@@ -653,7 +659,6 @@ class MainActivity : AppCompatActivity() {
         registerScreenOffReceiver()
         startDrawerDateRefreshTimer()
 
-        // Database 初期化をここで遅延実行（Binder 負荷軽減）
         if (!dbInitialized) {
             dbInitialized = true
             lifecycleScope.launch(Dispatchers.IO) {
@@ -691,12 +696,14 @@ class MainActivity : AppCompatActivity() {
         Log.d(TAG, "Cleared FLAG_SECURE and overlay on app destroy")
 
         // アプリ終了時にシークレットセッションを全て削除
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                sessionRepository.deleteAllIncognitoSessions()
-                Log.d(TAG, "Cleaned up all incognito sessions on app destruction")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to cleanup incognito sessions", e)
+        if (repositoriesReady) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    sessionRepository.deleteAllIncognitoSessions()
+                    Log.d(TAG, "Cleaned up all incognito sessions on app destruction")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to cleanup incognito sessions", e)
+                }
             }
         }
     }
@@ -744,17 +751,13 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             sessionRepository.getAllSessions().collectLatest { sessions ->
                 latestDrawerSessions = sessions
-                renderDrawerHistory(sessions)
-            }
-        }
-
-        // 現在のセッションIDの変更を監視
-        lifecycleScope.launch {
-            while (true) {
-                delay(500) // 0.5秒ごとにチェック
-                val newSessionId = getCurrentSessionId()
+                val grouped = withContext(Dispatchers.Default) { groupSessionsByDate(sessions) }
                 if (::drawerHistoryAdapter.isInitialized) {
-                    drawerHistoryAdapter.setCurrentSessionId(newSessionId)
+                    lastRenderedDrawerDayStartMillis = localDayStartMillis()
+                    drawerHistoryAdapter.setCurrentSessionId(getCurrentSessionId())
+                    drawerHistoryAdapter.submitList(grouped)
+                    binding.drawerHistoryEmpty.visibility =
+                        if (sessions.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
                 }
             }
         }
@@ -799,11 +802,14 @@ class MainActivity : AppCompatActivity() {
             Log.w(TAG, "renderDrawerHistory called before drawerHistoryAdapter initialization")
             return
         }
-        lastRenderedDrawerDayStartMillis = localDayStartMillis()
-        drawerHistoryAdapter.setCurrentSessionId(getCurrentSessionId())
-        val groupedSessions = groupSessionsByDate(sessions)
-        drawerHistoryAdapter.submitList(groupedSessions)
-        binding.drawerHistoryEmpty.visibility = if (sessions.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
+        lifecycleScope.launch {
+            val grouped = withContext(Dispatchers.Default) { groupSessionsByDate(sessions) }
+            lastRenderedDrawerDayStartMillis = localDayStartMillis()
+            drawerHistoryAdapter.setCurrentSessionId(getCurrentSessionId())
+            drawerHistoryAdapter.submitList(grouped)
+            binding.drawerHistoryEmpty.visibility =
+                if (sessions.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
+        }
     }
 
     private fun localDayStartMillis(): Long {
