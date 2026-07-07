@@ -102,11 +102,23 @@ object PreferencesHelper {
     }
 
     fun getSdBackend(context: Context): String {
-        return getSharedPreferences(context).getString(KEY_SD_BACKEND, "auto") ?: "auto"
+        // NOTE: "auto" は廃止。UI は CPU / GPU/NPU の 2 選択のみとし、
+        // ここで下位互換のため auto を qnn にマップして返す。
+        val raw = getSharedPreferences(context).getString(KEY_SD_BACKEND, "qnn") ?: "qnn"
+        return when (raw.lowercase()) {
+            "mnn", "cpu" -> "mnn"
+            "qnn", "npu", "gpu", "gpu_npu", "auto" -> "qnn"
+            else -> "qnn"
+        }
     }
 
     fun setSdBackend(context: Context, backend: String) {
-        getSharedPreferences(context).edit().putString(KEY_SD_BACKEND, backend).apply()
+        // 入力のバリエーションを含めて mnn / qnn に正規化して保存する。
+        val normalized = when (backend.lowercase()) {
+            "mnn", "cpu" -> "mnn"
+            else -> "qnn"
+        }
+        getSharedPreferences(context).edit().putString(KEY_SD_BACKEND, normalized).apply()
     }
 
     fun getSdSteps(context: Context): Int {

@@ -46,11 +46,27 @@ class LocalDreamModule(private val context: Context) {
         private const val EXECUTABLE_NAME = "libstable_diffusion_core.so"
         private const val RUNTIME_DIR = "runtime_libs"
 
+        // xororz/local-dream では MNN の MnnSessionOptions で Precision_Low +
+        // MNN_GPU_MEMORY_BUFFER + MNN_GPU_TUNING_FAST を付けることで OpenCL を安定化しているが、
+        // ネズミ AI は外部バイナリに任せているためこちら側での制御ができない。
+        // そこで、大きめの解像度 (>=512) では OpenCL をオフに倒すことで安全側に逃げる。
+        internal const val OPENCL_SAFE_MAX_SIDE = 448
+
         internal fun resolveEffectiveUseOpenCL(
             userWantsOpenCL: Boolean,
-            currentBackend: String?
+            currentBackend: String?,
+            maxSidePx: Int = 0
         ): Boolean {
-            return userWantsOpenCL
+            // QNN バックエンド利用中は MNN の OpenCL パスには入らないので本来不要だが、
+            // 内部で UNET の一部が OpenCL に逃げる不具合回避のため強制オフにする。
+            if (currentBackend?.lowercase() == "qnn") return false
+            if (!userWantsOpenCL) return false
+            // MNN CPU モードでも 512 クラスは OpenCL を避ける。
+            //   背景: 512x512 の UNET latent (64x64 * feature) を mobile GPU で tuning させると
+            //   カーネル JIT + 重み転送に数 GB の VRAM を使おうとしてドライバが abort する。
+            //   ボーダーは OPENCL_SAFE_MAX_SIDE (448) で、これを超えたら CPU (MNN) に逃す。
+            if (maxSidePx > OPENCL_SAFE_MAX_SIDE) return false
+            return true
         }
     }
 
@@ -587,9 +603,16 @@ class LocalDreamModule(private val context: Context) {
 
         try {
             val userWantsOpenCL = PreferencesHelper.isSdUseOpenCL(context)
-            val effectiveUseOpenCL = resolveEffectiveUseOpenCL(userWantsOpenCL, currentBackend)
+            val maxSide = kotlin.math.max(width, height)
+            val effectiveUseOpenCL = resolveEffectiveUseOpenCL(userWantsOpenCL, currentBackend, maxSide)
             if (userWantsOpenCL != effectiveUseOpenCL) {
-                Log.w(TAG, "generateImage: use_opencl の解決結果が期待値と異なりました (requested=$userWantsOpenCL, effective=$effectiveUseOpenCL)")
+                Log.w(TAG, "generateImage: use_opencl の解決結果が期待値と異なりました (requested=$userWantsOpenCL, effective=$effectiveUseOpenCL, side=$maxSide, backend=$currentBackend)")
+            }
+            // 512 クラスの生成はネイティブ側で latent (64×64 * feature) と VAE デコーダの
+            // 中間テンソルを同時に抱えるため、バックグラウンド側の Bitmap キャッシュを
+            // 一度回収してやると OOM 確率が下がる (local-dream の Memory_Low 相当のヒント)。
+            if (maxSide >= 512) {
+                System.gc()
             }
 
             val body = JSONObject().apply {
@@ -658,7 +681,10 @@ class LocalDreamModule(private val context: Context) {
                                     requestedSteps = steps
                                 )
                                 val now = System.currentTimeMillis()
-                                if (now - lastProgressTime > 400 || step == totalSteps) {
+                                // Perf fix: 進捗コールバックは Compose の recomposition を引き起こし、
+                                // 512 クラスでは 400ms スロットルだと main thread を不必要に食う。
+                                // 800ms に後退し、末尾ステップのみ確実に通知する。
+                                if (now - lastProgressTime > 800 || step == totalSteps) {
                                     onProgress(step, totalSteps, 0f)
                                     lastProgressTime = now
                                 }

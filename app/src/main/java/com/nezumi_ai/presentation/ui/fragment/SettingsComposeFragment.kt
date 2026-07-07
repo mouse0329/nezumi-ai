@@ -1,7 +1,14 @@
 package com.nezumi_ai.presentation.ui.fragment
 
+import android.net.Uri
 import android.os.Bundle
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -42,6 +49,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.fragment.app.Fragment
 import com.nezumi_ai.data.memory.MemoryTextEmbedder
+import com.nezumi_ai.sd.safety.ImageSafetyChecker
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.fragment.findNavController
@@ -58,6 +66,10 @@ import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.presentation.ui.composable.ErrorModalDialog
 import com.nezumi_ai.presentation.ui.composable.SvgSpinner
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -112,11 +124,77 @@ class SettingsComposeFragment : Fragment() {
     private var kvCacheOptimizationEnabled by mutableStateOf(true)
     private var contextShiftEnabled by mutableStateOf(true)
 
+    // NSFW チェッカー用のデバッグ UI 状態。ノン UI スレッドに入らないよう collectAsState でバインドする。
+    private var nsfwDebugBitmap by mutableStateOf<Bitmap?>(null)
+    private var nsfwDebugStatus by mutableStateOf<String?>(null)
+    private var nsfwDebugSafeProb by mutableStateOf<Float?>(null)
+    private var nsfwDebugNsfwProb by mutableStateOf<Float?>(null)
+    private var nsfwDebugRunning by mutableStateOf(false)
+    private lateinit var nsfwDebugPickLauncher: ActivityResultLauncher<String>
+
+    // 自動保存制御フラグ。loadInferenceSettings() の初期値適用中は true にして
+    // 初期化の emit で保存が回らないようにする。loadInferenceSettings() 完了後に false。
+    @Volatile private var settingsAutoSaveSuspended: Boolean = true
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val db = NezumiAiDatabase.getInstance(requireContext())
         settingsRepository = SettingsRepository.fromDatabase(db)
         memoryRepository = MemoryRepository(db.memoryDao())
+
+        // Fragment.registerForActivityResult() は onCreate までに登録する必要がある。
+        nsfwDebugPickLauncher = registerForActivityResult(
+            ActivityResultContracts.GetContent()
+        ) { uri: Uri? ->
+            if (uri == null) return@registerForActivityResult
+            runNsfwDebugCheck(uri)
+        }
+    }
+
+    /**
+     * 選択された画像 URI に対して ImageSafetyChecker を走らせ、スコアを UI に反映する。
+     * ImageSafetyChecker は open_nsfw.onnx (Yahoo Open NSFW, ResNet-50) を
+     * assets からロードし [0: Safe, 1: NSFW] の 2 クラス確率を返す。
+     */
+    private fun runNsfwDebugCheck(uri: Uri) {
+        nsfwDebugRunning = true
+        nsfwDebugStatus = "画像を読み込み中…"
+        nsfwDebugSafeProb = null
+        nsfwDebugNsfwProb = null
+        viewLifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bmp = requireContext().contentResolver.openInputStream(uri)?.use { input ->
+                        BitmapFactory.decodeStream(input)
+                    } ?: error("画像のデコードに失敗しました")
+                    val checker = ImageSafetyChecker(requireContext())
+                    val probs = checker.check(bmp)
+                        ?: error("NSFW チェッカーの推論に失敗しました (open_nsfw.onnx 未展開?)")
+                    Triple(bmp, probs.getOrNull(0) ?: 0f, probs.getOrNull(1) ?: 0f)
+                }
+            }
+            result.onSuccess { (bmp, safe, nsfw) ->
+                nsfwDebugBitmap = bmp
+                nsfwDebugSafeProb = safe
+                nsfwDebugNsfwProb = nsfw
+                nsfwDebugStatus = null
+            }.onFailure { e ->
+                nsfwDebugBitmap = null
+                nsfwDebugStatus = "失敗: ${e.message}"
+            }
+            nsfwDebugRunning = false
+        }
+    }
+
+    // この Fragment がバックグラウンドに行く際にも未保存の値を確実に flush する。
+    // 自動保存のデバウンス・window 中にバックグラウンド化したときのデータロスを防ぐ。
+    override fun onPause() {
+        super.onPause()
+        val error = validateSettings()
+        if (error != null) return
+        viewLifecycleOwner.lifecycleScope.launch {
+            runCatching { persistSettings() }
+        }
     }
 
     override fun onCreateView(
@@ -147,6 +225,57 @@ class SettingsComposeFragment : Fragment() {
     private fun SettingsScreen() {
         val chatViewModel = ViewModelProvider(requireActivity()).get(com.nezumi_ai.presentation.viewmodel.ChatViewModel::class.java)
         val sharedModelErrorMessage by chatViewModel.modelErrorDialogMessage.collectAsState()
+
+        // 自動保存レイヤー: 入力フィールドを snapshotFlow で監視し、全項目を
+        // すべてハッシュして単一の String キーにして 400ms デバウンスして
+        // persistSettings() を回す。validate 失敗はサイレントスキップ。
+        @OptIn(FlowPreview::class)
+        LaunchedEffect(Unit) {
+            snapshotFlow {
+                buildString {
+                    append(contextWindowInput); append('|')
+                    append(temperatureInput); append('|')
+                    append(topPInput); append('|')
+                    append(topkInput); append('|')
+                    append(maxTokensInput); append('|')
+                    append(contextCompressionEnabled); append('|')
+                    append(contextCompressionThresholdPercent); append('|')
+                    append(speculativeDecodingEnabled); append('|')
+                    append(requireMultimodal); append('|')
+                    append(preloadMemoryWarningThresholdPercent); append('|')
+                    append(backendType); append('|')
+                    append(llamaCppThreads); append('|')
+                    append(llamaCppGpuLayers); append('|')
+                    append(llamaCppBatchSize); append('|')
+                    append(llamaCppUBatchSize); append('|')
+                    append(llamaCppKvUnified); append('|')
+                    append(llamaCppNKeep); append('|')
+                    append(llamaCppRopeFreqBase); append('|')
+                    append(llamaCppRopeFreqScale); append('|')
+                    append(memorySaveMode); append('|')
+                    append(chatHistoryLimit); append('|')
+                    append(sdSteps); append('|')
+                    append(sdCfg); append('|')
+                    append(braveSearchApiKeyInput); append('|')
+                    append(mtpEnabled); append('|')
+                    append(mtpDraftTokens); append('|')
+                    append(flashAttentionEnabled); append('|')
+                    append(dynamicBatchSizeEnabled); append('|')
+                    append(promptBatchSize); append('|')
+                    append(generationBatchSize); append('|')
+                    append(kvCacheOptimizationEnabled); append('|')
+                    append(contextShiftEnabled)
+                }
+            }
+                .filter { !settingsAutoSaveSuspended }
+                .distinctUntilChanged()
+                .debounce(400)
+                .collect {
+                    // 入力不正の間はスキップするが、エラーダイアログは出さない。
+                    if (validateSettings() != null) return@collect
+                    runCatching { persistSettings() }
+                }
+        }
 
         errorDialogMessage?.let { message ->
             ErrorModalDialog(
@@ -1779,6 +1908,83 @@ class SettingsComposeFragment : Fragment() {
                 debugTextSimilarityResult?.let {
                     Text(text = it, color = colorResource(id = R.color.primary))
                 }
+
+                // ---- NSFW チェッカー (open_nsfw.onnx / Yahoo Open NSFW) ----
+                Divider(modifier = Modifier.padding(vertical = 4.dp))
+                Text(
+                    text = "選択した画像の NSFW チェック",
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    text = "ギャラリーから選んだ画像を、内蔵の open_nsfw モデルで判定し、\n" +
+                        "safe / nsfw の確率を表示します。実際の生成フローと別に確認できます。",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { nsfwDebugPickLauncher.launch("image/*") },
+                        enabled = !nsfwDebugRunning
+                    ) {
+                        Text(if (nsfwDebugRunning) "判定中…" else "画像を選択して NSFW チェック")
+                    }
+                    Button(onClick = {
+                        nsfwDebugBitmap = null
+                        nsfwDebugStatus = null
+                        nsfwDebugSafeProb = null
+                        nsfwDebugNsfwProb = null
+                    }, enabled = !nsfwDebugRunning) {
+                        Text("クリア")
+                    }
+                }
+                nsfwDebugStatus?.let {
+                    Text(text = it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                nsfwDebugBitmap?.let { bmp ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = "NSFW チェック対象画像",
+                            modifier = Modifier
+                                .size(96.dp)
+                                .clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            val safe = nsfwDebugSafeProb
+                            val nsfw = nsfwDebugNsfwProb
+                            if (safe != null && nsfw != null) {
+                                val verdict = if (nsfw >= 0.8f) "BLOCK (本番ではブロック)" else "ALLOW"
+                                val verdictColor = if (nsfw >= 0.8f)
+                                    MaterialTheme.colorScheme.error else colorResource(id = R.color.primary)
+                                Text(
+                                    text = "判定: $verdict",
+                                    color = verdictColor,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = String.format("safe: %.4f", safe),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    text = String.format("nsfw: %.4f", nsfw),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    text = "しきい値: nsfw >= 0.8 でブロック",
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(onClick = {
                     modelErrorDialogMessage = "モデルのロードに失敗しました。デバッグ用モーダルを表示しています。"
@@ -1843,6 +2049,7 @@ class SettingsComposeFragment : Fragment() {
 
 
     private fun loadInferenceSettings() {
+        settingsAutoSaveSuspended = true
         viewLifecycleOwner.lifecycleScope.launch {
             val config = settingsRepository.getInferenceConfig(requireContext())
             val systemPrompt = settingsRepository.getSystemPrompt()
@@ -1893,6 +2100,8 @@ class SettingsComposeFragment : Fragment() {
             generationBatchSize = settingsRepository.getGenerationBatchSize()
             kvCacheOptimizationEnabled = settingsRepository.isKvCacheOptimizationEnabled()
             contextShiftEnabled = settingsRepository.isContextShiftEnabled()
+            // 初期値適用後に自動保存を解除。
+            settingsAutoSaveSuspended = false
         }
     }
 
@@ -2163,6 +2372,9 @@ class SettingsComposeFragment : Fragment() {
     }
 
     private fun onBackButtonPressed() {
+        // 保存自体は入力の都度自動で行われるため、ここではさらに flush するだけ。
+        // 不正入力がある際はエラーダイアログで知らせ、戻らないでフィールドの
+        // 修正を促す。
         val error = validateSettings()
         if (error != null) {
             errorDialogMessage = error
@@ -2171,12 +2383,11 @@ class SettingsComposeFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             runCatching {
                 persistSettings()
-            }.onSuccess {
-                if (isAdded) {
-                    findNavController().navigateUp()
-                }
             }.onFailure {
                 toast("設定の保存に失敗しました: ${it.message}")
+            }
+            if (isAdded) {
+                findNavController().navigateUp()
             }
         }
     }

@@ -201,6 +201,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var audioInputEnabled = true
 
     // 音声録音関連
+    // NOTE: 上限は 30 秒。VoiceVox / whisper 系の後段処理と体験（ダイアログ表示時間）の
+    // バランスに基づく上限で、UI と MediaRecorder.setMaxDuration の両方でこの値を参照する。
+    private val MAX_RECORDING_DURATION_MS = 30_000
     private var mediaRecorder: MediaRecorder? = null
     private var isRecordingAudio = false
     private var recordingAnimationJob: Job? = null
@@ -2071,6 +2074,24 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 setAudioEncodingBitRate(128000)
                 setAudioSamplingRate(44100)
                 setOutputFile(recordingFile?.absolutePath)
+                // 上限 30 秒。長時間録音による端末側 OOM / STT レイテンシ悪化を回避する。
+                setMaxDuration(MAX_RECORDING_DURATION_MS)
+                setOnInfoListener { _, what, _ ->
+                    if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED) {
+                        // メインスレッドで UI 破棄も含む停止処理を実行する。
+                        _binding?.root?.post {
+                            if (isRecordingAudio) {
+                                dismissAudioRecordingDialog()
+                                stopAudioRecording()
+                                Toast.makeText(
+                                    requireContext(),
+                                    "録音上限 (${MAX_RECORDING_DURATION_MS / 1000}秒) に達したため停止しました",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    }
+                }
                 prepare()
                 start()
             }
@@ -2191,14 +2212,17 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         recordingAnimationJob = viewLifecycleOwner.lifecycleScope.launch {
             var dotCount = 0
+            val startedAt = System.currentTimeMillis()
             while (isRecordingAudio && mediaRecorder != null) {
                 try {
                     // ドット数を循環（1個 → 2個 → 3個 → 1個）
                     dotCount = (dotCount % 3) + 1
                     val dots = ".".repeat(dotCount)
+                    val elapsedMs = System.currentTimeMillis() - startedAt
+                    val remainSec = ((MAX_RECORDING_DURATION_MS - elapsedMs).coerceAtLeast(0L) / 1000L).toInt()
 
                     withContext(Dispatchers.Main) {
-                        recordingStatusTextView?.text = "録音中$dots"
+                        recordingStatusTextView?.text = "録音中$dots  (あと ${remainSec}s)"
                         val density = requireContext().resources.displayMetrics.density
                         recordingWaveBars.forEachIndexed { index, bar ->
                             val heightDp = 24 + ((dotCount + index) % 5) * 10
