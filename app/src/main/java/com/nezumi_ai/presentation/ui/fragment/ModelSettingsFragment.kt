@@ -57,6 +57,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.FlowPreview
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -259,6 +261,14 @@ open class ModelSettingsFragment : Fragment() {
         }
     private var settingsDialogDisplayName by mutableStateOf("")
     private var settingsDialogStopTokens by mutableStateOf("")
+
+    // モデル設定ダイアログの自動保存制御: openModelSettingsDialog() 内で値をセットする間は
+    // true にし、LaunchedEffect の snapshotFlow が初回ロード値を保存に回すのを防ぐ。
+    // Compose で入力値が変わったときのみデバウンス保存することで
+    // 「保存ボタンなしでその場で保存される」を実現する。
+    @Volatile private var modelSettingsAutoSaveSuspended: Boolean = true
+    private var modelSettingsAutoSaveJob: kotlinx.coroutines.Job? = null
+
     private var expandedModelKey by mutableStateOf<String?>(null)
 
     private var sdModels by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
@@ -571,7 +581,43 @@ open class ModelSettingsFragment : Fragment() {
         val dialogTitle = ImportedModelCapabilityStore.resolveDisplayName(
             requireContext(), model.path, model.shortDisplayName
         )
-        Dialog(onDismissRequest = { modelSettingsDialogModel = null }) {
+        Dialog(onDismissRequest = {
+            // ダイアログを閉じる際に未保存値を即時 flush する。
+            // 保存ボタンを廃止したため、回転中のデバウンス保存が未完了のまま
+            // 閉じるシナリオを回避する。
+            modelSettingsAutoSaveJob?.cancel()
+            modelSettingsAutoSaveJob = null
+            val pendingModel = modelSettingsDialogModel
+            if (pendingModel != null) {
+                viewLifecycleOwner.lifecycleScope.launch {
+                    autoPersistModelSettingsFromDialog()
+                    refreshImportedTasks()
+                }
+            }
+            modelSettingsDialogModel = null
+        }) {
+            @OptIn(FlowPreview::class)
+            LaunchedEffect(modelSettingsDialogModel) {
+                // ダイアログ内の全値を snapshotFlow で監視し、350ms でデバウンスして自動保存する。
+                snapshotFlow {
+                    // 取りこぼしないよう state を全て単一 String キーに封入して監視する。
+                    buildString {
+                        append(capabilityDialogImageEnabled); append('|')
+                        append(capabilityDialogAudioEnabled); append('|')
+                        append(capabilityDialogThinkingEnabled); append('|')
+                        append(capabilityDialogToolCallingEnabled); append('|')
+                        append(capabilityDialogMmprojPath); append('|')
+                        append(settingsDialogDisplayName); append('|')
+                        append(settingsDialogStopTokens); append('|')
+                        append(capabilityDialogTemplateMode); append('|')
+                        append(capabilityDialogTemplateCustom)
+                    }
+                }
+                    .filter { !modelSettingsAutoSaveSuspended }
+                    .distinctUntilChanged()
+                    .debounce(350)
+                    .collect { autoPersistModelSettingsFromDialog() }
+            }
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
@@ -583,12 +629,36 @@ open class ModelSettingsFragment : Fragment() {
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(
-                        text = "設定",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "設定",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        // 保存ボタンを廃止し、クローズのみの X ボタン。
+                        IconButton(onClick = {
+                            modelSettingsAutoSaveJob?.cancel()
+                            val pendingModel = modelSettingsDialogModel
+                            if (pendingModel != null) {
+                                viewLifecycleOwner.lifecycleScope.launch {
+                                    autoPersistModelSettingsFromDialog()
+                                    refreshImportedTasks()
+                                }
+                            }
+                            modelSettingsDialogModel = null
+                        }) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = "閉じる",
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
                     Text(
                         text = dialogTitle,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -885,58 +955,9 @@ open class ModelSettingsFragment : Fragment() {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
-                    ) {
-                        TextButton(onClick = { modelSettingsDialogModel = null }) { Text("キャンセル") }
-                        Button(onClick = {
-                            val invalidChars = Regex("[\\\\/:*?\"<>|]")
-                            if (invalidChars.containsMatchIn(settingsDialogDisplayName)) {
-                                toast("表示名に使用できない記号が含まれています")
-                                return@Button
-                            }
-                            // カスタムテンプレートのバリデーション
-                            if (capabilityDialogTemplateMode == PromptTemplateStore.MODE_CUSTOM) {
-                                val err = PromptTemplateEngine.validate(capabilityDialogTemplateCustom)
-                                if (err != null) {
-                                    capabilityDialogTemplateError = err
-                                    toast("テンプレートにエラーがあります: $err")
-                                    return@Button
-                                }
-                            }
-                            val tokens = settingsDialogStopTokens
-                                .split(',')
-                                .map { it.trim() }
-                                .filter { it.isNotEmpty() }
-                            val newCapabilities = ImportedModelCapabilities(
-                                imageEnabled = capabilityDialogImageEnabled,
-                                audioEnabled = capabilityDialogAudioEnabled,
-                                mmprojPath = capabilityDialogMmprojPath.ifBlank { null },
-                                thinkingEnabled = capabilityDialogThinkingEnabled,
-                                displayName = settingsDialogDisplayName.trim().ifBlank { null },
-                                toolCallingEnabled = capabilityDialogToolCallingEnabled
-                            )
-                            viewLifecycleOwner.lifecycleScope.launch {
-                                val requiresConfirmation = capabilityDialogCurrentCapabilities?.toolCallingEnabled == true &&
-                                    !newCapabilities.toolCallingEnabled
-                                if (requiresConfirmation) {
-                                    val affectedCount = withContext(Dispatchers.IO) {
-                                        presetRepository.countPresetsUsingModelWithToolCallingEnabled(model.path)
-                                    }
-                                    if (affectedCount > 0) {
-                                        toolCallingDisableConfirmModel = model
-                                        toolCallingDisableConfirmNewCapabilities = newCapabilities
-                                        toolCallingDisableConfirmTokens = tokens
-                                        toolCallingDisableConflictCount = affectedCount
-                                        showToolCallingDisableConfirmDialog = true
-                                        return@launch
-                                    }
-                                }
-                                persistModelSettings(model, newCapabilities, isGguf, tokens)
-                            }
-                        }) { Text("保存") }
-                    }
+                    // NOTE: 保存 / キャンセル ボタン行は完全に廃止。
+                    // 入力は LaunchedEffect のデバウンス保存で自動反映され、
+                    // ダイアログの X / 外側タップで flush される。
                 }
             }
         }
@@ -966,7 +987,19 @@ open class ModelSettingsFragment : Fragment() {
                     }) { Text("はい") }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showToolCallingDisableConfirmDialog = false }) { Text("キャンセル") }
+                    TextButton(onClick = {
+                        // 確認キャンセル時: トグルを元に戻して自動保存のリトライを回避する。
+                        modelSettingsAutoSaveSuspended = true
+                        capabilityDialogToolCallingEnabled = true
+                        toolCallingDisableConfirmModel = null
+                        toolCallingDisableConfirmNewCapabilities = null
+                        toolCallingDisableConfirmTokens = emptyList()
+                        showToolCallingDisableConfirmDialog = false
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            kotlinx.coroutines.delay(500)
+                            modelSettingsAutoSaveSuspended = false
+                        }
+                    }) { Text("キャンセル") }
                 }
             )
         }
@@ -3241,6 +3274,11 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     private fun openModelSettingsDialog(model: ModelFileManager.ImportedTaskModel) {
+        // 初期値ロード中は自動保存を流さない (state の初期化自体で保存されるのを防ぐ)。
+        modelSettingsAutoSaveSuspended = true
+        modelSettingsAutoSaveJob?.cancel()
+        modelSettingsAutoSaveJob = null
+
         val caps = ImportedModelCapabilityStore.get(requireContext(), model.path)
         capabilityDialogImageEnabled = caps.imageEnabled
         capabilityDialogAudioEnabled = caps.audioEnabled
@@ -3279,6 +3317,79 @@ open class ModelSettingsFragment : Fragment() {
                 }
                 capabilityDialogRepoMmprojLoading = false
             }
+            // 初期値ロード完了後にのみ自動保存を解除する。以降のユーザ入力に対して
+            // のみ Composable 内の LaunchedEffect が保存をトリガする。
+            modelSettingsAutoSaveSuspended = false
+        }
+    }
+
+    /**
+     * 自動保存用。バリデーション失敗時は trace レベルのログのみでサイレントにスキップ。
+     * 保存ボタン介しと違い UI フィードバックを出さない (Toast もなし)。
+     */
+    private suspend fun autoPersistModelSettingsFromDialog() {
+        val model = modelSettingsDialogModel ?: return
+        val displayName = settingsDialogDisplayName
+        val invalidChars = Regex("[\\\\/:*?\"<>|]")
+        if (invalidChars.containsMatchIn(displayName)) return
+        if (capabilityDialogTemplateMode == PromptTemplateStore.MODE_CUSTOM) {
+            val err = PromptTemplateEngine.validate(capabilityDialogTemplateCustom)
+            if (err != null) {
+                capabilityDialogTemplateError = err
+                return
+            }
+        }
+        val isGguf = model.path.lowercase().endsWith(".gguf")
+        val tokens = settingsDialogStopTokens
+            .split(',')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        val newCapabilities = ImportedModelCapabilities(
+            imageEnabled = capabilityDialogImageEnabled,
+            audioEnabled = capabilityDialogAudioEnabled,
+            mmprojPath = capabilityDialogMmprojPath.ifBlank { null },
+            thinkingEnabled = capabilityDialogThinkingEnabled,
+            displayName = displayName.trim().ifBlank { null },
+            toolCallingEnabled = capabilityDialogToolCallingEnabled
+        )
+        // ツール呼び出しの OFF は影響範囲が広いため、確認ダイアログを経由する。
+        val requiresConfirmation = capabilityDialogCurrentCapabilities?.toolCallingEnabled == true &&
+            !newCapabilities.toolCallingEnabled
+        if (requiresConfirmation) {
+            val affectedCount = withContext(Dispatchers.IO) {
+                presetRepository.countPresetsUsingModelWithToolCallingEnabled(model.path)
+            }
+            if (affectedCount > 0) {
+                toolCallingDisableConfirmModel = model
+                toolCallingDisableConfirmNewCapabilities = newCapabilities
+                toolCallingDisableConfirmTokens = tokens
+                toolCallingDisableConflictCount = affectedCount
+                showToolCallingDisableConfirmDialog = true
+                return
+            }
+        }
+        try {
+            withContext(Dispatchers.IO) {
+                ImportedModelCapabilityStore.set(
+                    requireContext(),
+                    model.path,
+                    newCapabilities
+                )
+                if (isGguf) {
+                    settingsRepository.updateStopTokensForModel(model.path, tokens)
+                }
+                PromptTemplateStore.setSelection(
+                    requireContext(),
+                    model.path,
+                    PromptTemplateStore.TemplateSelection(
+                        mode = capabilityDialogTemplateMode,
+                        customTemplate = capabilityDialogTemplateCustom
+                    )
+                )
+            }
+            capabilityDialogCurrentCapabilities = newCapabilities
+        } catch (t: Throwable) {
+            Log.w("ModelSettings", "autoPersistModelSettingsFromDialog failed: ${t.message}")
         }
     }
 

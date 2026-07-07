@@ -386,7 +386,9 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    listOf("auto" to "自動", "qnn" to "GPU/NPU", "mnn" to "CPU").forEach { (value, label) ->
+                    // NOTE: 以前の "自動" 選択を廃止。不安定だった QNN 自動フォールバックを
+                    // 回避し、ユーザーに実行先を明示的に選ばせる。
+                    listOf("qnn" to "GPU/NPU", "mnn" to "CPU").forEach { (value, label) ->
                         val selected = selectedBackend == value
                         androidx.compose.material3.FilterChip(
                             selected = selected,
@@ -601,6 +603,8 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                             }
                         }
                     } else if (loading) {
+                        // ステップ表示/プログレスバーを廃止し、スピナーのみにする。
+                        // (進行状況の描画は 512 生成中のメインスレッドに重い負荷を与えていた)
                         Column(
                             modifier = Modifier.weight(1f),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -611,23 +615,12 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                             ) {
                                 SvgSpinner(Modifier.size(24.dp))
                                 Text(
-                                    "$currentStep / $steps",
+                                    "生成中…",
                                     color = MaterialTheme.colorScheme.primary,
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold
                                 )
-                                Text(
-                                    "${if (steps > 0) (currentStep * 100 / steps) else 0}%",
-                                    color = MaterialTheme.colorScheme.secondary,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
                             }
-                            LinearProgressIndicator(
-                                progress = { if (steps > 0) currentStep.toFloat() / steps else 0f },
-                                modifier = Modifier.fillMaxWidth().height(4.dp),
-                                color = MaterialTheme.colorScheme.primary,
-                                trackColor = MaterialTheme.colorScheme.outlineVariant
-                            )
                         }
                         Button(
                             onClick = { vm.cancel() },
@@ -642,8 +635,9 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                 }
 
                 if (generationQueue.items.isNotEmpty()) {
+                    // キュー進行の件数のみを表示 (ステップ番号は UI を重くするため廃止)。
                     Text(
-                        "現在 ${generationQueue.currentIndex + 1}/${generationQueue.items.size}  |  ステップ ${currentStep}/${steps}",
+                        "現在 ${generationQueue.currentIndex + 1}/${generationQueue.items.size} 件目を生成中",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 8.dp)
@@ -1144,9 +1138,11 @@ private fun ImageResultItem(itemBmp: Bitmap) {
 @Composable
 private fun ImagePreviewSection(vm: ImageGenViewModel) {
     val loading by vm.loading.collectAsState()
-    val steps by vm.steps.collectAsState()
-    val currentStep by vm.currentStep.collectAsState()
 
+    // NOTE: 旧実装は steps / currentStep を Text / LinearProgressIndicator で
+    // 描画しており、512x512 生成時に main thread への recomposition による
+    // バックプレッシャーとなって GPU/NPU パスでハング/クラッシュする一因だった。
+    // スピナーのみにして進捗はキャンセルボタン側のマーカーに任せる。
     if (loading) {
         Column(
             modifier = Modifier
@@ -1157,7 +1153,6 @@ private fun ImagePreviewSection(vm: ImageGenViewModel) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // プレビュー画像の代わりにインジケーターを表示
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1170,35 +1165,6 @@ private fun ImagePreviewSection(vm: ImageGenViewModel) {
                     modifier = Modifier.size(48.dp),
                     color = MaterialTheme.colorScheme.primary,
                     strokeWidth = 4.dp
-                )
-            }
-
-            // プログレスバー
-            val progressRatio = if (steps > 0) currentStep.toFloat() / steps else 0f
-            LinearProgressIndicator(
-                progress = { progressRatio },
-                modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.outlineVariant
-            )
-            
-            // ステップ情報
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "ステップ $currentStep / $steps",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    "${(progressRatio * 100).toInt()}%",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
                 )
             }
         }
