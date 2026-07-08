@@ -663,7 +663,7 @@ class ChatViewModel(
         // キャンセル前のコレクションジョブ
         messagesCollectionJob?.cancel()
 
-        messagesCollectionJob = viewModelScope.launch {
+        messagesCollectionJob = viewModelScope.launch(Dispatchers.IO) {
             Log.d(TAG, "START_MESSAGE_COLLECTION: sessionId=$sessionId")
             messageRepository.getMessagesForSession(sessionId)
                 .collect { msgs ->
@@ -674,9 +674,13 @@ class ChatViewModel(
                         )
                     }
                     // Room の Flow は参照を再利用することがあるため、toList() でコピーして新しいオブジェクト参照を作る
-                    _messages.value = msgs.toList()
-                    // ★ メーター不正確修正: キャッシュクリア完了後にメーター計算を実行
-                    _contextUsageChars.value = estimateContextUsageChars(msgs)
+                    val snapshot = msgs.toList()
+                    val contextUsageChars = estimateContextUsageChars(snapshot)
+                    withContext(Dispatchers.Main) {
+                        _messages.value = snapshot
+                        // ★ メーター不正確修正: キャッシュクリア完了後にメーター計算を実行
+                        _contextUsageChars.value = contextUsageChars
+                    }
                 }
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -860,6 +864,17 @@ class ChatViewModel(
     fun sendMessage(userMessage: String) {
         if (_isLoading.value) return
 
+        // ★ UI フリーズ対策: 送信タップ直後に UI 状態を同期的に反映する。
+        //   MutableStateFlow.value は thread-safe。ここで先に true にすることで、
+        //   ensureValidCurrentSession() 等のサスペンド前に送信ボタン無効化と
+        //   ローディングオーバーレイが表示され、フリーズしたように見える問題を回避。
+        //   実際のモデルロード進捗は loadModelWithOverlay() 内で上書き更新される。
+        _isLoading.value = true
+        if (!_isModelLoading.value) {
+            _isModelLoading.value = true
+            _modelLoadingStatus.value = "モデルを準備中..."
+        }
+
         viewModelScope.launch {
             val thisJob = coroutineContext[Job] ?: return@launch
 
@@ -895,8 +910,7 @@ class ChatViewModel(
                 // 入力フィールドをクリア
                 _inputText.value = ""
 
-                // AI応答を生成
-                _isLoading.value = true
+                // AI応答を生成（_isLoading は送信タップ時にすでに true）
                 // Note: sendMessage はテキストのみサポート。
                 // 画像付きメッセージは sendMessageWithMedia を使用すること。
                 generateAIResponse(sessionId, userMessage, images = emptyList(), audioClips = emptyList(), currentTurnMessageId = userMessageId)
@@ -905,6 +919,13 @@ class ChatViewModel(
                 Log.e(TAG, "Error sending message", e)
             } finally {
                 _isLoading.value = false
+                // ★ 早期 return / 例外パスで loadModelWithOverlay に到達せず
+                //   _isModelLoading が残り UI が固まるのを防止する防御的クリーンアップ。
+                //   loadModelWithOverlay 自体が到達した場合は既に自身の finally でクリア済み。
+                if (_isModelLoading.value) {
+                    _isModelLoading.value = false
+                    _modelLoadingStatus.value = ""
+                }
                 // このJobがまだcurrentなら null にする（前のJobから overwrite されない）
                 if (generationJob == thisJob) {
                     generationJob = null
@@ -3932,6 +3953,17 @@ class ChatViewModel(
     ) {
         if (_isLoading.value) return
 
+        // ★ UI フリーズ対策: 送信タップ直後に UI 状態を同期的に反映する。
+        //   MutableStateFlow.value は thread-safe。ここで先に true にすることで、
+        //   generationControlMutex 取得 / ensureValidCurrentSession() 等のサスペンド前に
+        //   送信ボタン無効化とローディングオーバーレイが表示される。
+        //   実際のモデルロード進捗は loadModelWithOverlay() 内で上書き更新される。
+        _isLoading.value = true
+        if (!_isModelLoading.value) {
+            _isModelLoading.value = true
+            _modelLoadingStatus.value = "モデルを準備中..."
+        }
+
         // 計算集約的な処理はDefault（CPU 集約的タスク用）で実行
         viewModelScope.launch(Dispatchers.Default) {
             val thisJob = coroutineContext[Job]  // このJobインスタンスを保存
@@ -3939,10 +3971,20 @@ class ChatViewModel(
                 generationJob?.cancel(UserStopCancellationException())
                 generationJob = thisJob
             }
-            val sessionId = ensureValidCurrentSession() ?: return@launch
+            val sessionId = ensureValidCurrentSession()
+            if (sessionId == null) {
+                // セッション取得失敗時はローディング UI を必ず解除する
+                withContext(Dispatchers.Main) {
+                    _isLoading.value = false
+                    _isModelLoading.value = false
+                    _modelLoadingStatus.value = ""
+                }
+                if (generationJob == thisJob) generationJob = null
+                return@launch
+            }
             var imagesToCleanup = mutableListOf<Bitmap>()
             try {
-                // ★ 最初に立てる（二重送信防止＆UI競合防止）
+                // ★ 二重送信防止＆UI競合防止（同期側で既に立てているが冪等性のため再度セット）
                 withContext(Dispatchers.Main) {
                     _isLoading.value = true
                 }
@@ -4031,6 +4073,13 @@ class ChatViewModel(
                 // UI 更新 - Main スレッド
                 withContext(Dispatchers.Main) {
                     _isLoading.value = false
+                    // ★ 送信入り口で早期に立てた _isModelLoading が loadModelWithOverlay に
+                    //   到達せずに早期 return したケース（モデル未ダウンロード / メモリ不足 等）で
+                    //   フラグが残り UI が固まるのを防止する防御的クリーンアップ。
+                    if (_isModelLoading.value) {
+                        _isModelLoading.value = false
+                        _modelLoadingStatus.value = ""
+                    }
                 }
                 // ← Bitmapをクリーンアップ
                 imagesToCleanup.forEach { bitmap ->
