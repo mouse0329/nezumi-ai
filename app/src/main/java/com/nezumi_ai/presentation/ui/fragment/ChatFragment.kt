@@ -323,7 +323,19 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         val messageRepository = MessageRepository(database.messageDao())
         presetRepository = PresetRepository(database.presetDao(), appContext)
         val memoryRepository = MemoryRepository(database.memoryDao())
-        lastObservedPresetId = PreferencesHelper.getCurrentPresetId(requireContext())
+        // ★ 起動直後フリーズ対策: SharedPreferences の初回読み込みはディスク I/O を
+        //   ブロックするため、UI スレッドではなく IO スレッドに逃がす。
+        //   lastObservedPresetId は onResume() でのプリセット変更検知に使われるが、
+        //   起動直後は変更検知が発火しないため null 初期値でも支障なく、
+        //   IO で読み終わり次第 UI スレッドに書き戻す。
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val presetId = PreferencesHelper.getCurrentPresetId(appContext)
+            withContext(Dispatchers.Main) {
+                if (lastObservedPresetId == null) {
+                    lastObservedPresetId = presetId
+                }
+            }
+        }
         val factory = ChatViewModelFactory(
             appContext,
             sessionRepository,
@@ -1211,8 +1223,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun setupModelDisplay() {
-        modelOptions = buildDownloadedModelOptions()
-        updateModelNameText(viewModel.selectedModel.value)
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val options = buildDownloadedModelOptions()
+            withContext(Dispatchers.Main) {
+                modelOptions = options
+                updateModelNameText(viewModel.selectedModel.value)
+            }
+        }
     }
 
     private fun updateModelNameText(modelKey: String) {

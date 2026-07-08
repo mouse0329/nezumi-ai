@@ -26,6 +26,15 @@ class MyApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         PreferencesHelper.applyThemeMode(this)
+
+        // ★ 起動直後フリーズ対策: Room DB インスタンスと SharedPreferences を
+        //   バックグラウンド (IO) で先に warmup する。
+        //   これにより ChatFragment.onViewCreated がメインスレッドで呼ぶ
+        //   NezumiAiDatabase.getInstance() の synchronized(this) 内の
+        //   Room.databaseBuilder().build() や、SharedPreferences の初回
+        //   ディスク読み込みが UI スレッドを止めるのを防止する。
+        //   fire-and-forget: 失敗しても既存の遅延初期化パスで復旧できる。
+        warmupStorageAsync()
         
         // Initialize VOICEVOX (フラグが false の場合はスタブが返るだけで何もしない)
         voicevoxManager = VoicevoxManager(this)
@@ -126,6 +135,31 @@ class MyApplication : Application() {
                     .initializeDefaultsIfNeeded()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to initialize preset defaults", e)
+            }
+        }
+    }
+
+    /**
+     * Room DB と SharedPreferences を IO スレッドで事前 warmup する。
+     * これにより UI スレッドから初めて触る際のブロッキングを回避する。
+     */
+    private fun warmupStorageAsync() {
+        applicationScope.launch(Dispatchers.IO) {
+            try {
+                // Room の getInstance() は synchronized(this) 内で
+                // databaseBuilder().build() を実行するため、
+                // メインスレッドで走ると数十〜数百 ms 止まりうる。
+                NezumiAiDatabase.getInstance(this@MyApplication)
+
+                // よく使う SharedPreferences をあらかじめ読み込ませる。
+                // getString/getBoolean の初回は該当ファイルの load 完了まで
+                // ブロックするため、ここで一度触っておく。
+                PreferencesHelper.getCurrentPresetId(this@MyApplication)
+                PreferencesHelper.isStopKeyboardLearningEnabled(this@MyApplication)
+                PreferencesHelper.isInitialSetupCompleted(this@MyApplication)
+                Log.d(TAG, "Storage warmup completed on IO thread")
+            } catch (e: Exception) {
+                Log.w(TAG, "Storage warmup failed (non-fatal)", e)
             }
         }
     }
