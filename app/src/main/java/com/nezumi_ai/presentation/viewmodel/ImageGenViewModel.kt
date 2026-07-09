@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.os.PowerManager
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -17,6 +18,7 @@ import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.sd.safety.PromptFilter
 import com.nezumi_ai.data.inference.ModelManager
+import com.nezumi_ai.data.inference.ImageGenerationNotificationManager
 import com.nezumi_ai.sd.ProgressData
 import com.nezumi_ai.sd.safety.SafetyResult
 import com.nezumi_ai.data.media.MessageMediaStore
@@ -336,9 +338,42 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     }
 
     private var isCancelling = false
+    private var generationWakeLock: PowerManager.WakeLock? = null
 
     fun clearSnackbar() {
         _snackbar.value = null
+    }
+
+    private fun notificationPromptPreview(prompt: String): String {
+        val trimmed = prompt.trim().replace("\n", " ")
+        return if (trimmed.length <= 48) trimmed else trimmed.take(48) + "…"
+    }
+
+    private fun acquireGenerationWakeLock() {
+        try {
+            val pm = getApplication<Application>().getSystemService(Context.POWER_SERVICE) as? PowerManager
+                ?: return
+            if (generationWakeLock?.isHeld == true) return
+            generationWakeLock = pm.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "nezumi_ai:ImageGen"
+            ).apply {
+                setReferenceCounted(false)
+                acquire(60 * 60 * 1000L)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to acquire image generation WakeLock", e)
+        }
+    }
+
+    private fun releaseGenerationWakeLock() {
+        try {
+            generationWakeLock?.takeIf { it.isHeld }?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to release image generation WakeLock", e)
+        } finally {
+            generationWakeLock = null
+        }
     }
 
     /**
@@ -366,6 +401,15 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         _loading.value = false
         _currentStep.value = 0
         _progressData.value = null
+        val app = getApplication<Application>()
+        ImageGenerationNotificationManager.showError(
+            app,
+            ImageGenerationNotificationManager.singleNotificationId(),
+            "画像生成を停止しました",
+            "進行中の画像生成をキャンセルしました"
+        )
+        ImageGenerationNotificationManager.cancelQueue(app)
+        releaseGenerationWakeLock()
         Log.i(TAG, "[ImageGen] cancel() completed")
     }
 
@@ -426,6 +470,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         if (!ensureSafetyModelReady(app)) {
             return@launch
         }
+        acquireGenerationWakeLock()
         _loading.value = true
         _resultBitmap.value = null
         _currentStep.value = 0
@@ -435,6 +480,14 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         val threads = settingsRepository.getLlamaCppThreads().coerceAtLeast(1)
         val sz = _sizePx.value
         val totalSteps = _steps.value
+        val promptPreview = notificationPromptPreview(pr)
+        ImageGenerationNotificationManager.showSingleProgress(
+            app,
+            step = 0,
+            totalSteps = totalSteps,
+            promptPreview = promptPreview,
+            indeterminate = false
+        )
         Log.d(TAG, "[ImageGen] requested size=$sz x $sz")
         var wasCancelled = false
         try {
@@ -470,6 +523,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     if (prev == null || prev.step != step || prev.totalSteps != steps || prev.time != time) {
                         _progressData.value = ProgressData(step, steps, time)
                     }
+                    ImageGenerationNotificationManager.showSingleProgress(
+                        app,
+                        step = clamped,
+                        totalSteps = steps,
+                        promptPreview = promptPreview
+                    )
                 }
             )
             val bmp = result?.first
@@ -482,20 +541,44 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 bmp == null && isCancelling -> {
                     wasCancelled = true
                     _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
+                    ImageGenerationNotificationManager.showError(
+                        app,
+                        ImageGenerationNotificationManager.singleNotificationId(),
+                        "画像生成を停止しました",
+                        "単体画像の生成をキャンセルしました"
+                    )
                 }
                 bmp == null -> {
                     val lastVerdict = ld.getLastSafetyVerdict()
                     if (lastVerdict == SafetyResult.Verdict.BLOCK) {
                         _safetyVerdict.value = SafetyResult.Verdict.BLOCK
                         showImageGenError("不適切なコンテンツが検出されたため表示を制限しました")
+                        ImageGenerationNotificationManager.showError(
+                            app,
+                            ImageGenerationNotificationManager.singleNotificationId(),
+                            "画像生成をブロックしました",
+                            "セーフティガードにより結果の表示を制限しました"
+                        )
                     } else {
                         showImageGenError("画像生成に失敗しました")
+                        ImageGenerationNotificationManager.showError(
+                            app,
+                            ImageGenerationNotificationManager.singleNotificationId(),
+                            "画像生成に失敗しました",
+                            promptPreview
+                        )
                     }
                 }
                 else -> {
                     _resultBitmap.value = bmp
                     val uri = MessageMediaStore.savePngBitmap(app, bmp, "imagegen_${System.currentTimeMillis()}")
                     lastSavedInternalUri = uri
+                    ImageGenerationNotificationManager.showCompleted(
+                        app,
+                        ImageGenerationNotificationManager.singleNotificationId(),
+                        "画像生成が完了しました",
+                        promptPreview
+                    )
                     if (uri != null && metadata != null) {
                         val prefs = app.getSharedPreferences("image_metadata", Context.MODE_PRIVATE)
                         prefs.edit().putString("metadata_$uri", buildMetadataJson(metadata)).apply()
@@ -506,13 +589,31 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             Log.i(TAG, "[ImageGen] generate() job was cancelled")
             wasCancelled = true
             _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
+            ImageGenerationNotificationManager.showError(
+                app,
+                ImageGenerationNotificationManager.singleNotificationId(),
+                "画像生成を停止しました",
+                "単体画像の生成をキャンセルしました"
+            )
         } catch (e: java.net.SocketException) {
             Log.e(TAG, "[ImageGen] Socket closed during generation (likely due to cancellation)", e)
             wasCancelled = true
             _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
+            ImageGenerationNotificationManager.showError(
+                app,
+                ImageGenerationNotificationManager.singleNotificationId(),
+                "画像生成を停止しました",
+                "単体画像の生成をキャンセルしました"
+            )
         } catch (e: Exception) {
             Log.e(TAG, "ImageGen failed", e)
             showImageGenError(e.message ?: "画像生成に失敗しました")
+            ImageGenerationNotificationManager.showError(
+                app,
+                ImageGenerationNotificationManager.singleNotificationId(),
+                "画像生成に失敗しました",
+                e.message ?: promptPreview
+            )
         } finally {
             Log.i(TAG, "[ImageGen] finally block: cleaning up")
             isCancelling = false
@@ -536,6 +637,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             _loading.value = false
             _currentStep.value = 0
             _progressData.value = null
+            releaseGenerationWakeLock()
             Log.i(TAG, "[ImageGen] finally block: cleanup completed")
         }
         }
@@ -742,6 +844,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         }
 
         queueRunJob?.cancel()
+        acquireGenerationWakeLock()
         _loading.value = true
         _resultBitmap.value = null
         _currentStep.value = 0
@@ -756,11 +859,27 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 _isQueueRunning.value = false
                 _loading.value = false
                 _snackbar.value = "セーフティモデルのダウンロードに失敗しました"
+                ImageGenerationNotificationManager.showError(
+                    app,
+                    ImageGenerationNotificationManager.queueNotificationId(),
+                    "画像生成キューに失敗しました",
+                    "セーフティモデルの準備に失敗しました"
+                )
+                releaseGenerationWakeLock()
                 return@launch
             }
 
             val totalItems = queue.items.size
+            val queuePromptPreview = notificationPromptPreview(queue.items.firstOrNull()?.prompt.orEmpty())
             _queueProgress.value = Pair(0, totalItems)
+            ImageGenerationNotificationManager.showQueueProgress(
+                app,
+                itemIndex = 1,
+                totalItems = totalItems,
+                step = 0,
+                totalSteps = queue.items.firstOrNull()?.steps ?: 1,
+                promptPreview = queuePromptPreview
+            )
             
             var completedCount = 0
             var failedCount = 0
@@ -786,12 +905,18 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 _generationQueue.value = currentQueue
                 _resultBitmap.value = null
 
-                val bmp = executeQueueItem(item)
+                val bmp = executeQueueItem(item, idx + 1, totalItems)
                 
                 // セーフティ違反をチェック
                 if (_safetyVerdict.value == SafetyResult.Verdict.BLOCK) {
                     Log.w(TAG, "[Queue] Safety violation detected at item ${idx + 1}")
                     _snackbar.value = "不適切なコンテンツが検出されたため、キューを中止しました"
+                    ImageGenerationNotificationManager.showError(
+                        app,
+                        ImageGenerationNotificationManager.queueNotificationId(),
+                        "画像生成キューを停止しました",
+                        "セーフティガードにより ${idx + 1} 枚目で中止しました"
+                    )
                     _generationQueue.value = currentQueue.copy(
                         items = currentQueue.items.mapIndexed { itemIndex, queueItem ->
                             if (itemIndex > idx) queueItem.copy(status = GenerationQueueItem.GenerationStatus.CANCELLED)
@@ -837,17 +962,26 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             //   同じ backend/model であれば EngineManager のキャッシュを使い回すので不要。
             runCatching { EngineManager.releaseSdKeepNone() }
             runCatching { EngineManager.markLlmActive() }
+            if (_safetyVerdict.value != SafetyResult.Verdict.BLOCK) {
+                ImageGenerationNotificationManager.showCompleted(
+                    app,
+                    ImageGenerationNotificationManager.queueNotificationId(),
+                    "画像生成キューが完了しました",
+                    "$completedCount / $totalItems 枚を保存しました"
+                )
+            }
             _isQueueRunning.value = false
             _queueProgress.value = null
             _loading.value = false
             _currentStep.value = 0
+            releaseGenerationWakeLock()
         }
     }
 
     /**
      * キューのアイテム1つを実行
      */
-    private suspend fun executeQueueItem(item: GenerationQueueItem): Bitmap? = withContext(Dispatchers.IO) {
+    private suspend fun executeQueueItem(item: GenerationQueueItem, itemIndex: Int, totalItems: Int): Bitmap? = withContext(Dispatchers.IO) {
         try {
             val app = getApplication<Application>()
             val path = _modelPath.value.trim()
@@ -901,6 +1035,14 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     if (prev == null || prev.step != step || prev.totalSteps != totalSteps) {
                         _progressData.value = ProgressData(step, totalSteps, 0f)
                     }
+                    ImageGenerationNotificationManager.showQueueProgress(
+                        app,
+                        itemIndex = itemIndex,
+                        totalItems = totalItems,
+                        step = clamped,
+                        totalSteps = totalSteps,
+                        promptPreview = notificationPromptPreview(item.prompt)
+                    )
                 }
             )
 
@@ -1001,6 +1143,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         _generationQueue.value = GenerationQueue()
         _queueProgress.value = null
         _isQueueRunning.value = false
+        ImageGenerationNotificationManager.cancelQueue(getApplication())
+        releaseGenerationWakeLock()
         _snackbar.value = "キューをクリアしました"
     }
 
@@ -1010,6 +1154,13 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     fun cancelQueueExecution() {
         queueRunJob?.cancel()
         _isQueueRunning.value = false
+        ImageGenerationNotificationManager.showError(
+            getApplication(),
+            ImageGenerationNotificationManager.queueNotificationId(),
+            "画像生成キューを停止しました",
+            "キュー実行をキャンセルしました"
+        )
+        releaseGenerationWakeLock()
         _snackbar.value = "キュー実行をキャンセルしました"
     }
 

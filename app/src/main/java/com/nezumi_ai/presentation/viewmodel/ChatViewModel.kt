@@ -32,6 +32,7 @@ import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.GgufToolPromptBuilder
 import com.nezumi_ai.data.inference.EngineManager
+import com.nezumi_ai.data.inference.ImageGenerationNotificationManager
 import com.nezumi_ai.data.inference.GenerateImageToolBridge
 import com.nezumi_ai.data.inference.GenerateImageToolHandler
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
@@ -2558,7 +2559,14 @@ class ChatViewModel(
                 )
             }
             _uiMessage.emit("🎨 画像生成中...")
-            
+            val promptPreview = prompt.trim().replace("\n", " ").let { if (it.length <= 48) it else it.take(48) + "…" }
+            ImageGenerationNotificationManager.showChatToolProgress(
+                appContext,
+                step = 0,
+                totalSteps = steps,
+                promptPreview = promptPreview
+            )
+
             val bmp = localDream.generateImage(
                 prompt = prompt,
                 negativePrompt = negativePrompt,
@@ -2572,6 +2580,12 @@ class ChatViewModel(
                     _toolCallState.value = ToolCallState.Executing(
                         toolName = "generate_image",
                         elapsedMs = SystemClock.elapsedRealtime()
+                    )
+                    ImageGenerationNotificationManager.showChatToolProgress(
+                        appContext,
+                        step = step.coerceAtMost(totalSteps),
+                        totalSteps = totalSteps,
+                        promptPreview = promptPreview
                     )
                     Log.d(TAG, "performGenerateImageFromTool: Progress $step/$totalSteps")
                 }
@@ -2593,6 +2607,12 @@ class ChatViewModel(
                     resultMessage = "生成失敗"
                 )
                 _uiMessage.emit("❌ generate_image: 画像生成失敗")
+                ImageGenerationNotificationManager.showError(
+                    appContext,
+                    ImageGenerationNotificationManager.chatToolNotificationId(),
+                    "チャット画像生成に失敗しました",
+                    promptPreview
+                )
                 clearImageGenerationStatusSoon()
             } else {
                 ImageLibraryStore.save(appContext, bmp, prompt)
@@ -2614,6 +2634,12 @@ class ChatViewModel(
                     resultMessage = "画像を生成しました"
                 )
                 _uiMessage.emit("✅ generate_image: 画像を生成しました")
+                ImageGenerationNotificationManager.showCompleted(
+                    appContext,
+                    ImageGenerationNotificationManager.chatToolNotificationId(),
+                    "チャット画像生成が完了しました",
+                    promptPreview
+                )
                 clearImageGenerationStatusSoon()
             }
         } catch (e: Exception) {
@@ -2632,6 +2658,12 @@ class ChatViewModel(
                 resultMessage = e.message ?: "sd_error"
             )
             _uiMessage.emit("❌ generate_image: エラー - ${e.message ?: "不明なエラー"}")
+            ImageGenerationNotificationManager.showError(
+                appContext,
+                ImageGenerationNotificationManager.chatToolNotificationId(),
+                "チャット画像生成に失敗しました",
+                e.message ?: "不明なエラー"
+            )
             clearImageGenerationStatusSoon()
 
             // LLMへの報告をストリームに流す
