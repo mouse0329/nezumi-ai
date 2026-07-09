@@ -182,6 +182,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     // 生成中にユーザーが意図的に上スクロールしたときだけ true。
     // 最下部に戻るか送信するとリセット。
     private var userScrolledAwayDuringGeneration = false
+    // ユーザーが RecyclerView を直接ドラッグしている間だけ true。
+    // プログラム側の scrollBy / postOnAnimation で auto-follow を誤停止しないために分離して扱う。
+    private var userIsDraggingMessages = false
     // 自動追従中は、テーブル列追加などの大きな再レイアウトで底判定が一瞬外れても維持する。
     // ユーザーが明示的に上へドラッグした時だけ false にする。
     private var autoFollowBottomLocked = true
@@ -379,27 +382,31 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         binding.messagesRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
                 super.onScrollStateChanged(recyclerView, newState)
-                // ★ ユーザーが手動でドラッグしたことを検出
-                if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
-                    // ドラッグ中は自動追従をロック解除
-                    autoFollowBottomLocked = false
-                    userScrolledAwayDuringGeneration = true
-                    Log.d(TAG, "USER_SCROLL: Manual drag detected - autoFollowBottomLocked=false, userScrolledAwayDuringGeneration=true")
-                } else if (newState == RecyclerView.SCROLL_STATE_IDLE) {
-                    // ★ スクロールが止まった後に判定を更新
-                    // ユーザーが底部に手動スクロールで戻ったら、自動追従を再開
-                    if (isGenerating && isNearBottom(recyclerView)) {
-                        autoFollowBottomLocked = true
-                        userScrolledAwayDuringGeneration = false
-                        Log.d(TAG, "USER_SCROLL_BACK_TO_BOTTOM: Re-enabling auto-follow")
+                when (newState) {
+                    RecyclerView.SCROLL_STATE_DRAGGING -> {
+                        userIsDraggingMessages = true
+                    }
+                    RecyclerView.SCROLL_STATE_IDLE -> {
+                        userIsDraggingMessages = false
+                        // ユーザーが下端付近まで戻ったら自動追従を再開する。
+                        if (isGenerating && isNearBottom(recyclerView)) {
+                            autoFollowBottomLocked = true
+                            userScrolledAwayDuringGeneration = false
+                            scheduleAutoScrollToBottom()
+                            Log.d(TAG, "USER_SCROLL_BACK_TO_BOTTOM: Re-enabling auto-follow")
+                        }
                     }
                 }
             }
 
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                 super.onScrolled(recyclerView, dx, dy)
-                // ★ スクロール中に底部判定を更新（自動スクロルループ抜け出し判定用）
                 isUserAtBottom = !recyclerView.canScrollVertically(1)
+                // 生成中に「上へ」ドラッグして下端から離れたときだけ auto-follow を解除する。
+                if (isGenerating && userIsDraggingMessages && dy < 0 && !isNearBottom(recyclerView)) {
+                    autoFollowBottomLocked = false
+                    userScrolledAwayDuringGeneration = true
+                }
                 updateScrollToBottomButtonVisibility()
             }
         })
@@ -1116,9 +1123,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private fun followBottomForFrames(rv: RecyclerView, framesRemaining: Int, previousRange: Int) {
         if (_binding == null || !isAdded) return
         if (!isGenerating || userScrolledAwayDuringGeneration) return
-        // ★ バグ修正: ドラッグ中だけでなく、SCROLL_STATE_SETTLING(inertia scroll中)も判定
-        if (rv.scrollState != RecyclerView.SCROLL_STATE_IDLE) {
-            Log.d(TAG, "AUTOSCROLL_STOP: ScrollState=${rv.scrollState} - user interaction detected")
+        if (userIsDraggingMessages) {
+            Log.d(TAG, "AUTOSCROLL_STOP: user drag in progress")
             return
         }
         if (!autoFollowBottomLocked && !isNearBottom(rv)) return
@@ -1178,6 +1184,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private fun scrollToBottom(position: Int) {
         if (position < 0) return
+        userScrolledAwayDuringGeneration = false
+        autoFollowBottomLocked = true
         scrollToBottomImmediate()
     }
 

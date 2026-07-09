@@ -639,7 +639,6 @@ class MessageAdapter(
             binding.aiMessageMarkdownCompose.setContent {
                 GalleryMarkdownText(content = content)
             }
-            binding.aiMessageMarkdownCompose.post { onAiMessageLayoutChanged() }
             lastRenderedContent = content
             lastRenderedContentMode = ContentRenderMode.Markdown
         }
