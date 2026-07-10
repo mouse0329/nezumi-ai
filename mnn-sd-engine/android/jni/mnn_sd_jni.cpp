@@ -113,4 +113,79 @@ Java_com_nezumi_1ai_sd_MnnSdNative_isLoaded(JNIEnv* /*env*/, jobject /*thiz*/, j
     return mnn_sd_is_loaded(from_handle(handle)) ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jbyteArray JNICALL
+Java_com_nezumi_1ai_sd_MnnSdNative_generate(
+    JNIEnv* env,
+    jobject /*thiz*/,
+    jlong handle,
+    jstring prompt,
+    jstring negative_prompt,
+    jint width,
+    jint height,
+    jint steps,
+    jfloat cfg,
+    jlong seed) {
+    const char* prompt_utf = env->GetStringUTFChars(prompt, nullptr);
+    const char* neg_utf = env->GetStringUTFChars(negative_prompt, nullptr);
+
+    MnnSdGenerateParams params{};
+    params.prompt = prompt_utf;
+    params.negative_prompt = neg_utf;
+    params.width = width;
+    params.height = height;
+    params.steps = steps;
+    params.cfg_scale = cfg;
+    params.seed = seed;
+    params.scheduler = MNN_SD_SCHEDULER_DPM;
+    params.use_opencl = 0;
+
+    MnnSdImage image{};
+    MnnSdErrorInfo error{};
+    MnnSdError code = mnn_sd_generate(
+        from_handle(handle), &params, nullptr, nullptr, &image, &error);
+
+    env->ReleaseStringUTFChars(prompt, prompt_utf);
+    env->ReleaseStringUTFChars(negative_prompt, neg_utf);
+
+    if (code != MNN_SD_OK) {
+        set_last_error(error);
+        LOGE("generate failed: %s", g_last_error.c_str());
+        return nullptr;
+    }
+
+    const size_t header_size = 8;
+    const size_t rgb_size = static_cast<size_t>(image.data_size);
+    const size_t total = header_size + rgb_size;
+    jbyteArray result = env->NewByteArray(static_cast<jsize>(total));
+    if (!result) {
+        mnn_sd_free_image(&image);
+        return nullptr;
+    }
+
+    jbyte header[8];
+    header[0] = static_cast<jbyte>(image.width & 0xFF);
+    header[1] = static_cast<jbyte>((image.width >> 8) & 0xFF);
+    header[2] = static_cast<jbyte>((image.width >> 16) & 0xFF);
+    header[3] = static_cast<jbyte>((image.width >> 24) & 0xFF);
+    header[4] = static_cast<jbyte>(image.height & 0xFF);
+    header[5] = static_cast<jbyte>((image.height >> 8) & 0xFF);
+    header[6] = static_cast<jbyte>((image.height >> 16) & 0xFF);
+    header[7] = static_cast<jbyte>((image.height >> 24) & 0xFF);
+
+    env->SetByteArrayRegion(result, 0, 8, header);
+    if (rgb_size > 0 && image.data) {
+        env->SetByteArrayRegion(
+            result, 8, static_cast<jsize>(rgb_size),
+            reinterpret_cast<const jbyte*>(image.data));
+    }
+    mnn_sd_free_image(&image);
+    g_last_error.clear();
+    return result;
+}
+
+JNIEXPORT void JNICALL
+Java_com_nezumi_1ai_sd_MnnSdNative_cancel(JNIEnv* /*env*/, jobject /*thiz*/, jlong handle) {
+    mnn_sd_cancel(from_handle(handle));
+}
+
 }  // extern "C"

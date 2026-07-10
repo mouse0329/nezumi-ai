@@ -3,8 +3,7 @@ package com.nezumi_ai.sd
 import android.util.Log
 
 /**
- * Phase 0 JNI bridge for [mnn-sd-engine].
- * Sibling of [LocalDreamModule]; full txt2img lands in Phase 1+.
+ * JNI bridge for [mnn-sd-engine]. Replaces LocalDream's HTTP subprocess.
  */
 object MnnSdNative {
     private const val TAG = "MnnSdNative"
@@ -22,11 +21,15 @@ object MnnSdNative {
         synchronized(this) {
             if (loaded) return
             try {
-                // libmnn_sd_engine.so depends on libMNN.so — load order matters on some devices.
                 try {
                     System.loadLibrary("MNN")
                 } catch (_: UnsatisfiedLinkError) {
                     Log.w(TAG, "libMNN.so not in jniLibs yet")
+                }
+                try {
+                    System.loadLibrary("mnn_sd_engine")
+                } catch (_: UnsatisfiedLinkError) {
+                    Log.w(TAG, "libmnn_sd_engine.so not in jniLibs yet")
                 }
                 System.loadLibrary(LIB)
                 loaded = true
@@ -50,6 +53,22 @@ object MnnSdNative {
     external fun isLoaded(handle: Long): Boolean
     external fun probeModel(mnnPath: String, backend: Int): String
     external fun getLastError(): String
+
+    /**
+     * @return packed RGB: first 8 bytes = width (int LE) + height (int LE), then RGB triplets
+     */
+    external fun generate(
+        handle: Long,
+        prompt: String,
+        negativePrompt: String,
+        width: Int,
+        height: Int,
+        steps: Int,
+        cfg: Float,
+        seed: Long
+    ): ByteArray?
+
+    external fun cancel(handle: Long)
 
     const val BACKEND_CPU = 0
     const val BACKEND_OPENCL = 1

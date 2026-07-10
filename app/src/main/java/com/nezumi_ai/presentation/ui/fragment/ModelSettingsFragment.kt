@@ -1571,7 +1571,7 @@ open class ModelSettingsFragment : Fragment() {
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "xororz/sd-mnn (GPU) | sd-qnn (NPU)",
+                    text = "xororz/sd-mnn (MNN)",
                     style = MaterialTheme.typography.bodySmall,
                     color = colorResource(id = R.color.text_secondary)
                 )
@@ -1981,13 +1981,11 @@ open class ModelSettingsFragment : Fragment() {
                     )
                 }
                 model.variant?.let { variant ->
-                    com.nezumi_ai.data.inference.ImageModelBrowser.getVariantLabel(variant)?.let { label ->
-                        Text(
-                            text = label,
-                            color = colorResource(id = R.color.text_secondary),
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
+                    Text(
+                        text = variant,
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
                 Button(
                     onClick = { downloadImageModel(model) },
@@ -2407,7 +2405,7 @@ open class ModelSettingsFragment : Fragment() {
                 // SDモデル
                 if (sdModels.isNotEmpty()) {
                     Text(
-                        text = "画像生成モデル (MNN/QNN)",
+                        text = "画像生成モデル (MNN)",
                         style = MaterialTheme.typography.labelSmall,
                         color = colorResource(id = R.color.text_secondary),
                         modifier = Modifier.padding(top = 8.dp)
@@ -2446,13 +2444,13 @@ open class ModelSettingsFragment : Fragment() {
                     }
                 } else {
                     Text(
-                        text = "画像生成モデル (MNN/QNN)",
+                        text = "画像生成モデル (MNN)",
                         style = MaterialTheme.typography.labelSmall,
                         color = colorResource(id = R.color.text_secondary),
                         modifier = Modifier.padding(top = 8.dp)
                     )
                     Text(
-                        text = "上記の「画像生成モデル (MNN/QNN)」カードからダウンロードできます",
+                        text = "上記の「画像生成モデル (MNN)」カードからダウンロードできます",
                         style = MaterialTheme.typography.bodySmall,
                         color = colorResource(id = R.color.text_secondary)
                     )
@@ -3003,12 +3001,7 @@ open class ModelSettingsFragment : Fragment() {
                         }
                         if (!isExpanded) {
                             val hasMnn = modelDir.listFiles()?.any { it.name.endsWith(".mnn") } == true
-                            val hasQnn = modelDir.listFiles()?.any { it.name.endsWith(".bin") } == true
-                            val backend = when {
-                                hasQnn -> "QNN (NPU)"
-                                hasMnn -> "MNN (GPU)"
-                                else -> "Unknown"
-                            }
+                            val backend = if (hasMnn) "MNN" else "Unknown"
                             Text(
                                 text = backend,
                                 style = MaterialTheme.typography.labelSmall,
@@ -3030,12 +3023,7 @@ open class ModelSettingsFragment : Fragment() {
                     Spacer(modifier = Modifier.height(8.dp))
                     val modelDir = File(model.path)
                     val hasMnn = modelDir.listFiles()?.any { it.name.endsWith(".mnn") } == true
-                    val hasQnn = modelDir.listFiles()?.any { it.name.endsWith(".bin") } == true
-                    val backend = when {
-                        hasQnn -> "QNN (NPU)"
-                        hasMnn -> "MNN (GPU)"
-                        else -> "Unknown"
-                    }
+                    val backend = if (hasMnn) "MNN" else "Unknown"
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

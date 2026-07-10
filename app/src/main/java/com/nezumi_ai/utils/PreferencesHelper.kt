@@ -102,23 +102,24 @@ object PreferencesHelper {
     }
 
     fun getSdBackend(context: Context): String {
-        // NOTE: "auto" は廃止。UI は CPU / GPU/NPU の 2 選択のみとし、
-        // ここで下位互換のため auto を qnn にマップして返す。
-        val raw = getSharedPreferences(context).getString(KEY_SD_BACKEND, "qnn") ?: "qnn"
+        val raw = getSharedPreferences(context).getString(KEY_SD_BACKEND, "mnn") ?: "mnn"
         return when (raw.lowercase()) {
+            "opencl", "gpu" -> "opencl"
             "mnn", "cpu" -> "mnn"
-            "qnn", "npu", "gpu", "gpu_npu", "auto" -> "qnn"
-            else -> "qnn"
+            // 旧 QNN / auto 設定は MNN CPU に移行
+            "qnn", "npu", "gpu_npu", "auto" -> "mnn"
+            else -> "mnn"
         }
     }
 
     fun setSdBackend(context: Context, backend: String) {
-        // 入力のバリエーションを含めて mnn / qnn に正規化して保存する。
         val normalized = when (backend.lowercase()) {
-            "mnn", "cpu" -> "mnn"
-            else -> "qnn"
+            "opencl", "gpu" -> "opencl"
+            else -> "mnn"
         }
         getSharedPreferences(context).edit().putString(KEY_SD_BACKEND, normalized).apply()
+        // OpenCL 選択時のみ GPU パスを有効化
+        setSdUseOpenCL(context, normalized == "opencl")
     }
 
     fun getSdSteps(context: Context): Int {
