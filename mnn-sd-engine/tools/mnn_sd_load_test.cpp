@@ -3,13 +3,15 @@
 
 #include "mnn_sd/engine.h"
 
-int main(int argc, char** argv) {
-    if (argc < 2) {
+int main(int argc, char **argv)
+{
+    if (argc < 2)
+    {
         std::fprintf(stderr, "Usage: %s <model_dir>\n", argv[0]);
         return 1;
     }
 
-    MnnSdEngine* engine = mnn_sd_create();
+    MnnSdEngine *engine = mnn_sd_create();
     MnnSdLoadOptions options{};
     options.backend = MNN_SD_BACKEND_CPU;
     options.precision_low = 1;
@@ -17,10 +19,12 @@ int main(int argc, char** argv) {
 
     MnnSdErrorInfo error{};
     MnnSdError code = mnn_sd_load(engine, argv[1], &options, &error);
-    if (code != MNN_SD_OK) {
+    if (code != MNN_SD_OK)
+    {
         std::fprintf(stderr, "load failed: %s (%s)\n",
-            mnn_sd_error_string(code), error.message);
-        if (error.cause[0]) {
+                     mnn_sd_error_string(code), error.message);
+        if (error.cause[0])
+        {
             std::fprintf(stderr, "  cause: %s\n", error.cause);
         }
         mnn_sd_destroy(engine);
