@@ -54,20 +54,18 @@ class MnnSdModule {
             )
         }
 
-        val modelDir = resolveModelDir(File(modelPath))
+        val layout = SdModelLayout.resolve(File(modelPath))
             ?: return@withContext ProbeResult(
                 modelPath,
                 emptyMap(),
-                listOf("unet.mnn not found under $modelPath (max depth 3)")
+                listOf("UNet marker not found under $modelPath (unet.mnn / unet_asym_block32.mnn, max depth 3)")
             )
 
-        val targets = listOf("unet.mnn", "clip.mnn", "clip_v2.mnn", "vae_decoder.mnn")
         val logs = linkedMapOf<String, String>()
         val errors = mutableListOf<String>()
 
-        for (name in targets) {
-            val file = File(modelDir, name)
-            if (!file.exists()) continue
+        for (name in layout.probeTargets()) {
+            val file = File(layout.modelDir, name)
             val log = MnnSdNative.probeModel(file.absolutePath, backend)
             logs[name] = log
             val lastErr = MnnSdNative.getLastError()
@@ -82,26 +80,14 @@ class MnnSdModule {
         }
 
         if (logs.isEmpty()) {
-            errors.add("No .mnn files found in ${modelDir.absolutePath}")
+            errors.add("No probe targets in ${layout.modelDir.absolutePath}")
         }
 
-        ProbeResult(modelDir.absolutePath, logs, errors)
+        ProbeResult(layout.modelDir.absolutePath, logs, errors)
     }
 
-    /** Same marker-file search as [LocalDreamModule] (MNN / CPU). */
-    internal fun resolveModelDir(dir: File): File? {
-        if (File(dir, "unet.mnn").exists()) return dir
-
-        fun search(current: File, depth: Int): File? {
-            if (depth > 3) return null
-            current.listFiles()?.filter { it.isDirectory }?.forEach { sub ->
-                if (File(sub, "unet.mnn").exists()) return sub
-                search(sub, depth + 1)?.let { return it }
-            }
-            return null
-        }
-        return search(dir, 0)
-    }
+    /** @see SdModelLayout.findModelDir */
+    internal fun resolveModelDir(dir: File): File? = SdModelLayout.findModelDir(dir)
 
     fun close() {
         if (handle != 0L) {

@@ -45,9 +45,20 @@ class LocalDreamModule(private val context: Context) {
         private const val SERVER_PORT = 18081
         private const val EXECUTABLE_NAME = "libstable_diffusion_core.so"
         private const val RUNTIME_DIR = "runtime_libs"
-        // テスト/開発時にローカル SD サーバー起動を完全に無効化したい場合の切り替え。
-        // これを true にするとネイティブ実行ファイルの起動経路を使わず、UI/テストの他部分を進める。
-        private const val DISABLE_NATIVE_SERVER_FOR_TESTS = true
+        private const val DISABLE_NATIVE_SERVER_PROPERTY = "nezumi.disable_native_sd_server"
+
+        internal fun shouldDisableNativeServerForTests(
+            isDebugBuild: Boolean,
+            systemProperty: String?
+        ): Boolean {
+            val enabled = systemProperty?.trim()?.lowercase()
+            return when (enabled) {
+                "true" -> isDebugBuild
+                "false" -> false
+                null -> false
+                else -> false
+            }
+        }
 
         // xororz/local-dream では MNN の MnnSessionOptions で Precision_Low +
         // MNN_GPU_MEMORY_BUFFER + MNN_GPU_TUNING_FAST を付けることで OpenCL を安定化しているが、
@@ -299,8 +310,12 @@ class LocalDreamModule(private val context: Context) {
     }
 
     suspend fun loadModel(modelPath: String, backend: String = "auto"): Boolean = withContext(Dispatchers.IO) {
-        if (DISABLE_NATIVE_SERVER_FOR_TESTS) {
-            Log.w(TAG, "loadModel: Native SD server disabled for tests; skipping server startup")
+        val disableNativeServer = shouldDisableNativeServerForTests(
+            isDebugBuild = com.nezumi_ai.BuildConfig.DEBUG,
+            systemProperty = System.getProperty(DISABLE_NATIVE_SERVER_PROPERTY)
+        )
+        if (disableNativeServer) {
+            Log.w(TAG, "loadModel: Native SD server disabled by system property; skipping server startup")
             currentModelPath = modelPath
             currentBackend = backend
             isServerReady = false
@@ -397,8 +412,12 @@ class LocalDreamModule(private val context: Context) {
         backend: String,
         isCpu: Boolean
     ): Boolean {
-        if (DISABLE_NATIVE_SERVER_FOR_TESTS) {
-            Log.w(TAG, "tryStartServer: Native SD server disabled for tests; skipping startup")
+        val disableNativeServer = shouldDisableNativeServerForTests(
+            isDebugBuild = com.nezumi_ai.BuildConfig.DEBUG,
+            systemProperty = System.getProperty(DISABLE_NATIVE_SERVER_PROPERTY)
+        )
+        if (disableNativeServer) {
+            Log.w(TAG, "tryStartServer: Native SD server disabled by system property; skipping startup")
             return false
         }
 
@@ -609,8 +628,12 @@ class LocalDreamModule(private val context: Context) {
             return@withContext null
         }
         // ─────────────────────────────────────────────────────────
-        if (DISABLE_NATIVE_SERVER_FOR_TESTS) {
-            Log.w(TAG, "generateImage: Native SD server disabled for tests; skipping generation")
+        val disableNativeServer = shouldDisableNativeServerForTests(
+            isDebugBuild = com.nezumi_ai.BuildConfig.DEBUG,
+            systemProperty = System.getProperty(DISABLE_NATIVE_SERVER_PROPERTY)
+        )
+        if (disableNativeServer) {
+            Log.w(TAG, "generateImage: Native SD server disabled by system property; skipping generation")
             return@withContext null
         }
         if (!isServerReady) {
