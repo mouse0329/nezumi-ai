@@ -3129,7 +3129,7 @@ open class ModelSettingsFragment : Fragment() {
     private fun probeMnnSdIo(modelPath: String) {
         sdModelProbePath = modelPath
         viewLifecycleOwner.lifecycleScope.launch {
-            val module = com.nezumi_ai.sd.MnnSdModule()
+            val module = com.nezumi_ai.sd.MnnSdModule(requireContext())
             try {
                 if (!module.isNativeAvailable()) {
                     toast("mnn_sd_jni が未ロードです。scripts/build_mnn_android.ps1 を実行してください")
@@ -3148,7 +3148,7 @@ open class ModelSettingsFragment : Fragment() {
                 }
             } finally {
                 sdModelProbePath = null
-                module.close()
+                module.cleanup()
             }
         }
     }

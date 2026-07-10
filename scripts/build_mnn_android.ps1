@@ -60,6 +60,8 @@ if (Test-Path $EngineBuild) {
     "-DCMAKE_TOOLCHAIN_FILE=$ndk\build\cmake\android.toolchain.cmake" `
     -DANDROID_ABI=arm64-v8a `
     -DANDROID_PLATFORM=android-30 `
+    -DCMAKE_BUILD_TYPE=Release `
+    -DANDROID_STL=c++_static `
     "-DMNN_ROOT=$MnnRoot" `
     "-DMNN_ANDROID_LIB=$LibMnn" `
     -DMNN_SD_BUILD_PROBE_CLI=OFF

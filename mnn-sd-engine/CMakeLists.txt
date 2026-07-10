@@ -108,6 +108,8 @@ if(ANDROID)
     add_library(mnn_sd_jni SHARED android/jni/mnn_sd_jni.cpp)
     target_link_libraries(mnn_sd_jni PRIVATE mnn_sd_engine ${ANDROID_LOG_LIB})
     target_include_directories(mnn_sd_jni PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    # 16KB page size support (Android 15+)
+    target_link_options(mnn_sd_jni PRIVATE "-Wl,-z,max-page-size=16384")
 endif()
 
 # --- Optional HTTP server (Phase 4) ---

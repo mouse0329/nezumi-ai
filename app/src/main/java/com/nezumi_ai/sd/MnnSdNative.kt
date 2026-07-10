@@ -55,9 +55,26 @@ object MnnSdNative {
     external fun getLastError(): String
 
     /**
-     * @return packed RGB: first 8 bytes = width (int LE) + height (int LE), then RGB triplets
+     * @return packed RGB: first 8 bytes = width (int LE) + height (int LE), then RGB triplets.
+     * Returns null if generation fails or the native symbol is not yet present in the loaded .so.
      */
-    external fun generate(
+    fun generate(
+        handle: Long,
+        prompt: String,
+        negativePrompt: String,
+        width: Int,
+        height: Int,
+        steps: Int,
+        cfg: Float,
+        seed: Long
+    ): ByteArray? = try {
+        generateNative(handle, prompt, negativePrompt, width, height, steps, cfg, seed)
+    } catch (e: UnsatisfiedLinkError) {
+        Log.e(TAG, "generate() not found in libmnn_sd_jni.so — rebuild required: ${e.message}")
+        null
+    }
+
+    private external fun generateNative(
         handle: Long,
         prompt: String,
         negativePrompt: String,

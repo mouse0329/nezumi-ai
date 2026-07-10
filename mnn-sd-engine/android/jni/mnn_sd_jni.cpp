@@ -114,7 +114,7 @@ Java_com_nezumi_1ai_sd_MnnSdNative_isLoaded(JNIEnv* /*env*/, jobject /*thiz*/, j
 }
 
 JNIEXPORT jbyteArray JNICALL
-Java_com_nezumi_1ai_sd_MnnSdNative_generate(
+Java_com_nezumi_1ai_sd_MnnSdNative_generateNative(
     JNIEnv* env,
     jobject /*thiz*/,
     jlong handle,

@@ -43,7 +43,6 @@ class LocalDreamModule(private val context: Context) {
     companion object {
         private const val TAG = "LocalDreamModule"
         private const val SERVER_PORT = 18081
-        private const val EXECUTABLE_NAME = "libstable_diffusion_core.so"
         private const val RUNTIME_DIR = "runtime_libs"
         private const val DISABLE_NATIVE_SERVER_PROPERTY = "nezumi.disable_native_sd_server"
 
@@ -90,6 +89,7 @@ class LocalDreamModule(private val context: Context) {
     var isServerReady = false
         private set
     private var monitorJob: Job? = null
+    private var mnnModule: MnnSdModule? = null
     private val coroutineScope = CoroutineScope(Dispatchers.Default + Job())
     private val activeGenerationConn = AtomicReference<HttpURLConnection?>(null)
 
@@ -177,21 +177,6 @@ class LocalDreamModule(private val context: Context) {
         runtimeDir
     }
 
-    private fun resolveExecutable(): File? {
-        val nativeDir = context.applicationInfo.nativeLibraryDir
-        val nativeDirFile = File(nativeDir, EXECUTABLE_NAME)
-
-        if (!nativeDirFile.exists()) {
-            Log.w(TAG, "resolveExecutable: executable not found in nativeLibraryDir=${nativeDirFile.absolutePath}")
-            return null
-        }
-
-        if (!nativeDirFile.canExecute()) {
-            nativeDirFile.setExecutable(true, true)
-        }
-        Log.d(TAG, "resolveExecutable: native executable=${nativeDirFile.absolutePath} canExecute=${nativeDirFile.canExecute()} length=${nativeDirFile.length()}")
-        return nativeDirFile
-    }
 
     private fun resolveModelDir(dir: File, isCpu: Boolean): File? {
         val markerFile = if (isCpu) "unet.mnn" else "unet.bin"
@@ -232,88 +217,15 @@ class LocalDreamModule(private val context: Context) {
         return searchDir(dir, 0)
     }
 
-    private fun buildCommand(
-        executable: File,
-        modelDir: File,
-        runtimeDir: File,
-        isCpu: Boolean
-    ): List<String> {
-        return if (isCpu) {
-            mutableListOf(
-                executable.absolutePath,
-                "--clip", File(modelDir, "clip.mnn").absolutePath,
-                "--unet", File(modelDir, "unet.mnn").absolutePath,
-                "--vae_decoder", File(modelDir, "vae_decoder.mnn").absolutePath,
-                "--tokenizer", File(modelDir, "tokenizer.json").absolutePath,
-                "--port", SERVER_PORT.toString(),
-                "--text_embedding_size", "768",
-                "--cpu"
-            ).also { cmd ->
-                val vaeEncoder = File(modelDir, "vae_encoder.mnn")
-                if (vaeEncoder.exists()) {
-                    cmd.addAll(listOf("--vae_encoder", vaeEncoder.absolutePath))
-                }
-            }
-        } else {
-            val clipFile = when {
-                File(modelDir, "clip.mnn").exists() -> "clip.mnn"
-                File(modelDir, "clip_v2.mnn").exists() -> "clip_v2.mnn"
-                else -> "clip.bin"
-            }
-            val hasMnnClip = clipFile.endsWith(".mnn")
-
-            mutableListOf(
-                executable.absolutePath,
-                "--clip", File(modelDir, clipFile).absolutePath,
-                "--unet", File(modelDir, "unet.bin").absolutePath,
-                "--vae_decoder", File(modelDir, "vae_decoder.bin").absolutePath,
-                "--tokenizer", File(modelDir, "tokenizer.json").absolutePath,
-                "--backend", File(runtimeDir, "libQnnHtp.so").absolutePath,
-                "--system_library", File(runtimeDir, "libQnnSystem.so").absolutePath,
-                "--port", SERVER_PORT.toString(),
-                "--text_embedding_size", "768"
-            ).also { cmd ->
-                if (hasMnnClip) {
-                    cmd.add("--use_cpu_clip")
-                }
-                val vaeEncoder = File(modelDir, "vae_encoder.bin")
-                if (vaeEncoder.exists()) {
-                    cmd.addAll(listOf("--vae_encoder", vaeEncoder.absolutePath))
-                }
-            }
-        }
-    }
-
-    private fun buildEnvironment(runtimeDir: File, nativeLibraryDir: String): Map<String, String> {
-        val env = mutableMapOf<String, String>()
-
-        val systemLibPaths = mutableListOf(
-            runtimeDir.absolutePath,
-            nativeLibraryDir,
-            "/system/lib64",
-            "/vendor/lib64",
-            "/vendor/lib64/egl"
-        )
-
-        val inheritedLdLibraryPath = System.getenv("LD_LIBRARY_PATH")
-        if (!inheritedLdLibraryPath.isNullOrBlank()) {
-            systemLibPaths.add(inheritedLdLibraryPath)
-        }
-
-        env["LD_LIBRARY_PATH"] = systemLibPaths.joinToString(":")
-        env["DSP_LIBRARY_PATH"] = runtimeDir.absolutePath
-        env["ADSP_LIBRARY_PATH"] = runtimeDir.absolutePath
-        env["MNN_OPENCL_TUNING"] = "WIDE"
-        env["PATH"] = System.getenv("PATH") ?: ""
-
-        return env
-    }
+    // Legacy subprocess execution (libstable_diffusion_core.so) removed.
+    // LocalDreamModule now prefers the JNI `MnnSdModule` path provided by mnn-sd-engine.
 
     suspend fun loadModel(modelPath: String, backend: String = "auto"): Boolean = withContext(Dispatchers.IO) {
         val disableNativeServer = shouldDisableNativeServerForTests(
             isDebugBuild = com.nezumi_ai.BuildConfig.DEBUG,
             systemProperty = System.getProperty(DISABLE_NATIVE_SERVER_PROPERTY)
         )
+        // JNI attempt is performed after selecting the backend below.
         if (disableNativeServer) {
             Log.w(TAG, "loadModel: Native SD server disabled by system property; skipping server startup")
             currentModelPath = modelPath
@@ -375,6 +287,32 @@ class LocalDreamModule(private val context: Context) {
 
             Log.d(TAG, "loadModel: Selected backend=$selectedBackend, modelDir=$modelDir")
 
+            // Try JNI-based MNN engine first (mnn-sd-engine)
+            if (MnnSdNative.isAvailable()) {
+                Log.i(TAG, "loadModel: MnnSdNative available — attempting JNI MNN engine load")
+                stopServer()
+                mnnModule?.cleanup()
+                mnnModule = MnnSdModule(context)
+                val backendForMnn = if (selectedBackend == "mnn") "mnn" else "opencl"
+                val loadedMnn = try {
+                    mnnModule!!.loadModel(modelPath, backendForMnn)
+                } catch (e: Exception) {
+                    Log.e(TAG, "loadModel: JNI MNN module load failed", e)
+                    false
+                }
+                if (loadedMnn) {
+                    currentModelPath = modelPath
+                    currentBackend = selectedBackend
+                    isServerReady = mnnModule?.isServerReady == true
+                    Log.i(TAG, "loadModel: ✓ JNI MNN engine loaded, ready=${isServerReady}")
+                    return@withContext true
+                } else {
+                    Log.w(TAG, "loadModel: JNI MNN engine failed to load; will attempt other backends")
+                    mnnModule?.cleanup()
+                    mnnModule = null
+                }
+            }
+
             if (currentModelPath == modelPath && isServerReady && currentBackend == selectedBackend) {
                 if (serverProcess?.isAlive != true) {
                     Log.w(TAG, "loadModel: Previous server process is not alive but HTTP service is still marked ready. Reusing existing server for $modelPath.")
@@ -412,65 +350,18 @@ class LocalDreamModule(private val context: Context) {
         backend: String,
         isCpu: Boolean
     ): Boolean {
-        val disableNativeServer = shouldDisableNativeServerForTests(
-            isDebugBuild = com.nezumi_ai.BuildConfig.DEBUG,
-            systemProperty = System.getProperty(DISABLE_NATIVE_SERVER_PROPERTY)
-        )
-        if (disableNativeServer) {
-            Log.w(TAG, "tryStartServer: Native SD server disabled by system property; skipping startup")
-            return false
+        Log.i(TAG, "tryStartServer: legacy subprocess path removed — using JNI MNN engine only")
+        // If a JNI-backed module is already initialized, report its readiness.
+        if (mnnModule != null) {
+            isServerReady = mnnModule?.isServerReady == true
+            currentModelPath = modelPath
+            currentBackend = backend
+            Log.i(TAG, "tryStartServer: JNI module present, ready=${isServerReady}")
+            return isServerReady
         }
 
-        Log.d(TAG, "tryStartServer: Starting (backend=$backend, isCpu=$isCpu)")
-
-        val runtimeDir = prepareRuntimeDir()
-        val executableFile = resolveExecutable() ?: return false
-
-        val nativeDir = context.applicationInfo.nativeLibraryDir
-        Log.d(TAG, "tryStartServer: executableFile=${executableFile.absolutePath} exists=${executableFile.exists()} canExecute=${executableFile.canExecute()} length=${executableFile.length()}")
-
-        val command = buildCommand(executableFile, modelDir, runtimeDir, isCpu)
-        val env = buildEnvironment(runtimeDir, nativeDir)
-
-        Log.d(TAG, "COMMAND: ${command.joinToString(" ")}")
-        Log.d(TAG, "LD_LIBRARY_PATH=${env["LD_LIBRARY_PATH"]}")
-
-        val processBuilder = ProcessBuilder(command).apply {
-            directory(executableFile.parentFile)
-            redirectErrorStream(true)
-            environment().putAll(env)
-        }
-
-        Log.d(TAG, "tryStartServer: Spawning process...")
-        serverProcess = try {
-            processBuilder.start()
-        } catch (e: IOException) {
-            Log.w(TAG, "tryStartServer: direct exec failed, retrying with sh", e)
-            val shellCommand = listOf("sh", "-c", command.joinToString(" ") { arg ->
-                arg.replace("'", "'\\''").let { "'$it'" }
-            })
-            ProcessBuilder(shellCommand).apply {
-                directory(executableFile.parentFile)
-                redirectErrorStream(true)
-                environment().putAll(env)
-            }.start()
-        }
-        startMonitor()
-        currentModelPath = modelPath
-        currentBackend = backend
-        isServerReady = false
-
-        Log.d(TAG, "tryStartServer: serverProcess alive=${serverProcess?.isAlive}")
-        val timeoutMs = if (isCpu) 180000L else 120000L
-        val ready = waitForServer(timeoutMs)
-        if (ready) {
-            isServerReady = true
-            Log.i(TAG, "tryStartServer: ✓ Server is ready on port $SERVER_PORT (backend: $backend)")
-        } else {
-            Log.e(TAG, "tryStartServer: ✗ Server failed to start within ${timeoutMs/1000}s")
-        }
-
-        return ready
+        Log.w(TAG, "tryStartServer: JNI module not initialized or failed to load; not attempting deprecated subprocess startup")
+        return false
     }
 
     private suspend fun waitForServer(timeoutMs: Long): Boolean {
@@ -639,6 +530,19 @@ class LocalDreamModule(private val context: Context) {
         if (!isServerReady) {
             Log.e(TAG, "Server is not ready")
             return@withContext null
+        }
+        if (mnnModule != null) {
+            Log.d(TAG, "generateImage: Using JNI MNN module for generation")
+            return@withContext mnnModule!!.generateImage(
+                prompt = prompt,
+                negativePrompt = negativePrompt,
+                width = width,
+                height = height,
+                steps = steps,
+                cfg = cfg,
+                seed = seed,
+                onProgress = onProgress
+            )
         }
         if (serverProcess?.isAlive != true) {
             Log.w(TAG, "Server process is not alive but service is marked ready; continuing with HTTP generation")

@@ -210,9 +210,7 @@ extern "C"
 
         engine->cancel_requested = false;
 
-        // Phase 0 stub: not implemented yet.
-        set_error(out_error, MNN_SD_ERR_INTERNAL, "generate() not implemented (Phase 1)");
-        return MNN_SD_ERR_INTERNAL;
+        return mnn_sd_run_pipeline(engine, params, on_progress, progress_user_data, out_image, out_error);
     }
 
     void mnn_sd_cancel(MnnSdEngine *engine)
