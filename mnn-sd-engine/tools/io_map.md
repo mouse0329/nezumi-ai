@@ -6,8 +6,12 @@ MNN公式 `stable_diffusion.cpp` の実装から確定。
 
 | 方向 | 名前 | shape | dtype |
 |------|------|-------|-------|
-| input | `input_ids` | [2, 77] | int32 |
+| input | `input_embedding` | [2, 77, 768] | float32 |
 | output | `last_hidden_state` | [2, 77, 768] | float32 |
+
+**注意**: `input_ids` ではなく事前に埋め込み済みの float テンソルを受け取る。
+`token_emb.bin`（vocab×768）と `pos_emb.bin`（77×768）を使って
+`input_embedding = token_emb[token_id] + pos_emb[pos]` を計算してから渡す。
 
 ## unet_asym_block32.mnn
 

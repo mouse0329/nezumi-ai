@@ -16,6 +16,12 @@
 #if defined(MNN_SD_HAS_MNN)
 #include <MNN/Interpreter.hpp>
 #include <MNN/MNNDefine.h>
+#ifdef ANDROID
+#include <android/log.h>
+#define PROBE_LOG(fmt, ...) __android_log_print(ANDROID_LOG_INFO, "MnnSdJni", fmt, ##__VA_ARGS__)
+#else
+#define PROBE_LOG(fmt, ...) std::fprintf(stderr, fmt "\n", ##__VA_ARGS__)
+#endif
 #endif
 
 namespace
@@ -156,6 +162,31 @@ extern "C"
             return MNN_SD_ERR_MODEL_NOT_FOUND;
         }
 
+        // Load xororz embedding tables (token_emb.bin, pos_emb.bin)
+        {
+            auto load_bin = [](const std::string &path, std::vector<float> &out) -> bool {
+                FILE *f = std::fopen(path.c_str(), "rb");
+                if (!f) return false;
+                std::fseek(f, 0, SEEK_END);
+                long sz = std::ftell(f);
+                std::fseek(f, 0, SEEK_SET);
+                out.resize(sz / sizeof(float));
+                std::fread(out.data(), sizeof(float), out.size(), f);
+                std::fclose(f);
+                return !out.empty();
+            };
+
+            const std::string token_emb_path = build_model_path(engine->model_dir.c_str(), "token_emb.bin");
+            const std::string pos_emb_path   = build_model_path(engine->model_dir.c_str(), "pos_emb.bin");
+
+            if (file_exists(token_emb_path) && file_exists(pos_emb_path))
+            {
+                load_bin(token_emb_path, engine->token_emb);
+                load_bin(pos_emb_path,   engine->pos_emb);
+                engine->token_emb_vocab_size = (int)(engine->token_emb.size() / 768);
+            }
+        }
+
         MnnSdError err = create_interpreter_and_session(
             unet_path, engine->load_options.backend, engine->unet_interpreter, engine->unet_session, out_error);
         if (err != MNN_SD_OK)
@@ -225,6 +256,7 @@ extern "C"
     }
 
     MnnSdError mnn_sd_probe_model(
+        const char *mnn_path,
         MnnSdBackend backend,
         char *out_log,
         size_t out_log_capacity,
@@ -579,14 +611,78 @@ std::vector<int> ClipTokenizer::encode_pair(const std::string &prompt) const
 
 namespace
 {
+    MNN::Tensor *get_session_input_tensor(MNN::Interpreter *net, MNN::Session *session, const char *name)
+    {
+        if (!net || !session || !name) return nullptr;
+        auto *t = net->getSessionInput(session, name);
+        if (t) return t;
+
+        const auto &all_inputs = net->getSessionInputAll(session);
+        auto it = all_inputs.find(name);
+        if (it != all_inputs.end()) return it->second;
+        if (all_inputs.size() == 1) return all_inputs.begin()->second;
+        return nullptr;
+    }
+
+    MNN::Tensor *get_session_output_tensor(MNN::Interpreter *net, MNN::Session *session, const char *name)
+    {
+        if (!net || !session || !name) return nullptr;
+        auto *t = net->getSessionOutput(session, name);
+        if (t) return t;
+
+        const auto &all_outputs = net->getSessionOutputAll(session);
+        auto it = all_outputs.find(name);
+        if (it != all_outputs.end()) return it->second;
+        if (all_outputs.size() == 1) return all_outputs.begin()->second;
+        return nullptr;
+    }
+
     // Copy float data into a named MNN session input tensor
     bool fill_input_f32(MNN::Interpreter *net, MNN::Session *session,
                         const char *name, const float *data, size_t count)
     {
-        auto *t = net->getSessionInput(session, name);
-        if (!t) return false;
+        auto *t = get_session_input_tensor(net, session, name);
+        if (!t || !data) return false;
         MNN::Tensor host(t, MNN::Tensor::CAFFE);
-        if ((size_t)host.elementSize() != count) return false;
+        // Resize if needed
+        if ((size_t)host.elementSize() != count)
+        {
+            std::vector<int> shape;
+            for (int i = 0; i < t->dimensions(); ++i) shape.push_back(t->length(i));
+            if (shape.empty())
+            {
+                shape.push_back((int)count);
+            }
+            else if (shape.size() >= 2)
+            {
+                int64_t tail_size = 1;
+                for (size_t i = 1; i < shape.size(); ++i)
+                    tail_size *= std::max(1, shape[i]);
+                if (tail_size > 0 && count % tail_size == 0)
+                {
+                    shape[0] = (int)(count / tail_size);
+                }
+                else
+                {
+                    shape[0] = std::max(1, (int)count);
+                }
+            }
+            else if (shape.size() == 1)
+            {
+                shape[0] = (int)count;
+            }
+
+            net->resizeTensor(t, shape);
+            net->resizeSession(session);
+
+            t = get_session_input_tensor(net, session, name);
+            if (!t) return false;
+            MNN::Tensor host2(t, MNN::Tensor::CAFFE);
+            if ((size_t)host2.elementSize() != count) return false;
+            std::memcpy(host2.host<float>(), data, count * sizeof(float));
+            t->copyFromHostTensor(&host2);
+            return true;
+        }
         std::memcpy(host.host<float>(), data, count * sizeof(float));
         t->copyFromHostTensor(&host);
         return true;
@@ -595,10 +691,45 @@ namespace
     bool fill_input_i32(MNN::Interpreter *net, MNN::Session *session,
                         const char *name, const int *data, size_t count)
     {
-        auto *t = net->getSessionInput(session, name);
-        if (!t) return false;
+        auto *t = get_session_input_tensor(net, session, name);
+        if (!t || !data) return false;
         MNN::Tensor host(t, MNN::Tensor::CAFFE);
-        if ((size_t)host.elementSize() != count) return false;
+        if ((size_t)host.elementSize() != count)
+        {
+            std::vector<int> shape;
+            for (int i = 0; i < t->dimensions(); ++i) shape.push_back(t->length(i));
+            if (shape.empty())
+            {
+                shape.push_back((int)count);
+            }
+            else if (shape.size() >= 2)
+            {
+                int64_t tail_size = 1;
+                for (size_t i = 1; i < shape.size(); ++i)
+                    tail_size *= std::max(1, shape[i]);
+                if (tail_size > 0 && count % tail_size == 0)
+                {
+                    shape[0] = (int)(count / tail_size);
+                }
+                else
+                {
+                    shape[0] = std::max(1, (int)count);
+                }
+            }
+            else if (shape.size() == 1)
+            {
+                shape[0] = (int)count;
+            }
+            net->resizeTensor(t, shape);
+            net->resizeSession(session);
+            t = get_session_input_tensor(net, session, name);
+            if (!t) return false;
+            MNN::Tensor host2(t, MNN::Tensor::CAFFE);
+            if ((size_t)host2.elementSize() != count) return false;
+            std::memcpy(host2.host<int>(), data, count * sizeof(int));
+            t->copyFromHostTensor(&host2);
+            return true;
+        }
         std::memcpy(host.host<int>(), data, count * sizeof(int));
         t->copyFromHostTensor(&host);
         return true;
@@ -607,7 +738,7 @@ namespace
     // Copy output tensor to a float vector
     std::vector<float> read_output_f32(MNN::Interpreter *net, MNN::Session *session, const char *name)
     {
-        auto *t = net->getSessionOutput(session, name);
+        auto *t = get_session_output_tensor(net, session, name);
         if (!t) return {};
         MNN::Tensor host(t, MNN::Tensor::CAFFE);
         t->copyToHostTensor(&host);
@@ -717,16 +848,72 @@ MnnSdError mnn_sd_run_pipeline(
     const int lh = height / 8;
     const int latent_size = 4 * lh * lw;
 
-    // --- 1. Tokenize ---
+    // --- 0. Probe CLIP tensor names (logged once for debugging) ---
+    {
+        const auto &all_inputs = engine->clip_interpreter->getSessionInputAll(engine->clip_session);
+        for (const auto &kv : all_inputs)
+        {
+            const MNN::Tensor *t = kv.second;
+            char buf[256];
+            std::snprintf(buf, sizeof(buf), "[Probe] CLIP input: %s dims=%d",
+                          kv.first.c_str(), t ? t->dimensions() : -1);
+            __android_log_print(ANDROID_LOG_INFO, "MnnSdJni", "%s", buf);
+        }
+        const auto &all_outputs = engine->clip_interpreter->getSessionOutputAll(engine->clip_session);
+        for (const auto &kv : all_outputs)
+        {
+            char buf[256];
+            std::snprintf(buf, sizeof(buf), "[Probe] CLIP output: %s", kv.first.c_str());
+            __android_log_print(ANDROID_LOG_INFO, "MnnSdJni", "%s", buf);
+        }
+    }
+
+    // --- 0. Probe CLIP/UNet/VAE tensor names (logged once) ---
+    {
+        auto probe_session = [](MNN::Interpreter *net, MNN::Session *sess, const char *label) {
+            for (const auto &kv : net->getSessionInputAll(sess))
+                PROBE_LOG("%s input: %s", label, kv.first.c_str());
+            for (const auto &kv : net->getSessionOutputAll(sess))
+                PROBE_LOG("%s output: %s", label, kv.first.c_str());
+        };
+        probe_session(engine->clip_interpreter.get(), engine->clip_session, "CLIP");
+        probe_session(engine->unet_interpreter.get(), engine->unet_session, "UNet");
+        probe_session(engine->vae_interpreter.get(),  engine->vae_session,  "VAE");
+    }
+
+    // --- 1. Tokenize + build input_embedding ---
     auto token_ids = engine->tokenizer.encode_pair(params->prompt ? params->prompt : "");
     // token_ids: [2 * 77] ints
 
+    // Build input_embedding [2, 77, 768] = token_emb[id] + pos_emb[pos]
+    const int seq_len = ClipTokenizer::MAX_LEN;
+    const int emb_dim = 768;
+    const int batch = 2;
+    std::vector<float> input_embedding(batch * seq_len * emb_dim, 0.0f);
+
+    if (!engine->token_emb.empty() && !engine->pos_emb.empty())
+    {
+        for (int b = 0; b < batch; ++b)
+        {
+            for (int p = 0; p < seq_len; ++p)
+            {
+                int tok_id = token_ids[b * seq_len + p];
+                tok_id = std::max(0, std::min(tok_id, engine->token_emb_vocab_size - 1));
+                const float *te = engine->token_emb.data() + tok_id * emb_dim;
+                const float *pe = engine->pos_emb.data()   + p       * emb_dim;
+                float *dst = input_embedding.data() + (b * seq_len + p) * emb_dim;
+                for (int d = 0; d < emb_dim; ++d)
+                    dst[d] = te[d] + pe[d];
+            }
+        }
+    }
+
     // --- 2. CLIP text encoder ---
-    if (!fill_input_i32(engine->clip_interpreter.get(), engine->clip_session,
-                        "input_ids", token_ids.data(), token_ids.size()))
+    if (!fill_input_f32(engine->clip_interpreter.get(), engine->clip_session,
+                        "input_embedding", input_embedding.data(), input_embedding.size()))
     {
         if (out_error) std::snprintf(out_error->message, sizeof(out_error->message),
-                                     "CLIP: input_ids tensor not found");
+                                     "CLIP: input_embedding tensor not found");
         return MNN_SD_ERR_INTERNAL;
     }
     engine->clip_interpreter->runSession(engine->clip_session);

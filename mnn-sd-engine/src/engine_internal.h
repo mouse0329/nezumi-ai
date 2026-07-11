@@ -47,6 +47,13 @@ struct MnnSdEngine
 
     ClipTokenizer tokenizer;
 
+    // xororz/local-dream embedding tables
+    // token_emb: [vocab_size, 768] float32  (loaded from token_emb.bin)
+    // pos_emb:   [77, 768]         float32  (loaded from pos_emb.bin)
+    std::vector<float> token_emb;  // vocab_size * 768
+    std::vector<float> pos_emb;    // 77 * 768
+    int token_emb_vocab_size = 0;
+
     std::shared_ptr<MNN::Interpreter> clip_interpreter;
     std::shared_ptr<MNN::Interpreter> unet_interpreter;
     std::shared_ptr<MNN::Interpreter> vae_interpreter;
@@ -58,9 +65,14 @@ struct MnnSdEngine
     // PNDM scheduler alphas_cumprod[0..999]
     std::vector<float> alphas_cumprod;
     // PNDM state
-    std::vector<std::shared_ptr<MNN::Express::VARP>> ets;
-    std::shared_ptr<MNN::Express::VARP> pndm_sample;
+    // PNDM state (plain float vectors, no MNN::Express dependency)
+    std::vector<std::vector<float>> pndm_ets;
+    std::vector<float> pndm_prev_sample;
 };
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 MnnSdError mnn_sd_initialize_sessions(MnnSdEngine *engine, MnnSdErrorInfo *out_error);
 void mnn_sd_release_sessions(MnnSdEngine *engine);
@@ -73,3 +85,7 @@ MnnSdError mnn_sd_run_pipeline(
     void *progress_user_data,
     MnnSdImage *out_image,
     MnnSdErrorInfo *out_error);
+
+#ifdef __cplusplus
+}
+#endif

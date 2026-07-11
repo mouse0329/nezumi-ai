@@ -1,6 +1,7 @@
 #include "mnn_sd/model_config.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace
@@ -108,7 +109,7 @@ namespace
         ++pos;
         while (*pos == ' ' || *pos == '\t')
             ++pos;
-        *out = static_cast<int32_t>(std::strtol(pos, nullptr, 10));
+        *out = static_cast<int32_t>(strtol(pos, nullptr, 10));
         return true;
     }
 
