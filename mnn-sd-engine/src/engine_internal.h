@@ -54,6 +54,13 @@ struct MnnSdEngine
     std::vector<float> pos_emb;    // 77 * 768
     int token_emb_vocab_size = 0;
 
+    // Just-in-time load: paths are resolved at mnn_sd_load(), interpreters
+    // are created lazily inside mnn_sd_run_pipeline and released between
+    // stages to keep peak RAM below the LMK threshold on 2-3 GB devices.
+    std::string clip_path;
+    std::string unet_path;
+    std::string vae_path;
+
     std::shared_ptr<MNN::Interpreter> clip_interpreter;
     std::shared_ptr<MNN::Interpreter> unet_interpreter;
     std::shared_ptr<MNN::Interpreter> vae_interpreter;

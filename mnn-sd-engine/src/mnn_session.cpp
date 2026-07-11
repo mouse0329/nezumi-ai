@@ -187,26 +187,26 @@ extern "C"
             }
         }
 
-        MnnSdError err = create_interpreter_and_session(
-            unet_path, engine->load_options.backend, engine->unet_interpreter, engine->unet_session, out_error);
-        if (err != MNN_SD_OK)
-            return err;
-
-        err = create_interpreter_and_session(
-            clip_path, engine->load_options.backend, engine->clip_interpreter, engine->clip_session, out_error);
-        if (err != MNN_SD_OK)
-        {
-            mnn_sd_release_sessions(engine);
-            return err;
+        // Just-in-time loading strategy: on low-RAM devices we cannot afford
+        // to keep all three (CLIP + UNet + VAE) interpreters resident at
+        // once. Verify the files exist here, but defer interpreter/session
+        // creation to the pipeline stages (see mnn_sd_run_pipeline). Persist
+        // only the paths used to recreate them.
+        if (!file_exists(unet_path)) {
+            set_error(out_error, MNN_SD_ERR_MODEL_NOT_FOUND, "unet not found", unet_path.c_str());
+            return MNN_SD_ERR_MODEL_NOT_FOUND;
         }
-
-        err = create_interpreter_and_session(
-            vae_path, engine->load_options.backend, engine->vae_interpreter, engine->vae_session, out_error);
-        if (err != MNN_SD_OK)
-        {
-            mnn_sd_release_sessions(engine);
-            return err;
+        if (!file_exists(clip_path)) {
+            set_error(out_error, MNN_SD_ERR_MODEL_NOT_FOUND, "clip not found", clip_path.c_str());
+            return MNN_SD_ERR_MODEL_NOT_FOUND;
         }
+        if (!file_exists(vae_path)) {
+            set_error(out_error, MNN_SD_ERR_MODEL_NOT_FOUND, "vae not found", vae_path.c_str());
+            return MNN_SD_ERR_MODEL_NOT_FOUND;
+        }
+        engine->clip_path = clip_path;
+        engine->unet_path = unet_path;
+        engine->vae_path  = vae_path;
 
         // Precompute PNDM alphas_cumprod (scaled_linear schedule, beta_start=0.00085, beta_end=0.012, T=1000)
         {
@@ -588,8 +588,9 @@ std::vector<int> ClipTokenizer::encode_single(const std::string &text) const
     }
 
     ids.push_back(EOS_ID);
-    // Pad or truncate to MAX_LEN
-    ids.resize(MAX_LEN, 0);
+    // Pad (with EOS_ID, matching xororz/local-dream) or truncate to MAX_LEN
+    if ((int)ids.size() > MAX_LEN) ids.resize(MAX_LEN);
+    while ((int)ids.size() < MAX_LEN) ids.push_back(EOS_ID);
     return ids;
 }
 
@@ -638,6 +639,7 @@ namespace
     }
 
     // Copy float data into a named MNN session input tensor
+    [[maybe_unused]]
     bool fill_input_f32(MNN::Interpreter *net, MNN::Session *session,
                         const char *name, const float *data, size_t count)
     {
@@ -688,6 +690,7 @@ namespace
         return true;
     }
 
+    [[maybe_unused]]
     bool fill_input_i32(MNN::Interpreter *net, MNN::Session *session,
                         const char *name, const int *data, size_t count)
     {
@@ -848,27 +851,13 @@ MnnSdError mnn_sd_run_pipeline(
     const int lh = height / 8;
     const int latent_size = 4 * lh * lw;
 
-    // --- 0. Probe CLIP tensor names (logged once for debugging) ---
+    // --- 0. Load CLIP just-in-time ---
     {
-        const auto &all_inputs = engine->clip_interpreter->getSessionInputAll(engine->clip_session);
-        for (const auto &kv : all_inputs)
-        {
-            const MNN::Tensor *t = kv.second;
-            char buf[256];
-            std::snprintf(buf, sizeof(buf), "[Probe] CLIP input: %s dims=%d",
-                          kv.first.c_str(), t ? t->dimensions() : -1);
-            __android_log_print(ANDROID_LOG_INFO, "MnnSdJni", "%s", buf);
-        }
-        const auto &all_outputs = engine->clip_interpreter->getSessionOutputAll(engine->clip_session);
-        for (const auto &kv : all_outputs)
-        {
-            char buf[256];
-            std::snprintf(buf, sizeof(buf), "[Probe] CLIP output: %s", kv.first.c_str());
-            __android_log_print(ANDROID_LOG_INFO, "MnnSdJni", "%s", buf);
-        }
+        MnnSdError err = create_interpreter_and_session(
+            engine->clip_path, engine->load_options.backend,
+            engine->clip_interpreter, engine->clip_session, out_error);
+        if (err != MNN_SD_OK) return err;
     }
-
-    // --- 0. Probe CLIP/UNet/VAE tensor names (logged once) ---
     {
         auto probe_session = [](MNN::Interpreter *net, MNN::Session *sess, const char *label) {
             for (const auto &kv : net->getSessionInputAll(sess))
@@ -877,54 +866,109 @@ MnnSdError mnn_sd_run_pipeline(
                 PROBE_LOG("%s output: %s", label, kv.first.c_str());
         };
         probe_session(engine->clip_interpreter.get(), engine->clip_session, "CLIP");
-        probe_session(engine->unet_interpreter.get(), engine->unet_session, "UNet");
-        probe_session(engine->vae_interpreter.get(),  engine->vae_session,  "VAE");
     }
 
-    // --- 1. Tokenize + build input_embedding ---
+    // --- 1. Tokenize + build per-side input_embedding (batch=1 each) ---
+    // xororz/sd-mnn CLIP graph is fixed to batch=1; we run it twice (uncond + cond)
+    // instead of trying to fit a batch=2 tensor.
     auto token_ids = engine->tokenizer.encode_pair(params->prompt ? params->prompt : "");
-    // token_ids: [2 * 77] ints
+    // token_ids: [2 * 77] ints (first half = uncond, second half = cond)
 
-    // Build input_embedding [2, 77, 768] = token_emb[id] + pos_emb[pos]
     const int seq_len = ClipTokenizer::MAX_LEN;
-    const int emb_dim = 768;
-    const int batch = 2;
-    std::vector<float> input_embedding(batch * seq_len * emb_dim, 0.0f);
+    const int emb_dim = engine->model_config.text_embedding_size > 0
+                            ? engine->model_config.text_embedding_size
+                            : 768;
 
-    if (!engine->token_emb.empty() && !engine->pos_emb.empty())
+    if (engine->token_emb.empty() || engine->pos_emb.empty())
     {
-        for (int b = 0; b < batch; ++b)
-        {
-            for (int p = 0; p < seq_len; ++p)
-            {
-                int tok_id = token_ids[b * seq_len + p];
-                tok_id = std::max(0, std::min(tok_id, engine->token_emb_vocab_size - 1));
-                const float *te = engine->token_emb.data() + tok_id * emb_dim;
-                const float *pe = engine->pos_emb.data()   + p       * emb_dim;
-                float *dst = input_embedding.data() + (b * seq_len + p) * emb_dim;
-                for (int d = 0; d < emb_dim; ++d)
-                    dst[d] = te[d] + pe[d];
-            }
-        }
+        if (out_error) std::snprintf(out_error->message, sizeof(out_error->message),
+                                     "token_emb.bin / pos_emb.bin not loaded (xororz format required)");
+        return MNN_SD_ERR_MODEL_NOT_FOUND;
     }
 
-    // --- 2. CLIP text encoder ---
-    if (!fill_input_f32(engine->clip_interpreter.get(), engine->clip_session,
-                        "input_embedding", input_embedding.data(), input_embedding.size()))
+    auto build_side_embedding = [&](int side /*0=uncond, 1=cond*/,
+                                    std::vector<float> &out)
+    {
+        out.assign((size_t)seq_len * emb_dim, 0.0f);
+        for (int p = 0; p < seq_len; ++p)
+        {
+            int tok_id = token_ids[side * seq_len + p];
+            tok_id = std::max(0, std::min(tok_id, engine->token_emb_vocab_size - 1));
+            const float *te = engine->token_emb.data() + (size_t)tok_id * emb_dim;
+            const float *pe = engine->pos_emb.data()   + (size_t)p       * emb_dim;
+            float *dst = out.data() + (size_t)p * emb_dim;
+            for (int d = 0; d < emb_dim; ++d)
+                dst[d] = te[d] + pe[d];
+        }
+    };
+
+    // --- 2. CLIP text encoder: explicit resize to {1, 77, emb_dim}, then run
+    // twice (once per side). Concatenate outputs into text_emb [2, 77, emb_dim]. ---
+    auto *clip_net = engine->clip_interpreter.get();
+    auto *clip_input = clip_net->getSessionInput(engine->clip_session, "input_embedding");
+    if (!clip_input)
+    {
+        const auto &all_in = clip_net->getSessionInputAll(engine->clip_session);
+        if (all_in.size() == 1) clip_input = all_in.begin()->second;
+    }
+    if (!clip_input)
     {
         if (out_error) std::snprintf(out_error->message, sizeof(out_error->message),
                                      "CLIP: input_embedding tensor not found");
         return MNN_SD_ERR_INTERNAL;
     }
-    engine->clip_interpreter->runSession(engine->clip_session);
-    auto text_emb = read_output_f32(engine->clip_interpreter.get(), engine->clip_session, "last_hidden_state");
-    if (text_emb.empty())
+    clip_net->resizeTensor(clip_input, {1, seq_len, emb_dim});
+    clip_net->resizeSession(engine->clip_session);
+    clip_input = clip_net->getSessionInput(engine->clip_session, "input_embedding");
+
+    std::vector<float> text_emb((size_t)2 * seq_len * emb_dim, 0.0f);
+    std::vector<float> side_emb;
+    for (int side = 0; side < 2; ++side)
     {
-        if (out_error) std::snprintf(out_error->message, sizeof(out_error->message),
-                                     "CLIP: last_hidden_state output empty");
-        return MNN_SD_ERR_INTERNAL;
+        build_side_embedding(side, side_emb);
+
+        MNN::Tensor host(clip_input, MNN::Tensor::CAFFE);
+        if ((size_t)host.elementSize() != side_emb.size())
+        {
+            if (out_error) std::snprintf(out_error->message, sizeof(out_error->message),
+                                         "CLIP: resize failed (host=%d want=%zu)",
+                                         host.elementSize(), side_emb.size());
+            return MNN_SD_ERR_INTERNAL;
+        }
+        std::memcpy(host.host<float>(), side_emb.data(), side_emb.size() * sizeof(float));
+        clip_input->copyFromHostTensor(&host);
+
+        clip_net->runSession(engine->clip_session);
+
+        auto *out_t = clip_net->getSessionOutput(engine->clip_session, "last_hidden_state");
+        if (!out_t)
+        {
+            const auto &all_out = clip_net->getSessionOutputAll(engine->clip_session);
+            if (all_out.size() == 1) out_t = all_out.begin()->second;
+        }
+        if (!out_t)
+        {
+            if (out_error) std::snprintf(out_error->message, sizeof(out_error->message),
+                                         "CLIP: last_hidden_state output not found");
+            return MNN_SD_ERR_INTERNAL;
+        }
+        MNN::Tensor host_out(out_t, MNN::Tensor::CAFFE);
+        out_t->copyToHostTensor(&host_out);
+        std::memcpy(text_emb.data() + (size_t)side * seq_len * emb_dim,
+                    host_out.host<float>(),
+                    (size_t)seq_len * emb_dim * sizeof(float));
     }
-    // text_emb: [2, 77, 768]
+    // text_emb: [2, 77, emb_dim]  (side 0 = uncond, side 1 = cond)
+
+    // Free CLIP now — its weights (~150 MB) are not needed for the rest of
+    // the pipeline. On low-RAM devices (<3 GB) keeping all three interpreters
+    // resident causes the LMK to kill the process before UNet finishes.
+    if (engine->clip_session)
+    {
+        engine->clip_interpreter->releaseSession(engine->clip_session);
+        engine->clip_session = nullptr;
+    }
+    engine->clip_interpreter.reset();
 
     if (on_progress) { MnnSdProgress p{1, steps + 2, 0.0f}; on_progress(&p, progress_user_data); }
 
@@ -943,9 +987,100 @@ MnnSdError mnn_sd_run_pipeline(
     for (int i = steps - 1; i >= 0; --i)
         timesteps[i] = 1 + (steps - 1 - i) * step_size;
 
-    // --- 5. UNet denoising loop ---
+    // --- 4b. Load UNet just-in-time (after CLIP has been freed) ---
+    {
+        MnnSdError err = create_interpreter_and_session(
+            engine->unet_path, engine->load_options.backend,
+            engine->unet_interpreter, engine->unet_session, out_error);
+        if (err != MNN_SD_OK) return err;
+        auto probe_session = [](MNN::Interpreter *net, MNN::Session *sess, const char *label) {
+            for (const auto &kv : net->getSessionInputAll(sess))
+                PROBE_LOG("%s input: %s", label, kv.first.c_str());
+            for (const auto &kv : net->getSessionOutputAll(sess))
+                PROBE_LOG("%s output: %s", label, kv.first.c_str());
+        };
+        probe_session(engine->unet_interpreter.get(), engine->unet_session, "UNet");
+    }
+
+    // --- 5. UNet denoising loop: batch=1 x2 per step (low-RAM friendly) ---
+    // Rationale: batch=2 would double every UNet activation and pushes
+    // 2-3 GB RAM devices past the LMK 'min2x watermark' threshold. Running
+    // uncond + cond as two separate batch=1 forwards uses roughly half the
+    // peak memory in exchange for two MNN sessions per step. On CPU the
+    // overhead is small because the model weights dominate.
+    auto *unet_net = engine->unet_interpreter.get();
+    auto *u_sample = unet_net->getSessionInput(engine->unet_session, "sample");
+    auto *u_ts     = unet_net->getSessionInput(engine->unet_session, "timestep");
+    auto *u_enc    = unet_net->getSessionInput(engine->unet_session, "encoder_hidden_states");
+    if (!u_sample || !u_ts || !u_enc)
+    {
+        if (out_error) std::snprintf(out_error->message, sizeof(out_error->message),
+                                     "UNet: required inputs not found (sample/timestep/encoder_hidden_states)");
+        return MNN_SD_ERR_INTERNAL;
+    }
+    unet_net->resizeTensor(u_sample, {1, 4, lh, lw});
+    unet_net->resizeTensor(u_ts, {1});
+    unet_net->resizeTensor(u_enc, {1, seq_len, emb_dim});
+    unet_net->resizeSession(engine->unet_session);
+    // Drop the initial model buffer now that the graph is compiled — MNN
+    // still holds the weights mmap'd by the interpreter, but the parsed copy
+    // can be released. Frees roughly the model file size again in RAM.
+    unet_net->releaseModel();
+
+    // Re-fetch pointers after resize.
+    u_sample = unet_net->getSessionInput(engine->unet_session, "sample");
+    u_ts     = unet_net->getSessionInput(engine->unet_session, "timestep");
+    u_enc    = unet_net->getSessionInput(engine->unet_session, "encoder_hidden_states");
+
     std::vector<std::vector<float>> ets;
     std::vector<float> pndm_prev;
+
+    // Per-side text embedding views ([1, 77, emb_dim] each). text_emb is laid
+    // out as [uncond, cond] contiguously.
+    const float *emb_uncond = text_emb.data();
+    const float *emb_cond   = text_emb.data() + (size_t)seq_len * emb_dim;
+    const size_t emb_bytes  = (size_t)seq_len * emb_dim * sizeof(float);
+    const size_t latent_bytes = (size_t)latent_size * sizeof(float);
+
+    std::vector<float> pred_uncond(latent_size);
+    std::vector<float> pred_cond(latent_size);
+
+    auto run_unet_once = [&](const float *emb_ptr, int ts, std::vector<float> &out_pred) -> bool
+    {
+        // Upload sample
+        {
+            MNN::Tensor host_s(u_sample, MNN::Tensor::CAFFE);
+            std::memcpy(host_s.host<float>(), latent.data(), latent_bytes);
+            u_sample->copyFromHostTensor(&host_s);
+        }
+        // Upload timestep (int32)
+        {
+            MNN::Tensor host_ts(u_ts, MNN::Tensor::CAFFE);
+            *host_ts.host<int>() = ts;
+            u_ts->copyFromHostTensor(&host_ts);
+        }
+        // Upload encoder_hidden_states for this side
+        {
+            MNN::Tensor host_e(u_enc, MNN::Tensor::CAFFE);
+            std::memcpy(host_e.host<float>(), emb_ptr, emb_bytes);
+            u_enc->copyFromHostTensor(&host_e);
+        }
+
+        unet_net->runSession(engine->unet_session);
+
+        auto *out_t = unet_net->getSessionOutput(engine->unet_session, "out_sample");
+        if (!out_t)
+        {
+            const auto &all_out = unet_net->getSessionOutputAll(engine->unet_session);
+            if (all_out.size() == 1) out_t = all_out.begin()->second;
+        }
+        if (!out_t) return false;
+        MNN::Tensor host_out(out_t, MNN::Tensor::CAFFE);
+        out_t->copyToHostTensor(&host_out);
+        if (host_out.elementSize() < latent_size) return false;
+        std::memcpy(out_pred.data(), host_out.host<float>(), latent_bytes);
+        return true;
+    };
 
     for (int i = 0; i < steps; ++i)
     {
@@ -955,47 +1090,22 @@ MnnSdError mnn_sd_run_pipeline(
             return MNN_SD_ERR_CANCELLED;
         }
 
-        // sample = concat(latent, latent) -> [2, 4, lh, lw]
-        std::vector<float> sample(latent_size * 2);
-        std::memcpy(sample.data(),              latent.data(), latent_size * sizeof(float));
-        std::memcpy(sample.data() + latent_size, latent.data(), latent_size * sizeof(float));
-
         int ts = timesteps[i];
 
-        if (!fill_input_f32(engine->unet_interpreter.get(), engine->unet_session,
-                            "sample", sample.data(), sample.size()))
+        if (!run_unet_once(emb_uncond, ts, pred_uncond) ||
+            !run_unet_once(emb_cond,   ts, pred_cond))
         {
             if (out_error) std::snprintf(out_error->message, sizeof(out_error->message),
-                                         "UNet: sample tensor not found");
-            return MNN_SD_ERR_INTERNAL;
-        }
-        {
-            float ts_f = (float)ts;
-            fill_input_f32(engine->unet_interpreter.get(), engine->unet_session, "timestep", &ts_f, 1);
-        }
-        if (!fill_input_f32(engine->unet_interpreter.get(), engine->unet_session,
-                            "encoder_hidden_states", text_emb.data(), text_emb.size()))
-        {
-            if (out_error) std::snprintf(out_error->message, sizeof(out_error->message),
-                                         "UNet: encoder_hidden_states tensor not found");
-            return MNN_SD_ERR_INTERNAL;
-        }
-
-        engine->unet_interpreter->runSession(engine->unet_session);
-        auto noise_pred = read_output_f32(engine->unet_interpreter.get(), engine->unet_session, "out_sample");
-        if (noise_pred.empty())
-        {
-            if (out_error) std::snprintf(out_error->message, sizeof(out_error->message),
-                                         "UNet: out_sample output empty");
+                                         "UNet: run failed at step %d", i);
             return MNN_SD_ERR_INTERNAL;
         }
 
         // CFG: noise_pred = uncond + cfg * (cond - uncond)
+        std::vector<float> combined(latent_size);
         for (int j = 0; j < latent_size; ++j)
-            noise_pred[j] = noise_pred[j] + cfg * (noise_pred[j + latent_size] - noise_pred[j]);
-        noise_pred.resize(latent_size);
+            combined[j] = pred_uncond[j] + cfg * (pred_cond[j] - pred_uncond[j]);
 
-        latent = pndm_step(latent, noise_pred, i, timesteps,
+        latent = pndm_step(latent, combined, i, timesteps,
                            engine->alphas_cumprod, ets, pndm_prev);
 
         if (on_progress)
@@ -1005,25 +1115,73 @@ MnnSdError mnn_sd_run_pipeline(
         }
     }
 
-    // --- 6. VAE decode ---
+    // Free UNet before VAE (~860 MB back to the OS on CuteYukiMix).
+    if (engine->unet_session)
+    {
+        engine->unet_interpreter->releaseSession(engine->unet_session);
+        engine->unet_session = nullptr;
+    }
+    engine->unet_interpreter.reset();
+    unet_net = nullptr;
+    u_sample = u_ts = u_enc = nullptr;
+
+    // --- 5b. Load VAE just-in-time (after UNet has been freed) ---
+    {
+        MnnSdError err = create_interpreter_and_session(
+            engine->vae_path, engine->load_options.backend,
+            engine->vae_interpreter, engine->vae_session, out_error);
+        if (err != MNN_SD_OK) return err;
+        auto probe_session = [](MNN::Interpreter *net, MNN::Session *sess, const char *label) {
+            for (const auto &kv : net->getSessionInputAll(sess))
+                PROBE_LOG("%s input: %s", label, kv.first.c_str());
+            for (const auto &kv : net->getSessionOutputAll(sess))
+                PROBE_LOG("%s output: %s", label, kv.first.c_str());
+        };
+        probe_session(engine->vae_interpreter.get(), engine->vae_session, "VAE");
+    }
+
+    // --- 6. VAE decode: explicit resize to {1, 4, lh, lw} ---
     // scale latent: latent / 0.18215
     for (auto &v : latent) v /= 0.18215f;
 
-    if (!fill_input_f32(engine->vae_interpreter.get(), engine->vae_session,
-                        "latent_sample", latent.data(), latent.size()))
+    auto *vae_net = engine->vae_interpreter.get();
+    auto *v_input = vae_net->getSessionInput(engine->vae_session, "latent_sample");
+    if (!v_input)
+    {
+        const auto &all_in = vae_net->getSessionInputAll(engine->vae_session);
+        if (all_in.size() == 1) v_input = all_in.begin()->second;
+    }
+    if (!v_input)
     {
         if (out_error) std::snprintf(out_error->message, sizeof(out_error->message),
                                      "VAE: latent_sample tensor not found");
         return MNN_SD_ERR_INTERNAL;
     }
-    engine->vae_interpreter->runSession(engine->vae_session);
-    auto image_f = read_output_f32(engine->vae_interpreter.get(), engine->vae_session, "sample");
+    vae_net->resizeTensor(v_input, {1, 4, lh, lw});
+    vae_net->resizeSession(engine->vae_session);
+    v_input = vae_net->getSessionInput(engine->vae_session, "latent_sample");
+
+    {
+        MNN::Tensor host_v(v_input, MNN::Tensor::CAFFE);
+        std::memcpy(host_v.host<float>(), latent.data(), latent.size() * sizeof(float));
+        v_input->copyFromHostTensor(&host_v);
+    }
+    vae_net->runSession(engine->vae_session);
+    auto image_f = read_output_f32(vae_net, engine->vae_session, "sample");
     if (image_f.empty())
     {
         if (out_error) std::snprintf(out_error->message, sizeof(out_error->message),
                                      "VAE: sample output empty");
         return MNN_SD_ERR_INTERNAL;
     }
+
+    // Free VAE now — the RGB copy below only needs image_f.
+    if (engine->vae_session)
+    {
+        engine->vae_interpreter->releaseSession(engine->vae_session);
+        engine->vae_session = nullptr;
+    }
+    engine->vae_interpreter.reset();
 
     // image_f: [1, 3, H, W] NCHW, range ~[-1, 1] -> clamp to [0,1] -> uint8 RGB
     const int pixels = width * height;
