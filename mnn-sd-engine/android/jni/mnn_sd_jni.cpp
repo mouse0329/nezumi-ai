@@ -15,6 +15,27 @@ namespace {
 
 thread_local std::string g_last_error;
 
+struct ProgressCtx {
+    JNIEnv* env;
+    jobject cb;
+    jmethodID method;
+};
+
+void progress_trampoline(const MnnSdProgress* p, void* user_data) {
+    if (!p || !user_data) return;
+    auto* ctx = static_cast<ProgressCtx*>(user_data);
+    if (!ctx->env || !ctx->cb || !ctx->method) return;
+    ctx->env->CallVoidMethod(
+        ctx->cb, ctx->method,
+        static_cast<jint>(p->step),
+        static_cast<jint>(p->total_steps),
+        static_cast<jfloat>(p->elapsed_sec));
+    if (ctx->env->ExceptionCheck()) {
+        ctx->env->ExceptionDescribe();
+        ctx->env->ExceptionClear();
+    }
+}
+
 jlong native_handle(MnnSdEngine* engine) {
     return reinterpret_cast<jlong>(engine);
 }
@@ -124,7 +145,8 @@ Java_com_nezumi_1ai_sd_MnnSdNative_generateNative(
     jint height,
     jint steps,
     jfloat cfg,
-    jlong seed) {
+    jlong seed,
+    jobject progress_cb) {
     const char* prompt_utf = env->GetStringUTFChars(prompt, nullptr);
     const char* neg_utf = env->GetStringUTFChars(negative_prompt, nullptr);
 
@@ -139,10 +161,29 @@ Java_com_nezumi_1ai_sd_MnnSdNative_generateNative(
     params.scheduler = MNN_SD_SCHEDULER_DPM;
     params.use_opencl = 0;
 
+    ProgressCtx ctx{env, nullptr, nullptr};
+    if (progress_cb != nullptr) {
+        jclass cb_class = env->GetObjectClass(progress_cb);
+        if (cb_class != nullptr) {
+            ctx.method = env->GetMethodID(cb_class, "onNativeProgress", "(IIF)V");
+            env->DeleteLocalRef(cb_class);
+            if (env->ExceptionCheck()) {
+                env->ExceptionDescribe();
+                env->ExceptionClear();
+                ctx.method = nullptr;
+            }
+        }
+        if (ctx.method != nullptr) {
+            ctx.cb = progress_cb;
+        }
+    }
+
     MnnSdImage image{};
     MnnSdErrorInfo error{};
+    MnnSdProgressFn cb_fn = (ctx.cb && ctx.method) ? &progress_trampoline : nullptr;
+    void* cb_ud = (ctx.cb && ctx.method) ? static_cast<void*>(&ctx) : nullptr;
     MnnSdError code = mnn_sd_generate(
-        from_handle(handle), &params, nullptr, nullptr, &image, &error);
+        from_handle(handle), &params, cb_fn, cb_ud, &image, &error);
 
     env->ReleaseStringUTFChars(prompt, prompt_utf);
     env->ReleaseStringUTFChars(negative_prompt, neg_utf);

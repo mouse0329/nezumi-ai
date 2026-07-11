@@ -154,6 +154,16 @@ class MnnSdModule(private val context: Context) {
         onProgress(0, steps, 0f)
         Log.d(TAG, "[MnnSd] request size=${width}x${height}")
 
+        val progressBridge = object : MnnSdNative.NativeProgressListener {
+            override fun onNativeProgress(step: Int, totalSteps: Int, elapsedSec: Float) {
+                try {
+                    onProgress(step, totalSteps, elapsedSec)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "onProgress threw", t)
+                }
+            }
+        }
+
         val packed = MnnSdNative.generate(
             handle = handle,
             prompt = prompt,
@@ -162,7 +172,8 @@ class MnnSdModule(private val context: Context) {
             height = height,
             steps = steps,
             cfg = cfg,
-            seed = seed
+            seed = seed,
+            progressListener = progressBridge
         )
 
         onProgress(steps, steps, 0f)

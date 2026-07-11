@@ -26,8 +26,17 @@ struct ClipTokenizer
     std::vector<std::pair<std::string, std::string>> merges; // BPE merge rules
 
     bool load(const std::string &tokenizer_json_path);
-    // Returns [2 * MAX_LEN] ids: uncond (empty) + cond (prompt)
-    std::vector<int> encode_pair(const std::string &prompt) const;
+
+    // Returns [2 * MAX_LEN] ids: uncond (negative_prompt) + cond (prompt).
+    // When negative_prompt is empty this degenerates to the classic
+    // Stable-Diffusion "empty prompt" uncond (BOS + EOS + pad).
+    std::vector<int> encode_pair(const std::string &prompt,
+                                 const std::string &negative_prompt) const;
+
+    // Backwards-compatible overload (uncond = empty prompt).
+    inline std::vector<int> encode_pair(const std::string &prompt) const {
+        return encode_pair(prompt, std::string());
+    }
 
 private:
     std::vector<int> encode_single(const std::string &text) const;

@@ -54,6 +54,10 @@ object MnnSdNative {
     external fun probeModel(mnnPath: String, backend: Int): String
     external fun getLastError(): String
 
+    interface NativeProgressListener {
+        fun onNativeProgress(step: Int, totalSteps: Int, elapsedSec: Float)
+    }
+
     /**
      * @return packed RGB: first 8 bytes = width (int LE) + height (int LE), then RGB triplets.
      * Returns null if generation fails or the native symbol is not yet present in the loaded .so.
@@ -66,9 +70,10 @@ object MnnSdNative {
         height: Int,
         steps: Int,
         cfg: Float,
-        seed: Long
+        seed: Long,
+        progressListener: NativeProgressListener? = null
     ): ByteArray? = try {
-        generateNative(handle, prompt, negativePrompt, width, height, steps, cfg, seed)
+        generateNative(handle, prompt, negativePrompt, width, height, steps, cfg, seed, progressListener)
     } catch (e: UnsatisfiedLinkError) {
         Log.e(TAG, "generate() not found in libmnn_sd_jni.so — rebuild required: ${e.message}")
         null
@@ -82,7 +87,8 @@ object MnnSdNative {
         height: Int,
         steps: Int,
         cfg: Float,
-        seed: Long
+        seed: Long,
+        progressListener: NativeProgressListener?
     ): ByteArray?
 
     external fun cancel(handle: Long)

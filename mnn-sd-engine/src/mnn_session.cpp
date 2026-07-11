@@ -594,9 +594,10 @@ std::vector<int> ClipTokenizer::encode_single(const std::string &text) const
     return ids;
 }
 
-std::vector<int> ClipTokenizer::encode_pair(const std::string &prompt) const
+std::vector<int> ClipTokenizer::encode_pair(const std::string &prompt,
+                                             const std::string &negative_prompt) const
 {
-    auto uncond = encode_single("");
+    auto uncond = encode_single(negative_prompt.empty() ? "" : negative_prompt);
     auto cond   = encode_single(prompt);
     std::vector<int> out;
     out.insert(out.end(), uncond.begin(), uncond.end());
@@ -871,7 +872,9 @@ MnnSdError mnn_sd_run_pipeline(
     // --- 1. Tokenize + build per-side input_embedding (batch=1 each) ---
     // xororz/sd-mnn CLIP graph is fixed to batch=1; we run it twice (uncond + cond)
     // instead of trying to fit a batch=2 tensor.
-    auto token_ids = engine->tokenizer.encode_pair(params->prompt ? params->prompt : "");
+    auto token_ids = engine->tokenizer.encode_pair(
+        params->prompt ? params->prompt : "",
+        params->negative_prompt ? params->negative_prompt : "");
     // token_ids: [2 * 77] ints (first half = uncond, second half = cond)
 
     const int seq_len = ClipTokenizer::MAX_LEN;
@@ -905,21 +908,23 @@ MnnSdError mnn_sd_run_pipeline(
     // --- 2. CLIP text encoder: explicit resize to {1, 77, emb_dim}, then run
     // twice (once per side). Concatenate outputs into text_emb [2, 77, emb_dim]. ---
     auto *clip_net = engine->clip_interpreter.get();
-    auto *clip_input = clip_net->getSessionInput(engine->clip_session, "input_embedding");
-    if (!clip_input)
-    {
-        const auto &all_in = clip_net->getSessionInputAll(engine->clip_session);
-        if (all_in.size() == 1) clip_input = all_in.begin()->second;
+    MNN::Tensor *clip_input = nullptr;
+    const auto &all_in = clip_net->getSessionInputAll(engine->clip_session);
+    if (all_in.find("input_ids") != all_in.end()) {
+        clip_input = all_in.at("input_ids");
+    } else if (all_in.find("input_embedding") != all_in.end()) {
+        clip_input = all_in.at("input_embedding");
+    } else if (!all_in.empty()) {
+        clip_input = all_in.begin()->second;
     }
     if (!clip_input)
     {
         if (out_error) std::snprintf(out_error->message, sizeof(out_error->message),
-                                     "CLIP: input_embedding tensor not found");
+                                     "CLIP: input tensor not found");
         return MNN_SD_ERR_INTERNAL;
     }
     clip_net->resizeTensor(clip_input, {1, seq_len, emb_dim});
     clip_net->resizeSession(engine->clip_session);
-    clip_input = clip_net->getSessionInput(engine->clip_session, "input_embedding");
 
     std::vector<float> text_emb((size_t)2 * seq_len * emb_dim, 0.0f);
     std::vector<float> side_emb;
@@ -940,16 +945,22 @@ MnnSdError mnn_sd_run_pipeline(
 
         clip_net->runSession(engine->clip_session);
 
-        auto *out_t = clip_net->getSessionOutput(engine->clip_session, "last_hidden_state");
-        if (!out_t)
-        {
-            const auto &all_out = clip_net->getSessionOutputAll(engine->clip_session);
-            if (all_out.size() == 1) out_t = all_out.begin()->second;
+        MNN::Tensor *out_t = nullptr;
+        const auto &all_out = clip_net->getSessionOutputAll(engine->clip_session);
+        for (const char *candidate : {"last_hidden_state", "hidden_states", "text_embeddings", "output"}) {
+            auto it = all_out.find(candidate);
+            if (it != all_out.end()) {
+                out_t = it->second;
+                break;
+            }
+        }
+        if (!out_t && !all_out.empty()) {
+            out_t = all_out.begin()->second;
         }
         if (!out_t)
         {
             if (out_error) std::snprintf(out_error->message, sizeof(out_error->message),
-                                         "CLIP: last_hidden_state output not found");
+                                         "CLIP: text output not found");
             return MNN_SD_ERR_INTERNAL;
         }
         MNN::Tensor host_out(out_t, MNN::Tensor::CAFFE);
@@ -983,9 +994,14 @@ MnnSdError mnn_sd_run_pipeline(
 
     // --- 4. Build PNDM timesteps ---
     std::vector<int> timesteps(steps);
-    int step_size = 1000 / steps;
-    for (int i = steps - 1; i >= 0; --i)
-        timesteps[i] = 1 + (steps - 1 - i) * step_size;
+    const int step_size = 1000 / steps;
+    for (int i = 0; i < steps; ++i) {
+        const int index = steps - 1 - i;
+        timesteps[i] = 1 + index * step_size;
+    }
+    if (steps > 1 && timesteps.back() != 1) {
+        timesteps.back() = 1;
+    }
 
     // --- 4b. Load UNet just-in-time (after CLIP has been freed) ---
     {
