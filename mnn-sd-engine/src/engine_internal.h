@@ -22,7 +22,7 @@ struct ClipTokenizer
     static constexpr int EOS_ID = 49407;
     static constexpr int MAX_LEN = 77;
 
-    std::unordered_map<std::string, int> vocab;   // token -> id
+    std::unordered_map<std::string, int> vocab;              // token -> id
     std::vector<std::pair<std::string, std::string>> merges; // BPE merge rules
 
     bool load(const std::string &tokenizer_json_path);
@@ -34,7 +34,8 @@ struct ClipTokenizer
                                  const std::string &negative_prompt) const;
 
     // Backwards-compatible overload (uncond = empty prompt).
-    inline std::vector<int> encode_pair(const std::string &prompt) const {
+    inline std::vector<int> encode_pair(const std::string &prompt) const
+    {
         return encode_pair(prompt, std::string());
     }
 
@@ -59,8 +60,8 @@ struct MnnSdEngine
     // xororz/local-dream embedding tables
     // token_emb: [vocab_size, 768] float32  (loaded from token_emb.bin)
     // pos_emb:   [77, 768]         float32  (loaded from pos_emb.bin)
-    std::vector<float> token_emb;  // vocab_size * 768
-    std::vector<float> pos_emb;    // 77 * 768
+    std::vector<float> token_emb; // vocab_size * 768
+    std::vector<float> pos_emb;   // 77 * 768
     int token_emb_vocab_size = 0;
 
     // Just-in-time load: paths are resolved at mnn_sd_load(), interpreters
@@ -87,20 +88,21 @@ struct MnnSdEngine
 };
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
-MnnSdError mnn_sd_initialize_sessions(MnnSdEngine *engine, MnnSdErrorInfo *out_error);
-void mnn_sd_release_sessions(MnnSdEngine *engine);
+    MnnSdError mnn_sd_initialize_sessions(MnnSdEngine *engine, MnnSdErrorInfo *out_error);
+    void mnn_sd_release_sessions(MnnSdEngine *engine);
 
-// Run full txt2img pipeline; fills out_image on success
-MnnSdError mnn_sd_run_pipeline(
-    MnnSdEngine *engine,
-    const MnnSdGenerateParams *params,
-    MnnSdProgressFn on_progress,
-    void *progress_user_data,
-    MnnSdImage *out_image,
-    MnnSdErrorInfo *out_error);
+    // Run full txt2img pipeline; fills out_image on success
+    MnnSdError mnn_sd_run_pipeline(
+        MnnSdEngine *engine,
+        const MnnSdGenerateParams *params,
+        MnnSdProgressFn on_progress,
+        void *progress_user_data,
+        MnnSdImage *out_image,
+        MnnSdErrorInfo *out_error);
 
 #ifdef __cplusplus
 }
