@@ -27,7 +27,13 @@ class MnnSdModule(private val context: Context) {
             maxSidePx: Int = 0
         ): Int {
             val normalized = backend.trim().lowercase()
-            val wantsOpenCl = normalized == "opencl" || normalized == "gpu"
+            // NPU (QNN) は廃止。旧識別子 "qnn"/"npu" が渡されても実体は
+            // MNN OpenCL 経路にリダイレクトする (UI 側の SharedPreferences で
+            // 過去に保存された値との後方互換のため)。
+            val wantsOpenCl = normalized == "opencl" ||
+                              normalized == "gpu" ||
+                              normalized == "qnn" ||
+                              normalized == "npu"
             if (!wantsOpenCl) return MnnSdNative.BACKEND_CPU
             return if (maxSidePx > OPENCL_SAFE_MAX_SIDE) {
                 MnnSdNative.BACKEND_CPU
@@ -75,8 +81,9 @@ class MnnSdModule(private val context: Context) {
             return@withContext false
         }
 
+        // NPU (QNN) は廃止。旧識別子も OpenCL 経路にマップして後方互換を保つ。
         val normalizedBackend = when (backend.lowercase()) {
-            "opencl", "gpu" -> "opencl"
+            "opencl", "gpu", "qnn", "npu" -> "opencl"
             else -> "mnn"
         }
 

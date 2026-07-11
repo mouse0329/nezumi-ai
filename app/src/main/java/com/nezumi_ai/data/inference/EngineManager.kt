@@ -9,7 +9,7 @@ import kotlinx.coroutines.sync.withLock
 
 /**
  * LLM（LiteRT / GGUF）と SD の同時利用を避けるための直列化。
- * LocalDreamModule（MNN/QNN）に一本化。
+ * LocalDreamModule（MNN のみ, QNN/NPU は廃止）に一本化。
  */
 object EngineManager {
     private const val TAG = "EngineManager"

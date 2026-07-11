@@ -70,9 +70,10 @@ class LocalDreamModule(private val context: Context) {
             currentBackend: String?,
             maxSidePx: Int = 0
         ): Boolean {
-            // QNN バックエンド利用中は MNN の OpenCL パスには入らないので本来不要だが、
-            // 内部で UNET の一部が OpenCL に逃げる不具合回避のため強制オフにする。
-            if (currentBackend?.lowercase() == "qnn") return false
+            // NPU (QNN) サポートは廃止済み。currentBackend は "mnn" (CPU) か
+            // "qnn" (旧識別子だが実体は GPU/OpenCL) の 2 択で、どちらの経路も
+            // MNN 側の OpenCL カーネルに合流するため、ここでは backend 名に
+            // 依存せず「解像度と userWantsOpenCL」だけで判断する。
             if (!userWantsOpenCL) return false
             // MNN CPU モードでも 512 クラスは OpenCL を避ける。
             //   背景: 512x512 の UNET latent (64x64 * feature) を mobile GPU で tuning させると
@@ -122,9 +123,12 @@ class LocalDreamModule(private val context: Context) {
         }
     }
 
-    // Perf fix: QNN ライブラリコピーはモデルごとに変わらないので、
-    //           プロセス内で一度成功したらキャッシュして
-            //   loadModel ごとの assets スキャン (数バイトサイズチェック x N 本) をスキップする。
+    // NOTE: QNN/NPU バックエンドは廃止済み。以前は assets/qnnlibs/ 配下の
+    //   QNN 実行ライブラリ (libQnnHtp.so 等) を毎起動時に filesDir にコピーする
+    //   ロジックがここにあったが、いまはロードされないため機能上は no-op。
+    //   assets 側にファイルが残っていても失敗するだけで生成には影響しない。
+    //   将来的に assets/qnnlibs/ を完全削除する際にこの prepareRuntimeDir と
+    //   関連ロジックも取り除くこと。
     @Volatile private var runtimeDirReady: File? = null
 
     private suspend fun prepareRuntimeDir(): File = withContext(Dispatchers.IO) {
@@ -189,8 +193,8 @@ class LocalDreamModule(private val context: Context) {
                 if (File(subDir, markerFile).exists()) {
                     Log.d(TAG, "Found $markerFile in: ${subDir.absolutePath}")
                     // マーカーファイルは見つかったが、他の必須ファイルも存在するか簡易チェック
-                    // CPU の場合: unet.mnn, clip.mnn, vae_decoder.mnn
-                    // QNN の場合: unet.bin, clip.bin (or clip_v2.mnn), vae_decoder.bin
+                    // MNN 形式: unet.mnn, clip.mnn, vae_decoder.mnn (対応)
+                    // 旧 QNN 形式: unet.bin, clip.bin (or clip_v2.mnn), vae_decoder.bin (非対応 — 検出のみ残す)
                     val hasRequiredFiles = if (isCpu) {
                         File(subDir, "unet.mnn").exists() &&
                         (File(subDir, "clip.mnn").exists() || File(subDir, "clip_v2.mnn").exists()) &&
@@ -245,43 +249,44 @@ class LocalDreamModule(private val context: Context) {
 
             Log.d(TAG, "loadModel: Model directory exists and is readable")
 
+            // NPU (QNN) サポートは廃止。バックエンドは:
+            //   - "mnn" / "cpu" : MNN CPU 経路
+            //   - "qnn" / "gpu" / "npu" (後方互換) : MNN OpenCL 経路
+            // どちらも MNN エンジン (mnn-sd-engine) の JNI に流れる。
             val normalizedBackend = when (backend.lowercase()) {
                 "mnn", "cpu" -> "mnn"
-                "qnn", "npu" -> "qnn"
+                "gpu", "opencl", "qnn", "npu" -> "gpu"
                 else -> "auto"
             }
 
             val cpuModelDir = resolveModelDir(rawModelDir, true)
-            val qnnModelDir = resolveModelDir(rawModelDir, false)
-            val npuSupported = isNpuSupported()
+            // 旧 QNN 形式 (.bin) のディレクトリも一応検出する: そこにしか .mnn が
+            // 見つからないなら「対応形式でない」旨をログに残して失敗させる。
+            val legacyQnnModelDir = resolveModelDir(rawModelDir, false)
 
-            Log.d(TAG, "loadModel: cpuModelDir=$cpuModelDir, qnnModelDir=$qnnModelDir, npuSupported=$npuSupported")
+            Log.d(TAG, "loadModel: cpuModelDir=$cpuModelDir, legacyQnnModelDir=$legacyQnnModelDir")
 
             val (selectedBackend, modelDir) = when (normalizedBackend) {
                 "mnn" -> when {
                     cpuModelDir != null -> "mnn" to cpuModelDir
-                    qnnModelDir != null -> {
-                        Log.w(TAG, "loadModel: CPU/MNN was requested but only QNN model files exist. Falling back to QNN.")
-                        "qnn" to qnnModelDir
-                    }
                     else -> null
                 }
-                "qnn" -> when {
-                    qnnModelDir != null -> "qnn" to qnnModelDir
-                    cpuModelDir != null -> {
-                        Log.w(TAG, "loadModel: QNN/NPU was requested but this model only has CPU/MNN files. Falling back to MNN/CPU.")
-                        "mnn" to cpuModelDir
-                    }
+                "gpu" -> when {
+                    // GPU (OpenCL) でも実体の重みは .mnn (unet.mnn / clip.mnn / vae_decoder.mnn)。
+                    cpuModelDir != null -> "gpu" to cpuModelDir
                     else -> null
                 }
                 else -> when {
-                    qnnModelDir != null && npuSupported -> "qnn" to qnnModelDir
                     cpuModelDir != null -> "mnn" to cpuModelDir
-                    qnnModelDir != null -> "qnn" to qnnModelDir
                     else -> null
                 }
             } ?: run {
-                Log.e(TAG, "loadModel: Could not find usable model files in $modelPath (backend=$backend)")
+                if (legacyQnnModelDir != null) {
+                    Log.e(TAG, "loadModel: Only legacy QNN (.bin) model files were found under $modelPath. " +
+                        "The QNN/NPU backend is discontinued. Please re-import an MNN (.mnn) formatted model.")
+                } else {
+                    Log.e(TAG, "loadModel: Could not find usable model files in $modelPath (backend=$backend)")
+                }
                 return@withContext false
             }
 
@@ -293,6 +298,8 @@ class LocalDreamModule(private val context: Context) {
                 stopServer()
                 mnnModule?.cleanup()
                 mnnModule = MnnSdModule(context)
+                // "gpu" / "opencl" は MnnSdNative の BACKEND_OPENCL に、
+                // "mnn" / "cpu" は BACKEND_CPU にマップする。
                 val backendForMnn = if (selectedBackend == "mnn") "mnn" else "opencl"
                 val loadedMnn = try {
                     mnnModule!!.loadModel(modelPath, backendForMnn)
@@ -331,13 +338,10 @@ class LocalDreamModule(private val context: Context) {
 
             val result = tryStartServer(modelPath, modelDir, selectedBackend, selectedBackend == "mnn")
 
-            if (!result && selectedBackend == "qnn" && cpuModelDir != null) {
-                Log.w(TAG, "loadModel: QNN backend failed, falling back to MNN/CPU")
-                stopServer()
-                tryStartServer(modelPath, cpuModelDir, "mnn", true)
-            } else {
-                result
-            }
+            // NPU/QNN 廃止に伴い旧 QNN → MNN フォールバック分岐は削除。
+            // GPU (OpenCL) が失敗しても実体は同一の mnn-sd-engine JNI 経由なので
+            // CPU への切り替えはユーザーが UI 上で選択し直す (ImageGenFragment)。
+            result
         } catch (e: Exception) {
             Log.e(TAG, "loadModel: Error loading model", e)
             stopServer()
@@ -828,10 +832,10 @@ class LocalDreamModule(private val context: Context) {
         val dir = File(path)
         val dirName = dir.name
 
-        // バックエンド情報を追加
+        // バックエンド情報を追加。NPU (QNN) は廃止済みなので旧形式は "-Legacy" 表記。
         val backend = when {
-            File(dir, "unet.bin").exists() -> "-QNN"
             File(dir, "unet.mnn").exists() -> "-MNN"
+            File(dir, "unet.bin").exists() -> "-Legacy"
             else -> ""
         }
 

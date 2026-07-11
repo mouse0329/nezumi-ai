@@ -182,13 +182,16 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private fun detectModelFormat(path: String): String {
         val dir = File(path)
         if (!dir.isDirectory) return "Unknown"
-        
+
+        // NPU (QNN) 対応は廃止。unet.bin (旧 QNN 形式) が残っていても
+        //   本エンジンでは使えないため表示上は「非対応形式」と伝え、
+        //   MNN 形式のみを推論対象として扱う。
         val hasMnn = File(dir, "unet.mnn").exists()
         val hasQnn = File(dir, "unet.bin").exists()
-        
+
         return when {
-            hasQnn -> "QNN (NPU)"
-            hasMnn -> "MNN (CPU/OpenCL)"
+            hasMnn -> "MNN (CPU/GPU)"
+            hasQnn -> "旧 QNN 形式 (非対応)"
             else -> "Unknown"
         }
     }

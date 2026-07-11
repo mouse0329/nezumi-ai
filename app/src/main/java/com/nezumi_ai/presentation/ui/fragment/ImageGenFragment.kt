@@ -388,7 +388,10 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                     )
                     // NOTE: 以前の "自動" 選択を廃止。不安定だった QNN 自動フォールバックを
                     // 回避し、ユーザーに実行先を明示的に選ばせる。
-                    listOf("qnn" to "GPU/NPU", "mnn" to "CPU").forEach { (value, label) ->
+                    // NPU (QNN) サポートは廃止。MNN OpenCL による GPU / CPU の2択のみ。
+                    // 内部識別子 "qnn" は後方互換 (SharedPreferences 既存値) のため残すが、
+                    // ラベルは "GPU" に統一し UI 上に NPU 表記は出さない。
+                    listOf("qnn" to "GPU", "mnn" to "CPU").forEach { (value, label) ->
                         val selected = selectedBackend == value
                         androidx.compose.material3.FilterChip(
                             selected = selected,

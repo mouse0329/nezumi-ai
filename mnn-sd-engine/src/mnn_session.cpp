@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <climits>
 #include <memory>
 #include <random>
 #include <set>
@@ -48,6 +49,11 @@ namespace
 
 #if defined(MNN_SD_HAS_MNN)
 
+    // Bug fix: OpenCL 推論が起動直後に abort する / 出力が真っ黒になる問題は
+    // xororz/local-dream と比較すると schedule.mode に OpenCL 向けフラグを
+    // 立てていなかったこと (MNN_GPU_MEMORY_BUFFER + MNN_GPU_TUNING_FAST) と、
+    // CPU 側にスレッド数 / Memory_Low ヒントを与えていなかったことが原因。
+    // ここは local-dream の MnnSessionOptions と等価な設定に合わせる。
     struct ScheduleBundle
     {
         MNN::BackendConfig backend_config{};
@@ -56,11 +62,24 @@ namespace
         explicit ScheduleBundle(MnnSdBackend backend)
         {
             backend_config.precision = MNN::BackendConfig::Precision_Low;
+            backend_config.power = MNN::BackendConfig::Power_High;
             if (backend == MNN_SD_BACKEND_OPENCL)
             {
-                backend_config.power = MNN::BackendConfig::Power_High;
+                schedule.type = MNN_FORWARD_OPENCL;
+                // MNN_GPU_MEMORY_BUFFER: OpenCL 側で cl_mem を Buffer として確保する。
+                //   Image ベースだと 512x512 UNet の中間テンソルで Mali/Adreno が
+                //   CL_INVALID_IMAGE_SIZE を返してドライバごと abort する端末があった。
+                // MNN_GPU_TUNING_FAST: OpenCL カーネルのオートチューニング時間を
+                //   数秒以内に収める。既定 (TUNING_NONE) だとカーネル選択が悪く、
+                //   UNet の per-step で数倍遅くなる。
+                schedule.mode = MNN_GPU_MEMORY_BUFFER | MNN_GPU_TUNING_FAST;
             }
-            schedule.type = (backend == MNN_SD_BACKEND_OPENCL) ? MNN_FORWARD_OPENCL : MNN_FORWARD_CPU;
+            else
+            {
+                schedule.type = MNN_FORWARD_CPU;
+                schedule.numThread = 4;
+                backend_config.memory = MNN::BackendConfig::Memory_Low;
+            }
             schedule.backendConfig = &backend_config;
         }
     };
@@ -162,9 +181,25 @@ extern "C"
             return MNN_SD_ERR_MODEL_NOT_FOUND;
         }
 
-        // Load xororz embedding tables (token_emb.bin, pos_emb.bin)
+        // Load xororz embedding tables (token_emb.bin, pos_emb.bin).
+        //
+        // Bug fix (プロンプト無視の根因):
+        //   これまで token_emb.bin を必ず float32 として読み込んでいたが、
+        //   xororz 互換モデルは token_emb.bin を FP16 (uint16) でパッケージング
+        //   することがある (実際、100MB 超の SD1.5 レガシー FP32 版と、
+        //   ~72MB の FP16 版が世に出回っている)。
+        //   FP16 データを float32 として reinterpret すると:
+        //     - 要素数が半分になる (vocab_size が 49408 -> 24704 相当に化ける)
+        //     - 各値の bit pattern が全く別の float 値に化ける
+        //   結果として CLIP に渡る input_embedding はプロンプトと無関係の
+        //   数値になり、生成画像がプロンプトを無視する。
+        //
+        // 対処:
+        //   1. ファイルサイズと emb_dim から要素数を推定し、FP16 と FP32 を自動判定
+        //   2. FP16 と判定した場合は uint16 -> float の変換を挟んで格納
+        //   pos_emb.bin は歴代常に float32 なので従来通り。
         {
-            auto load_bin = [](const std::string &path, std::vector<float> &out) -> bool
+            auto load_fp32 = [](const std::string &path, std::vector<float> &out) -> bool
             {
                 FILE *f = std::fopen(path.c_str(), "rb");
                 if (!f)
@@ -173,19 +208,202 @@ extern "C"
                 long sz = std::ftell(f);
                 std::fseek(f, 0, SEEK_SET);
                 out.resize(sz / sizeof(float));
-                std::fread(out.data(), sizeof(float), out.size(), f);
+                size_t got = std::fread(out.data(), sizeof(float), out.size(), f);
                 std::fclose(f);
-                return !out.empty();
+                return got == out.size() && !out.empty();
+            };
+
+            // IEEE 754 half-precision (binary16) -> float32. Handles subnormals,
+            // Inf, NaN correctly. Small, self-contained, no dependency.
+            auto fp16_to_fp32 = [](uint16_t h) -> float
+            {
+                uint32_t sign = (uint32_t)(h & 0x8000) << 16;
+                uint32_t exp  = (h >> 10) & 0x1F;
+                uint32_t mant = h & 0x3FF;
+                uint32_t f;
+                if (exp == 0)
+                {
+                    if (mant == 0)
+                    {
+                        f = sign;
+                    }
+                    else
+                    {
+                        // Subnormal: renormalize.
+                        exp = 1;
+                        while ((mant & 0x400) == 0)
+                        {
+                            mant <<= 1;
+                            exp -= 1;
+                        }
+                        mant &= 0x3FF;
+                        f = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+                    }
+                }
+                else if (exp == 0x1F)
+                {
+                    f = sign | 0x7F800000 | (mant << 13);
+                }
+                else
+                {
+                    f = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+                }
+                float out;
+                std::memcpy(&out, &f, sizeof(out));
+                return out;
+            };
+
+            auto load_token_emb = [&](const std::string &path,
+                                       int emb_dim,
+                                       int tokenizer_vocab_size,
+                                       std::vector<float> &out,
+                                       int &out_vocab_size,
+                                       const char *label) -> bool
+            {
+                FILE *f = std::fopen(path.c_str(), "rb");
+                if (!f)
+                    return false;
+                std::fseek(f, 0, SEEK_END);
+                long sz = std::ftell(f);
+                std::fseek(f, 0, SEEK_SET);
+                if (sz <= 0 || emb_dim <= 0)
+                {
+                    std::fclose(f);
+                    return false;
+                }
+
+                // Compute the vocab_size implied by each interpretation:
+                //   FP16: 2 bytes/element -> vocab = sz / (2 * emb_dim)
+                //   FP32: 4 bytes/element -> vocab = sz / (4 * emb_dim)
+                //
+                // Bug fix (v4 の判定が逆転していた問題):
+                //   両方 [10000, 200000] に収まる場合、旧実装は FP32 を先に採用
+                //   していた。CuteYukiMix (SD1.5) の token_emb.bin は
+                //   75,890,688 バイト → FP16 なら 49408 vocab、FP32 なら 24704
+                //   vocab。実際は FP16 (49408) が正しい (CLIP-L の tokenizer.json
+                //   側 vocab も 49408) のに FP32 (24704) を選んでしまっていた。
+                //
+                // 決定基準 (v5): "tokenizer_vocab_size とちょうど一致する方"
+                //   を最優先で採用する。tokenizer.json は既にロード済みで実際に
+                //   使う vocab の大きさを知っているので、これが最も確実。
+                //   一致するものが無ければ tokenizer vocab を包含する (>=) 側で
+                //   差が小さい方を選ぶ。tokenizer が未ロードの場合のみ、従来の
+                //   "現実的な範囲" ヒューリスティックにフォールバック — その際
+                //   FP16 を優先する (現行パッケージの主流)。
+                const long fp16_elem = (long)sizeof(uint16_t);
+                const long fp32_elem = (long)sizeof(float);
+                bool fp16_ok = (sz % (fp16_elem * emb_dim) == 0);
+                bool fp32_ok = (sz % (fp32_elem * emb_dim) == 0);
+                int fp16_vocab = fp16_ok ? (int)(sz / (fp16_elem * emb_dim)) : 0;
+                int fp32_vocab = fp32_ok ? (int)(sz / (fp32_elem * emb_dim)) : 0;
+
+                bool use_fp16 = false;
+                bool decided  = false;
+
+                if (tokenizer_vocab_size > 0)
+                {
+                    // 1. Exact match wins outright.
+                    if (fp16_ok && fp16_vocab == tokenizer_vocab_size)
+                    {
+                        use_fp16 = true;
+                        decided = true;
+                    }
+                    else if (fp32_ok && fp32_vocab == tokenizer_vocab_size)
+                    {
+                        use_fp16 = false;
+                        decided = true;
+                    }
+                    else
+                    {
+                        // 2. Nearest superset of tokenizer vocab. A token
+                        //    embedding table must have >= tokenizer_vocab_size
+                        //    rows (extra rows are legal for special / reserved
+                        //    tokens); a smaller row count means the file was
+                        //    misinterpreted as the wrong dtype.
+                        int fp16_delta = (fp16_ok && fp16_vocab >= tokenizer_vocab_size)
+                                             ? (fp16_vocab - tokenizer_vocab_size)
+                                             : INT32_MAX;
+                        int fp32_delta = (fp32_ok && fp32_vocab >= tokenizer_vocab_size)
+                                             ? (fp32_vocab - tokenizer_vocab_size)
+                                             : INT32_MAX;
+                        if (fp16_delta != INT32_MAX || fp32_delta != INT32_MAX)
+                        {
+                            use_fp16 = (fp16_delta <= fp32_delta);
+                            decided = true;
+                        }
+                    }
+                }
+
+                if (!decided)
+                {
+                    // Fallback: prefer FP16 (modern default) among plausible
+                    // vocab sizes; last resort is FP32.
+                    auto plausible = [](int v) { return v >= 10000 && v <= 200000; };
+                    if (fp16_ok && plausible(fp16_vocab))
+                        use_fp16 = true;
+                    else if (fp32_ok && plausible(fp32_vocab))
+                        use_fp16 = false;
+                    else
+                        use_fp16 = false;
+                }
+
+                if (use_fp16)
+                {
+                    size_t n = (size_t)(sz / fp16_elem);
+                    std::vector<uint16_t> buf(n);
+                    size_t got = std::fread(buf.data(), sizeof(uint16_t), n, f);
+                    std::fclose(f);
+                    if (got != n)
+                        return false;
+                    out.resize(n);
+                    for (size_t i = 0; i < n; ++i)
+                        out[i] = fp16_to_fp32(buf[i]);
+                    out_vocab_size = (int)(n / emb_dim);
+                    PROBE_LOG("%s: file=%ld bytes, format=FP16, vocab_size=%d, emb_dim=%d, tokenizer_vocab=%d",
+                              label, sz, out_vocab_size, emb_dim, tokenizer_vocab_size);
+                }
+                else
+                {
+                    size_t n = (size_t)(sz / fp32_elem);
+                    out.resize(n);
+                    size_t got = std::fread(out.data(), sizeof(float), n, f);
+                    std::fclose(f);
+                    if (got != n)
+                        return false;
+                    out_vocab_size = (int)(n / emb_dim);
+                    PROBE_LOG("%s: file=%ld bytes, format=FP32, vocab_size=%d, emb_dim=%d, tokenizer_vocab=%d",
+                              label, sz, out_vocab_size, emb_dim, tokenizer_vocab_size);
+                }
+                return true;
             };
 
             const std::string token_emb_path = build_model_path(engine->model_dir.c_str(), "token_emb.bin");
-            const std::string pos_emb_path = build_model_path(engine->model_dir.c_str(), "pos_emb.bin");
+            const std::string pos_emb_path   = build_model_path(engine->model_dir.c_str(), "pos_emb.bin");
 
             if (file_exists(token_emb_path) && file_exists(pos_emb_path))
             {
-                load_bin(token_emb_path, engine->token_emb);
-                load_bin(pos_emb_path, engine->pos_emb);
-                engine->token_emb_vocab_size = (int)(engine->token_emb.size() / 768);
+                // pos_emb.bin is always FP32 (77 * emb_dim floats).
+                load_fp32(pos_emb_path, engine->pos_emb);
+
+                int emb_dim = engine->model_config.text_embedding_size > 0
+                                  ? engine->model_config.text_embedding_size
+                                  : (int)(engine->pos_emb.size() / ClipTokenizer::MAX_LEN);
+                if (emb_dim <= 0)
+                    emb_dim = 768;
+                PROBE_LOG("pos_emb.bin: %zu floats, emb_dim=%d",
+                          engine->pos_emb.size(), emb_dim);
+
+                int tokenizer_vocab_size = (int)engine->tokenizer.vocab.size();
+                int detected_vocab = 0;
+                if (!load_token_emb(token_emb_path, emb_dim,
+                                    tokenizer_vocab_size,
+                                    engine->token_emb, detected_vocab,
+                                    "token_emb.bin"))
+                {
+                    PROBE_LOG("token_emb.bin: FAILED to load (path=%s)",
+                              token_emb_path.c_str());
+                }
+                engine->token_emb_vocab_size = detected_vocab;
             }
         }
 
@@ -351,134 +569,287 @@ extern "C"
 
 namespace
 {
-    // Minimal JSON string extraction (no third-party dep)
-    // Finds the value of "key": { ... } or "key": "..."
-    // Returns empty string on failure
-    std::string json_find_object(const std::string &json, const std::string &key)
+    // ---------------------------------------------------------------------
+    // Structural JSON scanners for tokenizer.json.
+    //
+    // These are NOT a general-purpose JSON parser; they only handle the
+    // subset produced by HuggingFace's `tokenizers` library for a BPE
+    // model (an object with a "model" sub-object containing a "vocab"
+    // object and a "merges" array of strings).
+    //
+    // Previous version of this file used std::string::find('"') to iterate
+    // through the JSON text without tracking structural context. That
+    // walked over the inter-entry whitespace/comma as if it were part of
+    // the next entry, silently losing ~40% of the merges table on the
+    // real CLIP tokenizer.json. Concretely, in
+    //     "merges": [
+    //       "i n",
+    //       "t h",
+    //       ...
+    // the naive scan produced garbage entries like  (",\n", "     ")
+    // and pushed real merges past their true rank, so lookups such as
+    // ("h","ello</w>") returned "not found" and BPE stopped at 'h'+'ello</w>'
+    // (IDs 71 + 2512) instead of merging to 'hello</w>' (ID 3306) --
+    // hence the "prompt is being ignored" symptom.
+    //
+    // The new scanner walks the token stream while respecting JSON syntax:
+    // after a value in an array or object, the next meaningful character
+    // is either ',' or ']'/'}' (whitespace is skipped). That is enough to
+    // separate entries reliably without a full JSON grammar.
+
+    inline void json_skip_ws(const std::string &s, size_t &i)
     {
-        std::string needle = "\"" + key + "\"";
-        auto pos = json.find(needle);
-        if (pos == std::string::npos)
-            return {};
-        pos = json.find('{', pos + needle.size());
-        if (pos == std::string::npos)
-            return {};
-        int depth = 0;
-        size_t start = pos;
-        for (size_t i = pos; i < json.size(); ++i)
+        while (i < s.size())
         {
-            if (json[i] == '{')
-                ++depth;
-            else if (json[i] == '}')
-            {
-                --depth;
-                if (depth == 0)
-                    return json.substr(start, i - start + 1);
-            }
+            char c = s[i];
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r')
+                ++i;
+            else
+                break;
         }
-        return {};
     }
 
-    // Parse "token": id pairs from a JSON object string
-    void parse_vocab(const std::string &obj, std::unordered_map<std::string, int> &vocab)
+    // Read a JSON string literal starting at s[i] == '"'. On success sets
+    // i to just past the closing quote and returns the unescaped content.
+    bool json_read_string(const std::string &s, size_t &i, std::string &out)
     {
-        size_t i = 0;
-        while (i < obj.size())
+        if (i >= s.size() || s[i] != '"')
+            return false;
+        ++i;
+        out.clear();
+        while (i < s.size())
         {
-            // find next "
-            auto q1 = obj.find('"', i);
-            if (q1 == std::string::npos)
-                break;
-            auto q2 = std::string::npos;
-            // find closing " (handle \" escapes)
-            size_t j = q1 + 1;
-            while (j < obj.size())
+            unsigned char c = (unsigned char)s[i];
+            if (c == '"')
             {
-                if (obj[j] == '\\')
-                {
-                    j += 2;
-                    continue;
-                }
-                if (obj[j] == '"')
-                {
-                    q2 = j;
-                    break;
-                }
-                ++j;
+                ++i;
+                return true;
             }
-            if (q2 == std::string::npos)
-                break;
-            std::string token = obj.substr(q1 + 1, q2 - q1 - 1);
-            // unescape \\\\ -> \\ and \\" -> "
-            std::string unescaped;
-            for (size_t k = 0; k < token.size(); ++k)
+            if (c == '\\')
             {
-                if (token[k] == '\\' && k + 1 < token.size())
+                if (i + 1 >= s.size())
+                    return false;
+                char esc = s[i + 1];
+                switch (esc)
                 {
-                    ++k;
-                    if (token[k] == '"')
-                        unescaped += '"';
-                    else if (token[k] == '\\')
-                        unescaped += '\\';
-                    else if (token[k] == 'n')
-                        unescaped += '\n';
+                case '"':  out += '"';  break;
+                case '\\': out += '\\'; break;
+                case '/':  out += '/';  break;
+                case 'b':  out += '\b'; break;
+                case 'f':  out += '\f'; break;
+                case 'n':  out += '\n'; break;
+                case 'r':  out += '\r'; break;
+                case 't':  out += '\t'; break;
+                case 'u':
+                {
+                    if (i + 5 >= s.size())
+                        return false;
+                    unsigned int cp = 0;
+                    for (int k = 0; k < 4; ++k)
+                    {
+                        char h = s[i + 2 + k];
+                        cp <<= 4;
+                        if (h >= '0' && h <= '9') cp |= (h - '0');
+                        else if (h >= 'a' && h <= 'f') cp |= (h - 'a' + 10);
+                        else if (h >= 'A' && h <= 'F') cp |= (h - 'A' + 10);
+                        else return false;
+                    }
+                    if (cp < 0x80)
+                    {
+                        out += (char)cp;
+                    }
+                    else if (cp < 0x800)
+                    {
+                        out += (char)(0xC0 | (cp >> 6));
+                        out += (char)(0x80 | (cp & 0x3F));
+                    }
                     else
                     {
-                        unescaped += '\\';
-                        unescaped += token[k];
+                        out += (char)(0xE0 | (cp >> 12));
+                        out += (char)(0x80 | ((cp >> 6) & 0x3F));
+                        out += (char)(0x80 | (cp & 0x3F));
                     }
+                    i += 6;
+                    continue;
                 }
-                else
-                    unescaped += token[k];
-            }
-            // find colon then integer
-            auto colon = obj.find(':', q2 + 1);
-            if (colon == std::string::npos)
-                break;
-            size_t num_start = colon + 1;
-            while (num_start < obj.size() && (obj[num_start] == ' ' || obj[num_start] == '\t'))
-                ++num_start;
-            if (num_start >= obj.size() || !std::isdigit((unsigned char)obj[num_start]))
-            {
-                i = q2 + 1;
+                default:
+                    out += '\\';
+                    out += esc;
+                    break;
+                }
+                i += 2;
                 continue;
             }
-            int id = std::stoi(obj.substr(num_start));
-            vocab[unescaped] = id;
-            i = num_start;
+            out += (char)c;
+            ++i;
+        }
+        return false;
+    }
+
+    // Scan the value that starts at s[i], leaving i just past it.
+    // Handles strings, objects, arrays, numbers, true/false/null.
+    void json_skip_value(const std::string &s, size_t &i)
+    {
+        json_skip_ws(s, i);
+        if (i >= s.size()) return;
+        char c = s[i];
+        if (c == '"')
+        {
+            std::string dummy;
+            json_read_string(s, i, dummy);
+            return;
+        }
+        if (c == '{' || c == '[')
+        {
+            char open_c = c;
+            char close_c = (c == '{') ? '}' : ']';
+            ++i;
+            int depth = 1;
+            bool in_str = false;
+            while (i < s.size() && depth > 0)
+            {
+                char ch = s[i];
+                if (in_str)
+                {
+                    if (ch == '\\' && i + 1 < s.size()) { i += 2; continue; }
+                    if (ch == '"') in_str = false;
+                    ++i;
+                    continue;
+                }
+                if (ch == '"') { in_str = true; ++i; continue; }
+                if (ch == open_c) ++depth;
+                else if (ch == close_c) --depth;
+                ++i;
+            }
+            return;
+        }
+        // number / bool / null: skip until control char at depth 0
+        while (i < s.size())
+        {
+            char ch = s[i];
+            if (ch == ',' || ch == '}' || ch == ']' ||
+                ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r')
+                break;
+            ++i;
         }
     }
 
-    // Parse merges array: each element is "a b" (two tokens separated by space)
-    void parse_merges(const std::string &json, std::vector<std::pair<std::string, std::string>> &merges)
+    // Find `"key"` inside the object whose opening `{` is at start.
+    // On success sets out_after_colon to point just past the ':' (whitespace
+    // may follow before the value). Returns false if the key is missing.
+    bool json_find_key(const std::string &s, size_t start, const std::string &key, size_t &out_after_colon)
     {
-        // find "merges": [
-        auto pos = json.find("\"merges\"");
-        if (pos == std::string::npos)
-            return;
-        auto bracket = json.find('[', pos);
-        if (bracket == std::string::npos)
-            return;
-        size_t i = bracket + 1;
-        while (i < json.size())
+        json_skip_ws(s, start);
+        if (start >= s.size() || s[start] != '{')
+            return false;
+        size_t i = start + 1;
+        while (i < s.size())
         {
-            auto q1 = json.find('"', i);
-            if (q1 == std::string::npos)
-                break;
-            auto q2 = json.find('"', q1 + 1);
-            if (q2 == std::string::npos)
-                break;
-            std::string entry = json.substr(q1 + 1, q2 - q1 - 1);
-            auto sp = entry.find(' ');
-            if (sp != std::string::npos)
-                merges.emplace_back(entry.substr(0, sp), entry.substr(sp + 1));
-            i = q2 + 1;
-            // stop at ]
-            auto next_q = json.find('"', i);
-            auto next_bracket = json.find(']', i);
-            if (next_bracket != std::string::npos && (next_q == std::string::npos || next_bracket < next_q))
-                break;
+            json_skip_ws(s, i);
+            if (i >= s.size()) return false;
+            if (s[i] == '}') return false;
+            if (s[i] == ',') { ++i; continue; }
+            std::string k;
+            if (!json_read_string(s, i, k)) return false;
+            json_skip_ws(s, i);
+            if (i >= s.size() || s[i] != ':') return false;
+            ++i;
+            json_skip_ws(s, i);
+            if (k == key)
+            {
+                out_after_colon = i;
+                return true;
+            }
+            json_skip_value(s, i);
         }
+        return false;
+    }
+
+    bool json_read_int(const std::string &s, size_t &i, long &out)
+    {
+        json_skip_ws(s, i);
+        size_t start = i;
+        if (i < s.size() && (s[i] == '-' || s[i] == '+')) ++i;
+        while (i < s.size() && std::isdigit((unsigned char)s[i])) ++i;
+        if (i == start) return false;
+        try { out = std::stol(s.substr(start, i - start)); }
+        catch (...) { return false; }
+        return true;
+    }
+
+    // Parse `{ "tok": id, ... }` at s[start]==`{`.
+    bool clip_parse_vocab_object(const std::string &s, size_t start,
+                                 std::unordered_map<std::string, int> &vocab)
+    {
+        json_skip_ws(s, start);
+        if (start >= s.size() || s[start] != '{')
+            return false;
+        size_t i = start + 1;
+        while (i < s.size())
+        {
+            json_skip_ws(s, i);
+            if (i >= s.size()) return false;
+            if (s[i] == '}') { ++i; return true; }
+            if (s[i] == ',') { ++i; continue; }
+            std::string tok;
+            if (!json_read_string(s, i, tok))
+                return false;
+            json_skip_ws(s, i);
+            if (i >= s.size() || s[i] != ':') return false;
+            ++i;
+            long id = 0;
+            if (!json_read_int(s, i, id)) return false;
+            vocab[tok] = (int)id;
+        }
+        return false;
+    }
+
+    // Parse `[ "a b", "c d", ... ]` (legacy string form) OR
+    //       `[ ["a", "b"], ... ]` (modern list form) at s[start]==`[`.
+    bool clip_parse_merges_array(const std::string &s, size_t start,
+                                 std::vector<std::pair<std::string, std::string>> &merges)
+    {
+        json_skip_ws(s, start);
+        if (start >= s.size() || s[start] != '[')
+            return false;
+        size_t i = start + 1;
+        while (i < s.size())
+        {
+            json_skip_ws(s, i);
+            if (i >= s.size()) return false;
+            if (s[i] == ']') { ++i; return true; }
+            if (s[i] == ',') { ++i; continue; }
+
+            if (s[i] == '"')
+            {
+                std::string entry;
+                if (!json_read_string(s, i, entry)) return false;
+                auto sp = entry.find(' ');
+                if (sp != std::string::npos)
+                    merges.emplace_back(entry.substr(0, sp), entry.substr(sp + 1));
+            }
+            else if (s[i] == '[')
+            {
+                ++i;
+                std::string a, b;
+                json_skip_ws(s, i);
+                if (!json_read_string(s, i, a)) return false;
+                json_skip_ws(s, i);
+                if (i >= s.size() || s[i] != ',') return false;
+                ++i;
+                json_skip_ws(s, i);
+                if (!json_read_string(s, i, b)) return false;
+                json_skip_ws(s, i);
+                if (i >= s.size() || s[i] != ']') return false;
+                ++i;
+                merges.emplace_back(std::move(a), std::move(b));
+            }
+            else
+            {
+                ++i;
+            }
+        }
+        return false;
     }
 } // namespace
 
@@ -494,15 +865,34 @@ bool ClipTokenizer::load(const std::string &path)
     std::fread(&json[0], 1, sz, f);
     std::fclose(f);
 
-    std::string model_obj = json_find_object(json, "model");
-    if (model_obj.empty())
+    size_t p = 0;
+    json_skip_ws(json, p);
+    if (p >= json.size() || json[p] != '{')
         return false;
-    std::string vocab_obj = json_find_object(model_obj, "vocab");
-    if (vocab_obj.empty())
+
+    // Descend to "model": { ... }
+    size_t model_start = 0;
+    if (!json_find_key(json, p, "model", model_start))
         return false;
-    parse_vocab(vocab_obj, vocab);
-    parse_merges(model_obj, merges);
-    return !vocab.empty();
+    json_skip_ws(json, model_start);
+    if (model_start >= json.size() || json[model_start] != '{')
+        return false;
+
+    // Descend to "model.vocab": { ... }
+    size_t vocab_start = 0;
+    if (!json_find_key(json, model_start, "vocab", vocab_start))
+        return false;
+    if (!clip_parse_vocab_object(json, vocab_start, vocab))
+        return false;
+
+    // Descend to "model.merges": [ ... ]
+    size_t merges_start = 0;
+    if (!json_find_key(json, model_start, "merges", merges_start))
+        return false;
+    if (!clip_parse_merges_array(json, merges_start, merges))
+        return false;
+
+    return !vocab.empty() && !merges.empty();
 }
 
 // CLIP byte-level unicode mapping (same as GPT-2)
@@ -559,6 +949,39 @@ std::string ClipTokenizer::bytes_to_unicode(unsigned char c)
     return out;
 }
 
+namespace
+{
+    // Lazy rank table cached per merges vector. The engine loads exactly
+    // one tokenizer per process lifetime, so a single cached table is
+    // sufficient. Key format is  "a\0b"  (first token, NUL, second token)
+    // to avoid needing a custom hash for std::pair<string,string>.
+    struct BpeRankTable
+    {
+        const void *owner = nullptr;
+        std::unordered_map<std::string, int> rank;
+    };
+    inline BpeRankTable &bpe_rank_table_for(const std::vector<std::pair<std::string,std::string>> &merges)
+    {
+        static BpeRankTable table;
+        if (table.owner != (const void *)&merges)
+        {
+            table.owner = (const void *)&merges;
+            table.rank.clear();
+            table.rank.reserve(merges.size() * 2);
+            for (size_t i = 0; i < merges.size(); ++i)
+            {
+                std::string key;
+                key.reserve(merges[i].first.size() + 1 + merges[i].second.size());
+                key.append(merges[i].first);
+                key.push_back('\0');
+                key.append(merges[i].second);
+                table.rank.emplace(std::move(key), (int)i);
+            }
+        }
+        return table;
+    }
+}
+
 std::string ClipTokenizer::bpe(const std::string &token) const
 {
     if (token.empty())
@@ -583,31 +1006,32 @@ std::string ClipTokenizer::bpe(const std::string &token) const
         chars.back() += "</w>";
 
     // BPE merge loop
+    auto &rank_table = bpe_rank_table_for(merges).rank;
     while (chars.size() > 1)
     {
-        // Find the highest-priority merge pair
+        // Find the highest-priority merge pair (lowest rank number).
         int best_rank = -1;
         size_t best_pos = 0;
+        std::string key;
         for (size_t k = 0; k + 1 < chars.size(); ++k)
         {
-            std::string pair_a = chars[k];
-            std::string pair_b = chars[k + 1];
-            for (int r = 0; r < (int)merges.size(); ++r)
+            key.clear();
+            key.reserve(chars[k].size() + 1 + chars[k + 1].size());
+            key.append(chars[k]);
+            key.push_back('\0');
+            key.append(chars[k + 1]);
+            auto it = rank_table.find(key);
+            if (it == rank_table.end())
+                continue;
+            int r = it->second;
+            if (best_rank < 0 || r < best_rank)
             {
-                if (merges[r].first == pair_a && merges[r].second == pair_b)
-                {
-                    if (best_rank < 0 || r < best_rank)
-                    {
-                        best_rank = r;
-                        best_pos = k;
-                    }
-                    break;
-                }
+                best_rank = r;
+                best_pos = k;
             }
         }
         if (best_rank < 0)
             break;
-        // Merge
         chars[best_pos] += chars[best_pos + 1];
         chars.erase(chars.begin() + best_pos + 1);
     }
@@ -622,34 +1046,223 @@ std::string ClipTokenizer::bpe(const std::string &token) const
     return result;
 }
 
+namespace
+{
+    // ---- UTF-8 helpers ----------------------------------------------------
+    // Read a single UTF-8 codepoint starting at bytes[pos]. Advances pos.
+    // On malformed input, treats each stray byte as its own codepoint.
+    static inline uint32_t utf8_next(const std::string &s, size_t &pos)
+    {
+        if (pos >= s.size())
+            return 0;
+        unsigned char c = (unsigned char)s[pos];
+        uint32_t cp;
+        int extra;
+        if (c < 0x80) { cp = c; extra = 0; }
+        else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; extra = 1; }
+        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; extra = 2; }
+        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; extra = 3; }
+        else { pos += 1; return c; }
+        if (pos + 1 + extra > s.size()) { pos += 1; return c; }
+        for (int k = 0; k < extra; ++k)
+        {
+            unsigned char nc = (unsigned char)s[pos + 1 + k];
+            if ((nc & 0xC0) != 0x80) { pos += 1; return c; }
+            cp = (cp << 6) | (nc & 0x3F);
+        }
+        pos += 1 + extra;
+        return cp;
+    }
+
+    // ASCII category tables adequate for CLIP (which lowercases + NFC first).
+    // For the non-ASCII plane we conservatively call every non-ASCII codepoint
+    // a "letter" (matches \p{L} for the great majority of prompts; wrong for
+    // stray punctuation but harmless because ByteLevel + BPE will still map
+    // known n-grams correctly).
+    static inline bool cp_is_space(uint32_t cp)
+    {
+        return cp == 0x20 || cp == 0x09 || cp == 0x0A || cp == 0x0B ||
+               cp == 0x0C || cp == 0x0D || cp == 0xA0;
+    }
+    static inline bool cp_is_letter(uint32_t cp)
+    {
+        if (cp < 0x80)
+            return (cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z') || cp == '_';
+        // Treat any non-ASCII printable as a letter for splitting purposes.
+        return true;
+    }
+    static inline bool cp_is_digit(uint32_t cp)
+    {
+        return cp >= '0' && cp <= '9';
+    }
+    static inline void cp_encode_utf8(uint32_t cp, std::string &out)
+    {
+        if (cp < 0x80) { out += (char)cp; }
+        else if (cp < 0x800)
+        {
+            out += (char)(0xC0 | (cp >> 6));
+            out += (char)(0x80 | (cp & 0x3F));
+        }
+        else if (cp < 0x10000)
+        {
+            out += (char)(0xE0 | (cp >> 12));
+            out += (char)(0x80 | ((cp >> 6) & 0x3F));
+            out += (char)(0x80 | (cp & 0x3F));
+        }
+        else
+        {
+            out += (char)(0xF0 | (cp >> 18));
+            out += (char)(0x80 | ((cp >> 12) & 0x3F));
+            out += (char)(0x80 | ((cp >> 6) & 0x3F));
+            out += (char)(0x80 | (cp & 0x3F));
+        }
+    }
+
+    // Bug fix (プロンプト無視): CLIP のプリトークナイザ (HuggingFace の
+    //   Regex(r"'s|'t|'re|'ve|'m|'ll|'d|[\p{L}]+|[\p{N}]|[^\s\p{L}\p{N}]+"))
+    // と等価な分割を行う。旧実装は空白のみで分割していたため "a red, cute cat" が
+    //   "a"  "red,"  "cute"  "cat"
+    // に化け、"red,</w>" が語彙に存在せずに silent-drop されていた。正しくは
+    //   "a"  "red"  ","  "cute"  "cat"
+    // の 5 断片に割り、それぞれを ByteLevel 経由で BPE にかける。
+    static std::vector<std::string> pre_tokenize_clip(const std::string &lower_text)
+    {
+        std::vector<std::string> pieces;
+        const std::string &s = lower_text;
+        size_t i = 0;
+        while (i < s.size())
+        {
+            // Skip whitespace runs (regex removes them).
+            size_t save = i;
+            uint32_t cp = utf8_next(s, i);
+            if (cp_is_space(cp))
+                continue;
+            i = save; // rewind
+
+            // Try apostrophe contractions: 's 't 're 've 'm 'll 'd
+            if ((unsigned char)s[i] == '\'' && i + 1 < s.size())
+            {
+                static const char *contractions[] = {"'s","'t","'re","'ve","'m","'ll","'d"};
+                bool matched = false;
+                for (const char *c : contractions)
+                {
+                    size_t L = std::strlen(c);
+                    if (i + L <= s.size() && s.compare(i, L, c) == 0)
+                    {
+                        pieces.emplace_back(c);
+                        i += L;
+                        matched = true;
+                        break;
+                    }
+                }
+                if (matched)
+                    continue;
+            }
+
+            // Peek codepoint category.
+            size_t start = i;
+            uint32_t first = utf8_next(s, i);
+
+            if (cp_is_letter(first))
+            {
+                // Consume run of letters.
+                while (i < s.size())
+                {
+                    size_t sv = i;
+                    uint32_t nc = utf8_next(s, i);
+                    if (!cp_is_letter(nc)) { i = sv; break; }
+                }
+                pieces.emplace_back(s.substr(start, i - start));
+            }
+            else if (cp_is_digit(first))
+            {
+                // Single digit per token (CLIP's [\p{N}] is not +, it splits each digit).
+                pieces.emplace_back(s.substr(start, i - start));
+            }
+            else
+            {
+                // Run of non-space, non-letter, non-digit.
+                while (i < s.size())
+                {
+                    size_t sv = i;
+                    uint32_t nc = utf8_next(s, i);
+                    if (cp_is_space(nc) || cp_is_letter(nc) || cp_is_digit(nc))
+                    {
+                        i = sv;
+                        break;
+                    }
+                }
+                pieces.emplace_back(s.substr(start, i - start));
+            }
+        }
+        return pieces;
+    }
+} // namespace
+
 std::vector<int> ClipTokenizer::encode_single(const std::string &text) const
 {
     std::vector<int> ids;
     ids.push_back(BOS_ID);
 
-    // Lowercase + simple whitespace split into words
+    // NFC would go here in HuggingFace; skipped because prompts are typically
+    // already normalized and MNN's CLIP is trained on lowercased text.
     std::string lower;
+    lower.reserve(text.size());
     for (unsigned char c : text)
         lower += (char)std::tolower(c);
 
-    std::istringstream ss(lower);
-    std::string word;
-    while (ss >> word)
+    // Bug fix (プロンプト無視): CLIP プリトークナイザに合わせて分割する。
+    //   詳細は pre_tokenize_clip() のコメント参照。
+    auto pieces = pre_tokenize_clip(lower);
+
+    for (const auto &piece : pieces)
     {
-        // Byte-level encode each character
+        if (piece.empty())
+            continue;
+
+        // Byte-level encode: each raw byte -> unicode escape (CLIP/GPT-2 shared table)
         std::string byte_word;
-        for (unsigned char c : word)
+        byte_word.reserve(piece.size() * 2);
+        for (unsigned char c : piece)
             byte_word += bytes_to_unicode(c);
 
-        // BPE
+        // BPE merge
         std::string bpe_result = bpe(byte_word);
+
+        // Split on space; look up each sub-token in vocab. If a sub-token is
+        // missing, fall back one level: replace it with its per-character
+        // ByteLevel sub-tokens (which are guaranteed to exist as individual
+        // codepoints in the CLIP vocab). This preserves at least the "shape"
+        // of the input instead of silently dropping it.
         std::istringstream bpe_ss(bpe_result);
         std::string sub;
         while (bpe_ss >> sub)
         {
             auto it = vocab.find(sub);
             if (it != vocab.end())
+            {
                 ids.push_back(it->second);
+                continue;
+            }
+            // Fallback: emit each unicode-encoded byte one by one.
+            // sub is a UTF-8 string of ByteLevel-escaped codepoints; iterate
+            // codepoints and look them up individually.
+            size_t p = 0;
+            while (p < sub.size())
+            {
+                size_t before = p;
+                uint32_t cp = utf8_next(sub, p);
+                std::string one;
+                cp_encode_utf8(cp, one);
+                auto it2 = vocab.find(one);
+                if (it2 != vocab.end())
+                    ids.push_back(it2->second);
+                // If even the single codepoint is missing, we accept the loss
+                // (should not happen for CLIP vocab which contains all 256
+                // ByteLevel codepoints). before is unused; kept to make the
+                // step semantics obvious to future readers.
+                (void)before;
+            }
         }
     }
 
@@ -659,6 +1272,27 @@ std::vector<int> ClipTokenizer::encode_single(const std::string &text) const
         ids.resize(MAX_LEN);
     while ((int)ids.size() < MAX_LEN)
         ids.push_back(EOS_ID);
+
+    // Diagnostic: log the first few resolved token ids for the initial few
+    // prompts of the session so a logcat trace can immediately reveal whether
+    // BPE ended up at plausible (>1000, not just <=256) vocab positions.
+#if defined(MNN_SD_HAS_MNN)
+    {
+        static int diag_count = 0;
+        if (diag_count < 4)
+        {
+            ++diag_count;
+            char buf[512];
+            int off = std::snprintf(buf, sizeof(buf),
+                                    "encode_single: text=\"%.60s\" ids[0..15]=",
+                                    text.c_str());
+            for (int k = 0; k < 16 && k < (int)ids.size() && off < (int)sizeof(buf) - 12; ++k)
+                off += std::snprintf(buf + off, sizeof(buf) - off, "%d ", ids[k]);
+            PROBE_LOG("%s", buf);
+        }
+    }
+#endif
+
     return ids;
 }
 
@@ -997,31 +1631,65 @@ extern "C"
                 for (int d = 0; d < emb_dim; ++d)
                     dst[d] = te[d] + pe[d];
             }
+
+            // Diagnostic: sum-of-squares of row 1 and row 5 to make sure the
+            // embedding rows carry sensible float values (should be O(dim) for
+            // a healthy row; near-zero or huge/NaN indicate the token table
+            // was misread as the wrong dtype).
+            static int diag_count = 0;
+            if (diag_count < 4)
+            {
+                ++diag_count;
+                auto row_norm2 = [&](int p) -> double
+                {
+                    if (p >= seq_len) return 0.0;
+                    double s = 0.0;
+                    const float *row = out.data() + (size_t)p * emb_dim;
+                    for (int d = 0; d < emb_dim; ++d) s += (double)row[d] * (double)row[d];
+                    return s;
+                };
+                PROBE_LOG("build_side_embedding: side=%d row1_norm2=%.3f row5_norm2=%.3f (emb_dim=%d, vocab=%d)",
+                          side, row_norm2(1), row_norm2(5), emb_dim,
+                          engine->token_emb_vocab_size);
+            }
         };
 
         // --- 2. CLIP text encoder: explicit resize to {1, 77, emb_dim}, then run
         // twice (once per side). Concatenate outputs into text_emb [2, 77, emb_dim]. ---
+        //
+        // Bug fix (プロンプト無視の主原因): 以前は入力名として "input_ids" を
+        //   最優先で探し、見つかればそこに float 埋め込みを流し込んでいた。
+        //   しかし xororz/sd-mnn 形式の CLIP モデルは入力名が "input_embedding"
+        //   (float32, [1, 77, emb_dim]) で、"input_ids" は存在しない。
+        //   もし変換違いのモデルで "input_ids" (int32, [1, 77]) が来ると、
+        //   int32 テンソルに float の埋め込みを memcpy し shape も破壊するため、
+        //   CLIP はプロンプトと無関係な出力を返し、UNet が「意味のない条件」で
+        //   デノイズを回してしまう → 生成画像がプロンプトを無視する。
+        //
+        //   対処: 常に "input_embedding" を優先し、見つからない場合のみ他候補に
+        //   フォールバックする。int32 の input_ids エントリしか無いモデルは
+        //   ここではサポート対象外 (本エンジンは token_emb.bin/pos_emb.bin で
+        //   embedding を事前計算する xororz 形式に一本化)。
         auto *clip_net = engine->clip_interpreter.get();
         MNN::Tensor *clip_input = nullptr;
         const auto &all_in = clip_net->getSessionInputAll(engine->clip_session);
-        if (all_in.find("input_ids") != all_in.end())
-        {
-            clip_input = all_in.at("input_ids");
-        }
-        else if (all_in.find("input_embedding") != all_in.end())
+        if (all_in.find("input_embedding") != all_in.end())
         {
             clip_input = all_in.at("input_embedding");
         }
-        else if (!all_in.empty())
+        else if (all_in.size() == 1)
         {
+            // Single-input CLIP graph: safe to treat as input_embedding.
             clip_input = all_in.begin()->second;
+            PROBE_LOG("CLIP: only one input tensor '%s' - assuming input_embedding layout",
+                      all_in.begin()->first.c_str());
         }
-        if (!clip_input)
+        else
         {
             if (out_error)
                 std::snprintf(out_error->message, sizeof(out_error->message),
-                              "CLIP: input tensor not found");
-            return MNN_SD_ERR_INTERNAL;
+                              "CLIP: 'input_embedding' tensor not found. Model must be converted with the xororz/sd-mnn embedding-input CLIP graph.");
+            return MNN_SD_ERR_MODEL_INVALID;
         }
         clip_net->resizeTensor(clip_input, {1, seq_len, emb_dim});
         clip_net->resizeSession(engine->clip_session);
@@ -1032,6 +1700,11 @@ extern "C"
         {
             build_side_embedding(side, side_emb);
 
+            // Bug fix: 埋め込みは必ず side_emb.size() == elementSize() のはずだが、
+            //   万一 resize が失敗しても静かに壊れないように double-check し、
+            //   OpenCL バックエンドでも host<float>() が backing buffer を取れる
+            //   ケースは直接書き込む (xororz と同じ経路)。取れない場合は従来通り
+            //   一時ホストテンソル経由で copyFromHostTensor に落とす。
             MNN::Tensor host(clip_input, MNN::Tensor::CAFFE);
             if ((size_t)host.elementSize() != side_emb.size())
             {
@@ -1086,9 +1759,16 @@ extern "C"
         }
         engine->clip_interpreter.reset();
 
+        // Bug fix (進捗が 3→6 に跳ぶ): 以前は CLIP 完了時に total=steps+2、
+        //   UNet 各ステップで total=steps、VAE 完了で total=steps+2 と
+        //   通知していたため、UI 側の (step/total)*requested 正規化で
+        //   ステップ表示がまたぎ跳ねていた。全通知で total_steps を
+        //   同じ値 (=steps) に統一し、CLIP と VAE のイベントは進捗更新
+        //   ではなく端点通知として扱う (step=0 のまま送るとリセット扱いに
+        //   なる端末があるため、step は 0 に固定して total=steps とする)。
         if (on_progress)
         {
-            MnnSdProgress p{1, steps + 2, 0.0f};
+            MnnSdProgress p{0, steps, 0.0f};
             on_progress(&p, progress_user_data);
         }
 
@@ -1102,17 +1782,64 @@ extern "C"
                 v = dist(rng);
         }
 
-        // --- 4. Build PNDM timesteps ---
-        std::vector<int> timesteps(steps);
-        const int step_size = 1000 / steps;
+        // --- 4. Build PLMS timesteps (Diffusers PNDMScheduler, skip_prk_steps=True) ---
+        //
+        // Bug fix (見た目 1-2 ステップにしかならない問題):
+        //   Diffusers の PLMS スケジュールは N ステップ要求に対して N+1 要素の
+        //   timesteps を作る。末尾から 2 番目 (Diffusers 表記の _timesteps[-2])
+        //   を 1 回複製し、逆順に並べる:
+        //     _timesteps        = [1, k, 2k, ..., (N-1)k] + 1   (N entries)
+        //     plms_timesteps    = concat(_timesteps[:-1],
+        //                                _timesteps[-2:-1],
+        //                                _timesteps[-1:])[::-1]  (N+1 entries)
+        //   N=7 の例:
+        //     _timesteps       = [1, 143, 285, 427, 569, 711, 853]
+        //     plms_timesteps   = [853, 711, 711, 569, 427, 285, 143, 1]
+        //
+        //   複製された 711 は counter=0 と counter=1 が同一 (853 -> 711) の
+        //   遷移を担うことを意味する。counter=0 は前進サンプルを保存し、
+        //   counter=1 はモデル出力の平均を取って同じ遷移をやり直す (多段線形法
+        //   の bootstrap)。counter=2 以降が本来の "1 solver step ≒ 1 timestep"。
+        //
+        //   旧実装は N ステップ要求で N 要素しか作らなかったため、bootstrap の
+        //   分だけ実効的な denoise 段数が 1 少なくなり、7 ステップ設定が
+        //   Diffusers 相当の 6 ステップとして走っていた。少ステップ (7〜10) 領域
+        //   ではこの 1 ステップ差が仕上がりに大きく効く。
+
+        std::vector<int> _timesteps(steps);
+        const int step_ratio = 1000 / steps;
         for (int i = 0; i < steps; ++i)
         {
-            const int index = steps - 1 - i;
-            timesteps[i] = 1 + index * step_size;
+            _timesteps[i] = 1 + i * step_ratio; // ascending order, includes +1 (steps_offset)
         }
-        if (steps > 1 && timesteps.back() != 1)
+
+        std::vector<int> timesteps;
+        timesteps.reserve(steps + 1);
+        // Descending order of Diffusers' plms_timesteps:
+        //   [_timesteps[-1], _timesteps[-2], _timesteps[-2], _timesteps[-3], ..., _timesteps[0]]
+        // i.e. append _timesteps[-1], then _timesteps[-2] twice, then rest in reverse.
+        if (steps >= 1) timesteps.push_back(_timesteps.back());          // _timesteps[-1]
+        if (steps >= 2) timesteps.push_back(_timesteps[steps - 2]);      // _timesteps[-2] (dup #1)
+        for (int i = steps - 2; i >= 0; --i)
         {
-            timesteps.back() = 1;
+            timesteps.push_back(_timesteps[i]);                          // rest (includes _timesteps[-2] again)
+        }
+        // Guard: if only 1 step was requested, run a single 853->0 transition.
+        if (steps == 1)
+        {
+            timesteps.assign({_timesteps[0]});
+        }
+
+        {
+            char buf[512];
+            int off = std::snprintf(buf, sizeof(buf), "PLMS timesteps (%zu):", timesteps.size());
+            for (size_t k = 0; k < timesteps.size() && off < (int)sizeof(buf) - 12; ++k)
+                off += std::snprintf(buf + off, sizeof(buf) - off, " %d", timesteps[k]);
+            PROBE_LOG("%s", buf);
+            if (steps < 15)
+            {
+                PROBE_LOG("NOTE: steps=%d is low for SD1.5; consider steps>=20 for a clean image.", steps);
+            }
         }
 
         // --- 4b. Load UNet just-in-time (after CLIP has been freed) ---
@@ -1216,7 +1943,8 @@ extern "C"
             return true;
         };
 
-        for (int i = 0; i < steps; ++i)
+        const int num_solver_iters = (int)timesteps.size();
+        for (int i = 0; i < num_solver_iters; ++i)
         {
             if (engine->cancel_requested)
             {
@@ -1244,9 +1972,17 @@ extern "C"
             latent = pndm_step(latent, combined, i, timesteps,
                                engine->alphas_cumprod, ets, pndm_prev);
 
+            // Progress: report user-visible steps out of `steps`, not
+            // `timesteps.size()` (which is steps+1 to include the PLMS
+            // bootstrap iteration). Fold counter=0 and counter=1 into a
+            // single "step 1 of N" from the user's point of view.
             if (on_progress)
             {
-                MnnSdProgress p{i + 1, steps, 0.0f};
+                int visible_step;
+                if (i <= 1) visible_step = 1;             // bootstrap counts as first step
+                else        visible_step = i;             // i=2 -> step 2, ..., i=steps -> step steps
+                if (visible_step > steps) visible_step = steps;
+                MnnSdProgress p{visible_step, steps, 0.0f};
                 on_progress(&p, progress_user_data);
             }
         }
@@ -1346,7 +2082,8 @@ extern "C"
 
         if (on_progress)
         {
-            MnnSdProgress p{steps + 2, steps + 2, 0.0f};
+            // VAE 完了通知: step は steps に固定 (100%)、total_steps も steps。
+            MnnSdProgress p{steps, steps, 0.0f};
             on_progress(&p, progress_user_data);
         }
         return MNN_SD_OK;
