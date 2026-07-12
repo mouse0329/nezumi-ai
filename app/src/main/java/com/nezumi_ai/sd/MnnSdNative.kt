@@ -71,9 +71,10 @@ object MnnSdNative {
         steps: Int,
         cfg: Float,
         seed: Long,
+        scheduler: Int,
         progressListener: NativeProgressListener? = null
     ): ByteArray? = try {
-        generateNative(handle, prompt, negativePrompt, width, height, steps, cfg, seed, progressListener)
+        generateNative(handle, prompt, negativePrompt, width, height, steps, cfg, seed, scheduler, progressListener)
     } catch (e: UnsatisfiedLinkError) {
         Log.e(TAG, "generate() not found in libmnn_sd_jni.so — rebuild required: ${e.message}")
         null
@@ -88,6 +89,7 @@ object MnnSdNative {
         steps: Int,
         cfg: Float,
         seed: Long,
+        scheduler: Int,
         progressListener: NativeProgressListener?
     ): ByteArray?
 
@@ -95,4 +97,8 @@ object MnnSdNative {
 
     const val BACKEND_CPU = 0
     const val BACKEND_OPENCL = 1
+
+    const val SCHEDULER_EULER = 0
+    const val SCHEDULER_DDIM = 1
+    const val SCHEDULER_DPM = 2
 }

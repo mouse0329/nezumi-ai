@@ -38,6 +38,7 @@ import kotlinx.coroutines.withContext
 import com.nezumi_ai.sd.GenerationQueue
 import com.nezumi_ai.sd.GenerationQueueItem
 import com.nezumi_ai.sd.ImageGenerationMetadata
+import com.nezumi_ai.sd.SdScheduler
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.isActive
 import org.json.JSONObject
@@ -225,6 +226,9 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private val _seed = MutableStateFlow(-1L)
     val seed: StateFlow<Long> = _seed.asStateFlow()
 
+    private val _scheduler = MutableStateFlow(SdScheduler.fromId(PreferencesHelper.getSdScheduler(application)))
+    val scheduler: StateFlow<SdScheduler> = _scheduler.asStateFlow()
+
     private val _resultBitmap = MutableStateFlow<Bitmap?>(null)
     val resultBitmap: StateFlow<Bitmap?> = _resultBitmap.asStateFlow()
 
@@ -338,6 +342,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
     fun setSeed(s: Long) {
         _seed.value = s
+    }
+
+    fun setScheduler(scheduler: SdScheduler) {
+        _scheduler.value = scheduler
+        PreferencesHelper.setSdScheduler(getApplication(), scheduler.id)
     }
 
     private var isCancelling = false
@@ -516,6 +525,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 steps = totalSteps,
                 cfg = _cfg.value,
                 seed = _seed.value,
+                scheduler = _scheduler.value,
                 onProgress = { step, steps, time ->
                     // 同じ step の連続更新で不必要な recomposition を避ける
                     val clamped = step.coerceAtMost(totalSteps)
@@ -803,6 +813,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         val validCount = count.coerceIn(1, 10)
         val basePrompt = _prompt.value.trim()
         val baseNegPrompt = _negativePrompt.value
+        val baseSeed = if (seed >= 0) seed else _seed.value
+        val baseScheduler = _scheduler.value.id
 
         if (basePrompt.isEmpty()) {
             _snackbar.value = "プロンプトを入力してください"
@@ -811,8 +823,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
         val queueItems = mutableListOf<GenerationQueueItem>()
         for (idx in 1..validCount) {
-            val itemSeed = if (seed >= 0) seed + idx else -1L
-            
+            val itemSeed = if (baseSeed >= 0) baseSeed + (idx - 1) else -1L
+
             queueItems.add(
                 GenerationQueueItem(
                     count = idx,
@@ -820,7 +832,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     negativePrompt = baseNegPrompt,
                     steps = _steps.value,
                     cfg = _cfg.value,
-                    seed = itemSeed
+                    seed = itemSeed,
+                    scheduler = baseScheduler
                 )
             )
         }
@@ -1029,6 +1042,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 steps = item.steps,
                 cfg = item.cfg,
                 seed = item.seed,
+                scheduler = SdScheduler.fromId(item.scheduler),
                 onProgress = { step, totalSteps, _ ->
                     val clamped = step.coerceAtMost(totalSteps)
                     if (_currentStep.value != clamped) {
@@ -1130,6 +1144,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             put("steps", metadata.steps)
             put("cfg", metadata.cfg)
             put("seed", metadata.seed)
+            put("scheduler", metadata.scheduler)
             put("width", metadata.width)
             put("height", metadata.height)
             put("backend", metadata.backend)
@@ -1208,6 +1223,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 steps = obj.getInt("steps"),
                 cfg = obj.getDouble("cfg").toFloat(),
                 seed = obj.getLong("seed"),
+                scheduler = obj.optString("scheduler", SdScheduler.DEFAULT.id),
                 width = obj.getInt("width"),
                 height = obj.getInt("height"),
                 backend = obj.getString("backend"),
@@ -1228,6 +1244,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         _negativePrompt.value = item.negativePrompt
         _steps.value = item.steps
         _cfg.value = item.cfg
+        _seed.value = item.seed
+        _scheduler.value = SdScheduler.fromId(item.scheduler)
     }
 
     // ==========================================

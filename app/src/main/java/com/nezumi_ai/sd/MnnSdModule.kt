@@ -128,6 +128,7 @@ class MnnSdModule(private val context: Context) {
         steps: Int,
         cfg: Float,
         seed: Long,
+        scheduler: SdScheduler = SdScheduler.DEFAULT,
         onProgress: (Int, Int, Float) -> Unit
     ): Bitmap? = withContext(Dispatchers.IO) {
         if (com.nezumi_ai.BuildConfig.SAFETY_PROMPT_FILTER_ENABLED &&
@@ -180,6 +181,7 @@ class MnnSdModule(private val context: Context) {
             steps = steps,
             cfg = cfg,
             seed = seed,
+            scheduler = scheduler.nativeValue,
             progressListener = progressBridge
         )
 
@@ -203,6 +205,7 @@ class MnnSdModule(private val context: Context) {
         steps: Int,
         cfg: Float,
         seed: Long,
+        scheduler: SdScheduler = SdScheduler.DEFAULT,
         onProgress: (Int, Int, Float) -> Unit
     ): Pair<Bitmap?, ImageGenerationMetadata?>? = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
@@ -220,6 +223,7 @@ class MnnSdModule(private val context: Context) {
             steps = steps,
             cfg = cfg,
             seed = resolvedSeed,
+            scheduler = scheduler,
             onProgress = onProgress
         )
 
@@ -232,6 +236,7 @@ class MnnSdModule(private val context: Context) {
                 steps = steps,
                 cfg = cfg,
                 seed = resolvedSeed,
+                scheduler = scheduler.id,
                 width = width,
                 height = height,
                 backend = currentBackend ?: "mnn",

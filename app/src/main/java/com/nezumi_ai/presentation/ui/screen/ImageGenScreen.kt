@@ -38,6 +38,7 @@ import com.nezumi_ai.presentation.viewmodel.ImageGenViewModelFactory
 import com.nezumi_ai.sd.GenerationQueue
 import com.nezumi_ai.sd.GenerationQueueItem
 import com.nezumi_ai.sd.ImageGenerationMetadata
+import com.nezumi_ai.sd.SdScheduler
 
 data class GeneratedImage(val bitmap: Bitmap, val prompt: String, val timestamp: Long)
 
@@ -144,6 +145,8 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
     val prompt by vm.prompt.collectAsState()
     val negPrompt by vm.negativePrompt.collectAsState()
     val sizePx by vm.sizePx.collectAsState()
+    val seed by vm.seed.collectAsState()
+    val scheduler by vm.scheduler.collectAsState()
     val loading by vm.loading.collectAsState()
     val resultBitmap by vm.resultBitmap.collectAsState()
     val currentStep by vm.currentStep.collectAsState()
@@ -326,6 +329,86 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                     }
                 }
             }
+        }
+
+        FieldGroup("スケジューラ") {
+            val schedulerOptions = remember { SdScheduler.values().toList() }
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF2A2A2A)).padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                schedulerOptions.chunked(2).forEach { rowOptions ->
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowOptions.forEach { option ->
+                            SchedulerChip(
+                                text = option.displayName,
+                                active = scheduler == option,
+                                onClick = { vm.setScheduler(option) }
+                            )
+                        }
+                        if (rowOptions.size < 2) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+                Text(
+                    "※ DPM++ 2M は JNI の MNN 経路では現在 DPM にフォールバックし、HTTP 互換経路では指定値をそのまま送信します。",
+                    color = Color(0xFF999999),
+                    fontSize = 11.sp
+                )
+            }
+        }
+
+        FieldGroup("シード") {
+            var seedInput by remember(seed) { mutableStateOf(if (seed < 0) "" else seed.toString()) }
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = seedInput,
+                    onValueChange = { value ->
+                        seedInput = value
+                        if (value.isBlank()) {
+                            vm.setSeed(-1L)
+                        } else {
+                            value.toLongOrNull()?.let(vm::setSeed)
+                        }
+                    },
+                    singleLine = true,
+                    placeholder = { Text("空欄でランダム", color = Color(0xFF666666)) },
+                    modifier = Modifier.weight(1f),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedContainerColor = Color(0xFF2A2A2A),
+                        unfocusedContainerColor = Color(0xFF2A2A2A),
+                        focusedBorderColor = Color(0xFF0084FF),
+                        unfocusedBorderColor = Color(0xFF444444)
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                )
+                Button(
+                    onClick = { vm.setSeed(-1L) },
+                    modifier = Modifier.height(56.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF666666)),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("ランダム", fontSize = 12.sp)
+                }
+            }
+            Text(
+                if (seed < 0) "現在: ランダム" else "現在: $seed",
+                color = Color(0xFF999999),
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 6.dp)
+            )
         }
         
         // ============ 一括生成キュー機能 ============
@@ -550,6 +633,24 @@ fun RowScope.SizeTab(text: String, active: Boolean, onClick: () -> Unit) {
             text,
             color = if (active) Color.White else Color(0xFF999999),
             fontSize = 13.sp,
+            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal
+        )
+    }
+}
+
+@Composable
+fun RowScope.SchedulerChip(text: String, active: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier.weight(1f).clip(RoundedCornerShape(7.dp))
+            .background(if (active) Color(0xFF0084FF) else Color(0xFF1A1A1A))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text,
+            color = if (active) Color.White else Color(0xFF999999),
+            fontSize = 12.sp,
             fontWeight = if (active) FontWeight.Bold else FontWeight.Normal
         )
     }

@@ -3,6 +3,7 @@ package com.nezumi_ai.utils
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.appcompat.app.AppCompatDelegate
+import com.nezumi_ai.sd.SdScheduler
 import java.security.MessageDigest
 
 object PreferencesHelper {
@@ -14,6 +15,7 @@ object PreferencesHelper {
     private const val KEY_SD_BACKEND = "sd_backend"
     private const val KEY_SD_STEPS = "sd_steps"
     private const val KEY_SD_CFG = "sd_cfg"
+    private const val KEY_SD_SCHEDULER = "sd_scheduler"
     private const val KEY_CURRENT_PRESET_ID = "current_preset_id"
     private const val KEY_BRAVE_SEARCH_API_KEY = "brave_search_api_key"
     private const val KEY_ENABLE_THINKING = "enable_thinking"
@@ -136,6 +138,16 @@ object PreferencesHelper {
 
     fun setSdCfg(context: Context, cfg: Float) {
         getSharedPreferences(context).edit().putFloat(KEY_SD_CFG, cfg.coerceIn(1f, 20f)).apply()
+    }
+
+    fun getSdScheduler(context: Context): String {
+        val raw = getSharedPreferences(context).getString(KEY_SD_SCHEDULER, SdScheduler.DEFAULT.id)
+        return SdScheduler.fromId(raw).id
+    }
+
+    fun setSdScheduler(context: Context, scheduler: String) {
+        val normalized = SdScheduler.fromId(scheduler).id
+        getSharedPreferences(context).edit().putString(KEY_SD_SCHEDULER, normalized).apply()
     }
 
     fun getCurrentPresetId(context: Context): String {

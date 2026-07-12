@@ -496,6 +496,7 @@ class LocalDreamModule(private val context: Context) {
         steps: Int,
         cfg: Float,
         seed: Long,
+        scheduler: SdScheduler = SdScheduler.DEFAULT,
         onProgress: (Int, Int, Float) -> Unit
     ): Bitmap? = withContext(Dispatchers.IO) {
         // ── 前段：テキストガード ──────────────────────────────────
@@ -545,6 +546,7 @@ class LocalDreamModule(private val context: Context) {
                 steps = steps,
                 cfg = cfg,
                 seed = seed,
+                scheduler = scheduler,
                 onProgress = onProgress
             )
         }
@@ -574,7 +576,7 @@ class LocalDreamModule(private val context: Context) {
                 put("steps", steps)
                 put("cfg", cfg)
                 put("seed", if (seed < 0) (Math.random() * Int.MAX_VALUE).toInt() else seed)
-                put("scheduler", "dpm")
+                put("scheduler", scheduler.httpValue)
                 put("use_opencl", effectiveUseOpenCL)
                 put("show_diffusion_process", false)
             }
@@ -785,6 +787,7 @@ class LocalDreamModule(private val context: Context) {
         steps: Int,
         cfg: Float,
         seed: Long,
+        scheduler: SdScheduler = SdScheduler.DEFAULT,
         onProgress: (Int, Int, Float) -> Unit
     ): Pair<Bitmap?, ImageGenerationMetadata?>? = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
@@ -802,6 +805,7 @@ class LocalDreamModule(private val context: Context) {
             steps = steps,
             cfg = cfg,
             seed = resolvedSeed,
+            scheduler = scheduler,
             onProgress = onProgress
         )
 
@@ -815,6 +819,7 @@ class LocalDreamModule(private val context: Context) {
                 steps = steps,
                 cfg = cfg,
                 seed = resolvedSeed,
+                scheduler = scheduler.id,
                 width = width,
                 height = height,
                 backend = currentBackend ?: "unknown",

@@ -63,6 +63,20 @@ namespace
         }
     }
 
+    MnnSdScheduler to_scheduler(jint scheduler)
+    {
+        switch (scheduler)
+        {
+        case 0:
+            return MNN_SD_SCHEDULER_EULER;
+        case 1:
+            return MNN_SD_SCHEDULER_DDIM;
+        case 2:
+        default:
+            return MNN_SD_SCHEDULER_DPM;
+        }
+    }
+
 } // namespace
 
 extern "C"
@@ -167,6 +181,7 @@ extern "C"
         jint steps,
         jfloat cfg,
         jlong seed,
+        jint scheduler,
         jobject progress_cb)
     {
         const char *prompt_utf = env->GetStringUTFChars(prompt, nullptr);
@@ -180,7 +195,7 @@ extern "C"
         params.steps = steps;
         params.cfg_scale = cfg;
         params.seed = seed;
-        params.scheduler = MNN_SD_SCHEDULER_DPM;
+        params.scheduler = to_scheduler(scheduler);
         params.use_opencl = 0;
 
         ProgressCtx ctx{env, nullptr, nullptr};

@@ -45,6 +45,7 @@ import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import com.nezumi_ai.data.preset.PresetConstants
 import com.google.ai.edge.litertlm.ToolCall
 import com.nezumi_ai.utils.PreferencesHelper
+import com.nezumi_ai.sd.SdScheduler
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -2375,6 +2376,7 @@ class ChatViewModel(
             ?: (toolCall.arguments["cfg_scale"] as? Number)?.toFloat()
             ?: PreferencesHelper.getSdCfg(appContext)
         val seed = (toolCall.arguments["seed"] as? Number)?.toLong() ?: -1L
+        val scheduler = SdScheduler.fromId(toolCall.arguments["scheduler"] as? String)
 
         val edited = awaitImageGenerationConfirmation(prompt)
         if (edited == null) {
@@ -2433,6 +2435,7 @@ class ChatViewModel(
             steps = steps,
             cfg = cfg,
             seed = seed,
+            scheduler = scheduler,
             sdPath = sdPath
         )
         _uiMessage.emit("🎨 generate_image: 画像生成を開始します")
@@ -2456,6 +2459,7 @@ class ChatViewModel(
         steps: Int,
         cfg: Float,
         seed: Long,
+        scheduler: SdScheduler,
         sdPath: String
     ) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -2485,6 +2489,7 @@ class ChatViewModel(
                 steps = steps,
                 cfg = cfg,
                 seed = seed,
+                scheduler = scheduler,
                 sdPath = sdPath
             )
         }
@@ -2499,6 +2504,7 @@ class ChatViewModel(
         steps: Int,
         cfg: Float,
         seed: Long,
+        scheduler: SdScheduler,
         sdPath: String
     ) {
         if (BuildConfig.SAFETY_IMAGE_GUARD_ENABLED &&
@@ -2575,6 +2581,7 @@ class ChatViewModel(
                 steps = steps,
                 cfg = cfg,
                 seed = seed,
+                scheduler = scheduler,
                 onProgress = { step, totalSteps, _ ->
                     _imageGenProgress.value = Pair(step, totalSteps)
                     _toolCallState.value = ToolCallState.Executing(
