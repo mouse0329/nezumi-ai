@@ -1483,10 +1483,230 @@ namespace
 
     enum class ActiveScheduler
     {
-        PLMS = 0, // PNDM / PLMS (bootstrap 1 step)
-        DDIM,     // deterministic; eta=0
-        EULER,    // 単純オイラー法 (LCM はこちらで代用)
+        PLMS = 0,       // PNDM / PLMS (bootstrap 1 step)
+        DDIM,           // deterministic; eta=0
+        EULER,          // 単純オイラー法
+        EULER_A,        // Euler ancestral (ステップの途中で ancestral ノイズを足す)
+        LCM_STEP,       // LCM の 1 ステップ式 (x0 -> x_prev = sqrt(a_prev)*x0 + sqrt(1-a_prev)*noise)
+        DPMPP_2M,       // DPM-Solver++ 2M 多ステップ (linear sigma schedule)
+        DPMPP_2M_KARRAS // DPM-Solver++ 2M + Karras ノイズスケジュール
     };
+
+    // ---------------------------------------------------------------
+    // sigma 系スケジューラー共通ヘルパ
+    // ---------------------------------------------------------------
+    // sigma_t = sqrt((1 - alpha_t) / alpha_t)
+    inline float sigma_from_alpha(float a)
+    {
+        return std::sqrt((1.0f - a) / std::max(a, 1e-6f));
+    }
+
+    /**
+     * Karras ノイズスケジュール (Karras et al., "Elucidating the Design Space of
+     * Diffusion-Based Generative Models", 2022):
+     *   sigma_i = (sigma_max^(1/rho) + i/(N-1) * (sigma_min^(1/rho) - sigma_max^(1/rho)))^rho
+     *   i = 0..N-1 (降順)，末尾に sigma=0 を付けて N+1 個にする。
+     * rho は普通 7.0。sigma_min / sigma_max は学習時の alphas_cumprod の
+     * 両端から取る。
+     */
+    std::vector<float> build_karras_sigmas(int steps,
+                                            const std::vector<float> &alphas_cumprod)
+    {
+        const int T = (int)alphas_cumprod.size();
+        // sigma_min: 学習中の最小ノイズ (timestep=0 側, alpha 最大 → sigma 最小)
+        // sigma_max: 学習中の最大ノイズ (timestep=T-1 側, alpha 最小 → sigma 最大)
+        float sigma_min = sigma_from_alpha(alphas_cumprod[0]);
+        float sigma_max = sigma_from_alpha(alphas_cumprod[T - 1]);
+        // 固定値も一応ガード (SD1.5 の典型値に合わせる)
+        if (!std::isfinite(sigma_min) || sigma_min < 1e-4f) sigma_min = 0.0292f;
+        if (!std::isfinite(sigma_max) || sigma_max < 1.0f)   sigma_max = 14.6146f;
+        const float rho = 7.0f;
+        const float inv_rho = 1.0f / rho;
+        const float min_inv = std::pow(sigma_min, inv_rho);
+        const float max_inv = std::pow(sigma_max, inv_rho);
+        std::vector<float> sigmas(steps + 1);
+        for (int i = 0; i < steps; ++i)
+        {
+            float t = (float)i / (float)(steps - 1 > 0 ? steps - 1 : 1);
+            float v = max_inv + t * (min_inv - max_inv);
+            sigmas[i] = std::pow(v, rho);
+        }
+        sigmas[steps] = 0.0f; // 末尾は 0 (完全にデノイズされた地図)
+        return sigmas;
+    }
+
+    /**
+     * timesteps を線形に取る sigma schedule (DDIM / 普通の DPM++ に対応):
+     *   sigmas[i] = sigma_from_alpha(alphas_cumprod[timesteps[i]])，末尾に 0
+     */
+    std::vector<float> sigmas_from_timesteps(
+        const std::vector<int> &timesteps,
+        const std::vector<float> &alphas_cumprod)
+    {
+        std::vector<float> sigmas(timesteps.size() + 1);
+        for (size_t i = 0; i < timesteps.size(); ++i)
+        {
+            int t = std::max(0, std::min(timesteps[i], (int)alphas_cumprod.size() - 1));
+            sigmas[i] = sigma_from_alpha(alphas_cumprod[t]);
+        }
+        sigmas[timesteps.size()] = 0.0f;
+        return sigmas;
+    }
+
+    /**
+     * DPM-Solver++ 2M 多ステップ (Lu et al., 2022) を sigma 系で実装。
+     *   モデルは eps-prediction を前提とし:
+     *     x0 = x - sigma * eps
+     *     lambda(sigma) = -log(sigma)   (VE 便宜式、SD 実装によく見られる形)
+     *   1 ステップ目は Euler 相当、以降は linear multistep 係数で修正:
+     *     h_i     = lambda_next - lambda_cur
+     *     h_prev  = lambda_cur  - lambda_prev
+     *     r       = h_prev / h_i
+     *     D_i     = (1 + 1/(2*r)) * x0_cur - (1/(2*r)) * x0_prev
+     *     x_next  = (sigma_next / sigma_cur) * x + (1 - sigma_next / sigma_cur) * D_i
+     *   (これは k-diffusion や diffusers 実装と同形)。
+     */
+    std::vector<float> dpmpp_2m_step(
+        const std::vector<float> &sample,
+        const std::vector<float> &eps,
+        int step_index,
+        const std::vector<float> &sigmas,
+        std::vector<float> &x0_prev_out,
+        const std::vector<float> &x0_prev_in)
+    {
+        const size_t N = sample.size();
+        const float sigma_cur = std::max(sigmas[step_index], 1e-6f);
+        const float sigma_next = sigmas[step_index + 1];
+        // 現在の x0 推定値
+        std::vector<float> x0_cur(N);
+        for (size_t i = 0; i < N; ++i)
+            x0_cur[i] = sample[i] - sigma_cur * eps[i];
+
+        std::vector<float> denoised(N);
+        // 末尾ステップ (sigma_next == 0) は x0 をそのまま返す (完全にデノイズ)
+        if (sigma_next <= 1e-8f)
+        {
+            x0_prev_out = x0_cur;
+            return x0_cur;
+        }
+
+        const bool has_prev = !x0_prev_in.empty() && step_index >= 1;
+        if (!has_prev)
+        {
+            // 1 ステップ目: Euler 相当 (linear multistep の bootstrap)
+            for (size_t i = 0; i < N; ++i)
+                denoised[i] = x0_cur[i];
+        }
+        else
+        {
+            const float sigma_prev = std::max(sigmas[step_index - 1], 1e-6f);
+            const float lambda_cur  = -std::log(sigma_cur);
+            const float lambda_next = -std::log(std::max(sigma_next, 1e-6f));
+            const float lambda_prev = -std::log(sigma_prev);
+            const float h_i    = lambda_next - lambda_cur;
+            const float h_prev = lambda_cur  - lambda_prev;
+            // sigmas は単調減少 (sigma_next < sigma_cur < sigma_prev) なので
+            // lambda_next > lambda_cur > lambda_prev、両方正。
+            const float r = h_prev / std::max(h_i, 1e-6f);
+            const float coef_cur  = 1.0f + 0.5f / std::max(r, 1e-6f);
+            const float coef_prev = -0.5f / std::max(r, 1e-6f);
+            for (size_t i = 0; i < N; ++i)
+                denoised[i] = coef_cur * x0_cur[i] + coef_prev * x0_prev_in[i];
+        }
+
+        const float ratio = sigma_next / sigma_cur;
+        std::vector<float> next(N);
+        for (size_t i = 0; i < N; ++i)
+            next[i] = ratio * sample[i] + (1.0f - ratio) * denoised[i];
+
+        x0_prev_out = x0_cur;
+        return next;
+    }
+
+    /**
+     * Euler ancestral ステップ。sigma 空間で:
+     *   sigma_up   = sqrt(sigma_next^2 * (sigma_cur^2 - sigma_next^2) / sigma_cur^2)
+     *   sigma_down = sqrt(sigma_next^2 - sigma_up^2)
+     *   x_next = x + (sigma_down - sigma_cur) * eps + sigma_up * noise
+     */
+    std::vector<float> euler_a_step(
+        const std::vector<float> &sample,
+        const std::vector<float> &eps,
+        int step_index,
+        const std::vector<float> &sigmas,
+        std::mt19937 &rng)
+    {
+        const size_t N = sample.size();
+        const float sigma_cur = std::max(sigmas[step_index], 1e-6f);
+        const float sigma_next = sigmas[step_index + 1];
+
+        float up2 = 0.0f;
+        if (sigma_next > 1e-8f)
+        {
+            up2 = (sigma_next * sigma_next) *
+                  (sigma_cur * sigma_cur - sigma_next * sigma_next) /
+                  (sigma_cur * sigma_cur);
+            if (up2 < 0.0f) up2 = 0.0f;
+        }
+        float sigma_up = std::sqrt(up2);
+        float sigma_down_sq = sigma_next * sigma_next - up2;
+        if (sigma_down_sq < 0.0f) sigma_down_sq = 0.0f;
+        float sigma_down = std::sqrt(sigma_down_sq);
+
+        std::vector<float> next(N);
+        std::normal_distribution<float> dist(0.0f, 1.0f);
+        std::vector<float> noise;
+        if (sigma_up > 0.0f)
+        {
+            noise.resize(N);
+            for (size_t i = 0; i < N; ++i)
+                noise[i] = dist(rng);
+        }
+        for (size_t i = 0; i < N; ++i)
+        {
+            float step = (sigma_down - sigma_cur) * eps[i];
+            next[i] = sample[i] + step;
+            if (sigma_up > 0.0f)
+                next[i] += sigma_up * noise[i];
+        }
+        return next;
+    }
+
+    /**
+     * LCM 1 ステップ式:
+     *   x0 = (x - sqrt(1-a_t) * eps) / sqrt(a_t)
+     *   x_prev = sqrt(a_prev) * x0 + sqrt(1 - a_prev) * noise
+     * 末尾ステップは noise を乗せない。
+     */
+    std::vector<float> lcm_step(
+        const std::vector<float> &sample,
+        const std::vector<float> &eps,
+        int step_index,
+        const std::vector<int> &timesteps,
+        const std::vector<float> &alphas_cumprod,
+        std::mt19937 &rng)
+    {
+        const int t = timesteps[step_index];
+        const int t_prev = (step_index + 1 < (int)timesteps.size()) ? timesteps[step_index + 1] : 0;
+        const float a_t    = alphas_cumprod[t];
+        const float a_prev = alphas_cumprod[std::max(0, t_prev)];
+        const float sqrt_a_t    = std::sqrt(a_t);
+        const float sqrt_a_prev = std::sqrt(a_prev);
+        const float sqrt_1_minus_at   = std::sqrt(std::max(0.0f, 1.0f - a_t));
+        const float sqrt_1_minus_prev = std::sqrt(std::max(0.0f, 1.0f - a_prev));
+
+        const size_t N = sample.size();
+        std::vector<float> next(N);
+        const bool is_last = (step_index + 1 >= (int)timesteps.size());
+        std::normal_distribution<float> dist(0.0f, 1.0f);
+        for (size_t i = 0; i < N; ++i)
+        {
+            float x0 = (sample[i] - sqrt_1_minus_at * eps[i]) / sqrt_a_t;
+            float n  = is_last ? 0.0f : dist(rng);
+            next[i]  = sqrt_a_prev * x0 + sqrt_1_minus_prev * n;
+        }
+        return next;
+    }
 
     /**
      * DDIM ステップ (deterministic, eta=0):
@@ -1672,8 +1892,20 @@ extern "C"
                   static_cast<long long>(params->seed));
 
         // Bug fix (スケジューラ選択を実際の denoise リングに反映させる):
-        //   params->scheduler (0..7) を ActiveScheduler に選別する。
-        //   DDIM / Euler / LCM は専用パス、その他は PLMS フォールバック。
+        //   params->scheduler (0..7) を ActiveScheduler に振り分ける。
+        //   以前は DPM / DPM++ 2M / DPM++ 2M Karras / UniPC を全部 PLMS に落として
+        //   いたため、SdScheduler.DEFAULT = DPM_PLUS_PLUS_2M だと何を選んでも
+        //   事実 PLMS で固定されていた。これで「スケジューラだけ変えても他アプリ
+        //   のようにきれいにならない、ステップ同じなのにノイズのまま」問題が起きていた。
+        //   今回の修正で:
+        //     DDIM       -> DDIM パス (既存)
+        //     Euler      -> Euler パス (既存)
+        //     Euler a    -> Euler ancestral パス (新規)
+        //     LCM        -> LCM 1 ステップ式 (新規、少ステップに強い)
+        //     DPM        -> 内部実装の DPM はないので PLMS にフォールバック
+        //     DPM++ 2M   -> DPM-Solver++ 2M linear sigma (新規)
+        //     DPM++ 2M K -> DPM-Solver++ 2M Karras sigma  (新規)
+        //     UniPC      -> 実装未対応なので DPM++ 2M にフォールバック (PLMS よりは近い)
         ActiveScheduler active_scheduler = ActiveScheduler::PLMS;
         switch (params->scheduler)
         {
@@ -1681,19 +1913,31 @@ extern "C"
             active_scheduler = ActiveScheduler::DDIM;
             break;
         case MNN_SD_SCHEDULER_EULER:
-        case MNN_SD_SCHEDULER_EULER_A: // ancestral は未対応なので Euler にフォールバック
-        case MNN_SD_SCHEDULER_LCM:     // LCM は少ステップに強い Euler 相当で代用
             active_scheduler = ActiveScheduler::EULER;
             break;
-        case MNN_SD_SCHEDULER_DPM:
+        case MNN_SD_SCHEDULER_EULER_A:
+            active_scheduler = ActiveScheduler::EULER_A;
+            break;
+        case MNN_SD_SCHEDULER_LCM:
+            active_scheduler = ActiveScheduler::LCM_STEP;
+            break;
         case MNN_SD_SCHEDULER_DPM_PP_2M:
+            active_scheduler = ActiveScheduler::DPMPP_2M;
+            break;
         case MNN_SD_SCHEDULER_DPM_PP_2M_KARRAS:
+            active_scheduler = ActiveScheduler::DPMPP_2M_KARRAS;
+            break;
         case MNN_SD_SCHEDULER_UNIPC:
+            // UniPC はフル実装するにはバッファ管理が大きいので、今は DPM++ 2M で代用。
+            active_scheduler = ActiveScheduler::DPMPP_2M;
+            break;
+        case MNN_SD_SCHEDULER_DPM:
         default:
             active_scheduler = ActiveScheduler::PLMS;
             break;
         }
-        PROBE_LOG("mnn_sd_run_pipeline: active_scheduler=%d (0=PLMS,1=DDIM,2=Euler)",
+        PROBE_LOG("mnn_sd_run_pipeline: active_scheduler=%d "
+                  "(0=PLMS,1=DDIM,2=Euler,3=EulerA,4=LCM,5=DPM++2M,6=DPM++2M-Karras)",
                   static_cast<int>(active_scheduler));
 
         const int steps = params->steps;
@@ -1983,13 +2227,38 @@ extern "C"
         else
         {
             // Bug fix (スケジューラ別の timesteps):
-            //   DDIM / Euler では PLMS の bootstrap 重複は不要で、単純に
-            //   逆順に並べた N 個の timestep で N ステップ denoise する。
+            //   DDIM / Euler / EulerA / LCM / DPM++ 2M / DPM++ 2M Karras では
+            //   PLMS の bootstrap 重複は不要で、単純に逆順に並べた N 個の
+            //   timestep で N ステップ denoise する。
             timesteps.reserve(steps);
             for (int i = steps - 1; i >= 0; --i)
             {
                 timesteps.push_back(_timesteps[i]);
             }
+        }
+
+        // Bug fix (sigma 系スケジューラーの事前計算):
+        //   DPM++ 2M / DPM++ 2M Karras / EulerA は sigma 空間で定式化されているので、
+        //   step_index に対する sigma[i], sigma[i+1] テーブルを事前に組む。
+        //   Karras は専用の non-linear スケジュール、それ以外は timesteps から
+        //   導出する。LCM / DDIM / PLMS / Euler / DPM は使わない。
+        std::vector<float> sigmas;
+        if (active_scheduler == ActiveScheduler::DPMPP_2M_KARRAS)
+        {
+            sigmas = build_karras_sigmas(steps, engine->alphas_cumprod);
+        }
+        else if (active_scheduler == ActiveScheduler::DPMPP_2M ||
+                 active_scheduler == ActiveScheduler::EULER_A)
+        {
+            sigmas = sigmas_from_timesteps(timesteps, engine->alphas_cumprod);
+        }
+        if (!sigmas.empty())
+        {
+            char sb[512];
+            int off = std::snprintf(sb, sizeof(sb), "sigmas (%zu):", sigmas.size());
+            for (size_t k = 0; k < sigmas.size() && off < (int)sizeof(sb) - 12; ++k)
+                off += std::snprintf(sb + off, sizeof(sb) - off, " %.4f", sigmas[k]);
+            PROBE_LOG("%s", sb);
         }
 
         {
@@ -2054,6 +2323,14 @@ extern "C"
 
         std::vector<std::vector<float>> ets;
         std::vector<float> pndm_prev;
+        // DPM++ 2M の multistep 係数用: 1 つ前の x0 推定値を保持するバッファ
+        std::vector<float> dpmpp_x0_prev;
+        // ancestral / LCM 用の RNG。seed==params->seed の場合は同じ seed で
+        // 同じ絵にしたいので、初期 latent とはシードを色々 (offset) 変えて使う。
+        std::mt19937 sched_rng(
+            params->seed < 0
+                ? std::random_device{}()
+                : (uint32_t)((uint64_t)params->seed ^ 0x9E3779B9u));
 
         // Per-side text embedding views ([1, 77, emb_dim] each). text_emb is laid
         // out as [uncond, cond] contiguously.
@@ -2139,6 +2416,22 @@ extern "C"
             case ActiveScheduler::EULER:
                 latent = euler_step(latent, combined, i, timesteps, engine->alphas_cumprod);
                 break;
+            case ActiveScheduler::EULER_A:
+                latent = euler_a_step(latent, combined, i, sigmas, sched_rng);
+                break;
+            case ActiveScheduler::LCM_STEP:
+                latent = lcm_step(latent, combined, i, timesteps,
+                                  engine->alphas_cumprod, sched_rng);
+                break;
+            case ActiveScheduler::DPMPP_2M:
+            case ActiveScheduler::DPMPP_2M_KARRAS:
+            {
+                std::vector<float> x0_next;
+                latent = dpmpp_2m_step(latent, combined, i, sigmas,
+                                       x0_next, dpmpp_x0_prev);
+                dpmpp_x0_prev = std::move(x0_next);
+                break;
+            }
             case ActiveScheduler::PLMS:
             default:
                 latent = pndm_step(latent, combined, i, timesteps,

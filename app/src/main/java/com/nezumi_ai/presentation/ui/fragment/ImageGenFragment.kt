@@ -293,40 +293,67 @@ private fun LegacyImageGenScreen(
     //   代わりに ViewModel 側で StateFlow として公開している
     //   lastCompletedMetadata を直接参照する。同一 timestamp での二重登録を
     //   防ぐため、直近に登録したメタデータの timestamp を覚えておく。
+    //
+    // Bug fix (ライブラリに同じ画像が 2 つ入る問題):
+    //   旧実装は LaunchedEffect のキーに bitmap と lastCompletedMetadata の
+    //   両方を指定していたため、ViewModel 側で
+    //     _resultBitmap.value = bmp                       // ← 1 回目の発火
+    //     _lastCompletedMetadata.value = metadata          // ← 2 回目の発火
+    //   と StateFlow を順に更新する ImageGenViewModel の生成完了処理
+    //   （キュー / 単発ともに）で 1 回の生成につき 2 回コルーチンが走り、
+    //   1 回目 (metadata がまだ古い / 未到着) と 2 回目 (metadata 到着後)
+    //   で別 timestamp のライブラリエントリが 2 件作られていた。
+    //   ガードは「同じ metaTs での二度登録防止」しか見ていなかったので、
+    //   1 回目に metaTs=0L で通ってしまうと 2 回目もチェックを通過する。
+    //
+    //   対処:
+    //     - キーを metadata の timestamp に絞る (bitmap 変化単独では発火しない)。
+    //       これで「bitmap 更新 → metadata 更新」の順で来ても 1 回だけになる。
+    //     - metadata が確定してから登録する (metaTs == 0L は skip)。
+    //     - すでに同じ timestamp のエントリが library に居るなら追加しない
+    //       (StateFlow の replay や ViewModel 再購読で二重に走ったときの保険)。
     var lastLibraryTs by remember { mutableStateOf(0L) }
-    LaunchedEffect(bitmap, lastCompletedMetadata) {
+    LaunchedEffect(lastCompletedMetadata?.timestamp) {
+        val meta = lastCompletedMetadata ?: return@LaunchedEffect
         val bmp = bitmap ?: return@LaunchedEffect
-        val meta = lastCompletedMetadata
+        val metaTs = meta.timestamp
+        if (metaTs == 0L) return@LaunchedEffect
         // 同じメタデータを二度登録しない（bitmap や metadata のどちらかが
         // 先に届いてリコンポーズでリークするのを防ぐ）。
-        val metaTs = meta?.timestamp ?: 0L
-        if (metaTs != 0L && metaTs == lastLibraryTs) return@LaunchedEffect
+        if (metaTs == lastLibraryTs) return@LaunchedEffect
+        // 二重ガード: すでに同じ timestamp のライブラリエントリがあるなら skip。
+        //   （プロセス復帰直後で lastLibraryTs が 0 のまま同じ生成完了イベントを
+        //   再購読するケースを想定。）
+        if (library.any { it.timestamp == metaTs }) {
+            lastLibraryTs = metaTs
+            return@LaunchedEffect
+        }
         val ts = saveImageToLibrary(
             ctx, bmp, prompt,
-            negativePrompt = meta?.negativePrompt,
-            steps = meta?.steps,
-            seed = meta?.seed,
-            modelName = meta?.modelName,
-            width = meta?.width,
-            height = meta?.height,
-            cfg = meta?.cfg,
-            scheduler = meta?.scheduler
+            negativePrompt = meta.negativePrompt,
+            steps = meta.steps,
+            seed = meta.seed,
+            modelName = meta.modelName,
+            width = meta.width,
+            height = meta.height,
+            cfg = meta.cfg,
+            scheduler = meta.scheduler
         )
         library.add(
             0,
             LibraryItem(
                 bmp, prompt, ts,
-                negativePrompt = meta?.negativePrompt,
-                steps = meta?.steps,
-                seed = meta?.seed,
-                modelName = meta?.modelName,
-                width = meta?.width,
-                height = meta?.height,
-                cfg = meta?.cfg,
-                scheduler = meta?.scheduler
+                negativePrompt = meta.negativePrompt,
+                steps = meta.steps,
+                seed = meta.seed,
+                modelName = meta.modelName,
+                width = meta.width,
+                height = meta.height,
+                cfg = meta.cfg,
+                scheduler = meta.scheduler
             )
         )
-        if (metaTs != 0L) lastLibraryTs = metaTs
+        lastLibraryTs = metaTs
     }
 
     Column(Modifier.fillMaxSize()) {
