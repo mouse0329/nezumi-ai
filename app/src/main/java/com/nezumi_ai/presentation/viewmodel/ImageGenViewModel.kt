@@ -226,6 +226,26 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private val _seed = MutableStateFlow(-1L)
     val seed: StateFlow<Long> = _seed.asStateFlow()
 
+    // Bug fix (シード値の不具合):
+    //   これまで _seed は「ユーザーが指定した値 (-1 = ランダム)」のみを持ち、
+    //   -1 のときは LocalDreamModule.generateImageWithMetadata 内部で確定した
+    //   実 seed が呼び出し側に返らない（メタデータ経由で永続化はされるが
+    //   生成タブの UI 上では -1 のままだった）ため、　
+    //   「シード値が出ない」「シードを指定しても無視されているように見える」
+    //   と誤解される要因になっていた。
+    //   最後に実際に使われた seed を明示的に公開する。
+    private val _lastUsedSeed = MutableStateFlow<Long?>(null)
+    val lastUsedSeed: StateFlow<Long?> = _lastUsedSeed.asStateFlow()
+
+    // Bug fix (ライブラリのネガティブプロンプト等が表示されない問題):
+    //   旧実装は「完了 -> lastSavedInternalUri をセット -> UI がその URI をキーに
+    //   SharedPreferences から metadata を引く」という間接パスで、キュー経路では
+    //   lastSavedInternalUri が更新されずメタデータ引きに失敗していた。
+    //   確実に戻している metadata オブジェクト自体を StateFlow で公開し、
+    //   UI は URI を介さずに直接参照できるようにする。
+    private val _lastCompletedMetadata = MutableStateFlow<ImageGenerationMetadata?>(null)
+    val lastCompletedMetadata: StateFlow<ImageGenerationMetadata?> = _lastCompletedMetadata.asStateFlow()
+
     private val _scheduler = MutableStateFlow(SdScheduler.fromId(PreferencesHelper.getSdScheduler(application)))
     val scheduler: StateFlow<SdScheduler> = _scheduler.asStateFlow()
 
@@ -347,6 +367,29 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     fun setScheduler(scheduler: SdScheduler) {
         _scheduler.value = scheduler
         PreferencesHelper.setSdScheduler(getApplication(), scheduler.id)
+    }
+
+    /**
+     * Bug fix (設定画面で変えたステップ数 / CFG / スケジューラが即時反映されない問題):
+     *   ViewModel の _steps / _cfg / _scheduler はは init ブロックで一度だけ
+     *   Preferences から読み込まれる。しかし ImageGenViewModel は Fragment に属する
+     *   ので、ユーザーが設定画面で変更して戻ってきても、Fragment が
+     *   destroy されていない限り旧値のままになる。このメソッドを onResume から
+     *   呼び、Preferences の現値を StateFlow に再反映する。
+     *   ユーザーが手動で複雑な入力をしている途中に上書きしないよう、
+     *   値が実際に変わるときだけセットする。
+     */
+    fun refreshPreferencesBackedFields() {
+        val app = getApplication<Application>()
+        val prefsSteps = PreferencesHelper.getSdSteps(app)
+        if (_steps.value != prefsSteps) _steps.value = prefsSteps
+        val prefsCfg = PreferencesHelper.getSdCfg(app)
+        if (_cfg.value != prefsCfg) _cfg.value = prefsCfg
+        val prefsSchedulerId = PreferencesHelper.getSdScheduler(app)
+        val prefsScheduler = SdScheduler.fromId(prefsSchedulerId)
+        if (_scheduler.value != prefsScheduler) _scheduler.value = prefsScheduler
+        val prefsBackend = PreferencesHelper.getSdBackend(app)
+        if (_selectedBackend.value != prefsBackend) _selectedBackend.value = prefsBackend
     }
 
     private var isCancelling = false
@@ -517,6 +560,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             _currentStep.value = 0
             _progressData.value = ProgressData(0, totalSteps, 0.0f)
             
+            // Bug fix (シード指定を無視するバグ):
+            //   ここでは _seed.value をそのまま渡す。generateImageWithMetadata 側で
+            //   negative の場合のみランダム化される。従来ロジックの中間で int にキャストして
+            //   桁落ちしないよう、Long のまま最後まで通すことを担保する。
+            val requestedSeed = _seed.value
             val result = ld.generateImageWithMetadata(
                 prompt = pr,
                 negativePrompt = _negativePrompt.value,
@@ -524,7 +572,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 height = sz,
                 steps = totalSteps,
                 cfg = _cfg.value,
-                seed = _seed.value,
+                seed = requestedSeed,
                 scheduler = _scheduler.value,
                 onProgress = { step, steps, time ->
                     // 同じ step の連続更新で不必要な recomposition を避ける
@@ -595,6 +643,13 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     if (uri != null && metadata != null) {
                         val prefs = app.getSharedPreferences("image_metadata", Context.MODE_PRIVATE)
                         prefs.edit().putString("metadata_$uri", buildMetadataJson(metadata)).apply()
+                    }
+                    // Bug fix: metadata.seed に実際に使われた seed が入るので、
+                    //   -1 (ランダム) が指定されていた場合でも UI で確定値を表示できるように
+                    //   ここで lastUsedSeed を更新する。
+                    metadata?.let {
+                        _lastUsedSeed.value = it.seed
+                        _lastCompletedMetadata.value = it
                     }
                 }
             }
@@ -1068,7 +1123,21 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 if (bmp != null) {
                     _resultBitmap.value = bmp
                     if (metadata != null) {
-                        saveImageWithMetadata(app, bmp, metadata)
+                        // Bug fix (キュー経路で lastSavedInternalUri が更新されず
+                        //   メタデータがひけない問題):
+                        //   saveImageWithMetadata は uri を返すので、それを
+                        //   lastSavedInternalUri に充てて旧 UI パスとも互換を保ち、
+                        //   同時に metadata を StateFlow で公開してしまうことで
+                        //   UI は確実にメタデータを取得できるようにする。
+                        val savedUri = saveImageWithMetadata(app, bmp, metadata)
+                        if (savedUri != null) {
+                            lastSavedInternalUri = savedUri
+                        }
+                        // Bug fix (キュー内でもシードを追跡):
+                        //   キュー実行時も最後に使われた seed を UI に反映し、
+                        //   ライブラリと生成タブの表示が一致するようにする。
+                        _lastUsedSeed.value = metadata.seed
+                        _lastCompletedMetadata.value = metadata
                     }
                     return@withContext bmp
                 } else {

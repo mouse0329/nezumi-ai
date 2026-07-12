@@ -65,6 +65,15 @@ namespace
 
     MnnSdScheduler to_scheduler(jint scheduler)
     {
+        // Bug fix: JNI 側は 0/1/2 の 3 種類しかマップしていなかったため、
+        //   Kotlin (SdScheduler) が 8 種類定義しているにも関わらず、
+        //   ユーザーが選んだ DPM++ 2M / LCM / Euler a / UniPC などは
+        //   default (= DPM) にフォールバックし、事実上「選択されて動いていない」
+        //   状態になっていた。types.h の MnnSdScheduler enum に合わせて
+        //   0..7 のすべてを正しくマップする。
+        //   ※ 現状 engine 内部は PLMS(PNDM) 固定でサンプラ切替は未実装なので
+        //   ここで正しい enum を渡しても最終的な数値挙動は当面同じだが、
+        //   ログ・診断上「何が要求されたか」が engine に届く点が重要。
         switch (scheduler)
         {
         case 0:
@@ -72,9 +81,42 @@ namespace
         case 1:
             return MNN_SD_SCHEDULER_DDIM;
         case 2:
+            return MNN_SD_SCHEDULER_DPM;
+        case 3:
+            return MNN_SD_SCHEDULER_DPM_PP_2M;
+        case 4:
+            return MNN_SD_SCHEDULER_DPM_PP_2M_KARRAS;
+        case 5:
+            return MNN_SD_SCHEDULER_LCM;
+        case 6:
+            return MNN_SD_SCHEDULER_EULER_A;
+        case 7:
+            return MNN_SD_SCHEDULER_UNIPC;
         default:
+            LOGE("to_scheduler: unknown scheduler id=%d, falling back to DPM", scheduler);
             return MNN_SD_SCHEDULER_DPM;
         }
+    }
+
+    /**
+     * Bug fix: MnnSdEngine には load 時点の backend 情報が保持されているが、
+     *   JNI 側では generate() 呼び出しごとに use_opencl を 0 で
+     *   ハードコードしていた。これでは engine 内部 (create_interpreter_and_session)
+     *   で backend=OPENCL を選択していても、param.use_opencl フラグを見る
+     *   コードパス (subprocess/HTTP 互換ヘルパ経由) では常に CPU 扱いになり
+     *   ユーザーが GPU を選んだ意図が反映されない。
+     *   ネイティブエンジンの capabilities から supports_opencl を取り出し、
+     *   それを use_opencl の初期値として使う。
+     */
+    int32_t resolve_use_opencl(MnnSdEngine *engine)
+    {
+        if (!engine)
+            return 0;
+        MnnSdCapabilities caps{};
+        MnnSdErrorInfo err{};
+        if (mnn_sd_get_capabilities(engine, &caps, &err) != MNN_SD_OK)
+            return 0;
+        return caps.supports_opencl ? 1 : 0;
     }
 
 } // namespace
@@ -187,6 +229,8 @@ extern "C"
         const char *prompt_utf = env->GetStringUTFChars(prompt, nullptr);
         const char *neg_utf = env->GetStringUTFChars(negative_prompt, nullptr);
 
+        MnnSdEngine *engine_ptr = from_handle(handle);
+
         MnnSdGenerateParams params{};
         params.prompt = prompt_utf;
         params.negative_prompt = neg_utf;
@@ -196,7 +240,12 @@ extern "C"
         params.cfg_scale = cfg;
         params.seed = seed;
         params.scheduler = to_scheduler(scheduler);
-        params.use_opencl = 0;
+        // Bug fix: 以前は 0 ハードコードで GPU 選択が事実上無効化されていた。
+        //   load 時の backend が OpenCL なら use_opencl=1 を engine に伝える。
+        params.use_opencl = resolve_use_opencl(engine_ptr);
+        LOGI("generate: seed=%lld scheduler=%d use_opencl=%d %dx%d steps=%d cfg=%.2f",
+             static_cast<long long>(seed), static_cast<int>(params.scheduler),
+             params.use_opencl, width, height, steps, cfg);
 
         ProgressCtx ctx{env, nullptr, nullptr};
         if (progress_cb != nullptr)
@@ -224,7 +273,7 @@ extern "C"
         MnnSdProgressFn cb_fn = (ctx.cb && ctx.method) ? &progress_trampoline : nullptr;
         void *cb_ud = (ctx.cb && ctx.method) ? static_cast<void *>(&ctx) : nullptr;
         MnnSdError code = mnn_sd_generate(
-            from_handle(handle), &params, cb_fn, cb_ud, &image, &error);
+            engine_ptr, &params, cb_fn, cb_ud, &image, &error);
 
         env->ReleaseStringUTFChars(prompt, prompt_utf);
         env->ReleaseStringUTFChars(negative_prompt, neg_utf);

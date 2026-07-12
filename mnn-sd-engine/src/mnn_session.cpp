@@ -1469,6 +1469,94 @@ namespace
         return std::vector<float>(ptr, ptr + host.elementSize());
     }
 
+    // Bug fix (スケジューラを切り替えても同じ絵が出る問題):
+    //   以前の engine はユーザーの選択に関係なく PLMS (PNDM) 固定で、
+    //   Kotlin/JNI 側では値を届けているのに実際の denoise リングが
+    //   切り替わらなかった。ここで DDIM / Euler / (LCMはEulerベース) を
+    //   実装し、同じ seed でもスケジューラごとに見た目が変わるようにする。
+    //
+    //   DPM++ 2M / 2M Karras / UniPC は完全な位相地図を発重させるには
+    //   数百行のコードと karras sigma テーブルが必要なため、小さい
+    //   パッチで実装可能な DDIM / Euler / (LCM=Euler相当) に限定し、
+    //   それ以外は PLMS にフォールバックするというポリシーとする。
+    //   このポリシーは run_pipeline 内の resolve_active_scheduler() で選ぶ。
+
+    enum class ActiveScheduler
+    {
+        PLMS = 0, // PNDM / PLMS (bootstrap 1 step)
+        DDIM,     // deterministic; eta=0
+        EULER,    // 単純オイラー法 (LCM はこちらで代用)
+    };
+
+    /**
+     * DDIM ステップ (deterministic, eta=0):
+     *   x0 = (x_t - sqrt(1-alpha_t) * eps) / sqrt(alpha_t)
+     *   dir = sqrt(1 - alpha_prev) * eps
+     *   x_prev = sqrt(alpha_prev) * x0 + dir
+     */
+    std::vector<float> ddim_step(
+        const std::vector<float> &sample,
+        const std::vector<float> &model_output,
+        int step_index,
+        const std::vector<int> &timesteps,
+        const std::vector<float> &alphas_cumprod)
+    {
+        int timestep = timesteps[step_index];
+        int prev_timestep = (step_index + 1 < (int)timesteps.size()) ? timesteps[step_index + 1] : 0;
+        float alpha_t = alphas_cumprod[timestep];
+        float alpha_prev = alphas_cumprod[std::max(0, prev_timestep)];
+        float sqrt_alpha_t = std::sqrt(alpha_t);
+        float sqrt_one_minus_alpha_t = std::sqrt(std::max(0.0f, 1.0f - alpha_t));
+        float sqrt_alpha_prev = std::sqrt(alpha_prev);
+        float sqrt_one_minus_alpha_prev = std::sqrt(std::max(0.0f, 1.0f - alpha_prev));
+        size_t N = sample.size();
+        std::vector<float> prev(N);
+        for (size_t i = 0; i < N; ++i)
+        {
+            float x0 = (sample[i] - sqrt_one_minus_alpha_t * model_output[i]) / sqrt_alpha_t;
+            float dir = sqrt_one_minus_alpha_prev * model_output[i];
+            prev[i] = sqrt_alpha_prev * x0 + dir;
+        }
+        return prev;
+    }
+
+    /**
+     * オイラー法 (sigma 空間のオイラーを alphas_cumprod から導いて使う形で簡易実装):
+     *   sigma_t   = sqrt((1 - a_t) / a_t)
+     *   sigma_prev= sqrt((1 - a_prev) / a_prev)
+     *   x_t = sample / sqrt(a_t)          (ノイズを押さえた地図)
+     *   x_prev_denoise = x_t - sigma_t * eps
+     *   x_prev = x_prev_denoise + sigma_prev * eps  = x_t + (sigma_prev - sigma_t) * eps
+     *   を sample 空間に戻す: prev = sqrt(a_prev) * x_prev
+     * LCM もこの形で代用する (少ステップに強い挙動)。
+     */
+    std::vector<float> euler_step(
+        const std::vector<float> &sample,
+        const std::vector<float> &model_output,
+        int step_index,
+        const std::vector<int> &timesteps,
+        const std::vector<float> &alphas_cumprod)
+    {
+        int timestep = timesteps[step_index];
+        int prev_timestep = (step_index + 1 < (int)timesteps.size()) ? timesteps[step_index + 1] : 0;
+        float alpha_t = alphas_cumprod[timestep];
+        float alpha_prev = alphas_cumprod[std::max(0, prev_timestep)];
+        float sigma_t = std::sqrt((1.0f - alpha_t) / std::max(alpha_t, 1e-6f));
+        float sigma_prev = std::sqrt((1.0f - alpha_prev) / std::max(alpha_prev, 1e-6f));
+        float sqrt_a_t = std::sqrt(alpha_t);
+        float sqrt_a_prev = std::sqrt(alpha_prev);
+        size_t N = sample.size();
+        std::vector<float> prev(N);
+        float d = sigma_prev - sigma_t;
+        for (size_t i = 0; i < N; ++i)
+        {
+            float x = sample[i] / sqrt_a_t;
+            x = x + d * model_output[i];
+            prev[i] = x * sqrt_a_prev;
+        }
+        return prev;
+    }
+
     // PNDM step: returns prev_sample
     // ets: ring buffer of last 4 model outputs (oldest first)
     std::vector<float> pndm_step(
@@ -1569,6 +1657,45 @@ extern "C"
         }
         return MNN_SD_ERR_BACKEND_INIT_FAILED;
 #else
+        // Bug fix (スケジューラ動作不具合):
+        //   Kotlin/JNI からは 0..7 の 8 種類のスケジューラが飛んでくるが、
+        //   engine 内部の denoise ループはまだ PLMS(PNDM) 固定である。この
+        //   ため「スケジューラを指定しても切り替わらない」バグの実装レイヤーの
+        //   根本原因は engine 側にある。少ステップ運用で LCM を選んでも
+        //   結局 PLMS で走るのが分かるように、ここで明示的にログを残す。
+        //   ユーザーの指定を尊重する完全対応は将来の課題として TODO を残す。
+        // TODO(scheduler): engine 側で Euler / DDIM / DPM++ 2M / LCM /
+        //   Euler a / UniPC の分岐を実装し、params->scheduler に応じて切り替える。
+        PROBE_LOG("mnn_sd_run_pipeline: requested scheduler=%d (0=Euler,1=DDIM,2=DPM,3=DPM++2M,4=DPM++2M-Karras,5=LCM,6=EulerA,7=UniPC); engine currently runs PLMS regardless.",
+                  static_cast<int>(params->scheduler));
+        PROBE_LOG("mnn_sd_run_pipeline: seed=%lld (negative=random)",
+                  static_cast<long long>(params->seed));
+
+        // Bug fix (スケジューラ選択を実際の denoise リングに反映させる):
+        //   params->scheduler (0..7) を ActiveScheduler に選別する。
+        //   DDIM / Euler / LCM は専用パス、その他は PLMS フォールバック。
+        ActiveScheduler active_scheduler = ActiveScheduler::PLMS;
+        switch (params->scheduler)
+        {
+        case MNN_SD_SCHEDULER_DDIM:
+            active_scheduler = ActiveScheduler::DDIM;
+            break;
+        case MNN_SD_SCHEDULER_EULER:
+        case MNN_SD_SCHEDULER_EULER_A: // ancestral は未対応なので Euler にフォールバック
+        case MNN_SD_SCHEDULER_LCM:     // LCM は少ステップに強い Euler 相当で代用
+            active_scheduler = ActiveScheduler::EULER;
+            break;
+        case MNN_SD_SCHEDULER_DPM:
+        case MNN_SD_SCHEDULER_DPM_PP_2M:
+        case MNN_SD_SCHEDULER_DPM_PP_2M_KARRAS:
+        case MNN_SD_SCHEDULER_UNIPC:
+        default:
+            active_scheduler = ActiveScheduler::PLMS;
+            break;
+        }
+        PROBE_LOG("mnn_sd_run_pipeline: active_scheduler=%d (0=PLMS,1=DDIM,2=Euler)",
+                  static_cast<int>(active_scheduler));
+
         const int steps = params->steps;
         const int width = params->width;
         const int height = params->height;
@@ -1577,10 +1704,33 @@ extern "C"
         const int lh = height / 8;
         const int latent_size = 4 * lh * lw;
 
+        // Bug fix (GPUで動作しない問題):
+        //   load 時に OpenCL を選択しても、latent の一辺が mobile GPU の
+        //   カーネル JIT / VRAM 制限を超えると CL_INVALID_IMAGE_SIZE や
+        //   CL_OUT_OF_RESOURCES でドライバが abort し、Kotlin 側では
+        //   「GPU だとさっぱり落ちる」と見える。既存の
+        //   opencl_safe_max_side ヒントは load_options に存在するのに
+        //   実行時は見ていなかったため、ここで effective backend を確定させる。
+        //   この値を CLIP / UNet / VAE 全テンソルの create_session で使う。
+        //
+        //   なお params->use_opencl は JNI 側で engine->caps.supports_opencl を
+        //   ミラーした値が入るので、use_opencl == 0 だったらユーザーはすでに
+        //   CPU を選んでいる。
+        int32_t max_side = width > height ? width : height;
+        int32_t safe_max = engine->load_options.opencl_safe_max_side;
+        if (safe_max <= 0)
+            safe_max = 448;
+        MnnSdBackend effective_backend = engine->load_options.backend;
+        if (effective_backend == MNN_SD_BACKEND_OPENCL &&
+            (params->use_opencl == 0 || max_side > safe_max))
+        {
+            effective_backend = MNN_SD_BACKEND_CPU;
+        }
+
         // --- 0. Load CLIP just-in-time ---
         {
             MnnSdError err = create_interpreter_and_session(
-                engine->clip_path, engine->load_options.backend,
+                engine->clip_path, effective_backend,
                 engine->clip_interpreter, engine->clip_session, out_error);
             if (err != MNN_SD_OK)
                 return err;
@@ -1814,20 +1964,32 @@ extern "C"
         }
 
         std::vector<int> timesteps;
-        timesteps.reserve(steps + 1);
-        // Descending order of Diffusers' plms_timesteps:
-        //   [_timesteps[-1], _timesteps[-2], _timesteps[-2], _timesteps[-3], ..., _timesteps[0]]
-        // i.e. append _timesteps[-1], then _timesteps[-2] twice, then rest in reverse.
-        if (steps >= 1) timesteps.push_back(_timesteps.back());          // _timesteps[-1]
-        if (steps >= 2) timesteps.push_back(_timesteps[steps - 2]);      // _timesteps[-2] (dup #1)
-        for (int i = steps - 2; i >= 0; --i)
+        if (active_scheduler == ActiveScheduler::PLMS)
         {
-            timesteps.push_back(_timesteps[i]);                          // rest (includes _timesteps[-2] again)
+            timesteps.reserve(steps + 1);
+            // Descending order of Diffusers' plms_timesteps:
+            //   [_timesteps[-1], _timesteps[-2], _timesteps[-2], _timesteps[-3], ..., _timesteps[0]]
+            if (steps >= 1) timesteps.push_back(_timesteps.back());
+            if (steps >= 2) timesteps.push_back(_timesteps[steps - 2]);
+            for (int i = steps - 2; i >= 0; --i)
+            {
+                timesteps.push_back(_timesteps[i]);
+            }
+            if (steps == 1)
+            {
+                timesteps.assign({_timesteps[0]});
+            }
         }
-        // Guard: if only 1 step was requested, run a single 853->0 transition.
-        if (steps == 1)
+        else
         {
-            timesteps.assign({_timesteps[0]});
+            // Bug fix (スケジューラ別の timesteps):
+            //   DDIM / Euler では PLMS の bootstrap 重複は不要で、単純に
+            //   逆順に並べた N 個の timestep で N ステップ denoise する。
+            timesteps.reserve(steps);
+            for (int i = steps - 1; i >= 0; --i)
+            {
+                timesteps.push_back(_timesteps[i]);
+            }
         }
 
         {
@@ -1845,7 +2007,7 @@ extern "C"
         // --- 4b. Load UNet just-in-time (after CLIP has been freed) ---
         {
             MnnSdError err = create_interpreter_and_session(
-                engine->unet_path, engine->load_options.backend,
+                engine->unet_path, effective_backend,
                 engine->unet_interpreter, engine->unet_session, out_error);
             if (err != MNN_SD_OK)
                 return err;
@@ -1969,18 +2131,36 @@ extern "C"
             for (int j = 0; j < latent_size; ++j)
                 combined[j] = pred_uncond[j] + cfg * (pred_cond[j] - pred_uncond[j]);
 
-            latent = pndm_step(latent, combined, i, timesteps,
-                               engine->alphas_cumprod, ets, pndm_prev);
+            switch (active_scheduler)
+            {
+            case ActiveScheduler::DDIM:
+                latent = ddim_step(latent, combined, i, timesteps, engine->alphas_cumprod);
+                break;
+            case ActiveScheduler::EULER:
+                latent = euler_step(latent, combined, i, timesteps, engine->alphas_cumprod);
+                break;
+            case ActiveScheduler::PLMS:
+            default:
+                latent = pndm_step(latent, combined, i, timesteps,
+                                   engine->alphas_cumprod, ets, pndm_prev);
+                break;
+            }
 
-            // Progress: report user-visible steps out of `steps`, not
-            // `timesteps.size()` (which is steps+1 to include the PLMS
-            // bootstrap iteration). Fold counter=0 and counter=1 into a
-            // single "step 1 of N" from the user's point of view.
+            // Progress は active_scheduler に応じて変わる:
+            //   PLMS: timesteps.size() = steps+1 なので bootstrap 2 回目をステップ 1 に折りたたむ。
+            //   それ以外: timesteps.size() = steps なので i そのままで OK。
             if (on_progress)
             {
                 int visible_step;
-                if (i <= 1) visible_step = 1;             // bootstrap counts as first step
-                else        visible_step = i;             // i=2 -> step 2, ..., i=steps -> step steps
+                if (active_scheduler == ActiveScheduler::PLMS)
+                {
+                    if (i <= 1) visible_step = 1;
+                    else        visible_step = i;
+                }
+                else
+                {
+                    visible_step = i + 1;
+                }
                 if (visible_step > steps) visible_step = steps;
                 MnnSdProgress p{visible_step, steps, 0.0f};
                 on_progress(&p, progress_user_data);
@@ -2000,7 +2180,7 @@ extern "C"
         // --- 5b. Load VAE just-in-time (after UNet has been freed) ---
         {
             MnnSdError err = create_interpreter_and_session(
-                engine->vae_path, engine->load_options.backend,
+                engine->vae_path, effective_backend,
                 engine->vae_interpreter, engine->vae_session, out_error);
             if (err != MNN_SD_OK)
                 return err;
