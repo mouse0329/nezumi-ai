@@ -25,10 +25,19 @@ typedef enum MnnSdBackend {
     MNN_SD_BACKEND_OPENCL = 1,
 } MnnSdBackend;
 
+/**
+ * Scheduler (sampler) types for the denoising process.
+ * These control the noise schedule and step algorithm in the UNet sampling loop.
+ */
 typedef enum MnnSdScheduler {
     MNN_SD_SCHEDULER_EULER = 0,
     MNN_SD_SCHEDULER_DDIM = 1,
     MNN_SD_SCHEDULER_DPM = 2,
+    MNN_SD_SCHEDULER_DPM_PP_2M = 3,
+    MNN_SD_SCHEDULER_DPM_PP_2M_KARRAS = 4,
+    MNN_SD_SCHEDULER_LCM = 5,
+    MNN_SD_SCHEDULER_EULER_A = 6,
+    MNN_SD_SCHEDULER_UNIPC = 7,
 } MnnSdScheduler;
 
 typedef struct MnnSdLoadOptions {

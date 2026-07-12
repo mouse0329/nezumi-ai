@@ -96,6 +96,7 @@ import androidx.navigation.fragment.findNavController
 import com.nezumi_ai.R
 import com.nezumi_ai.presentation.viewmodel.ImageGenViewModel
 import com.nezumi_ai.utils.PreferencesHelper
+import com.nezumi_ai.sd.SdScheduler
 import com.nezumi_ai.sd.safety.SafetyResult
 import java.io.File
 
@@ -216,6 +217,7 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
     val currentStep by vm.currentStep.collectAsState()
     val backendInfo by vm.backendInfo.collectAsState()
     val selectedBackend by vm.selectedBackend.collectAsState()
+    val scheduler by vm.scheduler.collectAsState()
     val queueResultBitmaps by vm.queueResultBitmaps.collectAsState()
     val generationQueue by vm.generationQueue.collectAsState()
     val isQueueRunning by vm.isQueueRunning.collectAsState()
@@ -540,6 +542,37 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                             Text(s.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         }
                     }
+                }
+
+                Column(Modifier.padding(top = 12.dp)) {
+                    Text(
+                        "スケジューラ",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        SdScheduler.values().forEach { option ->
+                            androidx.compose.material3.FilterChip(
+                                selected = scheduler == option,
+                                onClick = { vm.setScheduler(option) },
+                                label = { Text(option.displayName) },
+                                colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                )
+                            )
+                        }
+                    }
+                    Text(
+                        "※ DPM++ 2M 系は MNN JNI では実装に応じてフォールバックし、HTTP 互換経路では指定値をそのまま送信します。",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
                 }
 
                 var batchCount by remember { mutableStateOf(1) }

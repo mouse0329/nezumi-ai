@@ -10,6 +10,7 @@ namespace
 {
 
     constexpr int kDefaultOpenClSafeMaxSide = 448;
+    constexpr int kMaxScheduler = 7;
 
     void set_error(MnnSdErrorInfo *out, MnnSdError code, const char *message, const char *cause = "")
     {
@@ -40,6 +41,11 @@ namespace
         if (params->steps <= 0)
         {
             set_error(out_error, MNN_SD_ERR_INVALID_PARAMS, "steps must be positive");
+            return false;
+        }
+        if (params->scheduler < 0 || params->scheduler > kMaxScheduler)
+        {
+            set_error(out_error, MNN_SD_ERR_INVALID_PARAMS, "invalid scheduler value (must be 0-7)");
             return false;
         }
         return true;
