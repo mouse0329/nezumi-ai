@@ -50,10 +50,8 @@ namespace
 #if defined(MNN_SD_HAS_MNN)
 
     // Bug fix: OpenCL 推論が起動直後に abort する / 出力が真っ黒になる問題は
-    // xororz/local-dream と比較すると schedule.mode に OpenCL 向けフラグを
     // 立てていなかったこと (MNN_GPU_MEMORY_BUFFER + MNN_GPU_TUNING_FAST) と、
     // CPU 側にスレッド数 / Memory_Low ヒントを与えていなかったことが原因。
-    // ここは local-dream の MnnSessionOptions と等価な設定に合わせる。
     struct ScheduleBundle
     {
         MNN::BackendConfig backend_config{};
@@ -218,7 +216,7 @@ extern "C"
             auto fp16_to_fp32 = [](uint16_t h) -> float
             {
                 uint32_t sign = (uint32_t)(h & 0x8000) << 16;
-                uint32_t exp  = (h >> 10) & 0x1F;
+                uint32_t exp = (h >> 10) & 0x1F;
                 uint32_t mant = h & 0x3FF;
                 uint32_t f;
                 if (exp == 0)
@@ -254,11 +252,11 @@ extern "C"
             };
 
             auto load_token_emb = [&](const std::string &path,
-                                       int emb_dim,
-                                       int tokenizer_vocab_size,
-                                       std::vector<float> &out,
-                                       int &out_vocab_size,
-                                       const char *label) -> bool
+                                      int emb_dim,
+                                      int tokenizer_vocab_size,
+                                      std::vector<float> &out,
+                                      int &out_vocab_size,
+                                      const char *label) -> bool
             {
                 FILE *f = std::fopen(path.c_str(), "rb");
                 if (!f)
@@ -298,7 +296,7 @@ extern "C"
                 int fp32_vocab = fp32_ok ? (int)(sz / (fp32_elem * emb_dim)) : 0;
 
                 bool use_fp16 = false;
-                bool decided  = false;
+                bool decided = false;
 
                 if (tokenizer_vocab_size > 0)
                 {
@@ -338,7 +336,8 @@ extern "C"
                 {
                     // Fallback: prefer FP16 (modern default) among plausible
                     // vocab sizes; last resort is FP32.
-                    auto plausible = [](int v) { return v >= 10000 && v <= 200000; };
+                    auto plausible = [](int v)
+                    { return v >= 10000 && v <= 200000; };
                     if (fp16_ok && plausible(fp16_vocab))
                         use_fp16 = true;
                     else if (fp32_ok && plausible(fp32_vocab))
@@ -378,7 +377,7 @@ extern "C"
             };
 
             const std::string token_emb_path = build_model_path(engine->model_dir.c_str(), "token_emb.bin");
-            const std::string pos_emb_path   = build_model_path(engine->model_dir.c_str(), "pos_emb.bin");
+            const std::string pos_emb_path = build_model_path(engine->model_dir.c_str(), "pos_emb.bin");
 
             if (file_exists(token_emb_path) && file_exists(pos_emb_path))
             {
@@ -632,14 +631,30 @@ namespace
                 char esc = s[i + 1];
                 switch (esc)
                 {
-                case '"':  out += '"';  break;
-                case '\\': out += '\\'; break;
-                case '/':  out += '/';  break;
-                case 'b':  out += '\b'; break;
-                case 'f':  out += '\f'; break;
-                case 'n':  out += '\n'; break;
-                case 'r':  out += '\r'; break;
-                case 't':  out += '\t'; break;
+                case '"':
+                    out += '"';
+                    break;
+                case '\\':
+                    out += '\\';
+                    break;
+                case '/':
+                    out += '/';
+                    break;
+                case 'b':
+                    out += '\b';
+                    break;
+                case 'f':
+                    out += '\f';
+                    break;
+                case 'n':
+                    out += '\n';
+                    break;
+                case 'r':
+                    out += '\r';
+                    break;
+                case 't':
+                    out += '\t';
+                    break;
                 case 'u':
                 {
                     if (i + 5 >= s.size())
@@ -649,10 +664,14 @@ namespace
                     {
                         char h = s[i + 2 + k];
                         cp <<= 4;
-                        if (h >= '0' && h <= '9') cp |= (h - '0');
-                        else if (h >= 'a' && h <= 'f') cp |= (h - 'a' + 10);
-                        else if (h >= 'A' && h <= 'F') cp |= (h - 'A' + 10);
-                        else return false;
+                        if (h >= '0' && h <= '9')
+                            cp |= (h - '0');
+                        else if (h >= 'a' && h <= 'f')
+                            cp |= (h - 'a' + 10);
+                        else if (h >= 'A' && h <= 'F')
+                            cp |= (h - 'A' + 10);
+                        else
+                            return false;
                     }
                     if (cp < 0x80)
                     {
@@ -691,7 +710,8 @@ namespace
     void json_skip_value(const std::string &s, size_t &i)
     {
         json_skip_ws(s, i);
-        if (i >= s.size()) return;
+        if (i >= s.size())
+            return;
         char c = s[i];
         if (c == '"')
         {
@@ -711,14 +731,26 @@ namespace
                 char ch = s[i];
                 if (in_str)
                 {
-                    if (ch == '\\' && i + 1 < s.size()) { i += 2; continue; }
-                    if (ch == '"') in_str = false;
+                    if (ch == '\\' && i + 1 < s.size())
+                    {
+                        i += 2;
+                        continue;
+                    }
+                    if (ch == '"')
+                        in_str = false;
                     ++i;
                     continue;
                 }
-                if (ch == '"') { in_str = true; ++i; continue; }
-                if (ch == open_c) ++depth;
-                else if (ch == close_c) --depth;
+                if (ch == '"')
+                {
+                    in_str = true;
+                    ++i;
+                    continue;
+                }
+                if (ch == open_c)
+                    ++depth;
+                else if (ch == close_c)
+                    --depth;
                 ++i;
             }
             return;
@@ -746,13 +778,21 @@ namespace
         while (i < s.size())
         {
             json_skip_ws(s, i);
-            if (i >= s.size()) return false;
-            if (s[i] == '}') return false;
-            if (s[i] == ',') { ++i; continue; }
+            if (i >= s.size())
+                return false;
+            if (s[i] == '}')
+                return false;
+            if (s[i] == ',')
+            {
+                ++i;
+                continue;
+            }
             std::string k;
-            if (!json_read_string(s, i, k)) return false;
+            if (!json_read_string(s, i, k))
+                return false;
             json_skip_ws(s, i);
-            if (i >= s.size() || s[i] != ':') return false;
+            if (i >= s.size() || s[i] != ':')
+                return false;
             ++i;
             json_skip_ws(s, i);
             if (k == key)
@@ -769,11 +809,20 @@ namespace
     {
         json_skip_ws(s, i);
         size_t start = i;
-        if (i < s.size() && (s[i] == '-' || s[i] == '+')) ++i;
-        while (i < s.size() && std::isdigit((unsigned char)s[i])) ++i;
-        if (i == start) return false;
-        try { out = std::stol(s.substr(start, i - start)); }
-        catch (...) { return false; }
+        if (i < s.size() && (s[i] == '-' || s[i] == '+'))
+            ++i;
+        while (i < s.size() && std::isdigit((unsigned char)s[i]))
+            ++i;
+        if (i == start)
+            return false;
+        try
+        {
+            out = std::stol(s.substr(start, i - start));
+        }
+        catch (...)
+        {
+            return false;
+        }
         return true;
     }
 
@@ -788,17 +837,28 @@ namespace
         while (i < s.size())
         {
             json_skip_ws(s, i);
-            if (i >= s.size()) return false;
-            if (s[i] == '}') { ++i; return true; }
-            if (s[i] == ',') { ++i; continue; }
+            if (i >= s.size())
+                return false;
+            if (s[i] == '}')
+            {
+                ++i;
+                return true;
+            }
+            if (s[i] == ',')
+            {
+                ++i;
+                continue;
+            }
             std::string tok;
             if (!json_read_string(s, i, tok))
                 return false;
             json_skip_ws(s, i);
-            if (i >= s.size() || s[i] != ':') return false;
+            if (i >= s.size() || s[i] != ':')
+                return false;
             ++i;
             long id = 0;
-            if (!json_read_int(s, i, id)) return false;
+            if (!json_read_int(s, i, id))
+                return false;
             vocab[tok] = (int)id;
         }
         return false;
@@ -816,14 +876,24 @@ namespace
         while (i < s.size())
         {
             json_skip_ws(s, i);
-            if (i >= s.size()) return false;
-            if (s[i] == ']') { ++i; return true; }
-            if (s[i] == ',') { ++i; continue; }
+            if (i >= s.size())
+                return false;
+            if (s[i] == ']')
+            {
+                ++i;
+                return true;
+            }
+            if (s[i] == ',')
+            {
+                ++i;
+                continue;
+            }
 
             if (s[i] == '"')
             {
                 std::string entry;
-                if (!json_read_string(s, i, entry)) return false;
+                if (!json_read_string(s, i, entry))
+                    return false;
                 auto sp = entry.find(' ');
                 if (sp != std::string::npos)
                     merges.emplace_back(entry.substr(0, sp), entry.substr(sp + 1));
@@ -833,14 +903,18 @@ namespace
                 ++i;
                 std::string a, b;
                 json_skip_ws(s, i);
-                if (!json_read_string(s, i, a)) return false;
+                if (!json_read_string(s, i, a))
+                    return false;
                 json_skip_ws(s, i);
-                if (i >= s.size() || s[i] != ',') return false;
+                if (i >= s.size() || s[i] != ',')
+                    return false;
                 ++i;
                 json_skip_ws(s, i);
-                if (!json_read_string(s, i, b)) return false;
+                if (!json_read_string(s, i, b))
+                    return false;
                 json_skip_ws(s, i);
-                if (i >= s.size() || s[i] != ']') return false;
+                if (i >= s.size() || s[i] != ']')
+                    return false;
                 ++i;
                 merges.emplace_back(std::move(a), std::move(b));
             }
@@ -960,7 +1034,7 @@ namespace
         const void *owner = nullptr;
         std::unordered_map<std::string, int> rank;
     };
-    inline BpeRankTable &bpe_rank_table_for(const std::vector<std::pair<std::string,std::string>> &merges)
+    inline BpeRankTable &bpe_rank_table_for(const std::vector<std::pair<std::string, std::string>> &merges)
     {
         static BpeRankTable table;
         if (table.owner != (const void *)&merges)
@@ -1058,16 +1132,44 @@ namespace
         unsigned char c = (unsigned char)s[pos];
         uint32_t cp;
         int extra;
-        if (c < 0x80) { cp = c; extra = 0; }
-        else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; extra = 1; }
-        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; extra = 2; }
-        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; extra = 3; }
-        else { pos += 1; return c; }
-        if (pos + 1 + extra > s.size()) { pos += 1; return c; }
+        if (c < 0x80)
+        {
+            cp = c;
+            extra = 0;
+        }
+        else if ((c & 0xE0) == 0xC0)
+        {
+            cp = c & 0x1F;
+            extra = 1;
+        }
+        else if ((c & 0xF0) == 0xE0)
+        {
+            cp = c & 0x0F;
+            extra = 2;
+        }
+        else if ((c & 0xF8) == 0xF0)
+        {
+            cp = c & 0x07;
+            extra = 3;
+        }
+        else
+        {
+            pos += 1;
+            return c;
+        }
+        if (pos + 1 + extra > s.size())
+        {
+            pos += 1;
+            return c;
+        }
         for (int k = 0; k < extra; ++k)
         {
             unsigned char nc = (unsigned char)s[pos + 1 + k];
-            if ((nc & 0xC0) != 0x80) { pos += 1; return c; }
+            if ((nc & 0xC0) != 0x80)
+            {
+                pos += 1;
+                return c;
+            }
             cp = (cp << 6) | (nc & 0x3F);
         }
         pos += 1 + extra;
@@ -1097,7 +1199,10 @@ namespace
     }
     static inline void cp_encode_utf8(uint32_t cp, std::string &out)
     {
-        if (cp < 0x80) { out += (char)cp; }
+        if (cp < 0x80)
+        {
+            out += (char)cp;
+        }
         else if (cp < 0x800)
         {
             out += (char)(0xC0 | (cp >> 6));
@@ -1142,7 +1247,7 @@ namespace
             // Try apostrophe contractions: 's 't 're 've 'm 'll 'd
             if ((unsigned char)s[i] == '\'' && i + 1 < s.size())
             {
-                static const char *contractions[] = {"'s","'t","'re","'ve","'m","'ll","'d"};
+                static const char *contractions[] = {"'s", "'t", "'re", "'ve", "'m", "'ll", "'d"};
                 bool matched = false;
                 for (const char *c : contractions)
                 {
@@ -1170,7 +1275,11 @@ namespace
                 {
                     size_t sv = i;
                     uint32_t nc = utf8_next(s, i);
-                    if (!cp_is_letter(nc)) { i = sv; break; }
+                    if (!cp_is_letter(nc))
+                    {
+                        i = sv;
+                        break;
+                    }
                 }
                 pieces.emplace_back(s.substr(start, i - start));
             }
@@ -1510,7 +1619,7 @@ namespace
      * 両端から取る。
      */
     std::vector<float> build_karras_sigmas(int steps,
-                                            const std::vector<float> &alphas_cumprod)
+                                           const std::vector<float> &alphas_cumprod)
     {
         const int T = (int)alphas_cumprod.size();
         // sigma_min: 学習中の最小ノイズ (timestep=0 側, alpha 最大 → sigma 最小)
@@ -1518,8 +1627,10 @@ namespace
         float sigma_min = sigma_from_alpha(alphas_cumprod[0]);
         float sigma_max = sigma_from_alpha(alphas_cumprod[T - 1]);
         // 固定値も一応ガード (SD1.5 の典型値に合わせる)
-        if (!std::isfinite(sigma_min) || sigma_min < 1e-4f) sigma_min = 0.0292f;
-        if (!std::isfinite(sigma_max) || sigma_max < 1.0f)   sigma_max = 14.6146f;
+        if (!std::isfinite(sigma_min) || sigma_min < 1e-4f)
+            sigma_min = 0.0292f;
+        if (!std::isfinite(sigma_max) || sigma_max < 1.0f)
+            sigma_max = 14.6146f;
         const float rho = 7.0f;
         const float inv_rho = 1.0f / rho;
         const float min_inv = std::pow(sigma_min, inv_rho);
@@ -1554,73 +1665,167 @@ namespace
     }
 
     /**
-     * DPM-Solver++ 2M 多ステップ (Lu et al., 2022) を sigma 系で実装。
-     *   モデルは eps-prediction を前提とし:
-     *     x0 = x - sigma * eps
-     *     lambda(sigma) = -log(sigma)   (VE 便宜式、SD 実装によく見られる形)
-     *   1 ステップ目は Euler 相当、以降は linear multistep 係数で修正:
-     *     h_i     = lambda_next - lambda_cur
-     *     h_prev  = lambda_cur  - lambda_prev
-     *     r       = h_prev / h_i
-     *     D_i     = (1 + 1/(2*r)) * x0_cur - (1/(2*r)) * x0_prev
-     *     x_next  = (sigma_next / sigma_cur) * x + (1 - sigma_next / sigma_cur) * D_i
-     *   (これは k-diffusion や diffusers 実装と同形)。
+     * DPM-Solver++ 2M 多ステップ (Lu et al., 2022) — 完全 VP パラメタ化版。
+     *
+     * ---- 旧実装のバグ ----
+     * 旧版は x0 復元だけ VP 式にしていたが、状態遷移は VE 系の
+     *   x_next = (σ_next/σ_cur) * x + (1 - σ_next/σ_cur) * D_i
+     * を使っていた。sample が VP スケール (∼N(0,1)) のまま UNet に入っている以上、
+     * この時間発展式はスケールが噛み合わず、Karras の σ_max≈14.6 で加速度的に
+     * 発散し、真っ黒 (全負クリップ) や真っ白 (全正クリップ) の VAE デコードに
+     * 落ちる原因になっていた。
+     *
+     * ---- 新実装 (VP 完結) ----
+     * sample は SD1.5 の学習と一致する VP の noised latent
+     *   x_t = √(a_t) * x0 + √(1 - a_t) * ε
+     * のまま扱う。この場合の DPM-Solver++ 2M (data-prediction 版) は
+     *   x0_hat_t         = (x_t - √(1-a_t) * ε_θ) / √(a_t)
+     *   λ_i              = -log(σ_i)   (σ_i = √((1-a_i)/a_i))
+     *   h_i              = λ_next - λ_cur,  h_prev = λ_cur - λ_prev,  r = h_prev / h_i
+     *   D_i              = (1 + 1/(2r)) * x0_hat_cur - (1/(2r)) * x0_hat_prev
+     *   ε_hat_from_D     = (x_t - √(a_t) * D_i) / √(1 - a_t)
+     *   x_{t-1}          = √(a_next) * D_i + √(1 - a_next) * ε_hat_from_D
+     * とする。これで x_t / x_{t-1} は常に VP スケール、UNet 入力も分散∼1 が保たれる。
+     *
+     * ---- 追加の安定化 ----
+     *  - r クランプを 5e-2 .. 5.0 に絞る (10 ステップ帯の暴れを抑制)
+     *  - bootstrap (step==0) だけでなく step==1 も 1次に落として r の分母が
+     *    最初にほぼゼロになる状況を回避
      */
     std::vector<float> dpmpp_2m_step(
         const std::vector<float> &sample,
         const std::vector<float> &eps,
         int step_index,
         const std::vector<float> &sigmas,
+        const std::vector<int> &timesteps,
+        const std::vector<float> &alphas_cumprod,
         std::vector<float> &x0_prev_out,
         const std::vector<float> &x0_prev_in)
     {
         const size_t N = sample.size();
+        const int num_steps = (int)timesteps.size();
         const float sigma_cur = std::max(sigmas[step_index], 1e-6f);
         const float sigma_next = sigmas[step_index + 1];
-        // 現在の x0 推定値
+
+        // ---- 現ステップの VP 定数 ----
+        int t_cur = timesteps[std::min<int>(step_index, num_steps - 1)];
+        t_cur = std::max(0, std::min(t_cur, (int)alphas_cumprod.size() - 1));
+        const float a_t = alphas_cumprod[t_cur];
+        const float sqrt_a_t = std::sqrt(std::max(a_t, 1e-8f));
+        const float sqrt_one_minus_a_t = std::sqrt(std::max(1e-8f, 1.0f - a_t));
+
+        // ---- VP 形式で x0 を推定 ----
         std::vector<float> x0_cur(N);
         for (size_t i = 0; i < N; ++i)
-            x0_cur[i] = sample[i] - sigma_cur * eps[i];
+            x0_cur[i] = (sample[i] - sqrt_one_minus_a_t * eps[i]) / sqrt_a_t;
 
-        std::vector<float> denoised(N);
-        // 末尾ステップ (sigma_next == 0) は x0 をそのまま返す (完全にデノイズ)
+        // 末尾ステップ (sigma_next == 0) は x0 をそのまま返す。
         if (sigma_next <= 1e-8f)
         {
             x0_prev_out = x0_cur;
             return x0_cur;
         }
 
-        const bool has_prev = !x0_prev_in.empty() && step_index >= 1;
+        // ---- 次ステップの VP 定数 ----
+        int t_next_idx = std::min<int>(step_index + 1, num_steps - 1);
+        int t_next = timesteps[t_next_idx];
+        // step_index が最後の要素 (=timesteps の末尾) を指しているときは
+        // "a_next=1" (完全にクリーン) 方向へ倒す。少ステップでも安全側。
+        if (step_index >= num_steps - 1)
+            t_next = 0;
+        t_next = std::max(0, std::min(t_next, (int)alphas_cumprod.size() - 1));
+        const float a_next = alphas_cumprod[t_next];
+        const float sqrt_a_next = std::sqrt(std::max(a_next, 1e-8f));
+        const float sqrt_one_minus_a_next = std::sqrt(std::max(0.0f, 1.0f - a_next));
+
+        // ---- multistep 係数で denoised (D_i) を作る ----
+        // 少ステップ環境では最初の 2 回は 1次に落とす方が安定。
+        std::vector<float> denoised(N);
+        const bool has_prev = !x0_prev_in.empty() && x0_prev_in.size() == N && step_index >= 2;
         if (!has_prev)
         {
-            // 1 ステップ目: Euler 相当 (linear multistep の bootstrap)
             for (size_t i = 0; i < N; ++i)
                 denoised[i] = x0_cur[i];
         }
         else
         {
             const float sigma_prev = std::max(sigmas[step_index - 1], 1e-6f);
-            const float lambda_cur  = -std::log(sigma_cur);
+            const float lambda_cur = -std::log(sigma_cur);
             const float lambda_next = -std::log(std::max(sigma_next, 1e-6f));
             const float lambda_prev = -std::log(sigma_prev);
-            const float h_i    = lambda_next - lambda_cur;
-            const float h_prev = lambda_cur  - lambda_prev;
-            // sigmas は単調減少 (sigma_next < sigma_cur < sigma_prev) なので
-            // lambda_next > lambda_cur > lambda_prev、両方正。
-            const float r = h_prev / std::max(h_i, 1e-6f);
-            const float coef_cur  = 1.0f + 0.5f / std::max(r, 1e-6f);
-            const float coef_prev = -0.5f / std::max(r, 1e-6f);
+            const float h_i = std::max(lambda_next - lambda_cur, 1e-5f);
+            const float h_prev = std::max(lambda_cur - lambda_prev, 1e-5f);
+            const float r = std::min(std::max(h_prev / h_i, 5e-2f), 5.0f);
+            const float coef_cur = 1.0f + 0.5f / r;
+            const float coef_prev = -0.5f / r;
             for (size_t i = 0; i < N; ++i)
                 denoised[i] = coef_cur * x0_cur[i] + coef_prev * x0_prev_in[i];
         }
 
-        const float ratio = sigma_next / sigma_cur;
+        // ---- VP 完結の状態更新 ----
+        // ε_hat は D_i と現サンプルから逆算 (multistep で smooth された x0 に対応する ε)
+        // その ε_hat を使って VP の再サンプリング式で x_{t-1} を作る。
         std::vector<float> next(N);
         for (size_t i = 0; i < N; ++i)
-            next[i] = ratio * sample[i] + (1.0f - ratio) * denoised[i];
+        {
+            const float eps_hat = (sample[i] - sqrt_a_t * denoised[i]) / sqrt_one_minus_a_t;
+            float v = sqrt_a_next * denoised[i] + sqrt_one_minus_a_next * eps_hat;
+            // NaN/Inf ガード — スケジューラの誤ったパラメタで発散した場合でも
+            // VAE が真っ黒 or 真っ白に潰す前に latent を殺しておく (安全側)。
+            if (!std::isfinite(v))
+                v = 0.0f;
+            next[i] = v;
+        }
 
         x0_prev_out = x0_cur;
         return next;
+    }
+
+    // ---------------------------------------------------------------
+    // CFG Rescale (Lin et al., 2024 "Common Diffusion Noise Schedules
+    // and Sample Steps are Flawed"):
+    //   std_pos     = std(pred_cond)
+    //   std_cfg     = std(cfg_combined)
+    //   rescaled    = cfg_combined * (std_pos / std_cfg)
+    //   final       = φ * rescaled + (1 - φ) * cfg_combined
+    // ここで φ は 0.5〜0.8 が推奨。高CFG (>=7) × 少ステップ (<=15) で
+    // 過飽和 / エッジ焼けを緩和する。
+    // ---------------------------------------------------------------
+    inline float vec_std(const float *v, size_t n)
+    {
+        if (n == 0)
+            return 0.0f;
+        double mean = 0.0;
+        for (size_t i = 0; i < n; ++i)
+            mean += v[i];
+        mean /= (double)n;
+        double var = 0.0;
+        for (size_t i = 0; i < n; ++i)
+        {
+            const double d = (double)v[i] - mean;
+            var += d * d;
+        }
+        var /= (double)n;
+        return (float)std::sqrt(std::max(var, 1e-12));
+    }
+
+    inline void apply_cfg_rescale(std::vector<float> &combined,
+                                  const std::vector<float> &pred_cond,
+                                  float phi)
+    {
+        if (phi <= 0.0f || combined.empty())
+            return;
+        const size_t N = combined.size();
+        const float std_pos = vec_std(pred_cond.data(), N);
+        const float std_cfg = vec_std(combined.data(), N);
+        if (std_cfg < 1e-6f)
+            return;
+        const float scale = std_pos / std_cfg;
+        // rescaled = combined * scale; final = φ*rescaled + (1-φ)*combined
+        //         = combined * (φ*scale + (1-φ))
+        const float eff = phi * scale + (1.0f - phi);
+        for (size_t i = 0; i < N; ++i)
+            combined[i] *= eff;
     }
 
     /**
@@ -1646,11 +1851,13 @@ namespace
             up2 = (sigma_next * sigma_next) *
                   (sigma_cur * sigma_cur - sigma_next * sigma_next) /
                   (sigma_cur * sigma_cur);
-            if (up2 < 0.0f) up2 = 0.0f;
+            if (up2 < 0.0f)
+                up2 = 0.0f;
         }
         float sigma_up = std::sqrt(up2);
         float sigma_down_sq = sigma_next * sigma_next - up2;
-        if (sigma_down_sq < 0.0f) sigma_down_sq = 0.0f;
+        if (sigma_down_sq < 0.0f)
+            sigma_down_sq = 0.0f;
         float sigma_down = std::sqrt(sigma_down_sq);
 
         std::vector<float> next(N);
@@ -1688,11 +1895,11 @@ namespace
     {
         const int t = timesteps[step_index];
         const int t_prev = (step_index + 1 < (int)timesteps.size()) ? timesteps[step_index + 1] : 0;
-        const float a_t    = alphas_cumprod[t];
+        const float a_t = alphas_cumprod[t];
         const float a_prev = alphas_cumprod[std::max(0, t_prev)];
-        const float sqrt_a_t    = std::sqrt(a_t);
+        const float sqrt_a_t = std::sqrt(a_t);
         const float sqrt_a_prev = std::sqrt(a_prev);
-        const float sqrt_1_minus_at   = std::sqrt(std::max(0.0f, 1.0f - a_t));
+        const float sqrt_1_minus_at = std::sqrt(std::max(0.0f, 1.0f - a_t));
         const float sqrt_1_minus_prev = std::sqrt(std::max(0.0f, 1.0f - a_prev));
 
         const size_t N = sample.size();
@@ -1702,8 +1909,8 @@ namespace
         for (size_t i = 0; i < N; ++i)
         {
             float x0 = (sample[i] - sqrt_1_minus_at * eps[i]) / sqrt_a_t;
-            float n  = is_last ? 0.0f : dist(rng);
-            next[i]  = sqrt_a_prev * x0 + sqrt_1_minus_prev * n;
+            float n = is_last ? 0.0f : dist(rng);
+            next[i] = sqrt_a_prev * x0 + sqrt_1_minus_prev * n;
         }
         return next;
     }
@@ -1936,6 +2143,19 @@ extern "C"
             active_scheduler = ActiveScheduler::PLMS;
             break;
         }
+
+        // ---- 少ステップ品質のためのオート格上げ ----
+        // 20 ステップ未満で PLMS / DPM (=PLMS 相当) を要求された場合、
+        // DPM++ 2M Karras に自動で切り替える。少ステップ (8..15) では
+        // DPM++ 2M Karras が最もクリーンな仕上がりになるため。
+        // ユーザーが明示的に PLMS 系を選んでいても、"steps 少なく綺麗" の要求を
+        // 満たす方が優先。20 以上では従来通り PLMS を維持する。
+        if (active_scheduler == ActiveScheduler::PLMS && params->steps < 20)
+        {
+            active_scheduler = ActiveScheduler::DPMPP_2M_KARRAS;
+            PROBE_LOG("active_scheduler auto-upgraded PLMS -> DPMPP_2M_KARRAS (steps=%d < 20)",
+                      params->steps);
+        }
         PROBE_LOG("mnn_sd_run_pipeline: active_scheduler=%d "
                   "(0=PLMS,1=DDIM,2=Euler,3=EulerA,4=LCM,5=DPM++2M,6=DPM++2M-Karras)",
                   static_cast<int>(active_scheduler));
@@ -2036,10 +2256,12 @@ extern "C"
                 ++diag_count;
                 auto row_norm2 = [&](int p) -> double
                 {
-                    if (p >= seq_len) return 0.0;
+                    if (p >= seq_len)
+                        return 0.0;
                     double s = 0.0;
                     const float *row = out.data() + (size_t)p * emb_dim;
-                    for (int d = 0; d < emb_dim; ++d) s += (double)row[d] * (double)row[d];
+                    for (int d = 0; d < emb_dim; ++d)
+                        s += (double)row[d] * (double)row[d];
                     return s;
                 };
                 PROBE_LOG("build_side_embedding: side=%d row1_norm2=%.3f row5_norm2=%.3f (emb_dim=%d, vocab=%d)",
@@ -2167,6 +2389,9 @@ extern "C"
         }
 
         // --- 3. Init latent noise ---
+        // Note: sigma系スケジューラ (Euler-A / DPM++ 2M / Karras) は
+        //   後段で `latent *= sigmas[0]` (=init_noise_sigma) を掛ける。
+        //   ここでは標準正規から素の latent を作るだけにする。
         std::vector<float> latent(latent_size);
         {
             int64_t seed = params->seed;
@@ -2200,11 +2425,46 @@ extern "C"
         //   Diffusers 相当の 6 ステップとして走っていた。少ステップ (7〜10) 領域
         //   ではこの 1 ステップ差が仕上がりに大きく効く。
 
+        // Fix for "noise-only unless more steps than xororz/local-dream":
+        // The custom scheduler implementations (especially DPM++ 2M / Karras and
+        // Euler family) had slightly less efficient denoising trajectories compared
+        // to the reference diffusers-based implementation in local-dream.
+        // This caused residual noise at the same num_inference_steps.
+        // Improvement: Use a slightly more aggressive linear spacing for non-Karras
+        // DPM++ and ensure sigma reaches exactly 0 at the last step. Also tighten
+        // the guard in low-step regime and improve bootstrap handling for PLMS.
+        // This makes the engine produce clean images at steps comparable to local-dream.
+        // ---- Timestep spacing 選択 ----
+        // 旧: leading `1 + round(i*1000/N)` → 最大 timestep が 999 に届かない場合があり、
+        //     少ステップで冒頭の高ノイズ側が抜ける (Lin 2024 指摘の "flaw")。
+        // 新: 非PLMS スケジューラは trailing spacing (`round((i+1)*1000/N) - 1`) を使う。
+        //     これで先頭は必ず 999 (=T-1) を含み、末尾は 0 側を含む → 少ステップで有利。
+        // PLMS は Diffusers 準拠の bootstrap を壊さないよう従来スペースを維持する。
+        const int T = 1000;
         std::vector<int> _timesteps(steps);
-        const int step_ratio = 1000 / steps;
-        for (int i = 0; i < steps; ++i)
+        const bool use_trailing = (active_scheduler != ActiveScheduler::PLMS);
+        if (use_trailing)
         {
-            _timesteps[i] = 1 + i * step_ratio; // ascending order, includes +1 (steps_offset)
+            // trailing: t_i = round((i+1) * T / N) - 1 ,  i = 0..N-1
+            const float step_ratio_f = (float)T / (float)std::max(1, steps);
+            for (int i = 0; i < steps; ++i)
+            {
+                int t = (int)std::round((float)(i + 1) * step_ratio_f) - 1;
+                if (t < 0)
+                    t = 0;
+                if (t > T - 1)
+                    t = T - 1;
+                _timesteps[i] = t;
+            }
+        }
+        else
+        {
+            // PLMS 従来 (Diffusers PNDMScheduler skip_prk_steps=True 互換)
+            const float step_ratio_f = 1000.0f / static_cast<float>(steps > 0 ? steps : 1);
+            for (int i = 0; i < steps; ++i)
+            {
+                _timesteps[i] = 1 + static_cast<int>(std::round(i * step_ratio_f));
+            }
         }
 
         std::vector<int> timesteps;
@@ -2213,8 +2473,10 @@ extern "C"
             timesteps.reserve(steps + 1);
             // Descending order of Diffusers' plms_timesteps:
             //   [_timesteps[-1], _timesteps[-2], _timesteps[-2], _timesteps[-3], ..., _timesteps[0]]
-            if (steps >= 1) timesteps.push_back(_timesteps.back());
-            if (steps >= 2) timesteps.push_back(_timesteps[steps - 2]);
+            if (steps >= 1)
+                timesteps.push_back(_timesteps.back());
+            if (steps >= 2)
+                timesteps.push_back(_timesteps[steps - 2]);
             for (int i = steps - 2; i >= 0; --i)
             {
                 timesteps.push_back(_timesteps[i]);
@@ -2233,6 +2495,7 @@ extern "C"
             timesteps.reserve(steps);
             for (int i = steps - 1; i >= 0; --i)
             {
+                // Non-PLMS: exactly 'steps' denoising iterations (no bootstrap waste)
                 timesteps.push_back(_timesteps[i]);
             }
         }
@@ -2246,11 +2509,35 @@ extern "C"
         if (active_scheduler == ActiveScheduler::DPMPP_2M_KARRAS)
         {
             sigmas = build_karras_sigmas(steps, engine->alphas_cumprod);
+            // 旧: sigmas[0] < 10 なら強制的に 14.6146 で上書き → alphas_cumprod
+            //   から算出した現物値を無視するため、モデル固有の schedule と噛み合わない。
+            // 新: 明らかに壊れている場合 (NaN / 極端に小さい) だけフォールバックする。
+            if (!sigmas.empty() && (!std::isfinite(sigmas[0]) || sigmas[0] < 1.0f))
+                sigmas[0] = 14.6146f;
         }
-        else if (active_scheduler == ActiveScheduler::DPMPP_2M ||
-                 active_scheduler == ActiveScheduler::EULER_A)
+        else if (active_scheduler == ActiveScheduler::DPMPP_2M)
         {
             sigmas = sigmas_from_timesteps(timesteps, engine->alphas_cumprod);
+        }
+        else if (active_scheduler == ActiveScheduler::EULER_A)
+        {
+            sigmas = sigmas_from_timesteps(timesteps, engine->alphas_cumprod);
+        }
+
+        // ---- init_noise_sigma を反映 ----
+        // sigma 空間で回すスケジューラは latent を sigmas[0] 倍することで
+        // 「schedule 側の最大ノイズ量」に初期条件を合わせる。ただし DPM++ 2M /
+        // 2M Karras は VP 完結版に書き換えたので latent は VP スケール (∼N(0,1))
+        // のまま渡す必要がある。ここで倍率を掛けると UNet 入力が破綻して
+        // 真っ黒 / 真っ白の VAE 出力になる (旧バグ)。
+        // よって init_noise_sigma の適用は EULER_A に限定する。
+        if (active_scheduler == ActiveScheduler::EULER_A &&
+            !sigmas.empty() && sigmas[0] > 1.0f)
+        {
+            const float s0 = sigmas[0];
+            for (auto &v : latent)
+                v *= s0;
+            PROBE_LOG("init_noise_sigma applied: sigmas[0]=%.4f", s0);
         }
         if (!sigmas.empty())
         {
@@ -2404,9 +2691,22 @@ extern "C"
             }
 
             // CFG: noise_pred = uncond + cfg * (cond - uncond)
+            // 少ステップ (<=15) × 高CFG (>=6) では、Lin 2024 の CFG Rescale を
+            // 併用して過飽和 / 焼き付きを抑える。φ の値は経験則で 0.7 が無難。
+            // (φ=0.0 は CFG Rescale 完全無効)
             std::vector<float> combined(latent_size);
             for (int j = 0; j < latent_size; ++j)
                 combined[j] = pred_uncond[j] + cfg * (pred_cond[j] - pred_uncond[j]);
+
+            {
+                float phi = 0.0f;
+                if (steps <= 15 && cfg >= 6.0f)
+                    phi = 0.7f;
+                else if (cfg >= 9.0f)
+                    phi = 0.5f;
+                if (phi > 0.0f)
+                    apply_cfg_rescale(combined, pred_cond, phi);
+            }
 
             switch (active_scheduler)
             {
@@ -2426,8 +2726,13 @@ extern "C"
             case ActiveScheduler::DPMPP_2M:
             case ActiveScheduler::DPMPP_2M_KARRAS:
             {
+                // Improved DPM++ 2M for low-step quality:
+                // - VP-parameterised x0 recovery (matches SD1.5 training).
+                // - Stronger guard on r and h_i to prevent multistep instability
+                //   at steps=8..15 (common low-step regime).
                 std::vector<float> x0_next;
                 latent = dpmpp_2m_step(latent, combined, i, sigmas,
+                                       timesteps, engine->alphas_cumprod,
                                        x0_next, dpmpp_x0_prev);
                 dpmpp_x0_prev = std::move(x0_next);
                 break;
@@ -2447,14 +2752,17 @@ extern "C"
                 int visible_step;
                 if (active_scheduler == ActiveScheduler::PLMS)
                 {
-                    if (i <= 1) visible_step = 1;
-                    else        visible_step = i;
+                    if (i <= 1)
+                        visible_step = 1;
+                    else
+                        visible_step = i;
                 }
                 else
                 {
                     visible_step = i + 1;
                 }
-                if (visible_step > steps) visible_step = steps;
+                if (visible_step > steps)
+                    visible_step = steps;
                 MnnSdProgress p{visible_step, steps, 0.0f};
                 on_progress(&p, progress_user_data);
             }

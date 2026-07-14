@@ -11,9 +11,9 @@ nezumi-aiは、インターネット接続なしで動作するプライベー�
 
 - **完全オフライン動作**: ローカル推論で、サーバーへのデータ送信なし
 - **マルチモデル対応**: Gemma 4 2B (軽量) / 4B (高性能) + Gemma 3n の選択可能
-- **GPU/CPU/NPU自動切り替え**: 端末のハードウェア最適化による高速化
+- **GPU/CPU自動切り替え**: 端末のハードウェア最適化による高速化
 - **画像入力対応**: カメラ・ギャラリーから画像を取り込んでAIに解析させられる
-- **画像生成機能**: LocalDreamModule（MNN/QNN）による高速画像生成
+- **画像生成機能**: MNN 画像生成エンジンによる高速画像生成
 - **チャット履歴管理**: Room DBで会話履歴を永続化
 - **高度なツールコール**: AIが画像生成、アラーム設定、Web検索などのツールを自律的に呼び出し
 
@@ -28,7 +28,7 @@ nezumi-aiは、インターネット接続なしで動作するプライベー�
 | **Android Version** | 12 (API 30) | 14+ (API 34+) |
 | **RAM** | 6GB | 8GB以上 |
 | **ストレージ** | 4GB | 8GB以上 |
-| **GPU/NPU** | 任意 | Snapdragon (QNN対応) / Mali / Adreno推奨 |
+| **GPU/NPU** | 任意 | Snapdragon / Mali / Adreno推奨 |
 
 ---
 
@@ -80,9 +80,9 @@ KEY_PASSWORD=your_key_password
 - **Gemma 3n E2B / E4B**: レガシーモデル（互換性維持）
 
 ### 3. 画像生成機能
-- **LocalDreamModule**: MNN/QNNバックエンドによる高速画像生成
+- **MNN 画像生成エンジン**: MNNバックエンドによる高速画像生成
 - **NPU対応**: Snapdragon端末でのNPUアクセラレーション
-- **自動バックエンド選択**: QNN（NPU）→ MNN（CPU/OpenCL）の自動フォールバック
+- **自動バックエンド選択**: GPU→CPU の自動フォールバック（MNN OpenCL / CPU を利用）
 - **AI自動生成**: Gemmaがツールとして画像生成を呼び出し（ユーザー承認制）
 
 ### 4. 推論バックエンド切り替え（LLM）
@@ -115,10 +115,10 @@ KEY_PASSWORD=your_key_password
     - **特徴**: JNI経由で`llama.cpp`を直接制御。16KBページサイズ対応、適応的GPU層数、サンプラーキャッシングなどの高度なネイティブ最適化が施されています。
 2.  **LiteRT-LMエンジン (Google LiteRT)**
     - **用途**: Gemma 3nなどのTFLite形式モデルの実行。
-    - **特徴**: Googleの`litertlm`ライブラリを活用。特にSnapdragon搭載端末において、QNN（Qualcomm AI Stack）を通じた**NPUアクセラレーション**を強力にサポートし、低消費電力かつ高速なレスポンスを実現します。
-3.  **LocalDreamエンジン (MNN/QNN)**
+    - **特徴**: Googleの`litertlm`ライブラリを活用。特にSnapdragon搭載端末において、QualcommのAIスタックを通じた**NPUアクセラレーション**をサポートし、低消費電力かつ高速なレスポンスを実現します。
+3.  **MNN 画像生成エンジン**
     - **用途**: 画像生成（Stable Diffusion 1.5）。
-    - **特徴**: `stable-diffusion.cpp`から移行し、MNN OpenCLおよびQNN NPUバックエンドを統合。Snapdragon 8 Gen 2クラスの端末では、数秒での画像生成が可能です。
+    - **特徴**: MNN OpenCLバックエンドを利用。Snapdragon 8 Gen 2クラスの端末では、数秒での画像生成が可能です。
 
 ### セーフティ & メディア管理
 
@@ -156,9 +156,9 @@ KEY_PASSWORD=your_key_password
 - **主要コンポーネント**:
   - UI/UX: Jetpack Compose
   - データベース: Room
-  - 推論エンジン: llama.cpp (GGUF), LiteRT-LM (TFLite), MNN/QNN (画像生成)
+    - 推論エンジン: llama.cpp (GGUF), LiteRT-LM (TFLite), MNN (画像生成)
   - LLMモデル: Gemma 4 (2B/4B), Gemma 3n (E2B/E4B)
-  - 画像生成: Stable Diffusion 1.5 (MNN/QNN)
+    - 画像生成: Stable Diffusion 1.5 (MNN)
 
 ### VOICEVOX音声読み上げについて
 
@@ -186,7 +186,7 @@ KEY_PASSWORD=your_key_password
 - **MediaPipe Tasks**: オンデバイスML実行
 - **TensorFlow Lite / LiteRT**: 軽量推論エンジン
 - **llama.cpp** (via JNI): LLM推論コア
-- **LocalDreamModule**: MNN/QNNベースの画像生成エンジン
+-- **MNN 画像生成エンジン**: 画像生成モジュール
 
 ### UI Components
 - **Halilibo Compose Richtext**: Markdown表示

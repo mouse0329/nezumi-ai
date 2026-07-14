@@ -205,7 +205,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         }
         
         val format = detectModelFormat(path)
-        _backendInfo.value = "$format | LocalDream"
+        _backendInfo.value = format
     }
 
     private val _prompt = MutableStateFlow("")
