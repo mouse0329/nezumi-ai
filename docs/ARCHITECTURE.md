@@ -13,7 +13,7 @@ nezumi-aiは完全オフラインで動作するAndroid AIチャットアプリ�
 ### 主要機能
 
 - **LLM推論**: llama.cpp (GGUF) による高速推論
-- **画像生成**: MNN/QNN (LocalDream) による高速画像生成
+- **画像生成**: MNN 画像生成エンジンによる高速画像生成
 - **マルチモーダル**: テキスト + 画像入力対応
 - **ツールコール**: Gemmaがツールとして画像生成・アラーム・フラッシュライト等を呼び出し
 - **チャット履歴**: Room DBによる永続化
@@ -31,7 +31,7 @@ nezumi-aiは完全オフラインで動作するAndroid AIチャットアプリ�
 | データベース | Room |
 | 非同期処理 | Kotlin Coroutines + Flow |
 | LLM推論 | llama.cpp (JNI) |
-| 画像生成 | MNN/QNN (LocalDream) |
+| 画像生成 | MNN 画像生成エンジン |
 
 ### 対応モデル
 
@@ -40,7 +40,7 @@ nezumi-aiは完全オフラインで動作するAndroid AIチャットアプリ�
 | Gemma 4 | ~2GB | 高精度チャット |
 | Gemma 3n E2B | ~900MB | 軽量・高速チャット |
 | Gemma 3n E4B | ~2.1GB | 高精度チャット |
-| Stable Diffusion 1.5 | ~1.5GB | 画像生成 (MNN/QNN) |
+| Stable Diffusion 1.5 | ~1.5GB | 画像生成 (MNN) |
 
 ---
 
@@ -76,7 +76,7 @@ nezumi-aiは完全オフラインで動作するAndroid AIチャットアプリ�
 ┌─────────────────────────────────────────────────────────┐
 │                     Inference Layer                      │
 │  ┌──────────────────────┐  ┌──────────────────────┐    │
-│  │     LlmEngine        │  │   LocalDreamModule   │    │
+│  │     LlmEngine        │  │   MnnSdModule         │    │
 │  │  (llama.cpp JNI)     │  │   (MNN/QNN Server)   │    │
 │  └──────────┬───────────┘  └──────────┬───────────┘    │
 │             │                          │                │
@@ -171,7 +171,7 @@ suspend fun executeToolCall(toolCall: ToolCall): ToolResult {
         "generateImage" -> {
             val approved = awaitUserConfirmation(toolCall.args["prompt"])
             if (approved) {
-                localDream.generateImage(...)
+                imageGenerator.generateImage(...)
             } else {
                 ToolResult.Text("キャンセルされました")
             }
@@ -185,7 +185,7 @@ suspend fun executeToolCall(toolCall: ToolCall): ToolResult {
 
 ---
 
-## 画像生成フロー (LocalDream)
+## 画像生成フロー
 
 ### 1. サーバー起動
 

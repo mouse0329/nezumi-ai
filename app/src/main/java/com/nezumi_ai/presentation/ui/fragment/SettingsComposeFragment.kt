@@ -109,6 +109,13 @@ class SettingsComposeFragment : Fragment() {
     private var chatHistoryLimit by mutableStateOf(30)
     private var sdSteps by mutableStateOf(8)
     private var sdCfg by mutableStateOf(7.0f)
+    // Feature (設定画面への集約):
+    //   メインの画像生成ページにあった「スケジューラ設定」「シード値設定」の
+    //   デフォルト値をここで管理する。メインページの入力 UI は引き続き使えるが、
+    //   初期値とリセット先はここで定める。画面の縦長化を防ぐため、
+    //   元ページの大きな UI をそのままコピーしないことを方針とする。
+    private var sdSchedulerId by mutableStateOf(com.nezumi_ai.sd.SdScheduler.DEFAULT.id)
+    private var sdDefaultSeedInput by mutableStateOf("")
     private var braveSearchApiKeyInput by mutableStateOf("")
     private var selectedSection by mutableStateOf(0)
     private var debugTextAInput by mutableStateOf("")
@@ -141,6 +148,16 @@ class SettingsComposeFragment : Fragment() {
         val db = NezumiAiDatabase.getInstance(requireContext())
         settingsRepository = SettingsRepository.fromDatabase(db)
         memoryRepository = MemoryRepository(db.memoryDao())
+
+        // Feature: 他の Fragment (例: ImageGenFragment) から arguments で
+        //   startSection を伸ばしてもらえれば、そのタブを初期選択とする。
+        //   指示書: 「設定リンクをクリックしたら画像タブに自動切り替えして」に対応。
+        //   sectionTitles = [全般, 推論, 画像, メモリ, チャット, デバッグ] なので
+        //   「画像」 = index 2。
+        val startSection = arguments?.getInt("startSection", -1) ?: -1
+        if (startSection in 0..5) {
+            selectedSection = startSection
+        }
 
         // Fragment.registerForActivityResult() は onCreate までに登録する必要がある。
         nsfwDebugPickLauncher = registerForActivityResult(
@@ -1542,6 +1559,7 @@ class SettingsComposeFragment : Fragment() {
 
 
     @Composable
+    @OptIn(ExperimentalMaterial3Api::class)
     private fun ImageGenSettingsCard() {
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -1551,6 +1569,12 @@ class SettingsComposeFragment : Fragment() {
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(text = "画像生成設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+
+                Text(
+                    text = "ステップ数・CFG スケールに加え、メインの生成ページで使う「スケジューラ」「シード」の初期値をここで管理します。",
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
 
                 // ステップ数 Slider
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1609,6 +1633,82 @@ class SettingsComposeFragment : Fragment() {
                         valueRange = 1f..20f,
                         steps = 38,
                         modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                // ---- Scheduler (コンパクトなドロップダウン) ----
+                //   メインページ側の Chip を 8 個並べる UI をそのままコピーすると
+                //   設定画面も縦に弸むため、ここでは 1 行の ExposedDropdownMenu に集約する。
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "スケジューラ（初期値）",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    var schedulerExpanded by remember { mutableStateOf(false) }
+                    val schedulerOptions = remember { com.nezumi_ai.sd.SdScheduler.values().toList() }
+                    val currentScheduler = com.nezumi_ai.sd.SdScheduler.fromId(sdSchedulerId)
+                    ExposedDropdownMenuBox(
+                        expanded = schedulerExpanded,
+                        onExpandedChange = { schedulerExpanded = it }
+                    ) {
+                        OutlinedTextField(
+                            value = currentScheduler.displayName,
+                            onValueChange = {},
+                            readOnly = true,
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(MenuAnchorType.PrimaryNotEditable, true),
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = schedulerExpanded) }
+                        )
+                        ExposedDropdownMenu(
+                            expanded = schedulerExpanded,
+                            onDismissRequest = { schedulerExpanded = false }
+                        ) {
+                            schedulerOptions.forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(option.displayName) },
+                                    onClick = {
+                                        sdSchedulerId = option.id
+                                        schedulerExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // ---- Seed (デフォルト値) ----
+                //   -1 (空欄) = ランダム。ここでは保存には Preferences を使わず、
+                //   入力値のバリデーションとデフォルト値提示に役割を限定。
+                //   (SD の実際の seed は生成タブ側のフィールドで逐回指定するフローを維持)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "シード値（デフォルト、空欄でランダム）",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    OutlinedTextField(
+                        value = sdDefaultSeedInput,
+                        onValueChange = { raw ->
+                            // 数字のみ受け付け (先頭のマイナスも許容)
+                            val cleaned = raw.filterIndexed { idx, c ->
+                                c.isDigit() || (idx == 0 && c == '-')
+                            }
+                            sdDefaultSeedInput = cleaned
+                        },
+                        singleLine = true,
+                        placeholder = { Text("-1") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = "※ 実際の生成に使うシードはメインの「画像生成」ページ上で逐回確定されます。",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.labelSmall
                     )
                 }
             }
@@ -2092,6 +2192,7 @@ class SettingsComposeFragment : Fragment() {
             chatHistoryLimit = historyLimit
             sdSteps = PreferencesHelper.getSdSteps(requireContext())
             sdCfg = PreferencesHelper.getSdCfg(requireContext())
+            sdSchedulerId = PreferencesHelper.getSdScheduler(requireContext())
             mtpEnabled = settingsRepository.isMtpEnabled()
             mtpDraftTokens = settingsRepository.getMtpDraftTokens()
             flashAttentionEnabled = settingsRepository.isFlashAttentionEnabled()
@@ -2186,6 +2287,7 @@ class SettingsComposeFragment : Fragment() {
         settingsRepository.updateChatHistoryLimit(chatHistoryLimit)
         PreferencesHelper.setSdSteps(requireContext(), sdSteps)
         PreferencesHelper.setSdCfg(requireContext(), sdCfg)
+        PreferencesHelper.setSdScheduler(requireContext(), sdSchedulerId)
         PreferencesHelper.setBraveSearchApiKey(requireContext(), braveSearchApiKeyInput.trim())
         settingsRepository.updateMtpEnabled(mtpEnabled)
         settingsRepository.updateMtpDraftTokens(mtpDraftTokens)
@@ -2270,7 +2372,7 @@ class SettingsComposeFragment : Fragment() {
                     AboutSection(title = "推論エンジン") {
                         AboutInfoRow("LiteRT-LM", BuildConfig.LITERTLM_VERSION)
                         AboutInfoRow("GGUF / llama.cpp", BuildConfig.LLAMACPP_VERSION)
-                        AboutInfoRow("Stable Diffusion", "LocalDream / MNN・QNN")
+                        AboutInfoRow("Stable Diffusion", "MNN 自前エンジン")
                         if (com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) {
                             AboutInfoRow("音声合成", "VOICEVOX CORE 0.16.4")
                         }

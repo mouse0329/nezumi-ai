@@ -210,24 +210,22 @@ NATIVE COMPONENTS
 * stable-diffusion.cpp-mnn Runtime
   License: See upstream project and linked backend licenses
   https://github.com/xororz/stable-diffusion.cpp-mnn
-  Note: Used for on-device image generation via MNN/OpenCL and QNN/NPU backends.
+  Note: Used for on-device image generation via MNN/OpenCL backend.
 
 * MNN
   License: Apache License 2.0
   https://github.com/alibaba/MNN
   Note: Used by stable-diffusion.cpp-mnn for CPU/OpenCL image generation.
 
-* Qualcomm QNN Runtime Libraries
-  License: Qualcomm SDK / QNN runtime terms
-  https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk
-  Note: QNN libraries are included under app/src/main/assets/qnnlibs for Snapdragon NPU acceleration.
+
 
 * Downloaded or Imported Models
   License: See each model provider's terms
   Sources may include Hugging Face Hub and user-provided local files.
   Note:
     This app can download or import GGUF, LiteRT-LM, .task, .safetensors,
-    MNN, QNN, and VOICEVOX VVM model files. Model files are governed by
+    MNN and VOICEVOX VVM model files. Model files are governed by
+
     their own licenses and model cards. No blanket license is granted by this
     NOTICE for third-party models downloaded or imported by the user.
 

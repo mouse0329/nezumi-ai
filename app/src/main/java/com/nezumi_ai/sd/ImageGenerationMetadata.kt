@@ -11,9 +11,10 @@ data class ImageGenerationMetadata(
     val steps: Int,               // 生成ステップ数
     val cfg: Float,               // CFGスケール
     val seed: Long,               // 乱数シード
+    val scheduler: String,        // スケジューラ識別子 (e.g. dpm, ddim)
     val width: Int,               // 生成画像の幅
     val height: Int,              // 生成画像の高さ
-    val backend: String,          // バックエンド ("mnn", "qnn")
+    val backend: String,          // バックエンド ("mnn", "opencl")
     val timestamp: Long,          // 生成時刻
     val generationTimeMs: Long    // 生成にかかった時間（ミリ秒）
 )
@@ -29,6 +30,7 @@ data class GenerationQueueItem(
     val steps: Int,
     val cfg: Float,
     val seed: Long,                          // -1でランダム
+    val scheduler: String = SdScheduler.DEFAULT.id,
     val metadata: ImageGenerationMetadata? = null,
     val status: GenerationStatus = GenerationStatus.PENDING,
     val resultUri: String? = null,           // 生成結果の保存URI
@@ -53,12 +55,12 @@ data class GenerationQueue(
 ) {
     val currentItem: GenerationQueueItem?
         get() = items.getOrNull(currentIndex)
-    
+
     val completedCount: Int
         get() = items.count { it.status == GenerationQueueItem.GenerationStatus.COMPLETED }
-    
+
     val failedCount: Int
         get() = items.count { it.status == GenerationQueueItem.GenerationStatus.FAILED }
-    
+
     fun isComplete(): Boolean = currentIndex >= items.size
 }

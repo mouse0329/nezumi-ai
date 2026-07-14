@@ -1,0 +1,167 @@
+//
+//  AVX2Functions.cpp
+//  MNN
+//
+//  Created by MNN on b'2021/05/17'.
+//  Copyright © 2018, Alibaba Group Holding Limited
+//
+
+#include "AVX2Functions.hpp"
+#include "AVX2Backend.hpp"
+#include "avx/FunctionSummary.hpp"
+#include "avxfma/FunctionSummary.hpp"
+#include "avx512/FunctionSummary.hpp"
+#include "sse/FunctionSummary.hpp"
+#include <cmath>
+namespace MNN {
+static int geP, glP, ghP;
+static CoreFunctions* gAVX2CoreFunctions = nullptr;
+static CoreInt8Functions* gAVX2CoreInt8Functions = nullptr;
+static void _MNNGetMatMulPackMode(int* eP, int* lP, int* hP) {
+    *eP = geP;
+    *lP = glP;
+    *hP = ghP;
+}
+
+template <int Pack>
+static void _MNNNormPacked_Float(float* dest, const float* source, const float* gamma, const float* beta, float epsilon,
+                                 size_t batch, size_t channels, bool RMSNorm) {
+    const size_t channelUnit = UP_DIV(channels, Pack);
+    for (size_t n = 0; n < batch; ++n) {
+        float mean = 0.0f;
+        if (!RMSNorm) {
+            float sum = 0.0f;
+            for (size_t c = 0; c < channels; ++c) {
+                const size_t cu = c / Pack;
+                const size_t cr = c - cu * Pack;
+                sum += source[(cu * batch + n) * Pack + cr];
+            }
+            mean = sum / static_cast<float>(channels);
+        }
+
+        float squareSum = 0.0f;
+        for (size_t c = 0; c < channels; ++c) {
+            const size_t cu = c / Pack;
+            const size_t cr = c - cu * Pack;
+            float v = source[(cu * batch + n) * Pack + cr];
+            float d = RMSNorm ? v : (v - mean);
+            squareSum += d * d;
+        }
+
+        const float invStd = 1.0f / std::sqrt(squareSum / static_cast<float>(channels) + epsilon);
+        for (size_t c = 0; c < channels; ++c) {
+            const size_t cu = c / Pack;
+            const size_t cr = c - cu * Pack;
+            const size_t index = (cu * batch + n) * Pack + cr;
+            float v = source[index];
+            float norm = RMSNorm ? (v * invStd) : ((v - mean) * invStd);
+            if (gamma && beta) {
+                norm = norm * gamma[c] + beta[c];
+            }
+            dest[index] = norm;
+        }
+        for (size_t c = channels; c < channelUnit * Pack; ++c) {
+            const size_t cu = c / Pack;
+            const size_t cr = c - cu * Pack;
+            dest[(cu * batch + n) * Pack + cr] = 0.0f;
+        }
+    }
+}
+
+#ifndef MNN_USE_AVX
+bool AVX2Functions::init(int cpuFlags) {
+    return false;
+}
+#else
+
+bool AVX2Functions::init(int cpuFlags) {
+    gAVX2CoreFunctions = new CoreFunctions;
+    auto coreFunction = gAVX2CoreFunctions;
+    gAVX2CoreInt8Functions = new CoreInt8Functions;
+    // Init default functions
+    *coreFunction = *MNNGetCoreFunctions();
+    *gAVX2CoreInt8Functions = *MNNGetInt8CoreFunctions();
+    _AVX_MNNInt8FunctionInit(gAVX2CoreInt8Functions);
+    // Init AVX2
+    coreFunction->MNNGetMatMulPackMode = _MNNGetMatMulPackMode;
+    geP = 24;
+    glP = 1;
+    ghP = 4;
+    _AVX_ReorderInit(coreFunction);
+
+    coreFunction->MNNPackedMatMul = _AVX_MNNPackedMatMul;
+    coreFunction->MNNPackedMatMulRemain = _AVX_MNNPackedMatMulRemain;
+
+#ifdef MNN_LOW_MEMORY
+    coreFunction->MNNAbsMax = _AVX_MNNAbsMaxFP32;
+    coreFunction->MNNDynamicQuant = _AVX_MNNDynamicQuant;
+    coreFunction->MNNAsyQuantFunc = _AVX_MNNAsyQuantFunc;
+    coreFunction->MNNAsyQuantInfo = _AVX_MNNAsyQuantInfo;
+#endif
+    coreFunction->MNNPackC4ForMatMul_A = _AVX_MNNPackC4ForMatMul_A;
+    coreFunction->MNNPackForMatMul_B = _AVX_MNNPackForMatMul_B;
+    coreFunction->MNNComputeMatMulForE_1 = _AVX_MNNComputeMatMulForE_1;
+    coreFunction->MNNComputeMatMulForH_1 = _AVX_MNNComputeMatMulForH_1;
+    // Dynamic Quant
+    coreFunction->MNNCountMaxMinValue = _AVX_MNNCountMinMaxValue;
+    coreFunction->MNNSoftmax = _AVX_MNNSoftmax;
+
+    // For Packed Functions
+    coreFunction->pack = 8;
+    coreFunction->MNNNormPacked = _MNNNormPacked_Float<8>;
+    _AVX_ExtraInit(coreFunction);
+    // Winograd
+    _AVX_WinogradInit(coreFunction);
+    if (cpuFlags & libyuv::kCpuHasFMA3) {
+        coreFunction->MNNPackedMatMul = _AVX_MNNPackedMatMulFMA;
+        coreFunction->MNNPackedMatMulRemain = _AVX_MNNPackedMatMulRemainFMA;
+        coreFunction->MNNComputeMatMulForE_1 = _AVX_MNNComputeMatMulForE_1FMA;
+        coreFunction->MNNComputeMatMulForH_1 = _AVX_MNNComputeMatMulForH_1FMA;
+        _AVX_ExtraInitFMA(coreFunction);
+    }
+#ifdef MNN_AVX512
+    if ((cpuFlags & libyuv::kCpuHasAVX512VNNI) || (cpuFlags & libyuv::kCpuHasAVX512VL) ||
+        (cpuFlags & libyuv::kCpuHasAVX512BW) || (cpuFlags & libyuv::kCpuHasAVX512VBMI) ||
+        (cpuFlags & libyuv::kCpuHasAVX512VBITALG) || (cpuFlags & libyuv::kCpuHasAVX512VPOPCNTDQ) ||
+        (cpuFlags & libyuv::kCpuHasAVX512VBMI2)) {
+        coreFunction->pack = 16;
+        coreFunction->MNNNormPacked = _MNNNormPacked_Float<16>;
+        _AVX512_ReorderInit(coreFunction);
+        _AVX512_ExtraInit(coreFunction);
+        _AVX512_WinogradInit(coreFunction);
+        coreFunction->MNNPackForMatMul_B = _AVX512_MNNPackForMatMul_B;
+        coreFunction->MNNPackC4ForMatMul_A = _AVX512_MNNPackC8ForMatMul_A;
+        coreFunction->MNNPackedMatMul = _AVX512_MNNPackedMatMul;
+        coreFunction->MNNPackedMatMulRemain = _AVX512_MNNPackedMatMulRemain;
+        geP = 48;
+        ghP = 8;
+        glP = 1;
+        _AVX512_MNNInt8FunctionInit(gAVX2CoreInt8Functions, cpuFlags & libyuv::kCpuHasAVX512VNNI);
+        memcpy(coreFunction->MNNPackedMatMulOC16Functions, _AVX512_MNNPackedMatMulOC16Functions,
+               sizeof(MNN::CoreFunctions::MNNPackedMatMulKernel) * AVX512_INPUT_TILE_MAX);
+        memcpy(coreFunction->MNNPackedMatMulOC32Functions, _AVX512_MNNPackedMatMulOC32Functions,
+               sizeof(MNN::CoreFunctions::MNNPackedMatMulKernel) * AVX512_INPUT_TILE_MAX);
+        memcpy(coreFunction->MNNPackedMatMulOC48Functions, _AVX512_MNNPackedMatMulOC48Functions,
+               sizeof(MNN::CoreFunctions::MNNPackedMatMulKernel) * AVX512_INPUT_TILE_MAX);
+    }
+#endif
+    {
+        coreFunction->int8MatmulRelatedFunctions.Int8GemmKernel = gAVX2CoreInt8Functions->Int8GemmKernel;
+        coreFunction->int8MatmulRelatedFunctions.Int8GemmKernelFast = gAVX2CoreInt8Functions->Int8GemmKernelFast;
+        coreFunction->int8MatmulRelatedFunctions.Int8GemmKernel_W4 = gAVX2CoreInt8Functions->Int8GemmKernel_W4;
+        coreFunction->int8MatmulRelatedFunctions.MNNGetGemmUnit = gAVX2CoreInt8Functions->MNNGetGemmUnit;
+        coreFunction->int8MatmulRelatedFunctions.MNNPackC4Int8ForMatMul_A =
+            gAVX2CoreInt8Functions->MNNPackC4Int8ForMatMul_A;
+        coreFunction->int8MatmulRelatedFunctions.eP = 4;
+    }
+    return true;
+}
+#endif
+
+CoreFunctions* AVX2Functions::get() {
+    return gAVX2CoreFunctions;
+}
+CoreInt8Functions* AVX2Functions::getInt8() {
+    return gAVX2CoreInt8Functions;
+}
+}; // namespace MNN

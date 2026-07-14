@@ -52,9 +52,9 @@ model_dir/
 
 ## 実装ステップ
 
-### Step 1: LocalDreamModule作成
+### Step 1: SDエンジンモジュール作成
 
-`app/src/main/java/com/nezumi_ai/sd/LocalDreamModule.kt`:
+`app/src/main/java/com/nezumi_ai/sd/SdEngineModule.kt`:
 
 ```kotlin
 package com.nezumi_ai.sd
@@ -67,10 +67,10 @@ import java.io.*
 import java.net.HttpURLConnection
 import java.net.URL
 
-class LocalDreamModule(private val context: Context) {
+class SdEngineModule(private val context: Context) {
     
     companion object {
-        private const val TAG = "LocalDreamModule"
+        private const val TAG = "SdEngineModule"
         private const val SERVER_PORT = 18081
         private const val EXECUTABLE_NAME = "libstable_diffusion_core.so"
     }

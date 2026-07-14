@@ -96,6 +96,8 @@ import androidx.navigation.fragment.findNavController
 import com.nezumi_ai.R
 import com.nezumi_ai.presentation.viewmodel.ImageGenViewModel
 import com.nezumi_ai.utils.PreferencesHelper
+import com.nezumi_ai.sd.SdScheduler
+
 import com.nezumi_ai.sd.safety.SafetyResult
 import java.io.File
 
@@ -105,7 +107,17 @@ data class LibraryItem(
     val timestamp: Long,
     val negativePrompt: String? = null,
     val steps: Int? = null,
-    val seed: Long? = null
+    val seed: Long? = null,
+    // Feature: ライブラリのメタデータ拡張。
+    //   指示書の「表示必須項目」に揃えるため、モデル名 / 画像サイズ /
+    //   CFG スケール / スケジューラの 4 項目を新規で保持する。
+    //   既存ライブラリファイルとの下位互換のため、すべて nullable にする。
+    val modelName: String? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    val cfg: Float? = null,
+    val scheduler: String? = null
+
 )
 
 class ImageGenFragment : Fragment() {
@@ -115,6 +127,13 @@ class ImageGenFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshAvailableModels()
+        // Bug fix (ステップ数 / CFG / スケジューラを設定画面で変えても
+        //   即時に反映されない問題):
+        //   設定画面から戻る度に Preferences を引き直し、ViewModel の
+        //   StateFlow を同期させる。UI の入力中値を上書きしないよう、
+        //   実際に変わったときだけ代入する。
+        viewModel.refreshPreferencesBackedFields()
+
     }
 
     override fun onDestroyView() {
@@ -130,8 +149,23 @@ class ImageGenFragment : Fragment() {
                     findNavController().navigateUp()
                     Unit
                 }
+                // Feature: メインの画像生成ページから設定画面へリンクする導線。
+                //   スケジューラ / シードの入力を設定に集約したので、代わりにここを
+                //   タップしたら直接見に行けるようにする。
+                // Bug fix: 導線先で「画像」タブを自動で選ばせるために
+                //   Bundle で startSection=2 を伸べる。SettingsComposeFragment は
+                //   onCreate でこの値を読んで内部タブを切り替える。
+                val navigateToSettings: () -> Unit = {
+                    runCatching {
+                        findNavController().navigate(
+                            R.id.settingsFragment,
+                            android.os.Bundle().apply { putInt("startSection", 2) }
+                        )
+                    }
+                }
                 NezumiImageGenTheme {
-                    LegacyImageGenScreen(viewModel, navigateUp)
+                    LegacyImageGenScreen(viewModel, navigateUp, navigateToSettings)
+
                 }
             }
         }
@@ -196,7 +230,12 @@ private fun NezumiImageGenTheme(content: @Composable () -> Unit) {
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit) {
+private fun LegacyImageGenScreen(
+    vm: ImageGenViewModel,
+    onNavigateUp: () -> Unit,
+    onNavigateToSettings: () -> Unit = {}
+) {
+
     val ctx = LocalContext.current
     val prompt by vm.prompt.collectAsState()
     val neg by vm.negativePrompt.collectAsState()
@@ -216,6 +255,9 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
     val currentStep by vm.currentStep.collectAsState()
     val backendInfo by vm.backendInfo.collectAsState()
     val selectedBackend by vm.selectedBackend.collectAsState()
+    val scheduler by vm.scheduler.collectAsState()
+    val lastUsedSeed by vm.lastUsedSeed.collectAsState()
+
     val queueResultBitmaps by vm.queueResultBitmaps.collectAsState()
     val generationQueue by vm.generationQueue.collectAsState()
     val isQueueRunning by vm.isQueueRunning.collectAsState()
@@ -249,18 +291,80 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
         }
     }
     
-    LaunchedEffect(bitmap) {
-        bitmap?.let { bmp ->
-            val meta = vm.getImageMetadata(ctx, vm.lastSavedInternalUri)
-            val ts = saveImageToLibrary(ctx, bmp, prompt, meta?.negativePrompt, meta?.steps, meta?.seed)
-            library.add(0, LibraryItem(bmp, prompt, ts, meta?.negativePrompt, meta?.steps, meta?.seed))
+    val lastCompletedMetadata by vm.lastCompletedMetadata.collectAsState()
+
+    // Bug fix (ライブラリにネガティブプロンプト等のメタデータが出ない問題):
+    //   旧パス (vm.getImageMetadata(ctx, vm.lastSavedInternalUri)) はキュー経路で
+    //   URI が更新されず null を与えてしまうケースがあった。
+    //   代わりに ViewModel 側で StateFlow として公開している
+    //   lastCompletedMetadata を直接参照する。同一 timestamp での二重登録を
+    //   防ぐため、直近に登録したメタデータの timestamp を覚えておく。
+    //
+    // Bug fix (ライブラリに同じ画像が 2 つ入る問題):
+    //   旧実装は LaunchedEffect のキーに bitmap と lastCompletedMetadata の
+    //   両方を指定していたため、ViewModel 側で
+    //     _resultBitmap.value = bmp                       // ← 1 回目の発火
+    //     _lastCompletedMetadata.value = metadata          // ← 2 回目の発火
+    //   と StateFlow を順に更新する ImageGenViewModel の生成完了処理
+    //   （キュー / 単発ともに）で 1 回の生成につき 2 回コルーチンが走り、
+    //   1 回目 (metadata がまだ古い / 未到着) と 2 回目 (metadata 到着後)
+    //   で別 timestamp のライブラリエントリが 2 件作られていた。
+    //   ガードは「同じ metaTs での二度登録防止」しか見ていなかったので、
+    //   1 回目に metaTs=0L で通ってしまうと 2 回目もチェックを通過する。
+    //
+    //   対処:
+    //     - キーを metadata の timestamp に絞る (bitmap 変化単独では発火しない)。
+    //       これで「bitmap 更新 → metadata 更新」の順で来ても 1 回だけになる。
+    //     - metadata が確定してから登録する (metaTs == 0L は skip)。
+    //     - すでに同じ timestamp のエントリが library に居るなら追加しない
+    //       (StateFlow の replay や ViewModel 再購読で二重に走ったときの保険)。
+    var lastLibraryTs by remember { mutableStateOf(0L) }
+    LaunchedEffect(lastCompletedMetadata?.timestamp) {
+        val meta = lastCompletedMetadata ?: return@LaunchedEffect
+        val bmp = bitmap ?: return@LaunchedEffect
+        val metaTs = meta.timestamp
+        if (metaTs == 0L) return@LaunchedEffect
+        // 同じメタデータを二度登録しない（bitmap や metadata のどちらかが
+        // 先に届いてリコンポーズでリークするのを防ぐ）。
+        if (metaTs == lastLibraryTs) return@LaunchedEffect
+        // 二重ガード: すでに同じ timestamp のライブラリエントリがあるなら skip。
+        //   （プロセス復帰直後で lastLibraryTs が 0 のまま同じ生成完了イベントを
+        //   再購読するケースを想定。）
+        if (library.any { it.timestamp == metaTs }) {
+            lastLibraryTs = metaTs
+            return@LaunchedEffect
         }
+        val ts = saveImageToLibrary(
+            ctx, bmp, prompt,
+            negativePrompt = meta.negativePrompt,
+            steps = meta.steps,
+            seed = meta.seed,
+            modelName = meta.modelName,
+            width = meta.width,
+            height = meta.height,
+            cfg = meta.cfg,
+            scheduler = meta.scheduler
+        )
+        library.add(
+            0,
+            LibraryItem(
+                bmp, prompt, ts,
+                negativePrompt = meta.negativePrompt,
+                steps = meta.steps,
+                seed = meta.seed,
+                modelName = meta.modelName,
+                width = meta.width,
+                height = meta.height,
+                cfg = meta.cfg,
+                scheduler = meta.scheduler
+            )
+        )
+        lastLibraryTs = metaTs
     }
 
     Column(Modifier.fillMaxSize()) {
         Spacer(modifier = Modifier.statusBarsPadding())
         
-        // 戻るボタンとタイトル
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -279,6 +383,12 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f)
             )
+            // Feature: 設定画面へのリンク。スケジューラ / シードのデフォルト値は
+            //   設定の「画像」タブに集約されているため、ここから直接飛べるようにする。
+            TextButton(onClick = onNavigateToSettings) {
+                Text("設定", color = MaterialTheme.colorScheme.primary)
+            }
+
         }
         
         // タブヘッダー
@@ -346,32 +456,96 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                     }
                 }
                 
-                // シード値設定
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                // UI 整理: シード値設定も設定画面に集約し、ここでは折りたたみで
+                //   コンパクトに行う。デフォルトは閉じておき、
+                //   現在のシード状態と前回使用シードだけを見せる。入力が必要なときだけ
+                //   展開して 1 行の入力フィールドを見せる。
+                var seedExpanded by remember { mutableStateOf(false) }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
-                    OutlinedTextField(
-                        value = if (seedValue == -1L) "" else seedValue.toString(),
-                        onValueChange = {
-                            val s = it.toLongOrNull() ?: -1L
-                            vm.setSeed(s)
-                        },
-                        label = { Text("シード値 (-1でランダム)") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
-                        ),
-                        colors = fieldColors
-                    )
-                    Button(
-                        onClick = { vm.setSeed(-1L) },
-                        enabled = seedValue != -1L,
-                        modifier = Modifier.height(56.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { seedExpanded = !seedExpanded },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("リセット")
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "シード値",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                            Text(
+                                if (seedValue == -1L) "ランダム" else seedValue.toString(),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Text(
+                            if (seedExpanded) "–" else "⊕",
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                    if (seedExpanded) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = if (seedValue == -1L) "" else seedValue.toString(),
+                                onValueChange = {
+                                    val s = it.toLongOrNull() ?: -1L
+                                    vm.setSeed(s)
+                                },
+                                label = { Text("-1 でランダム") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                                ),
+                                colors = fieldColors
+                            )
+                            TextButton(
+                                onClick = { vm.setSeed(-1L) },
+                                enabled = seedValue != -1L
+                            ) {
+                                Text("リセット")
+                            }
+                        }
+                        Text(
+                            "※ 詳細なデフォルトは「設定 > 画像」で変更できます。",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                }
+                // Bug fix (シード表示):
+                //   以前は seed=-1 (ランダム) のとき何も出ず「シード値が出ない」
+                //   と見えていた。実際に使われた seed を導入した lastUsedSeed から
+                //   一行で見せ、タップして再利用できるようにする。
+                lastUsedSeed?.let { used ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "前回使用シード: $used",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { vm.setSeed(used) }) {
+                            Text("再利用")
+                        }
                     }
                 }
 
@@ -386,9 +560,9 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    // NOTE: 以前の "自動" 選択を廃止。不安定だった QNN 自動フォールバックを
-                    // 回避し、ユーザーに実行先を明示的に選ばせる。
-                    listOf("qnn" to "GPU/NPU", "mnn" to "CPU").forEach { (value, label) ->
+                    // QNN (NPU) サポートは廃止。UI では MNN を唯一の選択肢として表示する。
+                    listOf("mnn" to "MNN (CPU/GPU)").forEach { (value, label) ->
+
                         val selected = selectedBackend == value
                         androidx.compose.material3.FilterChip(
                             selected = selected,
@@ -537,6 +711,50 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                             Text(s.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         }
                     }
+                }
+
+                // UI 整理: スケジューラ / ステップ数 / CFG の現在値を一括で小さく見せ、
+                //   タップで設定画面へ飛ぶ導線にする。ユーザーが「どこでステップ数や
+                //   CFG を変えるのか分からない」のを防ぐ。スケジューラも同じバッジに入れ、
+                //   設定を変更して戻ってきたときは onResume の refreshPreferencesBackedFields で
+                //   StateFlow が更新されるのでここの表示も自動で切り替わる。
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .clickable { onNavigateToSettings() }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    @Composable
+                    fun MetricCell(label: String, value: String) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                label,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                            Text(
+                                value,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    MetricCell("ステップ", steps.toString())
+                    MetricCell("CFG", String.format("%.1f", cfg))
+                    MetricCell("スケジューラ", scheduler.displayName)
+                    Text(
+                        "設定へ ›",
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelMedium
+                    )
                 }
 
                 var batchCount by remember { mutableStateOf(1) }
@@ -940,6 +1158,40 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
                             )
                         }
                         
+                        // Feature: 指示書にある「表示必須メタデータ一覧」を青写して見せる。
+                        //   「プロンプト / ネガティブプロンプト / モデル名 /
+                        //    画像サイズ / CFGスケール / スケジューラの種類 / シード値」。
+                        //   値がない（旧ファイル）行は飛ばし、存在する値だけ並べる。
+                        val metaRows: List<Pair<String, String>> = buildList {
+                            if (!item.modelName.isNullOrEmpty()) add("モデル名" to item.modelName)
+                            if (item.width != null && item.height != null) {
+                                add("画像サイズ" to "${item.width} x ${item.height}")
+                            }
+                            if (item.steps != null) add("Steps" to item.steps.toString())
+                            if (item.cfg != null) add("CFGスケール" to String.format("%.1f", item.cfg))
+                            if (!item.scheduler.isNullOrEmpty()) {
+                                val displayName = com.nezumi_ai.sd.SdScheduler.fromId(item.scheduler).displayName
+                                add("スケジューラ" to displayName)
+                            }
+                            if (item.seed != null) add("シード値" to item.seed.toString())
+                        }
+                        metaRows.forEach { (label, value) ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    "$label:",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    modifier = Modifier.width(110.dp)
+                                )
+                                Text(
+                                    value,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f)
+                                )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
@@ -1006,27 +1258,35 @@ private fun LegacyImageGenScreen(vm: ImageGenViewModel, onNavigateUp: () -> Unit
 }
 
 // ライブラリの永続化関数
+// Feature: モデル名 / 画像サイズ / CFG / スケジューラをライブラリに導入。
+
 private fun saveImageToLibrary(
     context: android.content.Context,
     bitmap: Bitmap,
     prompt: String,
     negativePrompt: String? = null,
     steps: Int? = null,
-    seed: Long? = null
+    seed: Long? = null,
+    modelName: String? = null,
+    width: Int? = null,
+    height: Int? = null,
+    cfg: Float? = null,
+    scheduler: String? = null
+
 ): Long {
     val libraryDir = File(context.filesDir, "library")
     if (!libraryDir.exists()) {
         libraryDir.mkdirs()
     }
-    
+
     val timestamp = System.currentTimeMillis()
     val filename = "img_$timestamp.jpg"
     val file = File(libraryDir, filename)
-    
+
     file.outputStream().use { output ->
         bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)
     }
-    
+
     // メタデータを保存
     val metadataFile = File(libraryDir, "metadata.txt")
     val json = org.json.JSONObject().apply {
@@ -1035,6 +1295,13 @@ private fun saveImageToLibrary(
         put("negativePrompt", negativePrompt ?: "")
         put("steps", steps ?: 0)
         put("seed", seed ?: -1L)
+        // 新規項目：旧ファイルとの下位互換のため opt フィールドとして込む
+        if (!modelName.isNullOrEmpty()) put("modelName", modelName)
+        if (width != null && width > 0) put("width", width)
+        if (height != null && height > 0) put("height", height)
+        if (cfg != null) put("cfg", cfg.toDouble())
+        if (!scheduler.isNullOrEmpty()) put("scheduler", scheduler)
+
     }
     metadataFile.appendText(json.toString() + "\n")
     return timestamp
@@ -1059,12 +1326,31 @@ private fun loadLibrary(context: android.content.Context): List<LibraryItem> {
                 val negPrompt = obj.optString("negativePrompt").takeIf { it.isNotEmpty() }
                 val steps = obj.optInt("steps").takeIf { it > 0 }
                 val seed = obj.optLong("seed").takeIf { it != -1L }
-                
+                val modelName = obj.optString("modelName").takeIf { it.isNotEmpty() }
+                val width = obj.optInt("width").takeIf { it > 0 }
+                val height = obj.optInt("height").takeIf { it > 0 }
+                val cfg = if (obj.has("cfg")) obj.optDouble("cfg").toFloat() else null
+                val scheduler = obj.optString("scheduler").takeIf { it.isNotEmpty() }
+
+
                 val imageFile = File(libraryDir, "img_${timestamp}.jpg")
                 if (imageFile.exists()) {
                     val imageBitmap = BitmapFactory.decodeFile(imageFile.absolutePath)
                     if (imageBitmap != null) {
-                        library.add(LibraryItem(imageBitmap, libPrompt, timestamp, negPrompt, steps, seed))
+                        library.add(
+                            LibraryItem(
+                                imageBitmap, libPrompt, timestamp,
+                                negativePrompt = negPrompt,
+                                steps = steps,
+                                seed = seed,
+                                modelName = modelName,
+                                width = width,
+                                height = height,
+                                cfg = cfg,
+                                scheduler = scheduler
+                            )
+                        )
+
                     }
                 }
             } else {

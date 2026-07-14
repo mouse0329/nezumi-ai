@@ -43,8 +43,21 @@ class LocalDreamModule(private val context: Context) {
     companion object {
         private const val TAG = "LocalDreamModule"
         private const val SERVER_PORT = 18081
-        private const val EXECUTABLE_NAME = "libstable_diffusion_core.so"
         private const val RUNTIME_DIR = "runtime_libs"
+        private const val DISABLE_NATIVE_SERVER_PROPERTY = "nezumi.disable_native_sd_server"
+
+        internal fun shouldDisableNativeServerForTests(
+            isDebugBuild: Boolean,
+            systemProperty: String?
+        ): Boolean {
+            val enabled = systemProperty?.trim()?.lowercase()
+            return when (enabled) {
+                "true" -> isDebugBuild
+                "false" -> false
+                null -> false
+                else -> false
+            }
+        }
 
         // xororz/local-dream では MNN の MnnSessionOptions で Precision_Low +
         // MNN_GPU_MEMORY_BUFFER + MNN_GPU_TUNING_FAST を付けることで OpenCL を安定化しているが、
@@ -57,9 +70,10 @@ class LocalDreamModule(private val context: Context) {
             currentBackend: String?,
             maxSidePx: Int = 0
         ): Boolean {
-            // QNN バックエンド利用中は MNN の OpenCL パスには入らないので本来不要だが、
-            // 内部で UNET の一部が OpenCL に逃げる不具合回避のため強制オフにする。
-            if (currentBackend?.lowercase() == "qnn") return false
+            // NPU (QNN) サポートは廃止済み。currentBackend は "mnn" (CPU) か
+            // "qnn" (旧識別子だが実体は GPU/OpenCL) の 2 択で、どちらの経路も
+            // MNN 側の OpenCL カーネルに合流するため、ここでは backend 名に
+            // 依存せず「解像度と userWantsOpenCL」だけで判断する。
             if (!userWantsOpenCL) return false
             // MNN CPU モードでも 512 クラスは OpenCL を避ける。
             //   背景: 512x512 の UNET latent (64x64 * feature) を mobile GPU で tuning させると
@@ -76,6 +90,7 @@ class LocalDreamModule(private val context: Context) {
     var isServerReady = false
         private set
     private var monitorJob: Job? = null
+    private var mnnModule: MnnSdModule? = null
     private val coroutineScope = CoroutineScope(Dispatchers.Default + Job())
     private val activeGenerationConn = AtomicReference<HttpURLConnection?>(null)
 
@@ -108,9 +123,12 @@ class LocalDreamModule(private val context: Context) {
         }
     }
 
-    // Perf fix: QNN ライブラリコピーはモデルごとに変わらないので、
-    //           プロセス内で一度成功したらキャッシュして
-            //   loadModel ごとの assets スキャン (数バイトサイズチェック x N 本) をスキップする。
+    // NOTE: QNN/NPU バックエンドは廃止済み。以前は assets/qnnlibs/ 配下の
+    //   QNN 実行ライブラリ (libQnnHtp.so 等) を毎起動時に filesDir にコピーする
+    //   ロジックがここにあったが、いまはロードされないため機能上は no-op。
+    //   assets 側にファイルが残っていても失敗するだけで生成には影響しない。
+    //   将来的に assets/qnnlibs/ を完全削除する際にこの prepareRuntimeDir と
+    //   関連ロジックも取り除くこと。
     @Volatile private var runtimeDirReady: File? = null
 
     private suspend fun prepareRuntimeDir(): File = withContext(Dispatchers.IO) {
@@ -163,21 +181,6 @@ class LocalDreamModule(private val context: Context) {
         runtimeDir
     }
 
-    private fun resolveExecutable(): File? {
-        val nativeDir = context.applicationInfo.nativeLibraryDir
-        val nativeDirFile = File(nativeDir, EXECUTABLE_NAME)
-
-        if (!nativeDirFile.exists()) {
-            Log.w(TAG, "resolveExecutable: executable not found in nativeLibraryDir=${nativeDirFile.absolutePath}")
-            return null
-        }
-
-        if (!nativeDirFile.canExecute()) {
-            nativeDirFile.setExecutable(true, true)
-        }
-        Log.d(TAG, "resolveExecutable: native executable=${nativeDirFile.absolutePath} canExecute=${nativeDirFile.canExecute()} length=${nativeDirFile.length()}")
-        return nativeDirFile
-    }
 
     private fun resolveModelDir(dir: File, isCpu: Boolean): File? {
         val markerFile = if (isCpu) "unet.mnn" else "unet.bin"
@@ -190,8 +193,8 @@ class LocalDreamModule(private val context: Context) {
                 if (File(subDir, markerFile).exists()) {
                     Log.d(TAG, "Found $markerFile in: ${subDir.absolutePath}")
                     // マーカーファイルは見つかったが、他の必須ファイルも存在するか簡易チェック
-                    // CPU の場合: unet.mnn, clip.mnn, vae_decoder.mnn
-                    // QNN の場合: unet.bin, clip.bin (or clip_v2.mnn), vae_decoder.bin
+                    // MNN 形式: unet.mnn, clip.mnn, vae_decoder.mnn (対応)
+                    // 旧 QNN 形式: unet.bin, clip.bin (or clip_v2.mnn), vae_decoder.bin (非対応 — 検出のみ残す)
                     val hasRequiredFiles = if (isCpu) {
                         File(subDir, "unet.mnn").exists() &&
                         (File(subDir, "clip.mnn").exists() || File(subDir, "clip_v2.mnn").exists()) &&
@@ -218,84 +221,23 @@ class LocalDreamModule(private val context: Context) {
         return searchDir(dir, 0)
     }
 
-    private fun buildCommand(
-        executable: File,
-        modelDir: File,
-        runtimeDir: File,
-        isCpu: Boolean
-    ): List<String> {
-        return if (isCpu) {
-            mutableListOf(
-                executable.absolutePath,
-                "--clip", File(modelDir, "clip.mnn").absolutePath,
-                "--unet", File(modelDir, "unet.mnn").absolutePath,
-                "--vae_decoder", File(modelDir, "vae_decoder.mnn").absolutePath,
-                "--tokenizer", File(modelDir, "tokenizer.json").absolutePath,
-                "--port", SERVER_PORT.toString(),
-                "--text_embedding_size", "768",
-                "--cpu"
-            ).also { cmd ->
-                val vaeEncoder = File(modelDir, "vae_encoder.mnn")
-                if (vaeEncoder.exists()) {
-                    cmd.addAll(listOf("--vae_encoder", vaeEncoder.absolutePath))
-                }
-            }
-        } else {
-            val clipFile = when {
-                File(modelDir, "clip.mnn").exists() -> "clip.mnn"
-                File(modelDir, "clip_v2.mnn").exists() -> "clip_v2.mnn"
-                else -> "clip.bin"
-            }
-            val hasMnnClip = clipFile.endsWith(".mnn")
-
-            mutableListOf(
-                executable.absolutePath,
-                "--clip", File(modelDir, clipFile).absolutePath,
-                "--unet", File(modelDir, "unet.bin").absolutePath,
-                "--vae_decoder", File(modelDir, "vae_decoder.bin").absolutePath,
-                "--tokenizer", File(modelDir, "tokenizer.json").absolutePath,
-                "--backend", File(runtimeDir, "libQnnHtp.so").absolutePath,
-                "--system_library", File(runtimeDir, "libQnnSystem.so").absolutePath,
-                "--port", SERVER_PORT.toString(),
-                "--text_embedding_size", "768"
-            ).also { cmd ->
-                if (hasMnnClip) {
-                    cmd.add("--use_cpu_clip")
-                }
-                val vaeEncoder = File(modelDir, "vae_encoder.bin")
-                if (vaeEncoder.exists()) {
-                    cmd.addAll(listOf("--vae_encoder", vaeEncoder.absolutePath))
-                }
-            }
-        }
-    }
-
-    private fun buildEnvironment(runtimeDir: File, nativeLibraryDir: String): Map<String, String> {
-        val env = mutableMapOf<String, String>()
-
-        val systemLibPaths = mutableListOf(
-            runtimeDir.absolutePath,
-            nativeLibraryDir,
-            "/system/lib64",
-            "/vendor/lib64",
-            "/vendor/lib64/egl"
-        )
-
-        val inheritedLdLibraryPath = System.getenv("LD_LIBRARY_PATH")
-        if (!inheritedLdLibraryPath.isNullOrBlank()) {
-            systemLibPaths.add(inheritedLdLibraryPath)
-        }
-
-        env["LD_LIBRARY_PATH"] = systemLibPaths.joinToString(":")
-        env["DSP_LIBRARY_PATH"] = runtimeDir.absolutePath
-        env["ADSP_LIBRARY_PATH"] = runtimeDir.absolutePath
-        env["MNN_OPENCL_TUNING"] = "WIDE"
-        env["PATH"] = System.getenv("PATH") ?: ""
-
-        return env
-    }
+    // Legacy subprocess execution (libstable_diffusion_core.so) removed.
+    // LocalDreamModule now prefers the JNI `MnnSdModule` path provided by mnn-sd-engine.
 
     suspend fun loadModel(modelPath: String, backend: String = "auto"): Boolean = withContext(Dispatchers.IO) {
+        val disableNativeServer = shouldDisableNativeServerForTests(
+            isDebugBuild = com.nezumi_ai.BuildConfig.DEBUG,
+            systemProperty = System.getProperty(DISABLE_NATIVE_SERVER_PROPERTY)
+        )
+        // JNI attempt is performed after selecting the backend below.
+        if (disableNativeServer) {
+            Log.w(TAG, "loadModel: Native SD server disabled by system property; skipping server startup")
+            currentModelPath = modelPath
+            currentBackend = backend
+            isServerReady = false
+            return@withContext false
+        }
+
         Log.d(TAG, "loadModel: Starting (modelPath=$modelPath, backend=$backend)")
 
         try {
@@ -307,47 +249,76 @@ class LocalDreamModule(private val context: Context) {
 
             Log.d(TAG, "loadModel: Model directory exists and is readable")
 
+            // NPU (QNN) サポートは廃止。バックエンドは:
+            //   - "mnn" / "cpu" : MNN CPU 経路
+            //   - "qnn" / "gpu" / "npu" (後方互換) : MNN OpenCL 経路
+            // どちらも MNN エンジン (mnn-sd-engine) の JNI に流れる。
             val normalizedBackend = when (backend.lowercase()) {
                 "mnn", "cpu" -> "mnn"
-                "qnn", "npu" -> "qnn"
+                "gpu", "opencl", "qnn", "npu" -> "gpu"
                 else -> "auto"
             }
 
             val cpuModelDir = resolveModelDir(rawModelDir, true)
-            val qnnModelDir = resolveModelDir(rawModelDir, false)
-            val npuSupported = isNpuSupported()
+            // 旧 QNN 形式 (.bin) のディレクトリも一応検出する: そこにしか .mnn が
+            // 見つからないなら「対応形式でない」旨をログに残して失敗させる。
+            val legacyQnnModelDir = resolveModelDir(rawModelDir, false)
 
-            Log.d(TAG, "loadModel: cpuModelDir=$cpuModelDir, qnnModelDir=$qnnModelDir, npuSupported=$npuSupported")
+            Log.d(TAG, "loadModel: cpuModelDir=$cpuModelDir, legacyQnnModelDir=$legacyQnnModelDir")
 
             val (selectedBackend, modelDir) = when (normalizedBackend) {
                 "mnn" -> when {
                     cpuModelDir != null -> "mnn" to cpuModelDir
-                    qnnModelDir != null -> {
-                        Log.w(TAG, "loadModel: CPU/MNN was requested but only QNN model files exist. Falling back to QNN.")
-                        "qnn" to qnnModelDir
-                    }
                     else -> null
                 }
-                "qnn" -> when {
-                    qnnModelDir != null -> "qnn" to qnnModelDir
-                    cpuModelDir != null -> {
-                        Log.w(TAG, "loadModel: QNN/NPU was requested but this model only has CPU/MNN files. Falling back to MNN/CPU.")
-                        "mnn" to cpuModelDir
-                    }
+                "gpu" -> when {
+                    // GPU (OpenCL) でも実体の重みは .mnn (unet.mnn / clip.mnn / vae_decoder.mnn)。
+                    cpuModelDir != null -> "gpu" to cpuModelDir
                     else -> null
                 }
                 else -> when {
-                    qnnModelDir != null && npuSupported -> "qnn" to qnnModelDir
                     cpuModelDir != null -> "mnn" to cpuModelDir
-                    qnnModelDir != null -> "qnn" to qnnModelDir
                     else -> null
                 }
             } ?: run {
-                Log.e(TAG, "loadModel: Could not find usable model files in $modelPath (backend=$backend)")
+                if (legacyQnnModelDir != null) {
+                    Log.e(TAG, "loadModel: Only legacy QNN (.bin) model files were found under $modelPath. " +
+                        "The QNN/NPU backend is discontinued. Please re-import an MNN (.mnn) formatted model.")
+                } else {
+                    Log.e(TAG, "loadModel: Could not find usable model files in $modelPath (backend=$backend)")
+                }
                 return@withContext false
             }
 
             Log.d(TAG, "loadModel: Selected backend=$selectedBackend, modelDir=$modelDir")
+
+            // Try JNI-based MNN engine first (mnn-sd-engine)
+            if (MnnSdNative.isAvailable()) {
+                Log.i(TAG, "loadModel: MnnSdNative available — attempting JNI MNN engine load")
+                stopServer()
+                mnnModule?.cleanup()
+                mnnModule = MnnSdModule(context)
+                // "gpu" / "opencl" は MnnSdNative の BACKEND_OPENCL に、
+                // "mnn" / "cpu" は BACKEND_CPU にマップする。
+                val backendForMnn = if (selectedBackend == "mnn") "mnn" else "opencl"
+                val loadedMnn = try {
+                    mnnModule!!.loadModel(modelPath, backendForMnn)
+                } catch (e: Exception) {
+                    Log.e(TAG, "loadModel: JNI MNN module load failed", e)
+                    false
+                }
+                if (loadedMnn) {
+                    currentModelPath = modelPath
+                    currentBackend = selectedBackend
+                    isServerReady = mnnModule?.isServerReady == true
+                    Log.i(TAG, "loadModel: ✓ JNI MNN engine loaded, ready=${isServerReady}")
+                    return@withContext true
+                } else {
+                    Log.w(TAG, "loadModel: JNI MNN engine failed to load; will attempt other backends")
+                    mnnModule?.cleanup()
+                    mnnModule = null
+                }
+            }
 
             if (currentModelPath == modelPath && isServerReady && currentBackend == selectedBackend) {
                 if (serverProcess?.isAlive != true) {
@@ -367,13 +338,10 @@ class LocalDreamModule(private val context: Context) {
 
             val result = tryStartServer(modelPath, modelDir, selectedBackend, selectedBackend == "mnn")
 
-            if (!result && selectedBackend == "qnn" && cpuModelDir != null) {
-                Log.w(TAG, "loadModel: QNN backend failed, falling back to MNN/CPU")
-                stopServer()
-                tryStartServer(modelPath, cpuModelDir, "mnn", true)
-            } else {
-                result
-            }
+            // NPU/QNN 廃止に伴い旧 QNN → MNN フォールバック分岐は削除。
+            // GPU (OpenCL) が失敗しても実体は同一の mnn-sd-engine JNI 経由なので
+            // CPU への切り替えはユーザーが UI 上で選択し直す (ImageGenFragment)。
+            result
         } catch (e: Exception) {
             Log.e(TAG, "loadModel: Error loading model", e)
             stopServer()
@@ -386,56 +354,18 @@ class LocalDreamModule(private val context: Context) {
         backend: String,
         isCpu: Boolean
     ): Boolean {
-        Log.d(TAG, "tryStartServer: Starting (backend=$backend, isCpu=$isCpu)")
-
-        val runtimeDir = prepareRuntimeDir()
-        val executableFile = resolveExecutable() ?: return false
-
-        val nativeDir = context.applicationInfo.nativeLibraryDir
-        Log.d(TAG, "tryStartServer: executableFile=${executableFile.absolutePath} exists=${executableFile.exists()} canExecute=${executableFile.canExecute()} length=${executableFile.length()}")
-
-        val command = buildCommand(executableFile, modelDir, runtimeDir, isCpu)
-        val env = buildEnvironment(runtimeDir, nativeDir)
-
-        Log.d(TAG, "COMMAND: ${command.joinToString(" ")}")
-        Log.d(TAG, "LD_LIBRARY_PATH=${env["LD_LIBRARY_PATH"]}")
-
-        val processBuilder = ProcessBuilder(command).apply {
-            directory(executableFile.parentFile)
-            redirectErrorStream(true)
-            environment().putAll(env)
+        Log.i(TAG, "tryStartServer: legacy subprocess path removed — using JNI MNN engine only")
+        // If a JNI-backed module is already initialized, report its readiness.
+        if (mnnModule != null) {
+            isServerReady = mnnModule?.isServerReady == true
+            currentModelPath = modelPath
+            currentBackend = backend
+            Log.i(TAG, "tryStartServer: JNI module present, ready=${isServerReady}")
+            return isServerReady
         }
 
-        Log.d(TAG, "tryStartServer: Spawning process...")
-        serverProcess = try {
-            processBuilder.start()
-        } catch (e: IOException) {
-            Log.w(TAG, "tryStartServer: direct exec failed, retrying with sh", e)
-            val shellCommand = listOf("sh", "-c", command.joinToString(" ") { arg ->
-                arg.replace("'", "'\\''").let { "'$it'" }
-            })
-            ProcessBuilder(shellCommand).apply {
-                directory(executableFile.parentFile)
-                redirectErrorStream(true)
-                environment().putAll(env)
-            }.start()
-        }
-        startMonitor()
-        currentModelPath = modelPath
-        currentBackend = backend
-        isServerReady = false
-
-        Log.d(TAG, "tryStartServer: serverProcess alive=${serverProcess?.isAlive}")
-        val timeoutMs = if (isCpu) 180000L else 120000L
-        val ready = waitForServer(timeoutMs)
-        if (ready) {
-            isServerReady = true
-            Log.i(TAG, "tryStartServer: ✓ Server is ready on port $SERVER_PORT (backend: $backend)")
-        } else {
-            Log.e(TAG, "tryStartServer: ✗ Server failed to start within ${timeoutMs/1000}s")
-        }
-
-        return ready
+        Log.w(TAG, "tryStartServer: JNI module not initialized or failed to load; not attempting deprecated subprocess startup")
+        return false
     }
 
     private suspend fun waitForServer(timeoutMs: Long): Boolean {
@@ -566,6 +496,7 @@ class LocalDreamModule(private val context: Context) {
         steps: Int,
         cfg: Float,
         seed: Long,
+        scheduler: SdScheduler = SdScheduler.DEFAULT,
         onProgress: (Int, Int, Float) -> Unit
     ): Bitmap? = withContext(Dispatchers.IO) {
         // ── 前段：テキストガード ──────────────────────────────────
@@ -593,9 +524,31 @@ class LocalDreamModule(private val context: Context) {
             return@withContext null
         }
         // ─────────────────────────────────────────────────────────
+        val disableNativeServer = shouldDisableNativeServerForTests(
+            isDebugBuild = com.nezumi_ai.BuildConfig.DEBUG,
+            systemProperty = System.getProperty(DISABLE_NATIVE_SERVER_PROPERTY)
+        )
+        if (disableNativeServer) {
+            Log.w(TAG, "generateImage: Native SD server disabled by system property; skipping generation")
+            return@withContext null
+        }
         if (!isServerReady) {
             Log.e(TAG, "Server is not ready")
             return@withContext null
+        }
+        if (mnnModule != null) {
+            Log.d(TAG, "generateImage: Using JNI MNN module for generation")
+            return@withContext mnnModule!!.generateImage(
+                prompt = prompt,
+                negativePrompt = negativePrompt,
+                width = width,
+                height = height,
+                steps = steps,
+                cfg = cfg,
+                seed = seed,
+                scheduler = scheduler,
+                onProgress = onProgress
+            )
         }
         if (serverProcess?.isAlive != true) {
             Log.w(TAG, "Server process is not alive but service is marked ready; continuing with HTTP generation")
@@ -623,7 +576,7 @@ class LocalDreamModule(private val context: Context) {
                 put("steps", steps)
                 put("cfg", cfg)
                 put("seed", if (seed < 0) (Math.random() * Int.MAX_VALUE).toInt() else seed)
-                put("scheduler", "dpm")
+                put("scheduler", scheduler.httpValue)
                 put("use_opencl", effectiveUseOpenCL)
                 put("show_diffusion_process", false)
             }
@@ -834,6 +787,7 @@ class LocalDreamModule(private val context: Context) {
         steps: Int,
         cfg: Float,
         seed: Long,
+        scheduler: SdScheduler = SdScheduler.DEFAULT,
         onProgress: (Int, Int, Float) -> Unit
     ): Pair<Bitmap?, ImageGenerationMetadata?>? = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
@@ -851,6 +805,7 @@ class LocalDreamModule(private val context: Context) {
             steps = steps,
             cfg = cfg,
             seed = resolvedSeed,
+            scheduler = scheduler,
             onProgress = onProgress
         )
 
@@ -864,6 +819,7 @@ class LocalDreamModule(private val context: Context) {
                 steps = steps,
                 cfg = cfg,
                 seed = resolvedSeed,
+                scheduler = scheduler.id,
                 width = width,
                 height = height,
                 backend = currentBackend ?: "unknown",
@@ -881,10 +837,10 @@ class LocalDreamModule(private val context: Context) {
         val dir = File(path)
         val dirName = dir.name
 
-        // バックエンド情報を追加
+        // バックエンド情報を追加。NPU (QNN) は廃止済みなので旧形式は "-Legacy" 表記。
         val backend = when {
-            File(dir, "unet.bin").exists() -> "-QNN"
             File(dir, "unet.mnn").exists() -> "-MNN"
+            File(dir, "unet.bin").exists() -> "-Legacy"
             else -> ""
         }
 

@@ -38,6 +38,7 @@ import kotlinx.coroutines.withContext
 import com.nezumi_ai.sd.GenerationQueue
 import com.nezumi_ai.sd.GenerationQueueItem
 import com.nezumi_ai.sd.ImageGenerationMetadata
+import com.nezumi_ai.sd.SdScheduler
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.isActive
 import org.json.JSONObject
@@ -182,13 +183,16 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private fun detectModelFormat(path: String): String {
         val dir = File(path)
         if (!dir.isDirectory) return "Unknown"
-        
+
+        // NPU (QNN) 対応は廃止。unet.bin (旧 QNN 形式) が残っていても
+        //   本エンジンでは使えないため表示上は「非対応形式」と伝え、
+        //   MNN 形式のみを推論対象として扱う。
         val hasMnn = File(dir, "unet.mnn").exists()
         val hasQnn = File(dir, "unet.bin").exists()
-        
+
         return when {
-            hasQnn -> "QNN (NPU)"
-            hasMnn -> "MNN (CPU/OpenCL)"
+            hasMnn -> "MNN (CPU/GPU)"
+            hasQnn -> "旧 QNN 形式 (非対応)"
             else -> "Unknown"
         }
     }
@@ -201,7 +205,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         }
         
         val format = detectModelFormat(path)
-        _backendInfo.value = "$format | LocalDream"
+        _backendInfo.value = format
     }
 
     private val _prompt = MutableStateFlow("")
@@ -221,6 +225,29 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
     private val _seed = MutableStateFlow(-1L)
     val seed: StateFlow<Long> = _seed.asStateFlow()
+
+    // Bug fix (シード値の不具合):
+    //   これまで _seed は「ユーザーが指定した値 (-1 = ランダム)」のみを持ち、
+    //   -1 のときは LocalDreamModule.generateImageWithMetadata 内部で確定した
+    //   実 seed が呼び出し側に返らない（メタデータ経由で永続化はされるが
+    //   生成タブの UI 上では -1 のままだった）ため、　
+    //   「シード値が出ない」「シードを指定しても無視されているように見える」
+    //   と誤解される要因になっていた。
+    //   最後に実際に使われた seed を明示的に公開する。
+    private val _lastUsedSeed = MutableStateFlow<Long?>(null)
+    val lastUsedSeed: StateFlow<Long?> = _lastUsedSeed.asStateFlow()
+
+    // Bug fix (ライブラリのネガティブプロンプト等が表示されない問題):
+    //   旧実装は「完了 -> lastSavedInternalUri をセット -> UI がその URI をキーに
+    //   SharedPreferences から metadata を引く」という間接パスで、キュー経路では
+    //   lastSavedInternalUri が更新されずメタデータ引きに失敗していた。
+    //   確実に戻している metadata オブジェクト自体を StateFlow で公開し、
+    //   UI は URI を介さずに直接参照できるようにする。
+    private val _lastCompletedMetadata = MutableStateFlow<ImageGenerationMetadata?>(null)
+    val lastCompletedMetadata: StateFlow<ImageGenerationMetadata?> = _lastCompletedMetadata.asStateFlow()
+
+    private val _scheduler = MutableStateFlow(SdScheduler.fromId(PreferencesHelper.getSdScheduler(application)))
+    val scheduler: StateFlow<SdScheduler> = _scheduler.asStateFlow()
 
     private val _resultBitmap = MutableStateFlow<Bitmap?>(null)
     val resultBitmap: StateFlow<Bitmap?> = _resultBitmap.asStateFlow()
@@ -335,6 +362,34 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
     fun setSeed(s: Long) {
         _seed.value = s
+    }
+
+    fun setScheduler(scheduler: SdScheduler) {
+        _scheduler.value = scheduler
+        PreferencesHelper.setSdScheduler(getApplication(), scheduler.id)
+    }
+
+    /**
+     * Bug fix (設定画面で変えたステップ数 / CFG / スケジューラが即時反映されない問題):
+     *   ViewModel の _steps / _cfg / _scheduler はは init ブロックで一度だけ
+     *   Preferences から読み込まれる。しかし ImageGenViewModel は Fragment に属する
+     *   ので、ユーザーが設定画面で変更して戻ってきても、Fragment が
+     *   destroy されていない限り旧値のままになる。このメソッドを onResume から
+     *   呼び、Preferences の現値を StateFlow に再反映する。
+     *   ユーザーが手動で複雑な入力をしている途中に上書きしないよう、
+     *   値が実際に変わるときだけセットする。
+     */
+    fun refreshPreferencesBackedFields() {
+        val app = getApplication<Application>()
+        val prefsSteps = PreferencesHelper.getSdSteps(app)
+        if (_steps.value != prefsSteps) _steps.value = prefsSteps
+        val prefsCfg = PreferencesHelper.getSdCfg(app)
+        if (_cfg.value != prefsCfg) _cfg.value = prefsCfg
+        val prefsSchedulerId = PreferencesHelper.getSdScheduler(app)
+        val prefsScheduler = SdScheduler.fromId(prefsSchedulerId)
+        if (_scheduler.value != prefsScheduler) _scheduler.value = prefsScheduler
+        val prefsBackend = PreferencesHelper.getSdBackend(app)
+        if (_selectedBackend.value != prefsBackend) _selectedBackend.value = prefsBackend
     }
 
     private var isCancelling = false
@@ -505,6 +560,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             _currentStep.value = 0
             _progressData.value = ProgressData(0, totalSteps, 0.0f)
             
+            // Bug fix (シード指定を無視するバグ):
+            //   ここでは _seed.value をそのまま渡す。generateImageWithMetadata 側で
+            //   negative の場合のみランダム化される。従来ロジックの中間で int にキャストして
+            //   桁落ちしないよう、Long のまま最後まで通すことを担保する。
+            val requestedSeed = _seed.value
             val result = ld.generateImageWithMetadata(
                 prompt = pr,
                 negativePrompt = _negativePrompt.value,
@@ -512,7 +572,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 height = sz,
                 steps = totalSteps,
                 cfg = _cfg.value,
-                seed = _seed.value,
+                seed = requestedSeed,
+                scheduler = _scheduler.value,
                 onProgress = { step, steps, time ->
                     // 同じ step の連続更新で不必要な recomposition を避ける
                     val clamped = step.coerceAtMost(totalSteps)
@@ -582,6 +643,13 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     if (uri != null && metadata != null) {
                         val prefs = app.getSharedPreferences("image_metadata", Context.MODE_PRIVATE)
                         prefs.edit().putString("metadata_$uri", buildMetadataJson(metadata)).apply()
+                    }
+                    // Bug fix: metadata.seed に実際に使われた seed が入るので、
+                    //   -1 (ランダム) が指定されていた場合でも UI で確定値を表示できるように
+                    //   ここで lastUsedSeed を更新する。
+                    metadata?.let {
+                        _lastUsedSeed.value = it.seed
+                        _lastCompletedMetadata.value = it
                     }
                 }
             }
@@ -800,6 +868,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         val validCount = count.coerceIn(1, 10)
         val basePrompt = _prompt.value.trim()
         val baseNegPrompt = _negativePrompt.value
+        val baseSeed = if (seed >= 0) seed else _seed.value
+        val baseScheduler = _scheduler.value.id
 
         if (basePrompt.isEmpty()) {
             _snackbar.value = "プロンプトを入力してください"
@@ -808,8 +878,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
         val queueItems = mutableListOf<GenerationQueueItem>()
         for (idx in 1..validCount) {
-            val itemSeed = if (seed >= 0) seed + idx else -1L
-            
+            val itemSeed = if (baseSeed >= 0) baseSeed + (idx - 1) else -1L
+
             queueItems.add(
                 GenerationQueueItem(
                     count = idx,
@@ -817,7 +887,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     negativePrompt = baseNegPrompt,
                     steps = _steps.value,
                     cfg = _cfg.value,
-                    seed = itemSeed
+                    seed = itemSeed,
+                    scheduler = baseScheduler
                 )
             )
         }
@@ -1026,6 +1097,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 steps = item.steps,
                 cfg = item.cfg,
                 seed = item.seed,
+                scheduler = SdScheduler.fromId(item.scheduler),
                 onProgress = { step, totalSteps, _ ->
                     val clamped = step.coerceAtMost(totalSteps)
                     if (_currentStep.value != clamped) {
@@ -1051,7 +1123,21 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 if (bmp != null) {
                     _resultBitmap.value = bmp
                     if (metadata != null) {
-                        saveImageWithMetadata(app, bmp, metadata)
+                        // Bug fix (キュー経路で lastSavedInternalUri が更新されず
+                        //   メタデータがひけない問題):
+                        //   saveImageWithMetadata は uri を返すので、それを
+                        //   lastSavedInternalUri に充てて旧 UI パスとも互換を保ち、
+                        //   同時に metadata を StateFlow で公開してしまうことで
+                        //   UI は確実にメタデータを取得できるようにする。
+                        val savedUri = saveImageWithMetadata(app, bmp, metadata)
+                        if (savedUri != null) {
+                            lastSavedInternalUri = savedUri
+                        }
+                        // Bug fix (キュー内でもシードを追跡):
+                        //   キュー実行時も最後に使われた seed を UI に反映し、
+                        //   ライブラリと生成タブの表示が一致するようにする。
+                        _lastUsedSeed.value = metadata.seed
+                        _lastCompletedMetadata.value = metadata
                     }
                     return@withContext bmp
                 } else {
@@ -1127,6 +1213,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             put("steps", metadata.steps)
             put("cfg", metadata.cfg)
             put("seed", metadata.seed)
+            put("scheduler", metadata.scheduler)
             put("width", metadata.width)
             put("height", metadata.height)
             put("backend", metadata.backend)
@@ -1205,6 +1292,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 steps = obj.getInt("steps"),
                 cfg = obj.getDouble("cfg").toFloat(),
                 seed = obj.getLong("seed"),
+                scheduler = obj.optString("scheduler", SdScheduler.DEFAULT.id),
                 width = obj.getInt("width"),
                 height = obj.getInt("height"),
                 backend = obj.getString("backend"),
@@ -1225,6 +1313,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         _negativePrompt.value = item.negativePrompt
         _steps.value = item.steps
         _cfg.value = item.cfg
+        _seed.value = item.seed
+        _scheduler.value = SdScheduler.fromId(item.scheduler)
     }
 
     // ==========================================

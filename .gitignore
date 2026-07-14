@@ -30,3 +30,4 @@ app/src/main/assets/voicevox/**
 !.dev.vars.example
 .env*
 !.env.example
+models/

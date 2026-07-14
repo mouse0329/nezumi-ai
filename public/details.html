@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -17,12 +18,14 @@
       --color-text: #e6edf3;
       --color-text-secondary: #8b949e;
       --color-border: #30363d;
-      --shadow: 0 2px 12px rgba(0,0,0,0.3);
+      --shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
       --radius: 20px;
       --radius-xs: 8px;
     }
 
-    *, *::before, *::after {
+    *,
+    *::before,
+    *::after {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
@@ -308,6 +311,7 @@
     }
   </style>
 </head>
+
 <body>
   <header class="topbar">
     <a class="brand" href="index.html">
@@ -370,8 +374,7 @@
         <article class="card">
           <h3>画像生成</h3>
           <ul>
-            <li>Snapdragon NPU: QNNバックエンド</li>
-            <li>その他: MNN CPU/OpenCLフォールバック</li>
+            <li>MNN CPU/OpenCL フォールバック（GPU/NPU を活用）</li>
             <li>ユーザー承認制のツール呼び出し</li>
           </ul>
         </article>
@@ -408,7 +411,7 @@
       <span class="c-muted">↓</span>
 <span class="c-primary">[ Engine Layer ]</span>
   <span class="c-muted">├──</span> LlmEngine      LiteRT-LM（メイン）/ llama.cpp（GGUF）
-  <span class="c-muted">└──</span> SdEngine       MNN / QNN - Stable Diffusion 1.5</pre>
+  <span class="c-muted">└──</span> SdEngine       MNN - Stable Diffusion 1.5</pre>
       </div>
     </section>
 
@@ -473,4 +476,5 @@
     <a href="https://github.com/mouse0329/nezumi-ai">GitHub</a>
   </footer>
 </body>
+
 </html>

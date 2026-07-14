@@ -343,8 +343,8 @@
     <string name="image_gen_share">共有</string>
     <string name="image_gen_snackbar_cancelled">キャンセルしました</string>
     <string name="image_gen_back">戻る</string>
-    <string name="image_gen_model_path_hint_full">SDモデル選択（MNN / QNN形式）</string>
-    <string name="image_gen_err_model_missing">モデルディレクトリが見つかりません（unet.mnn または unet.bin が必要）</string>
+    <string name="image_gen_model_path_hint_full">SDモデル選択（MNN形式）</string>
+    <string name="image_gen_err_model_missing">モデルディレクトリが見つかりません（unet.mnn が必要）</string>
     <string name="image_gen_err_prompt_empty">プロンプトを入力してください</string>
     <string name="image_gen_delete_model">モデル削除</string>
     <string name="image_gen_delete_model_success">モデルを削除しました</string>

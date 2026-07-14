@@ -272,6 +272,8 @@ open class ModelSettingsFragment : Fragment() {
     private var expandedModelKey by mutableStateOf<String?>(null)
 
     private var sdModels by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
+    private var sdModelProbePath by mutableStateOf<String?>(null)
+
     
     private var selectedTab by mutableStateOf(ModelType.LLM)
 
@@ -1570,7 +1572,8 @@ open class ModelSettingsFragment : Fragment() {
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "xororz/sd-mnn (GPU) | sd-qnn (NPU)",
+                    text = "sd-mnn (MNN)",
+
                     style = MaterialTheme.typography.bodySmall,
                     color = colorResource(id = R.color.text_secondary)
                 )
@@ -1980,13 +1983,12 @@ open class ModelSettingsFragment : Fragment() {
                     )
                 }
                 model.variant?.let { variant ->
-                    com.nezumi_ai.data.inference.ImageModelBrowser.getVariantLabel(variant)?.let { label ->
-                        Text(
-                            text = label,
-                            color = colorResource(id = R.color.text_secondary),
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
+                    Text(
+                        text = variant,
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+
                 }
                 Button(
                     onClick = { downloadImageModel(model) },
@@ -2406,7 +2408,7 @@ open class ModelSettingsFragment : Fragment() {
                 // SDモデル
                 if (sdModels.isNotEmpty()) {
                     Text(
-                        text = "画像生成モデル (MNN/QNN)",
+                        text = "画像生成モデル (MNN)",
                         style = MaterialTheme.typography.labelSmall,
                         color = colorResource(id = R.color.text_secondary),
                         modifier = Modifier.padding(top = 8.dp)
@@ -2433,19 +2435,25 @@ open class ModelSettingsFragment : Fragment() {
                                 onSetActive = {
                                     PreferencesHelper.setSdModelPath(requireContext(), model.path)
                                     toast("アクティブに設定しました")
-                                }
+                                },
+                                onProbe = if (com.nezumi_ai.BuildConfig.DEBUG) {
+                                    { probeMnnSdIo(model.path) }
+                                } else {
+                                    null
+                                },
+                                probeRunning = sdModelProbePath == model.path
                             )
                         }
                     }
                 } else {
                     Text(
-                        text = "画像生成モデル (MNN/QNN)",
+                        text = "画像生成モデル (MNN)",
                         style = MaterialTheme.typography.labelSmall,
                         color = colorResource(id = R.color.text_secondary),
                         modifier = Modifier.padding(top = 8.dp)
                     )
                     Text(
-                        text = "上記の「画像生成モデル (MNN/QNN)」カードからダウンロードできます",
+                        text = "上記の「画像生成モデル (MNN)」カードからダウンロードできます",
                         style = MaterialTheme.typography.bodySmall,
                         color = colorResource(id = R.color.text_secondary)
                     )
@@ -2961,7 +2969,9 @@ open class ModelSettingsFragment : Fragment() {
         isExpanded: Boolean,
         onToggle: () -> Unit,
         onDelete: () -> Unit,
-        onSetActive: () -> Unit
+        onSetActive: () -> Unit,
+        onProbe: (() -> Unit)? = null,
+        probeRunning: Boolean = false
     ) {
         val currentActive = PreferencesHelper.getSdModelPath(requireContext())
         val isActive = currentActive == model.path
@@ -2994,12 +3004,7 @@ open class ModelSettingsFragment : Fragment() {
                         }
                         if (!isExpanded) {
                             val hasMnn = modelDir.listFiles()?.any { it.name.endsWith(".mnn") } == true
-                            val hasQnn = modelDir.listFiles()?.any { it.name.endsWith(".bin") } == true
-                            val backend = when {
-                                hasQnn -> "QNN (NPU)"
-                                hasMnn -> "MNN (GPU)"
-                                else -> "Unknown"
-                            }
+                            val backend = if (hasMnn) "MNN" else "Unknown"
                             Text(
                                 text = backend,
                                 style = MaterialTheme.typography.labelSmall,
@@ -3021,12 +3026,7 @@ open class ModelSettingsFragment : Fragment() {
                     Spacer(modifier = Modifier.height(8.dp))
                     val modelDir = File(model.path)
                     val hasMnn = modelDir.listFiles()?.any { it.name.endsWith(".mnn") } == true
-                    val hasQnn = modelDir.listFiles()?.any { it.name.endsWith(".bin") } == true
-                    val backend = when {
-                        hasQnn -> "QNN (NPU)"
-                        hasMnn -> "MNN (GPU)"
-                        else -> "Unknown"
-                    }
+                    val backend = if (hasMnn) "MNN" else "Unknown"
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -3053,9 +3053,26 @@ open class ModelSettingsFragment : Fragment() {
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
+                        if (!isActive) {
+                            TextButton(
+                                onClick = onSetActive,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("アクティブに設定")
+                            }
+                        }
+                        if (onProbe != null && hasMnn) {
+                            TextButton(
+                                onClick = onProbe,
+                                enabled = !probeRunning,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(if (probeRunning) "プローブ中…" else "MNN I/O プローブ")
+                            }
+                        }
                         TextButton(
                             onClick = onDelete,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.weight(1f)
                         ) {
                             Text("削除")
                         }
@@ -3109,6 +3126,33 @@ open class ModelSettingsFragment : Fragment() {
                 imageModelsError = "取得失敗: ${e.message}"
             }
             imageModelsLoading = false
+        }
+    }
+
+    private fun probeMnnSdIo(modelPath: String) {
+        sdModelProbePath = modelPath
+        viewLifecycleOwner.lifecycleScope.launch {
+            val module = com.nezumi_ai.sd.MnnSdModule(requireContext())
+            try {
+                if (!module.isNativeAvailable()) {
+                    toast("mnn_sd_jni が未ロードです。scripts/build_mnn_android.ps1 を実行してください")
+                    return@launch
+                }
+                val result = module.probeModelDirectory(modelPath)
+                Log.i("MnnSdModule", result.summary())
+                val reportFile = File(requireContext().filesDir, "mnn_sd_probe_last.txt")
+                withContext(Dispatchers.IO) {
+                    reportFile.writeText(result.summary())
+                }
+                if (result.ok) {
+                    toast("プローブ完了 (${result.logs.size} files)。logcat / ${reportFile.name} を確認")
+                } else {
+                    toast("プローブ失敗: ${result.errors.firstOrNull() ?: "unknown"}")
+                }
+            } finally {
+                sdModelProbePath = null
+                module.cleanup()
+            }
         }
     }
     
