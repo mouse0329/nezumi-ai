@@ -97,6 +97,7 @@ import com.nezumi_ai.R
 import com.nezumi_ai.presentation.viewmodel.ImageGenViewModel
 import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.sd.SdScheduler
+
 import com.nezumi_ai.sd.safety.SafetyResult
 import java.io.File
 
@@ -116,6 +117,7 @@ data class LibraryItem(
     val height: Int? = null,
     val cfg: Float? = null,
     val scheduler: String? = null
+
 )
 
 class ImageGenFragment : Fragment() {
@@ -131,6 +133,7 @@ class ImageGenFragment : Fragment() {
         //   StateFlow を同期させる。UI の入力中値を上書きしないよう、
         //   実際に変わったときだけ代入する。
         viewModel.refreshPreferencesBackedFields()
+
     }
 
     override fun onDestroyView() {
@@ -162,6 +165,7 @@ class ImageGenFragment : Fragment() {
                 }
                 NezumiImageGenTheme {
                     LegacyImageGenScreen(viewModel, navigateUp, navigateToSettings)
+
                 }
             }
         }
@@ -231,6 +235,7 @@ private fun LegacyImageGenScreen(
     onNavigateUp: () -> Unit,
     onNavigateToSettings: () -> Unit = {}
 ) {
+
     val ctx = LocalContext.current
     val prompt by vm.prompt.collectAsState()
     val neg by vm.negativePrompt.collectAsState()
@@ -252,6 +257,7 @@ private fun LegacyImageGenScreen(
     val selectedBackend by vm.selectedBackend.collectAsState()
     val scheduler by vm.scheduler.collectAsState()
     val lastUsedSeed by vm.lastUsedSeed.collectAsState()
+
     val queueResultBitmaps by vm.queueResultBitmaps.collectAsState()
     val generationQueue by vm.generationQueue.collectAsState()
     val isQueueRunning by vm.isQueueRunning.collectAsState()
@@ -359,7 +365,6 @@ private fun LegacyImageGenScreen(
     Column(Modifier.fillMaxSize()) {
         Spacer(modifier = Modifier.statusBarsPadding())
         
-        // 戻るボタンとタイトル、右に設定画面へのリンク
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -383,6 +388,7 @@ private fun LegacyImageGenScreen(
             TextButton(onClick = onNavigateToSettings) {
                 Text("設定", color = MaterialTheme.colorScheme.primary)
             }
+
         }
         
         // タブヘッダー
@@ -556,6 +562,7 @@ private fun LegacyImageGenScreen(
                     )
                     // QNN (NPU) サポートは廃止。UI では MNN を唯一の選択肢として表示する。
                     listOf("mnn" to "MNN (CPU/GPU)").forEach { (value, label) ->
+
                         val selected = selectedBackend == value
                         androidx.compose.material3.FilterChip(
                             selected = selected,
@@ -1185,6 +1192,37 @@ private fun LegacyImageGenScreen(
                                     style = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.weight(1f)
                                 )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            if (item.steps != null) {
+                                Column {
+                                    Text(
+                                        "Steps:",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.labelLarge
+                                    )
+                                    Text(
+                                        item.steps.toString(),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                }
+                            }
+                            if (item.seed != null) {
+                                Column {
+                                    Text(
+                                        "Seed:",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.labelLarge
+                                    )
+                                    Text(
+                                        item.seed.toString(),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                }
                             }
                         }
                     }
@@ -1221,6 +1259,7 @@ private fun LegacyImageGenScreen(
 
 // ライブラリの永続化関数
 // Feature: モデル名 / 画像サイズ / CFG / スケジューラをライブラリに導入。
+
 private fun saveImageToLibrary(
     context: android.content.Context,
     bitmap: Bitmap,
@@ -1233,6 +1272,7 @@ private fun saveImageToLibrary(
     height: Int? = null,
     cfg: Float? = null,
     scheduler: String? = null
+
 ): Long {
     val libraryDir = File(context.filesDir, "library")
     if (!libraryDir.exists()) {
@@ -1261,6 +1301,7 @@ private fun saveImageToLibrary(
         if (height != null && height > 0) put("height", height)
         if (cfg != null) put("cfg", cfg.toDouble())
         if (!scheduler.isNullOrEmpty()) put("scheduler", scheduler)
+
     }
     metadataFile.appendText(json.toString() + "\n")
     return timestamp
@@ -1291,6 +1332,7 @@ private fun loadLibrary(context: android.content.Context): List<LibraryItem> {
                 val cfg = if (obj.has("cfg")) obj.optDouble("cfg").toFloat() else null
                 val scheduler = obj.optString("scheduler").takeIf { it.isNotEmpty() }
 
+
                 val imageFile = File(libraryDir, "img_${timestamp}.jpg")
                 if (imageFile.exists()) {
                     val imageBitmap = BitmapFactory.decodeFile(imageFile.absolutePath)
@@ -1308,6 +1350,7 @@ private fun loadLibrary(context: android.content.Context): List<LibraryItem> {
                                 scheduler = scheduler
                             )
                         )
+
                     }
                 }
             } else {

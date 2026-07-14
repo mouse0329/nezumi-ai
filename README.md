@@ -11,9 +11,10 @@ nezumi-aiは、インターネット接続なしで動作するプライベー�
 
 - **完全オフライン動作**: ローカル推論で、サーバーへのデータ送信なし
 - **マルチモデル対応**: Gemma 4 2B (軽量) / 4B (高性能) + Gemma 3n の選択可能
-- **GPU/CPU自動切り替え**: 端末のハードウェア最適化による高速化
+- **GPU/CPU/NPU(対応機種のみ)切り替え**: 端末のハードウェア最適化による高速化
 - **画像入力対応**: カメラ・ギャラリーから画像を取り込んでAIに解析させられる
 - **画像生成機能**: MNN 画像生成エンジンによる高速画像生成
+
 - **チャット履歴管理**: Room DBで会話履歴を永続化
 - **高度なツールコール**: AIが画像生成、アラーム設定、Web検索などのツールを自律的に呼び出し
 
@@ -29,6 +30,7 @@ nezumi-aiは、インターネット接続なしで動作するプライベー�
 | **RAM** | 6GB | 8GB以上 |
 | **ストレージ** | 4GB | 8GB以上 |
 | **GPU/NPU** | 任意 | Snapdragon / Mali / Adreno推奨 |
+
 
 ---
 
@@ -81,8 +83,8 @@ KEY_PASSWORD=your_key_password
 
 ### 3. 画像生成機能
 - **MNN 画像生成エンジン**: MNNバックエンドによる高速画像生成
-- **NPU対応**: Snapdragon端末でのNPUアクセラレーション
 - **自動バックエンド選択**: GPU→CPU の自動フォールバック（MNN OpenCL / CPU を利用）
+
 - **AI自動生成**: Gemmaがツールとして画像生成を呼び出し（ユーザー承認制）
 
 ### 4. 推論バックエンド切り替え（LLM）
@@ -118,7 +120,7 @@ KEY_PASSWORD=your_key_password
     - **特徴**: Googleの`litertlm`ライブラリを活用。特にSnapdragon搭載端末において、QualcommのAIスタックを通じた**NPUアクセラレーション**をサポートし、低消費電力かつ高速なレスポンスを実現します。
 3.  **MNN 画像生成エンジン**
     - **用途**: 画像生成（Stable Diffusion 1.5）。
-    - **特徴**: MNN OpenCLバックエンドを利用。Snapdragon 8 Gen 2クラスの端末では、数秒での画像生成が可能です。
+
 
 ### セーフティ & メディア管理
 
@@ -160,6 +162,7 @@ KEY_PASSWORD=your_key_password
   - LLMモデル: Gemma 4 (2B/4B), Gemma 3n (E2B/E4B)
     - 画像生成: Stable Diffusion 1.5 (MNN)
 
+
 ### VOICEVOX音声読み上げについて
 
 現在、VOICEVOX機能は **一時的に無効化** されています。理由は以下の通りです：
@@ -187,6 +190,7 @@ KEY_PASSWORD=your_key_password
 - **TensorFlow Lite / LiteRT**: 軽量推論エンジン
 - **llama.cpp** (via JNI): LLM推論コア
 -- **MNN 画像生成エンジン**: 画像生成モジュール
+
 
 ### UI Components
 - **Halilibo Compose Richtext**: Markdown表示

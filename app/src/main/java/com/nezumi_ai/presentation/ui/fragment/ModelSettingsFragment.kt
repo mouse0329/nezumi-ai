@@ -273,6 +273,7 @@ open class ModelSettingsFragment : Fragment() {
 
     private var sdModels by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
     private var sdModelProbePath by mutableStateOf<String?>(null)
+
     
     private var selectedTab by mutableStateOf(ModelType.LLM)
 
@@ -1571,7 +1572,8 @@ open class ModelSettingsFragment : Fragment() {
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "xororz/sd-mnn (MNN)",
+                    text = "sd-mnn (MNN)",
+
                     style = MaterialTheme.typography.bodySmall,
                     color = colorResource(id = R.color.text_secondary)
                 )
@@ -1986,6 +1988,7 @@ open class ModelSettingsFragment : Fragment() {
                         color = colorResource(id = R.color.text_secondary),
                         style = MaterialTheme.typography.bodySmall
                     )
+
                 }
                 Button(
                     onClick = { downloadImageModel(model) },

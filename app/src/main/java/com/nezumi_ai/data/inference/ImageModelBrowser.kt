@@ -9,7 +9,8 @@ data class ImageModel(
     val id: String,
     val name: String,
     val displayName: String,
-    val backend: String, // "mnn" only (QNN 廃止)
+    val backend: String,
+
     val variant: String? = null,
     val downloadUrl: String,
     val fileName: String,
@@ -19,12 +20,14 @@ data class ImageModel(
 
 object ImageModelBrowser {
     private const val REPO_MNN = "xororz/sd-mnn"
+
     
     private var cachedModels: List<ImageModel>? = null
     private var cacheTimestamp = 0L
     private const val CACHE_TTL = 5 * 60 * 1000L
     
     suspend fun fetchAvailableModels(forceRefresh: Boolean = false): Result<List<ImageModel>> = runCatching {
+
         if (!forceRefresh && cachedModels != null && System.currentTimeMillis() - cacheTimestamp < CACHE_TTL) {
             return@runCatching cachedModels!!
         }
@@ -49,7 +52,6 @@ object ImageModelBrowser {
         }
         
         models.sortBy { it.name }
-        
         cachedModels = models
         cacheTimestamp = System.currentTimeMillis()
         models
@@ -96,13 +98,13 @@ object ImageModelBrowser {
             id = "${baseName.lowercase()}_cpu",
             name = baseName,
             displayName = "${insertSpaces(baseName)} (MNN)"
+
         )
     }
     
     private fun insertSpaces(name: String): String {
         return name.replace(Regex("([a-z\\d])([A-Z])")) { "${it.groupValues[1]} ${it.groupValues[2]}" }
     }
-    
     fun guessStyle(name: String): String {
         val lower = name.lowercase()
         return if (lower.contains("reality") || lower.contains("realistic") || 

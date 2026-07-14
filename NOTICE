@@ -217,10 +217,7 @@ NATIVE COMPONENTS
   https://github.com/alibaba/MNN
   Note: Used by stable-diffusion.cpp-mnn for CPU/OpenCL image generation.
 
-* Qualcomm QNN Runtime Libraries (deprecated)
-  License: Qualcomm SDK / QNN runtime terms
-  https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk
-  Note: QNN libraries were previously included for Snapdragon NPU acceleration. QNN support is deprecated and these libraries are not distributed by default.
+
 
 * Downloaded or Imported Models
   License: See each model provider's terms
@@ -228,6 +225,7 @@ NATIVE COMPONENTS
   Note:
     This app can download or import GGUF, LiteRT-LM, .task, .safetensors,
     MNN and VOICEVOX VVM model files. Model files are governed by
+
     their own licenses and model cards. No blanket license is granted by this
     NOTICE for third-party models downloaded or imported by the user.
 

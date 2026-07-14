@@ -60,6 +60,7 @@ android {
         val safetyPromptEnabled = true
         val safetyImageEnabled  = true
 
+
         buildConfigField(
             "boolean",
             "SAFETY_PROMPT_FILTER_ENABLED",
