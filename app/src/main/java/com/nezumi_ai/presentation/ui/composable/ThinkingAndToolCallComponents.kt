@@ -70,8 +70,7 @@ fun ExpandableThinkingBlock(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .animateContentSize()
-            .clickable { expanded = !expanded },
+            .animateContentSize(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         ),
@@ -79,21 +78,24 @@ fun ExpandableThinkingBlock(
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth()
+                    .clickable(enabled = !isLoading) { expanded = !expanded },
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (isLoading) {
-                    // ストリーミング中：パルスアニメーション風テキスト
                     Text(
                         text = "思考プロセス生成中...",
-                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 } else {
                     Text(
-                        text = "혁思考プロセス",
+                        text = "思考プロセス",
                         fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleSmall
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 11.sp
                     )
                 }
 
@@ -101,8 +103,10 @@ fun ExpandableThinkingBlock(
 
                 Text(
                     text = if (expanded) "▲" else "▼",
-                    modifier = Modifier.size(20.dp),
-                    color = MaterialTheme.colorScheme.onSurface
+                    modifier = Modifier.size(18.dp),
+                    color = MaterialTheme.colorScheme.onSurface.copy(
+                        alpha = if (isLoading) 0.5f else 1f
+                    )
                 )
             }
 

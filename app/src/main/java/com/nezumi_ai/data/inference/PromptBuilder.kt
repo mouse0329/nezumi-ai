@@ -319,6 +319,7 @@ object PromptBuilder {
         val trimmed = content.trimEnd()
         val directives = listOf(QWEN_THINK_COMMAND, QWEN_NO_THINK_COMMAND)
         if (directives.any { trimmed.endsWith(it) }) return trimmed
+        if (directive in content) return trimmed
         return "$trimmed\n$directive"
     }
 

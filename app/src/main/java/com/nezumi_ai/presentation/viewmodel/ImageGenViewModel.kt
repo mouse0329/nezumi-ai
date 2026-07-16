@@ -311,14 +311,17 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun setSelectedBackend(backend: String) {
+        val normalized = PreferencesHelper.getSdBackend(getApplication()).let { current ->
+            if (backend.equals(current, ignoreCase = true)) current else backend
+        }
         val previous = _selectedBackend.value
-        _selectedBackend.value = backend
-        PreferencesHelper.setSdBackend(getApplication(), backend)
+        _selectedBackend.value = normalized
+        PreferencesHelper.setSdBackend(getApplication(), normalized)
         updateBackendInfo()
         // ★ Bug fix: backend を切り替えたら即座に既存の LocalDream サーバーを停止し、
         //   次回 generate() 時に新 backend で起動し直されるようにする。
         //   これをしないと「CPU に切り替えても GPU のまま」バグが再発する。
-        if (!previous.equals(backend, ignoreCase = true)) {
+        if (!previous.equals(normalized, ignoreCase = true)) {
             viewModelScope.launch(Dispatchers.IO) {
                 runCatching { EngineManager.releaseSdKeepNone() }
             }
@@ -554,7 +557,9 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             //   markLlmActive() の際にアンロードされるのでここでは呼ばない。
             Log.i(TAG, "[ImageGen] generate() starting, acquiring LocalDream engine")
 
-            val backend = _selectedBackend.value
+            val backend = PreferencesHelper.getSdBackend(app).also { normalized ->
+                _selectedBackend.value = normalized
+            }
             val ld = EngineManager.acquireLocalDream(app, path, backend)
             
             _currentStep.value = 0

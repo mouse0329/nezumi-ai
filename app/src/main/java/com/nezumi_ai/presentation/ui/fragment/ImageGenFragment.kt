@@ -170,6 +170,7 @@ class ImageGenFragment : Fragment() {
             }
         }
     }
+}
 
 @Composable
 private fun NezumiImageGenTheme(content: @Composable () -> Unit) {
@@ -559,9 +560,8 @@ private fun LegacyImageGenScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    // QNN (NPU) サポートは廃止。UI では MNN を唯一の選択肢として表示する。
-                    listOf("mnn" to "MNN (CPU/GPU)").forEach { (value, label) ->
-
+                    // CPU (MNN) と GPU (OpenCL) の 2 つを提供
+                    listOf("mnn" to "CPU (MNN)", "opencl" to "GPU (OpenCL)").forEach { (value, label) ->
                         val selected = selectedBackend == value
                         androidx.compose.material3.FilterChip(
                             selected = selected,
@@ -1485,3 +1485,4 @@ private fun ImagePreviewSection(vm: ImageGenViewModel) {
         }
     }
 }
+

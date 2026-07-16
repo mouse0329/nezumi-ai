@@ -363,6 +363,27 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             }
         }
 
+        FieldGroup("バックエンド (CPU / GPU)") {
+            val selectedBackend by vm.selectedBackend.collectAsState()
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF2A2A2A)).padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("mnn" to "CPU (MNN)", "opencl" to "GPU (OpenCL)").forEach { (key, label) ->
+                    SchedulerChip(text = label, active = selectedBackend == key, onClick = {
+                        vm.setSelectedBackend(key)
+                    })
+                }
+            }
+            Text(
+                "※ GPU (OpenCL) は対応端末と *_opencl モデルでのみ動作します。",
+                color = Color(0xFF999999),
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+
         FieldGroup("シード") {
             var seedInput by remember(seed) { mutableStateOf(if (seed < 0) "" else seed.toString()) }
 

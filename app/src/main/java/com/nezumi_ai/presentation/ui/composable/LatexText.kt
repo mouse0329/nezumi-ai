@@ -2,10 +2,14 @@ package com.nezumi_ai.presentation.ui.composable
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.LocalContentColor
@@ -13,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.Placeholder
@@ -179,10 +184,16 @@ fun MarkdownLatexText(
                 }
                 is MixedPart.LatexBlockPart -> {
                     renderLatex(part.formula, textSize * 1.2f, textColorInt, bgColorInt)?.let {
+                        val brush = if (isSystemInDarkTheme()) Color(0x33FFFFFF) else Color(0x330084FF)
+                        val bg = if (isSystemInDarkTheme()) Color(0x14FFFFFF) else Color(0x11E3F2FD)
                         androidx.compose.foundation.Image(
                             bitmap = it.asImageBitmap(),
                             contentDescription = part.formula,
                             modifier = Modifier.fillMaxWidth()
+                                .padding(vertical = 10.dp)
+                                .background(bg, RoundedCornerShape(8.dp))
+                                .border(1.dp, brush, RoundedCornerShape(8.dp))
+                                .padding(12.dp)
                         )
                     }
                 }
@@ -310,10 +321,16 @@ fun LatexText(
 
                 is RenderItem.BlockRow -> {
                     renderLatex(item.formula, textSize * 1.2f, textColorInt, bgColorInt)?.let {
+                        val brush = if (isSystemInDarkTheme()) Color(0x33FFFFFF) else Color(0x330084FF)
+                        val bg = if (isSystemInDarkTheme()) Color(0x14FFFFFF) else Color(0x11E3F2FD)
                         androidx.compose.foundation.Image(
                             bitmap = it.asImageBitmap(),
                             contentDescription = item.formula,
                             modifier = Modifier.fillMaxWidth()
+                                .padding(vertical = 10.dp)
+                                .background(bg, RoundedCornerShape(8.dp))
+                                .border(1.dp, brush, RoundedCornerShape(8.dp))
+                                .padding(12.dp)
                         )
                     }
                 }
@@ -334,8 +351,8 @@ private fun renderLatex(
             .background(bgColor)
             .color(textColor)
             .build()
-        val w = drawable.intrinsicWidth.takeIf { it > 0 } ?: 400
-        val h = drawable.intrinsicHeight.takeIf { it > 0 } ?: 100
+        val w = (drawable.intrinsicWidth.takeIf { it > 0 } ?: 400).coerceAtLeast(64)
+        val h = (drawable.intrinsicHeight.takeIf { it > 0 } ?: 100).coerceAtLeast(32)
         val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         drawable.setBounds(0, 0, w, h)
