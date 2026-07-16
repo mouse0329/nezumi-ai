@@ -170,7 +170,6 @@ class ImageGenFragment : Fragment() {
             }
         }
     }
-}
 
 @Composable
 private fun NezumiImageGenTheme(content: @Composable () -> Unit) {
@@ -1192,6 +1191,8 @@ private fun LegacyImageGenScreen(
                                     style = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.weight(1f)
                                 )
+                            }
+                        }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
