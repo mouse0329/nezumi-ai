@@ -14,6 +14,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.nezumi_ai.data.inference.EngineManager
+import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.sd.safety.PromptFilter
@@ -27,6 +28,7 @@ import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import com.nezumi_ai.utils.PreferencesHelper
 import java.io.File
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -39,6 +41,7 @@ import com.nezumi_ai.sd.GenerationQueue
 import com.nezumi_ai.sd.GenerationQueueItem
 import com.nezumi_ai.sd.ImageGenerationMetadata
 import com.nezumi_ai.sd.SdScheduler
+import com.nezumi_ai.sd.SdModelLayout
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.isActive
 import org.json.JSONObject
@@ -179,19 +182,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun isProbableSdModelDir(file: File): Boolean {
-        if (!file.isDirectory) return false
-        val files = file.listFiles() ?: return false
-        // ネスト構造: 1つのサブディレクトリのみの場合、そちらを使う
-        if (files.size == 1 && files[0].isDirectory) {
-            return isProbableSdModelDir(files[0])
-        }
-        val names = files.map { it.name }.toSet()
-        // unet が必須（clip単体ディレクトリを排除）
-        val hasUnet = names.any { it == "unet.mnn" || it == "unet_asym_block32.mnn" || it == "unet_min.bin" || it == "unet.bin" }
-        if (!hasUnet) return false
-        // vae_decoder が必須
-        val hasVae = names.any { it == "vae_decoder.mnn" || it == "vae_decoder_fp16.mnn" || it == "vae_decoder_min.bin" || it == "vae_decoder.bin" }
-        return hasVae
+        // Bug fix:
+        //   旧実装は "unet + vae がある" だけで候補に入れていたため、
+        //   tokenizer/ や clip/ のような不完全ディレクトリが一覧に混ざり、
+        //   その結果 UI が壊れた候補を自動選択して loadModel に失敗していた。
+        //   実ロードと同じ SdModelLayout 判定に寄せる。
+        return SdModelLayout.isUsableModelDir(file)
     }
     
     private fun detectModelFormat(path: String): String {
@@ -201,8 +197,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         // NPU (QNN) 対応は廃止。unet.bin (旧 QNN 形式) が残っていても
         //   本エンジンでは使えないため表示上は「非対応形式」と伝え、
         //   MNN 形式のみを推論対象として扱う。
-        val hasMnn = File(dir, "unet.mnn").exists()
-        val hasQnn = File(dir, "unet.bin").exists()
+        val hasMnn = SdModelLayout.isUsableModelDir(dir)
+        val hasQnn = SdModelLayout.isLegacyQnnDir(dir)
 
         return when {
             hasMnn -> "MNN (CPU/GPU)"
@@ -458,6 +454,42 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         _snackbar.value = message
     }
 
+    private fun estimateSdModelBytes(modelPath: String): Long {
+        val baseDir = SdModelLayout.findUsableModelDir(File(modelPath)) ?: File(modelPath)
+        return runCatching {
+            baseDir.walkTopDown()
+                .filter { it.isFile }
+                .sumOf { it.length() }
+        }.getOrElse {
+            Log.w(TAG, "[ImageGen] failed to estimate model directory size: ${baseDir.absolutePath}", it)
+            0L
+        }
+    }
+
+    private fun buildLowMemoryAbortMessage(app: Application, modelPath: String, width: Int, height: Int): String? {
+        val modelBytes = estimateSdModelBytes(modelPath)
+        if (modelBytes <= 0L) return null
+        val isLow = MemoryObserver.isMemoryLowForFileSize(app, modelBytes, useAvailable = true)
+        if (!isLow) return null
+
+        val sys = MemoryObserver.getSystemMemoryInfoSync(app)
+        val modelGb = modelBytes / (1024f * 1024f * 1024f)
+        val availableGb = sys.availableMemoryMB / 1024f
+        val maxSide = maxOf(width, height)
+        val suggestion = when {
+            maxSide >= 512 -> "4bit UNet の軽量モデルに切り替えるか、まず 256px / steps 6-8 で試してください。"
+            maxSide >= 256 -> "4bit UNet の軽量モデルに切り替えるか、まず 192px / steps 4-6 で試してください。"
+            else -> "より軽量な 4bit モデルを使うか、不要なアプリを閉じて空き RAM を増やしてください。"
+        }
+        return String.format(
+            Locale.US,
+            "空きメモリ不足のため画像生成を開始しませんでした（空き約 %.2fGB / モデル約 %.2fGB）。この条件では Android の LMK によりアプリが強制終了されます。%s",
+            availableGb,
+            modelGb,
+            suggestion
+        )
+    }
+
     fun cancel() {
         if (isCancelling) {
             Log.w(TAG, "[ImageGen] cancel() already in progress, ignoring")
@@ -575,6 +607,19 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 _selectedBackend.value = normalized
             }
             val ld = EngineManager.acquireLocalDream(app, path, backend)
+
+            buildLowMemoryAbortMessage(app, path, sz, sz)?.let { abortMessage ->
+                Log.e(TAG, "[ImageGen] aborting before generation due to low memory: $abortMessage")
+                showImageGenError(abortMessage)
+                ImageGenerationNotificationManager.showError(
+                    app,
+                    ImageGenerationNotificationManager.singleNotificationId(),
+                    "メモリ不足のため開始できません",
+                    abortMessage
+                )
+                runCatching { EngineManager.releaseSdKeepNone() }
+                return@launch
+            }
             
             _currentStep.value = 0
             _progressData.value = ProgressData(0, totalSteps, 0.0f)
@@ -1107,6 +1152,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
             val width = _sizePx.value
             val height = _sizePx.value
+            buildLowMemoryAbortMessage(app, path, width, height)?.let { abortMessage ->
+                Log.e(TAG, "[QueueItem] aborting before generation due to low memory: $abortMessage")
+                showImageGenError(abortMessage)
+                runCatching { EngineManager.releaseSdKeepNone() }
+                return@withContext null
+            }
 
             val result = ld.generateImageWithMetadata(
                 prompt = item.prompt,

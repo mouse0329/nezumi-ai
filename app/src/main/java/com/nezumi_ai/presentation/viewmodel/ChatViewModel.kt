@@ -46,6 +46,7 @@ import com.nezumi_ai.data.preset.PresetConstants
 import com.google.ai.edge.litertlm.ToolCall
 import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.sd.SdScheduler
+import com.nezumi_ai.sd.SdModelLayout
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -2319,33 +2320,7 @@ class ChatViewModel(
     }
 
     private fun isProbableSdModelDir(file: File): Boolean {
-        if (!file.isDirectory) {
-            return false
-        }
-        
-        val files = file.listFiles()
-        
-        // Handle nested structure
-        if (files != null && files.size == 1 && files[0].isDirectory) {
-            return isProbableSdModelDir(files[0])
-        }
-        
-        val hasTokenizer = File(file, "tokenizer.json").exists()
-        val hasXororzEmb = File(file, "token_emb.bin").exists() && File(file, "pos_emb.bin").exists()
-        val hasModelJson = File(file, "model.json").exists()
-        val hasAnyTokenSource = hasTokenizer || hasXororzEmb || hasModelJson
-
-        val hasMnnFiles = (File(file, "unet.mnn").exists() || File(file, "unet_asym_block32.mnn").exists()) && 
-                         (File(file, "clip.mnn").exists() || File(file, "clip_v2.mnn").exists() || File(file, "clip_fp16.mnn").exists()) &&
-                         (File(file, "vae_decoder.mnn").exists() || File(file, "vae_decoder_fp16.mnn").exists()) &&
-                         hasAnyTokenSource
-        
-        val hasQnnFiles = File(file, "unet.bin").exists() &&
-                         (File(file, "clip.bin").exists() || File(file, "clip.mnn").exists()) &&
-                         File(file, "vae_decoder.bin").exists() &&
-                         hasTokenizer
-        
-        return hasMnnFiles || hasQnnFiles
+        return SdModelLayout.isUsableModelDir(file) || SdModelLayout.isLegacyQnnDir(file)
     }
 
     private suspend fun invokeGenerateImageFromTool(toolCall: ToolCall): ToolExecutionResult {

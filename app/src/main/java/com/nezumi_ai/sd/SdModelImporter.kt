@@ -116,22 +116,17 @@ object SdModelImporter {
     }
 
     fun validate(dir: File): Pair<Boolean, String> {
-        val names = dir.listFiles()?.map { it.name }?.toSet().orEmpty()
-        val hasUnet = UNET_NAMES.any { it in names }
-        val hasClip = CLIP_NAMES.any { it in names }
-        val hasVae = VAE_NAMES.any { it in names }
-        val hasTokenizer = "tokenizer.json" in names
-        val hasEmbeddings = "token_emb.bin" in names && "pos_emb.bin" in names
-        val hasModelJson = "model.json" in names
-
-        if (!hasUnet) return false to "unet.mnn / unet_asym_block32.mnn が見つかりません"
-        if (!hasClip) return false to "clip.mnn / clip_v2.mnn / clip_fp16.mnn が見つかりません"
-        if (!hasVae) return false to "vae_decoder.mnn / vae_decoder_fp16.mnn が見つかりません"
-
-        if (!hasTokenizer && !hasEmbeddings && !hasModelJson) {
-            return false to "tokenizer.json も pos_emb.bin/token_emb.bin も見つかりません (どちらか一方が必要)"
+        val result = SdModelLayout.validate(dir)
+        if (result.isUsable) return true to "OK"
+        val message = when (result.reason) {
+            "missing unet" -> "unet.mnn / unet_asym_block32.mnn が見つかりません"
+            "missing clip" -> "clip.mnn / clip_v2.mnn / clip_fp16.mnn が見つかりません"
+            "missing vae" -> "vae_decoder.mnn / vae_decoder_fp16.mnn が見つかりません"
+            "missing tokenizer or embeddings" -> "tokenizer.json も pos_emb.bin/token_emb.bin も見つかりません (どちらか一方が必要)"
+            "legacy qnn only" -> "旧 QNN (.bin) 形式のみです。MNN (.mnn) 形式のモデルを追加してください"
+            else -> "画像生成モデルとして必要なファイルが揃っていません (${result.reason})"
         }
-        return true to "OK"
+        return false to message
     }
 
     private fun readModelJsonName(dir: File): String? {

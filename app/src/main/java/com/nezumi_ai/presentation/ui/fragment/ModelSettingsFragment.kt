@@ -126,6 +126,7 @@ import android.os.Environment
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
+import com.nezumi_ai.sd.SdModelLayout
 
 enum class ModelType {
     LLM, IMAGE_GENERATION, TEXT_TO_SPEECH, DOWNLOAD_QUEUE
@@ -450,8 +451,7 @@ open class ModelSettingsFragment : Fragment() {
             }
             
             item { TabSelector() }
-            item { SdZipImportCard() }
-            
+
             when (selectedTab) {
                 ModelType.LLM -> {
                     item { HfCard() }
@@ -555,6 +555,9 @@ open class ModelSettingsFragment : Fragment() {
                     item { LocalModelAddCard() }
                 }
                 ModelType.IMAGE_GENERATION -> {
+                    // zip 一括インポートは画像生成モデル (Stable Diffusion / MNN)
+                    // 用途に限定した機能なので、このタブ内でのみ表示する。
+                    item { SdZipImportCard() }
                     item { SdImageGenFromHfCard() }
                     item { DownloadedImageModelsCard() }
                 }
@@ -3214,33 +3217,21 @@ open class ModelSettingsFragment : Fragment() {
             dirs?.forEach { modelDir ->
                 Log.d("ModelSettings", "refreshSdModels: checking ${modelDir.name}, isDir=${modelDir.isDirectory}")
                 if (!modelDir.isDirectory) return@forEach
-                
-                // Check if files are directly in this directory
-                var targetDir = modelDir
-                var files = modelDir.listFiles()
-                Log.d("ModelSettings", "refreshSdModels: ${modelDir.name} has ${files?.size ?: 0} files")
-                files?.forEach { f -> Log.d("ModelSettings", "  - ${f.name} (isDir=${f.isDirectory})") }
-                
-                // If there's only one subdirectory, use that instead (nested structure)
-                if (files?.size == 1 && files[0].isDirectory) {
-                    Log.d("ModelSettings", "refreshSdModels: detected nested structure, using ${files[0].absolutePath}")
-                    targetDir = files[0]
-                    files = files[0].listFiles()
-                    Log.d("ModelSettings", "refreshSdModels: nested dir has ${files?.size ?: 0} files")
-                    files?.forEach { f -> Log.d("ModelSettings", "  - ${f.name}") }
-                }
-                
-                val hasUnet = files?.any { it.name == "unet.mnn" || it.name == "unet_asym_block32.mnn" || it.name == "unet_min.bin" || it.name == "unet.bin" } == true
-                val hasVae = files?.any { it.name == "vae_decoder.mnn" || it.name == "vae_decoder_fp16.mnn" || it.name == "vae_decoder_min.bin" || it.name == "vae_decoder.bin" } == true
-                Log.d("ModelSettings", "refreshSdModels: ${modelDir.name} hasUnet=$hasUnet, hasVae=$hasVae")
-                if (hasUnet && hasVae) {
+
+                val resolvedDir = SdModelLayout.findUsableModelDir(modelDir)
+                val validation = SdModelLayout.validate(modelDir)
+                Log.d(
+                    "ModelSettings",
+                    "refreshSdModels: ${modelDir.name} usable=${validation.isUsable}, reason=${validation.reason}, resolved=${resolvedDir?.absolutePath}"
+                )
+                if (resolvedDir != null) {
                     models.add(ModelFileManager.ImportedTaskModel(
-                        path = targetDir.absolutePath,
+                        path = resolvedDir.absolutePath,
                         fileNameStem = modelDir.name,
                         shortDisplayName = modelDir.name,
                         hfRepoQualifier = null
                     ))
-                    Log.d("ModelSettings", "refreshSdModels: added ${modelDir.name} (path=${targetDir.absolutePath})")
+                    Log.d("ModelSettings", "refreshSdModels: added ${modelDir.name} (path=${resolvedDir.absolutePath})")
                 }
             }
         }

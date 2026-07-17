@@ -183,8 +183,25 @@ class LocalDreamModule(private val context: Context) {
 
 
     private fun resolveModelDir(dir: File, isCpu: Boolean): File? {
-        val markerFile = if (isCpu) "unet.mnn" else "unet.bin"
+        // Bug fix:
+        //   旧実装は CPU(MNN) 側の判定を "unet.mnn / clip.mnn / vae_decoder.mnn"
+        //   の固定ファイル名で見ていたため、現在主流の
+        //   unet_asym_block32.mnn / clip_v2.mnn / vae_decoder_fp16.mnn を含む
+        //   正常な変換済みモデルでも cpuModelDir=null になっていた。
+        //   さらに tokenizer/ のような不完全フォルダも上位のスキャンで候補に
+        //   混ざっており、UI がそれを選ぶと loadModel 全体が失敗していた。
+        //   MNN 側は SdModelLayout の実際の解決ロジックに一本化する。
+        if (isCpu) {
+            val resolved = SdModelLayout.findUsableModelDir(dir)
+            if (resolved != null) {
+                Log.d(TAG, "resolveModelDir: resolved usable MNN dir ${resolved.absolutePath}")
+                return resolved
+            }
+            Log.w(TAG, "resolveModelDir: no usable MNN dir under ${dir.absolutePath}")
+            return null
+        }
 
+        val markerFile = "unet.bin"
         if (File(dir, markerFile).exists()) return dir
 
         fun searchDir(current: File, depth: Int): File? {
@@ -192,24 +209,15 @@ class LocalDreamModule(private val context: Context) {
             current.listFiles()?.filter { it.isDirectory }?.forEach { subDir ->
                 if (File(subDir, markerFile).exists()) {
                     Log.d(TAG, "Found $markerFile in: ${subDir.absolutePath}")
-                    // マーカーファイルは見つかったが、他の必須ファイルも存在するか簡易チェック
-                    // MNN 形式: unet.mnn, clip.mnn, vae_decoder.mnn (対応)
-                    // 旧 QNN 形式: unet.bin, clip.bin (or clip_v2.mnn), vae_decoder.bin (非対応 — 検出のみ残す)
-                    val hasRequiredFiles = if (isCpu) {
-                        File(subDir, "unet.mnn").exists() &&
-                        (File(subDir, "clip.mnn").exists() || File(subDir, "clip_v2.mnn").exists()) &&
-                        File(subDir, "vae_decoder.mnn").exists()
-                    } else {
+                    val hasRequiredFiles =
                         File(subDir, "unet.bin").exists() &&
                         (File(subDir, "clip.bin").exists() || File(subDir, "clip_v2.mnn").exists()) &&
                         File(subDir, "vae_decoder.bin").exists()
-                    }
 
                     if (hasRequiredFiles) {
                         return subDir
                     } else {
                         Log.w(TAG, "resolveModelDir: Found $markerFile but missing other required files in ${subDir.absolutePath}")
-                        // 必須ファイルが足りない場合は探索を続ける
                     }
                 }
                 val deeper = searchDir(subDir, depth + 1)
