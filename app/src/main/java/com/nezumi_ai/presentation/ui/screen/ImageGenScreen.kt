@@ -356,8 +356,8 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                     }
                 }
                 Text(
-                    "※ DPM++ 2M は JNI の MNN 経路では現在 DPM にフォールバックし、HTTP 互換経路では指定値をそのまま送信します。",
-                    color = Color(0xFF999999),
+                    "※ 現状 JNI の MNN 経路は PLMS で固定実行されます (ネイティブの mnn_sd_run_pipeline 制限)。選択はメタデータにのみ反映され、実際のスケジューラは変わりません。HTTP 互換経路では選択値がそのまま送信されます。",
+                    color = Color(0xFFFFA726),
                     fontSize = 11.sp
                 )
             }

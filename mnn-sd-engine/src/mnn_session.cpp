@@ -11,6 +11,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -23,6 +24,29 @@
 #else
 #define PROBE_LOG(fmt, ...) std::fprintf(stderr, fmt "\n", ##__VA_ARGS__)
 #endif
+#endif
+
+// Bug fix (SIGABRT during VAE createFromFile after UNet ran):
+//   Android bionicのscudoはUNetをreleaseSession/resetしても、
+//   一時的に使った大きなチャンクを即座にOSに返さないことがある。
+//   直後にVAEをInterpreter::createFromFileすると、scudoが新規を
+//   割り当てられず internal map failure -> SIGABRT でプロセスが落ちる。
+//   malloc_trim(0) を予備式に呼んで、UNet 解放後のフリーリストをOSに
+//   返しておくと VAE ロードが安定する。
+//   bionic の malloc_trim は malloc.h にないので、弱参照で宣言し、
+//   シンボルがない環境でもリンクが通るようにする。
+#if defined(__ANDROID__)
+extern "C" int malloc_trim(size_t pad) __attribute__((weak));
+namespace {
+inline void trim_heap_to_os() noexcept
+{
+    if (&malloc_trim != nullptr) {
+        (void)malloc_trim(0);
+    }
+}
+}
+#else
+namespace { inline void trim_heap_to_os() noexcept {} }
 #endif
 
 namespace
@@ -2778,13 +2802,26 @@ extern "C"
         unet_net = nullptr;
         u_sample = u_ts = u_enc = nullptr;
 
+        // Bug fix (scudo internal map failure at VAE createFromFile):
+        //   UNet を reset しても scudo はOSにページを戻さないことがあり、
+        //   直後の VAE createFromFile で新規 mmap に失敗する。
+        //   malloc_trim(0) を 2 回呼び、間でスケジューリングを一旦譲ることで
+        //   解放済みチャンクを OS に返す。
+        PROBE_LOG("trim heap before VAE load");
+        trim_heap_to_os();
+        std::this_thread::yield();
+        trim_heap_to_os();
+
         // --- 5b. Load VAE just-in-time (after UNet has been freed) ---
         {
             MnnSdError err = create_interpreter_and_session(
                 engine->vae_path, effective_backend,
                 engine->vae_interpreter, engine->vae_session, out_error);
             if (err != MNN_SD_OK)
+            {
+                trim_heap_to_os();
                 return err;
+            }
             auto probe_session = [](MNN::Interpreter *net, MNN::Session *sess, const char *label)
             {
                 for (const auto &kv : net->getSessionInputAll(sess))
@@ -2841,6 +2878,7 @@ extern "C"
             engine->vae_session = nullptr;
         }
         engine->vae_interpreter.reset();
+        trim_heap_to_os();
 
         // image_f: [1, 3, H, W] NCHW, range ~[-1, 1] -> clamp to [0,1] -> uint8 RGB
         const int pixels = width * height;

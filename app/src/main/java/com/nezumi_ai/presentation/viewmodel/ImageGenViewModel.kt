@@ -467,13 +467,31 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun buildLowMemoryAbortMessage(app: Application, modelPath: String, width: Int, height: Int): String? {
+        // Bug fix (判定が厳しすぎて 16GB 端末でもブロックされる問題):
+        //   以前は「現在の空き RAM」で判定していたが、Android の androidFreeRam は
+        //   バックグラウンドアプリやキャッシュの影響で大きく見かけ上少なく見えることがあり、
+        //   16GB 端末でさえ 「空き 3GB」と報告されて誤検知を呼ぶことがあった。
+        //   実際の OOM は「総 RAM がモデルを持ち切れないこと」で発生するので、
+        //   予防ブロックは "総 RAM" 基準で、本当に物理的に不足するときのみトリガーする。
+        //   基準は UNet+VAE ピークを見込んでモデル総サイズの 150% とし、
+        //   さらに総 RAM が 3GB 以下の絶対的に小さい端末だけをターゲットにする。
+        //   これにより普通の 6～16GB 端末ではブロックしない。
         val modelBytes = estimateSdModelBytes(modelPath)
         if (modelBytes <= 0L) return null
-        val isLow = MemoryObserver.isMemoryLowForFileSize(app, modelBytes, useAvailable = true)
-        if (!isLow) return null
 
         val sys = MemoryObserver.getSystemMemoryInfoSync(app)
+        val totalGb = sys.totalMemoryMB / 1024f
         val modelGb = modelBytes / (1024f * 1024f * 1024f)
+        val requiredGb = modelGb * 1.5f
+
+        // 総 RAM が 3GB 以上なら実行を許可する (低 RAM 端末だけガード)。
+        //   それより上の端末では 0009 の releaseSdKeepNone + 0010 の malloc_trim に
+        //   より安定して実行できることを確認したため、予防ブロックは外す。
+        if (totalGb >= 3.0f) return null
+
+        // モデルピークが総 RAM を超える場合だけ警告する。
+        if (requiredGb <= totalGb) return null
+
         val availableGb = sys.availableMemoryMB / 1024f
         val maxSide = maxOf(width, height)
         val suggestion = when {
@@ -483,9 +501,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         }
         return String.format(
             Locale.US,
-            "空きメモリ不足のため画像生成を開始しませんでした（空き約 %.2fGB / モデル約 %.2fGB）。この条件では Android の LMK によりアプリが強制終了されます。%s",
+            "端末の総 RAM が小さすぎます（総 %.2fGB / 空き %.2fGB / モデル約 %.2fGB）。UNet と VAE のロードが同時に起きるピーク (目安 %.2fGB) で OOM になるため中止しました。%s",
+            totalGb,
             availableGb,
             modelGb,
+            requiredGb,
             suggestion
         )
     }
@@ -606,7 +626,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             val backend = PreferencesHelper.getSdBackend(app).also { normalized ->
                 _selectedBackend.value = normalized
             }
-            val ld = EngineManager.acquireLocalDream(app, path, backend)
+            // Bug fix (SIGABRT during VAE createFromFile after UNet ran):
+            //   前の 1 枚の MNN Interpreter がまだ生きていると、次の 1 枚で
+            //   UNet 実行→VAE createFromFile の直後に scudo の map failure が起き
+            //   SIGABRT で落ちる。取得の前に必ず前回セッションを完全に破棄し、
+            //   毎回まっさらな状態からロードする。
+            runCatching { EngineManager.releaseSdKeepNone() }
 
             buildLowMemoryAbortMessage(app, path, sz, sz)?.let { abortMessage ->
                 Log.e(TAG, "[ImageGen] aborting before generation due to low memory: $abortMessage")
@@ -617,9 +642,10 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     "メモリ不足のため開始できません",
                     abortMessage
                 )
-                runCatching { EngineManager.releaseSdKeepNone() }
                 return@launch
             }
+
+            val ld = EngineManager.acquireLocalDream(app, path, backend)
             
             _currentStep.value = 0
             _progressData.value = ProgressData(0, totalSteps, 0.0f)
@@ -1147,17 +1173,23 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             //   LLM 側はすでにリリースされる。キューの 2 枚目以降は同じ backend/model であれば
             //   サーバーを使い回し、余分なロードを避ける。
             val queueBackend = _selectedBackend.value
-            val ld = EngineManager.acquireLocalDream(app, path, queueBackend)
-            ld.clearLastSafetyVerdict()  // 前回の verdict をクリア
-
             val width = _sizePx.value
             val height = _sizePx.value
+
+            // Bug fix (SIGABRT during VAE createFromFile after UNet ran):
+            //   キューで 2 枚目以降を回すとき、前回の MNN Interpreter が残っていると
+            //   次の 1 枚目の VAE createFromFile で scudo map failure が起き SIGABRT。
+            //   取得の前に必ず前回セッションを完全に破棄する。
+            runCatching { EngineManager.releaseSdKeepNone() }
+
             buildLowMemoryAbortMessage(app, path, width, height)?.let { abortMessage ->
                 Log.e(TAG, "[QueueItem] aborting before generation due to low memory: $abortMessage")
                 showImageGenError(abortMessage)
-                runCatching { EngineManager.releaseSdKeepNone() }
                 return@withContext null
             }
+
+            val ld = EngineManager.acquireLocalDream(app, path, queueBackend)
+            ld.clearLastSafetyVerdict()  // 前回の verdict をクリア
 
             val result = ld.generateImageWithMetadata(
                 prompt = item.prompt,
