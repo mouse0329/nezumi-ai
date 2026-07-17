@@ -2330,17 +2330,20 @@ class ChatViewModel(
             return isProbableSdModelDir(files[0])
         }
         
-        // Check for MNN format
-        val hasMnnFiles = File(file, "unet.mnn").exists() && 
-                         (File(file, "clip.mnn").exists() || File(file, "clip_v2.mnn").exists()) &&
-                         File(file, "vae_decoder.mnn").exists() &&
-                         File(file, "tokenizer.json").exists()
+        val hasTokenizer = File(file, "tokenizer.json").exists()
+        val hasXororzEmb = File(file, "token_emb.bin").exists() && File(file, "pos_emb.bin").exists()
+        val hasModelJson = File(file, "model.json").exists()
+        val hasAnyTokenSource = hasTokenizer || hasXororzEmb || hasModelJson
+
+        val hasMnnFiles = (File(file, "unet.mnn").exists() || File(file, "unet_asym_block32.mnn").exists()) && 
+                         (File(file, "clip.mnn").exists() || File(file, "clip_v2.mnn").exists() || File(file, "clip_fp16.mnn").exists()) &&
+                         (File(file, "vae_decoder.mnn").exists() || File(file, "vae_decoder_fp16.mnn").exists()) &&
+                         hasAnyTokenSource
         
-        // Check for QNN format
         val hasQnnFiles = File(file, "unet.bin").exists() &&
                          (File(file, "clip.bin").exists() || File(file, "clip.mnn").exists()) &&
                          File(file, "vae_decoder.bin").exists() &&
-                         File(file, "tokenizer.json").exists()
+                         hasTokenizer
         
         return hasMnnFiles || hasQnnFiles
     }

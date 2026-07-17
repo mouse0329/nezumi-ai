@@ -222,6 +222,26 @@ open class ModelSettingsFragment : Fragment() {
             ?: VoicevoxManager.VoiceModelCatalogEntry("", VoicevoxManager.VoiceModelCategory.TALK, emptyList())
     )
 
+    // SD (画像生成) モデル zip ピッカー。
+    // zip 内に unet.mnn / clip*.mnn / vae_decoder*.mnn と、
+    // tokenizer.json または pos_emb.bin+token_emb.bin が含まれていればインポート可能。
+    private val sdZipPickerLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            viewLifecycleOwner.lifecycleScope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    com.nezumi_ai.sd.SdModelImporter.importFromUri(requireContext(), uri)
+                }
+                result.onSuccess { imported ->
+                    toast("画像生成モデルを追加しました: ${imported.displayName}")
+                    refreshSdModels()
+                    PreferencesHelper.setSdModelPath(requireContext(), imported.dir.absolutePath)
+                }.onFailure {
+                    toast("画像生成モデルの追加に失敗しました: ${it.message}")
+                }
+            }
+        }
+
     private val mmprojPickerLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) return@registerForActivityResult
@@ -430,6 +450,7 @@ open class ModelSettingsFragment : Fragment() {
             }
             
             item { TabSelector() }
+            item { SdZipImportCard() }
             
             when (selectedTab) {
                 ModelType.LLM -> {
@@ -545,6 +566,39 @@ open class ModelSettingsFragment : Fragment() {
                 ModelType.DOWNLOAD_QUEUE -> {
                     item { DownloadQueueCard() }
                 }
+            }
+        }
+    }
+
+    @Composable
+    private fun SdZipImportCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "SD モデル zip をインポート",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                OutlinedButton(
+                    onClick = {
+                        runCatching {
+                            sdZipPickerLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                        }.onFailure { toast("zip を選択できませんでした: ${it.message}") }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("📦 SD モデル zip を選択")
+                }
+                Text(
+                    text = "対応形式: unet.mnn / clip*.mnn / vae_decoder*.mnn + (tokenizer.json または pos_emb.bin+token_emb.bin)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_secondary),
+                    modifier = Modifier.padding(top = 6.dp)
+                )
             }
         }
     }
@@ -1877,10 +1931,6 @@ open class ModelSettingsFragment : Fragment() {
                             } else {
                                 toast("削除に失敗しました")
                             }
-                        },
-                        onSetActive = {
-                            PreferencesHelper.setSdModelPath(requireContext(), model.path)
-                            toast("アクティブに設定しました")
                         }
                     )
                 }
@@ -2432,10 +2482,6 @@ open class ModelSettingsFragment : Fragment() {
                                         toast("削除に失敗しました")
                                     }
                                 },
-                                onSetActive = {
-                                    PreferencesHelper.setSdModelPath(requireContext(), model.path)
-                                    toast("アクティブに設定しました")
-                                },
                                 onProbe = if (com.nezumi_ai.BuildConfig.DEBUG) {
                                     { probeMnnSdIo(model.path) }
                                 } else {
@@ -2453,7 +2499,7 @@ open class ModelSettingsFragment : Fragment() {
                         modifier = Modifier.padding(top = 8.dp)
                     )
                     Text(
-                        text = "上記の「画像生成モデル (MNN)」カードからダウンロードできます",
+                        text = "上記の「画像生成モデル (MNN)」カードからダウンロードするか、下のボタンから zip をインポートできます",
                         style = MaterialTheme.typography.bodySmall,
                         color = colorResource(id = R.color.text_secondary)
                     )
@@ -2969,13 +3015,9 @@ open class ModelSettingsFragment : Fragment() {
         isExpanded: Boolean,
         onToggle: () -> Unit,
         onDelete: () -> Unit,
-        onSetActive: () -> Unit,
         onProbe: (() -> Unit)? = null,
         probeRunning: Boolean = false
     ) {
-        val currentActive = PreferencesHelper.getSdModelPath(requireContext())
-        val isActive = currentActive == model.path
-        
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -3015,9 +3057,9 @@ open class ModelSettingsFragment : Fragment() {
                     }
                     if (!isExpanded) {
                         Text(
-                            text = if (isActive) "✓ アクティブ" else "✓ DL済み",
+                            text = "✓ DL済み",
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (isActive) colorResource(id = R.color.primary) else colorResource(id = R.color.text_secondary),
+                            color = colorResource(id = R.color.text_secondary),
                             modifier = Modifier.padding(start = 8.dp)
                         )
                     }
@@ -3044,7 +3086,7 @@ open class ModelSettingsFragment : Fragment() {
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = if (isActive) "現在アクティブなモデル" else "ダウンロード済み",
+                        text = "ダウンロード済み",
                         style = MaterialTheme.typography.bodySmall,
                         color = colorResource(id = R.color.text_secondary)
                     )
@@ -3053,14 +3095,6 @@ open class ModelSettingsFragment : Fragment() {
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        if (!isActive) {
-                            TextButton(
-                                onClick = onSetActive,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("アクティブに設定")
-                            }
-                        }
                         if (onProbe != null && hasMnn) {
                             TextButton(
                                 onClick = onProbe,
@@ -3196,10 +3230,10 @@ open class ModelSettingsFragment : Fragment() {
                     files?.forEach { f -> Log.d("ModelSettings", "  - ${f.name}") }
                 }
                 
-                val hasMnn = files?.any { it.name.endsWith(".mnn") } == true
-                val hasQnn = files?.any { it.name.endsWith(".bin") } == true
-                Log.d("ModelSettings", "refreshSdModels: ${modelDir.name} hasMnn=$hasMnn, hasQnn=$hasQnn")
-                if (hasMnn || hasQnn) {
+                val hasUnet = files?.any { it.name == "unet.mnn" || it.name == "unet_asym_block32.mnn" || it.name == "unet_min.bin" || it.name == "unet.bin" } == true
+                val hasVae = files?.any { it.name == "vae_decoder.mnn" || it.name == "vae_decoder_fp16.mnn" || it.name == "vae_decoder_min.bin" || it.name == "vae_decoder.bin" } == true
+                Log.d("ModelSettings", "refreshSdModels: ${modelDir.name} hasUnet=$hasUnet, hasVae=$hasVae")
+                if (hasUnet && hasVae) {
                     models.add(ModelFileManager.ImportedTaskModel(
                         path = targetDir.absolutePath,
                         fileNameStem = modelDir.name,

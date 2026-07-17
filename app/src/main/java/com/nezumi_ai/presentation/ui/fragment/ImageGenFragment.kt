@@ -126,7 +126,7 @@ class ImageGenFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        viewModel.refreshAvailableModels()
+        viewModel.refreshAvailableModels(force = true)
         // Bug fix (ステップ数 / CFG / スケジューラを設定画面で変えても
         //   即時に反映されない問題):
         //   設定画面から戻る度に Preferences を引き直し、ViewModel の

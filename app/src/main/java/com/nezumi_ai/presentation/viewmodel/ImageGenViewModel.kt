@@ -107,12 +107,14 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         pendingScanJob = viewModelScope.launch(Dispatchers.IO) {
             val models = mutableListOf<String>()
             if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] Starting model search")
-            // ダウンロード済み画像生成モデルディレクトリ
+            // ダウンロード済み画像生成モデルディレクトリ（refreshSdModels と同じネスト展開ロジック）
             val sdModelsDir = File(getApplication<Application>().filesDir, "sd_models")
-            sdModelsDir.listFiles()?.forEach { file ->
-                if (isProbableSdModelDir(file)) {
-                    if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] ✓ ${file.absolutePath}")
-                    models.add(file.absolutePath)
+            sdModelsDir.listFiles()?.forEach { dir ->
+                if (!dir.isDirectory) return@forEach
+                val targetDir = resolveNestedSdModelDir(dir)
+                if (isProbableSdModelDir(targetDir)) {
+                    if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] ✓ sd_models: ${targetDir.absolutePath}")
+                    models.add(targetDir.absolutePath)
                 }
             }
             // アプリ専用ディレクトリ
@@ -134,11 +136,13 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             Log.i(TAG, "[loadAvailableModels] Total models found: ${models.size}")
             lastModelScanAtMs = System.currentTimeMillis()
             _availableModels.value = models
-            // 現在のモデルパスが一覧にあればインデックスを設定
             val currentPath = _modelPath.value
-            val index = models.indexOf(currentPath)
+            val preferredPath = selectPreferredModelPath(models, currentPath)
+            val index = models.indexOf(preferredPath)
             if (index >= 0) {
                 _selectedModelIndex.value = index
+                _modelPath.value = preferredPath
+                PreferencesHelper.setSdModelPath(getApplication(), preferredPath)
             } else if (models.isNotEmpty()) {
                 _selectedModelIndex.value = 0
                 _modelPath.value = models[0]
@@ -152,32 +156,42 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    private fun selectPreferredModelPath(models: List<String>, currentPath: String): String {
+        if (models.isEmpty()) return ""
+        // 保存済みパスが models に存在し、かつ実際に有効な SD モデルなら優先
+        val current = currentPath.takeIf { it.isNotBlank() }
+        if (current != null && models.contains(current) && isProbableSdModelDir(File(current))) {
+            return current
+        }
+        // 最新のモデルを選択
+        return models.maxByOrNull { File(it).lastModified() } ?: models.first()
+    }
+
+    /** refreshSdModels と同じネスト展開: 1段だけのサブディレクトリがある場合はそちらを返す */
+    private fun resolveNestedSdModelDir(dir: File): File {
+        var current = dir
+        repeat(3) {
+            val children = current.listFiles()?.toList() ?: return current
+            if (children.size == 1 && children[0].isDirectory) current = children[0]
+            else return current
+        }
+        return current
+    }
+
     private fun isProbableSdModelDir(file: File): Boolean {
         if (!file.isDirectory) return false
-
         val files = file.listFiles() ?: return false
-        // ネスト構造チェック: 1つのサブディレクトリのみの場合、そちらを使う
+        // ネスト構造: 1つのサブディレクトリのみの場合、そちらを使う
         if (files.size == 1 && files[0].isDirectory) {
             return isProbableSdModelDir(files[0])
         }
-
-        // MNN形式チェック
-        val hasMnnFiles = File(file, "unet.mnn").exists() &&
-                         (File(file, "clip.mnn").exists() || File(file, "clip_v2.mnn").exists()) &&
-                         File(file, "vae_decoder.mnn").exists() &&
-                         File(file, "tokenizer.json").exists()
-
-        // QNN形式チェック
-        val hasQnnFiles = File(file, "unet.bin").exists() &&
-                         (File(file, "clip.bin").exists() || File(file, "clip.mnn").exists()) &&
-                         File(file, "vae_decoder.bin").exists() &&
-                         File(file, "tokenizer.json").exists()
-
-        val result = hasMnnFiles || hasQnnFiles
-        if (verboseModelScan) {
-            Log.d(TAG, "[isProbableSdModelDir] ${file.name}: mnn=$hasMnnFiles qnn=$hasQnnFiles -> $result")
-        }
-        return result
+        val names = files.map { it.name }.toSet()
+        // unet が必須（clip単体ディレクトリを排除）
+        val hasUnet = names.any { it == "unet.mnn" || it == "unet_asym_block32.mnn" || it == "unet_min.bin" || it == "unet.bin" }
+        if (!hasUnet) return false
+        // vae_decoder が必須
+        val hasVae = names.any { it == "vae_decoder.mnn" || it == "vae_decoder_fp16.mnn" || it == "vae_decoder_min.bin" || it == "vae_decoder.bin" }
+        return hasVae
     }
     
     private fun detectModelFormat(path: String): String {
@@ -296,8 +310,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     var lastSavedInternalUri: String? = null
     private var generateJob: Job? = null
 
-    fun refreshAvailableModels() {
-        loadAvailableModels()
+    fun refreshAvailableModels(force: Boolean = true) {
+        loadAvailableModels(force)
     }
 
     fun setSelectedModelIndex(index: Int) {
