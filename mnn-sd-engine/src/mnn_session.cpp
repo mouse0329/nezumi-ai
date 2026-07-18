@@ -95,6 +95,7 @@ namespace
                 //   数秒以内に収める。既定 (TUNING_NONE) だとカーネル選択が悪く、
                 //   UNet の per-step で数倍遅くなる。
                 schedule.mode = MNN_GPU_MEMORY_BUFFER | MNN_GPU_TUNING_FAST;
+                backend_config.memory = MNN::BackendConfig::Memory_Low;
             }
             else
             {

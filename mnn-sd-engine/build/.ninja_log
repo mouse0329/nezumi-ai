@@ -1,0 +1,12 @@
+# ninja log v7
+41	164	8060666630997057	CMakeFiles/mnn_sd_probe.dir/tools/mnn_sd_probe.cpp.obj	88c8ff633c08473d
+52	167	8060666631096985	CMakeFiles/mnn_sd_load_test.dir/tools/mnn_sd_load_test.cpp.obj	2716c5dbcec9d80e
+32	180	8060666630897054	CMakeFiles/mnn_sd_engine.dir/src/model_config.cpp.obj	72ecca4d963d93e
+14	578	8060666630717001	CMakeFiles/mnn_sd_engine.dir/src/c_api.cpp.obj	3f1f92f30f0706ac
+60	642	8060666631177060	CMakeFiles/mnn_sd_generate_cli.dir/tools/mnn_sd_generate_cli.cpp.obj	fc0693ef82fab337
+22	2309	8060666630807012	CMakeFiles/mnn_sd_engine.dir/src/mnn_session.cpp.obj	26ae7caa424e68b
+2311	2487	8060666655211386	mnn_sd_engine.dll	7f9a09be46c43a3f
+2311	2487	8060666655211386	mnn_sd_engine.lib	7f9a09be46c43a3f
+2489	2628	8060666655461426	mnn_sd_probe.exe	20ca9d44197e46f1
+2498	2634	8060666655561559	mnn_sd_load_test.exe	166d22ac315678d
+2507	2641	8060666655651563	mnn_sd_generate_cli.exe	ebc54dc197d07847

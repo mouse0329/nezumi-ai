@@ -101,6 +101,14 @@ if(MNN_SD_BUILD_PROBE_CLI AND NOT ANDROID)
 
     add_executable(mnn_sd_load_test tools/mnn_sd_load_test.cpp)
     target_link_libraries(mnn_sd_load_test PRIVATE mnn_sd_engine)
+    
+    # 実際に txt2img まで通す host 用CLI。Android実機への都度デプロイなしに
+    # 生成結果 (.ppm / stb_image_write.h があれば .png) を確認できる。
+    add_executable(mnn_sd_generate_cli tools/mnn_sd_generate_cli.cpp)
+    target_link_libraries(mnn_sd_generate_cli PRIVATE mnn_sd_engine)
+    if(MSVC)
+        target_compile_options(mnn_sd_generate_cli PRIVATE /utf-8)
+    endif()
 endif()
 
 # --- Android JNI ---

@@ -1,0 +1,9 @@
+C:/Users/mouse/AndroidStudioProjects/nezumiai/mnn-sd-engine/build/CMakeFiles/mnn_sd_engine.dir
+C:/Users/mouse/AndroidStudioProjects/nezumiai/mnn-sd-engine/build/CMakeFiles/mnn_sd_probe.dir
+C:/Users/mouse/AndroidStudioProjects/nezumiai/mnn-sd-engine/build/CMakeFiles/mnn_sd_load_test.dir
+C:/Users/mouse/AndroidStudioProjects/nezumiai/mnn-sd-engine/build/CMakeFiles/mnn_sd_generate_cli.dir
+C:/Users/mouse/AndroidStudioProjects/nezumiai/mnn-sd-engine/build/CMakeFiles/edit_cache.dir
+C:/Users/mouse/AndroidStudioProjects/nezumiai/mnn-sd-engine/build/CMakeFiles/rebuild_cache.dir
+C:/Users/mouse/AndroidStudioProjects/nezumiai/mnn-sd-engine/build/CMakeFiles/list_install_components.dir
+C:/Users/mouse/AndroidStudioProjects/nezumiai/mnn-sd-engine/build/CMakeFiles/install.dir
+C:/Users/mouse/AndroidStudioProjects/nezumiai/mnn-sd-engine/build/CMakeFiles/install/local.dir

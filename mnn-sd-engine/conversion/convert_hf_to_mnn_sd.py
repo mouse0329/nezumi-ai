@@ -60,6 +60,7 @@ def onnx_to_mnn(onnx_path, mnn_path, *, fp16=False, quant_bits=0,
             args.append("--weightQuantAsymmetric")
         if quant_block > 0:
             args += ["--weightQuantBlock", str(quant_block)]
+    args.append("--saveExternalData")
     run(args)
 
 

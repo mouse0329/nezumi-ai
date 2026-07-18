@@ -1,0 +1,310 @@
+diff --git a/mnn-sd-engine/CMakeLists.txt b/mnn-sd-engine/CMakeLists.txt
+index 62ae299..a276020 100644
+--- a/mnn-sd-engine/CMakeLists.txt
++++ b/mnn-sd-engine/CMakeLists.txt
+@@ -101,6 +101,14 @@ if(MNN_SD_BUILD_PROBE_CLI AND NOT ANDROID)
+ 
+     add_executable(mnn_sd_load_test tools/mnn_sd_load_test.cpp)
+     target_link_libraries(mnn_sd_load_test PRIVATE mnn_sd_engine)
++
++    # 実際に txt2img まで通す host 用CLI。Android実機への都度デプロイなしに
++    # 生成結果 (.ppm / stb_image_write.h があれば .png) を確認できる。
++    add_executable(mnn_sd_generate_cli tools/mnn_sd_generate_cli.cpp)
++    target_link_libraries(mnn_sd_generate_cli PRIVATE mnn_sd_engine)
++    if(MSVC)
++        target_compile_options(mnn_sd_generate_cli PRIVATE /utf-8)
++    endif()
+ endif()
+ 
+ # --- Android JNI ---
+diff --git a/mnn-sd-engine/conversion/convert_hf_to_mnn_sd.py b/mnn-sd-engine/conversion/convert_hf_to_mnn_sd.py
+index f40af3c..ba263ec 100644
+--- a/mnn-sd-engine/conversion/convert_hf_to_mnn_sd.py
++++ b/mnn-sd-engine/conversion/convert_hf_to_mnn_sd.py
+@@ -60,6 +60,12 @@ def onnx_to_mnn(onnx_path, mnn_path, *, fp16=False, quant_bits=0,
+             args.append("--weightQuantAsymmetric")
+         if quant_block > 0:
+             args += ["--weightQuantBlock", str(quant_block)]
++
++    # 実行時 (画像生成時) に .mnn を1回の巨大な連続mallocで丸ごと読み込むのを避けるため、
++    # 重みを外部ファイル (.mnn.weight) に分離する。これによりテンソル単位の小さな
++    # read() に分割され、ヒープ断片化耐性が大幅に上がる。
++    args.append("--saveExternalData")
++
+     run(args)
+ 
+ 
+diff --git a/mnn-sd-engine/tools/mnn_sd_generate_cli.cpp b/mnn-sd-engine/tools/mnn_sd_generate_cli.cpp
+new file mode 100644
+index 0000000..645ddc3
+--- /dev/null
++++ b/mnn-sd-engine/tools/mnn_sd_generate_cli.cpp
+@@ -0,0 +1,268 @@
++// mnn_sd_generate_cli.exe
++//
++// Windows/host 向けの txt2img テストCLI。Android への都度デプロイを避け、
++// PC上で「モデルロード -> 生成 -> PNG/PPM保存」までを一発で確認するためのツール。
++//
++// 使い方:
++//   mnn_sd_generate_cli <model_dir> <prompt> [options]
++//
++// 例:
++//   mnn_sd_generate_cli C:\models\CuteYukiMix "1girl, cute, cat ears" ^
++//       --negative "worst quality, blurry" --steps 20 --width 512 --height 512 ^
++//       --seed 12345 --backend cpu --out out.ppm
++//
++// 依存: mnn_sd_engine のみ。画像出力はヘッダオンリー実装のPPM(P6)。
++//       PNGで欲しい場合は stb_image_write.h をこのファイルと同じディレクトリに置くと
++//       自動的にPNGでも保存されます(なくてもビルド/実行は可能)。
++
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++#include <chrono>
++
++#include "mnn_sd/engine.h"
++
++#if __has_include("stb_image_write.h")
++#define MNN_SD_CLI_HAVE_STB 1
++#define STB_IMAGE_WRITE_IMPLEMENTATION
++#include "stb_image_write.h"
++#endif
++
++namespace
++{
++    struct CliOptions
++    {
++        std::string model_dir;
++        std::string prompt;
++        std::string negative_prompt;
++        int width = 512;
++        int height = 512;
++        int steps = 20;
++        float cfg_scale = 7.0f;
++        int64_t seed = -1;
++        MnnSdScheduler scheduler = MNN_SD_SCHEDULER_DPM_PP_2M;
++        MnnSdBackend backend = MNN_SD_BACKEND_CPU;
++        std::string out_path = "out.ppm";
++    };
++
++    void print_usage(const char *argv0)
++    {
++        std::fprintf(stderr,
++            "Usage: %s <model_dir> <prompt> [options]\n"
++            "Options:\n"
++            "  --negative <text>       negative prompt (default: empty)\n"
++            "  --width <n>             image width (default: 512)\n"
++            "  --height <n>            image height (default: 512)\n"
++            "  --steps <n>             sampling steps (default: 20)\n"
++            "  --cfg <f>               CFG scale (default: 7.0)\n"
++            "  --seed <n>              seed, negative = random (default: -1)\n"
++            "  --scheduler <name>      euler|ddim|dpm|dpm++2m|dpm++2m-karras|lcm|eulera|unipc (default: dpm++2m)\n"
++            "  --backend <name>        cpu|opencl (default: cpu)\n"
++            "  --out <path>            output file, .ppm always works; .png needs stb_image_write.h\n",
++            argv0);
++    }
++
++    bool parse_scheduler(const std::string &s, MnnSdScheduler *out)
++    {
++        if (s == "euler") { *out = MNN_SD_SCHEDULER_EULER; return true; }
++        if (s == "ddim") { *out = MNN_SD_SCHEDULER_DDIM; return true; }
++        if (s == "dpm") { *out = MNN_SD_SCHEDULER_DPM; return true; }
++        if (s == "dpm++2m") { *out = MNN_SD_SCHEDULER_DPM_PP_2M; return true; }
++        if (s == "dpm++2m-karras") { *out = MNN_SD_SCHEDULER_DPM_PP_2M_KARRAS; return true; }
++        if (s == "lcm") { *out = MNN_SD_SCHEDULER_LCM; return true; }
++        if (s == "eulera") { *out = MNN_SD_SCHEDULER_EULER_A; return true; }
++        if (s == "unipc") { *out = MNN_SD_SCHEDULER_UNIPC; return true; }
++        return false;
++    }
++
++    bool parse_args(int argc, char **argv, CliOptions *opt)
++    {
++        if (argc < 3)
++            return false;
++        opt->model_dir = argv[1];
++        opt->prompt = argv[2];
++
++        for (int i = 3; i < argc; ++i)
++        {
++            std::string a = argv[i];
++            auto next = [&](const char *flag) -> const char * {
++                if (i + 1 >= argc)
++                {
++                    std::fprintf(stderr, "missing value for %s\n", flag);
++                    std::exit(1);
++                }
++                return argv[++i];
++            };
++
++            if (a == "--negative") opt->negative_prompt = next("--negative");
++            else if (a == "--width") opt->width = std::atoi(next("--width"));
++            else if (a == "--height") opt->height = std::atoi(next("--height"));
++            else if (a == "--steps") opt->steps = std::atoi(next("--steps"));
++            else if (a == "--cfg") opt->cfg_scale = static_cast<float>(std::atof(next("--cfg")));
++            else if (a == "--seed") opt->seed = std::atoll(next("--seed"));
++            else if (a == "--scheduler")
++            {
++                std::string s = next("--scheduler");
++                if (!parse_scheduler(s, &opt->scheduler))
++                {
++                    std::fprintf(stderr, "unknown scheduler: %s\n", s.c_str());
++                    return false;
++                }
++            }
++            else if (a == "--backend")
++            {
++                std::string s = next("--backend");
++                if (s == "cpu") opt->backend = MNN_SD_BACKEND_CPU;
++                else if (s == "opencl") opt->backend = MNN_SD_BACKEND_OPENCL;
++                else
++                {
++                    std::fprintf(stderr, "unknown backend: %s\n", s.c_str());
++                    return false;
++                }
++            }
++            else if (a == "--out") opt->out_path = next("--out");
++            else
++            {
++                std::fprintf(stderr, "unknown option: %s\n", a.c_str());
++                return false;
++            }
++        }
++        return true;
++    }
++
++    bool write_ppm(const std::string &path, const MnnSdImage &img)
++    {
++        FILE *f = std::fopen(path.c_str(), "wb");
++        if (!f)
++            return false;
++        std::fprintf(f, "P6\n%d %d\n255\n", img.width, img.height);
++        std::fwrite(img.data, 1, img.data_size, f);
++        std::fclose(f);
++        return true;
++    }
++
++    void on_progress(const MnnSdProgress *p, void * /*user_data*/)
++    {
++        std::fprintf(stderr, "\r[step %d/%d] %.2fs elapsed", p->step, p->total_steps, p->elapsed_sec);
++        std::fflush(stderr);
++    }
++
++    bool has_suffix(const std::string &s, const char *suffix)
++    {
++        size_t n = std::strlen(suffix);
++        return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
++    }
++}
++
++int main(int argc, char **argv)
++{
++    CliOptions opt;
++    if (!parse_args(argc, argv, &opt))
++    {
++        print_usage(argv[0]);
++        return 1;
++    }
++
++    std::fprintf(stderr, "model_dir=%s\nprompt=%s\nnegative=%s\n%dx%d steps=%d cfg=%.2f seed=%lld backend=%s\n",
++                 opt.model_dir.c_str(), opt.prompt.c_str(), opt.negative_prompt.c_str(),
++                 opt.width, opt.height, opt.steps, opt.cfg_scale,
++                 static_cast<long long>(opt.seed),
++                 opt.backend == MNN_SD_BACKEND_OPENCL ? "opencl" : "cpu");
++
++    MnnSdEngine *engine = mnn_sd_create();
++    if (!engine)
++    {
++        std::fprintf(stderr, "mnn_sd_create failed\n");
++        return 1;
++    }
++
++    MnnSdLoadOptions load_opts{};
++    load_opts.backend = opt.backend;
++    load_opts.precision_low = 1;
++    load_opts.opencl_safe_max_side = 0; // engine default
++
++    MnnSdErrorInfo error{};
++    auto t0 = std::chrono::steady_clock::now();
++
++    MnnSdError code = mnn_sd_load(engine, opt.model_dir.c_str(), &load_opts, &error);
++    if (code != MNN_SD_OK)
++    {
++        std::fprintf(stderr, "load failed: %s (%s)\n", mnn_sd_error_string(code), error.message);
++        if (error.cause[0])
++            std::fprintf(stderr, "  cause: %s\n", error.cause);
++        mnn_sd_destroy(engine);
++        return 2;
++    }
++    auto t1 = std::chrono::steady_clock::now();
++    std::fprintf(stderr, "load ok (%.2fs)\n",
++                 std::chrono::duration<float>(t1 - t0).count());
++
++    MnnSdGenerateParams params{};
++    params.prompt = opt.prompt.c_str();
++    params.negative_prompt = opt.negative_prompt.c_str();
++    params.width = opt.width;
++    params.height = opt.height;
++    params.steps = opt.steps;
++    params.cfg_scale = opt.cfg_scale;
++    params.seed = opt.seed;
++    params.scheduler = opt.scheduler;
++    params.use_opencl = (opt.backend == MNN_SD_BACKEND_OPENCL) ? 1 : 0;
++
++    MnnSdImage image{};
++    auto t2 = std::chrono::steady_clock::now();
++    code = mnn_sd_generate(engine, &params, on_progress, nullptr, &image, &error);
++    auto t3 = std::chrono::steady_clock::now();
++    std::fprintf(stderr, "\n");
++
++    if (code != MNN_SD_OK)
++    {
++        std::fprintf(stderr, "generate failed: %s (%s)\n", mnn_sd_error_string(code), error.message);
++        if (error.cause[0])
++            std::fprintf(stderr, "  cause: %s\n", error.cause);
++        mnn_sd_unload(engine);
++        mnn_sd_destroy(engine);
++        return 3;
++    }
++
++    std::fprintf(stderr, "generate ok (%.2fs) -> %dx%d, %zu bytes\n",
++                 std::chrono::duration<float>(t3 - t2).count(),
++                 image.width, image.height, image.data_size);
++
++    bool saved = false;
++#if defined(MNN_SD_CLI_HAVE_STB)
++    if (has_suffix(opt.out_path, ".png"))
++    {
++        saved = stbi_write_png(opt.out_path.c_str(), image.width, image.height, 3,
++                                image.data, image.width * 3) != 0;
++    }
++#endif
++    if (!saved)
++    {
++        std::string path = opt.out_path;
++        if (has_suffix(path, ".png"))
++        {
++            // stb_image_write.h が無い場合は .ppm にフォールバック
++            path = path.substr(0, path.size() - 4) + ".ppm";
++            std::fprintf(stderr, "note: stb_image_write.h not found, saving as %s instead\n", path.c_str());
++        }
++        saved = write_ppm(path, image);
++        opt.out_path = path;
++    }
++
++    if (!saved)
++    {
++        std::fprintf(stderr, "failed to write output file: %s\n", opt.out_path.c_str());
++        mnn_sd_free_image(&image);
++        mnn_sd_unload(engine);
++        mnn_sd_destroy(engine);
++        return 4;
++    }
++
++    std::fprintf(stderr, "saved: %s\n", opt.out_path.c_str());
++
++    mnn_sd_free_image(&image);
++    mnn_sd_unload(engine);
++    mnn_sd_destroy(engine);
++    return 0;
++}

@@ -31,3 +31,4 @@ app/src/main/assets/voicevox/**
 .env*
 !.env.example
 models/
+mnn-sd-engine\build/
