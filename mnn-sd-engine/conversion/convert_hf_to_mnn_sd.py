@@ -51,7 +51,7 @@ def onnx_to_mnn(onnx_path, mnn_path, *, fp16=False, quant_bits=0,
             "--modelFile", str(onnx_path),
             "--MNNModel", str(mnn_path),
             "--bizCode", "mnn-sd15-v1",
-            "--optimizeLevel", "2"]
+            "--optimizeLevel", "1"]
     if fp16:
         args.append("--fp16")
     if quant_bits > 0:
@@ -69,22 +69,84 @@ def onnx_to_mnn(onnx_path, mnn_path, *, fp16=False, quant_bits=0,
 # (torch 2.x の scaled_dot_product_attention は opset 14 では出せないため)
 # --------------------------------------------------------------------------- #
 def scaled_dot_product_attention_patch(query, key, value, attn_mask=None,
-                                       dropout_p=0.0, is_causal=False, scale=None):
+                                       dropout_p=0.0, is_causal=False, scale=None,
+                                       chunk_size: int = 512):
+    """
+    素朴な matmul+softmax+matmul の代わりに、クエリ次元をチャンク分割して
+    計算するメモリ効率版。QK^T のフル NxN 行列を一度に作らないため、
+    ONNX/MNN 実行時のピークメモリを大幅に削減できる
+    (512x512 の SD1.5 UNet では最大 4096x4096 のスコア行列が複数箇所に
+    現れ、これが optimizeLevel=1 (バッファ再利用なし) 環境で数GB級の
+    ピークメモリの主因になっていた)。
+    """
     L, S = query.size(-2), key.size(-2)
     scale_factor = 1 / (query.size(-1) ** 0.5) if scale is None else scale
-    attn_weight = query @ key.transpose(-2, -1) * scale_factor
-    if is_causal:
-        mask = torch.ones(L, S, dtype=torch.bool, device=query.device).tril(diagonal=0)
-        attn_weight.masked_fill_(mask.logical_not(), float("-inf"))
-    if attn_mask is not None:
-        if attn_mask.dtype == torch.bool:
-            attn_weight.masked_fill_(attn_mask.logical_not(), float("-inf"))
-        else:
-            attn_weight += attn_mask
-    return torch.softmax(attn_weight, dim=-1) @ value
+
+    if is_causal or L <= chunk_size:
+        # causal (CLIP text encoder 用) やチャンク不要なほど小さい場合は従来通り
+        attn_weight = query @ key.transpose(-2, -1) * scale_factor
+        if is_causal:
+            mask = torch.ones(L, S, dtype=torch.bool, device=query.device).tril(diagonal=0)
+            attn_weight.masked_fill_(mask.logical_not(), float("-inf"))
+        if attn_mask is not None:
+            if attn_mask.dtype == torch.bool:
+                attn_weight.masked_fill_(attn_mask.logical_not(), float("-inf"))
+            else:
+                attn_weight += attn_mask
+        return torch.softmax(attn_weight, dim=-1) @ value
+
+    outputs = []
+    for start in range(0, L, chunk_size):
+        end = min(start + chunk_size, L)
+        q_chunk = query[..., start:end, :]
+        attn_weight = q_chunk @ key.transpose(-2, -1) * scale_factor
+        if attn_mask is not None:
+            if attn_mask.dtype == torch.bool:
+                attn_weight.masked_fill_(attn_mask.logical_not(), float("-inf"))
+            else:
+                attn_weight += attn_mask
+        attn_weight = torch.softmax(attn_weight, dim=-1)
+        outputs.append(attn_weight @ value)
+    return torch.cat(outputs, dim=-2)
 
 
 torch.nn.functional.scaled_dot_product_attention = scaled_dot_product_attention_patch
+
+# --------------------------------------------------------------------------- #
+# torch GroupNorm を ONNX 化可能な素朴実装に差し替え
+# (PyTorch 標準の GroupNorm -> ONNX 変換は Reshape の shape に "0" (=入力次元をそのまま
+#  コピーする ONNX の特殊値) を焼き込むが、MNN のコンバータがこれを正しく解釈できず
+#  "Reshape error: 0 -> N" として壊れる。ここでは全て具体的なリテラル整数だけを使う
+#  reshape に置き換えることで、"0" プレースホルダーが一切生成されないようにする)
+# --------------------------------------------------------------------------- #
+def group_norm_patch(input, num_groups, weight=None, bias=None, eps=1e-5):
+    """
+    解像度非依存版。バッチ*空間次元は -1 で動的に任せ (ONNX Reshape の
+    "0=入力からコピー" プレースホルダーではなく、shape[0] を明示的に
+    織り込んだ動的な -1 として扱われることを期待)、チャンネル数だけ
+    リテラル整数で扱う。これにより 128/192/256/320/384/448/512 など
+    複数解像度で同一の UNet/VAE .mnn を使い回せることを狙う。
+    """
+    C = int(input.shape[1])
+    G = num_groups
+    N = input.shape[0]
+    # バッチ次元だけ明示、空間次元はまとめて -1 に押し込む
+    # (チャンネルはグループ数で割り切れる前提)
+    x = input.reshape(N, G, C // G, -1)
+    dims = tuple(range(2, x.dim()))
+    mean = x.mean(dim=dims, keepdim=True)
+    var = x.var(dim=dims, unbiased=False, keepdim=True)
+    x = (x - mean) / torch.sqrt(var + eps)
+    x = x.reshape_as(input)
+    if weight is not None:
+        x = x * weight.view(1, C, *([1] * (input.dim() - 2)))
+    if bias is not None:
+        x = x + bias.view(1, C, *([1] * (input.dim() - 2)))
+    return x
+
+
+torch.nn.functional.group_norm = group_norm_patch
+
 
 
 # --------------------------------------------------------------------------- #
@@ -288,11 +350,16 @@ def main():
         )
 
         # UNet 最大の節約ポイント
-        #  - fp16 で -50%
-        #  - weightQuantBits=4 でさらに -50% (合計 -75%)
-        #  - block=32 で品質を維持
+        #  ★ 重要: --fp16 と --weightQuantBits を併用すると、UNet 規模の
+        #    大きいグラフでは mnnconvert (このバージョン) が量子化を無視し、
+        #    fp16 のみが適用されたファイルが出力される不具合を実測で確認済み
+        #    (CLIP/VAE のような小さいグラフでは問題なく併用できる)。
+        #    UNet だけは fp16=False にして --weightQuantBits 単独で量子化する
+        #    ことで、期待通り fp32 の 1/4 サイズ (int8) まで縮む。
+        #  - weightQuantBits=4 にすればさらに縮む
+        #  - block=32 は品質面で有利 (本家 xororz/sd-mnn と同等の構成)
         onnx_to_mnn(onnx_r, out_dir / f_unet,
-                    fp16=True,
+                    fp16=False,
                     quant_bits=args.unet_bits,
                     quant_block=args.unet_block,
                     asymmetric=True)
