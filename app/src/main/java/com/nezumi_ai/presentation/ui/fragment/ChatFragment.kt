@@ -188,6 +188,18 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     // 自動追従中は、テーブル列追加などの大きな再レイアウトで底判定が一瞬外れても維持する。
     // ユーザーが明示的に上へドラッグした時だけ false にする。
     private var autoFollowBottomLocked = true
+    // 生成完了直後の後処理フェーズ (TPS 表示 / 再生成・読み上げボタン / Markdown 再レイアウト等が
+    // 遅延登場する短時間) では、shouldAutoFollowBottom() が false でも末尾追従を強制するためのフラグ。
+    // これが true の間は下矢印ボタンも表示しない（自動で下に着地するため）。
+    private var postGenerationSettleActive = false
+
+    /**
+     * ★ 再生成タップ後、AI メッセージの animateContentSize 完了コールバックを受けたときにだけ
+     *   生成物の下端までスクロールさせるワンショットフラグ。
+     *   生成中 (isGenerating=true) の普段は既存の shouldAutoFollowBottom() 経路で追従するので
+     *   ここでは生成完了後の一回のジャンプだけを担当する。
+     */
+    private var scrollToBottomOnNextAiLayout = false
 
     private data class ScrollAnchor(val position: Int, val offset: Int)
 
@@ -365,6 +377,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 if (shouldAutoFollowBottom()) {
                     scheduleAutoScrollToBottom()
                 }
+                // ★ 再生成後の animateContentSize 完了を拾って一回だけ下端までジャンプする。
+                if (scrollToBottomOnNextAiLayout) {
+                    scrollToBottomOnNextAiLayout = false
+                    autoFollowBottomLocked = true
+                    scrollToBottomImmediate()
+                }
             },
             onAiMessageSpeak = { message, generatedText ->
                 viewModel.synthesizeText(message.id, generatedText)
@@ -373,6 +391,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 // ★ 再生成タップの直後は必ず末尾追従をリセットしておく。
                 userScrolledAwayDuringGeneration = false
                 autoFollowBottomLocked = true
+                postGenerationSettleActive = false
+                // ★ animateContentSize の完了コールバックで下端までジャンプさせるフラグを立てる。
+                scrollToBottomOnNextAiLayout = true
                 viewModel.regenerateLastResponse(message.id)
             },
             onAiVariantSelect = { parentId, newIndex ->
@@ -415,6 +436,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 if (isGenerating && userIsDraggingMessages && dy < 0 && !isNearBottom(recyclerView)) {
                     autoFollowBottomLocked = false
                     userScrolledAwayDuringGeneration = true
+                }
+                // 生成完了直後の settle フェーズ中でも、ユーザーが明示的に上へドラッグしたら settle を中断する。
+                if (postGenerationSettleActive && userIsDraggingMessages && dy < 0 && !isNearBottom(recyclerView)) {
+                    postGenerationSettleActive = false
+                    autoFollowBottomLocked = false
                 }
                 updateScrollToBottomButtonVisibility()
             }
@@ -638,6 +664,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 val audioToSend = if (audioInputEnabled) selectedAudioUri else null
                 userScrolledAwayDuringGeneration = false
                 autoFollowBottomLocked = true
+                postGenerationSettleActive = false
                 viewModel.sendMessageWithMedia(message, imagesToSend, audioToSend)
                 binding.messageInput.text?.clear()
                 selectedImageUrisList = emptyList()
@@ -691,6 +718,17 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             launchAudioRecording()
         }
 
+        // ★ バリアント切り替えスクロール要求を受け取るコレクター。
+        //   ChatViewModel.selectAssistantVariant() から切り替え先メッセージ id が流れてくるので、
+        //   そのメッセージの "一番下" をビューポート下側に合わせる。
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.scrollToVariantMessageId.collect { messageId ->
+                    scrollVariantMessageBottomIntoView(messageId)
+                }
+            }
+        }
+
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.isLoading.collect { isLoading ->
@@ -702,6 +740,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     renderSendButtonState()
                     if (isLoading) {
                         userScrolledAwayDuringGeneration = false
+                        postGenerationSettleActive = false
                         autoFollowBottomLocked = isUserAtBottom || isNearBottom()
                         startResponseTypingAnimation()
                         if (autoFollowBottomLocked) {
@@ -721,10 +760,31 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         //   キャリブレーションが見られていた。
                         //   直前まで末尾追従していた場合に限り、複数フレームにわたって末尾に強制着地させることで
                         //   このジャンプを防ぐ。ユーザーが生成中に上にスクロールして見ていた場合はその位置を尊重する。
+                        //   さらに: 単発の post {} だけだと、TPS/アクションボタンが遅延して登場したり、
+                        //   Markdown/コードブロックの再レイアウトが後続フレームで走った場合に、その時点では
+                        //   すでに isGenerating==false かつ shouldAutoFollowBottom()==false なので
+                        //   一番上にジャンプしてしまう。 finishingSettleFrames の間だけ末尾追従を強制する。
                         if (wasGenerating && !userScrolledAwayDuringGeneration && autoFollowBottomLocked) {
+                            postGenerationSettleActive = true
                             binding.messagesRecyclerView.post {
                                 if (_binding != null && isAdded) scrollToBottomImmediate()
                             }
+                            binding.messagesRecyclerView.postDelayed({
+                                if (_binding != null && isAdded) scrollToBottomImmediate()
+                            }, 32L)
+                            binding.messagesRecyclerView.postDelayed({
+                                if (_binding != null && isAdded) scrollToBottomImmediate()
+                            }, 96L)
+                            binding.messagesRecyclerView.postDelayed({
+                                if (_binding != null && isAdded) {
+                                    scrollToBottomImmediate()
+                                    postGenerationSettleActive = false
+                                    updateScrollToBottomButtonVisibility()
+                                }
+                            }, 240L)
+                        } else {
+                            postGenerationSettleActive = false
+                            updateScrollToBottomButtonVisibility()
                         }
                     }
                 }
@@ -1104,6 +1164,62 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
     }
 
+    /**
+     * ★ バリアント切り替え後のスクロール: 切り替え先メッセージの「一番下」に合わせる。
+     *   ★ ItemView の底辺が RecyclerView のビューポート底に合わさるよう offset を計算する。
+     *   ★ submitList の後で高さが確定しないことがあるので、複数フレームにわたって追従する。
+     */
+    private fun scrollVariantMessageBottomIntoView(messageId: Long) {
+        // ユーザーの能動的スクロール状態をリセットしてこのジャンプを優先する。
+        userScrolledAwayDuringGeneration = false
+        viewLifecycleOwner.lifecycleScope.launch {
+            // submitList で新しいリストが反映されるまでちょっと待つ
+            kotlinx.coroutines.delay(48L)
+            val rv = _binding?.messagesRecyclerView ?: return@launch
+            val lm = rv.layoutManager
+                as? androidx.recyclerview.widget.LinearLayoutManager ?: return@launch
+            val currentList = adapter.currentList
+            val position = currentList.indexOfFirst { it.id == messageId }
+            if (position < 0) {
+                Log.w(TAG, "scrollVariantMessageBottomIntoView: id=$messageId not found")
+                return@launch
+            }
+            fun landBottom() {
+                if (_binding == null || !isAdded) return
+                val view = lm.findViewByPosition(position)
+                if (view == null) {
+                    // まだレイアウトされていないときは、とりあえずその位置を上に見えるようジャンプし、次フレームで再試行。
+                    lm.scrollToPositionWithOffset(position, 0)
+                    return
+                }
+                val rvBottomInside = rv.height - rv.paddingBottom
+                val itemBottom = view.bottom
+                val delta = itemBottom - rvBottomInside
+                if (delta > 0) {
+                    // ItemView の底がビューポートより下: その分だけ下スクロールして底を見える位置にする。
+                    rv.scrollBy(0, delta)
+                } else if (view.top < rv.paddingTop) {
+                    // アイテムが高すぎて一画面に収まらない場合は、底を見せつつ top をビューポートに入れることを優先しない。
+                    // 、選択中バリアントの「一番下」を見せるのが目的なので delta<=0 なら何もしない。
+                }
+            }
+            // フレーム内でビュー内にスクロールしておいてから delta 調整する。
+            lm.scrollToPositionWithOffset(position, 0)
+            rv.post {
+                if (_binding == null || !isAdded) return@post
+                landBottom()
+                // Markdown / コードブロックの遅延レイアウトに備えて数フレーム後にも一度確定スクロールする。
+                rv.postDelayed({ landBottom() }, 64L)
+                rv.postDelayed({ landBottom() }, 160L)
+                rv.postDelayed({
+                    landBottom()
+                    updateScrollToBottomButtonVisibility()
+                }, 320L)
+            }
+            Log.d(TAG, "scrollVariantMessageBottomIntoView: id=$messageId pos=$position")
+        }
+    }
+
     private fun scrollToBottomImmediate() {
         val rv = _binding?.messagesRecyclerView ?: return
         val lastItem = adapter.itemCount - 1
@@ -1128,8 +1244,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun shouldAutoFollowBottom(): Boolean {
-        if (!isGenerating) return false
         if (userScrolledAwayDuringGeneration) return false
+        // 生成完了直後の settle フェーズも末尾追従を続ける（バグ修正: 生成完了瞬間に一番上へ飛ぶ問題）。
+        if (postGenerationSettleActive) return autoFollowBottomLocked
+        if (!isGenerating) return false
         return autoFollowBottomLocked || isUserAtBottom || isNearBottom()
     }
 
@@ -1151,7 +1269,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private fun followBottomForFrames(rv: RecyclerView, framesRemaining: Int, previousRange: Int) {
         if (_binding == null || !isAdded) return
-        if (!isGenerating || userScrolledAwayDuringGeneration) return
+        // settle フェーズ中は isGenerating==false でも追従を継続する。
+        if ((!isGenerating && !postGenerationSettleActive) || userScrolledAwayDuringGeneration) return
         if (userIsDraggingMessages) {
             Log.d(TAG, "AUTOSCROLL_STOP: user drag in progress")
             return
@@ -1225,6 +1344,16 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private fun updateScrollToBottomButtonVisibility() {
         if (_binding == null || !isAdded) return
+        // ★ バグ修正: 生成中に自動スクロールフラグが ON のとき（=末尾追従中）は、
+        //   ストリーミングで新トークンが挿入されるたびに一瞬底から離れて下矢印が
+        //   チカチカ表示されてしまう。追従が有効な間は、そもそもボタンを出さない。
+        //   生成完了直後の settle フェーズ中も同じ扱いにする（間もなく確実に底に着地するため）。
+        val followingBottom = (isGenerating && !userScrolledAwayDuringGeneration &&
+            (autoFollowBottomLocked || isUserAtBottom || isNearBottom()))
+        if (followingBottom || postGenerationSettleActive) {
+            scrollToBottomVisible = false
+            return
+        }
         scrollToBottomVisible = !isAtBottom()
     }
 
@@ -1279,17 +1408,21 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private fun buildDownloadedModelOptions(): List<ModelOption> {
         val options = mutableListOf<ModelOption>()
-        if (ModelFileManager.isDownloaded(requireContext(), ModelFileManager.LocalModel.GEMMA3N_2B)) {
-            options += ModelOption("Gemma3n-2B", "Gemma 3n 2B")
-        }
-        if (ModelFileManager.isDownloaded(requireContext(), ModelFileManager.LocalModel.GEMMA3N_4B)) {
-            options += ModelOption("Gemma3n-4B", "Gemma 3n 4B")
-        }
+        // Gemma 3n 2B / 4B は新規の選択肢から除外する（ダウンロードカードを提供しないため、
+                // チャットのセレクターも Gemma 4 以降に絞る）。
         if (ModelFileManager.isDownloaded(requireContext(), ModelFileManager.LocalModel.GEMMA4_2B)) {
             options += ModelOption("Gemma4-2B", "Gemma 4 2B")
         }
         if (ModelFileManager.isDownloaded(requireContext(), ModelFileManager.LocalModel.GEMMA4_4B)) {
             options += ModelOption("Gemma4-4B", "Gemma 4 4B")
+        }
+        // 既存ダウンロード済みの Gemma 3n ファイルが残っている場合だけ、
+        // 見えなくならないよう末尾に追記する（ダウンロードフローは剥がす）。
+        if (ModelFileManager.isDownloaded(requireContext(), ModelFileManager.LocalModel.GEMMA3N_2B)) {
+            options += ModelOption("Gemma3n-2B", "Gemma 3n 2B")
+        }
+        if (ModelFileManager.isDownloaded(requireContext(), ModelFileManager.LocalModel.GEMMA3N_4B)) {
+            options += ModelOption("Gemma3n-4B", "Gemma 3n 4B")
         }
         ModelFileManager.listImportedTaskModels(requireContext()).forEach { imported ->
             val label = ImportedModelCapabilityStore.resolveDisplayName(

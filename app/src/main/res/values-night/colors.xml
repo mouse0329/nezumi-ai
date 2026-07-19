@@ -12,6 +12,8 @@
     <!-- Text Colors -->
     <color name="text_primary">#F3F4F6</color>
     <color name="text_secondary">#D1D5DB</color>
+    <!-- Drawer (side menu) button text: white in dark mode, black in light mode -->
+    <color name="drawer_text">#FFFFFF</color>
 
     <!-- Background Colors -->
     <color name="bg_session_list">#0F172A</color>

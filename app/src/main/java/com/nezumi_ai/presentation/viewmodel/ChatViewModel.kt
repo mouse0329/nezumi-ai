@@ -224,10 +224,64 @@ class ChatViewModel(
      * ★ 応答バリアント選択状態:
      *   key = parentUserMessageId, value = 現在選択中の variantIndex。
      *   未登録の user メッセージは "最新バリアント" をデフォルト選択とする。
-     *   DB には保存せずメモリのみで管理（セッション切替でリセット）。
+     *   ★ 永続化: セッションごとに SharedPreferences へ JSON で保存し、セッション切り替え時に復元する。
      */
     private val _selectedVariantByParent = MutableStateFlow<Map<Long, Int>>(emptyMap())
     val selectedVariantByParent: StateFlow<Map<Long, Int>> = _selectedVariantByParent
+
+    /**
+     * ★ UI へのバリアント切替スクロール要求。
+     *   バリアントを切り替えた後に、新しいバリアントの assistant メッセージ id を流す。
+     *   UI 側はこの id のメッセージの "一番下" にスクロールする。
+     *   SharedFlow にして同じ id を連続で流してもトリガーできるようにする。
+     */
+    private val _scrollToVariantMessageId = MutableSharedFlow<Long>(
+        replay = 0,
+        extraBufferCapacity = 4,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+    )
+    val scrollToVariantMessageId: SharedFlow<Long> = _scrollToVariantMessageId
+
+    // バリアント選択の永続化用 SharedPreferences。
+    private val variantPrefs by lazy {
+        appContext.getSharedPreferences("nezumi_ai_variant_selection", Context.MODE_PRIVATE)
+    }
+    private fun variantPrefKey(sessionId: Long): String = "session_$sessionId"
+
+    /** セッションのバリアント選択状態を SharedPreferences から読み込む。 */
+    private fun loadVariantSelectionForSession(sessionId: Long): Map<Long, Int> {
+        val raw = variantPrefs.getString(variantPrefKey(sessionId), null) ?: return emptyMap()
+        return try {
+            val obj = org.json.JSONObject(raw)
+            val result = HashMap<Long, Int>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val parentId = k.toLongOrNull() ?: continue
+                val idx = obj.optInt(k, -1)
+                if (idx >= 0) result[parentId] = idx
+            }
+            result
+        } catch (t: Throwable) {
+            Log.w(TAG, "loadVariantSelectionForSession failed sessionId=$sessionId", t)
+            emptyMap()
+        }
+    }
+
+    /** セッションのバリアント選択状態を SharedPreferences に保存する。 */
+    private fun persistVariantSelectionForSession(sessionId: Long, selection: Map<Long, Int>) {
+        try {
+            if (selection.isEmpty()) {
+                variantPrefs.edit().remove(variantPrefKey(sessionId)).apply()
+                return
+            }
+            val obj = org.json.JSONObject()
+            selection.forEach { (parentId, idx) -> obj.put(parentId.toString(), idx) }
+            variantPrefs.edit().putString(variantPrefKey(sessionId), obj.toString()).apply()
+        } catch (t: Throwable) {
+            Log.w(TAG, "persistVariantSelectionForSession failed sessionId=$sessionId", t)
+        }
+    }
 
     /**
      * 同じ parentUserMessageId を持つ assistant メッセージをグループ化して、
@@ -302,16 +356,29 @@ class ChatViewModel(
     /**
      * 外部 (UI) から呼ばれる: ある parent のバリアントを切り替える。
      * インデックスはクリップされるので鶴々かな値を渡しても安全。
+     * ★ 切り替え後: (1) 永続化し (2) 切り替え先バリアントの id をスクロール要求として UI に流す。
      */
     fun selectAssistantVariant(parentUserMessageId: Long, newIndex: Int) {
         val all = allMessagesSnapshot.value
-        val siblings = all.filter { it.parentUserMessageId == parentUserMessageId && it.role != "user" }
+        val siblings = all
+            .filter { it.parentUserMessageId == parentUserMessageId && it.role != "user" }
+            .sortedWith(compareBy({ it.variantIndex }, { it.timestamp }))
         if (siblings.isEmpty()) return
         val clamped = newIndex.coerceIn(0, siblings.size - 1)
         val newMap = _selectedVariantByParent.value.toMutableMap()
         newMap[parentUserMessageId] = clamped
         _selectedVariantByParent.value = newMap
         _messages.value = applyVariantSelection(all, newMap)
+
+        // ★ セッションごとに永続化
+        _currentSessionId.value?.let { sid ->
+            persistVariantSelectionForSession(sid, newMap)
+        }
+
+        // ★ 切り替え先バリアントの assistant メッセージの "一番下" にスクロールするため、
+        //   そのメッセージ id を UI に通知する。
+        val chosen = siblings[clamped]
+        viewModelScope.launch { _scrollToVariantMessageId.emit(chosen.id) }
     }
 
     private val _pendingMediaMessage = MutableStateFlow<MessageEntity?>(null)
@@ -802,6 +869,12 @@ class ChatViewModel(
     suspend fun setCurrentSession(sessionId: Long) {
         val previousSessionId = _currentSessionId.value
         _currentSessionId.value = sessionId
+
+        // ★ セッション切替時に、このセッションのバリアント選択状態を SharedPreferences から復元する。
+        //   復元しないと setCurrentSession 内で下にある applyVariantSelection が
+        //   "前のセッションの選択状態" を使ってしまうので、messages コレクション開始
+        //   より前にロードしておく。
+        _selectedVariantByParent.value = loadVariantSelectionForSession(sessionId)
         if (lastThinkingSessionId != sessionId) {
             hasUserToggledThinking = false
             lastThinkingSessionId = sessionId
@@ -1371,11 +1444,18 @@ class ChatViewModel(
                     }
                 }
 
-                // ★ 既存 AI 応答は削除しない。stopGenerationInternal() だけでストリームを安全に止めておく。
-                stopGenerationInternal()
-                // stopGenerationInternal() は _isLoading=false にするので UI のフリーズ対策でクリンチとして true に戻す。
-                withContext(Dispatchers.Main) {
-                    _isLoading.value = true
+                // ★ 既存 AI 応答は削除しない。
+                // ★ Bug fix: ここで stopGenerationInternal() を呼ぶと、先頭で generationJob に自分自身を
+                //   登録してしまっているため、currentJob?.cancel(UserStopCancellationException()) が
+                //   自ジョブを cancel し、例外が自分の catch に飛んで generateAIResponse に到達しない。
+                //   代わりにネイティブ側の推論をなも々キャンセルし、KV もクリアするだけにとどめる。
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val manager = requireModelManager()
+                        val sid = _currentSessionId.value
+                        if (sid != null) manager.cancelInferenceForSession(sid)
+                        else manager.cancelInference()
+                    }.onFailure { Log.w(TAG, "cancelInference before regenerate failed", it) }
                 }
 
                 // 同じプロンプトを使い回すため、前ターンの KV キャッシュは新バリアント向けにクリアする。
@@ -1399,6 +1479,8 @@ class ChatViewModel(
                 val newSelection = _selectedVariantByParent.value.toMutableMap()
                 newSelection[parentUserMessageId] = existingVariantCount
                 _selectedVariantByParent.value = newSelection
+                // ★ 永続化: 再生成による新バリアントの選択もセッションに保存する。
+                persistVariantSelectionForSession(sessionId, newSelection)
 
                 // ユーザー側に保存されていた画像/音声を復元して同じ入力で推論を走らせる。
                 val images = mutableListOf<Bitmap>()
@@ -1435,8 +1517,14 @@ class ChatViewModel(
                     currentTurnMessageId = userMessage.id
                 )
             } catch (t: Throwable) {
-                val e = if (t is Exception) t else RuntimeException(t)
-                Log.e(TAG, "Error regenerating response", e)
+                // ★ Bug fix: 自ジョブの UserStopCancellationException は握りつぶす。
+                //   旧 generationJob を cancel したときに例外がこちらに伝播しても再生成フローを止めない。
+                if (t is UserStopCancellationException) {
+                    Log.d(TAG, "regenerate: UserStopCancellationException swallowed (own cancel signal)")
+                } else {
+                    val e = if (t is Exception) t else RuntimeException(t)
+                    Log.e(TAG, "Error regenerating response", e)
+                }
             } finally {
                 _pendingAssistantVariantSpec = null
                 withContext(Dispatchers.Main) {
@@ -1763,6 +1851,10 @@ class ChatViewModel(
                 val newSelection = _selectedVariantByParent.value.toMutableMap()
                 newSelection[effectiveParentId] = effectiveVariantIndex
                 _selectedVariantByParent.value = newSelection
+                // ★ 永続化: 新規バリアント選択も保存する。
+                _currentSessionId.value?.let { sid ->
+                    persistVariantSelectionForSession(sid, newSelection)
+                }
             }
 
             val answerBuilder = StringBuilder()
@@ -3354,7 +3446,18 @@ class ChatViewModel(
         // ★ バリアント選択をプロンプトにも反映させる。
         //   選択されていない assistant バリアントを除外しないと、同じ user ターンに対して
         //   複数の assistant ターンがプロンプトに並んでしまい、LLM にとって奇妙な会話になる。
-        val messages = applyVariantSelection(rawMessages, _selectedVariantByParent.value)
+        // ★ 再生成時は「再生成対象の assistant 応答」を履歴から外す。
+        //   ここで古い応答を会話履歴に残したままだと、モデルはすでに assistant が回答済みだと判断し、
+        //   新しい応答を作る代わりに同じ内容を再描画したような挙動になりやすい。
+        val selectedMessages = applyVariantSelection(rawMessages, _selectedVariantByParent.value)
+        val regeneratingParentId = _pendingAssistantVariantSpec?.parentUserMessageId
+        val messages = if (regeneratingParentId != null && currentTurnMessageId == regeneratingParentId) {
+            selectedMessages.filterNot { msg ->
+                msg.role != "user" && msg.parentUserMessageId == regeneratingParentId
+            }
+        } else {
+            selectedMessages
+        }
 
         // 画像をコンテキストに含むための デバッグログ
         val messagesWithImagesForLog = messages.filter { it.imageUri != null && it.imageUri.isNotEmpty() }

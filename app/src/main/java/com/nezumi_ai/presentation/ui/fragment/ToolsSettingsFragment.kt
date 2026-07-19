@@ -186,29 +186,33 @@ class ToolsSettingsFragment : Fragment() {
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(text = "ツール設定", fontWeight = FontWeight.Bold)
-                NezumiTool.entries.forEach { tool ->
-                    val enabled = toolEnabled[tool] ?: (tool == NezumiTool.GET_TIME)
-                    val canToggle = tool != NezumiTool.LIST_ALARMS || setAlarmEnabled
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(text = tool.displayName, color = colorResource(id = R.color.text_primary))
-                        Switch(
-                            checked = enabled,
-                            enabled = canToggle,
-                            onCheckedChange = { checked -> updateToolEnabled(tool, checked) }
-                        )
+                // カレンダーツール (追加/一覧) は現時点では有効化を受け付けないため、
+                // UI 一覧自体から除外する。
+                NezumiTool.entries
+                    .filter { it != NezumiTool.ADD_CALENDAR_EVENT && it != NezumiTool.LIST_CALENDAR_EVENTS }
+                    .forEach { tool ->
+                        val enabled = toolEnabled[tool] ?: (tool == NezumiTool.GET_TIME)
+                        val canToggle = tool != NezumiTool.LIST_ALARMS || setAlarmEnabled
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(text = tool.displayName, color = colorResource(id = R.color.text_primary))
+                            Switch(
+                                checked = enabled,
+                                enabled = canToggle,
+                                onCheckedChange = { checked -> updateToolEnabled(tool, checked) }
+                            )
+                        }
+                        if (tool == NezumiTool.LIST_ALARMS && !setAlarmEnabled) {
+                            Text(
+                                text = "「アラームセット」が有効な場合のみ使用できます",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorResource(id = R.color.text_secondary)
+                            )
+                        }
                     }
-                    if (tool == NezumiTool.LIST_ALARMS && !setAlarmEnabled) {
-                        Text(
-                            text = "「アラームセット」が有効な場合のみ使用できます",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colorResource(id = R.color.text_secondary)
-                        )
-                    }
-                }
             }
         }
     }
@@ -274,14 +278,14 @@ class ToolsSettingsFragment : Fragment() {
                 return
             }
         }
-        if (enabled && (tool == NezumiTool.ADD_CALENDAR_EVENT || tool == NezumiTool.LIST_CALENDAR_EVENTS)) {
-            pendingEnableTool = tool
-            calendarPermissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.READ_CALENDAR,
-                    Manifest.permission.WRITE_CALENDAR
-                )
-            )
+        if (tool == NezumiTool.ADD_CALENDAR_EVENT || tool == NezumiTool.LIST_CALENDAR_EVENTS) {
+            // カレンダーツールは現時点では有効化させない (常に無効)。
+            // 設定を確実に OFF にし、トーストで利用不可を告知する。
+            toolPreferences.setEnabled(tool, false)
+            loadToolSettings()
+            if (enabled) {
+                toast("カレンダーツールは現在利用できません")
+            }
             return
         }
         if (enabled && tool == NezumiTool.SET_ALARM && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

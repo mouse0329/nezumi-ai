@@ -94,6 +94,11 @@ class ToolPreferences(context: Context) {
 
     fun isEnabled(tool: NezumiTool): Boolean {
         ensureInitialized()
+        // カレンダーツール (追加/一覧) は現時点では一律に無効化し、
+        // プリセット側の設定や SharedPreferences に残った古い値で有効化されないようにする。
+        if (tool == NezumiTool.ADD_CALENDAR_EVENT || tool == NezumiTool.LIST_CALENDAR_EVENTS) {
+            return false
+        }
         val presetToolIds = getActivePresetToolIds()
         if (presetToolIds != null) {
             return presetIdsForTool(tool).any { it in presetToolIds }
@@ -102,7 +107,11 @@ class ToolPreferences(context: Context) {
     }
 
     fun setEnabled(tool: NezumiTool, enabled: Boolean) {
-        prefs.edit().putBoolean(keyFor(tool), enabled).apply()
+        // カレンダーツールは外部から true にされても永続化しない（常に false）。
+        val effectiveEnabled = if (
+            tool == NezumiTool.ADD_CALENDAR_EVENT || tool == NezumiTool.LIST_CALENDAR_EVENTS
+        ) false else enabled
+        prefs.edit().putBoolean(keyFor(tool), effectiveEnabled).apply()
     }
 
     fun getEnabledTools(): Set<NezumiTool> {

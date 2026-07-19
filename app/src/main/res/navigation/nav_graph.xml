@@ -51,10 +51,4 @@
         android:label="@string/nav_image_gen"
         tools:layout="@layout/fragment_settings" />
 
-    <fragment
-        android:id="@+id/benchmarkFragment"
-        android:name="com.nezumi_ai.presentation.ui.fragment.BenchmarkFragment"
-        android:label="ベンチマーク"
-        tools:layout="@layout/fragment_benchmark" />
-
 </navigation>

@@ -16,6 +16,8 @@
     <!-- Text Colors -->
     <color name="text_primary">#111827</color>
     <color name="text_secondary">#4B5563</color>
+    <!-- Drawer (side menu) button text: black in light mode, white in dark mode -->
+    <color name="drawer_text">#000000</color>
     <color name="success">#22C55E</color>
     <color name="error">#EF4444</color>
 

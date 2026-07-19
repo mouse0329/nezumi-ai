@@ -226,19 +226,26 @@ open class ModelSettingsFragment : Fragment() {
     // SD (画像生成) モデル zip ピッカー。
     // zip 内に unet.mnn / clip*.mnn / vae_decoder*.mnn と、
     // tokenizer.json または pos_emb.bin+token_emb.bin が含まれていればインポート可能。
+    // LLM モデル (.task/.litertlm/.gguf) と同様にインポート中はモーダルを表示し、
+    // 大きな zip を展開する間の無反応状態でユーザが二重タップしないようにする。
     private val sdZipPickerLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) return@registerForActivityResult
+            isImportingModel = true
             viewLifecycleOwner.lifecycleScope.launch {
-                val result = withContext(Dispatchers.IO) {
-                    com.nezumi_ai.sd.SdModelImporter.importFromUri(requireContext(), uri)
-                }
-                result.onSuccess { imported ->
-                    toast("画像生成モデルを追加しました: ${imported.displayName}")
-                    refreshSdModels()
-                    PreferencesHelper.setSdModelPath(requireContext(), imported.dir.absolutePath)
-                }.onFailure {
-                    toast("画像生成モデルの追加に失敗しました: ${it.message}")
+                try {
+                    val result = withContext(Dispatchers.IO) {
+                        com.nezumi_ai.sd.SdModelImporter.importFromUri(requireContext(), uri)
+                    }
+                    result.onSuccess { imported ->
+                        toast("画像生成モデルを追加しました: ${imported.displayName}")
+                        refreshSdModels()
+                        PreferencesHelper.setSdModelPath(requireContext(), imported.dir.absolutePath)
+                    }.onFailure {
+                        toast("画像生成モデルの追加に失敗しました: ${it.message}")
+                    }
+                } finally {
+                    isImportingModel = false
                 }
             }
         }
@@ -465,7 +472,15 @@ open class ModelSettingsFragment : Fragment() {
                             modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
                         )
                     }
-                    items(ModelFileManager.LocalModel.entries) { model ->
+                    // Gemma 3n 2B / 4B は組み込みモデルリストから除外する。
+                    // enum は既存ダウンロード済みファイルの削除/ミグレーションのために残すが、
+                    // ダウンロードカードは新規には提供しない。
+                    items(
+                        ModelFileManager.LocalModel.entries.filter { m ->
+                            m != ModelFileManager.LocalModel.GEMMA3N_2B &&
+                                m != ModelFileManager.LocalModel.GEMMA3N_4B
+                        }
+                    ) { model ->
                         val state = modelStates[model]
                         if (state != null) {
                             val modelKey = "builtin_${model.name}"
@@ -1664,6 +1679,9 @@ open class ModelSettingsFragment : Fragment() {
         )
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             for (model in ModelFileManager.LocalModel.entries) {
+                if (model == ModelFileManager.LocalModel.GEMMA3N_2B ||
+                    model == ModelFileManager.LocalModel.GEMMA3N_4B
+                ) continue // Gemma 3n は UI 一覧から除外
                 val state = modelStates[model] ?: continue
                 val modelKey = "builtin_${model.name}"
                 val isExpanded = expandedModelKey == modelKey
@@ -2433,6 +2451,9 @@ open class ModelSettingsFragment : Fragment() {
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (model in ModelFileManager.LocalModel.entries) {
+                        if (model == ModelFileManager.LocalModel.GEMMA3N_2B ||
+                            model == ModelFileManager.LocalModel.GEMMA3N_4B
+                        ) continue // Gemma 3n は UI 一覧から除外
                         val state = modelStates[model] ?: continue
                         val modelKey = "builtin_${model.name}"
                         val isExpanded = expandedModelKey == modelKey

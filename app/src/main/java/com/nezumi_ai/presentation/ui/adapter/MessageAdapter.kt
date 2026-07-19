@@ -13,6 +13,8 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.cardview.widget.CardView
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -783,7 +785,10 @@ class MessageAdapter(
             binding.aiMessageMarkdownCompose.visibility = View.VISIBLE
 
             binding.aiMessageMarkdownCompose.setContent {
-                GalleryMarkdownText(content = content)
+                GalleryMarkdownText(
+                    content = content,
+                    onSizeAnimationFinished = { onAiMessageLayoutChanged() }
+                )
             }
             lastRenderedContent = content
             lastRenderedContentMode = ContentRenderMode.Markdown
@@ -800,16 +805,28 @@ class MessageAdapter(
             if (lastRenderedThinking == content) return
 
             binding.aiThinkingMarkdownCompose.setContent {
-                GalleryMarkdownText(content = content)
+                // Thinking ブロックは自動スクロールのトリガーにしない。animateContentSize だけ適用。
+                GalleryMarkdownText(content = content, onSizeAnimationFinished = null)
             }
         }
 
         @Composable
-        private fun GalleryMarkdownText(content: String) {
+        private fun GalleryMarkdownText(
+            content: String,
+            onSizeAnimationFinished: (() -> Unit)? = null
+        ) {
             val shape = RoundedCornerShape(18.dp)
             Box(
                 modifier = Modifier
                     .widthIn(max = 280.dp)
+                    // ★ 再生成 / バリアント切り替え時の高さ変化をなだらかにする。
+                    // 完了コールバックで ChatFragment の自動スクロールにのせる。
+                    .animateContentSize(
+                        animationSpec = tween(durationMillis = 220),
+                        finishedListener = { _, _ ->
+                            onSizeAnimationFinished?.invoke()
+                        }
+                    )
                     .background(colorResource(id = R.color.surface_card), shape)
                     .border(
                         BorderStroke(1.dp, colorResource(id = R.color.border)),

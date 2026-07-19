@@ -2,6 +2,9 @@ package com.nezumi_ai.presentation.ui.screen
 
 import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -607,21 +610,35 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             )
         }
         
-        resultBitmap?.let { bmp ->
-            Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
-                androidx.compose.foundation.Image(
-                    bitmap = bmp.asImageBitmap(),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-                        .clickable { onImageClick(GeneratedImage(bmp, prompt, System.currentTimeMillis())) },
-                    contentScale = ContentScale.FillWidth
+        // 生成完了後の再描画のガクガクを防ぐため animateContentSize でなだらかに切り替える。
+        // resultBitmap の到達で表示が突然差し込まれるとリストの縦サイズが飛ぶため、
+        // Column 自体のサイズ変化をアニメーションで補間する。
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .animateContentSize(
+                    animationSpec = tween(
+                        durationMillis = 260,
+                        easing = FastOutSlowInEasing
+                    )
                 )
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    ActionButton("保存", Modifier.weight(1f)) { vm.saveToGallery(context) }
-                    ActionButton("共有", Modifier.weight(1f)) { vm.share(context) }
+        ) {
+            resultBitmap?.let { bmp ->
+                Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+                    androidx.compose.foundation.Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                            .clickable { onImageClick(GeneratedImage(bmp, prompt, System.currentTimeMillis())) },
+                        contentScale = ContentScale.FillWidth
+                    )
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        ActionButton("保存", Modifier.weight(1f)) { vm.saveToGallery(context) }
+                        ActionButton("共有", Modifier.weight(1f)) { vm.share(context) }
+                    }
                 }
             }
         }
