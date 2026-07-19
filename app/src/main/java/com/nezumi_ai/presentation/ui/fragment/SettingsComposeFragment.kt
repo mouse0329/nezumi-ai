@@ -155,7 +155,9 @@ class SettingsComposeFragment : Fragment() {
         //   sectionTitles = [全般, 推論, 画像, メモリ, チャット, デバッグ] なので
         //   「画像」 = index 2。
         val startSection = arguments?.getInt("startSection", -1) ?: -1
-        if (startSection in 0..5) {
+        // ★ デバッグタブは BuildConfig.DEBUG 時のみ存在するので、リリースビルドでは上限を 4 に制限する。
+        val maxAllowedSection = if (BuildConfig.DEBUG) 5 else 4
+        if (startSection in 0..maxAllowedSection) {
             selectedSection = startSection
         }
 
@@ -358,7 +360,12 @@ class SettingsComposeFragment : Fragment() {
             }
 
             item {
-                val sectionTitles = listOf("全般", "推論", "画像", "メモリ", "チャット", "デバッグ")
+                // ★ デバッグタブはデバッグビルド時のみ表示する。
+                //   リリースビルドでは BuildConfig.DEBUG=false なので自動的に非表示になる。
+                val sectionTitles = buildList {
+                    add("全般"); add("推論"); add("画像"); add("メモリ"); add("チャット")
+                    if (BuildConfig.DEBUG) add("デバッグ")
+                }
                 ScrollableTabRow(
                     selectedTabIndex = selectedSection,
                     edgePadding = 0.dp,
@@ -620,9 +627,14 @@ class SettingsComposeFragment : Fragment() {
                     4 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         ChatHistoryCard()
                     }
-                    5 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        DebugSettingsCard()
-                    }
+                    // ★ デバッグタブは BuildConfig.DEBUG 時のみ表示されるため、index 5 はデバッグビルドでのみ存在する。
+                    //   リリースビルドで sectionTitles に含まれていないので selectedSection == 5 にならないが、
+                    //   防御的に BuildConfig.DEBUG ガードも入れる。
+                    5 -> if (BuildConfig.DEBUG) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            DebugSettingsCard()
+                        }
+                    } else Unit
                     else -> {}
                 }
             }

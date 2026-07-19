@@ -20,7 +20,9 @@ class MessageRepository(private val dao: MessageDao) {
         imageUri: String? = null,
         imageDescription: String? = null,  // Phase 12: 画像説明
         audioUri: String? = null,
-        isStreaming: Boolean = false
+        isStreaming: Boolean = false,
+        parentUserMessageId: Long? = null,
+        variantIndex: Int = 0
     ): Long {
         val message = MessageEntity(
             sessionId = sessionId,
@@ -31,7 +33,9 @@ class MessageRepository(private val dao: MessageDao) {
             imageDescription = imageDescription,  // Phase 12: 画像説明を保存
             audioUri = audioUri,
             timestamp = System.currentTimeMillis(),
-            isStreaming = isStreaming
+            isStreaming = isStreaming,
+            parentUserMessageId = parentUserMessageId,
+            variantIndex = variantIndex
         )
         return dao.insert(message)
     }
@@ -161,6 +165,23 @@ class MessageRepository(private val dao: MessageDao) {
         dao.update(current.copy(
             imageUri = imageUri ?: current.imageUri,
             audioUri = audioUri ?: current.audioUri
+        ))
+    }
+
+    /**
+     * ★ 応答バリアント機能用: 既存の assistant メッセージに parent (user) リンクと、
+     *   同一 parent 内の並び順 variantIndex を付与する。旧データのマイグレーションと、
+     *   新規バリアント作成直後の属性付与の両方で使う。
+     */
+    suspend fun updateParentUserMessageId(
+        messageId: Long,
+        parentUserMessageId: Long,
+        variantIndex: Int
+    ) {
+        val current = dao.getMessageById(messageId) ?: return
+        dao.update(current.copy(
+            parentUserMessageId = parentUserMessageId,
+            variantIndex = variantIndex
         ))
     }
     

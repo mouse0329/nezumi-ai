@@ -13,6 +13,9 @@
         <item name="colorSurface">@color/surface_card</item>
         <item name="colorOnSurface">@color/text_primary</item>
         <item name="materialButtonStyle">@style/Widget.Nezumiai.Button</item>
+        <!-- Use the system sans-serif stack to avoid font-provider crashes on startup. -->
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="fontFamily">sans-serif</item>
     </style>
 
     <style name="Theme.Nezumiai" parent="Base.Theme.Nezumiai" />

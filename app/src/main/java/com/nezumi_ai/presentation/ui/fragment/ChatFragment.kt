@@ -369,6 +369,15 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             onAiMessageSpeak = { message, generatedText ->
                 viewModel.synthesizeText(message.id, generatedText)
             },
+            onAiMessageRegenerate = { message ->
+                // ★ 再生成タップの直後は必ず末尾追従をリセットしておく。
+                userScrolledAwayDuringGeneration = false
+                autoFollowBottomLocked = true
+                viewModel.regenerateLastResponse(message.id)
+            },
+            onAiVariantSelect = { parentId, newIndex ->
+                viewModel.selectAssistantVariant(parentId, newIndex)
+            },
             lifecycleOwner = viewLifecycleOwner,
             viewModelStoreOwner = this
         )
@@ -685,6 +694,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.isLoading.collect { isLoading ->
+                    val wasGenerating = isGenerating
                     isGenerating = isLoading
                     // ユーザーメッセージの取り消しボタンを生成中は隠す。
                     // Bug fix: 生成中に取り消しして KV キャッシュと不整合を起こさないため。
@@ -704,6 +714,18 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         stopResponseTypingAnimation()
                         responseTypingVisible = false
                         responseTypingText = getString(R.string.response_generating)
+                        // ★ Scroll bug fix: 生成完了の瞬間に、TPS 表示や各アクションボタン（再生成・スピーク）が
+                        //   登場してアイテムの高さが一度局所的に変わる。この後の onItemRangeChanged は
+                        //   isGenerating==false だがゆえに shouldAutoFollowBottom() は false を返し、
+                        //   自動追従がかからないまま RecyclerView のレイアウト内部リセットで一番上に飛んでしまう
+                        //   キャリブレーションが見られていた。
+                        //   直前まで末尾追従していた場合に限り、複数フレームにわたって末尾に強制着地させることで
+                        //   このジャンプを防ぐ。ユーザーが生成中に上にスクロールして見ていた場合はその位置を尊重する。
+                        if (wasGenerating && !userScrolledAwayDuringGeneration && autoFollowBottomLocked) {
+                            binding.messagesRecyclerView.post {
+                                if (_binding != null && isAdded) scrollToBottomImmediate()
+                            }
+                        }
                     }
                 }
             }
@@ -876,6 +898,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 streamingId to toolState
             }.collect { (streamingId, toolState) ->
                 adapter.setStreamingToolCallState(streamingId, toolState)
+            }
+        }
+
+        // ★ 応答バリアント情報を Adapter に流し込む。parent ごとに (全バリアント件数, 現在選択中の index)。
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.variantInfoByParent.collect { info ->
+                adapter.setVariantInfo(info)
             }
         }
 

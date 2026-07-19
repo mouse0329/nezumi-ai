@@ -47,6 +47,14 @@
     <string name="model_loading">モデルをロード中...</string>
     <string name="context_meter_format">コンテキスト使用量: %1$d / %2$d tokens</string>
     <string name="response_generating">応答中</string>
+    <!-- モデルロード中のオーバーレイに表示する統一文言。以前は「モデルを準備中...」「[XXX] エンジンを初期化中...」「[XXX] メモリを確認中...」など揺れがあったが、
+         全ての読み込みフェーズを『モデル準備中』で統一する。 -->
+    <string name="model_preparing">モデル準備中</string>
+    <string name="model_preparing_with_elapsed">モデル準備中 (%1$d秒)</string>
+    <string name="model_preparing_phase_memory">モデル準備中 · メモリ確認</string>
+    <string name="model_preparing_phase_engine">モデル準備中 · エンジン初期化</string>
+    <string name="model_preparing_phase_load">モデル準備中 · 重みロード</string>
+    <string name="model_preparing_phase_ready">モデル準備完了</string>
     <string name="response_extracting">⟳ 記憶を整理中...</string>
     <string name="chat_thinking_follow_settings">シンキング:ON</string>
     <string name="chat_thinking_off_for_session">シンキング:OFF</string>

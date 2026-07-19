@@ -32,7 +32,7 @@ import com.nezumi_ai.data.database.entity.SettingsEntity
         MemoryEntity::class,
         MemorySessionEntity::class
     ],
-    version = 26,
+    version = 27,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
@@ -57,7 +57,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                     NezumiAiDatabase::class.java,
                     "nezumi_ai.db"
                 )
-                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26)
+                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27)
                     // 開発中: スキーマ不一致時は再作成して起動クラッシュを回避
                     .fallbackToDestructiveMigration()
                     .build()
@@ -115,6 +115,22 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                 )
                 database.execSQL(
                     "ALTER TABLE preset ADD COLUMN tags_csv TEXT NOT NULL DEFAULT ''"
+                )
+            }
+        }
+
+        /**
+         * ★ 応答バリアント機能 (同一プロンプトに対する複数候補回答) のためのカラム追加。
+         * - parentUserMessageId: assistant メッセージの元になった user メッセージの id (nullable)
+         * - variantIndex: 同じ parent を共有する応答の並び順 (初回=0)
+         */
+        private val MIGRATION_26_27 = object : androidx.room.migration.Migration(26, 27) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE message ADD COLUMN parentUserMessageId INTEGER"
+                )
+                database.execSQL(
+                    "ALTER TABLE message ADD COLUMN variantIndex INTEGER NOT NULL DEFAULT 0"
                 )
             }
         }

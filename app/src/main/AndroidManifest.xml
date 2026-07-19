@@ -58,6 +58,11 @@
         </provider>
 
         <receiver android:name=".data.alarm.AlarmReceiver" android:exported="false" />
+
+        <!-- Downloadable Fonts (Noto Sans JP) - Google Play Services Fonts Provider -->
+        <meta-data
+            android:name="preloaded_fonts"
+            android:resource="@array/preloaded_fonts" />
     </application>
 
 </manifest>

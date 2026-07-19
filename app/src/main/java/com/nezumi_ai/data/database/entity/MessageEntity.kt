@@ -37,5 +37,17 @@ data class MessageEntity(
     /** 生成速度 (tokens/sec)。生成完了後に保存。null = 未計測 */
     val generationTps: Float? = null,
     /** 最初のトークン生成後から完了までの生成時間(ms)。null = 未計測 */
-    val generationTimeMs: Long? = null
+    val generationTimeMs: Long? = null,
+    /**
+     * ★ 応答バリアント機能:
+     * assistant ロールのメッセージのすぐ前の user メッセージの id。同じ parent を共有する
+     * assistant メッセージ同士は、同じユーザープロンプトに対する「別の候補回答」として UI で切り替えられる。
+     * user ロールのメッセージでは null。既存レコード (マイグレーション前に作られた応答) も null のまま。
+     */
+    val parentUserMessageId: Long? = null,
+    /**
+     * 同じ parentUserMessageId を持つ assistant メッセージの並び順。初回応答は 0、
+     * 再生成するごとに増える。parent が null のレコードでは常に 0。
+     */
+    val variantIndex: Int = 0
 )

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="start" android:layout_margin="8dp">
+    xmlns:app="http://schemas.android.com/apk/res-auto" android:id="@+id/ai_message_root" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="start" android:layout_margin="8dp">
 
     <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" android:gravity="start">
 
@@ -50,8 +50,15 @@
         <TextView android:id="@+id/ai_message_time" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="14:26" android:textSize="11sp" android:textColor="@color/text_secondary" android:layout_marginTop="3dp" android:layout_marginStart="4dp" />
 
         <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="4dp">
-            <com.google.android.material.button.MaterialButton android:id="@+id/copy_message_button" style="@style/Widget.Nezumiai.Button.Outlined" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/copy_all" android:textSize="11sp" android:minWidth="0dp" android:paddingStart="10dp" android:paddingEnd="10dp" android:minHeight="0dp" android:insetTop="0dp" android:insetBottom="0dp" app:cornerRadius="12dp" />
+            <ImageView android:id="@+id/copy_message_button" android:layout_width="32dp" android:layout_height="32dp" android:src="@drawable/content_copy_24" android:scaleType="centerInside" android:padding="4dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/copy_all" android:clickable="true" android:focusable="true" app:tint="@color/text_primary" />
             <com.google.android.material.button.MaterialButton android:id="@+id/speak_message_button" style="@style/Widget.Nezumiai.Button.Outlined" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="🔊" android:textSize="11sp" android:minWidth="0dp" android:paddingStart="10dp" android:paddingEnd="10dp" android:minHeight="0dp" android:insetTop="0dp" android:insetBottom="0dp" android:contentDescription="読み上げ" app:cornerRadius="12dp" />
+            <!-- ★ 応答バリアントナビゲーション (◀ n/m ▶)。応答が複数あるときのみ表示。 -->
+            <LinearLayout android:id="@+id/variant_nav_container" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginStart="6dp" android:visibility="gone">
+                <ImageView android:id="@+id/variant_prev_button" android:layout_width="28dp" android:layout_height="28dp" android:src="@drawable/ic_chevron_left_24" android:scaleType="centerInside" android:padding="2dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="前の応答" android:clickable="true" android:focusable="true" app:tint="@color/text_primary" />
+                <TextView android:id="@+id/variant_page_info" android:layout_width="wrap_content" android:layout_height="wrap_content" android:minWidth="36dp" android:gravity="center" android:text="1/1" android:textSize="11sp" android:textColor="@color/text_secondary" />
+                <ImageView android:id="@+id/variant_next_button" android:layout_width="28dp" android:layout_height="28dp" android:src="@drawable/ic_chevron_right_24" android:scaleType="centerInside" android:padding="2dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="次の応答" android:clickable="true" android:focusable="true" app:tint="@color/text_primary" />
+            </LinearLayout>
+            <ImageView android:id="@+id/regenerate_message_button" android:layout_width="32dp" android:layout_height="32dp" android:layout_marginStart="6dp" android:src="@drawable/ic_refresh_24" android:scaleType="centerInside" android:padding="4dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="再生成" android:clickable="true" android:focusable="true" android:visibility="gone" app:tint="@color/text_primary" />
             <ProgressBar android:id="@+id/speak_message_progress" android:layout_width="28dp" android:layout_height="28dp" android:layout_marginStart="6dp" android:indeterminate="true" android:visibility="gone" />
             <TextView android:id="@+id/tv_tps" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:textSize="11sp" android:textColor="@color/text_secondary" android:visibility="gone" />
         </LinearLayout>

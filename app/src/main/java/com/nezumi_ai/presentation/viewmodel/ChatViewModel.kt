@@ -61,7 +61,9 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.NonCancellable
@@ -79,6 +81,7 @@ import kotlinx.coroutines.CancellableContinuation
 import kotlin.coroutines.resume
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 
 class UserStopCancellationException : CancellationException("Stopped by user")
 
@@ -217,6 +220,100 @@ class ChatViewModel(
     private val _messages = MutableStateFlow<List<MessageEntity>>(emptyList())
     val messages: StateFlow<List<MessageEntity>> = _messages
 
+    /**
+     * ★ 応答バリアント選択状態:
+     *   key = parentUserMessageId, value = 現在選択中の variantIndex。
+     *   未登録の user メッセージは "最新バリアント" をデフォルト選択とする。
+     *   DB には保存せずメモリのみで管理（セッション切替でリセット）。
+     */
+    private val _selectedVariantByParent = MutableStateFlow<Map<Long, Int>>(emptyMap())
+    val selectedVariantByParent: StateFlow<Map<Long, Int>> = _selectedVariantByParent
+
+    /**
+     * 同じ parentUserMessageId を持つ assistant メッセージをグループ化して、
+     * 現在選択中のバリアント 1 件だけを残したリストを返す。
+     * ★ 既存レコードの互換性: parentUserMessageId == null の assistant メッセージは
+     *   マイグレーション前の旧データなので、バリアントグループ化せずそのまま保持。
+     */
+    private fun applyVariantSelection(
+        all: List<MessageEntity>,
+        selection: Map<Long, Int>
+    ): List<MessageEntity> {
+        // parent ごとに assistant メッセージをグループ化
+        val byParent: Map<Long, List<MessageEntity>> = all
+            .filter { it.role != "user" && it.parentUserMessageId != null }
+            .groupBy { it.parentUserMessageId!! }
+            .mapValues { entry ->
+                entry.value.sortedWith(compareBy({ it.variantIndex }, { it.timestamp }))
+            }
+
+        val visibleIds = HashSet<Long>()
+        byParent.forEach { (parentId, variants) ->
+            if (variants.isEmpty()) return@forEach
+            val requested = selection[parentId]
+            val chosen = if (requested != null && requested in variants.indices) {
+                variants[requested]
+            } else {
+                // デフォルトは最新 (一番後に生成されたもの)
+                variants.last()
+            }
+            visibleIds.add(chosen.id)
+        }
+
+        return all.filter { msg ->
+            when {
+                msg.role == "user" -> true
+                msg.parentUserMessageId == null -> true  // 旧データはそのまま表示
+                else -> msg.id in visibleIds
+            }
+        }
+    }
+
+    /**
+     * 未フィルタで保持している "全メッセージ" スナップショット。選択バリアントを
+     * 変えただけで再フィルタできるようキャッシュしておく。DB Flow から検取すると
+     * 逆に Room クエリが増えて共有トラブルの元になるので、メモリに保持する。
+     */
+    private val allMessagesSnapshot = MutableStateFlow<List<MessageEntity>>(emptyList())
+
+    /**
+     * ★ UI 向けに公開するバリアント情報。
+     *   key = parentUserMessageId, value = (全バリアント件数, 現在選択中の index)。
+     *   allMessagesSnapshot / _selectedVariantByParent が変化するたびに UI へ届くよう combine する。
+     */
+    val variantInfoByParent: StateFlow<Map<Long, Pair<Int, Int>>> =
+        combine(allMessagesSnapshot, _selectedVariantByParent) { all, selection ->
+            val byParent: Map<Long, List<MessageEntity>> = all
+                .filter { it.role != "user" && it.parentUserMessageId != null }
+                .groupBy { it.parentUserMessageId!! }
+            byParent.mapValues { entry ->
+                val siblings = entry.value.sortedWith(compareBy({ it.variantIndex }, { it.timestamp }))
+                val total = siblings.size
+                val requested = selection[entry.key]
+                val idx = if (requested != null && requested in 0 until total) requested else total - 1
+                total to idx
+            }
+        }.stateIn(
+            viewModelScope,
+            kotlinx.coroutines.flow.SharingStarted.Eagerly,
+            emptyMap()
+        )
+
+    /**
+     * 外部 (UI) から呼ばれる: ある parent のバリアントを切り替える。
+     * インデックスはクリップされるので鶴々かな値を渡しても安全。
+     */
+    fun selectAssistantVariant(parentUserMessageId: Long, newIndex: Int) {
+        val all = allMessagesSnapshot.value
+        val siblings = all.filter { it.parentUserMessageId == parentUserMessageId && it.role != "user" }
+        if (siblings.isEmpty()) return
+        val clamped = newIndex.coerceIn(0, siblings.size - 1)
+        val newMap = _selectedVariantByParent.value.toMutableMap()
+        newMap[parentUserMessageId] = clamped
+        _selectedVariantByParent.value = newMap
+        _messages.value = applyVariantSelection(all, newMap)
+    }
+
     private val _pendingMediaMessage = MutableStateFlow<MessageEntity?>(null)
     val pendingMediaMessage: StateFlow<MessageEntity?> = _pendingMediaMessage
 
@@ -237,6 +334,73 @@ class ChatViewModel(
 
     private val _modelLoadingStatus = MutableStateFlow("")
     val modelLoadingStatus: StateFlow<String> = _modelLoadingStatus
+
+    // ★ 「モデル準備中」のフェーズラベルと経過秒数を一元管理し、以前の「[gemma4-2b] エンジンを初期化中」などの
+    //   モデル名付きバラバラ表記を全て「モデル準備中」に統一し、進捗は (n秒) の形で見えるようにする。
+    private val _modelLoadingPhase = MutableStateFlow<String?>(null)
+    private val _modelLoadingElapsedSec = MutableStateFlow(0)
+    private var modelLoadingTickerJob: Job? = null
+    private var modelLoadingStartMs: Long = 0L
+
+    private fun composeModelLoadingLabel(): String {
+        val phase = _modelLoadingPhase.value
+        val elapsed = _modelLoadingElapsedSec.value
+        val base = "モデル準備中"
+        return buildString {
+            append(base)
+            if (!phase.isNullOrBlank()) {
+                append(" · ")
+                append(phase)
+            }
+            if (elapsed > 0) {
+                append(" (")
+                append(elapsed)
+                append("秒)")
+            }
+        }
+    }
+
+    /**
+     * モデルロード待ちのオーバーレイ表示を開始する。重複起動しても安全。
+     * ティッカーが 1 秒毎に _modelLoadingStatus を更新し経過秒数を反映させる。
+     */
+    private fun startModelLoadingIndicator(initialPhase: String? = null) {
+        _modelLoadingPhase.value = initialPhase
+        if (modelLoadingTickerJob?.isActive == true) {
+            _modelLoadingStatus.value = composeModelLoadingLabel()
+            return
+        }
+        modelLoadingStartMs = System.currentTimeMillis()
+        _modelLoadingElapsedSec.value = 0
+        _modelLoadingStatus.value = composeModelLoadingLabel()
+        modelLoadingTickerJob = viewModelScope.launch(Dispatchers.Default) {
+            while (isActive) {
+                delay(1000L)
+                val secs = ((System.currentTimeMillis() - modelLoadingStartMs) / 1000L).toInt().coerceAtLeast(0)
+                _modelLoadingElapsedSec.value = secs
+                _modelLoadingStatus.value = composeModelLoadingLabel()
+            }
+        }
+    }
+
+    /** ロードフェーズのラベルだけ差し替える。タイマーは止めない。 */
+    private fun updateModelLoadingPhase(phase: String?) {
+        _modelLoadingPhase.value = phase
+        _modelLoadingStatus.value = composeModelLoadingLabel()
+    }
+
+    /**
+     * モデルロード待ちのオーバーレイを完全にクリアする。早期 return / 例外 / 既ロードスキップのすべての終端で呼ぶことを想定。
+     * ★ 「モデル準備中が終わらない」バグの防御の中核。
+     */
+    private fun clearModelLoadingIndicator() {
+        modelLoadingTickerJob?.cancel()
+        modelLoadingTickerJob = null
+        _modelLoadingElapsedSec.value = 0
+        _modelLoadingPhase.value = null
+        _isModelLoading.value = false
+        _modelLoadingStatus.value = ""
+    }
 
     private val _isCompressing = MutableStateFlow(false)
     val isCompressing: StateFlow<Boolean> = _isCompressing
@@ -678,9 +842,12 @@ class ChatViewModel(
                     }
                     // Room の Flow は参照を再利用することがあるため、toList() でコピーして新しいオブジェクト参照を作る
                     val snapshot = msgs.toList()
-                    val contextUsageChars = estimateContextUsageChars(snapshot)
+                    // ★ バリアント適用前の全件を保持しておき、UI 側で切替可能にする
+                    allMessagesSnapshot.value = snapshot
+                    val filtered = applyVariantSelection(snapshot, _selectedVariantByParent.value)
+                    val contextUsageChars = estimateContextUsageChars(filtered)
                     withContext(Dispatchers.Main) {
-                        _messages.value = snapshot
+                        _messages.value = filtered
                         // ★ メーター不正確修正: キャッシュクリア完了後にメーター計算を実行
                         _contextUsageChars.value = contextUsageChars
                     }
@@ -871,12 +1038,11 @@ class ChatViewModel(
         //   MutableStateFlow.value は thread-safe。ここで先に true にすることで、
         //   ensureValidCurrentSession() 等のサスペンド前に送信ボタン無効化と
         //   ローディングオーバーレイが表示され、フリーズしたように見える問題を回避。
-        //   実際のモデルロード進捗は loadModelWithOverlay() 内で上書き更新される。
+        //   ★ モデルロード進捗は loadModelWithOverlay() が自身で立てるので、ここで先立てはしない。
+        //     以前は入口で _isModelLoading=true + startModelLoadingIndicator() を先立てしていたが、
+        //     モデル既ロード時は loadModelWithOverlay がショートカットして一切のロード処理をしないため、
+        //     入口で立てたインジケーターだけが残り「ロード不要なのにグルグルが無限に続く」バグの原因になっていた。
         _isLoading.value = true
-        if (!_isModelLoading.value) {
-            _isModelLoading.value = true
-            _modelLoadingStatus.value = "モデルを準備中..."
-        }
 
         viewModelScope.launch {
             val thisJob = coroutineContext[Job] ?: return@launch
@@ -926,8 +1092,7 @@ class ChatViewModel(
                 //   _isModelLoading が残り UI が固まるのを防止する防御的クリーンアップ。
                 //   loadModelWithOverlay 自体が到達した場合は既に自身の finally でクリア済み。
                 if (_isModelLoading.value) {
-                    _isModelLoading.value = false
-                    _modelLoadingStatus.value = ""
+                    clearModelLoadingIndicator()
                 }
                 // このJobがまだcurrentなら null にする（前のJobから overwrite されない）
                 if (generationJob == thisJob) {
@@ -1106,6 +1271,188 @@ class ChatViewModel(
             revokePromptFromMessageInternal(sessionId, promptMessageId)
         }
     }
+
+    /**
+     * 直前の AI 応答を削除し、直前のユーザーメッセージを使って再度応答を生成する。
+     * 対象エントリだけでなく、それより後ろに作られた AI→ツール結果などの連鎖メッセージも削除し、ユーザーメッセージ自体は残して応答のみやり直す。
+     * ボタンはUI側で末尾のAIメッセージにのみ表示されるが、万一他のメッセージから呼ばれても安全に動作させる。
+     */
+    /**
+     * ★ 応答バリアント方式の再生成:
+     *   既存の AI 応答は削除せずにそのまま保持し、同じ user プロンプト・同じ会話コンテキストで
+     *   新しい assistant バリアントを追加する。UI 側で◀ n/m ▶ で切り替え可能。
+     *   引数 aiMessageId は「この応答に対して再生成を走らせる」対象の応答 id 。
+     *   未指定の場合は末尾の assistant 応答に対して実行。
+     */
+    fun regenerateLastResponse(aiMessageId: Long? = null) {
+        val sessionId = _currentSessionId.value ?: return
+        if (_isLoading.value) return
+
+        // ★ UI フリーズ対策：送信タップ同様に同期的に「生成中」を立てる。
+        _isLoading.value = true
+
+        viewModelScope.launch(Dispatchers.Default) {
+            val thisJob = coroutineContext[Job]
+            generationControlMutex.withLock {
+                generationJob?.cancel(UserStopCancellationException())
+                generationJob = thisJob
+            }
+
+            try {
+                val messages = withContext(Dispatchers.IO) {
+                    messageRepository.getMessagesForSessionOnce(sessionId)
+                }
+                if (messages.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        _uiMessage.emit("再生成する応答がありません")
+                    }
+                    return@launch
+                }
+
+                // 対象のAIメッセージを決定。id指定があればそれを、なければ末尾の assistant を使う。
+                val targetAi = if (aiMessageId != null) {
+                    messages.firstOrNull { it.id == aiMessageId && it.role != "user" }
+                } else {
+                    messages.lastOrNull { it.role != "user" }
+                }
+                if (targetAi == null) {
+                    withContext(Dispatchers.Main) {
+                        _uiMessage.emit("再生成する応答がありません")
+                    }
+                    return@launch
+                }
+
+                // 対象応答の parent (元になった user メッセージ) を探す。
+                // parentUserMessageId が付いていればそれを使い、なければ旧データなので
+                // タイムスタンプ順で直前の user を探す。
+                val parentUserMessageId: Long = targetAi.parentUserMessageId ?: run {
+                    val targetIdx = messages.indexOf(targetAi)
+                    val prevUser = if (targetIdx > 0) {
+                        (targetIdx - 1 downTo 0).firstNotNullOfOrNull { i ->
+                            messages[i].takeIf { it.role == "user" }
+                        }
+                    } else null
+                    prevUser?.id ?: run {
+                        withContext(Dispatchers.Main) {
+                            _uiMessage.emit("再生成に必要なユーザーメッセージが見つかりません")
+                        }
+                        return@launch
+                    }
+                }
+                val userMessage = messages.firstOrNull { it.id == parentUserMessageId && it.role == "user" }
+                    ?: run {
+                        withContext(Dispatchers.Main) {
+                            _uiMessage.emit("再生成に必要なユーザーメッセージが見つかりません")
+                        }
+                        return@launch
+                    }
+
+                // 旧データ (parentUserMessageId == null) の assistant レコードもグループにひとまとめにするため、
+                // このタイミングで parent 付けにマイグレーションしてしまう。
+                withContext(Dispatchers.IO) {
+                    val siblings = messages.filter {
+                        it.role != "user" &&
+                            it.parentUserMessageId == null &&
+                            it.id == targetAi.id
+                    }
+                    siblings.forEachIndexed { idx, msg ->
+                        messageRepository.updateParentUserMessageId(
+                            messageId = msg.id,
+                            parentUserMessageId = parentUserMessageId,
+                            variantIndex = idx
+                        )
+                    }
+                }
+
+                // 共有する parent を持つ既存バリアントの件数 (これが新バリアントの variantIndex)
+                val existingVariantCount = withContext(Dispatchers.IO) {
+                    messageRepository.getMessagesForSessionOnce(sessionId).count {
+                        it.role != "user" && it.parentUserMessageId == parentUserMessageId
+                    }
+                }
+
+                // ★ 既存 AI 応答は削除しない。stopGenerationInternal() だけでストリームを安全に止めておく。
+                stopGenerationInternal()
+                // stopGenerationInternal() は _isLoading=false にするので UI のフリーズ対策でクリンチとして true に戻す。
+                withContext(Dispatchers.Main) {
+                    _isLoading.value = true
+                }
+
+                // 同じプロンプトを使い回すため、前ターンの KV キャッシュは新バリアント向けにクリアする。
+                // プロンプト内容は applyVariantSelection ・ 新規バリアント選択によって自動的に
+                // 「今選択中の応答だけ」を履歴に含む形で再構築される。
+                withContext(Dispatchers.IO) {
+                    compressedContextCache.remove(sessionId)
+                    runCatching { requireModelManager().clearKvCache() }
+                        .onFailure { Log.w(TAG, "clearKvCache after regenerate failed", it) }
+                    sessionRepository.updateSessionLastUpdated(sessionId)
+                }
+
+                // 新しいバリアントの作成は generateAIResponse の streamingMessageId 作成後に行う。
+                //   事前に _pendingAssistantVariantSpec に parent と index をセットしておけば、
+                //   generateAIResponse 内の addMessage 呼び出しがそれを拾って assistant レコードに付与してくれる。
+                _pendingAssistantVariantSpec = AssistantVariantSpec(
+                    parentUserMessageId = parentUserMessageId,
+                    variantIndex = existingVariantCount
+                )
+                // 新しいバリアントを選択ターゲットにしておく (UI を新応答にジャンプさせる)
+                val newSelection = _selectedVariantByParent.value.toMutableMap()
+                newSelection[parentUserMessageId] = existingVariantCount
+                _selectedVariantByParent.value = newSelection
+
+                // ユーザー側に保存されていた画像/音声を復元して同じ入力で推論を走らせる。
+                val images = mutableListOf<Bitmap>()
+                val audioClips = mutableListOf<ByteArray>()
+                val storedImageUris = userMessage.imageUri
+                    ?.split(',')
+                    ?.map { it.trim() }
+                    ?.filter { it.isNotBlank() }
+                    ?: emptyList()
+                for (uriStr in storedImageUris) {
+                    val uri = MessageMediaStore.toUri(uriStr) ?: continue
+                    val bitmap = loadBitmapFromUri(uri)
+                    if (bitmap != null) images.add(bitmap)
+                }
+                val storedAudioUri = userMessage.audioUri
+                if (!storedAudioUri.isNullOrBlank()) {
+                    val uri = MessageMediaStore.toUri(storedAudioUri)
+                    if (uri != null) {
+                        withContext(Dispatchers.IO) {
+                            runCatching {
+                                appContext.contentResolver.openInputStream(uri)?.use { input ->
+                                    audioClips.add(input.readBytes())
+                                }
+                            }.onFailure { Log.w(TAG, "regenerate: read audio failed", it) }
+                        }
+                    }
+                }
+
+                generateAIResponse(
+                    sessionId = sessionId,
+                    userMessage = userMessage.content,
+                    images = images,
+                    audioClips = audioClips,
+                    currentTurnMessageId = userMessage.id
+                )
+            } catch (t: Throwable) {
+                val e = if (t is Exception) t else RuntimeException(t)
+                Log.e(TAG, "Error regenerating response", e)
+            } finally {
+                _pendingAssistantVariantSpec = null
+                withContext(Dispatchers.Main) {
+                    _isLoading.value = false
+                    if (_isModelLoading.value) {
+                        clearModelLoadingIndicator()
+                    }
+                }
+                if (generationJob == thisJob) generationJob = null
+            }
+        }
+    }
+
+    /** 再生成リクエストに伴う assistant バリアントのスペック。generateAIResponse 内で拾い上げられる。 */
+    private data class AssistantVariantSpec(val parentUserMessageId: Long, val variantIndex: Int)
+    private var _pendingAssistantVariantSpec: AssistantVariantSpec? = null
 
     private suspend fun revokePromptFromMessageInternal(sessionId: Long, promptMessageId: Long) {
         // ★ Bug fix: 非同期 stopGeneration() だと、取り消し処理が message delete より先に終わる保証がなく、
@@ -1393,15 +1740,30 @@ class ChatViewModel(
                 }
             }
 
+            // ★ 応答バリアント: 再生成リクエストの場合は _pendingAssistantVariantSpec がセットされているので
+            //   その parent + variantIndex を使う。通常送信の場合は currentTurnMessageId (user メッセージ id) を
+            //   parent にして variantIndex=0 で新規登録する。currentTurnMessageId が null なら旧互換の null。
+            val variantSpec = _pendingAssistantVariantSpec
+            val effectiveParentId = variantSpec?.parentUserMessageId ?: currentTurnMessageId
+            val effectiveVariantIndex = variantSpec?.variantIndex ?: 0
             streamingMessageId = messageRepository.addMessage(
                 sessionId = sessionId,
                 role = "assistant",
                 content = "",
-                isStreaming = true
+                isStreaming = true,
+                parentUserMessageId = effectiveParentId,
+                variantIndex = effectiveVariantIndex
             )
             val activeStreamingMessageId = streamingMessageId
                 ?: throw IllegalStateException("Failed to create streaming message")
             streamingAssistantMessageIdForTools = activeStreamingMessageId
+            // ★ ストリーミングレコードの id が定まったので、この parent の選択ターゲットを
+            //   新規作成した variantIndex に合わせておく。UI を新応答にジャンプさせるため。
+            if (effectiveParentId != null) {
+                val newSelection = _selectedVariantByParent.value.toMutableMap()
+                newSelection[effectiveParentId] = effectiveVariantIndex
+                _selectedVariantByParent.value = newSelection
+            }
 
             val answerBuilder = StringBuilder()
             val thinkingBuilder = StringBuilder()
@@ -2987,8 +3349,12 @@ class ChatViewModel(
         engineModelName: String,
         currentTurnMessageId: Long? = null
     ): String {
-        val messages = messageRepository.getMessagesForSessionOnce(sessionId)
-        if (messages.isEmpty()) return ""
+        val rawMessages = messageRepository.getMessagesForSessionOnce(sessionId)
+        if (rawMessages.isEmpty()) return ""
+        // ★ バリアント選択をプロンプトにも反映させる。
+        //   選択されていない assistant バリアントを除外しないと、同じ user ターンに対して
+        //   複数の assistant ターンがプロンプトに並んでしまい、LLM にとって奇妙な会話になる。
+        val messages = applyVariantSelection(rawMessages, _selectedVariantByParent.value)
 
         // 画像をコンテキストに含むための デバッグログ
         val messagesWithImagesForLog = messages.filter { it.imageUri != null && it.imageUri.isNotEmpty() }
@@ -3815,8 +4181,26 @@ class ChatViewModel(
         val isModelAlreadyLoaded = manager.isModelLoaded(engineModelName, config)
         val isSameModelLoaded = manager.isSameModelLoaded(engineModelName)
         val effectiveSkipMemoryWarning = skipMemoryWarning || isModelAlreadyLoaded
+
+        // ★★★ 重要なショートカット:
+        //   モデルが既にロード済みで現コンフィグと互換なら、一切のオーバーレイを出さずに成功を返す。
+        //   以前はこのケースでも _isModelLoading = true を一旦立ててしまい、入り口側で先に立てたタイマーと不整合を起こし
+        //   「ロード不要なのにグルグルが永遠に続く」バグの主な原因だった。
+        //   ここで先手を打ってリターンすれば、呼び元は瞬時に推論以降のフェーズに進める。
+        if (isModelAlreadyLoaded) {
+            Log.d(TAG, "loadModelWithOverlay: SHORT_CIRCUIT model=$model already loaded, skip overlay entirely")
+            // 万一呼び元が先にインジケーターを立てていた場合に備えてもクリアしておく。
+            if (_isModelLoading.value || modelLoadingTickerJob?.isActive == true) {
+                clearModelLoadingIndicator()
+            }
+            return Result.success(Unit)
+        }
+
         _isModelLoading.value = true
-        _modelLoadingStatus.value = "モデルを準備中..."
+        // ★ モデル名やフェーズごとのラベルは以前「[Gemma4-2B] エンジンを初期化中...」などバラバラだったのを
+        //   全て「モデル準備中 · <フェーズ> (n秒)」に統一する。タイマーを 1秒毎に回して
+        //   進捗ラベルを自動更新。
+        startModelLoadingIndicator()
         return try {
             val displayModel = when (model.uppercase()) {
                 "GEMMA4-2B" -> "Gemma4-2B"
@@ -3825,7 +4209,7 @@ class ChatViewModel(
             }
 
             // Phase 14: モデルロード前にメモリ確認
-            _modelLoadingStatus.value = "[$displayModel] メモリを確認中..."
+            updateModelLoadingPhase("メモリ確認")
             Log.d(
                 TAG,
                 "loadModelWithOverlay: PRE_LOAD_MEMORY_CHECK model=$model backend=${config.backendType} alreadyLoaded=$isModelAlreadyLoaded sameModelLoaded=$isSameModelLoaded skipMemoryWarning=$skipMemoryWarning effectiveSkip=$effectiveSkipMemoryWarning"
@@ -3838,7 +4222,10 @@ class ChatViewModel(
                         modelName = displayModel,
                         message = warning.userMessage
                     )
-                    _isModelLoading.value = false
+                    // ★ クリーンアップ強化: 以前は _isModelLoading = false だけだったため
+                    //   _modelLoadingStatus の旧ラベルやタイマージョブが残って
+                    //   「モデル準備中」が終わらないのバグの一因だった。
+                    clearModelLoadingIndicator()
                     return Result.failure(RuntimeException("CPU_COMPAT_WARNING_SHOWN"))
                 }
             }
@@ -3887,7 +4274,7 @@ class ChatViewModel(
 
                     if (isMemoryLowByFileSize) {
                         Log.w(TAG, "loadModelWithOverlay: MEMORY LOW - model=$model byFileSize=$isMemoryLowByFileSize")
-                        _modelLoadingStatus.value = "メモリ確認中..."
+                        updateModelLoadingPhase("メモリ確認")
 
                         // 警告情報を取得
                         val systemMemInfo = MemoryObserver.getSystemMemoryInfo(appContext)
@@ -3905,8 +4292,10 @@ class ChatViewModel(
                                 usedPercent = systemMemInfo.usedPercent,
                                 lowMemoryFlag = systemMemInfo.lowMemoryFlag
                             )
-                            // 警告が表示されるまで待機（ローディング状態を維持）
-                            _isModelLoading.value = false
+                            // ★ 以前は _isModelLoading だけ false にしてラベルを残していたが、
+                            //   メモリ警告ダイアログを閉じた後に UI で「モデル準備中」が見え施けていた
+                            //   不具合を防ぐため、タイマー・フェーズも一旦クリアする。
+                            clearModelLoadingIndicator()
                             return Result.failure(RuntimeException("MEMORY_WARNING_SHOWN"))
                         }
                     }
@@ -3916,9 +4305,13 @@ class ChatViewModel(
             // effectiveSkipMemoryWarning=true の場合はメモリ警告をスキップしてロード続行
             Log.d(TAG, "loadModelWithOverlay: Memory check passed for model=$model")
 
-            _modelLoadingStatus.value = "[$displayModel] エンジンを初期化中..."
+            // ★ 以前「[Gemma4-2B] エンジンを初期化中...」だったのを「エンジン初期化」フェーズに統一。
+            updateModelLoadingPhase(if (isModelAlreadyLoaded) "重みロード" else "エンジン初期化")
             Log.d(TAG, "loadModelWithOverlay: model=$model, engineName=$engineModelName, enableThinking=${config.enableThinking}, backend=${config.backendType}, contextWindow=${config.contextWindow}")
 
+            // エンジンの loadModel は進捗コールバックを提供していないため、ロード中はフェーズを「重みロード」に切り替えて
+            //   タイマーの経過秒数だけで進捗感を見せる。
+            updateModelLoadingPhase("重みロード")
             val result = withContext(Dispatchers.IO) {
                 if (onlyIfAvailable) {
                     manager.initializeModelIfAvailable(engineModelName, config)
@@ -3928,7 +4321,7 @@ class ChatViewModel(
             }
 
             if (result.isSuccess) {
-                _modelLoadingStatus.value = "[$displayModel] ロード完了"
+                updateModelLoadingPhase("ロード完了")
                 Log.d(TAG, "loadModelWithOverlay: SUCCESS - model=$model")
             } else {
                 val error = result.exceptionOrNull()
@@ -3955,8 +4348,7 @@ class ChatViewModel(
             }
             result
         } finally {
-            _isModelLoading.value = false
-            _modelLoadingStatus.value = ""
+            clearModelLoadingIndicator()
         }
     }
 
@@ -3973,13 +4365,11 @@ class ChatViewModel(
         // ★ UI フリーズ対策: 送信タップ直後に UI 状態を同期的に反映する。
         //   MutableStateFlow.value は thread-safe。ここで先に true にすることで、
         //   generationControlMutex 取得 / ensureValidCurrentSession() 等のサスペンド前に
-        //   送信ボタン無効化とローディングオーバーレイが表示される。
-        //   実際のモデルロード進捗は loadModelWithOverlay() 内で上書き更新される。
+        //   送信ボタン無効化を反映させる。
+        //   ★ モデルロード表示 (_isModelLoading + startModelLoadingIndicator) はここでは立てない。
+        //     モデルが既ロードの場合は loadModelWithOverlay がショートカットしてオーバーレイを出さない仕様に統一。
+        //     以前は入口で先立てしていたため、既ロード時に「ロード不要なのにグルグルが無限に続く」バグを起こしていた。
         _isLoading.value = true
-        if (!_isModelLoading.value) {
-            _isModelLoading.value = true
-            _modelLoadingStatus.value = "モデルを準備中..."
-        }
 
         // 計算集約的な処理はDefault（CPU 集約的タスク用）で実行
         viewModelScope.launch(Dispatchers.Default) {
@@ -3993,8 +4383,7 @@ class ChatViewModel(
                 // セッション取得失敗時はローディング UI を必ず解除する
                 withContext(Dispatchers.Main) {
                     _isLoading.value = false
-                    _isModelLoading.value = false
-                    _modelLoadingStatus.value = ""
+                    clearModelLoadingIndicator()
                 }
                 if (generationJob == thisJob) generationJob = null
                 return@launch
@@ -4094,8 +4483,7 @@ class ChatViewModel(
                     //   到達せずに早期 return したケース（モデル未ダウンロード / メモリ不足 等）で
                     //   フラグが残り UI が固まるのを防止する防御的クリーンアップ。
                     if (_isModelLoading.value) {
-                        _isModelLoading.value = false
-                        _modelLoadingStatus.value = ""
+                        clearModelLoadingIndicator()
                     }
                 }
                 // ← Bitmapをクリーンアップ

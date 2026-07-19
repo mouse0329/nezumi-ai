@@ -27,7 +27,7 @@
 
         <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:orientation="horizontal">
 
-            <com.google.android.material.button.MaterialButton android:id="@+id/copy_message_button" style="@style/Widget.Nezumiai.Button.Outlined" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/copy_all" android:textSize="11sp" android:minWidth="0dp" android:paddingStart="10dp" android:paddingEnd="10dp" android:minHeight="0dp" android:insetTop="0dp" android:insetBottom="0dp" app:cornerRadius="12dp" />
+            <ImageView android:id="@+id/copy_message_button" android:layout_width="32dp" android:layout_height="32dp" android:src="@drawable/content_copy_24" android:scaleType="centerInside" android:padding="4dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/copy_all" android:clickable="true" android:focusable="true" app:tint="@color/text_primary" />
 
             <com.google.android.material.button.MaterialButton android:id="@+id/revoke_prompt_button" style="@style/Widget.Nezumiai.Button.Outlined" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="@string/revoke_prompt" android:textSize="11sp" android:minHeight="0dp" android:insetTop="0dp" android:insetBottom="0dp" app:cornerRadius="12dp" />
         </LinearLayout>

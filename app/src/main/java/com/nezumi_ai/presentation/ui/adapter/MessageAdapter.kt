@@ -63,9 +63,27 @@ class MessageAdapter(
     private val onUserPromptRevoke: (MessageEntity) -> Unit = {},
     private val onAiMessageLayoutChanged: () -> Unit = {},
     private val onAiMessageSpeak: (MessageEntity, String) -> Unit = { _, _ -> },
+    private val onAiMessageRegenerate: (MessageEntity) -> Unit = {},
+    // ★ 応答バリアント選択のコールバック: (parentUserMessageId, newIndex) -> Unit
+    private val onAiVariantSelect: (Long, Int) -> Unit = { _, _ -> },
     private val lifecycleOwner: LifecycleOwner? = null,
     private val viewModelStoreOwner: ViewModelStoreOwner? = null
 ) : ListAdapter<MessageEntity, RecyclerView.ViewHolder>(MessageDiffCallback()) {
+
+    /**
+     * ★ 応答バリアント情報。ChatFragment から setVariantInfo() で代入される。
+     *   キー: parentUserMessageId, 値: (全バリアント件数, 現在選択中の index)。
+     *   ここに入っていない parent は応答バリアント = 1 とみなしてナビゲーションを非表示にする。
+     */
+    private var variantInfo: Map<Long, Pair<Int, Int>> = emptyMap()
+
+    fun setVariantInfo(info: Map<Long, Pair<Int, Int>>) {
+        if (variantInfo == info) return
+        variantInfo = info
+        // バリアントナビの見せ方は各 AI メッセージの bind で参照するので、AI 行だけ再描画を促す。
+        // ListAdapter の内容を変えず notifyItemRangeChanged で payload=null のリバインドを強制。
+        notifyItemRangeChanged(0, itemCount)
+    }
 
     /**
      * 生成中フラグ。true の間は「取り消しボタン」を非表示にする。
@@ -217,11 +235,39 @@ class MessageAdapter(
             AiMessageViewHolder(binding, onAiMessageLayoutChanged, lifecycleOwner, viewModelStoreOwner)
         }
     }
-    
+
+    /**
+     * 引数の position がリスト中で最も後ろの AI メッセージかどうか判定する。
+     * 再生成ボタンは「直前の AI 応答」のみに表示したいのでこのヘルパーを使う。
+     */
+    private fun isLastAiMessage(position: Int): Boolean {
+        if (position < 0 || position >= itemCount) return false
+        if (getItem(position).role == "user") return false
+        for (i in position + 1 until itemCount) {
+            if (getItem(i).role != "user") return false
+        }
+        return true
+    }
+
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         when (holder) {
             is UserMessageViewHolder -> holder.bind(getItem(position))
-            is AiMessageViewHolder -> holder.bind(getItem(position))
+            is AiMessageViewHolder -> {
+                val msg = getItem(position)
+                val parentId = msg.parentUserMessageId
+                val info = if (parentId != null) variantInfo[parentId] else null
+                holder.bind(
+                    msg,
+                    isLastAiMessage(position),
+                    isGenerating,
+                    onAiMessageRegenerate,
+                    variantTotal = info?.first ?: 1,
+                    variantIndex = info?.second ?: 0,
+                    onVariantSelect = { newIndex ->
+                        if (parentId != null) onAiVariantSelect(parentId, newIndex)
+                    }
+                )
+            }
         }
     }
 
@@ -358,6 +404,9 @@ class MessageAdapter(
         private var lastRenderedThinking: String? = null
         private var lastRenderedContentMode: ContentRenderMode? = null
 
+        // ★ 応答バリアントスワイプ検出用。bind() で差し替える。
+        private var swipeVariantHandler: ((direction: Int) -> Unit)? = null
+
         fun clearCache() {
             lastRenderedContent = null
             lastRenderedThinking = null
@@ -399,15 +448,115 @@ class MessageAdapter(
                     onAiMessageLayoutChanged()
                 }
             }
+
+            // ★ 応答バリアントの横スワイプ検出。AI メッセージカード全体に仕掛ける。
+            //   RecyclerView の縦スクロールと競合しないよう、横方向に十分動いたときだけ requestDisallowInterceptTouchEvent する。
+            val touchSlop = android.view.ViewConfiguration.get(binding.root.context).scaledTouchSlop
+            val minSwipeDistancePx = touchSlop * 4  // 作図をはっきりさせる
+            var downX = 0f
+            var downY = 0f
+            var tracking = false
+            binding.aiMessageRoot.setOnTouchListener { v, ev ->
+                val handler = swipeVariantHandler ?: return@setOnTouchListener false
+                when (ev.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        downX = ev.x
+                        downY = ev.y
+                        tracking = true
+                        false  // 他のタップターゲット (ボタンなど) の子ビューにも伝える
+                    }
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        if (!tracking) return@setOnTouchListener false
+                        val dx = ev.x - downX
+                        val dy = ev.y - downY
+                        if (kotlin.math.abs(dx) > touchSlop && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.5f) {
+                            // 十分に横に動いたので、親に縦スクロールを遠慮してもらう
+                            v.parent?.requestDisallowInterceptTouchEvent(true)
+                        }
+                        false
+                    }
+                    android.view.MotionEvent.ACTION_UP -> {
+                        val consumed = if (tracking) {
+                            val dx = ev.x - downX
+                            val dy = ev.y - downY
+                            if (kotlin.math.abs(dx) >= minSwipeDistancePx &&
+                                kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.5f
+                            ) {
+                                // 右スワイプ = 前の応答へ (direction = -1)
+                                // 左スワイプ = 次の応答へ (direction = +1)
+                                handler(if (dx > 0) -1 else +1)
+                                true
+                            } else false
+                        } else false
+                        tracking = false
+                        consumed
+                    }
+                    android.view.MotionEvent.ACTION_CANCEL -> {
+                        tracking = false
+                        false
+                    }
+                    else -> false
+                }
+            }
         }
 
-        fun bind(message: MessageEntity) {
+        fun bind(
+            message: MessageEntity,
+            isLastAiMessage: Boolean = false,
+            isGenerating: Boolean = false,
+            onRegenerate: (MessageEntity) -> Unit = {},
+            variantTotal: Int = 1,
+            variantIndex: Int = 0,
+            onVariantSelect: (Int) -> Unit = {}
+        ) {
             if (BuildConfig.DEBUG) {
                 Log.d(
                     "MessageAdapter",
                     "BIND_AI_MESSAGE: id=${message.id} content='${message.content.take(50)}'..."
                 )
             }
+            // ★ 再生成ボタン：末尾の AI メッセージかつ非ストリーミング、非生成中にのみ表示する。
+            val canRegenerate = isLastAiMessage && !isGenerating && !message.isStreaming
+            binding.regenerateMessageButton.visibility =
+                if (canRegenerate) View.VISIBLE else View.GONE
+            binding.regenerateMessageButton.isEnabled = canRegenerate
+            binding.regenerateMessageButton.setOnClickListener {
+                if (canRegenerate) onRegenerate(message)
+            }
+
+            // ★ 応答バリアントナビゲーション (◀ n/m ▶)
+            //   - 応答が 2 件以上ある場合のみ表示
+            //   - ストリーミング中 / 生成中は非表示 (切り替えでレースを避ける)
+            val showVariantNav = variantTotal > 1 && !message.isStreaming && !isGenerating
+            binding.variantNavContainer.visibility =
+                if (showVariantNav) View.VISIBLE else View.GONE
+            if (showVariantNav) {
+                binding.variantPageInfo.text = "${variantIndex + 1}/$variantTotal"
+                val canPrev = variantIndex > 0
+                val canNext = variantIndex < variantTotal - 1
+                binding.variantPrevButton.isEnabled = canPrev
+                binding.variantPrevButton.alpha = if (canPrev) 1.0f else 0.3f
+                binding.variantNextButton.isEnabled = canNext
+                binding.variantNextButton.alpha = if (canNext) 1.0f else 0.3f
+                binding.variantPrevButton.setOnClickListener {
+                    if (canPrev) onVariantSelect(variantIndex - 1)
+                }
+                binding.variantNextButton.setOnClickListener {
+                    if (canNext) onVariantSelect(variantIndex + 1)
+                }
+            } else {
+                binding.variantPrevButton.setOnClickListener(null)
+                binding.variantNextButton.setOnClickListener(null)
+            }
+
+            // ★ スワイプ検出のハンドラをこの bind() のバリアント情報で差し替える。
+            //   スワイプ可能なのは "応答が 2 件以上 かつ 非ストリーミング中" だけに限定。
+            swipeVariantHandler = if (variantTotal > 1 && !message.isStreaming && !isGenerating) {
+                { direction ->
+                    val next = (variantIndex + direction).coerceIn(0, variantTotal - 1)
+                    if (next != variantIndex) onVariantSelect(next)
+                }
+            } else null
             binding.apply {
                 // ★ v5.1 Thinking 表示仕様：
                 //   - 設定スイッチの ON/OFF に一切依存せず、thinkingContent が非空であれば表示。
@@ -561,12 +710,9 @@ class MessageAdapter(
                 }
 
                 copyMessageButton.setOnClickListener {
-                    val text = if (!message.thinkingContent.isNullOrBlank()) {
-                        "【${binding.root.context.getString(R.string.gemma_thinking_section_title)}】\n${message.thinkingContent?.stripGemmaTokens()}\n\n【回答】\n${message.content.stripGemmaTokens()}"
-                    } else {
-                        message.content.stripGemmaTokens()
-                    }
-                    copyAllToClipboard(binding.root.context, text)
+                    // ★ Thinking (内部推論) はユーザー向けのコピー内容に含めない。
+                    //   回答本文だけをクリップボードに転送する。
+                    copyAllToClipboard(binding.root.context, message.content.stripGemmaTokens())
                 }
 
                 val speakText = message.content.stripGemmaTokens().trim()
