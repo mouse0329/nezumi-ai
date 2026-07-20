@@ -2279,32 +2279,6 @@ extern "C"
             effective_backend = MNN_SD_BACKEND_CPU;
         }
 
-        // Bug fix #4 (2026-07 OOM / LMK kill during UNet on OpenCL):
-        //   After promoting UNet to Precision_High (fp32) on OpenCL, the peak
-        //   RSS on 7-8 GB Cortex-A78-class devices reached ~4.5 GB and the
-        //   Android lowmemorykiller terminated the process mid-generation:
-        //     lmkd Kill ... to free 4522156kB rss, ...
-        //          reason: min watermark is breached and swap is low
-        //   In the field trace, availableMemory just before generate() was
-        //   ~2 GB, so there was no room to keep fp32 UNet activations plus
-        //   cl_mem staging buffers on the GPU heap.
-        //
-        //   Fix: on OpenCL, keep CLIP and VAE on the GPU (VAE is where the
-        //   wall-clock time really is — one big decode) but route the UNet
-        //   through the CPU backend. CPU UNet is fp32 by default too, so the
-        //   output quality is identical to the current GPU-fp32 path, and
-        //   the peak RSS increment shrinks from ~2.0 GB to ~1.0 GB because
-        //   we no longer hold OpenCL image/buffer mirrors of every layer.
-        //   If the user explicitly picked CPU, effective_backend is already
-        //   CPU and this override is a no-op.
-        MnnSdBackend unet_backend = effective_backend;
-        if (effective_backend == MNN_SD_BACKEND_OPENCL)
-        {
-            unet_backend = MNN_SD_BACKEND_CPU;
-            PROBE_LOG("UNet routed to CPU while CLIP/VAE stay on OpenCL "
-                      "(avoids fp32-UNet OOM on <4GB-free devices).");
-        }
-
         // --- 0. Load CLIP just-in-time ---
         {
             MnnSdError err = create_interpreter_and_session(
@@ -2675,11 +2649,9 @@ extern "C"
         }
 
         // --- 4b. Load UNet just-in-time (after CLIP has been freed) ---
-        //   Uses unet_backend (may be CPU even when the pipeline is OpenCL)
-        //   to avoid the fp32-UNet OOM described in patch #4.
         {
             MnnSdError err = create_interpreter_and_session(
-                engine->unet_path, unet_backend, SdModelKind::UNET,
+                engine->unet_path, effective_backend, SdModelKind::UNET,
                 engine->unet_interpreter, engine->unet_session, out_error);
             if (err != MNN_SD_OK)
                 return err;
