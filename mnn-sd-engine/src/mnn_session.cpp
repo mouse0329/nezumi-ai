@@ -73,17 +73,44 @@ namespace
 
 #if defined(MNN_SD_HAS_MNN)
 
+    // Which SD sub-model the schedule bundle is for. Precision must be picked
+    // per model because SD1.5 VAE cannot survive full FP16 on OpenCL.
+    enum class SdModelKind
+    {
+        CLIP,
+        UNET,
+        VAE,
+    };
+
     // Bug fix: OpenCL 推論が起動直後に abort する / 出力が真っ黒になる問題は
     // 立てていなかったこと (MNN_GPU_MEMORY_BUFFER + MNN_GPU_TUNING_FAST) と、
     // CPU 側にスレッド数 / Memory_Low ヒントを与えていなかったことが原因。
+    //
+    // Bug fix (GPU で真っ白画像になる問題 / 2026-07):
+    //   これまで OpenCL でも Precision_Low (=全 FP16) を全モデルに強制していた。
+    //   SD1.5 の VAE decoder は FP16 で中間活性が 65504 を超えて +Inf 化しやすく
+    //   (madebyollin/sdxl-vae-fp16-fix が対処している SDXL の症状と同型)、
+    //   最終段の [-1, 1] クランプで全ピクセルが +1.0 に潰れ、RGB=255 の真っ白
+    //   画像になる。CPU バックエンドは Precision_Low でも実質 fp32 で回るため
+    //   症状が出ず、「CPU では動くが GPU では真っ白」の挙動と一致する。
+    //
+    //   さらに UNet を Precision_Low で回すと、一部端末で cross-attention の
+    //   softmax 前 logits がオーバーフローして NaN を吐き、そのまま VAE 出口で
+    //   真っ白になるパスもある。
+    //
+    //   対処:
+    //     - VAE: Precision_High (fp32) 固定。速度低下は decode 1 回分だけなので許容。
+    //     - UNet: Precision_Normal (mixed: matmul は fp16、蓄積・正規化は fp32)。
+    //     - CLIP: Precision_Normal (十分安定・十分速い)。
+    //     - Memory_Normal / TUNING_NORMAL に緩める (Memory_Low + TUNING_FAST の
+    //       組み合わせは Adreno 系で稀に activation を丸めすぎる)。
     struct ScheduleBundle
     {
         MNN::BackendConfig backend_config{};
         MNN::ScheduleConfig schedule{};
 
-        explicit ScheduleBundle(MnnSdBackend backend)
+        ScheduleBundle(MnnSdBackend backend, SdModelKind kind)
         {
-            backend_config.precision = MNN::BackendConfig::Precision_Low;
             backend_config.power = MNN::BackendConfig::Power_High;
             if (backend == MNN_SD_BACKEND_OPENCL)
             {
@@ -91,16 +118,50 @@ namespace
                 // MNN_GPU_MEMORY_BUFFER: OpenCL 側で cl_mem を Buffer として確保する。
                 //   Image ベースだと 512x512 UNet の中間テンソルで Mali/Adreno が
                 //   CL_INVALID_IMAGE_SIZE を返してドライバごと abort する端末があった。
-                // MNN_GPU_TUNING_FAST: OpenCL カーネルのオートチューニング時間を
-                //   数秒以内に収める。既定 (TUNING_NONE) だとカーネル選択が悪く、
-                //   UNet の per-step で数倍遅くなる。
-                schedule.mode = MNN_GPU_MEMORY_BUFFER | MNN_GPU_TUNING_FAST;
-                backend_config.memory = MNN::BackendConfig::Memory_Low;
+                // MNN_GPU_TUNING_NORMAL: FAST だとカーネル選択が粗く、UNet の一部で
+                //   FP16 精度側にフォールバックしてしまう端末があった。NORMAL に上げる。
+                schedule.mode = MNN_GPU_MEMORY_BUFFER | MNN_GPU_TUNING_NORMAL;
+                switch (kind)
+                {
+                case SdModelKind::VAE:
+                    // ★ 真っ白画像を潰す本命 ★ fp32 で走らせる。
+                    backend_config.precision = MNN::BackendConfig::Precision_High;
+                    backend_config.memory = MNN::BackendConfig::Memory_Normal;
+                    break;
+                case SdModelKind::UNET:
+                    // Bug fix #2 (2026-07 単色青画像):
+                    //   前回パッチで UNet を Precision_Normal (mixed fp16/32) に
+                    //   落としたが、一部端末 (ARMv8 Cortex-A78 + Adreno 系で実測)
+                    //   では cross-attention の softmax 前 logits が FP16 の
+                    //   65504 を超えてオーバーフロー、NaN が伝播して UNet 出力
+                    //   がほぼゼロになる。すると VAE (fp32) は学習済みバイアスだけを
+                    //   デコードし、SD1.5 の学習セット平均色 (薄い青) を出す。
+                    //   これが「真っ白 → 青一色」の正体。
+                    //
+                    //   UNet 20 step × 2(uncond+cond)=40 forward の実測時間が
+                    //   63 秒 (=1 forward 1.5 秒) と、正常時 4-8 秒より明らかに
+                    //   短いことも、途中で NaN 化して以降のカーネルが早期終了
+                    //   している傍証。
+                    //
+                    //   対処: UNet も fp32 に上げる。CPU の 2 倍程度は遅くなるが、
+                    //   絵にならないよりマシ。将来的に vae_fp16_fix 相当の
+                    //   layer-wise upcast を実装する余地は残す。
+                    backend_config.precision = MNN::BackendConfig::Precision_High;
+                    backend_config.memory = MNN::BackendConfig::Memory_Normal;
+                    break;
+                case SdModelKind::CLIP:
+                default:
+                    backend_config.precision = MNN::BackendConfig::Precision_Normal;
+                    backend_config.memory = MNN::BackendConfig::Memory_Normal;
+                    break;
+                }
             }
             else
             {
                 schedule.type = MNN_FORWARD_CPU;
                 schedule.numThread = 4;
+                // CPU は Precision_Low でも実質 fp32 演算 (メモリ節約フラグ扱い)。
+                backend_config.precision = MNN::BackendConfig::Precision_Low;
                 backend_config.memory = MNN::BackendConfig::Memory_Low;
             }
             schedule.backendConfig = &backend_config;
@@ -139,6 +200,7 @@ namespace
     MnnSdError create_interpreter_and_session(
         const std::string &model_path,
         MnnSdBackend backend,
+        SdModelKind kind,
         std::shared_ptr<MNN::Interpreter> &interpreter,
         MNN::Session *&session,
         MnnSdErrorInfo *out_error)
@@ -156,7 +218,7 @@ namespace
             return MNN_SD_ERR_MODEL_INVALID;
         }
 
-        ScheduleBundle bundle(backend);
+        ScheduleBundle bundle(backend, kind);
         session = interpreter->createSession(bundle.schedule);
         if (!session)
         {
@@ -535,7 +597,8 @@ extern "C"
             return MNN_SD_ERR_MODEL_INVALID;
         }
 
-        ScheduleBundle bundle(backend);
+        // Probe path uses the safest CLIP-equivalent config.
+        ScheduleBundle bundle(backend, SdModelKind::CLIP);
         MNN::Session *session = net->createSession(bundle.schedule);
         if (!session)
         {
@@ -2216,10 +2279,36 @@ extern "C"
             effective_backend = MNN_SD_BACKEND_CPU;
         }
 
+        // Bug fix #4 (2026-07 OOM / LMK kill during UNet on OpenCL):
+        //   After promoting UNet to Precision_High (fp32) on OpenCL, the peak
+        //   RSS on 7-8 GB Cortex-A78-class devices reached ~4.5 GB and the
+        //   Android lowmemorykiller terminated the process mid-generation:
+        //     lmkd Kill ... to free 4522156kB rss, ...
+        //          reason: min watermark is breached and swap is low
+        //   In the field trace, availableMemory just before generate() was
+        //   ~2 GB, so there was no room to keep fp32 UNet activations plus
+        //   cl_mem staging buffers on the GPU heap.
+        //
+        //   Fix: on OpenCL, keep CLIP and VAE on the GPU (VAE is where the
+        //   wall-clock time really is — one big decode) but route the UNet
+        //   through the CPU backend. CPU UNet is fp32 by default too, so the
+        //   output quality is identical to the current GPU-fp32 path, and
+        //   the peak RSS increment shrinks from ~2.0 GB to ~1.0 GB because
+        //   we no longer hold OpenCL image/buffer mirrors of every layer.
+        //   If the user explicitly picked CPU, effective_backend is already
+        //   CPU and this override is a no-op.
+        MnnSdBackend unet_backend = effective_backend;
+        if (effective_backend == MNN_SD_BACKEND_OPENCL)
+        {
+            unet_backend = MNN_SD_BACKEND_CPU;
+            PROBE_LOG("UNet routed to CPU while CLIP/VAE stay on OpenCL "
+                      "(avoids fp32-UNet OOM on <4GB-free devices).");
+        }
+
         // --- 0. Load CLIP just-in-time ---
         {
             MnnSdError err = create_interpreter_and_session(
-                engine->clip_path, effective_backend,
+                engine->clip_path, effective_backend, SdModelKind::CLIP,
                 engine->clip_interpreter, engine->clip_session, out_error);
             if (err != MNN_SD_OK)
                 return err;
@@ -2586,9 +2675,11 @@ extern "C"
         }
 
         // --- 4b. Load UNet just-in-time (after CLIP has been freed) ---
+        //   Uses unet_backend (may be CPU even when the pipeline is OpenCL)
+        //   to avoid the fp32-UNet OOM described in patch #4.
         {
             MnnSdError err = create_interpreter_and_session(
-                engine->unet_path, effective_backend,
+                engine->unet_path, unet_backend, SdModelKind::UNET,
                 engine->unet_interpreter, engine->unet_session, out_error);
             if (err != MNN_SD_OK)
                 return err;
@@ -2654,25 +2745,43 @@ extern "C"
         std::vector<float> pred_uncond(latent_size);
         std::vector<float> pred_cond(latent_size);
 
-        auto run_unet_once = [&](const float *emb_ptr, int ts, std::vector<float> &out_pred) -> bool
+        // Bug fix #2 (2026-07 単色青画像):
+        //   OpenCL 上では resizeSession 後の session-input tensor が返す
+        //   host<float>() が有効な CPU バッキングを持たない端末があり、直接
+        //   memcpy しても書き込みが破棄される (VAE 側と同じ症状)。
+        //   VAE と同じ「別途 CAFFE ホストテンソルを create → memcpy →
+        //   copyFromHostTensor」で統一する。出力側も copyToHostTensor で
+        //   別途構築したホストテンソルに引き取り、NaN/Inf 検知を挟む。
+        auto run_unet_once = [&](const float *emb_ptr, int ts,
+                                 std::vector<float> &out_pred,
+                                 const char *tag, int step_index) -> bool
         {
             // Upload sample
             {
-                MNN::Tensor host_s(u_sample, MNN::Tensor::CAFFE);
-                std::memcpy(host_s.host<float>(), latent.data(), latent_bytes);
-                u_sample->copyFromHostTensor(&host_s);
+                std::unique_ptr<MNN::Tensor> host_s(MNN::Tensor::create<float>(
+                    std::vector<int>{1, 4, lh, lw}, nullptr, MNN::Tensor::CAFFE));
+                if (!host_s || host_s->elementSize() != latent_size)
+                    return false;
+                std::memcpy(host_s->host<float>(), latent.data(), latent_bytes);
+                u_sample->copyFromHostTensor(host_s.get());
             }
             // Upload timestep (int32)
             {
-                MNN::Tensor host_ts(u_ts, MNN::Tensor::CAFFE);
-                *host_ts.host<int>() = ts;
-                u_ts->copyFromHostTensor(&host_ts);
+                std::unique_ptr<MNN::Tensor> host_ts(MNN::Tensor::create<int>(
+                    std::vector<int>{1}, nullptr, MNN::Tensor::CAFFE));
+                if (!host_ts || host_ts->elementSize() != 1)
+                    return false;
+                *host_ts->host<int>() = ts;
+                u_ts->copyFromHostTensor(host_ts.get());
             }
             // Upload encoder_hidden_states for this side
             {
-                MNN::Tensor host_e(u_enc, MNN::Tensor::CAFFE);
-                std::memcpy(host_e.host<float>(), emb_ptr, emb_bytes);
-                u_enc->copyFromHostTensor(&host_e);
+                std::unique_ptr<MNN::Tensor> host_e(MNN::Tensor::create<float>(
+                    std::vector<int>{1, seq_len, emb_dim}, nullptr, MNN::Tensor::CAFFE));
+                if (!host_e || (size_t)host_e->elementSize() != (size_t)seq_len * emb_dim)
+                    return false;
+                std::memcpy(host_e->host<float>(), emb_ptr, emb_bytes);
+                u_enc->copyFromHostTensor(host_e.get());
             }
 
             unet_net->runSession(engine->unet_session);
@@ -2686,11 +2795,54 @@ extern "C"
             }
             if (!out_t)
                 return false;
-            MNN::Tensor host_out(out_t, MNN::Tensor::CAFFE);
-            out_t->copyToHostTensor(&host_out);
-            if (host_out.elementSize() < latent_size)
+
+            std::unique_ptr<MNN::Tensor> host_out(MNN::Tensor::create<float>(
+                std::vector<int>{1, 4, lh, lw}, nullptr, MNN::Tensor::CAFFE));
+            if (!host_out || host_out->elementSize() < latent_size)
                 return false;
-            std::memcpy(out_pred.data(), host_out.host<float>(), latent_bytes);
+            out_t->copyToHostTensor(host_out.get());
+            std::memcpy(out_pred.data(), host_out->host<float>(), latent_bytes);
+
+            // Bug fix #2 diagnostic: check UNet output stats. If everything
+            // is 0 / same value / NaN, the FP16 pipeline is silently broken
+            // and continuing would give the user a solid-color image.
+            {
+                bool any_nan = false;
+                float vmin = out_pred[0], vmax = out_pred[0];
+                double sum = 0.0, sq = 0.0;
+                for (int k = 0; k < latent_size; ++k)
+                {
+                    float v = out_pred[k];
+                    if (v != v || v > 1e30f || v < -1e30f)
+                    {
+                        any_nan = true;
+                        break;
+                    }
+                    if (v < vmin) vmin = v;
+                    if (v > vmax) vmax = v;
+                    sum += v;
+                    sq += (double)v * v;
+                }
+                // Log stats on first and last denoise step.
+                //   num_solver_iters is declared *below* this lambda, so we
+                //   can't capture it. timesteps was already captured by
+                //   reference and .size() gives us the same value.
+                const int last_idx = (int)timesteps.size() - 1;
+                if (step_index == 0 || step_index == last_idx)
+                {
+                    double mean = sum / latent_size;
+                    double var  = sq / latent_size - mean * mean;
+                    PROBE_LOG("UNet %s step=%d min=%.4f max=%.4f mean=%.4f std=%.4f",
+                              tag, step_index, vmin, vmax, mean,
+                              var > 0 ? std::sqrt(var) : 0.0);
+                }
+                if (any_nan || (vmax - vmin) < 1e-6f)
+                {
+                    PROBE_LOG("UNet %s step=%d DEGENERATE nan=%d min=%.4f max=%.4f",
+                              tag, step_index, any_nan ? 1 : 0, vmin, vmax);
+                    return false;
+                }
+            }
             return true;
         };
 
@@ -2706,12 +2858,13 @@ extern "C"
 
             int ts = timesteps[i];
 
-            if (!run_unet_once(emb_uncond, ts, pred_uncond) ||
-                !run_unet_once(emb_cond, ts, pred_cond))
+            if (!run_unet_once(emb_uncond, ts, pred_uncond, "uncond", i) ||
+                !run_unet_once(emb_cond,   ts, pred_cond,   "cond",   i))
             {
                 if (out_error)
                     std::snprintf(out_error->message, sizeof(out_error->message),
-                                  "UNet: run failed at step %d", i);
+                                  "UNet: run failed or produced degenerate output at step %d "
+                                  "(likely FP16 overflow \u2014 UNet must run at Precision_High).", i);
                 return MNN_SD_ERR_INTERNAL;
             }
 
@@ -2814,9 +2967,11 @@ extern "C"
         trim_heap_to_os();
 
         // --- 5b. Load VAE just-in-time (after UNet has been freed) ---
+        //   VAE は ScheduleBundle 側で Precision_High (fp32) に固定される。
+        //   これで OpenCL でも真っ白画像にならない。
         {
             MnnSdError err = create_interpreter_and_session(
-                engine->vae_path, effective_backend,
+                engine->vae_path, effective_backend, SdModelKind::VAE,
                 engine->vae_interpreter, engine->vae_session, out_error);
             if (err != MNN_SD_OK)
             {
@@ -2857,10 +3012,27 @@ extern "C"
         vae_net->resizeSession(engine->vae_session);
         v_input = vae_net->getSessionInput(engine->vae_session, "latent_sample");
 
+        // Bug fix (GPU 真っ白の副因):
+        //   OpenCL バックエンドでは resizeSession 直後の session-input tensor に
+        //   対する host<float>() が有効な CPU バッキングを返さない端末がある
+        //   (Adreno 6xx + MNN 3.6 で実測)。書き込みが実質的に破棄され、UNet が
+        //   出した意味のある latent ではなく未初期化のゼロが VAE に入ってしまい、
+        //   fp32 で走らせても VAE のバイアス項だけで灰色 or 白に潰れる。
+        //   ここは CLIP / UNet と同じ手順、つまり CAFFE レイアウトのホスト側
+        //   一時テンソルを別途構築 → memcpy → copyFromHostTensor で書き込む。
         {
-            MNN::Tensor host_v(v_input, MNN::Tensor::CAFFE);
-            std::memcpy(host_v.host<float>(), latent.data(), latent.size() * sizeof(float));
-            v_input->copyFromHostTensor(&host_v);
+            std::unique_ptr<MNN::Tensor> host_v(MNN::Tensor::create<float>(
+                std::vector<int>{1, 4, lh, lw}, nullptr, MNN::Tensor::CAFFE));
+            if (!host_v || host_v->elementSize() != (int)latent.size())
+            {
+                if (out_error)
+                    std::snprintf(out_error->message, sizeof(out_error->message),
+                                  "VAE: failed to build host input tensor");
+                return MNN_SD_ERR_INTERNAL;
+            }
+            std::memcpy(host_v->host<float>(), latent.data(),
+                        latent.size() * sizeof(float));
+            v_input->copyFromHostTensor(host_v.get());
         }
         vae_net->runSession(engine->vae_session);
         auto image_f = read_output_f32(vae_net, engine->vae_session, "sample");
@@ -2870,6 +3042,39 @@ extern "C"
                 std::snprintf(out_error->message, sizeof(out_error->message),
                               "VAE: sample output empty");
             return MNN_SD_ERR_INTERNAL;
+        }
+
+        // Sanity check: FP16 オーバーフローの痕跡 (全画素が同一 or NaN) を検出。
+        //   Precision_High に上げているので通常はここに引っかからないが、
+        //   万一ドライバが precision hint を無視した場合に沈黙して真っ白を
+        //   ユーザーに見せるより、ここで明示的にエラーを上げた方が親切。
+        {
+            bool any_nan = false;
+            float vmin = image_f[0];
+            float vmax = image_f[0];
+            const size_t N = image_f.size();
+            for (size_t k = 0; k < N; ++k)
+            {
+                float v = image_f[k];
+                if (v != v)
+                {
+                    any_nan = true;
+                    break;
+                }
+                if (v < vmin) vmin = v;
+                if (v > vmax) vmax = v;
+            }
+            if (any_nan || (vmax - vmin) < 1e-4f)
+            {
+                PROBE_LOG("VAE output degenerate: nan=%d min=%.4f max=%.4f (backend=%d)",
+                          any_nan ? 1 : 0, vmin, vmax, static_cast<int>(effective_backend));
+                if (out_error)
+                    std::snprintf(out_error->message, sizeof(out_error->message),
+                                  "VAE decode produced a flat/NaN image on backend=%d "
+                                  "(likely FP16 overflow \u2014 check that Precision_High reached the driver).",
+                                  static_cast<int>(effective_backend));
+                return MNN_SD_ERR_INTERNAL;
+            }
         }
 
         // Free VAE now — the RGB copy below only needs image_f.
