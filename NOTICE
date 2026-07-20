@@ -1,49 +1,77 @@
 NOTICE
 
-This product includes software developed by the following projects:
+This NOTICE describes the current Android application distribution of nezumi-ai.
+It covers code, libraries, native runtimes, and model terms that are bundled with,
+or referenced by, the current app build.
+
+Scope notes:
+- This NOTICE is for the shipped Android app build, not every historical or optional file in the repository.
+- Test-only and debug-only dependencies are intentionally excluded.
+- Optional or currently disabled components that are not part of the shipped Android build are intentionally excluded from this NOTICE.
+- Downloaded or imported models remain subject to their own upstream licenses and model cards.
 
 ================================================================================
-ANDROID FRAMEWORK & CORE LIBRARIES
+ANDROID FRAMEWORK & UI
 ================================================================================
 
-* Android Open Source Project
+* Android Open Source Project (AOSP)
   License: Apache License 2.0
   https://android.googlesource.com/
 
-* AndroidX Libraries
+* AndroidX Core / AppCompat / ConstraintLayout / Navigation / Lifecycle / Room / WorkManager / Biometric
   License: Apache License 2.0
   https://github.com/androidx/androidx
-  Includes:
+  Includes runtime components such as:
     - androidx.core:core-ktx
     - androidx.appcompat:appcompat
     - androidx.constraintlayout:constraintlayout
-    - androidx.activity:activity-compose
     - androidx.navigation:navigation-fragment-ktx
     - androidx.navigation:navigation-ui-ktx
+    - androidx.lifecycle:lifecycle-runtime-compose
+    - androidx.lifecycle:lifecycle-viewmodel-compose
     - androidx.room:room-runtime
     - androidx.room:room-ktx
-    - androidx.sqlite:sqlite
-    - androidx.sqlite:sqlite-framework
-    - androidx.lifecycle:lifecycle-viewmodel-ktx
-    - androidx.lifecycle:lifecycle-runtime-ktx
-    - androidx.lifecycle:lifecycle-livedata-ktx
-    - androidx.lifecycle:lifecycle-process
     - androidx.work:work-runtime-ktx
     - androidx.biometric:biometric
-    - androidx.test.ext:junit
-    - androidx.test.espresso:espresso-core
+
+* Google Material Components for Android
+  License: Apache License 2.0
+  https://github.com/material-components/material-components-android
+  Includes:
+    - com.google.android.material:material
+
+* Jetpack Compose
+  License: Apache License 2.0
+  https://github.com/androidx/androidx
+  Includes runtime components such as:
+    - androidx.activity:activity-compose
+    - androidx.compose.ui:ui
+    - androidx.compose.ui:ui-text-android
+    - androidx.compose.ui:ui-tooling-preview
+    - androidx.compose.foundation:foundation
+    - androidx.compose.material3:material3
+    - androidx.compose.material:material-icons-extended
+
+* compose-richtext
+  License: Apache License 2.0
+  https://github.com/halilibo/compose-richtext
+  Includes:
+    - com.halilibo.compose-richtext:richtext-commonmark
+    - com.halilibo.compose-richtext:richtext-ui-material3
+
+* JLatexMath Android
+  License: Apache License 2.0
+  https://github.com/noties/jlatexmath-android
+  Includes:
+    - ru.noties:jlatexmath-android
 
 ================================================================================
-KOTLIN & JetBrains
+KOTLIN & APPLICATION RUNTIME
 ================================================================================
 
-* Kotlin Programming Language
+* Kotlin Programming Language / Standard Library
   License: Apache License 2.0
   https://github.com/JetBrains/kotlin
-  Includes:
-    - kotlin-stdlib-jdk8
-    - kotlin-stdlib
-    - kotlin-metadata-jvm
 
 * Kotlinx Coroutines
   License: Apache License 2.0
@@ -58,83 +86,11 @@ KOTLIN & JetBrains
   Includes:
     - kotlinx-serialization-json
 
-* Compose
-  License: Apache License 2.0
-  https://github.com/JetBrains/compose-multiplatform
-  Includes:
-    - androidx.compose.ui:ui
-    - androidx.compose.ui:ui-tooling-preview
-    - androidx.compose.foundation:foundation
-    - androidx.compose.material3:material3
-    - androidx.compose.material:material-icons-extended
-    - androidx.lifecycle:lifecycle-runtime-compose
-    - androidx.lifecycle:lifecycle-viewmodel-compose
-
-================================================================================
-GOOGLE MATERIAL DESIGN
-================================================================================
-
-* Google Material Design Components
-  License: Apache License 2.0
-  https://github.com/material-components/material-components-android
-  Includes:
-    - com.google.android.material:material
-
-================================================================================
-GOOGLE AI & MACHINE LEARNING
-================================================================================
-
-* Google AI Edge LiteRT-LM
-  License: Apache License 2.0
-  https://ai.google.dev/edge/litert
-  Includes:
-    - com.google.ai.edge.litertlm:litertlm-android
-  Note: Runtime for local LiteRT-LM models.
-
-* Google Gson
-  License: Apache License 2.0
-  https://github.com/google/gson
-  Includes:
-    - com.google.code.gson:gson
-  Note: Resolved through the LiteRT-LM and VOICEVOX Core dependency graph.
-
-* Play Services TensorFlow Lite
-  License: Apache License 2.0
-  https://github.com/tensorflow/tensorflow
-  Includes:
-    - com.google.android.gms:play-services-tflite-java
-    - com.google.android.gms:play-services-tflite-gpu
-    - com.google.android.gms:play-services-base
-    - com.google.android.gms:play-services-tasks
-    - org.tensorflow:tensorflow-lite-api
-    - org.tensorflow:tensorflow-lite-gpu-api
-
-================================================================================
-UI & TEXT RENDERING
-================================================================================
-
-* Compose Rich Text
-  License: Apache License 2.0
-  https://github.com/halilibo/compose-richtext
-  Includes:
-    - com.halilibo.compose-richtext:richtext-commonmark
-    - com.halilibo.compose-richtext:richtext-ui-material3
-
-* JLatexMath Android
-  License: Apache License 2.0
-  https://github.com/noties/jlatexmath-android
-  Includes:
-    - ru.noties:jlatexmath-android
-
-* Coil (Image Loading)
+* Coil
   License: Apache License 2.0
   https://github.com/coil-kt/coil
   Includes:
     - io.coil-kt:coil-compose
-
-================================================================================
-NETWORK & UTILITIES
-================================================================================
 
 * OkHttp
   License: Apache License 2.0
@@ -142,212 +98,102 @@ NETWORK & UTILITIES
   Includes:
     - com.squareup.okhttp3:okhttp
 
-* ONNX Runtime
-  License: MIT License
-  https://github.com/microsoft/onnxruntime
-  Includes:
-    - com.microsoft.onnxruntime:onnxruntime-android
-
-* DJL Tokenizers
-  License: Apache License 2.0
-  https://github.com/deepjavalibrary/djl
-  Includes:
-    - ai.djl.huggingface:tokenizers
-    - ai.djl.android:tokenizer-native
-
-================================================================================
-AUTHENTICATION & SECURITY
-================================================================================
-
 * AppAuth for Android
   License: Apache License 2.0
   https://github.com/openid/AppAuth-Android
   Includes:
     - net.openid:appauth
 
-* AndroidX Biometric
-  License: Apache License 2.0
-  https://github.com/androidx/androidx
-  Includes:
-    - androidx.biometric:biometric
-
 ================================================================================
-TESTING
+AI / ML RUNTIME
 ================================================================================
 
-* JUnit
-  License: Eclipse Public License v1.0
-  https://github.com/junit-team/junit4
-  Includes:
-    - junit:junit
-
-* Espresso Testing Framework
+* Google AI Edge LiteRT-LM
   License: Apache License 2.0
-  https://github.com/android/testing-samples
+  https://ai.google.dev/edge/litert
   Includes:
-    - androidx.test.espresso:espresso-core
+    - com.google.ai.edge.litertlm:litertlm-android
+
+* TensorFlow Lite API / Google Play Services TensorFlow Lite
+  License: Apache License 2.0
+  https://github.com/tensorflow/tensorflow
+  Note: Runtime components may be resolved through the LiteRT-LM dependency graph.
+
+* ONNX Runtime
+  License: MIT License
+  https://github.com/microsoft/onnxruntime
+  Includes:
+    - com.microsoft.onnxruntime:onnxruntime-android
+  Note: Used by image safety and embedding-related runtime features.
+
+* Downloaded or Imported Models
+  License: See each upstream model provider's terms
+  Sources may include Hugging Face Hub and user-provided local files.
+  Note:
+    This app can download or import GGUF, LiteRT-LM, .task, .safetensors, MNN,
+    and other model files. Those model files are governed by their own licenses,
+    terms of use, and model cards.
+
+* Gemma Models and Terms
+  License: See Google's Gemma terms and model documentation
+  https://ai.google.dev/gemma
+  Note: Gemma-related model usage remains governed by the applicable upstream terms.
+
+* Hugging Face Hub
+  License: Service / model-hosting terms vary by hosted artifact
+  https://huggingface.co/
+  Note: Used as a distribution source for some downloadable models.
 
 ================================================================================
 NATIVE COMPONENTS
 ================================================================================
 
-* llama.cpp / ggml / GGUF
+* llama.cpp
   License: MIT License
   https://github.com/ggerganov/llama.cpp
+  Note: Core GGUF inference engine used through JNI.
+
+* llama.rn (derived integration layer)
+  License: MIT License
+  https://github.com/mybigday/llama.rn
+  Note: Parts of the rn-llama / completion integration are derived from this project.
+
+* ggml
+  License: MIT License
   https://github.com/ggml-org/ggml
-  Note: Custom JNI bridge for GGUF model inference.
+  Note: Low-level tensor / compute backend used by llama.cpp.
 
 * nlohmann/json
   License: MIT License
   https://github.com/nlohmann/json
-  Note: Header-only JSON library used in the native inference layer.
+  Note: Header-only JSON library used in native inference components.
 
 * anyascii
   License: ISC License
   https://github.com/anyascii/anyascii
   Note: Unicode transliteration code vendored in the native inference layer.
 
-* stable-diffusion.cpp-mnn Runtime
-  License: See upstream project and linked backend licenses
-  https://github.com/xororz/stable-diffusion.cpp-mnn
-  Note: Used for on-device image generation via MNN/OpenCL backend.
-
 * MNN
   License: Apache License 2.0
   https://github.com/alibaba/MNN
-  Note: Used by stable-diffusion.cpp-mnn for CPU/OpenCL image generation.
+  Note: Native runtime used by the on-device image-generation path.
 
-
-
-* Downloaded or Imported Models
-  License: See each model provider's terms
-  Sources may include Hugging Face Hub and user-provided local files.
-  Note:
-    This app can download or import GGUF, LiteRT-LM, .task, .safetensors,
-    MNN and VOICEVOX VVM model files. Model files are governed by
-
-    their own licenses and model cards. No blanket license is granted by this
-    NOTICE for third-party models downloaded or imported by the user.
-
-* VOICEVOX CORE
-  License: MIT License
-  https://github.com/VOICEVOX/voicevox_core
-  Note: Used for on-device Japanese text-to-speech synthesis.
-
-* VOICEVOX ONNX Runtime
-  License: VOICEVOX ONNX Runtime Terms and bundled third-party notices
-  https://github.com/VOICEVOX/voicevox_onnxruntime
-  Included notices:
-    - app/src/main/assets/voicevox/licenses/voicevox_onnxruntime_TERMS.txt
-    - app/src/main/assets/voicevox/licenses/voicevox_onnxruntime_third-party-notices.html
-  Credit notice: Products using VOICEVOX require credit indicating VOICEVOX usage.
-
-* VOICEVOX VVM Voice Models
-  License: VOICEVOX Voice Model Terms
-  https://github.com/VOICEVOX/voicevox_vvm
-  Note:
-    VOICEVOX voice models may be used commercially or non-commercially and may
-    be redistributed when embedded in an application. Generated audio must
-    follow the terms of each voice library. Credit notation is required.
-
-  Voice credits and primary terms:
-    - VOICEVOX:四国めたん / VOICEVOX:ずんだもん / VOICEVOX:九州そら /
-      VOICEVOX:中国うさぎ / VOICEVOX:中部つるぎ / VOICEVOX:東北ずん子 /
-      VOICEVOX:東北きりたん / VOICEVOX:東北イタコ / VOICEVOX:あんこもん
-      https://zunko.jp/con_ongen_kiyaku.html
-    - VOICEVOX:春日部つむぎ
-      https://tsumugi-official.studio.site/rule
-    - VOICEVOX:波音リツ
-      http://canon-voice.com/kiyaku.html
-    - VOICEVOX:玄野武宏 / VOICEVOX:白上虎太郎 / VOICEVOX:雀松朱司 /
-      VOICEVOX:麒ヶ島宗麟 / VOICEVOX:黒沢冴白
-      https://www.virvoxproject.com/voicevoxの利用規約
-    - VOICEVOX:青山龍星
-      Individual use is allowed with credit; company-involved use requires prior confirmation.
-      https://www.virvoxproject.com/voicevoxの利用規約
-      https://v.seventhh.com/contact/
-    - VOICEVOX:冥鳴ひまり
-      https://meimeihimari.wixsite.com/himari/terms-of-use
-    - VOICEVOX:もち子(cv 明日葉よもぎ)
-      Some uses and company-involved use require additional confirmation.
-      https://vtubermochio.wixsite.com/mochizora/利用規約
-    - VOICEVOX:剣崎雌雄
-      https://frontier.creatia.cc/fanclubs/413/posts/4507
-    - VOICEVOX:WhiteCUL
-      https://www.whitecul.com/guideline
-    - VOICEVOX:後鬼
-      Company-involved use requires prior confirmation.
-      https://ついなちゃん.com/voicevox_terms/
-    - VOICEVOX:No.7
-      Commercial use outside individual non-commercial/derivative contexts requires prior confirmation.
-      https://voiceseven.com/#j0200
-    - VOICEVOX:ちび式じい
-      https://docs.google.com/presentation/d/1AcD8zXkfzKFf2ertHwWRwJuQXjNnijMxhz7AJzEkaI4
-    - VOICEVOX:櫻歌ミコ
-      https://voicevox35miko.studio.site/rule
-    - VOICEVOX:小夜/SAYO
-      https://316soramegu.wixsite.com/sayo-official/guideline
-    - VOICEVOX:ナースロボ＿タイプＴ
-      https://www.krnr.top/rules
-    - VOICEVOX:†聖騎士 紅桜†
-      https://commons.nicovideo.jp/material/nc296132
-    - VOICEVOX:春歌ナナ
-      https://nanahira.jp/haruka_nana/guideline.html
-    - VOICEVOX:猫使アル / VOICEVOX:猫使ビィ
-      https://nekotukarb.wixsite.com/nekonohako/利用規約
-    - VOICEVOX:栗田まろん
-      https://aivoice.jp/character/maron/
-    - VOICEVOX:あいえるたん
-      https://www.infiniteloop.co.jp/special/iltan/terms/
-    - VOICEVOX:満別花丸
-      https://100hanamaru.wixsite.com/manbetsu-hanamaru/rule
-    - VOICEVOX:琴詠ニア
-      https://commons.nicovideo.jp/works/nc315435
-    - VOICEVOX:Voidoll(CV:丹下桜)
-      Corporate use requires individual inquiry.
-      https://blog.nicovideo.jp/niconews/224589.html
-    - VOICEVOX:ぞん子
-      Commercial use requires individual inquiry.
-      https://zonko.zone-energy.jp/guideline
-    - VOICEVOX:離途
-      https://litmus9.com/#/voicebank#rules
-    - VOICEVOX:ユーレイちゃん(CV:神崎零)
-      Commercial use outside individual non-commercial/derivative contexts requires prior confirmation.
-      https://u-stella.co.jp/voicevox-ure-chan-tucumo-terms-of-use/
-    - VOICEVOX:夜語トバリ / VOICEVOX:暁記ミタマ
-      https://yogataritobari.studio.site/#rules
-    - VOICEVOX:里石ユカ（つぼみ）
-      https://satoishiyuka.wixsite.com/satoishi/kiyaku
-    - VOICEVOX Nemo
-      https://voicevox.hiroshiba.jp/nemo/term/
-
-* Open JTalk Dictionary
-  License: See upstream dictionary package terms
-  https://open-jtalk.sourceforge.net/
-  Note: Used by VOICEVOX CORE for Japanese text analysis.
-
-================================================================================
-BUILD TOOLS & GRADLE
-================================================================================
-
-* Android Gradle Plugin
-  License: Apache License 2.0
-  https://android.googlesource.com/platform/tools/base
-
-* Gradle Build System
-  License: Apache License 2.0
-  https://github.com/gradle/gradle
+* stable-diffusion.cpp-mnn
+  License: See upstream project and linked backend licenses
+  https://github.com/xororz/stable-diffusion.cpp-mnn
+  Note: Upstream reference project for the MNN-based Stable Diffusion integration path.
 
 ================================================================================
 ADDITIONAL INFORMATION
 ================================================================================
 
-For complete license text and additional information about each dependency,
-please refer to:
-- LICENSE.md at the root of this project
-- Individual library documentation and license files
-- Maven Central Repository (https://central.sonatype.com/)
+For project-level licensing, redistribution terms, and upstream references, see:
+- LICENSE.md at the repository root
+- LGPL_LICENSE at the repository root
+- README.md at the repository root
+- third_party/MNN/LICENSE.txt
+- mnn-sd-engine/tools/MODEL_LICENSE.md
 
-This product contains code, libraries, runtimes, and models governed by their
-own licenses or terms. Review the referenced upstream terms before
-redistribution.
+This product contains code, libraries, runtimes, and model-related assets that are
+subject to their own upstream licenses or terms. Review the referenced upstream
+terms before redistribution.

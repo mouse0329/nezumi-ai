@@ -118,135 +118,183 @@
     <string name="open_help_page">ヘルプ</string>
     <string name="open_license_page">License</string>
     <string name="help_title">ヘルプ</string>
-    <string name="license_title">License</string>
-    <string name="license_body">This app includes open-source software.\n\nThis application uses multiple open-source libraries and models. Please review the license terms below before distribution.</string>
+    <string name="license_title">ライセンス</string>
+    <string name="license_body">この画面は、現在の Android アプリ配布物に実際に含まれる、または実行時に参照される主要なコード・ランタイム・モデル規約の案内です。未同梱の開発用・テスト用・無効化中コンポーネントは含めていません。</string>
 
-    <!-- License items -->
-    <string name="license_project_title">Project Repository</string>
+    <!-- License items (current Android app distribution scope) -->
+    <string name="license_project_title">プロジェクト / 配布元</string>
     <string name="license_project_url">https://github.com/mouse0329/nezumi-ai</string>
-    <string name="license_project_desc">Source code and release notes for this app.</string>
+    <string name="license_project_desc">このアプリのソースコード、README、LICENSE.md、NOTICE への入口です。配布条件の確認はここから行えます。</string>
 
-    <string name="license_androidx_title">AndroidX and Material Components</string>
-    <string name="license_androidx_url">https://github.com/androidx</string>
-    <string name="license_androidx_desc">Apache License 2.0\n\nComprehensive suite of libraries that provide modern Android development patterns and Material Design components.</string>
+    <string name="license_androidx_title">AndroidX / Material / ConstraintLayout</string>
+    <string name="license_androidx_url">https://github.com/androidx/androidx</string>
+    <string name="license_androidx_desc">Apache License 2.0
 
-    <string name="license_constraintlayout_title">AndroidX ConstraintLayout</string>
-    <string name="license_constraintlayout_url">https://github.com/androidx/constraintlayout</string>
-    <string name="license_constraintlayout_desc">Apache License 2.0\n\nLayout management library for building responsive and complex UI layouts efficiently. Version 2.1.4</string>
+AndroidX Core、AppCompat、ConstraintLayout、Material Components など、アプリの基本 UI と Android 実行基盤を構成するライブラリ群です。</string>
 
     <string name="license_navigation_title">AndroidX Navigation</string>
-    <string name="license_navigation_url">https://github.com/androidx/navigation</string>
-    <string name="license_navigation_desc">Apache License 2.0\n\nFramework for managing navigation between fragments in your app. Version 2.6.0</string>
+    <string name="license_navigation_url">https://github.com/androidx/androidx</string>
+    <string name="license_navigation_desc">Apache License 2.0
+
+画面遷移とナビゲーション管理に使用しています。主な利用バージョン: navigation-fragment-ktx 2.9.8 / navigation-ui-ktx 2.6.0。</string>
 
     <string name="license_room_title">AndroidX Room Database</string>
-    <string name="license_room_url">https://github.com/androidx/room</string>
-    <string name="license_room_desc">Apache License 2.0\n\nAbstraction layer over SQLite providing type-safe database access. Version 2.7.0</string>
+    <string name="license_room_url">https://github.com/androidx/androidx</string>
+    <string name="license_room_desc">Apache License 2.0
+
+会話履歴などのローカル永続化に使用しています。利用バージョン: 2.7.0。</string>
 
     <string name="license_workmanager_title">AndroidX WorkManager</string>
-    <string name="license_workmanager_url">https://github.com/androidx/work</string>
-    <string name="license_workmanager_desc">Apache License 2.0\n\nLibrary for scheduling and managing deferrable asynchronous tasks. Version 2.9.0</string>
+    <string name="license_workmanager_url">https://github.com/androidx/androidx</string>
+    <string name="license_workmanager_desc">Apache License 2.0
 
-    <string name="license_lifecycle_title">AndroidX Lifecycle &amp; ViewModel</string>
-    <string name="license_lifecycle_url">https://github.com/androidx/lifecycle</string>
-    <string name="license_lifecycle_desc">Apache License 2.0\n\nLifecycle-aware component management and UI state persistence. Version 2.7.0</string>
+バックグラウンド処理や遅延実行ジョブ管理に使用しています。利用バージョン: 2.11.2。</string>
+
+    <string name="license_lifecycle_title">AndroidX Lifecycle / ViewModel</string>
+    <string name="license_lifecycle_url">https://github.com/androidx/androidx</string>
+    <string name="license_lifecycle_desc">Apache License 2.0
+
+ライフサイクル連動処理と UI 状態管理に使用しています。利用バージョン: 2.7.0。</string>
+
+    <string name="license_biometric_title">AndroidX Biometric</string>
+    <string name="license_biometric_url">https://github.com/androidx/androidx</string>
+    <string name="license_biometric_desc">Apache License 2.0
+
+端末の生体認証によるロック解除に使用しています。利用バージョン: 1.1.0。</string>
 
     <string name="license_kotlin_title">Kotlin Standard Library</string>
     <string name="license_kotlin_url">https://github.com/JetBrains/kotlin</string>
-    <string name="license_kotlin_desc">Apache License 2.0\n\nKotlin programming language and its standard library, including coroutines for asynchronous operations.</string>
+    <string name="license_kotlin_desc">Apache License 2.0
 
-    <string name="license_mediapipe_title">MediaPipe Tasks</string>
-    <string name="license_mediapipe_url">https://github.com/google/mediapipe</string>
-    <string name="license_mediapipe_desc">Apache License 2.0\n\nGoogle MediaPipe framework providing ready-to-use ML solutions for computer vision, audio, and text tasks.</string>
-
-    <string name="license_mediapipe_genai_title">MediaPipe Tasks-GenAI</string>
-    <string name="license_mediapipe_genai_url">https://github.com/google/mediapipe/tree/master/mediapipe/tasks/cc</string>
-    <string name="license_mediapipe_genai_desc">Apache License 2.0\n\nMediaPipe GenAI task for on-device LLM inference, providing Gemma model support with optimized runtime performance.</string>
-
-    <string name="license_litertlm_title">Google AI Edge LiteRT-LM</string>
-    <string name="license_litertlm_url">https://ai.google.dev/edge</string>
-    <string name="license_litertlm_desc">Apache License 2.0\n\nGoogle AI Edge on-device LLM execution engine (v0.10.0). Provides local inference for Gemma models with optimized performance.</string>
-
-    <string name="license_tflite_title">TensorFlow Lite Play Services</string>
-    <string name="license_tflite_url">https://developer.android.com/ml-kit</string>
-    <string name="license_tflite_desc">Apache License 2.0\n\nTensorFlow Lite on-device inference library (v16.4.0) with CPU and GPU acceleration support via Google Play Services.</string>
-
-    <string name="license_huggingface_title">Hugging Face Models</string>
-    <string name="license_huggingface_url">https://huggingface.co</string>
-    <string name="license_huggingface_desc">Model Hub and distribution page\n\nGemma を含むモデルの配布ページ確認に使用しています。モデル規約の一次情報は各モデル提供元の条項を確認してください。</string>
-
-    <string name="license_gemma_title">Gemma Model</string>
-    <string name="license_gemma_url">https://ai.google.dev/gemma</string>
-    <string name="license_gemma_desc">Gemma Terms of Use\n\nGemma モデルの利用条件は Gemma Terms を確認してください。実運用時の規約確認はこの条項を優先してください。</string>
-
-    <string name="license_gemma4_title">Gemma 4 Framework &amp; Tools</string>
-    <string name="license_gemma4_url">https://ai.google.dev/gemma</string>
-    <string name="license_gemma4_desc">Apache License 2.0\n\nGemma 4 multi-turn conversation framework, channel API (thinking capability), and related tools. Applied to the inference engine components executed via LiteRT-LM.</string>
-
-    <string name="license_appauth_title">AppAuth for Android</string>
-    <string name="license_appauth_url">https://github.com/openid/AppAuth-Android</string>
-    <string name="license_appauth_desc">Apache License 2.0\n\nHugging Face OAuth 認証フローに使用しています。</string>
-
-    <string name="license_richtext_title">compose-richtext</string>
-    <string name="license_richtext_url">https://github.com/halilozercan/compose-richtext</string>
-    <string name="license_richtext_desc">Apache License 2.0\n\nMarkdown rendering library used for chat responses. Version 1.0.0-alpha02</string>
-
-    <string name="license_junit_title">JUnit</string>
-    <string name="license_junit_url">https://github.com/junit-team/junit</string>
-    <string name="license_junit_desc">Eclipse Public License (EPL) 1.0\n\nUnit testing framework for Java. Version 4.13.2</string>
-
-    <string name="license_androidtest_title">AndroidX Test (JUnit, Espresso)</string>
-    <string name="license_androidtest_url">https://github.com/androidx/androidx</string>
-    <string name="license_androidtest_desc">Apache License 2.0\n\nUI testing and instrumented testing libraries for Android apps. Versions: JUnit 1.1.5, Espresso 3.5.1</string>
-
-    <string name="license_compose_title">Jetpack Compose</string>
-    <string name="license_compose_url">https://github.com/androidx/androidx</string>
-    <string name="license_compose_desc">Apache License 2.0\n\nModern declarative UI toolkit for Android. Includes Compose BOM 2024.09.00, Material3, Foundation, and UI tooling.</string>
-
-    <string name="license_coil_title">Coil</string>
-    <string name="license_coil_url">https://github.com/coil-kt/coil</string>
-    <string name="license_coil_desc">Apache License 2.0\n\nImage loading library for Android backed by Kotlin Coroutines. Version 2.6.0</string>
-
-    <string name="license_okhttp_title">OkHttp</string>
-    <string name="license_okhttp_url">https://github.com/square/okhttp</string>
-    <string name="license_okhttp_desc">Apache License 2.0\n\nEfficient HTTP client for Android and Java. Version 4.11.0</string>
-
-    <string name="license_onnxruntime_title">ONNX Runtime</string>
-    <string name="license_onnxruntime_url">https://github.com/microsoft/onnxruntime</string>
-    <string name="license_onnxruntime_desc">MIT License\n\nHigh-performance inference engine for ONNX models. Version 1.15.0</string>
-
-    <string name="license_djl_tokenizers_title">DJL Tokenizers</string>
-    <string name="license_djl_tokenizers_url">https://github.com/deepjavalibrary/djl</string>
-    <string name="license_djl_tokenizers_desc">Apache License 2.0\n\nDeep Java Library tokenizers for Hugging Face models. Version 0.33.0</string>
+Kotlin 言語本体と標準ライブラリです。利用バージョン: 2.3.20。</string>
 
     <string name="license_kotlin_coroutines_title">Kotlin Coroutines</string>
     <string name="license_kotlin_coroutines_url">https://github.com/Kotlin/kotlinx.coroutines</string>
-    <string name="license_kotlin_coroutines_desc">Apache License 2.0\n\nKotlin library for asynchronous programming using coroutines. Version 1.7.3</string>
+    <string name="license_kotlin_coroutines_desc">Apache License 2.0
+
+非同期処理に使用しています。利用バージョン: 1.11.0。</string>
 
     <string name="license_kotlin_serialization_title">Kotlin Serialization</string>
     <string name="license_kotlin_serialization_url">https://github.com/Kotlin/kotlinx.serialization</string>
-    <string name="license_kotlin_serialization_desc">Apache License 2.0\n\nKotlin multiplatform serialization library. Version 1.6.2</string>
+    <string name="license_kotlin_serialization_desc">Apache License 2.0
+
+JSON シリアライズ / デシリアライズに使用しています。利用バージョン: 1.11.0。</string>
+
+    <string name="license_compose_title">Jetpack Compose</string>
+    <string name="license_compose_url">https://github.com/androidx/androidx</string>
+    <string name="license_compose_desc">Apache License 2.0
+
+宣言的 UI 実装に使用しています。Compose BOM 2026.06.01、Material3、Foundation、UI Toolkit を含みます。</string>
+
+    <string name="license_richtext_title">compose-richtext</string>
+    <string name="license_richtext_url">https://github.com/halilibo/compose-richtext</string>
+    <string name="license_richtext_desc">Apache License 2.0
+
+Markdown 表示に使用しています。利用バージョン: 1.0.0-alpha02。</string>
+
+    <string name="license_jlatexmath_title">JLatexMath Android</string>
+    <string name="license_jlatexmath_url">https://github.com/noties/jlatexmath-android</string>
+    <string name="license_jlatexmath_desc">Apache License 2.0
+
+LaTeX 数式の描画に使用しています。利用バージョン: 0.2.0。</string>
+
+    <string name="license_litertlm_title">Google AI Edge LiteRT-LM</string>
+    <string name="license_litertlm_url">https://ai.google.dev/edge/litert</string>
+    <string name="license_litertlm_desc">Apache License 2.0
+
+オンデバイス LLM 実行ランタイムです。利用バージョン: 0.13.1。</string>
+
+    <string name="license_tflite_title">TensorFlow Lite / Play Services TFLite</string>
+    <string name="license_tflite_url">https://github.com/tensorflow/tensorflow</string>
+    <string name="license_tflite_desc">Apache License 2.0
+
+LiteRT-LM の依存グラフ経由で参照される TensorFlow Lite 系ランタイムです。実際の含有物はビルド解決結果に従います。</string>
+
+    <string name="license_onnxruntime_title">ONNX Runtime</string>
+    <string name="license_onnxruntime_url">https://github.com/microsoft/onnxruntime</string>
+    <string name="license_onnxruntime_desc">MIT License
+
+画像セーフティや埋め込み関連機能で使用する推論ランタイムです。利用バージョン: 1.27.0。</string>
+
+    <string name="license_appauth_title">AppAuth for Android</string>
+    <string name="license_appauth_url">https://github.com/openid/AppAuth-Android</string>
+    <string name="license_appauth_desc">Apache License 2.0
+
+Hugging Face OAuth 認証フローに使用しています。利用バージョン: 0.11.1。</string>
+
+    <string name="license_coil_title">Coil</string>
+    <string name="license_coil_url">https://github.com/coil-kt/coil</string>
+    <string name="license_coil_desc">Apache License 2.0
+
+画像読み込みに使用しています。利用バージョン: 2.7.0。</string>
+
+    <string name="license_okhttp_title">OkHttp</string>
+    <string name="license_okhttp_url">https://github.com/square/okhttp</string>
+    <string name="license_okhttp_desc">Apache License 2.0
+
+HTTP 通信に使用しています。利用バージョン: 5.4.0。</string>
 
     <string name="license_llamacpp_title">llama.cpp</string>
     <string name="license_llamacpp_url">https://github.com/ggerganov/llama.cpp</string>
-    <string name="license_llamacpp_desc">MIT License\n\nCopyright (c) 2023-2024 The ggml authors\n\nPort of Facebook\'s LLaMA model in C/C++. Provides the core inference engine for GGUF models.</string>
+    <string name="license_llamacpp_desc">MIT License
+
+GGUF モデルのネイティブ推論エンジンです。JNI 経由で利用しています。</string>
 
     <string name="license_llamarn_title">llama.rn</string>
     <string name="license_llamarn_url">https://github.com/mybigday/llama.rn</string>
-    <string name="license_llamarn_desc">MIT License\n\nReact Native binding for llama.cpp. The rn-llama / rn-completion layer used in this app is derived from this project.</string>
+    <string name="license_llamarn_desc">MIT License
+
+llama.cpp 連携レイヤーの一部実装はこのプロジェクト由来です。</string>
 
     <string name="license_ggml_title">ggml</string>
-    <string name="license_ggml_url">https://github.com/ggerganov/ggml</string>
-    <string name="license_ggml_desc">MIT License\n\nCopyright (c) 2023-2024 The ggml authors\n\nTensor library for machine learning. Provides the low-level compute backend for llama.cpp.</string>
+    <string name="license_ggml_url">https://github.com/ggml-org/ggml</string>
+    <string name="license_ggml_desc">MIT License
+
+llama.cpp が利用する低レベルのテンソル / 計算バックエンドです。</string>
 
     <string name="license_nlohmann_title">nlohmann/json</string>
     <string name="license_nlohmann_url">https://github.com/nlohmann/json</string>
-    <string name="license_nlohmann_desc">MIT License\n\nCopyright (c) 2013-2022 Niels Lohmann\n\nJSON for Modern C++. Used in the native inference layer for JSON parsing.</string>
+    <string name="license_nlohmann_desc">MIT License
+
+ネイティブ推論層の JSON 処理で使用しています。</string>
 
     <string name="license_anyascii_title">anyascii</string>
     <string name="license_anyascii_url">https://github.com/anyascii/anyascii</string>
-    <string name="license_anyascii_desc">ISC License\n\nUnicode to ASCII transliteration library. Used in the native tokenization layer.</string>
+    <string name="license_anyascii_desc">ISC License
 
-    <string name="license_open_url">View License</string>
+ネイティブ層に取り込まれている Unicode 正規化 / 変換コードです。</string>
+
+    <string name="license_mnn_title">MNN</string>
+    <string name="license_mnn_url">https://github.com/alibaba/MNN</string>
+    <string name="license_mnn_desc">Apache License 2.0
+
+オンデバイス画像生成経路で使用するネイティブランタイムです。</string>
+
+    <string name="license_stable_diffusion_mnn_title">stable-diffusion.cpp-mnn</string>
+    <string name="license_stable_diffusion_mnn_url">https://github.com/xororz/stable-diffusion.cpp-mnn</string>
+    <string name="license_stable_diffusion_mnn_desc">上流プロジェクトと関連バックエンドのライセンスに従います。
+
+MNN ベース Stable Diffusion 統合の参照元プロジェクトです。</string>
+
+    <string name="license_huggingface_title">Hugging Face Hub</string>
+    <string name="license_huggingface_url">https://huggingface.co</string>
+    <string name="license_huggingface_desc">モデル配布プラットフォーム
+
+一部モデルの取得元です。個別モデルの規約は各モデルページ / モデルカードを確認してください。</string>
+
+    <string name="license_gemma_title">Gemma モデル規約</string>
+    <string name="license_gemma_url">https://ai.google.dev/gemma</string>
+    <string name="license_gemma_desc">Gemma Terms / Model Terms
+
+Gemma 系モデルの利用条件は Google が提供する規約とモデル文書に従います。</string>
+
+    <string name="license_downloaded_models_title">ダウンロード / 追加モデル</string>
+    <string name="license_downloaded_models_url">https://github.com/mouse0329/nezumi-ai/blob/main/NOTICE</string>
+    <string name="license_downloaded_models_desc">個別モデルのライセンスに従います。
+
+GGUF、LiteRT-LM、.task、.safetensors、MNN などのモデルファイルは、それぞれの配布元ライセンス・利用規約・モデルカードが優先されます。</string>
+
+    <string name="license_open_url">詳細を見る</string>
 
     <!-- Fragments for navigation -->
     <string name="first_fragment_label">First Fragment</string>

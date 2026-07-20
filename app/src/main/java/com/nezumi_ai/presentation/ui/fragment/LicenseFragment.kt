@@ -64,11 +64,6 @@ class LicenseFragment : Fragment() {
                 R.string.license_androidx_url
             ),
             LicenseItem(
-                R.string.license_constraintlayout_title,
-                R.string.license_constraintlayout_desc,
-                R.string.license_constraintlayout_url
-            ),
-            LicenseItem(
                 R.string.license_navigation_title,
                 R.string.license_navigation_desc,
                 R.string.license_navigation_url
@@ -89,19 +84,39 @@ class LicenseFragment : Fragment() {
                 R.string.license_lifecycle_url
             ),
             LicenseItem(
+                R.string.license_biometric_title,
+                R.string.license_biometric_desc,
+                R.string.license_biometric_url
+            ),
+            LicenseItem(
                 R.string.license_kotlin_title,
                 R.string.license_kotlin_desc,
                 R.string.license_kotlin_url
             ),
             LicenseItem(
-                R.string.license_mediapipe_title,
-                R.string.license_mediapipe_desc,
-                R.string.license_mediapipe_url
+                R.string.license_kotlin_coroutines_title,
+                R.string.license_kotlin_coroutines_desc,
+                R.string.license_kotlin_coroutines_url
             ),
             LicenseItem(
-                R.string.license_mediapipe_genai_title,
-                R.string.license_mediapipe_genai_desc,
-                R.string.license_mediapipe_genai_url
+                R.string.license_kotlin_serialization_title,
+                R.string.license_kotlin_serialization_desc,
+                R.string.license_kotlin_serialization_url
+            ),
+            LicenseItem(
+                R.string.license_compose_title,
+                R.string.license_compose_desc,
+                R.string.license_compose_url
+            ),
+            LicenseItem(
+                R.string.license_richtext_title,
+                R.string.license_richtext_desc,
+                R.string.license_richtext_url
+            ),
+            LicenseItem(
+                R.string.license_jlatexmath_title,
+                R.string.license_jlatexmath_desc,
+                R.string.license_jlatexmath_url
             ),
             LicenseItem(
                 R.string.license_litertlm_title,
@@ -114,19 +129,9 @@ class LicenseFragment : Fragment() {
                 R.string.license_tflite_url
             ),
             LicenseItem(
-                R.string.license_huggingface_title,
-                R.string.license_huggingface_desc,
-                R.string.license_huggingface_url
-            ),
-            LicenseItem(
-                R.string.license_gemma_title,
-                R.string.license_gemma_desc,
-                R.string.license_gemma_url
-            ),
-            LicenseItem(
-                R.string.license_gemma4_title,
-                R.string.license_gemma4_desc,
-                R.string.license_gemma4_url
+                R.string.license_onnxruntime_title,
+                R.string.license_onnxruntime_desc,
+                R.string.license_onnxruntime_url
             ),
             LicenseItem(
                 R.string.license_appauth_title,
@@ -134,39 +139,14 @@ class LicenseFragment : Fragment() {
                 R.string.license_appauth_url
             ),
             LicenseItem(
-                R.string.license_richtext_title,
-                R.string.license_richtext_desc,
-                R.string.license_richtext_url
-            ),
-            LicenseItem(
-                R.string.license_junit_title,
-                R.string.license_junit_desc,
-                R.string.license_junit_url
-            ),
-            LicenseItem(
-                R.string.license_androidtest_title,
-                R.string.license_androidtest_desc,
-                R.string.license_androidtest_url
-            ),
-            LicenseItem(
-                R.string.license_compose_title,
-                R.string.license_compose_desc,
-                R.string.license_compose_url
-            ),
-            LicenseItem(
                 R.string.license_coil_title,
                 R.string.license_coil_desc,
                 R.string.license_coil_url
             ),
             LicenseItem(
-                R.string.license_kotlin_coroutines_title,
-                R.string.license_kotlin_coroutines_desc,
-                R.string.license_kotlin_coroutines_url
-            ),
-            LicenseItem(
-                R.string.license_kotlin_serialization_title,
-                R.string.license_kotlin_serialization_desc,
-                R.string.license_kotlin_serialization_url
+                R.string.license_okhttp_title,
+                R.string.license_okhttp_desc,
+                R.string.license_okhttp_url
             ),
             LicenseItem(
                 R.string.license_llamacpp_title,
@@ -192,7 +172,33 @@ class LicenseFragment : Fragment() {
                 R.string.license_anyascii_title,
                 R.string.license_anyascii_desc,
                 R.string.license_anyascii_url
+            ),
+            LicenseItem(
+                R.string.license_mnn_title,
+                R.string.license_mnn_desc,
+                R.string.license_mnn_url
+            ),
+            LicenseItem(
+                R.string.license_stable_diffusion_mnn_title,
+                R.string.license_stable_diffusion_mnn_desc,
+                R.string.license_stable_diffusion_mnn_url
+            ),
+            LicenseItem(
+                R.string.license_huggingface_title,
+                R.string.license_huggingface_desc,
+                R.string.license_huggingface_url
+            ),
+            LicenseItem(
+                R.string.license_gemma_title,
+                R.string.license_gemma_desc,
+                R.string.license_gemma_url
+            ),
+            LicenseItem(
+                R.string.license_downloaded_models_title,
+                R.string.license_downloaded_models_desc,
+                R.string.license_downloaded_models_url
             )
+        )
         )
         Column(
             modifier = Modifier
@@ -220,6 +226,12 @@ class LicenseFragment : Fragment() {
                     fontWeight = FontWeight.Bold
                 )
             }
+            Text(
+                text = stringResource(id = R.string.license_body),
+                color = colorResource(id = R.color.text_secondary),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()

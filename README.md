@@ -18,7 +18,7 @@ nezumi-aiは、インターネット接続なしで動作するプライベー�
 - **チャット履歴管理**: Room DBで会話履歴を永続化
 - **高度なツールコール**: AIが画像生成、アラーム設定、Web検索などのツールを自律的に呼び出し
 
-> **注意**: VOICEVOX音声読み上げ機能は、Android 15以降の16KBページサイズ端末との互換性問題のため、現在無効化されています。詳細は [VOICEVOX_RESTORE.md](docs/VOICEVOX_RESTORE.md) を参照してください。
+> **注意**: VOICEVOX音声読み上げ機能は、Android 15以降の16KBページサイズ端末との互換性問題のため、現在無効化されています。現行の Android アプリ配布物およびアプリ内ライセンス画面は、この無効化状態を前提に整理しています。詳細は [VOICEVOX_RESTORE.md](docs/VOICEVOX_RESTORE.md) を参照してください。
 
 ---
 
@@ -167,6 +167,8 @@ KEY_PASSWORD=your_key_password
 
 現在、VOICEVOX機能は **一時的に無効化** されています。理由は以下の通りです：
 
+> 現行の Android アプリ配布物では、この機能を"現行配布物のライセンス一覧"には含めていません。将来再有効化して再配布する場合は、VOICEVOX 関連の通知・規約表示を再度有効化してください。
+
 - VOICEVOX CORE 0.16.4 に同梱の ONNX Runtime 1.17.3 は 4KB ページアライメントでビルドされている
 - Android 15 以降の一部端末（Pixel 6 以降など）は 16KB ページサイズを使用
 - 4KB アライメントのネイティブライブラリは 16KB 端末で `dlopen` 失敗してクラッシュ
@@ -201,7 +203,7 @@ KEY_PASSWORD=your_key_password
 - **AppAuth**: OAuth 2.0 フロー
 - **Kotlin Coroutines**: 非同期処理
 
-詳細ライセンス情報は [NOTICE](NOTICE) を参照してください。
+詳細ライセンス情報は [NOTICE](NOTICE) を参照してください。NOTICE は現行の Android アプリ配布構成に合わせて整理しています。
 
 ---
 
