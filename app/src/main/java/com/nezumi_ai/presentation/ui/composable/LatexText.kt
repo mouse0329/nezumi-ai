@@ -2,6 +2,7 @@ package com.nezumi_ai.presentation.ui.composable
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -167,7 +168,7 @@ fun MarkdownLatexText(
 
     val parts = remember(text) { parseMixed(text) }
 
-    Column(modifier = modifier) {
+    Column(modifier = modifier.animateContentSize()) {
         for (part in parts) {
             when (part) {
                 is MixedPart.MarkdownPart -> {
@@ -270,7 +271,7 @@ fun LatexText(
         items
     }
 
-    Column(modifier = modifier) {
+    Column(modifier = modifier.animateContentSize()) {
         for (item in renderItems) {
             when (item) {
                 is RenderItem.TextRow -> {
