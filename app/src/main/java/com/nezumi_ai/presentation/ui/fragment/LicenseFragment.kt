@@ -199,7 +199,7 @@ class LicenseFragment : Fragment() {
                 R.string.license_downloaded_models_url
             )
         )
-        )
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
