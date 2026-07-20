@@ -82,7 +82,6 @@ import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import androidx.recyclerview.widget.SimpleItemAnimator
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.R
@@ -406,7 +405,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             stackFromEnd = false
         }
         binding.messagesRecyclerView.adapter = adapter
-        (binding.messagesRecyclerView.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
+        binding.messagesRecyclerView.itemAnimator = null
 
         // ★ バグ修正: RecyclerView のスクロール状態をリアルタイム監視
         binding.messagesRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {

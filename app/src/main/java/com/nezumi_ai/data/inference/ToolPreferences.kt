@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import com.nezumi_ai.data.preset.PresetConstants
+import com.nezumi_ai.utils.PreferencesHelper
 import org.json.JSONArray
 
 enum class NezumiTool(val displayName: String) {
@@ -18,12 +19,13 @@ enum class NezumiTool(val displayName: String) {
     LIST_TIMERS("タイマー一覧"),
     GENERATE_IMAGE("画像生成(SD)"),
     SEARCH_MEMORY("メモリ検索"),
-    ADD_CALENDAR_EVENT("カレンダー追加"),
-    LIST_CALENDAR_EVENTS("カレンダー一覧"),
+    // CALENDAR_DISABLED: 復活時は下2行のコメントを外し、presetIdsForTool/isEnabled/setEnabled の対応箇所も戻す
+    // ADD_CALENDAR_EVENT("カレンダー追加"),
+    // LIST_CALENDAR_EVENTS("カレンダー一覧"),
     WEB_SEARCH("ウェブ検索")
 }
 
-class ToolPreferences(context: Context) {
+class ToolPreferences(private val context: Context) {
     companion object {
         private const val PREFS_NAME = "tool_preferences"
         private const val KEY_PREFIX = "tool_enabled_"
@@ -47,8 +49,8 @@ class ToolPreferences(context: Context) {
             NezumiTool.LIST_TIMERS -> setOf(PresetConstants.TOOL_TIMER)
             NezumiTool.GENERATE_IMAGE -> setOf(PresetConstants.TOOL_IMAGE_GENERATION)
             NezumiTool.SEARCH_MEMORY -> setOf(PresetConstants.TOOL_MEMORY)
-            NezumiTool.ADD_CALENDAR_EVENT,
-            NezumiTool.LIST_CALENDAR_EVENTS -> setOf(PresetConstants.TOOL_CALENDAR)
+            // NezumiTool.ADD_CALENDAR_EVENT,
+            // NezumiTool.LIST_CALENDAR_EVENTS -> setOf(PresetConstants.TOOL_CALENDAR)
             NezumiTool.WEB_SEARCH -> setOf(PresetConstants.TOOL_WEB_SEARCH)
         }
     }
@@ -73,12 +75,13 @@ class ToolPreferences(context: Context) {
             } else {
                 // カレンダーツールが追加された場合の初期化
                 val editor = prefs.edit()
-                if (!prefs.contains(keyFor(NezumiTool.ADD_CALENDAR_EVENT))) {
-                    editor.putBoolean(keyFor(NezumiTool.ADD_CALENDAR_EVENT), false)
-                }
-                if (!prefs.contains(keyFor(NezumiTool.LIST_CALENDAR_EVENTS))) {
-                    editor.putBoolean(keyFor(NezumiTool.LIST_CALENDAR_EVENTS), false)
-                }
+                // CALENDAR_DISABLED
+                // if (!prefs.contains(keyFor(NezumiTool.ADD_CALENDAR_EVENT))) {
+                //     editor.putBoolean(keyFor(NezumiTool.ADD_CALENDAR_EVENT), false)
+                // }
+                // if (!prefs.contains(keyFor(NezumiTool.LIST_CALENDAR_EVENTS))) {
+                //     editor.putBoolean(keyFor(NezumiTool.LIST_CALENDAR_EVENTS), false)
+                // }
                 if (!prefs.contains(keyFor(NezumiTool.WEB_SEARCH))) {
                     editor.putBoolean(keyFor(NezumiTool.WEB_SEARCH), false)
                 }
@@ -94,11 +97,10 @@ class ToolPreferences(context: Context) {
 
     fun isEnabled(tool: NezumiTool): Boolean {
         ensureInitialized()
-        // カレンダーツール (追加/一覧) は現時点では一律に無効化し、
-        // プリセット側の設定や SharedPreferences に残った古い値で有効化されないようにする。
-        if (tool == NezumiTool.ADD_CALENDAR_EVENT || tool == NezumiTool.LIST_CALENDAR_EVENTS) {
-            return false
-        }
+        // WEB_SEARCH: APIキー未設定なら常に無効
+        if (tool == NezumiTool.WEB_SEARCH &&
+            PreferencesHelper.getBraveSearchApiKey(context).isBlank()
+        ) return false
         val presetToolIds = getActivePresetToolIds()
         if (presetToolIds != null) {
             return presetIdsForTool(tool).any { it in presetToolIds }
@@ -107,11 +109,7 @@ class ToolPreferences(context: Context) {
     }
 
     fun setEnabled(tool: NezumiTool, enabled: Boolean) {
-        // カレンダーツールは外部から true にされても永続化しない（常に false）。
-        val effectiveEnabled = if (
-            tool == NezumiTool.ADD_CALENDAR_EVENT || tool == NezumiTool.LIST_CALENDAR_EVENTS
-        ) false else enabled
-        prefs.edit().putBoolean(keyFor(tool), effectiveEnabled).apply()
+        prefs.edit().putBoolean(keyFor(tool), enabled).apply()
     }
 
     fun getEnabledTools(): Set<NezumiTool> {

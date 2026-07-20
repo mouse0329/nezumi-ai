@@ -32,6 +32,7 @@ import com.nezumi_ai.data.database.entity.AlarmEntity
 import com.nezumi_ai.data.inference.NezumiTool
 import com.nezumi_ai.data.inference.ToolPreferences
 import com.nezumi_ai.data.tools.ToolSystemController
+import com.nezumi_ai.utils.PreferencesHelper
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -59,21 +60,21 @@ class ToolsSettingsFragment : Fragment() {
             }
         }
 
-    private val calendarPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
-            val tool = pendingEnableTool
-            pendingEnableTool = null
-            if (tool == null) return@registerForActivityResult
-
-            val readGranted = results[Manifest.permission.READ_CALENDAR] == true
-            val writeGranted = results[Manifest.permission.WRITE_CALENDAR] == true
-            if (readGranted && writeGranted) {
-                updateToolEnabledDirect(tool, true)
-            } else {
-                updateToolEnabledDirect(tool, false)
-                toast("カレンダー機能にはカレンダー権限が必要です")
-            }
-        }
+    // CALENDAR_DISABLED
+    // private val calendarPermissionLauncher =
+    //     registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+    //         val tool = pendingEnableTool
+    //         pendingEnableTool = null
+    //         if (tool == null) return@registerForActivityResult
+    //         val readGranted = results[Manifest.permission.READ_CALENDAR] == true
+    //         val writeGranted = results[Manifest.permission.WRITE_CALENDAR] == true
+    //         if (readGranted && writeGranted) {
+    //             updateToolEnabledDirect(tool, true)
+    //         } else {
+    //             updateToolEnabledDirect(tool, false)
+    //             toast("カレンダー機能にはカレンダー権限が必要です")
+    //         }
+    //     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -180,19 +181,21 @@ class ToolsSettingsFragment : Fragment() {
     @Composable
     private fun ToolSettingsCard() {
         val setAlarmEnabled = toolEnabled[NezumiTool.SET_ALARM] ?: false
+        val hasWebSearchApiKey = PreferencesHelper.getBraveSearchApiKey(requireContext()).isNotBlank()
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(text = "ツール設定", fontWeight = FontWeight.Bold)
-                // カレンダーツール (追加/一覧) は現時点では有効化を受け付けないため、
-                // UI 一覧自体から除外する。
-                NezumiTool.entries
-                    .filter { it != NezumiTool.ADD_CALENDAR_EVENT && it != NezumiTool.LIST_CALENDAR_EVENTS }
-                    .forEach { tool ->
+                // CALENDAR_DISABLED: enum から削除済みのため自動的に非表示
+                NezumiTool.entries.forEach { tool ->
                         val enabled = toolEnabled[tool] ?: (tool == NezumiTool.GET_TIME)
-                        val canToggle = tool != NezumiTool.LIST_ALARMS || setAlarmEnabled
+                        val canToggle = when {
+                            tool == NezumiTool.LIST_ALARMS -> setAlarmEnabled
+                            tool == NezumiTool.WEB_SEARCH -> hasWebSearchApiKey
+                            else -> true
+                        }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -208,6 +211,13 @@ class ToolsSettingsFragment : Fragment() {
                         if (tool == NezumiTool.LIST_ALARMS && !setAlarmEnabled) {
                             Text(
                                 text = "「アラームセット」が有効な場合のみ使用できます",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorResource(id = R.color.text_secondary)
+                            )
+                        }
+                        if (tool == NezumiTool.WEB_SEARCH && !hasWebSearchApiKey) {
+                            Text(
+                                text = "設定から Brave Search API キーを設定すると有効になります",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colorResource(id = R.color.text_secondary)
                             )
@@ -278,16 +288,13 @@ class ToolsSettingsFragment : Fragment() {
                 return
             }
         }
-        if (tool == NezumiTool.ADD_CALENDAR_EVENT || tool == NezumiTool.LIST_CALENDAR_EVENTS) {
-            // カレンダーツールは現時点では有効化させない (常に無効)。
-            // 設定を確実に OFF にし、トーストで利用不可を告知する。
-            toolPreferences.setEnabled(tool, false)
-            loadToolSettings()
-            if (enabled) {
-                toast("カレンダーツールは現在利用できません")
-            }
-            return
-        }
+        // CALENDAR_DISABLED
+        // if (tool == NezumiTool.ADD_CALENDAR_EVENT || tool == NezumiTool.LIST_CALENDAR_EVENTS) {
+        //     toolPreferences.setEnabled(tool, false)
+        //     loadToolSettings()
+        //     if (enabled) toast("カレンダーツールは現在利用できません")
+        //     return
+        // }
         if (enabled && tool == NezumiTool.SET_ALARM && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val alarmManager = requireContext().getSystemService(AlarmManager::class.java)
             if (alarmManager != null && !alarmManager.canScheduleExactAlarms()) {

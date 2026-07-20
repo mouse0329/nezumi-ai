@@ -72,16 +72,17 @@ object GgufToolPromptBuilder {
             "Searches stored conversation memories.",
             """{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer"}},"required":["query"]}"""
         ),
-        ToolSchema(
-            "add_calendar_event",
-            "Adds a calendar event.",
-            """{"type":"object","properties":{"title":{"type":"string"},"start_time":{"type":"string"},"end_time":{"type":"string"},"description":{"type":"string"}},"required":["title","start_time"]}"""
-        ),
-        ToolSchema(
-            "list_calendar_events",
-            "Lists upcoming calendar events.",
-            """{"type":"object","properties":{"days_ahead":{"type":"integer"}},"required":[]}"""
-        ),
+        // CALENDAR_DISABLED
+        // ToolSchema(
+        //     "add_calendar_event",
+        //     "Adds a calendar event.",
+        //     """{"type":"object","properties":{"title":{"type":"string"},"start_time":{"type":"string"},"end_time":{"type":"string"},"description":{"type":"string"}},"required":["title","start_time"]}"""
+        // ),
+        // ToolSchema(
+        //     "list_calendar_events",
+        //     "Lists upcoming calendar events.",
+        //     """{"type":"object","properties":{"days_ahead":{"type":"integer"}},"required":[]}"""
+        // ),
         ToolSchema(
             "web_search",
             "Searches the web for information.",
@@ -101,8 +102,9 @@ object GgufToolPromptBuilder {
         NezumiTool.LIST_TIMERS to "list_timers",
         NezumiTool.GENERATE_IMAGE to "generate_image",
         NezumiTool.SEARCH_MEMORY to "search_memory",
-        NezumiTool.ADD_CALENDAR_EVENT to "add_calendar_event",
-        NezumiTool.LIST_CALENDAR_EVENTS to "list_calendar_events",
+        // CALENDAR_DISABLED
+        // NezumiTool.ADD_CALENDAR_EVENT to "add_calendar_event",
+        // NezumiTool.LIST_CALENDAR_EVENTS to "list_calendar_events",
         NezumiTool.WEB_SEARCH to "web_search"
     )
 

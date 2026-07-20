@@ -21,7 +21,7 @@ object PresetConstants {
 
     val allToolIds: List<String> = listOf(
         TOOL_ALARM,
-        TOOL_CALENDAR,
+        // CALENDAR_DISABLED: TOOL_CALENDAR,
         TOOL_GMAIL,
         TOOL_SWITCHBOT,
         TOOL_FLASHLIGHT,

@@ -73,14 +73,14 @@ private val TOOL_NAME_MAP = mapOf(
     "search_memory"      to "searchmemory",
     "searchMemory"       to "searchmemory",
     "searchmemory"       to "searchmemory",
-    // add_calendar_event
-    "add_calendar_event" to "addcalendarevent",
-    "addCalendarEvent"   to "addcalendarevent",
-    "addcalendarevent"   to "addcalendarevent",
-    // list_calendar_events
-    "list_calendar_events" to "listcalendarevents",
-    "listCalendarEvents"   to "listcalendarevents",
-    "listcalendarevents"   to "listcalendarevents",
+    // CALENDAR_DISABLED
+    // "add_calendar_event" to "addcalendarevent",
+    // "addCalendarEvent"   to "addcalendarevent",
+    // "addcalendarevent"   to "addcalendarevent",
+    // // list_calendar_events
+    // "list_calendar_events" to "listcalendarevents",
+    // "listCalendarEvents"   to "listcalendarevents",
+    // "listcalendarevents"   to "listcalendarevents",
     // web_search
     "web_search"           to "websearch",
     "webSearch"            to "websearch",
@@ -122,8 +122,9 @@ internal fun buildEnabledToolProviders(context: Context, alarmDao: AlarmDao): Li
             Log.d(TOOL_TAG, "Adding SearchMemorySchema to tool providers")
             add(tool(SearchMemorySchema()))
         }
-        if (NezumiTool.ADD_CALENDAR_EVENT in enabled) add(tool(AddCalendarEventSchema()))
-        if (NezumiTool.LIST_CALENDAR_EVENTS in enabled) add(tool(ListCalendarEventsSchema()))
+        // CALENDAR_DISABLED
+        // if (NezumiTool.ADD_CALENDAR_EVENT in enabled) add(tool(AddCalendarEventSchema()))
+        // if (NezumiTool.LIST_CALENDAR_EVENTS in enabled) add(tool(ListCalendarEventsSchema()))
         if (NezumiTool.WEB_SEARCH in enabled) {
             Log.d(TOOL_TAG, "Adding WebSearchSchema to tool providers")
             add(tool(WebSearchSchema()))
@@ -300,8 +301,9 @@ internal class NezumiLiteRtToolExecutor(
             "listtimers"      -> executeListTimers()
             "generateimage"   -> executeGenerateImage(toolCall)
             "searchmemory"    -> executeSearchMemory(toolCall)
-            "addcalendarevent" -> executeAddCalendarEvent(toolCall)
-            "listcalendarevents" -> executeListCalendarEvents(toolCall)
+            // CALENDAR_DISABLED
+            // "addcalendarevent" -> executeAddCalendarEvent(toolCall)
+            // "listcalendarevents" -> executeListCalendarEvents(toolCall)
             "websearch"       -> executeWebSearch(toolCall)
             else -> {
                 Log.w(TOOL_TAG, "Unknown tool: ${toolCall.name}")
@@ -326,8 +328,9 @@ internal class NezumiLiteRtToolExecutor(
             "listtimers" -> NezumiTool.LIST_TIMERS
             "generateimage" -> NezumiTool.GENERATE_IMAGE
             "searchmemory" -> NezumiTool.SEARCH_MEMORY
-            "addcalendarevent" -> NezumiTool.ADD_CALENDAR_EVENT
-            "listcalendarevents" -> NezumiTool.LIST_CALENDAR_EVENTS
+            // CALENDAR_DISABLED
+            // "addcalendarevent" -> NezumiTool.ADD_CALENDAR_EVENT
+            // "listcalendarevents" -> NezumiTool.LIST_CALENDAR_EVENTS
             "websearch" -> NezumiTool.WEB_SEARCH
             else -> null
         }
