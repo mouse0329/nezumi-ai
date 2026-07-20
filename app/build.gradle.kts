@@ -40,7 +40,7 @@ android {
         applicationId = "com.nezumi_ai"
         minSdk = 30
         targetSdk = 37
-        versionCode = 14
+        versionCode = 16
         versionName = "2.2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -57,8 +57,8 @@ android {
         // -----------------------------------------------------------------------
 
 
-        val safetyPromptEnabled = true
-        val safetyImageEnabled  = true
+        val safetyPromptEnabled = false
+        val safetyImageEnabled  = false
 
 
         buildConfigField(
