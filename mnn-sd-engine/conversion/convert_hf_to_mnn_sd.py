@@ -69,45 +69,29 @@ def onnx_to_mnn(onnx_path, mnn_path, *, fp16=False, quant_bits=0,
 # (torch 2.x の scaled_dot_product_attention は opset 14 では出せないため)
 # --------------------------------------------------------------------------- #
 def scaled_dot_product_attention_patch(query, key, value, attn_mask=None,
-                                       dropout_p=0.0, is_causal=False, scale=None,
-                                       chunk_size: int = 512):
+                                       dropout_p=0.0, is_causal=False, scale=None):
     """
-    素朴な matmul+softmax+matmul の代わりに、クエリ次元をチャンク分割して
-    計算するメモリ効率版。QK^T のフル NxN 行列を一度に作らないため、
-    ONNX/MNN 実行時のピークメモリを大幅に削減できる
-    (512x512 の SD1.5 UNet では最大 4096x4096 のスコア行列が複数箇所に
-    現れ、これが optimizeLevel=1 (バッファ再利用なし) 環境で数GB級の
-    ピークメモリの主因になっていた)。
+    素朴な matmul+softmax+matmul 実装 (チャンク分割はしない)。
+    ★ 重要: チャンク分割版は Python の for ループ回数が
+      torch.onnx.export トレース時のシーケンス長 L で固定され、
+      dynamic_axes を付けても解像度ごとに変化しない。結果、トレース時と
+      異なる解像度で実行すると shape エラーは出ないが、チャンク境界が
+      ズレて出力が壊れる (実機で "cat" が意味不明な画像になった原因)。
+      メモリ削減効果も実測でほぼ無かったため、チャンク分割は行わない。
     """
     L, S = query.size(-2), key.size(-2)
     scale_factor = 1 / (query.size(-1) ** 0.5) if scale is None else scale
+    attn_weight = query @ key.transpose(-2, -1) * scale_factor
+    if is_causal:
+        mask = torch.ones(L, S, dtype=torch.bool, device=query.device).tril(diagonal=0)
+        attn_weight.masked_fill_(mask.logical_not(), float("-inf"))
+    if attn_mask is not None:
+        if attn_mask.dtype == torch.bool:
+            attn_weight.masked_fill_(attn_mask.logical_not(), float("-inf"))
+        else:
+            attn_weight += attn_mask
+    return torch.softmax(attn_weight, dim=-1) @ value
 
-    if is_causal or L <= chunk_size:
-        # causal (CLIP text encoder 用) やチャンク不要なほど小さい場合は従来通り
-        attn_weight = query @ key.transpose(-2, -1) * scale_factor
-        if is_causal:
-            mask = torch.ones(L, S, dtype=torch.bool, device=query.device).tril(diagonal=0)
-            attn_weight.masked_fill_(mask.logical_not(), float("-inf"))
-        if attn_mask is not None:
-            if attn_mask.dtype == torch.bool:
-                attn_weight.masked_fill_(attn_mask.logical_not(), float("-inf"))
-            else:
-                attn_weight += attn_mask
-        return torch.softmax(attn_weight, dim=-1) @ value
-
-    outputs = []
-    for start in range(0, L, chunk_size):
-        end = min(start + chunk_size, L)
-        q_chunk = query[..., start:end, :]
-        attn_weight = q_chunk @ key.transpose(-2, -1) * scale_factor
-        if attn_mask is not None:
-            if attn_mask.dtype == torch.bool:
-                attn_weight.masked_fill_(attn_mask.logical_not(), float("-inf"))
-            else:
-                attn_weight += attn_mask
-        attn_weight = torch.softmax(attn_weight, dim=-1)
-        outputs.append(attn_weight @ value)
-    return torch.cat(outputs, dim=-2)
 
 
 torch.nn.functional.scaled_dot_product_attention = scaled_dot_product_attention_patch
@@ -340,6 +324,11 @@ def main():
         dummy_timestep = torch.tensor([999], dtype=torch.int32)   # ← ★ int32 ★
         dummy_ehs = torch.randn(1, 77, hidden)
 
+        # ★ dynamic_axes で sample の H/W (latent の高さ・幅) をシンボリックに
+        #   保つ。これを指定しないと GroupNorm/Transformer2DModel 内部の
+        #   reshape が全部トレース時の解像度でリテラル固定されてしまい、
+        #   変換時に指定した --size 以外の解像度で実行時に
+        #   "Reshape error" が発生する (実測済み)。
         torch.onnx.export(
             model_to_run,
             (dummy_sample, dummy_timestep, dummy_ehs),
@@ -347,6 +336,10 @@ def main():
             input_names=["sample", "timestep", "encoder_hidden_states"],
             output_names=["out_sample"],
             opset_version=14,
+            dynamic_axes={
+                "sample": {0: "batch", 2: "height", 3: "width"},
+                "out_sample": {0: "batch", 2: "height", 3: "width"},
+            },
         )
 
         # UNet 最大の節約ポイント
@@ -379,11 +372,16 @@ def main():
         model_to_run = VAEDecoderWrapper(vae).eval()
         # ランタイムは latent_sample [1, 4, H/8, W/8]
         dummy_latent = torch.randn(1, 4, args.size // 8, args.size // 8)
+        # ★ UNet と同じ理由で VAE decoder も latent の H/W を動的にする
         torch.onnx.export(
             model_to_run, (dummy_latent,), onnx_r.as_posix(),
             input_names=["latent_sample"],
             output_names=["sample"],
             opset_version=14,
+            dynamic_axes={
+                "latent_sample": {0: "batch", 2: "height", 3: "width"},
+                "sample": {0: "batch", 2: "height", 3: "width"},
+            },
         )
         # VAE は int4 だと簡単に色が抜ける。int8 のままで fp16 の効果だけ乗せる
         onnx_to_mnn(onnx_r, out_dir / f_vae,
