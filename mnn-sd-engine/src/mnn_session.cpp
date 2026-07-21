@@ -109,7 +109,7 @@ namespace
         MNN::BackendConfig backend_config{};
         MNN::ScheduleConfig schedule{};
 
-        ScheduleBundle(MnnSdBackend backend, SdModelKind kind)
+        ScheduleBundle(MnnSdBackend backend, SdModelKind kind, bool low_memory_unet)
         {
             backend_config.power = MNN::BackendConfig::Power_High;
             if (backend == MNN_SD_BACKEND_OPENCL)
@@ -143,11 +143,14 @@ namespace
                     //   短いことも、途中で NaN 化して以降のカーネルが早期終了
                     //   している傍証。
                     //
-                    //   対処: UNet も fp32 に上げる。CPU の 2 倍程度は遅くなるが、
-                    //   絵にならないよりマシ。将来的に vae_fp16_fix 相当の
-                    //   layer-wise upcast を実装する余地は残す。
+                    // CuteYukiMix overflows on several mobile OpenCL drivers
+                    // in FP16 (the first UNet output becomes Inf/NaN). Keep
+                    // FP32 arithmetic, but honor the low-memory request for
+                    // the allocator so activation buffers are not retained.
                     backend_config.precision = MNN::BackendConfig::Precision_High;
-                    backend_config.memory = MNN::BackendConfig::Memory_Normal;
+                    backend_config.memory = low_memory_unet
+                                                ? MNN::BackendConfig::Memory_Low
+                                                : MNN::BackendConfig::Memory_Normal;
                     break;
                 case SdModelKind::CLIP:
                 default:
@@ -201,6 +204,7 @@ namespace
         const std::string &model_path,
         MnnSdBackend backend,
         SdModelKind kind,
+        bool low_memory_unet,
         std::shared_ptr<MNN::Interpreter> &interpreter,
         MNN::Session *&session,
         MnnSdErrorInfo *out_error)
@@ -218,7 +222,10 @@ namespace
             return MNN_SD_ERR_MODEL_INVALID;
         }
 
-        ScheduleBundle bundle(backend, kind);
+        ScheduleBundle bundle(backend, kind, low_memory_unet);
+        PROBE_LOG("MNN session: model=%s backend=%d kind=%d unet_low_memory=%d",
+                  model_path.c_str(), static_cast<int>(backend), static_cast<int>(kind),
+                  low_memory_unet ? 1 : 0);
         session = interpreter->createSession(bundle.schedule);
         if (!session)
         {
@@ -598,7 +605,7 @@ extern "C"
         }
 
         // Probe path uses the safest CLIP-equivalent config.
-        ScheduleBundle bundle(backend, SdModelKind::CLIP);
+        ScheduleBundle bundle(backend, SdModelKind::CLIP, false);
         MNN::Session *session = net->createSession(bundle.schedule);
         if (!session)
         {
@@ -2283,6 +2290,7 @@ extern "C"
         {
             MnnSdError err = create_interpreter_and_session(
                 engine->clip_path, effective_backend, SdModelKind::CLIP,
+                false,
                 engine->clip_interpreter, engine->clip_session, out_error);
             if (err != MNN_SD_OK)
                 return err;
@@ -2652,6 +2660,7 @@ extern "C"
         {
             MnnSdError err = create_interpreter_and_session(
                 engine->unet_path, effective_backend, SdModelKind::UNET,
+                engine->load_options.precision_low != 0,
                 engine->unet_interpreter, engine->unet_session, out_error);
             if (err != MNN_SD_OK)
                 return err;
@@ -2944,6 +2953,7 @@ extern "C"
         {
             MnnSdError err = create_interpreter_and_session(
                 engine->vae_path, effective_backend, SdModelKind::VAE,
+                false,
                 engine->vae_interpreter, engine->vae_session, out_error);
             if (err != MNN_SD_OK)
             {

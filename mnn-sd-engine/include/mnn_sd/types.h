@@ -48,7 +48,13 @@ extern "C"
     {
         MnnSdBackend backend;
         int32_t opencl_safe_max_side; /**< 0 = engine default (448) */
-        int32_t precision_low;        /**< non-zero = MNN Precision_Low */
+        /**
+         * OpenCL の UNet に MNN Memory_Low を要求する。
+         *
+         * CuteYukiMix の UNet は一部のモバイル GPU で FP16 overflow を起こす
+         * ため、演算精度は FP32 のまま維持する。
+         */
+        int32_t precision_low;
         const char *opencl_tuning;    /**< e.g. "WIDE", "FAST"; may be NULL */
     } MnnSdLoadOptions;
 
