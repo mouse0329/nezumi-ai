@@ -25,6 +25,12 @@ object PreferencesHelper {
     private const val KEY_ALWAYS_LOCK_ENABLED = "always_lock_enabled"
     private const val KEY_STOP_KEYBOARD_LEARNING = "stop_keyboard_learning"
     private const val KEY_SD_USE_OPENCL = "sd_use_opencl"
+    // ★ 新設: 全般タブで切り替えられる UI 表示オプション。既定はいずれも「表示しない」。
+    private const val KEY_SHOW_CONTEXT_METER = "show_context_meter"
+    private const val KEY_SHOW_TPS = "show_tps"
+    private const val KEY_SHOW_TTFT = "show_ttft"
+    // ★ スクリーンショット無効化 (FLAG_SECURE を常時有効化するかどうか)
+    private const val KEY_DISABLE_SCREENSHOT = "disable_screenshot"
 
     const val THEME_SYSTEM = "SYSTEM"
     const val THEME_LIGHT = "LIGHT"
@@ -238,6 +244,42 @@ object PreferencesHelper {
 
     fun setSdUseOpenCL(context: Context, enabled: Boolean) {
         getSharedPreferences(context).edit().putBoolean(KEY_SD_USE_OPENCL, enabled).apply()
+    }
+
+    // ★ コンテキストメーターの表示可否。既定は「表示しない (false)」。
+    fun isShowContextMeter(context: Context): Boolean {
+        return getSharedPreferences(context).getBoolean(KEY_SHOW_CONTEXT_METER, false)
+    }
+
+    fun setShowContextMeter(context: Context, enabled: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_SHOW_CONTEXT_METER, enabled).apply()
+    }
+
+    // ★ トークン/秒表示の可否。既定は「表示しない (false)」。
+    fun isShowTps(context: Context): Boolean {
+        return getSharedPreferences(context).getBoolean(KEY_SHOW_TPS, false)
+    }
+
+    fun setShowTps(context: Context, enabled: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_SHOW_TPS, enabled).apply()
+    }
+
+    // ★ TTFT (最初のトークンまでの時間) 表示の可否。既定は「表示しない (false)」。
+    fun isShowTtft(context: Context): Boolean {
+        return getSharedPreferences(context).getBoolean(KEY_SHOW_TTFT, false)
+    }
+
+    fun setShowTtft(context: Context, enabled: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_SHOW_TTFT, enabled).apply()
+    }
+
+    // ★ スクリーンショット無効化。既定は無効 (false)。
+    fun isDisableScreenshot(context: Context): Boolean {
+        return getSharedPreferences(context).getBoolean(KEY_DISABLE_SCREENSHOT, false)
+    }
+
+    fun setDisableScreenshot(context: Context, enabled: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_DISABLE_SCREENSHOT, enabled).apply()
     }
 }
 

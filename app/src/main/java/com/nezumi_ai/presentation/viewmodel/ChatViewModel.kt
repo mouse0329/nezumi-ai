@@ -1845,6 +1845,8 @@ class ChatViewModel(
             val activeStreamingMessageId = streamingMessageId
                 ?: throw IllegalStateException("Failed to create streaming message")
             streamingAssistantMessageIdForTools = activeStreamingMessageId
+            // ★ 新: TTFT (Time To First Token) の基準時刻。推論パイプラインに入った直後の時刻として抱える。
+            val streamStartedAtMs: Long = SystemClock.elapsedRealtime()
             // ★ ストリーミングレコードの id が定まったので、この parent の選択ターゲットを
             //   新規作成した variantIndex に合わせておく。UI を新応答にジャンプさせるため。
             if (effectiveParentId != null) {
@@ -1876,6 +1878,12 @@ class ChatViewModel(
             var lastPersistAt = 0L
             var toolResultsJson: String? = null
             var firstOutputAtMs: Long? = null
+            // ★ 新: 本文の最初のトークンが到達した時刻 (シンキング間は含めない。TPS 算出に使う)
+            var firstAnswerAtMs: Long? = null
+            // ★ 新: シンキング中の経過時間 (ms) を累積して本文生成時間から引く
+            var thinkingElapsedMs: Long = 0L
+            // ★ 新: シンキングフェーズ開始時刻 (フェーズが閉じた時に差分を thinkingElapsedMs に加算)
+            var thinkingStartedAtMs: Long? = null
             var generationEndAtMs: Long? = null
             var tokenCount = 0f
 
@@ -1937,6 +1945,7 @@ class ChatViewModel(
                                     firstTokenTimeoutJob.cancel()
                                     firstOutputAtMs = SystemClock.elapsedRealtime()
                                 }
+                                val chunkArrivedAt = SystemClock.elapsedRealtime()
                                 lastChunkAt.set(SystemClock.elapsedRealtime())
                                 // Split incoming chunk by embedded control markers so that
                                 // markers like \u0000__TPS__\u0000 or \u0000__FINAL__\u0000
@@ -1965,6 +1974,10 @@ class ChatViewModel(
                                             answerBuilder.append(resolvedFinal)
                                         }
                                         thinkDelta != null -> {
+                                            // ★ シンキングフェーズ開始を記録 (未開始のときだけ)
+                                            if (thinkingStartedAtMs == null && firstAnswerAtMs == null) {
+                                                thinkingStartedAtMs = chunkArrivedAt
+                                            }
                                             if (!nativeThinkingStream && answerBuilder.isNotBlank()) {
                                                 val leadingThinking =
                                                     Gemma4ThinkingParser.sanitizeVisibleText(answerBuilder.toString())
@@ -2073,11 +2086,20 @@ class ChatViewModel(
                                                     // TPS 表示を実態に一致させる。
                                                     val deltaText = merged.substring(currentContent.length)
                                                     tokenCount += TextTokenEstimator.estimateOutputTokens(deltaText)
-                                                    if (tokenCount >= 10f && firstOutputAtMs != null) {
-                                                        val elapsed = SystemClock.elapsedRealtime() - firstOutputAtMs
-                                                        if (elapsed > 0) {
-                                                            _currentTps.value = (tokenCount * 1000f) / elapsed
+                                                    // ★ 本文の最初のトークン到達時刻を記録。既にシンキングフェーズに入っていたら
+                                                    // その差分を thinkingElapsedMs に一度だけ収めて、シンキングフェーズを閉じる。
+                                                    if (firstAnswerAtMs == null) {
+                                                        firstAnswerAtMs = chunkArrivedAt
+                                                        thinkingStartedAtMs?.let { start ->
+                                                            val diff = chunkArrivedAt - start
+                                                            if (diff > 0L) thinkingElapsedMs += diff
+                                                            thinkingStartedAtMs = null
                                                         }
+                                                    }
+                                                    if (tokenCount >= 10f && firstAnswerAtMs != null) {
+                                                        val elapsed = (SystemClock.elapsedRealtime() - firstAnswerAtMs!!)
+                                                            .coerceAtLeast(1L)
+                                                        _currentTps.value = (tokenCount * 1000f) / elapsed
                                                     }
                                                     if (BuildConfig.DEBUG) {
                                                         Log.d(
@@ -2348,9 +2370,23 @@ class ChatViewModel(
 
             Log.d(TAG, "generateAIResponse finalization: hasPayload=$hasPayload, activeStreamingMessageId=$activeStreamingMessageId, completeResponse.len=${completeResponse.length}, finalThinking=${!finalThinking.isNullOrEmpty()}")
 
+            // ★ TTFT: 送信・推論開始から最初の (シンキングも含む) トークンまでの時間。
+            //   generationStartAtMs 相当のベースラインとして requestStartedAtMs を参照したいが、
+            //   当スコープでは firstOutputAtMs を得ているのでストリーミング開始 (streamStartedAtMs) を別途使う。
+            //   ここでは streamStartedAtMs の代わりに activeStreamingMessageId 取得直後の基準時刻を →
+            //   値がなければ firstOutputAtMs 相当を利用 (この場合 TTFT = 0)。
+            val ttftMs: Long? = firstOutputAtMs?.let { first ->
+                val start = streamStartedAtMs
+                if (start != null && first >= start) (first - start).coerceAtLeast(0L) else null
+            }
+            // ★ 修正: 本文生成時間 = (終了 - 最初の本文トークン) − (シンキング中の経過時間)。
+            //   これによりシンキングに長い時間を使っても TPS が不当に小さくならない。
+            //   firstAnswerAtMs がない (本文を一切出さなかった) 場合は従来通り firstOutputAtMs を使う。
             val generationTimeMs = firstOutputAtMs?.let { first ->
                 val end = generationEndAtMs ?: SystemClock.elapsedRealtime()
-                (end - first).coerceAtLeast(0L)
+                val baseStart = firstAnswerAtMs ?: first
+                val raw = end - baseStart
+                (raw - thinkingElapsedMs.coerceAtLeast(0L)).coerceAtLeast(0L)
             }
             val tps = if (generationTimeMs != null && generationTimeMs > 0L) {
                 val tokensAfterFirst = if (isGgufEngineModel(engineModelName)) {
@@ -2384,7 +2420,8 @@ class ChatViewModel(
                         thinkingContent = finalThinking,
                         toolResultsJson = finalToolResultsJson,
                         generationTps = tps,
-                        generationTimeMs = generationTimeMs
+                        generationTimeMs = generationTimeMs,
+                        ttftMs = ttftMs
                     )
                     Log.d(TAG, "Message content update complete")
                     if (contentToSave.isNotEmpty() && !stoppedWithoutPayload) {

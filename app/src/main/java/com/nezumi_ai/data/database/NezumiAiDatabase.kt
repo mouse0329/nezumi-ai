@@ -32,7 +32,7 @@ import com.nezumi_ai.data.database.entity.SettingsEntity
         MemoryEntity::class,
         MemorySessionEntity::class
     ],
-    version = 27,
+    version = 28,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
@@ -57,7 +57,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                     NezumiAiDatabase::class.java,
                     "nezumi_ai.db"
                 )
-                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27)
+                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28)
                     // 開発中: スキーマ不一致時は再作成して起動クラッシュを回避
                     .fallbackToDestructiveMigration()
                     .build()
@@ -131,6 +131,15 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                 )
                 database.execSQL(
                     "ALTER TABLE message ADD COLUMN variantIndex INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
+        // ★ v28: TTFT (最初のトークンまでの時間) カラムを追加
+        private val MIGRATION_27_28 = object : androidx.room.migration.Migration(27, 28) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE message ADD COLUMN ttftMs INTEGER"
                 )
             }
         }

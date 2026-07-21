@@ -92,11 +92,11 @@ class MessageAdapter(
      */
     private var isGenerating: Boolean = false
 
-    // ★ Thinking 表示仕様：
-    //   - 設定の Thinking スイッチ (OFF/ON) に依存しない。
-    //     OFF / Instant モード中でもモデルが思考を出したら隠さず表示する。
-    //   - 生成中/生成後を問わず、Thinking ブロックは常に展開したまま表示する。
-    //   - そのため、旧「展開状態を覚える」集合は互換のため残すが現在は使わない。
+    // ★ Thinking 表示仕様 (バグ修正後の新仕様)：
+    //   - モデルが思考を出したら常にブロックを表示する (設定に依存しない)。
+    //   - 【生成中】：強制的に展開し、トグル行は一切表示しない (閉じるバタンを消す)。
+    //   - 【生成後】：一律に自動で閉じ、トグルボタンを表示してユーザーが開閉できるようにする。
+    //     開閉状態は thinkingExpandedByMessageId に保持し、重複バインドにも耐える。
     private val thinkingExpandedByMessageId = mutableSetOf<Long>()
     private var speakingMessageId: Long? = null
     private var streamingMessageId: Long? = null
@@ -574,15 +574,51 @@ class MessageAdapter(
                         lastRenderedThinking = thinking
                     }
 
-                    aiThinkingBody.visibility = View.VISIBLE
-                    aiThinkingMarkdownCompose.visibility = View.VISIBLE
-                    aiThinkingToggleRow.visibility = View.GONE
-                    aiThinkingToggleRow.setOnClickListener(null)
+                    // ★ バグ修正：生成中 = 強制展開、トグル行非表示 (閉じるボタンを消す)。
+                    //   生成完了後 = トグル行を表示し、自動で閉じる (ユーザーが手動で開ける)。
+                    val streaming = message.isStreaming
+                    if (streaming) {
+                        // 生成中: トグル行を一切表示せず、強制展開。
+                        aiThinkingToggleRow.visibility = View.GONE
+                        aiThinkingToggleRow.setOnClickListener(null)
+                        aiThinkingToggleRow.isClickable = false
+                        aiThinkingBody.visibility = View.VISIBLE
+                        aiThinkingMarkdownCompose.visibility = View.VISIBLE
+                        // 生成中は展開フラグを集合から削除しておき、完了後の初回バインドでは閉じた状態になるようにする。
+                        thinkingExpandedByMessageId.remove(message.id)
+                    } else {
+                        // 生成完了後: トグル行を表示し、初期は閉じた状態。
+                        val expanded = thinkingExpandedByMessageId.contains(message.id)
+                        aiThinkingToggleRow.visibility = View.VISIBLE
+                        aiThinkingToggleRow.isClickable = true
+                        aiThinkingBody.visibility = if (expanded) View.VISIBLE else View.GONE
+                        aiThinkingMarkdownCompose.visibility = if (expanded) View.VISIBLE else View.GONE
+                        val toggleLabel = binding.aiThinkingToggleLabel
+                        val chevron = binding.aiThinkingChevron
+                        toggleLabel.text = binding.root.context.getString(
+                            if (expanded) R.string.gemma_hide_thinking else R.string.gemma_show_thinking
+                        )
+                        chevron.text = if (expanded) "▲" else "▼"
+                        aiThinkingToggleRow.setOnClickListener {
+                            val nowExpanded = thinkingExpandedByMessageId.contains(message.id)
+                            if (nowExpanded) {
+                                thinkingExpandedByMessageId.remove(message.id)
+                            } else {
+                                thinkingExpandedByMessageId.add(message.id)
+                            }
+                            // 自己リバインドで展開状態を反映
+                            val position = bindingAdapterPosition
+                            if (position != RecyclerView.NO_POSITION) {
+                                notifyItemChanged(position)
+                            }
+                        }
+                    }
                 } else {
                     aiThinkingBlock.visibility = View.GONE
                     aiThinkingBody.visibility = View.GONE
                     aiThinkingMarkdownCompose.visibility = View.GONE
                     lastRenderedThinking = null
+                    thinkingExpandedByMessageId.remove(message.id)
                 }
 
                 val visibleContent = message.content.stripGemmaTokens()
@@ -730,14 +766,26 @@ class MessageAdapter(
                     onAiMessageSpeak(message, speakText)
                 }
 
+                // ★ t/s と TTFT は全般タブの設定で非表示にできる。既定は両方とも非表示。
+                val ctx = binding.root.context
+                val showTps = com.nezumi_ai.utils.PreferencesHelper.isShowTps(ctx)
+                val showTtft = com.nezumi_ai.utils.PreferencesHelper.isShowTtft(ctx)
                 val tps = message.generationTps
                 val generationTimeMs = message.generationTimeMs
-                if (!message.isStreaming && ((tps != null && tps > 0f) || (generationTimeMs != null && generationTimeMs > 0L))) {
+                val ttftMs = message.ttftMs
+                val parts = mutableListOf<String>()
+                if (!message.isStreaming) {
+                    if (showTps) {
+                        tps?.takeIf { it > 0f }?.let { parts += String.format("%.1f t/s", it) }
+                        generationTimeMs?.takeIf { it > 0L }?.let { parts += formatGenerationTime(it) }
+                    }
+                    if (showTtft) {
+                        ttftMs?.takeIf { it > 0L }?.let { parts += formatTtft(it) }
+                    }
+                }
+                if (parts.isNotEmpty()) {
                     tvTps.visibility = View.VISIBLE
-                    tvTps.text = listOfNotNull(
-                        tps?.takeIf { it > 0f }?.let { String.format("%.1f t/s", it) },
-                        generationTimeMs?.takeIf { it > 0L }?.let { formatGenerationTime(it) }
-                    ).joinToString("  ·  ")
+                    tvTps.text = parts.joinToString("  ·  ")
                 } else {
                     tvTps.visibility = View.GONE
                 }
@@ -775,6 +823,15 @@ class MessageAdapter(
             }
         }
 
+        /** ★ 新: TTFT (Time To First Token) の表示フォーマット。 */
+        private fun formatTtft(ms: Long): String {
+            return if (ms < 1000L) {
+                String.format("TTFT %dms", ms)
+            } else {
+                String.format("TTFT %.2fs", ms / 1000f)
+            }
+        }
+
         private fun renderMarkdown(content: String) {
             if (
                 lastRenderedContent == content &&
@@ -796,14 +853,20 @@ class MessageAdapter(
             //   - early-return 判定は lastRenderedThinking の同値だけで十分。
             //     lastRenderedContentMode は「本文」用のフラグなのでここで参照/更新しない。
             //   - aiThinkingMarkdownCompose の visibility は呼び出し元の展開/折りたたみロジックが管理する。
-            //     ここで強制 VISIBLE にすると自動閉じ後に再描画が入ったとき勝手に開いてしまう。
             //   - onAiMessageLayoutChanged() は呼ばない。Thinking ブロックのレイアウト変化で
             //     毎トークン自動スクロールが再スケジュールされ、追従が乱れるため。
+            //
+            // ★ バグ修正 (一箱所に重なる/表示されない):
+            //   旧実装は early-return しても lastRenderedThinking を呼び出し元で更新する側だったが、
+                //   同一ビューホルダーの再利用時に Compose のスナップショットがリセットされず、
+                //   setContent が呼ばれないケースがあった。確実に新しい content で setContent するよう、
+                //   キャッシュを renderThinkingMarkdown 内部でも保持する。
             if (lastRenderedThinking == content) return
 
             binding.aiThinkingMarkdownCompose.setContent {
                 GalleryMarkdownText(content = content)
             }
+            lastRenderedThinking = content
         }
 
         @Composable
@@ -899,7 +962,8 @@ class MessageAdapter(
                 oldItem.imageUri == newItem.imageUri &&
                 oldItem.audioUri == newItem.audioUri &&
                 oldItem.generationTps == newItem.generationTps &&
-                oldItem.generationTimeMs == newItem.generationTimeMs
+                oldItem.generationTimeMs == newItem.generationTimeMs &&
+                oldItem.ttftMs == newItem.ttftMs
         }
     }
 

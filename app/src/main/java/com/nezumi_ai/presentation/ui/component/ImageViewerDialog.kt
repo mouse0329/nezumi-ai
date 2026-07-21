@@ -31,6 +31,18 @@ object ImageViewerDialog {
         val dialog = Dialog(context, android.R.style.Theme_Material_NoActionBar).apply {
             requestWindowFeature(Window.FEATURE_NO_TITLE)
             window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            // ★ バグ修正: このビューワーがロック画面より前面に出てしまう問題に対応。
+            //   FLAG_SHOW_WHEN_LOCKED / FLAG_DISMISS_KEYGUARD / FLAG_TURN_SCREEN_ON は
+            //   どのパスでも陳列しないよう、明示的にクリアする。
+            window?.clearFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+                    android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+            // ★ スクリーンショット無効化設定が ON のときは Dialog 自体に FLAG_SECURE を付ける。
+            if (com.nezumi_ai.utils.PreferencesHelper.isDisableScreenshot(context)) {
+                window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            }
         }
 
         val root = FrameLayout(context).apply {

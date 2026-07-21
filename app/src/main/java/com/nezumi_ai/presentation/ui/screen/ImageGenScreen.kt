@@ -747,11 +747,55 @@ fun LibraryCard(img: GeneratedImage, onClick: (GeneratedImage) -> Unit) {
 @Composable
 fun ImageViewer(img: GeneratedImage, vm: ImageGenViewModel, onClose: () -> Unit) {
     val context = LocalContext.current
-    
+
+    // ★ バグ修正: ライトモードでは背景と Text の色が同化して見えなくなっていた。
+    //   本ビューワーは黒背景の上に画像を見せる目的なので、テーマに依存せずとコントラストの高い白系に固定する。
+    val onDarkText = Color(0xFFEEEEEE)
+
     Dialog(
         onDismissRequest = onClose,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        // ★ バグ修正: usePlatformDefaultWidth = false だけだと Dialog の window 属性が
+        //   Application Overlay 相当のレイヤになってしまい、一部端末で keyguard
+        //   (ロック画面) より前面に出てしまう → securePolicy を SecureOn にし、
+        //   decorFitsSystemWindows も見直して本体 Activity の window より前に出さない。
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            securePolicy = androidx.compose.ui.window.SecureFlagPolicy.Inherit,
+            decorFitsSystemWindows = true,
+            dismissOnClickOutside = true,
+            dismissOnBackPress = true
+        )
     ) {
+        // ★ ビューアの window 属性をロック画面より前に出ないよう固定し、
+        //   スクリーンショット無効化設定に従って FLAG_SECURE を切り替える。
+        val currentView = androidx.compose.ui.platform.LocalView.current
+        androidx.compose.runtime.SideEffect {
+            try {
+                var host: android.view.View? = currentView
+                var dialogWindow: android.view.Window? = null
+                while (host != null) {
+                    if (host is androidx.compose.ui.window.DialogWindowProvider) {
+                        dialogWindow = (host as androidx.compose.ui.window.DialogWindowProvider).window
+                        break
+                    }
+                    host = host.parent as? android.view.View
+                }
+                dialogWindow?.let { w ->
+                    // ロック画面より前に出ないよう、以下のフラグをクリアする。
+                    w.clearFlags(
+                        android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                            android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+                            android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                            android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                    )
+                    // スクリーンショット無効化設定にしたがって FLAG_SECURE を切り替える。
+                    if (com.nezumi_ai.utils.PreferencesHelper.isDisableScreenshot(context)) {
+                        w.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                }
+            } catch (_: Throwable) {}
+        }
+
         Box(
             Modifier.fillMaxSize().background(Color(0xF2000000)).clickable { onClose() }
                 .padding(20.dp),
@@ -767,14 +811,16 @@ fun ImageViewer(img: GeneratedImage, vm: ImageGenViewModel, onClose: () -> Unit)
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)),
                     contentScale = ContentScale.FillWidth
                 )
-                
+
                 Text(
                     "Prompt:\n${img.prompt}",
-                    color = Color(0xFFEEEEEE),
+                    // ★ ライトモードでも 黒背景の上にテキストが見えるよう、
+                    //   テーマ依存しない固定の白系色を使う。
+                    color = onDarkText,
                     fontSize = 14.sp,
                     modifier = Modifier.padding(vertical = 20.dp)
                 )
-                
+
                 Row(
                     Modifier.fillMaxWidth(0.8f),
                     horizontalArrangement = Arrangement.spacedBy(15.dp)
@@ -782,28 +828,37 @@ fun ImageViewer(img: GeneratedImage, vm: ImageGenViewModel, onClose: () -> Unit)
                     Button(
                         onClick = { vm.saveToGallery(context) },
                         modifier = Modifier.weight(1f).height(48.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0084FF)),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF0084FF),
+                            contentColor = Color.White
+                        ),
                         shape = RoundedCornerShape(25.dp)
                     ) {
-                        Text("保存", fontWeight = FontWeight.Bold)
+                        Text("保存", fontWeight = FontWeight.Bold, color = Color.White)
                     }
                     Button(
                         onClick = { vm.share(context) },
                         modifier = Modifier.weight(1f).height(48.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0084FF)),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF0084FF),
+                            contentColor = Color.White
+                        ),
                         shape = RoundedCornerShape(25.dp)
                     ) {
-                        Text("共有", fontWeight = FontWeight.Bold)
+                        Text("共有", fontWeight = FontWeight.Bold, color = Color.White)
                     }
                 }
-                
+
                 Button(
                     onClick = onClose,
                     modifier = Modifier.padding(top = 20.dp).width(80.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF444444)),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF444444),
+                        contentColor = Color.White
+                    ),
                     shape = RoundedCornerShape(25.dp)
                 ) {
-                    Text("閉じる")
+                    Text("閉じる", color = Color.White)
                 }
             }
         }

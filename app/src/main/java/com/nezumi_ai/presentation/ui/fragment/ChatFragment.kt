@@ -156,6 +156,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var contextMeterText by mutableStateOf("")
     private var contextMeterProgress by mutableStateOf(0f)
     private var contextUsageCharsNow by mutableStateOf(0)
+    // ★ 新: コンテキストメーターの表示可否。全般タブで切り替えられる。既定は表示しない。
+    private var contextMeterVisible by mutableStateOf(false)
     private var scrollToBottomVisible by mutableStateOf(false)
     private var compressButtonVisible by mutableStateOf(true)
     private var compressButtonEnabled by mutableStateOf(true)
@@ -325,6 +327,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         responseTypingText = getString(R.string.response_generating)
         modelLoadingText = getString(R.string.model_loading)
         contextMeterText = getString(R.string.context_meter_format, 0, 0)
+        // ★ 初期値として全般タブのコンテキストメーター表示フラグを反映。
+        contextMeterVisible = PreferencesHelper.isShowContextMeter(requireContext())
         compressButtonText = ""
         thinkingToggleText = getString(R.string.chat_thinking_follow_settings)
         setupComposeIndicators()
@@ -1087,14 +1091,26 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     override fun onResume() {
         super.onResume()
-        // 設定が変更されている可能性があるため、キーボード学習停止設定を再適用
         disableKeyboardLearning(viewModel.isIncognitoMode.value)
 
-        modelOptions = buildDownloadedModelOptions()
-        updateModelNameText(viewModel.selectedModel.value)
-        refreshCurrentBackendType()
-        updateMediaAvailability(currentModelKey)
-        updateThinkingToggleVisibility()
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val options = buildDownloadedModelOptions()
+            withContext(Dispatchers.Main) {
+                modelOptions = options
+                updateModelNameText(viewModel.selectedModel.value)
+                refreshCurrentBackendType()
+                updateMediaAvailability(currentModelKey)
+                updateThinkingToggleVisibility()
+            }
+        }
+
+        // コンテキストメーター表示設定が変わった場合のみ再描画
+        val newContextMeterVisible = PreferencesHelper.isShowContextMeter(requireContext())
+        if (newContextMeterVisible != contextMeterVisible) {
+            contextMeterVisible = newContextMeterVisible
+            adapter.notifyDataSetChanged()
+        }
+
         viewLifecycleOwner.lifecycleScope.launch {
             refreshPresetHeader()
         }
@@ -1980,6 +1996,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     @Composable
     private fun ContextMeterSection() {
+        // ★ 全般タブの「コンテキストメーターを表示」フラグが OFF のときは何も描画しない。
+        if (!contextMeterVisible) return
         Column(
             modifier = Modifier
                 .fillMaxWidth()

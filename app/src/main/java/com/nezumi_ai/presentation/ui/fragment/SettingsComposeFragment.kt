@@ -237,7 +237,8 @@ class SettingsComposeFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        loadInferenceSettings()
+        // onViewCreated で初回ロード済みのため、onResume での再ロードは不要。
+        // 毎回全 state を更新すると全体が再コンポーズされてタブ切り替えが重くなる。
     }
 
     @Composable
@@ -390,7 +391,7 @@ class SettingsComposeFragment : Fragment() {
                 }
             }
 
-            item {
+            item(key = selectedSection) {
                 when (selectedSection) {
                     0 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         // 強制的にUIをここに展開
@@ -408,6 +409,10 @@ class SettingsComposeFragment : Fragment() {
                             var hasSecretModePin by remember { mutableStateOf(PreferencesHelper.hasSecretModePin(context)) }
                             var isAlwaysLockEnabled by remember { mutableStateOf(PreferencesHelper.isAlwaysLockEnabled(context)) }
                             var isStopKeyboardLearning by remember { mutableStateOf(PreferencesHelper.isStopKeyboardLearningEnabled(context)) }
+                            var isShowContextMeter by remember { mutableStateOf(PreferencesHelper.isShowContextMeter(context)) }
+                            var isShowTps by remember { mutableStateOf(PreferencesHelper.isShowTps(context)) }
+                            var isShowTtft by remember { mutableStateOf(PreferencesHelper.isShowTtft(context)) }
+                            var isDisableScreenshot by remember { mutableStateOf(PreferencesHelper.isDisableScreenshot(context)) }
                             var pendingAlwaysLockEnable by remember { mutableStateOf(false) }
 
                             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -522,6 +527,133 @@ class SettingsComposeFragment : Fragment() {
                                         onCheckedChange = { checked ->
                                             isStopKeyboardLearning = checked
                                             PreferencesHelper.setStopKeyboardLearningEnabled(context, checked)
+                                        }
+                                    )
+                                }
+
+                                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+
+                                // ★ 新: コンテキストメーターの表示 (既定: 表示しない)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "コンテキストメーターを表示",
+                                            color = colorResource(id = R.color.text_primary),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Text(
+                                            text = "チャット画面上部のコンテキスト使用量バーを表示します",
+                                            color = colorResource(id = R.color.text_secondary),
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                    Switch(
+                                        checked = isShowContextMeter,
+                                        onCheckedChange = { checked ->
+                                            isShowContextMeter = checked
+                                            PreferencesHelper.setShowContextMeter(context, checked)
+                                        }
+                                    )
+                                }
+
+                                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+
+                                // ★ 新: t/s (トークン/秒) の表示 (既定: 表示しない)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "トークン/秒 (t/s) を表示",
+                                            color = colorResource(id = R.color.text_primary),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Text(
+                                            text = "AI の回答にトークン/秒と生成時間を表示します",
+                                            color = colorResource(id = R.color.text_secondary),
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                    Switch(
+                                        checked = isShowTps,
+                                        onCheckedChange = { checked ->
+                                            isShowTps = checked
+                                            PreferencesHelper.setShowTps(context, checked)
+                                        }
+                                    )
+                                }
+
+                                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+
+                                // ★ 新: TTFT (最初のトークンまでの時間) の表示 (既定: 表示しない)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "TTFT (最初のトークンまでの時間) を表示",
+                                            color = colorResource(id = R.color.text_primary),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Text(
+                                            text = "推論開始から最初のトークンが到達するまでの時間を表示します",
+                                            color = colorResource(id = R.color.text_secondary),
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                    Switch(
+                                        checked = isShowTtft,
+                                        onCheckedChange = { checked ->
+                                            isShowTtft = checked
+                                            PreferencesHelper.setShowTtft(context, checked)
+                                        }
+                                    )
+                                }
+
+                                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+
+                                // ★ 新: スクリーンショット無効化 (既定: 無効)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "スクリーンショットを無効化",
+                                            color = colorResource(id = R.color.text_primary),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Text(
+                                            text = "アプリの画面キャプチャ・録画を禁止します (FLAG_SECURE)",
+                                            color = colorResource(id = R.color.text_secondary),
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                    Switch(
+                                        checked = isDisableScreenshot,
+                                        onCheckedChange = { checked ->
+                                            isDisableScreenshot = checked
+                                            PreferencesHelper.setDisableScreenshot(context, checked)
+                                            val activity = context as? android.app.Activity
+                                            if (checked) {
+                                                activity?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                                            } else {
+                                                // 常時ロックもシークレットモードも有効でない場合のみ解除
+                                                val mainActivity = activity as? com.nezumi_ai.MainActivity
+                                                val incognitoActive = mainActivity?.isInIncognitoMode() ?: false
+                                                if (!PreferencesHelper.isAlwaysLockEnabled(context) && !incognitoActive) {
+                                                    activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                                                }
+                                            }
                                         }
                                     )
                                 }

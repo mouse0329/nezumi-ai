@@ -70,7 +70,8 @@ class MessageRepository(private val dao: MessageDao) {
         thinkingContent: String? = null,
         toolResultsJson: String? = null,
         generationTps: Float? = null,
-        generationTimeMs: Long? = null
+        generationTimeMs: Long? = null,
+        ttftMs: Long? = null
     ) {
         updateMessageContentInternal(
             messageId = messageId,
@@ -80,7 +81,8 @@ class MessageRepository(private val dao: MessageDao) {
             thinkingContent = thinkingContent,
             toolResultsJson = toolResultsJson,
             generationTps = generationTps,
-            generationTimeMs = generationTimeMs
+            generationTimeMs = generationTimeMs,
+            ttftMs = ttftMs
         )
     }
 
@@ -94,7 +96,8 @@ class MessageRepository(private val dao: MessageDao) {
         isStreaming: Boolean,
         toolResultsJson: String? = null,
         generationTps: Float? = null,
-        generationTimeMs: Long? = null
+        generationTimeMs: Long? = null,
+        ttftMs: Long? = null
     ) {
         updateMessageContentInternal(
             messageId = messageId,
@@ -104,7 +107,8 @@ class MessageRepository(private val dao: MessageDao) {
             thinkingContent = null,
             toolResultsJson = toolResultsJson,
             generationTps = generationTps,
-            generationTimeMs = generationTimeMs
+            generationTimeMs = generationTimeMs,
+            ttftMs = ttftMs
         )
     }
 
@@ -116,7 +120,8 @@ class MessageRepository(private val dao: MessageDao) {
         thinkingContent: String?,
         toolResultsJson: String?,
         generationTps: Float?,
-        generationTimeMs: Long?
+        generationTimeMs: Long?,
+        ttftMs: Long? = null
     ) {
         try {
             android.util.Log.d(
@@ -146,7 +151,8 @@ class MessageRepository(private val dao: MessageDao) {
                     isStreaming = isStreaming,
                     toolResultsJson = toolResultsJson ?: current.toolResultsJson,
                     generationTps = generationTps ?: current.generationTps,
-                    generationTimeMs = generationTimeMs ?: current.generationTimeMs
+                    generationTimeMs = generationTimeMs ?: current.generationTimeMs,
+                    ttftMs = ttftMs ?: current.ttftMs
                 )
             )
             android.util.Log.d("MessageRepository", "updateMessageContent: complete messageId=$messageId")

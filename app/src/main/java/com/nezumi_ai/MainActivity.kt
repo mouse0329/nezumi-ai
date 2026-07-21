@@ -163,6 +163,8 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    fun isInIncognitoMode(): Boolean = isIncognitoModeActive
+
     fun openDrawer() {
         binding.drawerLayout.openDrawer(GravityCompat.START)
     }
@@ -318,8 +320,8 @@ class MainActivity : AppCompatActivity() {
         isAppInBackground = true
         Log.d(TAG, "App paused - marked as background")
 
-        // シークレットモードでない場合はFLAG_SECUREを削除
-        if (!isIncognitoModeActive) {
+        // シークレットモードでなく、かつスクリーンショット無効化設定もオフの場合のみFLAG_SECUREを削除
+        if (!isIncognitoModeActive && !PreferencesHelper.isDisableScreenshot(this)) {
             window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
             Log.d(TAG, "Cleared FLAG_SECURE on app pause")
         }
@@ -340,6 +342,14 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshDrawerDateLabels()
+
+        // ★ スクリーンショット無効化設定をアプリ全体に反映。
+        //   このフラグは既存のシークレットモード/常時ロックの FLAG_SECURE ロジックとは独立して動作する。
+        //   非有効のときも、シークレットモード/常時ロック側の既存制御を壊さないように、
+        //   後続の clearFlags はここでは呼ばない。
+        if (PreferencesHelper.isDisableScreenshot(this)) {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        }
 
         // アプリ起動時（初回 onResume）またはバックグラウンドから復帰時に生体認証を実行
         val shouldLock = if (isFirstResume) {
@@ -383,9 +393,11 @@ class MainActivity : AppCompatActivity() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 super.onAuthenticationSucceeded(result)
                 Log.d(TAG, "Biometric authentication succeeded")
-                // 認証成功時はオーバーレイを削除して FLAG_SECURE を解除
+                // 認証成功時はオーバーレイを削除して FLAG_SECURE を解除（スクリーンショット無効化設定が有効な場合は維持）
                 removeAuthOverlay()
-                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                if (!PreferencesHelper.isDisableScreenshot(this@MainActivity)) {
+                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                }
             }
 
             override fun onAuthenticationFailed() {
@@ -439,7 +451,9 @@ class MainActivity : AppCompatActivity() {
                 val pin = pinInput.text?.toString() ?: ""
                 if (pin.length == 4 && PreferencesHelper.verifySecretModePin(ctx, pin)) {
                     removeAuthOverlay()
-                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                    if (!PreferencesHelper.isDisableScreenshot(ctx)) {
+                        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                    }
                     Log.d(TAG, "PIN authentication succeeded")
                 } else {
                     Toast.makeText(ctx, "PINが正しくありません", Toast.LENGTH_SHORT).show()
@@ -619,8 +633,10 @@ class MainActivity : AppCompatActivity() {
         // オーバーレイを削除
         removeAuthOverlay()
 
-        // FLAG_SECURE を解除
-        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        // FLAG_SECURE を解除（スクリーンショット無効化設定が有効な場合は維持）
+        if (!PreferencesHelper.isDisableScreenshot(this)) {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        }
         PreferencesHelper.applyThemeMode(this)
         Log.d(TAG, "Exited incognito mode - FLAG_SECURE cleared")
 
@@ -684,7 +700,9 @@ class MainActivity : AppCompatActivity() {
 
         // FLAG_SECURE と authOverlay を完全にクリア
         isIncognitoModeActive = false
-        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        if (!PreferencesHelper.isDisableScreenshot(this)) {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        }
         removeAuthOverlay()
         PreferencesHelper.applyThemeMode(this)
         Log.d(TAG, "Cleared FLAG_SECURE and overlay on app destroy")
@@ -975,7 +993,9 @@ class MainActivity : AppCompatActivity() {
     private suspend fun leaveIncognitoModeForNormalNavigation() {
         if (!isIncognitoModeActive) return
         isIncognitoModeActive = false
-        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        if (!PreferencesHelper.isDisableScreenshot(this)) {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        }
         PreferencesHelper.applyThemeMode(this)
         withContext(Dispatchers.IO) {
             sessionRepository.deleteAllIncognitoSessions()
