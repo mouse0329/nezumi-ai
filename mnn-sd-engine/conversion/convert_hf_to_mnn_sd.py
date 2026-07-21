@@ -291,8 +291,8 @@ def main():
                     help="CLIP の layers スキップ数 (SD1.5 の多くは 2)")
     ap.add_argument("--unet-bits", type=int, default=8, choices=[0, 4, 8],
                     help="UNet の重み量子化 bit 幅。0=無効, 4=小さい/速い, 8=標準")
-    ap.add_argument("--unet-block", type=int, default=32,
-                    help="UNet の block-wise 量子化サイズ (32/64/128; 32 が最安定)")
+    ap.add_argument("--unet-block", type=int, default=0, choices=[0, 32, 64, 128],
+                    help="UNet の block-wise 量子化サイズ。0=無効（OpenCL GPU 互換）")
     ap.add_argument("--clip-bits", type=int, default=8, choices=[0, 4, 8],
                     help="CLIP の重み量子化 bit 幅")
     ap.add_argument("--vae-bits", type=int, default=8, choices=[0, 4, 8],
@@ -327,7 +327,10 @@ def main():
     # ファイル名の対応
     if args.filenames == "nezumi":
         f_clip = "clip_v2.mnn"
-        f_unet = f"unet_asym_block{args.unet_block}.mnn"
+        # The established sd-mnn GPU models use a conventional external-weight
+        # UNet.  The previous asymmetric block-32 variant produces numerically
+        # valid but unusable noisy images on some mobile OpenCL drivers.
+        f_unet = "unet.mnn"
         f_vae = "vae_decoder_fp16.mnn" if not args.no_vae_fp16 else "vae_decoder.mnn"
     else:
         f_clip = "clip.mnn"
@@ -420,7 +423,9 @@ def main():
             },
         )
 
-        # UNet 最大の節約ポイント
+        # GPU compatibility first: use conventional symmetric INT8 weights.
+        # Asymmetric block quantization is smaller, but has proven unstable on
+        # the target mobile OpenCL stack (CPU output is correct, GPU is noise).
         #  ★ 重要: --fp16 と --weightQuantBits を併用すると、UNet 規模の
         #    大きいグラフでは mnnconvert (このバージョン) が量子化を無視し、
         #    fp16 のみが適用されたファイルが出力される不具合を実測で確認済み
@@ -433,7 +438,7 @@ def main():
                     fp16=False,
                     quant_bits=args.unet_bits,
                     quant_block=args.unet_block,
-                    asymmetric=True)
+                    asymmetric=False)
         del unet, model_to_run
         gc.collect()
 
