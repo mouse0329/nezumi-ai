@@ -3085,8 +3085,7 @@ extern "C"
         //   ここは CLIP / UNet と同じ手順、つまり CAFFE レイアウトのホスト側
         //   一時テンソルを別途構築 → memcpy → copyFromHostTensor で書き込む。
         {
-            std::unique_ptr<MNN::Tensor> host_v(MNN::Tensor::create<float>(
-                std::vector<int>{1, 4, lh, lw}, nullptr, MNN::Tensor::CAFFE));
+            std::unique_ptr<MNN::Tensor> host_v(new MNN::Tensor(v_input, MNN::Tensor::CAFFE));
             if (!host_v || host_v->elementSize() != (int)latent.size())
             {
                 if (out_error)
