@@ -1,0 +1,81 @@
+diff --git a/mnn-sd-engine/src/mnn_session.cpp b/mnn-sd-engine/src/mnn_session.cpp
+index 4e1210b..e3fcf6d 100644
+--- a/mnn-sd-engine/src/mnn_session.cpp
++++ b/mnn-sd-engine/src/mnn_session.cpp
+@@ -200,6 +200,42 @@ namespace
+ 
+ #if defined(MNN_SD_HAS_MNN)
+ 
++    // Bug fix (OpenCL が異常に遅い / 2026-07):
++    //   MNN の OpenCL バックエンドは MNN_GPU_TUNING_* でカーネルを
++    //   オートチューニングするが、その結果をディスクにキャッシュしないと
++    //   createSession のたびに毎回チューニングをやり直す。
++    //   このエンジンは CLIP/UNet/VAE を都度ロード・解放する JIT 方式なので、
++    //   キャッシュなしでは生成 1 回につき 3 回分のフルチューニングコストを
++    //   払うことになり、これが「256x256 ですら 1 分半かかる」の主因だった。
++    //   参照実装 (xororz/local-dream, MnnUtils.hpp) は
++    //   interpreter->setCacheFile() を createSession 前に、
++    //   interpreter->updateCacheFile(session) を作成後に呼んでおり、
++    //   2 回目以降の生成はキャッシュ済みカーネルを再利用して高速化される。
++    //   同じパターンをここでも踏襲する。CPU バックエンドでは無意味なので
++    //   スキップする。
++    std::string cache_file_for(const std::string &model_path, SdModelKind kind)
++    {
++        std::string dir = model_path;
++        size_t slash = dir.find_last_of("/\\");
++        if (slash != std::string::npos)
++            dir = dir.substr(0, slash);
++        const char *stage = "clip";
++        switch (kind)
++        {
++        case SdModelKind::UNET:
++            stage = "unet";
++            break;
++        case SdModelKind::VAE:
++            stage = "vae";
++            break;
++        case SdModelKind::CLIP:
++        default:
++            stage = "clip";
++            break;
++        }
++        return build_model_path(dir.c_str(), (std::string("cache_") + stage + ".mnnc").c_str());
++    }
++
+     MnnSdError create_interpreter_and_session(
+         const std::string &model_path,
+         MnnSdBackend backend,
+@@ -222,10 +258,17 @@ namespace
+             return MNN_SD_ERR_MODEL_INVALID;
+         }
+ 
++        std::string cache_file;
++        if (backend == MNN_SD_BACKEND_OPENCL)
++        {
++            cache_file = cache_file_for(model_path, kind);
++            interpreter->setCacheFile(cache_file.c_str());
++        }
++
+         ScheduleBundle bundle(backend, kind, low_memory_unet);
+-        PROBE_LOG("MNN session: model=%s backend=%d kind=%d unet_low_memory=%d",
++        PROBE_LOG("MNN session: model=%s backend=%d kind=%d unet_low_memory=%d cache=%s",
+                   model_path.c_str(), static_cast<int>(backend), static_cast<int>(kind),
+-                  low_memory_unet ? 1 : 0);
++                  low_memory_unet ? 1 : 0, cache_file.empty() ? "(none)" : cache_file.c_str());
+         session = interpreter->createSession(bundle.schedule);
+         if (!session)
+         {
+@@ -234,6 +277,13 @@ namespace
+             return MNN_SD_ERR_BACKEND_INIT_FAILED;
+         }
+ 
++        if (backend == MNN_SD_BACKEND_OPENCL && !cache_file.empty())
++        {
++            // Persist the tuning result picked for this session so the next
++            // load (same model + backend) skips autotuning entirely.
++            interpreter->updateCacheFile(session);
++        }
++
+         return MNN_SD_OK;
+     }
+ 
