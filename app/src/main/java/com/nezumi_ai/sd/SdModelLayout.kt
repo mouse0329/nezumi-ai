@@ -15,7 +15,7 @@ object SdModelLayout {
 
     private const val TAG = "SdModelLayout"
 
-    val UNET_CANDIDATES = listOf("unet_asym_block32.mnn", "unet.mnn", "unet_min.bin")
+    val UNET_CANDIDATES = listOf("unet.mnn", "unet_asym_block32.mnn", "unet_min.bin")
     val CLIP_CANDIDATES = listOf("clip_v2.mnn", "clip_fp16.mnn", "clip.mnn")
     val VAE_DECODER_CANDIDATES = listOf("vae_decoder_fp16.mnn", "vae_decoder.mnn", "vae_decoder_min.bin")
     const val TOKENIZER_FILE = "tokenizer.json"

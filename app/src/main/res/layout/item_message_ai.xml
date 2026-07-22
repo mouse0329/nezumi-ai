@@ -22,20 +22,34 @@
         </LinearLayout>
 
         <!-- AI Edge Gallery の MessageBodyThinking に相当: タップで開閉、ストリーミング中は常に展開 -->
-        <LinearLayout android:id="@+id/ai_thinking_block" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="6dp" android:orientation="vertical" android:visibility="gone" android:background="@drawable/bg_message_ai" android:paddingStart="10dp" android:paddingEnd="10dp" android:paddingTop="8dp" android:paddingBottom="8dp" android:maxWidth="280dp">
+        <!-- ★ Bug fix(#Thinking-Layout):
+               旧実装は wrap_content + maxWidth=280dp を指定していたが、内部の
+               ai_thinking_markdown_compose (GalleryMarkdownText の widthIn(max=280dp)) が
+               親のパディング/縦線ぶんを無視して膨張し、Thinking ブロックが親コンテナから
+               はみ出す問題があった。ここでは固定の layout_width=280dp と android:clipChildren="true"
+               を明示し、内部 ComposeView にも maxWidth を設けて完全に枠内へ収める。 -->
+        <LinearLayout android:id="@+id/ai_thinking_block" android:layout_width="280dp" android:layout_height="wrap_content" android:layout_marginBottom="6dp" android:orientation="vertical" android:visibility="gone" android:background="@drawable/bg_message_ai" android:paddingStart="10dp" android:paddingEnd="10dp" android:paddingTop="8dp" android:paddingBottom="8dp" android:clipChildren="true" android:clipToPadding="true">
 
             <LinearLayout android:id="@+id/ai_thinking_toggle_row" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingTop="4dp" android:paddingBottom="4dp" android:clickable="true" android:focusable="true" android:foreground="?attr/selectableItemBackground">
 
-                <TextView android:id="@+id/ai_thinking_toggle_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/gemma_show_thinking" android:textColor="@color/text_secondary" android:textSize="14sp" android:textStyle="bold" />
+                <TextView android:id="@+id/ai_thinking_toggle_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/gemma_show_thinking" android:textColor="@color/text_secondary" android:textSize="14sp" android:textStyle="bold" android:ellipsize="end" android:maxLines="1" />
 
                 <TextView android:id="@+id/ai_thinking_chevron" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="4dp" android:text="▼" android:textColor="@color/text_secondary" android:textSize="14sp" android:importantForAccessibility="no" />
             </LinearLayout>
 
-            <LinearLayout android:id="@+id/ai_thinking_body" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:orientation="horizontal" android:visibility="gone">
+            <!-- ★ Bug fix(#Thinking-Layout):
+                   layout_height="match_parent" だった縦線 View は、親 (ai_thinking_body) が
+                   wrap_content のとき高さ計算が循環し、ComposeView 側の巨大な要望に引きずられて
+                   Thinking ブロック全体が枠外にはみ出す原因となっていた。
+                   縦線 View は 0dp + weight で意図した高さに追従させ、
+                   ai_thinking_body 自体には android:layout_width="match_parent" と
+                   android:clipChildren="true" を維持しつつ、内部 ComposeView にも
+                   android:maxWidth を設けて枠外はみ出しを完全に防ぐ。 -->
+            <LinearLayout android:id="@+id/ai_thinking_body" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:orientation="horizontal" android:visibility="gone" android:clipChildren="true" android:clipToPadding="true">
 
                 <View android:layout_width="2dp" android:layout_height="match_parent" android:layout_marginEnd="10dp" android:background="@color/text_secondary" android:alpha="0.35" />
 
-                <androidx.compose.ui.platform.ComposeView android:id="@+id/ai_thinking_markdown_compose" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:visibility="gone" />
+                <androidx.compose.ui.platform.ComposeView android:id="@+id/ai_thinking_markdown_compose" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:maxWidth="248dp" android:visibility="gone" />
             </LinearLayout>
         </LinearLayout>
 

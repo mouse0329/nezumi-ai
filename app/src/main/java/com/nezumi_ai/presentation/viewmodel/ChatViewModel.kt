@@ -2189,10 +2189,23 @@ class ChatViewModel(
                                     // Thinking フェーズのみで content が空の場合は persist を遅延させる
                                     // （content が来た時、または最終確定時のみ persist する）
                                     val isThinkingOnlyPhase = contentForUi.isEmpty() && !thinkingForUi.isNullOrBlank()
+                                    // ★ Bug fix(#Thinking-Realtime-1):
+                                    //   旧実装は Thinking のみのフェーズ中は shouldPersistToDb=false で in-memory 更新のみ
+                                    //   行っていたが、その直後に Room の messagesCollectionJob 側の Flow が古い
+                                    //   スナップショット (thinkingContent=null, isStreaming=true) を配信してきて、
+                                    //   in-memory 更新をすぐ上書きしていたため、UI にリアルタイム表示されない
+                                    //   ケースがあった。 Thinking の更新も定期的に DB へ persist することで、
+                                    //   Flow 経由の再配信でも Thinking 内容を保持する。
+                                    val thinkingChangedSinceLastPersist =
+                                        thinkingForUi != lastPersistedThinking
                                     val shouldPersistToDb =
                                         if (isThinkingOnlyPhase) {
-                                            // Thinking のみ中は persist をスキップ
-                                            false
+                                            // Thinking のみでも、初回、または一定間隔経過、または最終確定時は persist する。
+                                            thinkingChangedSinceLastPersist && (
+                                                finalFromModelGlobal != null ||
+                                                    isFirstThinkingPersist ||
+                                                    now - lastPersistAt >= persistInterval
+                                            )
                                         } else {
                                             // Content が存在すれば通常の persist ロジック
                                             (contentForUi != lastPersistedContent ||
@@ -2213,27 +2226,31 @@ class ChatViewModel(
                                         lastPersistedContent = contentForUi
                                         lastPersistedThinking = thinkingForUi
                                         lastPersistAt = now
-                                    } else if (isThinkingOnlyPhase) {
-                                        // Thinking のみ中でも UI には即座に反映: in-memory で更新
+                                    }
+                                    // ★ Bug fix(#Thinking-Realtime-2):
+                                    //   persist 間隔の合間でも UI へは即座に反映する必要があるため、
+                                    //   Thinking フェーズかどうかに関わらず _messages を in-memory 更新する。
+                                    //   Room Flow 再配信で古いスナップショットが届いても、次の persist で
+                                    //   thinkingContent が保存されているため上書きされない。
+                                    if (isThinkingOnlyPhase && !shouldPersistToDb) {
                                         if (BuildConfig.DEBUG) {
-                                            Log.d(TAG, "THINKING_ONLY_PHASE: updating in-memory id=$id thinkingLen=${thinkingForUi?.length ?: 0}")
+                                            Log.d(TAG, "THINKING_ONLY_PHASE: in-memory update id=$id thinkingLen=${thinkingForUi?.length ?: 0}")
                                         }
                                         val currentMsgs = _messages.value.toMutableList()
                                         val idx = currentMsgs.indexOfFirst { it.id == id }
-                                        if (BuildConfig.DEBUG) {
-                                            Log.d(TAG, "THINKING_ONLY_PHASE: found index=$idx current_messages=${currentMsgs.size}")
-                                        }
                                         if (idx >= 0) {
-                                            val updated = currentMsgs[idx].copy(thinkingContent = thinkingForUi)
+                                            // ★ isStreaming フラグを保持したまま thinkingContent のみ更新する。
+                                            //   これがないと MessageAdapter 側で「生成完了」と誤認され、
+                                            //   Thinking ブロックのトグル行が表示されてしまう。
+                                            val original = currentMsgs[idx]
+                                            val updated = original.copy(
+                                                thinkingContent = thinkingForUi,
+                                                isStreaming = true
+                                            )
                                             currentMsgs[idx] = updated
                                             _messages.value = currentMsgs.toList()
-                                            if (BuildConfig.DEBUG) {
-                                                Log.d(TAG, "THINKING_ONLY_PHASE: in-memory updated and emitted")
-                                            }
-                                        } else {
-                                            if (BuildConfig.DEBUG) {
-                                                Log.w(TAG, "THINKING_ONLY_PHASE: could not find message id=$id in ${currentMsgs.map { it.id }}")
-                                            }
+                                        } else if (BuildConfig.DEBUG) {
+                                            Log.w(TAG, "THINKING_ONLY_PHASE: could not find message id=$id in ${currentMsgs.map { it.id }}")
                                         }
                                     }
                                 }

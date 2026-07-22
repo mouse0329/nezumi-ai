@@ -17,6 +17,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -863,10 +864,45 @@ class MessageAdapter(
                 //   キャッシュを renderThinkingMarkdown 内部でも保持する。
             if (lastRenderedThinking == content) return
 
+            // ★ Bug fix(#Thinking-Layout):
+            //   旧実装は本文用の GalleryMarkdownText (widthIn max=280dp + 内部 padding 11dp) を
+            //   Thinking ブロックでも使っていたため、親の ai_thinking_body の枠
+            //   (縦線とパディングを除いた実質 248dp 前後) を超えて Compose ビューが膨張し、
+            //   Thinking ブロック全体が画面外にはみ出していた。
+            //   Thinking 専用の描画関数 ThinkingMarkdownText を使い、背景・ボーダーを自己主張せず
+            //   fillMaxWidth() で親のスペースに収める。
             binding.aiThinkingMarkdownCompose.setContent {
-                GalleryMarkdownText(content = content)
+                ThinkingMarkdownText(content = content)
             }
             lastRenderedThinking = content
+        }
+
+        /**
+         * ★ Thinking ブロック専用の Markdown 描画。
+         * 親の ai_thinking_body 内部で使われるため、自己のカード背景や固定幅は持たない。
+         * 幅は常に fillMaxWidth() で親コンテナに合わせ、枠外はみ出しを防ぐ。
+         */
+        @Composable
+        private fun ThinkingMarkdownText(content: String) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+            ) {
+                SelectionContainer {
+                    ProvideTextStyle(
+                        value = TextStyle(
+                            fontSize = 13.sp,
+                            lineHeight = 19.sp,
+                            color = colorResource(id = R.color.text_secondary),
+                            letterSpacing = 0.2.sp
+                        )
+                    ) {
+                        MaterialTheme {
+                            MarkdownLatexText(text = content, textSize = 36f)
+                        }
+                    }
+                }
+            }
         }
 
         @Composable

@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.LinearProgressIndicator
@@ -1486,7 +1487,14 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         compressButtonEnabled = enabled
         compressButtonText = ""
         // シンキングON/OFFはチャット生成中でも切り替え可能にする（次回送信から反映）
-        thinkingToggleEnabled = !isModelLoadingNow && thinkingToggleVisible
+        // ★ Bug fix(#Thinking-Header):
+        //   旧実装は `thinkingToggleEnabled = !isModelLoadingNow && thinkingToggleVisible` だったが、
+        //   この式だと thinkingToggleVisible が一旦 false になると enabled も false に固定され、
+        //   シンキング生成フェーズで modelSupportsThinking の再評価が遅れるタイミングで
+        //   ヘッダーの Switch 自体が消失して見えなくなっていた。
+        //   enabled を visible と切り離し、ヘッダーの表示自体は常に保ちつつ、
+        //   押下可否のみロードステータスで制御する。
+        thinkingToggleEnabled = !isModelLoadingNow
     }
 
     private fun updateThinkingToggleVisibility() {
@@ -2056,7 +2064,15 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     @Composable
     private fun HeaderActionsSection() {
+        // ★ Bug fix(#Thinking-Header):
+        //   旧実装ではシンキング生成中に
+        //   (compressButtonVisible=false + thinkingToggleVisible の一時的な false)
+        //   となり、Column が完全に空になってヘッダー UI が消失して見えていた。
+        //   シンキングトグルはモデルがシンキングをサポートする限り常時表示し、
+        //   生成中は押下可否 (enabled) だけで制御する。コンテナにも
+        //   最低幅 (heightIn) を与え、内容が一瞬空になってもレイアウトごと消失しないようにする。
         Column(
+            modifier = Modifier.heightIn(min = 32.dp),
             horizontalAlignment = Alignment.End,
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
@@ -2083,7 +2099,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         onCheckedChange = { checked ->
                             viewModel.setChatSessionDisableThinking(!checked)
                         },
-                        enabled = thinkingToggleEnabled
+                        enabled = thinkingToggleEnabled && !isGenerating
                     )
                 }
             }

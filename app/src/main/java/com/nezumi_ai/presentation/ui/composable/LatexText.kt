@@ -6,10 +6,13 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
@@ -34,7 +37,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import com.halilibo.richtext.commonmark.Markdown
@@ -168,13 +170,16 @@ fun MarkdownLatexText(
 
     val parts = remember(text) { parseMixed(text) }
 
-    Column(modifier = modifier.animateContentSize()) {
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val maxW = if (maxWidth == Dp.Infinity) 360.dp else maxWidth
+        Column(modifier = Modifier.widthIn(max = maxW)) {
         for (part in parts) {
             when (part) {
                 is MixedPart.MarkdownPart -> {
                     // Markdownコンテンツが空でないか確認
                     if (part.content.isNotBlank()) {
                         RichText(
+                            modifier = Modifier.widthIn(max = maxW),
                             style = if (linkStyle != null) {
                                 RichTextStyle(stringStyle = RichTextStringStyle(linkStyle = linkStyle))
                             } else null
@@ -209,6 +214,7 @@ fun MarkdownLatexText(
                     )
                 }
             }
+        }
         }
     }
 }

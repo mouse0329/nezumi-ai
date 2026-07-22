@@ -460,11 +460,11 @@ class SetupWizardFragment : Fragment() {
             color = textPrimary
         )
         Text(
-            text = "最初に 3 ステップだけ設定すると、すぐチャットを始められます。",
+            text = "最初に 4 ステップだけ設定すると、すぐチャットを始められます。",
             color = textSecondary
         )
         Text(
-            text = "1. 実行バックエンドを選ぶ\n2. 使いたいモデルを選ぶ\n3. 必要ならダウンロードして開始",
+            text = "1.ようこそ\n2. 実行バックエンドを選ぶ\n3. 必須モデルのダウンロード\n4. 使いたいモデルを選ぶ\nダウンロードはあとからでも可能です。",
             color = textPrimary
         )
         Text(
