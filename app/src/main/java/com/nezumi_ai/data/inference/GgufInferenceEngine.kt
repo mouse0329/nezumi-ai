@@ -147,9 +147,12 @@ class GgufInferenceEngine(
 
         internal fun resolveNativeGenerationSettings(
             modelPath: String,
-            config: InferenceConfig
+            config: InferenceConfig,
+            appContext: android.content.Context? = null
         ): NativeGenerationSettings {
-            val isGpt2Model = PromptBuilder.detectGgufFormat(modelPath) == PromptBuilder.GgufPromptFormat.PLAIN_COMPLETION
+            // Bug fix(#42): ユーザーがテンプレートを明示選択している場合は GPT-2 専用の
+            // 保守的ネイティブ設定 (batch=32 / flashAttn=off) を抑制する。
+            val isGpt2Model = PromptBuilder.detectGgufFormat(modelPath, appContext) == PromptBuilder.GgufPromptFormat.PLAIN_COMPLETION
             return if (isGpt2Model) {
                 NativeGenerationSettings(
                     batchSize = 32,
@@ -284,7 +287,7 @@ class GgufInferenceEngine(
 
                 val optimalThreads = getOptimalThreadCount()
                 val gpuLayers = getAdaptiveGpuLayers(normalized.backendType)
-                val nativeSettings = resolveNativeGenerationSettings(modelPath, normalized)
+                val nativeSettings = resolveNativeGenerationSettings(modelPath, normalized, appContext)
                 if (nativeSettings.batchSize <= 0 || nativeSettings.ubatchSize <= 0) {
                     return@withLock Result.failure(IllegalStateException("Invalid GGUF batch size configuration"))
                 }
@@ -295,7 +298,7 @@ class GgufInferenceEngine(
                     )
                 }
 
-                if (PromptBuilder.detectGgufFormat(modelPath) == PromptBuilder.GgufPromptFormat.PLAIN_COMPLETION) {
+                if (PromptBuilder.detectGgufFormat(modelPath, appContext) == PromptBuilder.GgufPromptFormat.PLAIN_COMPLETION) {
                     Log.w(TAG, "Using conservative native settings for GPT-2 model: batch=${nativeSettings.batchSize}, ubatch=${nativeSettings.ubatchSize}, flashAttention=${nativeSettings.flashAttentionEnabled}, ctxShift=${nativeSettings.contextShiftEnabled}")
                 }
                 Log.i(TAG, "Loading GGUF model: $modelPath backend=${normalized.backendType} threads=$optimalThreads gpuLayers=$gpuLayers")
@@ -676,7 +679,7 @@ class GgufInferenceEngine(
         }
 
         val stopSequences = effectiveStopSequences(config)
-        val nativeSettings = resolveNativeGenerationSettings(ctx.modelPath, config)
+        val nativeSettings = resolveNativeGenerationSettings(ctx.modelPath, config, appContext)
         val maxTokens = config.maxTokens.coerceAtMost(nativeSettings.maxTokensCap)
 
         Log.d(TAG, "generateRound: maxTokens=$maxTokens, temperature=${config.temperature}, topP=${config.topP}, topK=${config.maxTopK}")

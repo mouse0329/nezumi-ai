@@ -159,6 +159,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var contextUsageCharsNow by mutableStateOf(0)
     // ★ 新: コンテキストメーターの表示可否。全般タブで切り替えられる。既定は表示しない。
     private var contextMeterVisible by mutableStateOf(false)
+
+    // Bug fix(#43): t/s ・ TTFT トグルの値をフラグメント側でも保持し、onResume で変化を検知して
+    // MessageAdapter に強制リバインドを依頼する。これにより、設定タブでトグルした直後に
+    // チャット画面に戻ってきたとき、既存 ViewHolder でも即座に反映される。
+    private var showTpsIndicator: Boolean = false
+    private var showTtftIndicator: Boolean = false
     private var scrollToBottomVisible by mutableStateOf(false)
     private var compressButtonVisible by mutableStateOf(true)
     private var compressButtonEnabled by mutableStateOf(true)
@@ -1110,6 +1116,16 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         if (newContextMeterVisible != contextMeterVisible) {
             contextMeterVisible = newContextMeterVisible
             adapter.notifyDataSetChanged()
+        }
+
+        // Bug fix(#43): t/s と TTFT のトグル変更も onResume で拾い、MessageAdapter 側のキャッシュを
+        //   同期させて強制リバインドさせる。値が変わっていなければ no-op なのでコストは軸い。
+        val newShowTps = PreferencesHelper.isShowTps(requireContext())
+        val newShowTtft = PreferencesHelper.isShowTtft(requireContext())
+        if (newShowTps != showTpsIndicator || newShowTtft != showTtftIndicator) {
+            showTpsIndicator = newShowTps
+            showTtftIndicator = newShowTtft
+            adapter.refreshPerfIndicatorVisibility(newShowTps, newShowTtft)
         }
 
         viewLifecycleOwner.lifecycleScope.launch {

@@ -4091,7 +4091,10 @@ class ChatViewModel(
                 messages = recentMessages,
                 systemPrompt = systemPrompt,
                 compressedSummary = compressedSummary,
-                format = PromptBuilder.detectGgufFormat(engineModelName),
+                // Bug fix(#42): appContext を渡してユーザー選択のテンプレートモードを尊重させる。
+                //   これをしないと GPT-2 アーキテクチャの GGUF にカスタム/ChatML を割り当てても
+                //   PLAIN_COMPLETION にフォールバックされてテンプレが適用されない。
+                format = PromptBuilder.detectGgufFormat(engineModelName, appContext),
                 enableThinking = enableThinkingForPrompt,
                 modelPath = engineModelName,
                 sanitizeMessageContent = ::sanitizeMessageContentForPrompt,
@@ -4169,7 +4172,8 @@ class ChatViewModel(
             PromptBuilder.buildForGguf(
                 messages = filteredMessages,
                 systemPrompt = systemPrompt,
-                format = PromptBuilder.detectGgufFormat(engineModelName),
+                // Bug fix(#42): ユーザー選択のテンプレートモードを尊重させるため appContext を渡す。
+                format = PromptBuilder.detectGgufFormat(engineModelName, appContext),
                 enableThinking = enableThinkingForPrompt,
                 modelPath = engineModelName,
                 sanitizeMessageContent = sanitizer,

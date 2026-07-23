@@ -4,6 +4,18 @@ import android.content.Context
 import com.nezumi_ai.data.database.entity.MessageEntity
 
 object PromptBuilder {
+    /**
+     * Bug fix(#42): モデルパスからユーザー選択のテンプレモードを確認するための軽量ヘルパ。
+     * GPT-2 アーキテクチャなど「自動判定で PLAIN_COMPLETION 固定」になるモデルでも、
+     * ユーザーが明示的に "chatml" / "custom" 等を選んでいる場合はそちらを尊重する。
+     */
+    private fun hasExplicitUserTemplate(appContext: Context?, modelPath: String): Boolean {
+        if (appContext == null || modelPath.isBlank()) return false
+        return runCatching {
+            val sel = PromptTemplateStore.getSelection(appContext, modelPath)
+            sel.mode != PromptTemplateStore.MODE_AUTO
+        }.getOrDefault(false)
+    }
     private const val COMPRESSED_CONTEXT_HEADER = "以下は過去会話の圧縮コンテキストです:"
     private const val GEMMA_THINK_PREFIX = "<|think|>\n"
     private const val ASSISTANT_THINK_PREFILL = "<think>\n"
@@ -56,19 +68,23 @@ object PromptBuilder {
         PLAIN_COMPLETION,
     }
 
-    fun detectGgufFormat(modelPath: String): GgufPromptFormat {
+    fun detectGgufFormat(modelPath: String, appContext: Context? = null): GgufPromptFormat {
         val name = modelPath.lowercase()
+        // Bug fix(#42): ユーザーが明示的にテンプレを選んでいる場合は GPT-2 でも PLAIN_COMPLETION を強制しない。
+        // ChatML / Gemma などのユーザー選択を尊重してテンプレ経路 (buildWithCustomTemplate) に流す。
+        val userOverride = hasExplicitUserTemplate(appContext, modelPath)
         return when {
-            isGpt2Model(modelPath) -> GgufPromptFormat.PLAIN_COMPLETION
+            !userOverride && isGpt2Model(modelPath) -> GgufPromptFormat.PLAIN_COMPLETION
             "gemma" in name -> GgufPromptFormat.GEMMA_CHAT
             else -> GgufPromptFormat.CHATML
         }
     }
 
-    fun resolveThinkingPromptStyle(modelPath: String): ThinkingPromptStyle {
+    fun resolveThinkingPromptStyle(modelPath: String, appContext: Context? = null): ThinkingPromptStyle {
         val name = modelPath.lowercase()
+        val userOverride = hasExplicitUserTemplate(appContext, modelPath)
         return when {
-            isGpt2Model(modelPath) -> ThinkingPromptStyle.PLAIN_COMPLETION
+            !userOverride && isGpt2Model(modelPath) -> ThinkingPromptStyle.PLAIN_COMPLETION
             Regex("(^|[^a-z0-9])(qwen|qwq)([^a-z0-9]|$)").containsMatchIn(name) -> ThinkingPromptStyle.QWEN_COMMAND
             // Gemma4 (GGUF / litert) は thinking 構造が Gemma3 と異なるため専用スタイルへ振り分ける。
             // 一致条件: "gemma4", "gemma-4", "gemma_4", e2b/e4b/26b-a4b など Gemma4 サイズ識別子。
@@ -239,7 +255,7 @@ object PromptBuilder {
                 append(COMPRESSED_CONTEXT_HEADER).append('\n').append(compressedSummary)
             }
         }
-        val style = resolveThinkingPromptStyle(modelPath)
+        val style = resolveThinkingPromptStyle(modelPath, null)
         val rawHistory = messages.mapNotNull { msg ->
             val content = sanitizeMessageContent(msg)
             if (content.isBlank()) return@mapNotNull null
@@ -268,7 +284,16 @@ object PromptBuilder {
             thinkingGlobalPrefix(style, enableThinking) + rendered + suffix
         } catch (e: Exception) {
             // フォールバック: テンプレ崩壊時もモデル種別に応じた既定フォーマットで再構築する。
-            when (detectGgufFormat(modelPath)) {
+            // Bug fix(#42): ここでの detectGgufFormat は appContext を渡せない (buildWithCustomTemplate の呼び出し元にない) ため、
+            // GPT-2 判定で PLAIN_COMPLETION に落とす前に、テンプレ自身の内容 (例: <|im_start|> / <start_of_turn>) からフォーマットを推定する。
+            val fallbackFormat = when {
+                template.contains("<|im_start|>") || template.contains("<|im_end|>") -> GgufPromptFormat.CHATML
+                template.contains("<start_of_turn>") || template.contains("<end_of_turn>") -> GgufPromptFormat.GEMMA_CHAT
+                template.contains("<|start_header_id|>") || template.contains("<|eot_id|>") -> GgufPromptFormat.CHATML
+                template.contains("<|user|>") || template.contains("<|assistant|>") -> GgufPromptFormat.CHATML
+                else -> detectGgufFormat(modelPath)
+            }
+            when (fallbackFormat) {
                 GgufPromptFormat.GEMMA_CHAT -> buildForGgufGemma(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
                 GgufPromptFormat.CHATML -> buildForGgufChatMl(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
                 GgufPromptFormat.PLAIN_COMPLETION -> buildForGgufPlainCompletion(messages, systemPrompt, compressedSummary, sanitizeMessageContent)

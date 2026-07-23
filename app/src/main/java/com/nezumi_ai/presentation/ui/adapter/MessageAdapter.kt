@@ -103,6 +103,26 @@ class MessageAdapter(
     private var streamingMessageId: Long? = null
     private var streamingToolCallState: ToolCallState? = null
 
+    // Bug fix(#43): t/s ・ TTFT の表示トグルは SharedPreferences に保存されるが、
+    // RecyclerView の ViewHolder はリサイクルで前回の visibility を保持する。
+    // Adapter 側でフラグをキャッシュし、変更されたときに全アイテムを強制リバインドすることで
+    // 「トグルが効くときと効かないときがある」バグを防ぐ。
+    @Volatile private var cachedShowTps: Boolean? = null
+    @Volatile private var cachedShowTtft: Boolean? = null
+
+    /**
+     * Bug fix(#43): 全般設定タブで t/s または TTFT のトグルが切り替わったときに呼ぶことで、
+     * RecyclerView のリサイクルビューを含む全アイテムの visibility を確実に再評価させる。
+     */
+    fun refreshPerfIndicatorVisibility(showTps: Boolean, showTtft: Boolean) {
+        val changed = cachedShowTps != showTps || cachedShowTtft != showTtft
+        cachedShowTps = showTps
+        cachedShowTtft = showTtft
+        if (changed) {
+            notifyDataSetChanged()
+        }
+    }
+
     private enum class ContentRenderMode {
         Placeholder,
         Markdown
@@ -768,9 +788,14 @@ class MessageAdapter(
                 }
 
                 // ★ t/s と TTFT は全般タブの設定で非表示にできる。既定は両方とも非表示。
+                // Bug fix(#43): Adapter のキャッシュ値を優先し、未初期化のときだけ SharedPreferences を直接参照する。
+                // これにより、設定フラグメントから戻ってきた直後に refreshPerfIndicatorVisibility() で
+                // 強制リバインドさせれば、スクロールや新規メッセージを待たずに即座で反映される。
                 val ctx = binding.root.context
-                val showTps = com.nezumi_ai.utils.PreferencesHelper.isShowTps(ctx)
-                val showTtft = com.nezumi_ai.utils.PreferencesHelper.isShowTtft(ctx)
+                val showTps = cachedShowTps
+                    ?: com.nezumi_ai.utils.PreferencesHelper.isShowTps(ctx).also { cachedShowTps = it }
+                val showTtft = cachedShowTtft
+                    ?: com.nezumi_ai.utils.PreferencesHelper.isShowTtft(ctx).also { cachedShowTtft = it }
                 val tps = message.generationTps
                 val generationTimeMs = message.generationTimeMs
                 val ttftMs = message.ttftMs
