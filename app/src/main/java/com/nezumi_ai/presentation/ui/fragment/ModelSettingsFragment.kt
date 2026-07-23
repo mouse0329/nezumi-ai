@@ -84,6 +84,10 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -308,6 +312,16 @@ open class ModelSettingsFragment : Fragment() {
     private val modelStates = mutableStateMapOf<ModelFileManager.LocalModel, ModelUiState>()
     private val ggufCardMetadataStates = mutableStateMapOf<String, GgufCardMetadataUiState>()
 
+    // ★ 埋め込みモデルダウンロード進捗（DLタブで表示）
+    private var embeddingDownloadState by mutableStateOf<EmbeddingDownloadUiState?>(null)
+
+    // ★ ダウンロード中のネットワーク速度表示用（DLタブで表示）
+    private var activeDownloadSpeeds by mutableStateOf<Map<String, DownloadSpeedInfo>>(emptyMap())
+
+    // ★ リポジトリ更新通知: ダウンロード済みモデルのリポジトリが更新された場合に表示する
+    private var repoUpdateNotifications by mutableStateOf<List<RepoUpdateNotification>>(emptyList())
+    private var repoUpdateCheckInProgress by mutableStateOf(false)
+
     private val authLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             val data = result.data ?: return@registerForActivityResult
@@ -389,6 +403,8 @@ open class ModelSettingsFragment : Fragment() {
         observeCustomHfDownloadWork()
         observeImageModelDownloadWork()
         observeSafetyModelDownloadWork()
+        observeEmbeddingDownloadWork()
+        observeDownloadSpeeds()
         viewLifecycleOwner.lifecycleScope.launch {
             preloadMemoryWarningThresholdPercent = settingsRepository.getPreloadMemoryWarningThresholdPercent()
         }
@@ -399,6 +415,8 @@ open class ModelSettingsFragment : Fragment() {
         renderHfTokenState()
         refreshImportedTasks()
         refreshVoicevoxState()
+        // ★ DLタブ表示時にリポジトリ更新をチェック
+        checkRepositoryUpdates()
     }
 
     @Composable
@@ -431,34 +449,51 @@ open class ModelSettingsFragment : Fragment() {
             applyImportedModelFilters(importedTasks)
         }
 
-        LazyColumn(
+        // ★ モデル画面をサイドバー + コンテンツの2ペイン構成に変更。
+        //   横並びタブはスクロール可能なことに気づきにくかったため、縦型サイドバーにする。
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
                 .background(colorResource(id = R.color.bg_session_list))
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { findNavController().navigateUp() }) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_back),
-                            contentDescription = stringResource(id = R.string.back),
-                            tint = colorResource(id = R.color.text_primary)
-                        )
-                    }
-                    Text(
-                        text = "モデル",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = colorResource(id = R.color.text_primary),
-                        fontWeight = FontWeight.Bold
+            // ヘッダー行
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(start = 8.dp, top = 8.dp, end = 16.dp, bottom = 4.dp)
+            ) {
+                IconButton(onClick = { findNavController().navigateUp() }) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_back),
+                        contentDescription = stringResource(id = R.string.back),
+                        tint = colorResource(id = R.color.text_primary)
                     )
                 }
+                Text(
+                    text = "モデル",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = colorResource(id = R.color.text_primary),
+                    fontWeight = FontWeight.Bold
+                )
             }
-            
-            item { TabSelector() }
 
+            // サイドバー + コンテンツ
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f)
+            ) {
+                // ★ 縦型サイドバー
+                ModelSidebarSelector()
+
+                // ★ コンテンツエリア（右側）
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
             when (selectedTab) {
                 ModelType.LLM -> {
                     item { HfCard() }
@@ -583,6 +618,68 @@ open class ModelSettingsFragment : Fragment() {
                 }
                 ModelType.DOWNLOAD_QUEUE -> {
                     item { DownloadQueueCard() }
+                    item { EmbeddingDownloadCard() }
+                    item { NetworkSpeedCard() }
+                    item { RepoUpdateNotificationCard() }
+                }
+            }
+                } // LazyColumn close
+            } // Row(サイドバー+コンテンツ) close
+        } // Column(全体) close
+    }
+
+    @Composable
+    private fun ModelSidebarSelector() {
+        val tabs = buildList {
+            add(ModelType.LLM to "LLM")
+            add(ModelType.IMAGE_GENERATION to "画像生成")
+            if (com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) {
+                add(ModelType.TEXT_TO_SPEECH to "読み上げ")
+            }
+            add(ModelType.DOWNLOAD_QUEUE to "DL")
+        }
+        val isDark = isSystemInDarkTheme()
+        Column(
+            modifier = Modifier
+                .width(120.dp)
+                .fillMaxHeight()
+                .background(colorResource(id = R.color.primary_light))
+        ) {
+            tabs.forEach { (tab, label) ->
+                val isSelected = selectedTab == tab
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { selectedTab = tab }
+                        .background(
+                            if (isSelected) colorResource(id = R.color.primary)
+                            else Color.Transparent
+                        )
+                        .padding(vertical = 14.dp, horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(3.dp)
+                            .height(20.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(
+                                if (isSelected) colorResource(id = R.color.nezumi_on_primary)
+                                else Color.Transparent
+                            )
+                    )
+                    Text(
+                        text = label,
+                        color = if (isSelected) {
+                            colorResource(id = R.color.nezumi_on_primary)
+                        } else {
+                            if (isDark) Color.White.copy(alpha = 0.7f) else colorResource(id = R.color.text_secondary)
+                        },
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
         }
@@ -1079,46 +1176,188 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
+    // ★ TabSelector は ModelSidebarSelector に置き換えられたため削除。
+    //   古い横並びタブはスクロール可能なことに気づきにくかったため、縦型サイドバーに変更した。
+
+    // ★ 埋め込みモデルダウンロード進捗カード（DLタブに表示）
     @Composable
-    private fun TabSelector() {
+    private fun EmbeddingDownloadCard() {
+        val state = embeddingDownloadState ?: return
+        Text(
+            text = "埋め込みモデル（メモリ検索用）ダウンロード",
+            style = MaterialTheme.typography.labelSmall,
+            color = colorResource(id = R.color.text_secondary),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = 16.dp)
+        )
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
-                containerColor = colorResource(id = R.color.primary_light)
+                containerColor = colorResource(id = R.color.surface_card)
             )
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                TabButton(
-                    text = "LLM",
-                    selected = selectedTab == ModelType.LLM,
-                    onClick = { selectedTab = ModelType.LLM },
-                    modifier = Modifier.weight(1f)
-                )
-                TabButton(
-                    text = "画像生成",
-                    selected = selectedTab == ModelType.IMAGE_GENERATION,
-                    onClick = { selectedTab = ModelType.IMAGE_GENERATION },
-                    modifier = Modifier.weight(1f)
-                )
-                if (com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) {
-                    TabButton(
-                        text = "読み上げ",
-                        selected = selectedTab == ModelType.TEXT_TO_SPEECH,
-                        onClick = { selectedTab = ModelType.TEXT_TO_SPEECH },
-                        modifier = Modifier.weight(1f)
+                Text(text = "static-embedding-japanese: ${state.fileName}", fontWeight = FontWeight.SemiBold)
+                if (state.totalBytes > 0L) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        progress = { state.progress },
+                        color = colorResource(id = R.color.primary),
+                        trackColor = colorResource(id = R.color.context_meter_track)
+                    )
+                    val percent = (state.progress * 100).toInt()
+                    Text(
+                        text = "$percent% (${formatBytes(state.downloadedBytes)} / ${formatBytes(state.totalBytes)})",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = colorResource(id = R.color.primary),
+                        trackColor = colorResource(id = R.color.context_meter_track)
+                    )
+                    Text(
+                        text = "準備中...",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
-                TabButton(
-                    text = "DL",
-                    selected = selectedTab == ModelType.DOWNLOAD_QUEUE,
-                    onClick = { selectedTab = ModelType.DOWNLOAD_QUEUE },
-                    modifier = Modifier.weight(1f)
-                )
+            }
+        }
+    }
+
+    // ★ ネットワーク速度表示カード（DLタブに表示）
+    @Composable
+    private fun NetworkSpeedCard() {
+        if (activeDownloadSpeeds.isEmpty()) return
+        Text(
+            text = "ネットワーク速度",
+            style = MaterialTheme.typography.labelSmall,
+            color = colorResource(id = R.color.text_secondary),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = 16.dp)
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.surface_card)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                activeDownloadSpeeds.forEach { (key, info) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = key,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorResource(id = R.color.text_secondary)
+                        )
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = String.format("%.1f MB/s", info.speedMbps),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorResource(id = R.color.primary),
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (info.estimatedRemainingSec > 0) {
+                                val remainMin = (info.estimatedRemainingSec / 60).toInt()
+                                val remainSec = (info.estimatedRemainingSec % 60).toInt()
+                                Text(
+                                    text = "残り ${remainMin}分${remainSec}秒",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colorResource(id = R.color.text_secondary)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ★ リポジトリ更新通知カード（DLタブに表示）
+    @Composable
+    private fun RepoUpdateNotificationCard() {
+        if (repoUpdateNotifications.isEmpty()) return
+        Text(
+            text = "リポジトリ更新通知",
+            style = MaterialTheme.typography.labelSmall,
+            color = colorResource(id = R.color.text_secondary),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = 16.dp)
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            repoUpdateNotifications.forEach { notif ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = colorResource(id = R.color.surface_card)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(text = notif.displayName, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = "更新あり",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorResource(id = R.color.primary),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        // ★ SHA256 ハッシュ比較による更新検知のため、
+                        //   ローカルファイルサイズを表示する（リモートサイズは取得していない）
+                        Text(
+                            text = "ローカルファイル: ${formatBytes(notif.localFileSize)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorResource(id = R.color.text_secondary)
+                        )
+                        Text(
+                            text = "リモートリポジトリのハッシュが変更されています。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorResource(id = R.color.text_secondary)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = {
+                                // ★ 更新ボタン: モデルを削除して再ダウンロード
+                                viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                                    val model = ModelFileManager.LocalModel.entries.firstOrNull {
+                                        it.name == notif.modelKey
+                                    }
+                                    if (model != null) {
+                                        ModelFileManager.deleteModel(requireContext(), model)
+                                        withContext(Dispatchers.Main) {
+                                            refreshModelStatus(model)
+                                            requestNotificationPermissionForDownload(model)
+                                            toast("${notif.displayName} を更新しています...")
+                                        }
+                                    }
+                                }
+                            }) {
+                                Text("更新")
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -3828,6 +4067,130 @@ open class ModelSettingsFragment : Fragment() {
             }
     }
 
+    // ★ 埋め込みモデルダウンロード進捗を観測（MemoryTextEmbedder の StateFlow を直接使用）
+    //   ChatViewModel に依存せず、MemoryTextEmbedder が公開する StateFlow を直接 observe する。
+    private fun observeEmbeddingDownloadWork() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            MemoryTextEmbedder.downloadInProgress.collect { downloading ->
+                if (!downloading) {
+                    embeddingDownloadState = null
+                }
+            }
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            MemoryTextEmbedder.downloadProgress.collect { progress ->
+                if (progress != null) {
+                    embeddingDownloadState = EmbeddingDownloadUiState(
+                        fileName = progress.fileName,
+                        downloadedBytes = progress.downloaded,
+                        totalBytes = progress.total,
+                        isActive = true
+                    )
+                }
+            }
+        }
+    }
+
+    // ★ 組み込みモデル + HFカスタム + 画像モデルのダウンロード速度を観測
+    private fun observeDownloadSpeeds() {
+        val speedMap = mutableMapOf<String, DownloadSpeedInfo>()
+        // 組み込みモデル
+        ModelFileManager.LocalModel.entries.forEach { model ->
+            WorkManager.getInstance(requireContext())
+                .getWorkInfosForUniqueWorkLiveData(ModelDownloadWorker.modelWorkName(model))
+                .observe(viewLifecycleOwner) { infos ->
+                    val info = infos.maxByOrNull { it.runAttemptCount } ?: return@observe
+                    if (info.state != WorkInfo.State.RUNNING) {
+                        speedMap.remove(model.name)
+                    } else {
+                        val speed = info.progress.getDouble(ModelDownloadWorker.KEY_SPEED_MBPS, 0.0)
+                        val eta = info.progress.getDouble(ModelDownloadWorker.KEY_ESTIMATED_REMAINING_SEC, 0.0)
+                        val dl = info.progress.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
+                        val total = info.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L)
+                        speedMap[model.name] = DownloadSpeedInfo(speed, eta, dl, total)
+                    }
+                    activeDownloadSpeeds = speedMap.toMap()
+                }
+        }
+        // HFカスタムモデル
+        WorkManager.getInstance(requireContext())
+            .getWorkInfosByTagLiveData(ModelDownloadWorker.TAG_HF_CUSTOM_DOWNLOAD)
+            .observe(viewLifecycleOwner) { infos ->
+                infos.forEach { info ->
+                    if (info.state != WorkInfo.State.RUNNING) return@forEach
+                    val modelId = info.progress.getString(ModelDownloadWorker.KEY_HF_MODEL_ID) ?: return@forEach
+                    val filePath = info.progress.getString(ModelDownloadWorker.KEY_HF_FILE_PATH) ?: return@forEach
+                    val label = "${modelId}/${filePath.substringAfterLast("/")}"
+                    val speed = info.progress.getDouble(ModelDownloadWorker.KEY_SPEED_MBPS, 0.0)
+                    val eta = info.progress.getDouble(ModelDownloadWorker.KEY_ESTIMATED_REMAINING_SEC, 0.0)
+                    val dl = info.progress.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
+                    val total = info.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L)
+                    speedMap[label] = DownloadSpeedInfo(speed, eta, dl, total)
+                }
+                // 完了したものをクリーンアップ
+                val activeKeys = infos.filter { it.state == WorkInfo.State.RUNNING }
+                    .mapNotNull { it.progress.getString(ModelDownloadWorker.KEY_HF_MODEL_ID) + "/" + (it.progress.getString(ModelDownloadWorker.KEY_HF_FILE_PATH)?.substringAfterLast("/")) }
+                    .toSet()
+                speedMap.keys.filter { it.contains("/") }.forEach { key ->
+                    if (key !in activeKeys) speedMap.remove(key)
+                }
+                activeDownloadSpeeds = speedMap.toMap()
+            }
+    }
+
+    // ★ リポジトリ更新チェック: SHA256 ハッシュでローカルとリモートを比較
+    //   HuggingFace の HEAD レスポンスの ETag / X-Linked-Etag に SHA256 が入っているため、
+    //   ローカルファイルの SHA256 と比較することで確実に更新を検知できる。
+    //   ファイルサイズ比較は HuggingFace とローカルで必ず差が出るため使えない。
+    //   SHA256 計算はコストが高いため、ModelFileManager.getCachedLocalSha256() で
+    //   ファイルの lastModified + length が変わらなければキャッシュを再利用する。
+    private fun checkRepositoryUpdates() {
+        if (repoUpdateCheckInProgress) return
+        repoUpdateCheckInProgress = true
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val notifications = mutableListOf<RepoUpdateNotification>()
+            val token = HfAuthManager.getToken(requireContext())
+            // 組み込みモデルでダウンロード済みのものをチェック
+            ModelFileManager.LocalModel.entries.forEach { model ->
+                if (!ModelFileManager.isDownloaded(requireContext(), model)) return@forEach
+                if (model == ModelFileManager.LocalModel.GEMMA3N_2B ||
+                    model == ModelFileManager.LocalModel.GEMMA3N_4B) return@forEach
+                val localFile = ModelFileManager.modelFile(requireContext(), model)
+                if (localFile == null || !localFile.exists()) return@forEach
+                val localSize = localFile.length()
+                val displayName = titleFor(model)
+                val url = ModelFileManager.remoteUrlForModel(model) ?: return@forEach
+                // 1. リモートの SHA256 を HEAD リクエストで取得（ETag から抽出）
+                val remoteSha256 = ModelFileManager.getRemoteSha256(url, token)
+                if (remoteSha256 == null) {
+                    Log.w("ModelSettings", "Could not get remote SHA256 for ${model.name}")
+                    return@forEach
+                }
+                // 2. ローカルファイルの SHA256 を計算（キャッシュ付き）
+                val localSha256 = ModelFileManager.getCachedLocalSha256(localFile)
+                if (localSha256 == null) {
+                    Log.w("ModelSettings", "Could not compute local SHA256 for ${model.name}")
+                    return@forEach
+                }
+                // 3. ハッシュが異なれば更新あり
+                if (localSha256 != remoteSha256) {
+                    notifications.add(RepoUpdateNotification(
+                        modelKey = model.name,
+                        displayName = displayName,
+                        lastModifiedRemote = null,
+                        localFileSize = localSize,
+                        remoteFileSize = null
+                    ))
+                    Log.i("ModelSettings", "Repository update detected for ${model.name}: local=$localSha256 remote=$remoteSha256")
+                }
+            }
+            withContext(Dispatchers.Main) {
+                repoUpdateNotifications = notifications
+                repoUpdateCheckInProgress = false
+            }
+        }
+    }
+
     private fun initializeVoicevoxFromSettings() {
         if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) return
         voicevoxInitializing = true
@@ -4237,11 +4600,20 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     private fun getModelSizeBytes(model: ModelFileManager.LocalModel): Long {
+        // ★ 実際のダウンロード済みファイルサイズを優先して返す。
+        //   未ダウンロードの場合のみフォールバック値（概算）を使用する。
+        //   従来はハードコード値を返していたため、Gemma4 2B/4B の表示サイズが
+        //   実際のファイルサイズと一致しない問題があった。
+        val localFile = ModelFileManager.modelFile(requireContext(), model)
+        if (localFile.exists() && localFile.length() > 0L) {
+            return localFile.length()
+        }
+        // フォールバック: 未ダウンロード時の概算値
         return when (model) {
             ModelFileManager.LocalModel.GEMMA4_2B -> 2_400_000_000L  // 約 2.4GB
             ModelFileManager.LocalModel.GEMMA4_4B -> 8_000_000_000L  // 約 8GB (12GB端末推奨)
             ModelFileManager.LocalModel.GEMMA3N_2B -> 2_000_000_000L  // 約 2GB
-            ModelFileManager.LocalModel.GEMMA3N_4B -> 8_000_000_000L  // 約 4GB
+            ModelFileManager.LocalModel.GEMMA3N_4B -> 4_000_000_000L  // 約 4GB
         }
     }
 
@@ -4364,6 +4736,38 @@ open class ModelSettingsFragment : Fragment() {
     private data class NativeRuntimeStatus(
         val label: String,
         val compatible: Boolean
+    )
+
+    // ★ 埋め込みモデルダウンロード進捗用 UI 状態
+    private data class EmbeddingDownloadUiState(
+        val fileName: String,
+        val downloadedBytes: Long,
+        val totalBytes: Long,
+        val isActive: Boolean
+    ) {
+        val progress: Float
+            get() = if (totalBytes > 0L) {
+                (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+            } else {
+                0f
+            }
+    }
+
+    // ★ ネットワーク速度表示用
+    private data class DownloadSpeedInfo(
+        val speedMbps: Double,
+        val estimatedRemainingSec: Double,
+        val downloadedBytes: Long,
+        val totalBytes: Long
+    )
+
+    // ★ リポジトリ更新通知用
+    private data class RepoUpdateNotification(
+        val modelKey: String,
+        val displayName: String,
+        val lastModifiedRemote: String?,
+        val localFileSize: Long,
+        val remoteFileSize: Long?
     )
 
     @Composable

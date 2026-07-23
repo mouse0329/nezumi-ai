@@ -866,6 +866,14 @@ class ChatViewModel(
         Log.d(TAG, "Context window updated for model=$model: $contextWindow")
     }
 
+    /**
+     * 現在アクティブなメッセージコレクションセッションID。
+     * セッション切り替え時のレースコンディションを防ぐために使用する。
+     * 古いコレクションジョブの Flow エミッションが遅延到着した場合、
+     * この ID と一致しなければ _messages への反映をスキップする。
+     */
+    @Volatile private var activeCollectionSessionId: Long? = null
+
     suspend fun setCurrentSession(sessionId: Long) {
         val previousSessionId = _currentSessionId.value
         _currentSessionId.value = sessionId
@@ -900,13 +908,34 @@ class ChatViewModel(
         clearCompressedContextCache(sessionId)
         Log.d(TAG, "setCurrentSession: Cleared compressed context cache for sessionId=$sessionId")
 
+        // ★ レースコンディション修正: 即座にメッセージをクリアして、前セッションの
+        //   メッセージが一瞬表示される（チャットカードが切れる）現象を防ぐ。
+        //   古いコレクションジョブの最終エミッションが到着しても activeCollectionSessionId
+        //   ガードで弾かれるが、UI のちらつきを防ぐために即時クリアも行う。
+        withContext(Dispatchers.Main) {
+            _messages.value = emptyList()
+            allMessagesSnapshot.value = emptyList()
+        }
+
         // キャンセル前のコレクションジョブ
         messagesCollectionJob?.cancel()
+
+        // ★ 新しいコレクションセッションIDを設定してからジョブを起動する。
+        //   これにより古いジョブの遅延エミッションが新しいセッションのメッセージを
+        //   上書きするのを防ぐ。
+        activeCollectionSessionId = sessionId
 
         messagesCollectionJob = viewModelScope.launch(Dispatchers.IO) {
             Log.d(TAG, "START_MESSAGE_COLLECTION: sessionId=$sessionId")
             messageRepository.getMessagesForSession(sessionId)
                 .collect { msgs ->
+                    // ★ レースコンディションガード: このジョブが起動したセッションIDと
+                    //   現在アクティブなセッションIDが一致しない場合は、エミッションを破棄する。
+                    //   これにより古いセッションのメッセージが新セッションに混入するのを防ぐ。
+                    if (activeCollectionSessionId != sessionId) {
+                        Log.d(TAG, "STALE_MESSAGE_FLOW: discarding ${msgs.size} msgs for sessionId=$sessionId (active=${activeCollectionSessionId})")
+                        return@collect
+                    }
                     if (BuildConfig.DEBUG) {
                         Log.d(
                             TAG,
@@ -920,9 +949,12 @@ class ChatViewModel(
                     val filtered = applyVariantSelection(snapshot, _selectedVariantByParent.value)
                     val contextUsageChars = estimateContextUsageChars(filtered)
                     withContext(Dispatchers.Main) {
-                        _messages.value = filtered
-                        // ★ メーター不正確修正: キャッシュクリア完了後にメーター計算を実行
-                        _contextUsageChars.value = contextUsageChars
+                        // ★ 二重ガード: メインスレッドに戻った時点でもセッションIDを確認する
+                        if (activeCollectionSessionId == sessionId) {
+                            _messages.value = filtered
+                            // ★ メーター不正確修正: キャッシュクリア完了後にメーター計算を実行
+                            _contextUsageChars.value = contextUsageChars
+                        }
                     }
                 }
         }

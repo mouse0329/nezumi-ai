@@ -150,6 +150,27 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var currentBackendType = "CPU"
     private var currentModelKey = "E2B"
     private var isCompressingNow = false
+
+    // ★ セッション切り替え最適化: navigateToChatSession がフラグメントを再生成する代わりに、
+    //   このメソッドを呼んでセッションIDだけ切り替えることでページ遷移の重さを軽減する。
+    //   MainActivity.navigateToChatSession から呼ばれる。
+    fun switchSession(sessionId: Long) {
+        if (_binding == null || !isAdded) return
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                settingsRepository.saveCurrentSessionId(sessionId)
+                val prefs = requireContext().getSharedPreferences("nezumi_ai_prefs", android.content.Context.MODE_PRIVATE)
+                prefs.edit().putLong("current_session_id", sessionId).apply()
+                viewModel.setCurrentSession(sessionId)
+                withContext(Dispatchers.Main) {
+                    pendingInitialScrollToBottom = true
+                    userScrolledAwayDuringGeneration = false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "switchSession failed", e)
+            }
+        }
+    }
     private var responseTypingVisible by mutableStateOf(false)
     private var responseTypingText by mutableStateOf("")
     private var modelLoadingOverlayVisible by mutableStateOf(false)

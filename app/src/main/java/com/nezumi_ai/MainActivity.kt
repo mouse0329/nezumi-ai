@@ -294,6 +294,23 @@ class MainActivity : AppCompatActivity() {
 
     private fun navigateToChatSession(sessionId: Long) {
         val navController = findNavController(R.id.nav_host_fragment_content_main)
+        // ★ セッション遷移最適化: すでに ChatFragment が表示されている場合は、
+        //   フラグメントを再生成（popBackStack + navigate）する代わりに、
+        //   既存の ChatFragment の switchSession() を呼んでセッションIDだけ切り替える。
+        //   これによりフラグメントの再作成による重い処理（ViewBinding再生成、RecyclerView再構築、
+        //   Compose再構成など）を回避し、ページ遷移の重さを軽減する。
+        if (navController.currentDestination?.id == R.id.chatFragment) {
+            val chatFragment = supportFragmentManager.findFragmentById(R.id.nav_host_fragment_content_main)
+                ?.let { it as? androidx.navigation.fragment.NavHostFragment }
+                ?.childFragmentManager
+                ?.fragments
+                ?.firstOrNull { it is com.nezumi_ai.presentation.ui.fragment.ChatFragment } as? com.nezumi_ai.presentation.ui.fragment.ChatFragment
+            if (chatFragment != null && chatFragment.isAdded) {
+                chatFragment.switchSession(sessionId)
+                return
+            }
+        }
+        // ChatFragment が表示されていない場合は通常通りナビゲートする
         if (navController.currentDestination?.id == R.id.chatFragment) {
             navController.popBackStack(R.id.chatFragment, true)
         }

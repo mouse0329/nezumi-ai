@@ -19,6 +19,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -28,6 +31,20 @@ object MemoryTextEmbedder {
     private const val TAG = "MemoryTextEmbedder"
     // 実行時に決まる場合があるため定数から可変へ変更。ONNX モデルから取得可能なら上書きする。
     var DIMENSION = 1024
+
+    // ★ 埋め込みモデルダウンロード進捗を UI（DLタブ）から直接観測できるようにする。
+    //   ChatViewModel を経由せずに ModelSettingsFragment が observe できるよう公開する。
+    private val _downloadInProgress = MutableStateFlow(false)
+    val downloadInProgress: StateFlow<Boolean> = _downloadInProgress.asStateFlow()
+
+    private val _downloadProgress = MutableStateFlow<DownloadProgress?>(null)
+    val downloadProgress: StateFlow<DownloadProgress?> = _downloadProgress.asStateFlow()
+
+    data class DownloadProgress(
+        val fileName: String,
+        val downloaded: Long,
+        val total: Long
+    )
 
     private var initialized = false
     private var useOnnx = false
@@ -406,34 +423,42 @@ object MemoryTextEmbedder {
         context: Context,
         onProgress: ((file: String, downloaded: Long, total: Long) -> Unit)? = null
     ): Boolean = withContext(Dispatchers.IO) {
-        val embeddingDir = File(context.filesDir, embeddingDirName).also { it.mkdirs() }
-        val modelFile = File(embeddingDir, "model_quantized_arm64.onnx")
-        val tokenizerFile = File(embeddingDir, "tokenizer.json")
+        _downloadInProgress.value = true
+        try {
+            val embeddingDir = File(context.filesDir, embeddingDirName).also { it.mkdirs() }
+            val modelFile = File(embeddingDir, "model_quantized_arm64.onnx")
+            val tokenizerFile = File(embeddingDir, "tokenizer.json")
 
-        runCatching {
-            if (!modelFile.exists() || modelFile.length() == 0L) {
-                Log.i(TAG, "Downloading embedding model...")
-                downloadEmbeddingFile(context, EMBEDDING_MODEL_URL, modelFile) { d, t ->
-                    onProgress?.invoke("model_quantized_arm64.onnx", d, t)
+            runCatching {
+                if (!modelFile.exists() || modelFile.length() == 0L) {
+                    Log.i(TAG, "Downloading embedding model...")
+                    downloadEmbeddingFile(context, EMBEDDING_MODEL_URL, modelFile) { d, t ->
+                        onProgress?.invoke("model_quantized_arm64.onnx", d, t)
+                        _downloadProgress.value = DownloadProgress("model_quantized_arm64.onnx", d, t)
+                    }
+                    Log.i(TAG, "Embedding model downloaded: ${modelFile.length()} bytes")
+                } else {
+                    Log.d(TAG, "Embedding model already exists, skipping download")
                 }
-                Log.i(TAG, "Embedding model downloaded: ${modelFile.length()} bytes")
-            } else {
-                Log.d(TAG, "Embedding model already exists, skipping download")
-            }
-            if (!tokenizerFile.exists() || tokenizerFile.length() == 0L) {
-                Log.i(TAG, "Downloading embedding tokenizer...")
-                downloadEmbeddingFile(context, EMBEDDING_TOKENIZER_URL, tokenizerFile) { d, t ->
-                    onProgress?.invoke("tokenizer.json", d, t)
+                if (!tokenizerFile.exists() || tokenizerFile.length() == 0L) {
+                    Log.i(TAG, "Downloading embedding tokenizer...")
+                    downloadEmbeddingFile(context, EMBEDDING_TOKENIZER_URL, tokenizerFile) { d, t ->
+                        onProgress?.invoke("tokenizer.json", d, t)
+                        _downloadProgress.value = DownloadProgress("tokenizer.json", d, t)
+                    }
+                    Log.i(TAG, "Embedding tokenizer downloaded: ${tokenizerFile.length()} bytes")
+                } else {
+                    Log.d(TAG, "Embedding tokenizer already exists, skipping download")
                 }
-                Log.i(TAG, "Embedding tokenizer downloaded: ${tokenizerFile.length()} bytes")
-            } else {
-                Log.d(TAG, "Embedding tokenizer already exists, skipping download")
-            }
-            resetInitialization()
-            true
-        }.onFailure {
-            Log.e(TAG, "Failed to download embedding files", it)
-        }.getOrDefault(false)
+                resetInitialization()
+                true
+            }.onFailure {
+                Log.e(TAG, "Failed to download embedding files", it)
+            }.getOrDefault(false)
+        } finally {
+            _downloadInProgress.value = false
+            _downloadProgress.value = null
+        }
     }
 
     private suspend fun downloadEmbeddingFile(

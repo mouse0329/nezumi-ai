@@ -334,65 +334,118 @@ class SettingsComposeFragment : Fragment() {
             )
         }
 
-        LazyColumn(
+        // ★ 設定タブを縦型サイドバーに変更。
+        //   横スクロールタブはモダンではなく、スクロール可能なことに気づきにくかったため、
+        //   左側に縦に並んだサイドバー + 右側にコンテンツの2ペイン構成にする。
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(colorResource(id = R.color.bg_session_list)),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .background(colorResource(id = R.color.bg_session_list))
         ) {
-            item { Spacer(modifier = Modifier.statusBarsPadding()) }
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { onBackButtonPressed() }) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_back),
-                            contentDescription = stringResource(id = R.string.back),
-                            tint = colorResource(id = R.color.text_primary)
-                        )
-                    }
-                    Text(
-                        text = "設定",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = colorResource(id = R.color.text_primary),
-                        fontWeight = FontWeight.Bold
+            // ステータスバー余白
+            Spacer(modifier = Modifier.statusBarsPadding())
+            // ヘッダー行
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(start = 8.dp, top = 8.dp, end = 16.dp, bottom = 4.dp)
+            ) {
+                IconButton(onClick = { onBackButtonPressed() }) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_back),
+                        contentDescription = stringResource(id = R.string.back),
+                        tint = colorResource(id = R.color.text_primary)
                     )
                 }
+                Text(
+                    text = "設定",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = colorResource(id = R.color.text_primary),
+                    fontWeight = FontWeight.Bold
+                )
             }
 
-            item {
-                // ★ デバッグタブはデバッグビルド時のみ表示する。
-                //   リリースビルドでは BuildConfig.DEBUG=false なので自動的に非表示になる。
-                val sectionTitles = buildList {
+            // ★ デバッグタブはデバッグビルド時のみ表示する。
+            val sectionTitles = remember {
+                buildList {
                     add("全般"); add("推論"); add("画像"); add("メモリ"); add("チャット")
                     if (BuildConfig.DEBUG) add("デバッグ")
                 }
-                ScrollableTabRow(
-                    selectedTabIndex = selectedSection,
-                    edgePadding = 0.dp,
-                    indicator = { tabPositions ->
-                        TabRowDefaults.SecondaryIndicator(
-                            Modifier.tabIndicatorOffset(tabPositions[selectedSection]),
-                            color = colorResource(id = R.color.primary)
-                        )
-                    },
-                    containerColor = colorResource(id = R.color.primary_light)
-                ) {
-                    val isDark = isSystemInDarkTheme()
-                    sectionTitles.forEachIndexed { index, title ->
-                        Tab(
-                            selected = selectedSection == index,
-                            onClick = { selectedSection = index },
-                            selectedContentColor = if (isDark) Color.White else Color.Black,
-                            unselectedContentColor = if (isDark) Color.White.copy(alpha = 0.7f) else Color.Gray,
-                            text = { Text(text = title) }
-                        )
-                    }
+            }
+            val sectionIcons = remember {
+                buildList {
+                    add(R.drawable.settings_24)       // 全般
+                    add(R.drawable.ic_signal_cellular_24) // 推論
+                    add(R.drawable.ic_image)           // 画像
+                    add(R.drawable.ic_brain_24)        // メモリ
+                    add(R.drawable.ic_chat_24)         // チャット
+                    if (BuildConfig.DEBUG) add(R.drawable.ic_bug_24) // デバッグ
                 }
             }
 
-            item(key = selectedSection) {
-                when (selectedSection) {
+            // サイドバー + コンテンツの2ペイン構成
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f)
+            ) {
+                // ★ 縦型サイドバー
+                Column(
+                    modifier = Modifier
+                        .width(120.dp)
+                        .fillMaxHeight()
+                        .background(colorResource(id = R.color.primary_light))
+                ) {
+                    sectionTitles.forEachIndexed { index, title ->
+                        val isSelected = selectedSection == index
+                        val isDark = isSystemInDarkTheme()
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedSection = index }
+                                .background(
+                                    if (isSelected) colorResource(id = R.color.primary)
+                                    else Color.Transparent
+                                )
+                                .padding(vertical = 14.dp, horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // 選択中タブの左端にアクセントバー
+                            Box(
+                                modifier = Modifier
+                                    .width(3.dp)
+                                    .height(20.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(
+                                        if (isSelected) colorResource(id = R.color.nezumi_on_primary)
+                                        else Color.Transparent
+                                    )
+                            )
+                            Text(
+                                text = title,
+                                color = if (isSelected) {
+                                    colorResource(id = R.color.nezumi_on_primary)
+                                } else {
+                                    if (isDark) Color.White.copy(alpha = 0.7f) else colorResource(id = R.color.text_secondary)
+                                },
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+
+                // ★ コンテンツエリア（右側）
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                    contentPadding = PaddingValues(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    item(key = selectedSection) {
+                        when (selectedSection) {
                     0 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         // 強制的にUIをここに展開
                         Card(
@@ -789,7 +842,9 @@ class SettingsComposeFragment : Fragment() {
                     }
                 }
             }
-        }
+        } // ← LazyColumn close
+            } // ← Row(サイドバー+コンテンツ) close
+        } // ← Column(全体) close
     }
 
 

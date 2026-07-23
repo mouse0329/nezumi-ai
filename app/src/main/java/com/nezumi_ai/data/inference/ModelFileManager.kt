@@ -959,6 +959,71 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         return Result.success(file)
     }
 
+    // ★ リポジトリ更新チェック用: モデルのダウンロード URL を返す
+    fun remoteUrlForModel(model: LocalModel): String? {
+        return when (model) {
+            LocalModel.GEMMA3N_2B -> GEMMA3N_2B_HF_URL
+            LocalModel.GEMMA3N_4B -> GEMMA3N_4B_HF_URL
+            LocalModel.GEMMA4_2B -> GEMMA4_2B_HF_URL
+            LocalModel.GEMMA4_4B -> GEMMA4_4B_HF_URL
+        }
+    }
+
+    // ★ SHA256 ハッシュキャッシュ: リポジトリ更新チェックで毎回ファイル全体の
+    //   SHA256 を計算するとコストが高いため、ファイルパス→(lastModified, hash) の
+    //   キャッシュを持つ。ファイルの最終更新時刻が変わらなければキャッシュを再利用する。
+    private data class Sha256CacheEntry(
+        val fileLastModified: Long,
+        val fileLength: Long,
+        val hash: String
+    )
+    private val sha256Cache = ConcurrentHashMap<String, Sha256CacheEntry>()
+
+    // ★ ローカルファイルの SHA256 を計算（キャッシュ付き）
+    fun getCachedLocalSha256(file: File): String? {
+        if (!file.exists() || file.length() <= 0L) return null
+        val cacheKey = file.absolutePath
+        val cached = sha256Cache[cacheKey]
+        val currentLastMod = file.lastModified()
+        val currentLen = file.length()
+        // ファイルの最終更新時刻とサイズが変わっていなければキャッシュを再利用
+        if (cached != null && cached.fileLastModified == currentLastMod && cached.fileLength == currentLen) {
+            return cached.hash
+        }
+        // キャッシュミスまたはファイル変更済み: 実際に計算する
+        return runCatching {
+            val hash = sha256Blocking(file)
+            sha256Cache[cacheKey] = Sha256CacheEntry(currentLastMod, currentLen, hash)
+            hash
+        }.onFailure {
+            Log.w(TAG, "getCachedLocalSha256 failed for ${file.absolutePath}", it)
+        }.getOrNull()
+    }
+
+    // ★ リモートファイルの SHA256 を HEAD リクエストで取得（ETag / X-Linked-Etag から抽出）
+    fun getRemoteSha256(urlString: String, token: String): String? {
+        return try {
+            val conn = (URL(urlString).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 15_000
+                readTimeout = 15_000
+                requestMethod = "HEAD"
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "nezumi-ai/1.0")
+                if (token.isNotBlank()) setRequestProperty("Authorization", "Bearer $token")
+            }
+            try {
+                conn.connect()
+                if (conn.responseCode !in 200..299) return null
+                extractSha256FromHeaders(conn)
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "getRemoteSha256 failed for $urlString", e)
+            null
+        }
+    }
+
     fun previewTreeUrl(model: LocalModel): String {
         return when (model) {
             LocalModel.GEMMA3N_2B -> "https://huggingface.co/google/gemma-3n-E2B-it-litert-preview"
