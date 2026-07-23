@@ -449,51 +449,34 @@ open class ModelSettingsFragment : Fragment() {
             applyImportedModelFilters(importedTasks)
         }
 
-        // ★ モデル画面をサイドバー + コンテンツの2ペイン構成に変更。
-        //   横並びタブはスクロール可能なことに気づきにくかったため、縦型サイドバーにする。
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
                 .background(colorResource(id = R.color.bg_session_list))
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // ヘッダー行
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(start = 8.dp, top = 8.dp, end = 16.dp, bottom = 4.dp)
-            ) {
-                IconButton(onClick = { findNavController().navigateUp() }) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_back),
-                        contentDescription = stringResource(id = R.string.back),
-                        tint = colorResource(id = R.color.text_primary)
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { findNavController().navigateUp() }) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_back),
+                            contentDescription = stringResource(id = R.string.back),
+                            tint = colorResource(id = R.color.text_primary)
+                        )
+                    }
+                    Text(
+                        text = "モデル",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = colorResource(id = R.color.text_primary),
+                        fontWeight = FontWeight.Bold
                     )
                 }
-                Text(
-                    text = "モデル",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = colorResource(id = R.color.text_primary),
-                    fontWeight = FontWeight.Bold
-                )
             }
 
-            // サイドバー + コンテンツ
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .weight(1f)
-            ) {
-                // ★ 縦型サイドバー
-                ModelSidebarSelector()
+            item { TabSelector() }
 
-                // ★ コンテンツエリア（右側）
-                LazyColumn(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
             when (selectedTab) {
                 ModelType.LLM -> {
                     item { HfCard() }
@@ -623,64 +606,49 @@ open class ModelSettingsFragment : Fragment() {
                     item { RepoUpdateNotificationCard() }
                 }
             }
-                } // LazyColumn close
-            } // Row(サイドバー+コンテンツ) close
-        } // Column(全体) close
+        }
     }
 
     @Composable
-    private fun ModelSidebarSelector() {
-        val tabs = buildList {
-            add(ModelType.LLM to "LLM")
-            add(ModelType.IMAGE_GENERATION to "画像生成")
-            if (com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) {
-                add(ModelType.TEXT_TO_SPEECH to "読み上げ")
-            }
-            add(ModelType.DOWNLOAD_QUEUE to "DL")
-        }
-        val isDark = isSystemInDarkTheme()
-        Column(
-            modifier = Modifier
-                .width(120.dp)
-                .fillMaxHeight()
-                .background(colorResource(id = R.color.primary_light))
+    private fun TabSelector() {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
         ) {
-            tabs.forEach { (tab, label) ->
-                val isSelected = selectedTab == tab
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { selectedTab = tab }
-                        .background(
-                            if (isSelected) colorResource(id = R.color.primary)
-                            else Color.Transparent
-                        )
-                        .padding(vertical = 14.dp, horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .width(3.dp)
-                            .height(20.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(
-                                if (isSelected) colorResource(id = R.color.nezumi_on_primary)
-                                else Color.Transparent
-                            )
-                    )
-                    Text(
-                        text = label,
-                        color = if (isSelected) {
-                            colorResource(id = R.color.nezumi_on_primary)
-                        } else {
-                            if (isDark) Color.White.copy(alpha = 0.7f) else colorResource(id = R.color.text_secondary)
-                        },
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                        style = MaterialTheme.typography.bodyMedium,
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TabButton(
+                    text = "LLM",
+                    selected = selectedTab == ModelType.LLM,
+                    onClick = { selectedTab = ModelType.LLM },
+                    modifier = Modifier.weight(1f)
+                )
+                TabButton(
+                    text = "画像生成",
+                    selected = selectedTab == ModelType.IMAGE_GENERATION,
+                    onClick = { selectedTab = ModelType.IMAGE_GENERATION },
+                    modifier = Modifier.weight(1f)
+                )
+                if (com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) {
+                    TabButton(
+                        text = "読み上げ",
+                        selected = selectedTab == ModelType.TEXT_TO_SPEECH,
+                        onClick = { selectedTab = ModelType.TEXT_TO_SPEECH },
                         modifier = Modifier.weight(1f)
                     )
                 }
+                TabButton(
+                    text = "DL",
+                    selected = selectedTab == ModelType.DOWNLOAD_QUEUE,
+                    onClick = { selectedTab = ModelType.DOWNLOAD_QUEUE },
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }

@@ -24,6 +24,7 @@ import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.*
@@ -118,6 +119,10 @@ class SettingsComposeFragment : Fragment() {
     private var sdDefaultSeedInput by mutableStateOf("")
     private var braveSearchApiKeyInput by mutableStateOf("")
     private var selectedSection by mutableStateOf(0)
+    // ★ スマホ版設定画面でリスト表示か詳細表示かを切り替えるフラグ。
+    //   true = カテゴリリスト表示、false = 選択中セクションの詳細表示。
+    //   タブレット（幅 >= 600dp）では常にサイドバー+コンテンツの2ペイン表示なので使用しない。
+    private var showSettingsListOnPhone by mutableStateOf(true)
     private var debugTextAInput by mutableStateOf("")
     private var debugTextBInput by mutableStateOf("")
     private var debugTextSimilarityResult by mutableStateOf<String?>(null)
@@ -159,6 +164,8 @@ class SettingsComposeFragment : Fragment() {
         val maxAllowedSection = if (BuildConfig.DEBUG) 5 else 4
         if (startSection in 0..maxAllowedSection) {
             selectedSection = startSection
+            // ★ スマホで引数指定セクションの詳細を直接表示する
+            showSettingsListOnPhone = false
         }
 
         // Fragment.registerForActivityResult() は onCreate までに登録する必要がある。
@@ -334,9 +341,15 @@ class SettingsComposeFragment : Fragment() {
             )
         }
 
-        // ★ 設定タブを縦型サイドバーに変更。
-        //   横スクロールタブはモダンではなく、スクロール可能なことに気づきにくかったため、
-        //   左側に縦に並んだサイドバー + 右側にコンテンツの2ペイン構成にする。
+        // ★ レスポンシブ設定画面: タブレット(幅>=600dp)はサイドバー2ペイン、
+        //   スマホはカテゴリリスト→詳細ページ遷移。
+        val isTablet = LocalConfiguration.current.screenWidthDp >= 600
+        val sectionTitles = remember {
+            buildList {
+                add("全般"); add("推論"); add("画像"); add("メモリ"); add("チャット")
+                if (BuildConfig.DEBUG) add("デバッグ")
+            }
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -349,101 +362,142 @@ class SettingsComposeFragment : Fragment() {
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(start = 8.dp, top = 8.dp, end = 16.dp, bottom = 4.dp)
             ) {
-                IconButton(onClick = { onBackButtonPressed() }) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_back),
-                        contentDescription = stringResource(id = R.string.back),
-                        tint = colorResource(id = R.color.text_primary)
-                    )
+                if (!isTablet && !showSettingsListOnPhone) {
+                    // スマホ詳細画面: カテゴリリストに戻る
+                    IconButton(onClick = { showSettingsListOnPhone = true }) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_back),
+                            contentDescription = stringResource(id = R.string.back),
+                            tint = colorResource(id = R.color.text_primary)
+                        )
+                    }
+                } else {
+                    IconButton(onClick = { onBackButtonPressed() }) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_back),
+                            contentDescription = stringResource(id = R.string.back),
+                            tint = colorResource(id = R.color.text_primary)
+                        )
+                    }
                 }
                 Text(
-                    text = "設定",
+                    text = if (!isTablet && !showSettingsListOnPhone) {
+                        sectionTitles.getOrElse(selectedSection) { "設定" }
+                    } else {
+                        "設定"
+                    },
                     style = MaterialTheme.typography.headlineSmall,
                     color = colorResource(id = R.color.text_primary),
                     fontWeight = FontWeight.Bold
                 )
             }
 
-            // ★ デバッグタブはデバッグビルド時のみ表示する。
-            val sectionTitles = remember {
-                buildList {
-                    add("全般"); add("推論"); add("画像"); add("メモリ"); add("チャット")
-                    if (BuildConfig.DEBUG) add("デバッグ")
-                }
-            }
-            val sectionIcons = remember {
-                buildList {
-                    add(R.drawable.settings_24)       // 全般
-                    add(R.drawable.ic_signal_cellular_24) // 推論
-                    add(R.drawable.ic_image)           // 画像
-                    add(R.drawable.ic_brain_24)        // メモリ
-                    add(R.drawable.ic_chat_24)         // チャット
-                    if (BuildConfig.DEBUG) add(R.drawable.ic_bug_24) // デバッグ
-                }
-            }
-
-            // サイドバー + コンテンツの2ペイン構成
+            // ★ タブレット: サイドバー + コンテンツ / スマホ: リスト or コンテンツ
             Row(
                 modifier = Modifier
                     .fillMaxSize()
                     .weight(1f)
             ) {
-                // ★ 縦型サイドバー
-                Column(
-                    modifier = Modifier
-                        .width(120.dp)
-                        .fillMaxHeight()
-                        .background(colorResource(id = R.color.primary_light))
-                ) {
-                    sectionTitles.forEachIndexed { index, title ->
-                        val isSelected = selectedSection == index
-                        val isDark = isSystemInDarkTheme()
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { selectedSection = index }
-                                .background(
-                                    if (isSelected) colorResource(id = R.color.primary)
-                                    else Color.Transparent
-                                )
-                                .padding(vertical = 14.dp, horizontal = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            // 選択中タブの左端にアクセントバー
-                            Box(
+                if (isTablet) {
+                    // ★ タブレット: 縦型サイドバー
+                    Column(
+                        modifier = Modifier
+                            .width(120.dp)
+                            .fillMaxHeight()
+                            .background(colorResource(id = R.color.primary_light))
+                    ) {
+                        sectionTitles.forEachIndexed { index, title ->
+                            val isSelected = selectedSection == index
+                            val isDark = isSystemInDarkTheme()
+                            Row(
                                 modifier = Modifier
-                                    .width(3.dp)
-                                    .height(20.dp)
-                                    .clip(RoundedCornerShape(2.dp))
+                                    .fillMaxWidth()
+                                    .clickable { selectedSection = index }
                                     .background(
-                                        if (isSelected) colorResource(id = R.color.nezumi_on_primary)
+                                        if (isSelected) colorResource(id = R.color.primary)
                                         else Color.Transparent
                                     )
-                            )
-                            Text(
-                                text = title,
-                                color = if (isSelected) {
-                                    colorResource(id = R.color.nezumi_on_primary)
-                                } else {
-                                    if (isDark) Color.White.copy(alpha = 0.7f) else colorResource(id = R.color.text_secondary)
-                                },
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.weight(1f)
-                            )
+                                    .padding(vertical = 14.dp, horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(3.dp)
+                                        .height(20.dp)
+                                        .clip(RoundedCornerShape(2.dp))
+                                        .background(
+                                            if (isSelected) colorResource(id = R.color.nezumi_on_primary)
+                                            else Color.Transparent
+                                        )
+                                )
+                                Text(
+                                    text = title,
+                                    color = if (isSelected) {
+                                        colorResource(id = R.color.nezumi_on_primary)
+                                    } else {
+                                        if (isDark) Color.White.copy(alpha = 0.7f) else colorResource(id = R.color.text_secondary)
+                                    },
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                } else if (showSettingsListOnPhone) {
+                    // ★ スマホ: カテゴリリスト（タップで詳細ページへ遷移）
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(sectionTitles.size) { index ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selectedSection = index
+                                        showSettingsListOnPhone = false
+                                    },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = colorResource(id = R.color.surface_card)
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = sectionTitles[index],
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = colorResource(id = R.color.text_primary),
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.ic_chevron_right_24),
+                                        contentDescription = null,
+                                        tint = colorResource(id = R.color.text_secondary)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
 
-                // ★ コンテンツエリア（右側）
-                LazyColumn(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                    contentPadding = PaddingValues(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+                // ★ コンテンツエリア（タブレットは常時、スマホは詳細表示時のみ）
+                if (isTablet || !showSettingsListOnPhone) {
+                    LazyColumn(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        contentPadding = PaddingValues(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
                     item(key = selectedSection) {
                         when (selectedSection) {
                     0 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -842,9 +896,10 @@ class SettingsComposeFragment : Fragment() {
                     }
                 }
             }
-        } // ← LazyColumn close
-            } // ← Row(サイドバー+コンテンツ) close
-        } // ← Column(全体) close
+                    } // LazyColumn close
+                } // if (content) close
+            } // Row close
+        } // Column close
     }
 
 
