@@ -41,6 +41,20 @@ class ChatSessionListViewModel(
             repository.deleteSession(sessionId)
         }
     }
+
+    /**
+     * セッション削除と同時に、そのセッションの全メッセージの添付ファイル (画像 / 音声 / 動画) を
+     * MessageMediaStore 経由で掃除する。cleanupAttachments は呼び出し側で
+     * Context をキャプチャして渡す想定。
+     */
+    fun deleteSession(
+        sessionId: Long,
+        cleanupAttachments: (imageUri: String?, audioUri: String?) -> Unit
+    ) {
+        viewModelScope.launch {
+            repository.deleteSessionWithAttachments(sessionId, cleanupAttachments)
+        }
+    }
     
     fun togglePinSession(sessionId: Long) {
         viewModelScope.launch {

@@ -99,7 +99,12 @@ class MainActivity : AppCompatActivity() {
                     }
                     if (!isIncognitoModeActive) {
                         runCatching {
-                            cr.deleteAllIncognitoSessions()
+                            val ctx = applicationContext
+                            cr.deleteAllIncognitoSessionsWithAttachments { imageUri, audioUri ->
+                                com.nezumi_ai.data.media.MessageMediaStore.deleteMessageAttachments(
+                                    ctx, imageUri, audioUri
+                                )
+                            }
                             Log.d(TAG, "Cleaned up stale incognito sessions on startup")
                         }.onFailure {
                             Log.e(TAG, "Failed to cleanup stale incognito sessions on startup", it)
@@ -347,7 +352,12 @@ class MainActivity : AppCompatActivity() {
         if (!isIncognitoModeActive && repositoriesReady) {
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    sessionRepository.deleteAllIncognitoSessions()
+                    val ctx = applicationContext
+                    sessionRepository.deleteAllIncognitoSessionsWithAttachments { imageUri, audioUri ->
+                        com.nezumi_ai.data.media.MessageMediaStore.deleteMessageAttachments(
+                            ctx, imageUri, audioUri
+                        )
+                    }
                     Log.d(TAG, "Cleaned up all incognito sessions on app pause")
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to cleanup incognito sessions on pause", e)
@@ -728,7 +738,12 @@ class MainActivity : AppCompatActivity() {
         if (repositoriesReady) {
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    sessionRepository.deleteAllIncognitoSessions()
+                    val ctx = applicationContext
+                    sessionRepository.deleteAllIncognitoSessionsWithAttachments { imageUri, audioUri ->
+                        com.nezumi_ai.data.media.MessageMediaStore.deleteMessageAttachments(
+                            ctx, imageUri, audioUri
+                        )
+                    }
                     Log.d(TAG, "Cleaned up all incognito sessions on app destruction")
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to cleanup incognito sessions", e)
@@ -1015,7 +1030,12 @@ class MainActivity : AppCompatActivity() {
         }
         PreferencesHelper.applyThemeMode(this)
         withContext(Dispatchers.IO) {
-            sessionRepository.deleteAllIncognitoSessions()
+            val ctx = applicationContext
+            sessionRepository.deleteAllIncognitoSessionsWithAttachments { imageUri, audioUri ->
+                com.nezumi_ai.data.media.MessageMediaStore.deleteMessageAttachments(
+                    ctx, imageUri, audioUri
+                )
+            }
         }
         Log.d(TAG, "Exited incognito mode for normal chat navigation")
     }
@@ -1138,7 +1158,13 @@ class MainActivity : AppCompatActivity() {
                             if (session.id == getCurrentSessionId()) {
                                 clearCurrentSessionId()
                             }
-                            sessionRepository.deleteSession(session.id)
+                            // セッション削除と同時に添付ファイル (画像 / 音声 / 動画) も掃除する。
+                            val ctx = applicationContext
+                            sessionRepository.deleteSessionWithAttachments(session.id) { imageUri, audioUri ->
+                                com.nezumi_ai.data.media.MessageMediaStore.deleteMessageAttachments(
+                                    ctx, imageUri, audioUri
+                                )
+                            }
                         }
                     }.onFailure {
                         Log.e(TAG, "Failed to delete session", it)

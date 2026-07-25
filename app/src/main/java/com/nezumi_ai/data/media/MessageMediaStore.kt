@@ -159,6 +159,48 @@ object MessageMediaStore {
     }
 
     /**
+     * 動画ファイルをアプリストレージにコピーして永続化する。
+     * DB (MessageEntity.imageUri 内の VideoAttachmentEncoding マーカー) から参照する動画本体を、
+     * セッション削除時にまとめて掃除できるよう message_media 配下に置く。
+     *
+     * 保存名: video_<uuid>.mp4 などを URI から推測。
+     * Returns: 永続化された content:// URI 文字列、または失敗時 null。
+     */
+    fun persistVideoUriIfNeeded(context: Context, uriString: String?): String? {
+        if (uriString.isNullOrEmpty()) return null
+        return try {
+            val uri = Uri.parse(uriString)
+            when (uri.scheme) {
+                "file" -> {
+                    val f = File(uri.path ?: return null)
+                    val mediaDir = getMediaDir(context)
+                    if (f.canonicalPath.startsWith(mediaDir.canonicalPath)) return uri.toString()
+                }
+                "content" -> {
+                    val p = getPathFromUri(context, uri)
+                    if (p != null && File(p).canonicalPath.startsWith(getMediaDir(context).canonicalPath)) {
+                        return uri.toString()
+                    }
+                }
+                else -> return null
+            }
+            val ext = (uri.lastPathSegment ?: "").substringAfterLast('.', "mp4")
+                .lowercase()
+                .takeIf { it in listOf("mp4", "mov", "mkv", "webm", "3gp", "m4v") } ?: "mp4"
+            val mediaDir = getMediaDir(context)
+            val destFile = File(mediaDir, "video_${UUID.randomUUID()}.$ext")
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                destFile.outputStream().use { output -> input.copyTo(output) }
+            } ?: return null
+            val authority = context.packageName + AUTHORITY_SUFFIX
+            FileProvider.getUriForFile(context, authority, destFile).toString()
+        } catch (e: Exception) {
+            Log.w(TAG, "persistVideoUriIfNeeded failed: ${e.message}")
+            null
+        }
+    }
+
+    /**
      * メディアをアプリストレージにコピー
      * 
      * 処理：
@@ -288,5 +330,26 @@ object MessageMediaStore {
             Log.w(TAG, "Error getting path from content URI: ${e.message}")
             null
         }
+    }
+
+    /**
+     * MessageEntity に紐づいた添付ファイル (画像 / 音声 / 動画マーカー中の元動画) をまとめて掃除する。
+     * imageUri は VideoAttachmentEncoding.split で分解し、マーカー中の originalVideoUri / audioUri も掃く。
+     * セッション削除時に DB だけを消して実ファイルが残るリークを防ぐ。
+     */
+    fun deleteMessageAttachments(
+        context: Context,
+        imageUri: String?,
+        audioUri: String?
+    ) {
+        val (meta, frameUris) = com.nezumi_ai.data.media.VideoAttachmentEncoding.split(imageUri)
+        // 動画本体 (persistVideoUriIfNeeded で message_media に置いたもの) を掃除
+        meta?.originalVideoUri?.let { deleteStoredFileIfOwned(context, it) }
+        // 動画から抽出した音声トラックも掃除
+        meta?.audioUri?.let { deleteStoredFileIfOwned(context, it) }
+        // フレーム / 通常画像を掃除
+        frameUris.forEach { deleteStoredFileIfOwned(context, it) }
+        // トップレベルの audioUri (通常音声添付) も掃除
+        if (!audioUri.isNullOrBlank()) deleteStoredFileIfOwned(context, audioUri)
     }
 }

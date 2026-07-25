@@ -128,7 +128,14 @@ class SessionListFragment : Fragment() {
             .setMessage("このチャットとメッセージを削除します。よろしいですか？")
             .setNegativeButton("キャンセル", null)
             .setPositiveButton("削除") { _, _ ->
-                viewModel.deleteSession(sessionId)
+                val ctx = requireContext().applicationContext
+                // ファイル本体 (画像 / 音声 / 動画) は DB の CASCADE では消えないため、
+                // 削除前に MessageMediaStore.deleteMessageAttachments で掃除する。
+                viewModel.deleteSession(sessionId) { imageUri, audioUri ->
+                    com.nezumi_ai.data.media.MessageMediaStore.deleteMessageAttachments(
+                        ctx, imageUri, audioUri
+                    )
+                }
                 Toast.makeText(requireContext(), "チャットを削除しました", Toast.LENGTH_SHORT).show()
             }
             .show()

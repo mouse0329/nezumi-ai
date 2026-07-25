@@ -250,6 +250,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var selectedVideoUri by mutableStateOf<String?>(null)
     private var selectedVideoDurationMs: Long = 0L
     private var selectedVideoFrameCount: Int = 0
+    /** 動画選択後、フレーム/音声抽出が完了するまで true。抽出中は送信不可にする。 */
+    private var isExtractingVideo by mutableStateOf(false)
     private var cameraImageUri: Uri? = null
     private var imageInputEnabled = true
     private var audioInputEnabled = true
@@ -381,67 +383,63 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
      */
     private fun processPickedVideo(uri: android.net.Uri) {
         val ctx = requireContext().applicationContext
-        Toast.makeText(
-            requireContext(),
-            "動画を展開しています (最大30秒 / 1fps)…",
-            Toast.LENGTH_SHORT
-        ).show()
+        isExtractingVideo = true
+        renderSendButtonState()
         viewLifecycleOwner.lifecycleScope.launch {
-            val extracted = withContext(Dispatchers.IO) {
-                com.nezumi_ai.data.media.VideoFrameExtractor.extract(ctx, uri)
-            }
-            if (extracted == null || extracted.frames.isEmpty()) {
-                Toast.makeText(
-                    requireContext(),
-                    "動画のフレーム抽出に失敗しました",
-                    Toast.LENGTH_SHORT
-                ).show()
-                return@launch
-            }
-            // フレームを PNG としてキャッシュに書き出し、 file:// URI にする
-            val frameUris = withContext(Dispatchers.IO) {
-                val dir = java.io.File(ctx.cacheDir, "video_frames").apply { mkdirs() }
-                val runId = java.util.UUID.randomUUID().toString().take(8)
-                extracted.frames.mapIndexedNotNull { i, bmp ->
-                    try {
-                        val f = java.io.File(dir, "vf_${runId}_${i}.png")
-                        java.io.FileOutputStream(f).use { out ->
-                            bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            try {
+                val extracted = withContext(Dispatchers.IO) {
+                    com.nezumi_ai.data.media.VideoFrameExtractor.extract(ctx, uri)
+                }
+                if (extracted == null || extracted.frames.isEmpty()) {
+                    Toast.makeText(
+                        requireContext(),
+                        "動画のフレーム抽出に失敗しました",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return@launch
+                }
+                // フレームを PNG としてキャッシュに書き出し、 file:// URI にする
+                val frameUris = withContext(Dispatchers.IO) {
+                    val dir = java.io.File(ctx.cacheDir, "video_frames").apply { mkdirs() }
+                    val runId = java.util.UUID.randomUUID().toString().take(8)
+                    extracted.frames.mapIndexedNotNull { i, bmp ->
+                        try {
+                            val f = java.io.File(dir, "vf_${runId}_${i}.png")
+                            java.io.FileOutputStream(f).use { out ->
+                                bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                            }
+                            android.net.Uri.fromFile(f).toString()
+                        } catch (t: Throwable) {
+                            Log.w("ChatFragment", "Failed to persist frame #$i", t)
+                            null
+                        } finally {
+                            if (!bmp.isRecycled) bmp.recycle()
                         }
-                        android.net.Uri.fromFile(f).toString()
-                    } catch (t: Throwable) {
-                        Log.w("ChatFragment", "Failed to persist frame #$i", t)
-                        null
-                    } finally {
-                        if (!bmp.isRecycled) bmp.recycle()
                     }
                 }
+                if (frameUris.isEmpty()) {
+                    Toast.makeText(
+                        requireContext(),
+                        "動画フレームの保存に失敗しました",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return@launch
+                }
+                // 既存の手動選択画像はクリアして、動画のフレームに入れ替える
+                //   (画像 5 枚制限と 30 フレームの両方を一列に並べると 5 枚で切られてしまうため)
+                selectedImageUrisList = frameUris
+                selectedVideoUri = uri.toString()
+                selectedVideoDurationMs = extracted.effectiveDurationMs
+                selectedVideoFrameCount = frameUris.size
+                if (audioInputEnabled) {
+                    extracted.audioUriString?.let { selectedAudioUri = it }
+                }
+                updateMediaPreview()
+            } finally {
+                // 成功・失敗・早期returnのいずれでも必ずスピナーを止め、送信を再度可能にする。
+                isExtractingVideo = false
+                renderSendButtonState()
             }
-            if (frameUris.isEmpty()) {
-                Toast.makeText(
-                    requireContext(),
-                    "動画フレームの保存に失敗しました",
-                    Toast.LENGTH_SHORT
-                ).show()
-                return@launch
-            }
-            // 既存の手動選択画像はクリアして、動画のフレームに入れ替える
-            //   (画像 5 枚制限と 30 フレームの両方を一列に並べると 5 枚で切られてしまうため)
-            selectedImageUrisList = frameUris
-            selectedVideoUri = uri.toString()
-            selectedVideoDurationMs = extracted.effectiveDurationMs
-            selectedVideoFrameCount = frameUris.size
-            if (audioInputEnabled) {
-                extracted.audioUriString?.let { selectedAudioUri = it }
-            }
-            val sec = (extracted.effectiveDurationMs / 1000L).coerceAtLeast(1L)
-            val audioNote = if (selectedAudioUri != null) "と音声" else ""
-            Toast.makeText(
-                requireContext(),
-                "動画を ${frameUris.size} フレーム${audioNote}に展開 (${sec}s)",
-                Toast.LENGTH_SHORT
-            ).show()
-            updateMediaPreview()
         }
     }
 
@@ -450,18 +448,24 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
      * 動画を送信するときだけ、ユーザー本文の先頭に
      *   【音声（0秒～N秒、モデルに音声を直接添付）】
      *   【動画フレーム一覧（1fps、合計M枚）】
-     *   フレーム1: (添付画像1, 0秒)
-     *   フレーム2: (添付画像2, 1秒)
+     *   img_<uuid>.jpg: 0秒
+     *   img_<uuid>.jpg: 1秒
      *   ...
-     * を差し込む。これにより Gemma 4 は「添付画像は動画のフレーム列である」と
-     * 文脈で把握できる。音声本体は Content.AudioBytes で直接渡すので文字起こしは行わない。
+     * を差し込む。
+     *
+     * フレームの識別子は、モデルに実際に添付される画像の basename
+     * (MessageMediaStoreに persist 済みの img_<uuid>.jpg) をそのまま使う。
+     * モデルが内部で参照するファイル名とプロンプト内の識別子を同一化することで、
+     * 「img_c16a2de9-...の2枚目と img_8f...の3枚目の違いは…」のようなクエリも
+     * 不自然なマッピングなしに成立する。
      */
     private fun buildVideoAwarePrompt(
         userText: String,
-        frameCount: Int,
+        frameUris: List<String>,
         durationMs: Long,
         hasAudio: Boolean
     ): String {
+        val frameCount = frameUris.size
         val sec = (durationMs / 1000L).coerceAtLeast(1L)
         val sb = StringBuilder()
         if (hasAudio) {
@@ -469,11 +473,41 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
         sb.append("【動画フレーム一覧（1fps、合計${frameCount}枚）】\n")
         for (i in 0 until frameCount) {
-            sb.append("フレーム${i + 1}: (添付画像${i + 1}, ${i}秒)\n")
+            val name = extractDisplayName(frameUris[i], fallback = "frame_${i + 1}")
+            sb.append("$name: ${i}秒\n")
         }
         sb.append("\n")
         sb.append(userText)
         return sb.toString()
+    }
+
+    /**
+     * URI 文字列からモデルに見せるファイル名 (basename) を取り出す。
+     * - content:// の場合は ContentResolver の OpenableColumns.DISPLAY_NAME を優先
+     * - file:// やパス付き URI なら lastPathSegment
+     * - どちらも失敗したら fallback
+     */
+    private fun extractDisplayName(uriString: String, fallback: String): String {
+        return try {
+            val uri = android.net.Uri.parse(uriString)
+            if (uri.scheme == "content") {
+                val ctx = requireContext()
+                ctx.contentResolver.query(
+                    uri,
+                    arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                    null, null, null
+                )?.use { c ->
+                    if (c.moveToFirst()) {
+                        val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (idx >= 0) c.getString(idx)?.takeIf { it.isNotBlank() } else null
+                    } else null
+                } ?: uri.lastPathSegment ?: fallback
+            } else {
+                uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: fallback
+            }
+        } catch (_: Throwable) {
+            fallback
+        }
     }
 
     private fun updateMediaPreview() {
@@ -841,17 +875,45 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 viewModel.stopGeneration()
                 return@setOnClickListener
             }
+            // isEnabled 制御の取りこぼし対策。動画のフレーム/音声抽出がまだ終わっていない間は
+            // 送信できる添付物が確定していないため、ここでも明示的にブロックする。
+            if (isExtractingVideo) {
+                return@setOnClickListener
+            }
             val message = binding.messageInput.text.toString().trim()
-            if (message.isNotEmpty()) {
+            val hasMediaToSend = (imageInputEnabled && selectedImageUrisList.isNotEmpty()) ||
+                (audioInputEnabled && !selectedAudioUri.isNullOrEmpty())
+            // 従来はテキストが空だと送信ボタンが完全に無反応だった。
+            // 画像や音声(動画から抽出した音声を含む)だけを送りたいケース
+            // (「これ何？」すら打たずに音声/画像だけ送る) が弾かれてしまっていたため、
+            // メディアが1つでも添付されていればテキスト空でも送信できるようにする。
+            if (message.isNotEmpty() || hasMediaToSend) {
                 val imagesToSend = if (imageInputEnabled) selectedImageUrisList else emptyList()
                 val audioToSend = if (audioInputEnabled) selectedAudioUri else null
                 val videoUriToSend = selectedVideoUri
                 // Gemma 4 向けのプロンプト整形: 動画を送っているときだけ先頭に
                 // 【音声(0秒〜本体直接添付)】 / 【フレーム一覧(1fps)】ヘッダを差し込む。
-                val effectiveMessage = if (videoUriToSend != null && imagesToSend.isNotEmpty()) {
+                // フレームの basename をプロンプトに埋め込むので、モデルが実際に受け取る
+                // img_<uuid>.jpg と一致させるためここで先行 persist して確定ファイル名を得る。
+                val imagesPersisted = if (videoUriToSend != null && imagesToSend.isNotEmpty()) {
+                    imagesToSend.map { uriStr ->
+                        com.nezumi_ai.data.media.MessageMediaStore.persistUriIfNeeded(
+                            requireContext().applicationContext, uriStr
+                        ) ?: uriStr
+                    }
+                } else imagesToSend
+                // 動画本体もセッション削除時に一緒に掃除できるよう message_media にコピーしておく。
+                // 以前はピッカーが返した content:// をそのまま DB に入れていたため、
+                // セッションごと削除しても外部ストレージ側の動画は残り続けていた。
+                val videoPersisted = if (videoUriToSend != null) {
+                    com.nezumi_ai.data.media.MessageMediaStore.persistVideoUriIfNeeded(
+                        requireContext().applicationContext, videoUriToSend
+                    ) ?: videoUriToSend
+                } else null
+                val effectiveMessage = if (videoPersisted != null && imagesPersisted.isNotEmpty()) {
                     buildVideoAwarePrompt(
                         userText = message,
-                        frameCount = imagesToSend.size,
+                        frameUris = imagesPersisted,
                         durationMs = selectedVideoDurationMs,
                         hasAudio = audioToSend != null
                     )
@@ -860,18 +922,18 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 }
                 // 元動画 URI + 音声 URI + 長さ を "フレーム列の先頭にマーカーとして差し込む"
                 // ことで DB スキーマを変えずに後から MediaViewerDialog で展開できるようにする。
-                val imagesFinal = if (videoUriToSend != null && imagesToSend.isNotEmpty()) {
+                val imagesFinal = if (videoPersisted != null && imagesPersisted.isNotEmpty()) {
                     listOf(
                         com.nezumi_ai.data.media.VideoAttachmentEncoding.encode(
                             com.nezumi_ai.data.media.VideoAttachmentEncoding.Meta(
-                                originalVideoUri = videoUriToSend,
+                                originalVideoUri = videoPersisted,
                                 audioUri = audioToSend,
                                 durationMs = selectedVideoDurationMs
                             )
                         )
-                    ) + imagesToSend
+                    ) + imagesPersisted
                 } else {
-                    imagesToSend
+                    imagesPersisted
                 }
                 userScrolledAwayDuringGeneration = false
                 autoFollowBottomLocked = true
@@ -1694,7 +1756,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         binding.sendButton.setImageResource(
             if (isGenerating) R.drawable.ic_stop else R.drawable.ic_send
         )
-        binding.sendButton.isEnabled = isGenerating || !isModelLoadingNow
+        // 動画のフレーム/音声抽出中は、まだ送信できる添付物が確定していないため送信不可にする。
+        // 生成停止ボタンとしての利用（isGenerating時）は動画抽出中とは独立に常に有効のままにする。
+        binding.sendButton.isEnabled =
+            isGenerating || (!isModelLoadingNow && !isExtractingVideo)
     }
 
     private fun updateMediaAvailability(modelKey: String) {
@@ -1839,6 +1904,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         selectedImageUrisList = emptyList()
                         selectedAudioUri = null
                     },
+                    isExtractingVideo = isExtractingVideo,
                     onOpenViewer = { selectedKey ->
                         val bundle = com.nezumi_ai.presentation.ui.component.MediaViewerDialog.MediaBundle(
                             imageUris = selectedImageUrisList,

@@ -132,18 +132,39 @@ object MediaViewerDialog {
 
         // 現在選択中の「stage 表示対象」を管理
         // "video" or "image:<index>"
+        //
+        // 動画がある場合、bundle.imageUris は内部的にはその動画のフレーム列 (最大30枚)。
+        // これをサムネストリップにそのまま並べると「動画」の隣に「動画の1枚目とほぼ同じ
+        // 静止画(フレーム1)」が並び、ユーザーには "同じ動画が2個ある" ように見えてしまう。
+        // 動画がある間はフレームを個別の切替対象として見せず、"video" 1枚だけを stage 対象にする。
+        val hasVideoBundle = !bundle.videoUri.isNullOrBlank()
+        // 音声のみバンドル (画像・動画ともに無し) の場合、stage は何も見せず
+        // 下の音声プレイヤーだけを見せる。これがないと「音声のみ送信したのに
+        // (imageUris に別のメッセージのフレームが混ざり込むと) 隣の画像が
+        // 自動選択されて表示されてしまうバグを防ぐ。
+        val audioOnly = !hasVideoBundle && bundle.imageUris.isEmpty() && !bundle.audioUri.isNullOrBlank()
+        if (audioOnly) {
+            stage.visibility = View.GONE
+        }
         val stageKeys = mutableListOf<String>().apply {
-            if (!bundle.videoUri.isNullOrBlank()) add("video")
-            bundle.imageUris.forEachIndexed { i, _ -> add("image:$i") }
+            when {
+                audioOnly -> { /* stage なし */ }
+                hasVideoBundle -> add("video")
+                else -> bundle.imageUris.forEachIndexed { i, _ -> add("image:$i") }
+            }
         }
         val initialKey = when {
-            !bundle.videoUri.isNullOrBlank() && bundle.initialIndex <= 0 -> "video"
+            audioOnly -> null
+            hasVideoBundle -> "video"
             bundle.imageUris.isNotEmpty() -> "image:${bundle.initialIndex.coerceIn(0, bundle.imageUris.lastIndex)}"
-            !bundle.videoUri.isNullOrBlank() -> "video"
             else -> null
         }
 
         var mediaController: MediaController? = null
+        // 音声プレイヤーは showKey より後で構築されるため、先に参照だけ用意しておく。
+        // 動画 (元ファイルには音声トラックが含まれる) の再生を開始したら、
+        // 「この動画の音声」プレイヤー側が同時に鳴って二重再生にならないよう一時停止する。
+        var audioPlayerStateRef: AudioPlayerState? = null
         fun showKey(key: String) {
             when {
                 key == "video" && !bundle.videoUri.isNullOrBlank() -> {
@@ -151,13 +172,33 @@ object MediaViewerDialog {
                     videoView.visibility = View.VISIBLE
                     val vUri = MessageMediaStore.toUri(bundle.videoUri) ?: bundle.videoUri.toUri()
                     videoView.setVideoURI(vUri)
+                    // MediaController は VideoView 自身ではなく親 stage をアンカーにする。
+                    // VideoView をアンカーにすると、VideoView 自体が SurfaceView ベースで
+                    // その上に MediaController の Window が乗らないため、シークバーが表示
+                    // されず「自動再生されるが操作 UI が出てこない」現象になる。
                     if (mediaController == null) {
-                        mediaController = MediaController(context).apply { setAnchorView(videoView) }
+                        mediaController = MediaController(context).apply {
+                            setAnchorView(stage)
+                            setMediaPlayer(videoView)
+                        }
                         videoView.setMediaController(mediaController)
                     }
-                    videoView.setOnPreparedListener { it.isLooping = false }
+                    videoView.setOnPreparedListener { mp ->
+                        mp.isLooping = false
+                        audioPlayerStateRef?.pause()
+                        videoView.start()
+                        // シークバー付きコントローラを即時表示。0 を指定するとタッチするまで消えない。
+                        mediaController?.show(0)
+                    }
+                    videoView.setOnClickListener {
+                        // ユーザーが動画本体をタップしたときに再度シークバーを出す
+                        mediaController?.show(3000)
+                    }
+                    videoView.setOnErrorListener { _, what, extra ->
+                        Log.w(TAG, "VideoView error what=$what extra=$extra")
+                        false
+                    }
                     videoView.requestFocus()
-                    videoView.start()
                 }
                 key.startsWith("image:") -> {
                     val idx = key.removePrefix("image:").toIntOrNull() ?: 0
@@ -172,11 +213,21 @@ object MediaViewerDialog {
         }
 
         // --- 音声プレイヤー (常設、あれば) ---
+        // 動画がある場合、この音声は「動画から抽出した音声トラック」であることが伝わるよう
+        // ラベルを付ける。以前はラベル無しで音声チップが動画の隣に単独で並んで見えたため、
+        // ユーザーには「もう一つの動画」のように誤認されていた。
         val audioPlayerState = if (!bundle.audioUri.isNullOrBlank()) {
-            val player = buildAudioPlayer(context, bundle.audioUri)
+            val player = buildAudioPlayer(
+                context,
+                bundle.audioUri,
+                label = if (hasVideoBundle) "この動画の音声" else null
+            )
             column.addView(player.view)
             player
         } else null
+        // showKey("video") からの動画自動再生時に音声プレイヤーを一時停止できるよう、
+        // 前方宣言しておいた参照に今つないだインスタンスを渡す。
+        audioPlayerStateRef = audioPlayerState
 
         // --- サムネイル横スクロール (画像 + 動画が合わせて2件以上あるときのみ) ---
         if (stageKeys.size >= 2) {
@@ -258,8 +309,19 @@ object MediaViewerDialog {
         val view: View,
         private val player: MediaPlayer,
         private val handler: Handler,
-        private val ticker: Runnable
+        private val ticker: Runnable,
+        private val onPaused: () -> Unit = {}
     ) {
+        /** 動画側の再生開始など、外部要因でこの音声プレイヤーを止めたいときに呼ぶ。 */
+        fun pause() {
+            try {
+                if (player.isPlaying) {
+                    player.pause()
+                    onPaused()
+                }
+            } catch (_: Throwable) {}
+        }
+
         fun release() {
             try { handler.removeCallbacks(ticker) } catch (_: Throwable) {}
             try { player.stop() } catch (_: Throwable) {}
@@ -267,7 +329,24 @@ object MediaViewerDialog {
         }
     }
 
-    private fun buildAudioPlayer(context: Context, audioUri: String): AudioPlayerState {
+    private fun buildAudioPlayer(context: Context, audioUri: String, label: String? = null): AudioPlayerState {
+        val outer = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        if (!label.isNullOrBlank()) {
+            outer.addView(
+                TextView(context).apply {
+                    text = label
+                    setTextColor(Color.rgb(150, 165, 180))
+                    textSize = 11f
+                    setPadding(dp(context, 16), dp(context, 4), dp(context, 16), 0)
+                }
+            )
+        }
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -278,6 +357,7 @@ object MediaViewerDialog {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         }
+        outer.addView(row)
         val playBtn = TextView(context).apply {
             text = "▶"
             setTextColor(Color.WHITE)
@@ -360,7 +440,7 @@ object MediaViewerDialog {
             override fun onStopTrackingTouch(sb: SeekBar?) {}
         })
 
-        return AudioPlayerState(row, mp, handler, ticker)
+        return AudioPlayerState(outer, mp, handler, ticker, onPaused = { playBtn.text = "▶" })
     }
 
     private fun buildThumbnailStrip(

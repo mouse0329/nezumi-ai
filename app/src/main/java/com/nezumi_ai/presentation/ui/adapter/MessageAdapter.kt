@@ -214,6 +214,12 @@ class MessageAdapter(
         // 複数画像プレビュー (送信後表示)。タップで統一 MediaViewerDialog を開く。
         //   - imageUris: フレーム/画像 URI 列 (先頭の動画マーカーは剥がし済み)
         //   - videoUri, audioUri: 存在すればビュワーで同時に展開される
+        //
+        // 動画由来 (videoUri != null) のときは、フレーム列をカードとして1枚ずつ並べない。
+        // 内部的には動画は「フレーム列 + 音声」に分解して保持しているが、ユーザーには
+        // 常に「動画1本」として見せたいため、ここでは動画サムネ1枚だけを描画する。
+        // 音声もこの動画カードに吸収し、独立した音声カードは出さない
+        // (音声だけを別カードにすると「もう一つの動画のようなもの」に見えてしまう)。
         fun setupMultipleImagePreview(
             imageUris: List<String>,
             container: LinearLayout,
@@ -222,6 +228,67 @@ class MessageAdapter(
             audioUri: String? = null
         ) {
             container.removeAllViews()
+
+            if (!videoUri.isNullOrBlank()) {
+                // --- 動画由来: 1枚の動画カードのみ表示。フレーム列・音声は個別カード化しない ---
+                val cardView = androidx.cardview.widget.CardView(context).apply {
+                    layoutParams = LinearLayout.LayoutParams(250, 250).apply {
+                        setMargins(8, 8, 8, 8)
+                    }
+                    radius = 12f
+                    cardElevation = 4f
+                    setCardBackgroundColor(android.graphics.Color.BLACK)
+                }
+                val frameLayout = android.widget.FrameLayout(context).apply {
+                    layoutParams = android.view.ViewGroup.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                }
+                val imageView = ImageView(context).apply {
+                    layoutParams = android.view.ViewGroup.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    contentDescription = context.getString(R.string.message_image)
+                }
+                // 先頭フレームを動画の代表サムネとして流用
+                imageUris.firstOrNull()?.let { loadImageIntoView(imageView, it) }
+                frameLayout.addView(imageView)
+
+                val playIcon = android.widget.TextView(context).apply {
+                    text = "▶"
+                    setTextColor(android.graphics.Color.WHITE)
+                    textSize = 28f
+                    gravity = android.view.Gravity.CENTER
+                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    setBackgroundColor(android.graphics.Color.argb(90, 0, 0, 0))
+                }
+                frameLayout.addView(playIcon)
+                cardView.addView(frameLayout)
+
+                cardView.setOnClickListener {
+                    MediaViewerDialog.show(
+                        context,
+                        MediaViewerDialog.MediaBundle(
+                            imageUris = imageUris,
+                            videoUri = videoUri,
+                            audioUri = audioUri,
+                            initialIndex = 0,
+                            title = "動画・音声"
+                        )
+                    )
+                }
+                container.addView(cardView)
+                return
+            }
+
+            // --- 動画由来ではない、通常の複数画像 ---
+            // まず画像カードを並べる。
             for ((idx, uri) in imageUris.withIndex()) {
                 val cardView = androidx.cardview.widget.CardView(context).apply {
                     layoutParams = LinearLayout.LayoutParams(250, 250).apply {
@@ -247,13 +314,72 @@ class MessageAdapter(
                             videoUri = videoUri,
                             audioUri = audioUri,
                             initialIndex = idx,
-                            title = if (!videoUri.isNullOrBlank()) "動画・フレーム・音声" else "メディアプレビュー"
+                            title = "メディアプレビュー"
                         )
                     )
                 }
 
                 cardView.addView(imageView)
                 container.addView(cardView)
+            }
+
+            // 画像の後ろに「音声カード」を並べる。
+            // これを入れないと、「画像 + 音声」を同時送信した場合に送信後の一覧から
+            // 音声が完全に消えてしまう。(モデル側には audioUri は正しく渡っているが
+            //  UI 側の描画が拜けているのをここで補う)
+            if (!audioUri.isNullOrBlank()) {
+                val audioCard = androidx.cardview.widget.CardView(context).apply {
+                    layoutParams = LinearLayout.LayoutParams(250, 250).apply {
+                        setMargins(8, 8, 8, 8)
+                    }
+                    radius = 12f
+                    cardElevation = 4f
+                    setCardBackgroundColor(android.graphics.Color.parseColor("#1F2A44"))
+                }
+                val audioFrame = android.widget.FrameLayout(context).apply {
+                    layoutParams = android.view.ViewGroup.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                }
+                val playIcon = android.widget.TextView(context).apply {
+                    text = "♫▶"
+                    setTextColor(android.graphics.Color.WHITE)
+                    textSize = 30f
+                    gravity = android.view.Gravity.CENTER
+                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                }
+                val label = android.widget.TextView(context).apply {
+                    text = "音声"
+                    setTextColor(android.graphics.Color.WHITE)
+                    textSize = 11f
+                    gravity = android.view.Gravity.CENTER
+                    setPadding(0, 0, 0, 12)
+                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                        android.view.Gravity.BOTTOM
+                    )
+                }
+                audioFrame.addView(playIcon)
+                audioFrame.addView(label)
+                audioCard.addView(audioFrame)
+                audioCard.setOnClickListener {
+                    MediaViewerDialog.show(
+                        context,
+                        MediaViewerDialog.MediaBundle(
+                            imageUris = imageUris,
+                            videoUri = videoUri,
+                            audioUri = audioUri,
+                            initialIndex = 0,
+                            title = "画像・音声"
+                        )
+                    )
+                }
+                container.addView(audioCard)
             }
         }
     }

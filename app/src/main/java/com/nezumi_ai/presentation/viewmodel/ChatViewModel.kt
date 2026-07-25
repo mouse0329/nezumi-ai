@@ -541,6 +541,15 @@ class ChatViewModel(
                     val session = sessionRepository.getSessionById(sessionId) ?: return@launch
 
                     if (session.isIncognito) {
+                        // シークレットセッションのメッセージに含まれる添付ファイル (画像 / 音声 / 動画) を先に掃除
+                        runCatching {
+                            val msgs = messageRepository.getMessagesForSessionOnce(sessionId)
+                            msgs.forEach { m ->
+                                MessageMediaStore.deleteMessageAttachments(
+                                    appContext, m.imageUri, m.audioUri
+                                )
+                            }
+                        }.onFailure { Log.w(TAG, "cleanup attachments failed for incognito session=$sessionId", it) }
                         // シークレットセッションのメッセージを削除
                         messageRepository.deleteAllMessagesInSession(sessionId)
                         // セッション自体を削除
@@ -2589,24 +2598,54 @@ class ChatViewModel(
                     "モデルがロードされていません。もう一度全てリセットしてから試してください。"
                 else -> "エラー: ${e.message ?: "Unknown error"}"
             }
+            // 従来は errorMessage を assistant レコードの content に書き込んでいたため、
+            // LiteRT-LM の一部エラーが「エラーウィンドウに完全には出ず、チャット履歴に
+            // 残ってしまう」現象になっていた (Snackbar は 30 文字の短い途中例外のみ)。
+            // 以下の素早リターン判定に当てはまるケースだけ assistant レコードへ上書きし、
+            // それ以外は DB を汚さないでモーダル (_modelErrorDialogMessage) で見せる。
+            val looksLikeInferenceError = e.message?.let { msg ->
+                msg.contains("Failed to invoke the compiled model", ignoreCase = true) ||
+                        msg.contains("Status Code:", ignoreCase = true) ||
+                        msg.contains("TF_LITE_AUX", ignoreCase = true) ||
+                        msg.contains("not found", ignoreCase = true) ||
+                        msg.contains("OpenCL", ignoreCase = true) ||
+                        msg.contains("Vulkan", ignoreCase = true) ||
+                        msg.contains("NPU", ignoreCase = true) ||
+                        msg.contains("IllegalStateException", ignoreCase = true)
+            } ?: false
             val id = streamingMessageId
-            if (id != null) {
-                messageRepository.updateMessageContent(
-                    messageId = id,
-                    content = errorMessage,
-                    isStreaming = false,
-                    thinkingContent = null
-                )
+            if (looksLikeInferenceError) {
+                // ストリーミング途中の付け飛ばしレコードがあれば削除して履歴を汚さない。
+                if (id != null) {
+                    runCatching { messageRepository.deleteMessageById(id) }
+                        .onFailure { Log.w(TAG, "Failed to delete streaming error placeholder id=$id", it) }
+                }
+                withContext(Dispatchers.Main) {
+                    _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
+                        title = "推論エラー",
+                        message = "モデルの推論中にエラーが発生しました。",
+                        details = e.message
+                    )
+                }
             } else {
-                messageRepository.addMessage(
-                    sessionId = sessionId,
-                    role = "assistant",
-                    content = errorMessage
-                )
-            }
-            // エラーを UI に通知
-            withContext(Dispatchers.Main) {
-                _uiMessage.emit("❌ " + (e.message?.take(30) ?: "エラーが発生しました"))
+                if (id != null) {
+                    messageRepository.updateMessageContent(
+                        messageId = id,
+                        content = errorMessage,
+                        isStreaming = false,
+                        thinkingContent = null
+                    )
+                } else {
+                    messageRepository.addMessage(
+                        sessionId = sessionId,
+                        role = "assistant",
+                        content = errorMessage
+                    )
+                }
+                // エラーを UI に通知
+                withContext(Dispatchers.Main) {
+                    _uiMessage.emit("❌ " + (e.message?.take(30) ?: "エラーが発生しました"))
+                }
             }
         } finally {
             Log.d(TAG, "generateAIResponse finally entered")

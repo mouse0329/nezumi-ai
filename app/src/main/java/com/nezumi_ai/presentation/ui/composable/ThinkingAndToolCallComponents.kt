@@ -326,6 +326,9 @@ fun ToolCallProgressBar(
  * @param onClearAudio 音声クリアボタンのコールバック
  * @param videoUri  元動画 URI (存在すればフレーム列と別に動画サムネカードを先頭に並べる)
  * @param onClearVideo 動画クリアボタン
+ * @param isExtractingVideo 動画選択後、フレーム/音声抽出処理が進行中かどうか。
+ *   true の間はサムネの代わりにスピナーカードを表示する (抽出結果がまだ無いため)。
+ *   送信可否の制御はこの Composable ではなく呼び出し側 (送信ボタン) が isExtractingVideo を見て行う。
  * @param onOpenViewer 項目をタップしたときの統一ビュワーを開くコールバック。
  *   selectedKey: "video" または "image:<index>"
  */
@@ -340,13 +343,19 @@ fun MediaPreviewBar(
     audioUri: String? = null,
     videoUri: String? = null,
     onClearVideo: () -> Unit = {},
+    isExtractingVideo: Boolean = false,
     onOpenViewer: (selectedKey: String) -> Unit = {}
 ) {
     val hasVideo = !videoUri.isNullOrBlank()
-    if (!hasImage && !hasAudio && !hasVideo) {
+    if (!hasImage && !hasAudio && !hasVideo && !isExtractingVideo) {
         return
     }
-    
+
+    // 動画がある場合、imageUris は内部的にはその動画から分解したフレーム列。
+    // ユーザーには「動画1本」としてのみ見せたいので、個別の画像サムネとしては列挙しない
+    // (動画サムネの背景に先頭フレームだけ流用する分には内部利用として問題ない)。
+    val imagesToShow = if (hasVideo) emptyList() else imageUris
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -356,9 +365,12 @@ fun MediaPreviewBar(
         // 統一ストリップ: [動画サムネ (あれば)] [音声チップ (あれば)] [画像...] を 1 本の LazyRow に並べる
         run {
             val labelParts = buildList {
+                if (isExtractingVideo) add("動画を解析中…")
                 if (hasVideo) add("動画1本")
-                if (hasAudio) add("音声あり")
-                if (imageUris.isNotEmpty()) add("${imageUris.size}/5 画像")
+                // 動画には音声トラックが含まれているので、hasVideo のときは
+                // 「音声あり」を別途表示しない (チップ側と揃えて一元化)
+                if (hasAudio && !hasVideo) add("音声あり")
+                if (imagesToShow.isNotEmpty()) add("${imagesToShow.size}/5 画像")
             }
             if (labelParts.isNotEmpty()) {
                 Text(
@@ -371,7 +383,7 @@ fun MediaPreviewBar(
             }
         }
 
-        if (hasVideo || hasAudio || imageUris.isNotEmpty()) {
+        if (hasVideo || hasAudio || imagesToShow.isNotEmpty() || isExtractingVideo) {
             
             LazyRow(
                 modifier = Modifier
@@ -392,6 +404,32 @@ fun MediaPreviewBar(
             ) {
                 // ★ バグ修正: items に key を指定して画像の一意性を保証
                 // key を指定しないと、リスト順序が変わった時に古い Composable が再利用される可能性がある
+                // 0) 動画抽出中スピナー (フレーム/音声抽出が終わるまで、動画サムネの代わりに表示)
+                if (isExtractingVideo) {
+                    item(key = "video_extracting") {
+                        Box(
+                            modifier = Modifier
+                                .width(90.dp)
+                                .height(90.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.surfaceDim,
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                                )
+                                .border(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier.size(28.dp),
+                                strokeWidth = 2.5.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
                 // 1) 動画サムネ (あれば先頭)
                 if (hasVideo) {
                     item(key = "video") {
@@ -456,7 +494,12 @@ fun MediaPreviewBar(
                 }
 
                 // 2) 音声チップ
-                if (hasAudio) {
+                //    動画由来の音声トラック (hasVideo=true 時の audioUri) は動画サムネの一部として
+                //    扱い、単独の音声チップとしては並べない。ユーザー視点で「動画1本 + 音声1本」の
+                //    2つのメディアが並んで見えると誤解される (動画側にも音声トラックが含まれるため
+                //    実質同じ音源を二重に表示していることになる)。
+                //    通常の音声単独添付 (動画なし) のときだけ独立チップを描画する。
+                if (hasAudio && !hasVideo) {
                     item(key = "audio") {
                         Box(
                             modifier = Modifier
@@ -501,12 +544,12 @@ fun MediaPreviewBar(
                     }
                 }
 
-                // 3) 画像列
+                // 3) 画像列 (動画由来のフレーム列は imagesToShow=empty のため表示されない)
                 items(
-                    count = imageUris.size,
-                    key = { index -> "img:" + (imageUris.getOrNull(index) ?: index.toString()) }
+                    count = imagesToShow.size,
+                    key = { index -> "img:" + (imagesToShow.getOrNull(index) ?: index.toString()) }
                 ) { index ->
-                    val uri = imageUris.getOrNull(index) ?: return@items
+                    val uri = imagesToShow.getOrNull(index) ?: return@items
                     Box(
                         modifier = Modifier
                             .width(90.dp)

@@ -41,6 +41,29 @@ class ChatSessionRepository(
     suspend fun deleteSession(sessionId: Long) {
         dao.deleteById(sessionId)
     }
+
+    /**
+     * セッション削除前に添付ファイル (画像 / 音声 / 動画) を掃除してから削除する。
+     * Room の CASCADE で DB レコードは消えるが、ファイル本体 (特に message_media に
+     * コピーした動画) は手で消さないとストレージに残り続けることへの対応。
+     *
+     * cleanupAttachments は MessageEntity.imageUri / audioUri を受け取り、
+     * MessageMediaStore.deleteMessageAttachments を呼ぶ想定。
+     */
+    suspend fun deleteSessionWithAttachments(
+        sessionId: Long,
+        cleanupAttachments: (imageUri: String?, audioUri: String?) -> Unit
+    ) {
+        messageRepository?.let { repo ->
+            runCatching {
+                val msgs = repo.getMessagesForSessionOnce(sessionId)
+                msgs.forEach { m -> cleanupAttachments(m.imageUri, m.audioUri) }
+            }.onFailure {
+                android.util.Log.w("ChatSessionRepository", "cleanupAttachments failed for session=$sessionId", it)
+            }
+        }
+        dao.deleteById(sessionId)
+    }
     
     suspend fun updateSessionModel(sessionId: Long, model: String) {
         val session = dao.getSessionById(sessionId) ?: return
@@ -73,6 +96,25 @@ class ChatSessionRepository(
         allSessions.filter { it.isIncognito == true }.forEach {
             messageRepository?.deleteAllMessagesInSession(it.id)
             deleteSession(it.id)
+        }
+    }
+
+    /**
+     * インコグニトセッションを一括削除するときにも添付ファイルを掃除するバージョン。
+     */
+    suspend fun deleteAllIncognitoSessionsWithAttachments(
+        cleanupAttachments: (imageUri: String?, audioUri: String?) -> Unit
+    ) {
+        val allSessions = dao.getAllSessionsIncludingIncognito()
+        allSessions.filter { it.isIncognito == true }.forEach { session ->
+            messageRepository?.let { repo ->
+                runCatching {
+                    val msgs = repo.getMessagesForSessionOnce(session.id)
+                    msgs.forEach { m -> cleanupAttachments(m.imageUri, m.audioUri) }
+                }
+                repo.deleteAllMessagesInSession(session.id)
+            }
+            deleteSession(session.id)
         }
     }
 }
