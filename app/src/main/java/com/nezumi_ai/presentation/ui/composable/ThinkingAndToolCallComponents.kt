@@ -317,12 +317,17 @@ fun ToolCallProgressBar(
 /**
  * メディア添付プレビューコンポーネント
  *
- * 選択された画像・音声ファイルのプレビュー表示
+ * 選択された画像・動画・音声ファイルの統一プレビュー表示。
+ * タップで MediaViewerDialog (統一ビュワー) を開く。
  *
  * @param hasImage 画像が選択されているか
  * @param hasAudio 音声が選択されているか
  * @param onClearImage 画像クリアボタンのコールバック
  * @param onClearAudio 音声クリアボタンのコールバック
+ * @param videoUri  元動画 URI (存在すればフレーム列と別に動画サムネカードを先頭に並べる)
+ * @param onClearVideo 動画クリアボタン
+ * @param onOpenViewer 項目をタップしたときの統一ビュワーを開くコールバック。
+ *   selectedKey: "video" または "image:<index>"
  */
 @Composable
 fun MediaPreviewBar(
@@ -330,11 +335,15 @@ fun MediaPreviewBar(
     hasAudio: Boolean,
     onClearImage: () -> Unit = {},
     onClearAudio: () -> Unit = {},
-    imageUris: List<String> = emptyList(),  // Phase 11: 複数画像URI対応
-    onRemoveImage: (index: Int) -> Unit = {},  // Phase 11: 個別画像削除
-    audioUri: String? = null  // Phase 12: 音声ファイル URI
+    imageUris: List<String> = emptyList(),
+    onRemoveImage: (index: Int) -> Unit = {},
+    audioUri: String? = null,
+    videoUri: String? = null,
+    onClearVideo: () -> Unit = {},
+    onOpenViewer: (selectedKey: String) -> Unit = {}
 ) {
-    if (!hasImage && !hasAudio) {
+    val hasVideo = !videoUri.isNullOrBlank()
+    if (!hasImage && !hasAudio && !hasVideo) {
         return
     }
     
@@ -344,15 +353,25 @@ fun MediaPreviewBar(
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
             .padding(12.dp)
     ) {
-        // Phase 11: 複数画像のスクロール表示
-        if (imageUris.isNotEmpty()) {
-            Text(
-                text = "${imageUris.size}/5 画像",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(bottom = 8.dp),
-                color = MaterialTheme.colorScheme.primary
-            )
+        // 統一ストリップ: [動画サムネ (あれば)] [音声チップ (あれば)] [画像...] を 1 本の LazyRow に並べる
+        run {
+            val labelParts = buildList {
+                if (hasVideo) add("動画1本")
+                if (hasAudio) add("音声あり")
+                if (imageUris.isNotEmpty()) add("${imageUris.size}/5 画像")
+            }
+            if (labelParts.isNotEmpty()) {
+                Text(
+                    text = labelParts.joinToString(" ・ "),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+
+        if (hasVideo || hasAudio || imageUris.isNotEmpty()) {
             
             LazyRow(
                 modifier = Modifier
@@ -373,11 +392,120 @@ fun MediaPreviewBar(
             ) {
                 // ★ バグ修正: items に key を指定して画像の一意性を保証
                 // key を指定しないと、リスト順序が変わった時に古い Composable が再利用される可能性がある
+                // 1) 動画サムネ (あれば先頭)
+                if (hasVideo) {
+                    item(key = "video") {
+                        Box(
+                            modifier = Modifier
+                                .width(90.dp)
+                                .height(90.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.surfaceDim,
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                                )
+                                .border(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.primary,
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                                )
+                                .clickable { onOpenViewer("video") },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            // 動画先頭フレームを背景に (imageUris の先頭を代用)
+                            val bg = imageUris.firstOrNull()
+                            if (bg != null) {
+                                AsyncImage(
+                                    model = bg,
+                                    contentDescription = "Video thumbnail",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Color(0x66000000)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = "Play",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = onClearVideo,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(24.dp)
+                                    .background(
+                                        MaterialTheme.colorScheme.error.copy(alpha = 0.85f),
+                                        shape = androidx.compose.foundation.shape.CircleShape
+                                    )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear video",
+                                    tint = MaterialTheme.colorScheme.onError,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 2) 音声チップ
+                if (hasAudio) {
+                    item(key = "audio") {
+                        Box(
+                            modifier = Modifier
+                                .width(90.dp)
+                                .height(90.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                                )
+                                .border(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.primary,
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                                )
+                                .clickable { onOpenViewer("audio") },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Audio",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(32.dp)
+                            )
+                            IconButton(
+                                onClick = onClearAudio,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(24.dp)
+                                    .background(
+                                        MaterialTheme.colorScheme.error.copy(alpha = 0.85f),
+                                        shape = androidx.compose.foundation.shape.CircleShape
+                                    )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear audio",
+                                    tint = MaterialTheme.colorScheme.onError,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 3) 画像列
                 items(
                     count = imageUris.size,
-                    key = { index -> imageUris.getOrNull(index) ?: index }  // URI を key にする
+                    key = { index -> "img:" + (imageUris.getOrNull(index) ?: index.toString()) }
                 ) { index ->
-                    // 再度 getOrNull() で bounds チェック（index が無効になっている可能性）
                     val uri = imageUris.getOrNull(index) ?: return@items
                     Box(
                         modifier = Modifier
@@ -391,73 +519,15 @@ fun MediaPreviewBar(
                                 1.dp,
                                 MaterialTheme.colorScheme.outline,
                                 shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
-                            ),
+                            )
+                            .clickable { onOpenViewer("image:$index") },
                         contentAlignment = Alignment.Center
                     ) {
-                        // Phase 11: 画像サムネイル表示（AsyncImage で遅延ロード）
                         AsyncImageWithDelete(
                             uri = uri,
                             onDelete = { onRemoveImage(index) }
                         )
                     }
-                }
-            }
-        }
-        
-        // Phase 12: 音声プレビュー表示（画像と同じエリアに統合）
-        if (hasAudio) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        MaterialTheme.colorScheme.surfaceContainerHighest,
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
-                    )
-                    .border(
-                        1.dp,
-                        MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
-                    )
-                    .padding(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = "Audio",
-                    modifier = Modifier.size(24.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(start = 4.dp)
-                ) {
-                    Text(
-                        text = "音声",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    if (audioUri != null) {
-                        val fileName = audioUri.substringAfterLast("/")
-                        Text(
-                            text = fileName,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                IconButton(
-                    onClick = onClearAudio,
-                    modifier = Modifier.size(28.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Clear audio",
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(16.dp)
-                    )
                 }
             }
         }

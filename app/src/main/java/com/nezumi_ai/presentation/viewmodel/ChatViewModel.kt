@@ -707,13 +707,15 @@ class ChatViewModel(
                             ?.split(",")
                             ?.map { it.trim() }
                             ?.filter { it.isNotEmpty() }
+                            // 先頭の nezumi://videoframes マーカーは Bitmap 化しない (フレーム列のみ Bitmap 化)
+                            ?.filter { !com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(it) }
                             ?.forEach { uriStr ->
                                 val uri = MessageMediaStore.toUri(uriStr) ?: return@forEach
                                 val bitmap = loadBitmapFromUri(uri) ?: return@forEach
                                 val scaled = scaleBitmapTo1024(bitmap)
                                 if (scaled !== bitmap) bitmap.recycle()
                                 resumedImages.add(scaled)
-                                Log.d(TAG, "Reloaded image for resumed inference: $uriStr (${resumedImages.size}/5)")
+                                Log.d(TAG, "Reloaded image for resumed inference: $uriStr (${resumedImages.size}/30)")
                             }
 
                         lastUser.audioUri?.let { uriStr ->
@@ -1521,6 +1523,8 @@ class ChatViewModel(
                     ?.split(',')
                     ?.map { it.trim() }
                     ?.filter { it.isNotBlank() }
+                    // 先頭の nezumi://videoframes マーカーは Bitmap 化対象外
+                    ?.filter { !com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(it) }
                     ?: emptyList()
                 for (uriStr in storedImageUris) {
                     val uri = MessageMediaStore.toUri(uriStr) ?: continue
@@ -1802,6 +1806,8 @@ class ChatViewModel(
                             ?.split(",")
                             ?.map { it.trim() }
                             ?.filter { it.isNotEmpty() }
+                            // 先頭の nezumi://videoframes マーカーは Bitmap 化対象外
+                            ?.filter { !com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(it) }
                             ?.forEach { uriStr ->
                                 val uri = MessageMediaStore.toUri(uriStr) ?: return@forEach
                                 val bmp = loadBitmapFromUri(uri) ?: return@forEach
@@ -4589,9 +4595,15 @@ class ChatViewModel(
                 }
 
                 // Phase 11: 複数画像対応
+                //   先頭の nezumi://videoframes マーカーは persist 対象外 (そのまま保存) 。
+                //   フレーム URI だけ persistUriIfNeeded にかけて file:// 化する。
                 val storedImages = imageUris.mapNotNull { imageUri ->
-                    withContext(Dispatchers.IO) {
-                        MessageMediaStore.persistUriIfNeeded(appContext, imageUri)
+                    if (com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(imageUri)) {
+                        imageUri
+                    } else {
+                        withContext(Dispatchers.IO) {
+                            MessageMediaStore.persistUriIfNeeded(appContext, imageUri)
+                        }
                     }
                 }
 

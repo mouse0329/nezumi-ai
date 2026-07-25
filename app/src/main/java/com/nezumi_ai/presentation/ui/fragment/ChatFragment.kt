@@ -122,6 +122,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         private const val TAG = "ChatFragment"
         /** ドロップダウン・ヘッダーで長いラベルを省略するときの先頭文字数 */
         private const val MODEL_NAME_DISPLAY_CHARS = 16
+        /** 画像のマルチセレクト上限。 LiteRtLmEngine.MAX_VISION_IMAGES と揃える。 */
+        private const val MAX_SELECTABLE_IMAGES = 5
     }
 
     private fun modelDisplaySuffix(label: String): String =
@@ -240,6 +242,14 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     // Phase 11: 複数画像対応（Compose State管理で UI 再構成を自動化）
     private var selectedImageUrisList by mutableStateOf<List<String>>(emptyList())
     private var selectedAudioUri by mutableStateOf<String?>(null)  // State管理化
+    /**
+     * 選択された元動画 URI とメタ情報。DB スキーマを変えない方針でメモリ内のみ保持。
+     * ビュワーとプレビューでの "動画を見せる" 用と、送信時に Gemma 4 向けプロンプトに
+     * 【音声・尺】 / 【フレーム一覧】 ヘッダを差し込むための情報源として使う。
+     */
+    private var selectedVideoUri by mutableStateOf<String?>(null)
+    private var selectedVideoDurationMs: Long = 0L
+    private var selectedVideoFrameCount: Int = 0
     private var cameraImageUri: Uri? = null
     private var imageInputEnabled = true
     private var audioInputEnabled = true
@@ -261,17 +271,53 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
 
     // Phase 11: 複数画像選択
-    private val imagePickerLauncher = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+    //   PickMultipleVisualMedia(maxItems=5) を使って、ピッカーの段階で 6 枚以上選べないようにする
+    //   (GetMultipleContents だと picker 側で選択枚数を制限できず、後段の take(5) で無音カットになっていた)
+    private val imagePickerLauncher = registerForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(MAX_SELECTABLE_IMAGES)
+    ) { uris ->
         if (!imageInputEnabled) {
             Toast.makeText(requireContext(), "このモデルでは画像入力は無効です", Toast.LENGTH_SHORT).show()
             return@registerForActivityResult
         }
         if (uris.isNotEmpty()) {
-            val newUris = uris.take(5).map { it.toString() }  // 最大5枚まで
-            selectedImageUrisList = (selectedImageUrisList + newUris).take(5)
-            Toast.makeText(requireContext(), "${newUris.size}個の画像を選択しました (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
+            // 保険で二重にキャップする
+            val remaining = (MAX_SELECTABLE_IMAGES - selectedImageUrisList.size).coerceAtLeast(0)
+            if (remaining <= 0) {
+                Toast.makeText(
+                    requireContext(),
+                    "画像は最大 ${MAX_SELECTABLE_IMAGES} 枚までです",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@registerForActivityResult
+            }
+            val newUris = uris.take(remaining).map { it.toString() }
+            selectedImageUrisList = (selectedImageUrisList + newUris).take(MAX_SELECTABLE_IMAGES)
+            Toast.makeText(
+                requireContext(),
+                "${newUris.size}個の画像を選択しました (${selectedImageUrisList.size}/${MAX_SELECTABLE_IMAGES})",
+                Toast.LENGTH_SHORT
+            ).show()
             updateMediaPreview()
         }
+    }
+
+    /**
+     * 動画ピッカー (1本まで)。 30 秒 / 1fps でフレーム抽出し、音声トラックがあれば同時に取り出して
+     * 既存の画像 + 音声パイプラインに流し込む。 Gemma 4 (LiteRT-LM 0.13.x Kotlin API) の
+     * Content は Text/ImageBytes/ImageFile/AudioBytes/AudioFile のみで VideoBytes 相当はなく、
+     * モデルカードも "process videos as frames" となっているため、
+     * この展開によって間接的に "動画対応" させる。
+     */
+    private val videoPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        if (!imageInputEnabled) {
+            Toast.makeText(requireContext(), "このモデルでは動画/画像入力は無効です", Toast.LENGTH_SHORT).show()
+            return@registerForActivityResult
+        }
+        processPickedVideo(uri)
     }
 
     private val cameraLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -324,9 +370,115 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
     }
 
+    /**
+     * ピッカーで選ばれた動画 URI をバックグラウンドで [VideoFrameExtractor] にかけ、
+     *   - 先頭から 30 秒分を 1fps でフレーム化 (最大 30 枚)
+     *   - 音声トラックがあれば mono PCM WAV へ変換
+     * して、既存の selectedImageUrisList / selectedAudioUri に搭載する。
+     * 注意: このフレーム列は画像 5 枚制限 (MAX_SELECTABLE_IMAGES) とは別建てで
+     * カウントしているため、後段の take() を漏れないよう selectedImageUrisList には
+     * クリア後に一括代入する。
+     */
+    private fun processPickedVideo(uri: android.net.Uri) {
+        val ctx = requireContext().applicationContext
+        Toast.makeText(
+            requireContext(),
+            "動画を展開しています (最大30秒 / 1fps)…",
+            Toast.LENGTH_SHORT
+        ).show()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val extracted = withContext(Dispatchers.IO) {
+                com.nezumi_ai.data.media.VideoFrameExtractor.extract(ctx, uri)
+            }
+            if (extracted == null || extracted.frames.isEmpty()) {
+                Toast.makeText(
+                    requireContext(),
+                    "動画のフレーム抽出に失敗しました",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@launch
+            }
+            // フレームを PNG としてキャッシュに書き出し、 file:// URI にする
+            val frameUris = withContext(Dispatchers.IO) {
+                val dir = java.io.File(ctx.cacheDir, "video_frames").apply { mkdirs() }
+                val runId = java.util.UUID.randomUUID().toString().take(8)
+                extracted.frames.mapIndexedNotNull { i, bmp ->
+                    try {
+                        val f = java.io.File(dir, "vf_${runId}_${i}.png")
+                        java.io.FileOutputStream(f).use { out ->
+                            bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                        }
+                        android.net.Uri.fromFile(f).toString()
+                    } catch (t: Throwable) {
+                        Log.w("ChatFragment", "Failed to persist frame #$i", t)
+                        null
+                    } finally {
+                        if (!bmp.isRecycled) bmp.recycle()
+                    }
+                }
+            }
+            if (frameUris.isEmpty()) {
+                Toast.makeText(
+                    requireContext(),
+                    "動画フレームの保存に失敗しました",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@launch
+            }
+            // 既存の手動選択画像はクリアして、動画のフレームに入れ替える
+            //   (画像 5 枚制限と 30 フレームの両方を一列に並べると 5 枚で切られてしまうため)
+            selectedImageUrisList = frameUris
+            selectedVideoUri = uri.toString()
+            selectedVideoDurationMs = extracted.effectiveDurationMs
+            selectedVideoFrameCount = frameUris.size
+            if (audioInputEnabled) {
+                extracted.audioUriString?.let { selectedAudioUri = it }
+            }
+            val sec = (extracted.effectiveDurationMs / 1000L).coerceAtLeast(1L)
+            val audioNote = if (selectedAudioUri != null) "と音声" else ""
+            Toast.makeText(
+                requireContext(),
+                "動画を ${frameUris.size} フレーム${audioNote}に展開 (${sec}s)",
+                Toast.LENGTH_SHORT
+            ).show()
+            updateMediaPreview()
+        }
+    }
+
+    /**
+     * Gemma 4 (LiteRT-LM) 向けのプロンプト整形。
+     * 動画を送信するときだけ、ユーザー本文の先頭に
+     *   【音声（0秒～N秒、モデルに音声を直接添付）】
+     *   【動画フレーム一覧（1fps、合計M枚）】
+     *   フレーム1: (添付画像1, 0秒)
+     *   フレーム2: (添付画像2, 1秒)
+     *   ...
+     * を差し込む。これにより Gemma 4 は「添付画像は動画のフレーム列である」と
+     * 文脈で把握できる。音声本体は Content.AudioBytes で直接渡すので文字起こしは行わない。
+     */
+    private fun buildVideoAwarePrompt(
+        userText: String,
+        frameCount: Int,
+        durationMs: Long,
+        hasAudio: Boolean
+    ): String {
+        val sec = (durationMs / 1000L).coerceAtLeast(1L)
+        val sb = StringBuilder()
+        if (hasAudio) {
+            sb.append("【音声（0秒～${sec}秒、モデルに音声を直接添付）】\n")
+        }
+        sb.append("【動画フレーム一覧（1fps、合計${frameCount}枚）】\n")
+        for (i in 0 until frameCount) {
+            sb.append("フレーム${i + 1}: (添付画像${i + 1}, ${i}秒)\n")
+        }
+        sb.append("\n")
+        sb.append(userText)
+        return sb.toString()
+    }
+
     private fun updateMediaPreview() {
         // Phase 11: 複数画像対応
-        if (selectedImageUrisList.isEmpty() && selectedAudioUri.isNullOrEmpty()) {
+        if (selectedImageUrisList.isEmpty() && selectedAudioUri.isNullOrEmpty() && selectedVideoUri.isNullOrEmpty()) {
             viewModel.clearPendingMediaPreview()
             return
         }
@@ -693,13 +845,44 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             if (message.isNotEmpty()) {
                 val imagesToSend = if (imageInputEnabled) selectedImageUrisList else emptyList()
                 val audioToSend = if (audioInputEnabled) selectedAudioUri else null
+                val videoUriToSend = selectedVideoUri
+                // Gemma 4 向けのプロンプト整形: 動画を送っているときだけ先頭に
+                // 【音声(0秒〜本体直接添付)】 / 【フレーム一覧(1fps)】ヘッダを差し込む。
+                val effectiveMessage = if (videoUriToSend != null && imagesToSend.isNotEmpty()) {
+                    buildVideoAwarePrompt(
+                        userText = message,
+                        frameCount = imagesToSend.size,
+                        durationMs = selectedVideoDurationMs,
+                        hasAudio = audioToSend != null
+                    )
+                } else {
+                    message
+                }
+                // 元動画 URI + 音声 URI + 長さ を "フレーム列の先頭にマーカーとして差し込む"
+                // ことで DB スキーマを変えずに後から MediaViewerDialog で展開できるようにする。
+                val imagesFinal = if (videoUriToSend != null && imagesToSend.isNotEmpty()) {
+                    listOf(
+                        com.nezumi_ai.data.media.VideoAttachmentEncoding.encode(
+                            com.nezumi_ai.data.media.VideoAttachmentEncoding.Meta(
+                                originalVideoUri = videoUriToSend,
+                                audioUri = audioToSend,
+                                durationMs = selectedVideoDurationMs
+                            )
+                        )
+                    ) + imagesToSend
+                } else {
+                    imagesToSend
+                }
                 userScrolledAwayDuringGeneration = false
                 autoFollowBottomLocked = true
                 postGenerationSettleActive = false
-                viewModel.sendMessageWithMedia(message, imagesToSend, audioToSend)
+                viewModel.sendMessageWithMedia(effectiveMessage, imagesFinal, audioToSend)
                 binding.messageInput.text?.clear()
                 selectedImageUrisList = emptyList()
                 selectedAudioUri = null
+                selectedVideoUri = null
+                selectedVideoDurationMs = 0L
+                selectedVideoFrameCount = 0
                 updateMediaPreview()
             }
         }
@@ -733,11 +916,27 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             popupMenu.menu.add(0, 1, 0, "ギャラリーから選択")
             popupMenu.menu.add(0, 2, 1, "カメラで撮影")
             popupMenu.menu.add(0, 3, 2, "クリップボードから貼り付け")
+            popupMenu.menu.add(0, 4, 3, "動画から選択 (最大30秒)")
             popupMenu.setOnMenuItemClickListener { menuItem ->
                 when (menuItem.itemId) {
-                    1 -> { imagePickerLauncher.launch("image/*"); true }
+                    1 -> {
+                        imagePickerLauncher.launch(
+                            androidx.activity.result.PickVisualMediaRequest(
+                                ActivityResultContracts.PickVisualMedia.ImageOnly
+                            )
+                        )
+                        true
+                    }
                     2 -> { launchCamera(); true }
                     3 -> { pasteFromClipboard(); true }
+                    4 -> {
+                        videoPickerLauncher.launch(
+                            androidx.activity.result.PickVisualMediaRequest(
+                                ActivityResultContracts.PickVisualMedia.VideoOnly
+                            )
+                        )
+                        true
+                    }
                     else -> false
                 }
             }
@@ -1506,6 +1705,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         // 非対応メディアは選択状態を破棄し、送信対象から除外
         if (!imageInputEnabled) {
             selectedImageUrisList = emptyList()  // Phase 11: 複数画像対応
+            selectedVideoUri = null
+            selectedVideoDurationMs = 0L
+            selectedVideoFrameCount = 0
         }
         if (!audioInputEnabled) {
             selectedAudioUri = null
@@ -1627,7 +1829,31 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         }
                     },
                     audioUri = selectedAudioUri,
-                    onClearAudio = { selectedAudioUri = null }
+                    onClearAudio = { selectedAudioUri = null },
+                    videoUri = selectedVideoUri,
+                    onClearVideo = {
+                        // 動画を外すときは、動画由来のフレーム・音声も一緒にクリアするのが自然。
+                        selectedVideoUri = null
+                        selectedVideoDurationMs = 0L
+                        selectedVideoFrameCount = 0
+                        selectedImageUrisList = emptyList()
+                        selectedAudioUri = null
+                    },
+                    onOpenViewer = { selectedKey ->
+                        val bundle = com.nezumi_ai.presentation.ui.component.MediaViewerDialog.MediaBundle(
+                            imageUris = selectedImageUrisList,
+                            videoUri = selectedVideoUri,
+                            audioUri = selectedAudioUri,
+                            title = if (selectedVideoUri != null) "動画・フレーム・音声" else "メディアプレビュー",
+                            initialIndex = if (selectedKey.startsWith("image:")) {
+                                selectedKey.removePrefix("image:").toIntOrNull() ?: 0
+                            } else 0
+                        )
+                        com.nezumi_ai.presentation.ui.component.MediaViewerDialog.show(
+                            requireContext(),
+                            bundle
+                        )
+                    }
                 )
             }
         }

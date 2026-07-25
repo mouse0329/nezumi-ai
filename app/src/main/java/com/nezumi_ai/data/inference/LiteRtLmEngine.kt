@@ -53,7 +53,13 @@ class LiteRtLmEngine(
 
     companion object {
         private const val TAG = "LiteRtLmEngine"
+        /** 手動で選ばれたスチル画像の上限 (UI と揃える) */
         private const val MAX_VISION_IMAGES = 5
+        /**
+         * 動画に由来するフレーム列を受け入れる上限。 30 秒 × 1fps = 30。
+         * コール経路 (フレームメント側) で展開されたフレームはこの上限まで通す。
+         */
+        private const val MAX_VIDEO_FRAMES = 30
         private const val MAX_BITMAP_EDGE = 1024
         private const val THOUGHT_CHANNEL = "thought"
 
@@ -1089,7 +1095,10 @@ class LiteRtLmEngine(
             }
 
             val contents = mutableListOf<Content>()
-            for (bitmap in images.take(MAX_VISION_IMAGES)) {
+            // 5 枚を超える入力は「動画フレーム列」とみなして 30 枚まで引き上げる。
+            // スチル画像 5 枚制限は UI 側で保証されるため、ここではリミッタとしてのみ機能していれば十分。
+            val visionCap = if (images.size > MAX_VISION_IMAGES) MAX_VIDEO_FRAMES else MAX_VISION_IMAGES
+            for (bitmap in images.take(visionCap)) {
                 val scaled = scaleBitmapForVision(bitmap)
                 try {
                     val imageBytes = scaled.toPngByteArray()

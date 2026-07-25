@@ -52,6 +52,8 @@ import com.halilibo.richtext.ui.material3.RichText
 import com.nezumi_ai.data.inference.ToolCallState
 import com.nezumi_ai.data.inference.ToolResultCard
 import com.nezumi_ai.presentation.ui.component.ImageViewerDialog
+import com.nezumi_ai.presentation.ui.component.MediaViewerDialog
+import com.nezumi_ai.data.media.VideoAttachmentEncoding
 import com.nezumi_ai.presentation.ui.component.ToolResultCardView
 import com.nezumi_ai.presentation.ui.composable.PersistedToolCallIndicators
 import com.nezumi_ai.presentation.ui.composable.StreamingToolCallIndicator
@@ -209,34 +211,47 @@ class MessageAdapter(
             }
         }
 
-        // Phase 11: 複数画像プレビュー用ヘルパー関数（送信前と統一）
-        // Phase 14: file:// URI に対応して画像読み込み
-        fun setupMultipleImagePreview(imageUris: List<String>, container: LinearLayout, context: Context) {
+        // 複数画像プレビュー (送信後表示)。タップで統一 MediaViewerDialog を開く。
+        //   - imageUris: フレーム/画像 URI 列 (先頭の動画マーカーは剥がし済み)
+        //   - videoUri, audioUri: 存在すればビュワーで同時に展開される
+        fun setupMultipleImagePreview(
+            imageUris: List<String>,
+            container: LinearLayout,
+            context: Context,
+            videoUri: String? = null,
+            audioUri: String? = null
+        ) {
             container.removeAllViews()
-            for (uri in imageUris) {
-                // CardView を使用して角丸・ボーダー実現
+            for ((idx, uri) in imageUris.withIndex()) {
                 val cardView = androidx.cardview.widget.CardView(context).apply {
                     layoutParams = LinearLayout.LayoutParams(250, 250).apply {
-                        setMargins(8, 8, 8, 8)  // 16dp spacing (両側8dp)
+                        setMargins(8, 8, 8, 8)
                     }
-                    radius = 12f  // 角丸
-                    cardElevation = 4f  // 影
+                    radius = 12f
+                    cardElevation = 4f
                     setCardBackgroundColor(android.graphics.Color.WHITE)
                 }
-                
+
                 val imageView = ImageView(context).apply {
                     layoutParams = android.view.ViewGroup.LayoutParams(250, 250)
                     scaleType = ImageView.ScaleType.CENTER_CROP
                     contentDescription = context.getString(R.string.message_image)
                 }
-                
+
                 loadImageIntoView(imageView, uri)
-                
-                // タップしてモーダルで大きく表示
                 imageView.setOnClickListener {
-                    ImageViewerDialog.show(context, uri)
+                    MediaViewerDialog.show(
+                        context,
+                        MediaViewerDialog.MediaBundle(
+                            imageUris = imageUris,
+                            videoUri = videoUri,
+                            audioUri = audioUri,
+                            initialIndex = idx,
+                            title = if (!videoUri.isNullOrBlank()) "動画・フレーム・音声" else "メディアプレビュー"
+                        )
+                    )
                 }
-                
+
                 cardView.addView(imageView)
                 container.addView(cardView)
             }
@@ -323,44 +338,65 @@ class MessageAdapter(
                 userMessageText.text = message.content
                 userMessageTime.text = MessageAdapter.formatTime(message.timestamp)
                 
-                // Media handling
-                if (!message.imageUri.isNullOrEmpty() || !message.audioUri.isNullOrEmpty()) {
+                // Media handling (統一ビュワー対応)
+                //   1) imageUri 先頭の nezumi://videoframes マーカーを剥がして
+                //      元動画 URI + 音声 URI + フレーム列 に展開する
+                //   2) 画像/動画/音声 のどれか一つでもあれば mediaContainer を表示
+                val (videoMeta, imageUris) = VideoAttachmentEncoding.split(message.imageUri)
+                val videoUri = videoMeta?.originalVideoUri
+                // 動画マーカーに埋め込んだ音声 URI を優先し、なければレコードの audioUri を見る
+                val effectiveAudioUri = videoMeta?.audioUri ?: message.audioUri
+                val hasVideo = !videoUri.isNullOrBlank()
+                val hasAudio = !effectiveAudioUri.isNullOrEmpty()
+                val hasImages = imageUris.isNotEmpty()
+
+                if (hasImages || hasAudio || hasVideo) {
                     mediaContainer.visibility = View.VISIBLE
-                    
-                    if (!message.imageUri.isNullOrEmpty()) {
-                        // Phase 11: 複数画像対応
-                        val imageUris = message.imageUri!!.split(",").filter { it.isNotBlank() }
-                        if (imageUris.size > 1) {
-                            // 複数画像：HorizontalScrollView で表示
+
+                    if (hasImages) {
+                        // 複数 or 動画由来のときは LazyRow相当の横スクロールに統一
+                        if (imageUris.size > 1 || hasVideo || hasAudio) {
                             imageScrollView.visibility = View.VISIBLE
                             singleImageContainer.visibility = View.GONE
                             userImagePreview.visibility = View.GONE
                             audioPlaybackContainer.visibility = View.GONE
-                            setupMultipleImagePreview(imageUris, imageContainer, binding.root.context)
+                            setupMultipleImagePreview(
+                                imageUris,
+                                imageContainer,
+                                binding.root.context,
+                                videoUri = videoUri,
+                                audioUri = effectiveAudioUri
+                            )
                         } else {
-                            // 単一画像：従来通り表示
+                            // 単一画像・音声なし・動画なし：従来通り表示
                             imageScrollView.visibility = View.GONE
                             singleImageContainer.visibility = View.VISIBLE
                             userImagePreview.visibility = View.VISIBLE
                             audioPlaybackContainer.visibility = View.GONE
+                            val singleUri = imageUris.first()
                             try {
-                                loadImageIntoView(userImagePreview, message.imageUri!!)
+                                loadImageIntoView(userImagePreview, singleUri)
                             } catch (e: Exception) {
                                 userImagePreview.setImageResource(android.R.drawable.ic_menu_gallery)
                             }
                             userImagePreview.setOnClickListener {
-                                ImageViewerDialog.show(binding.root.context, message.imageUri!!)
+                                MediaViewerDialog.show(
+                                    binding.root.context,
+                                    MediaViewerDialog.MediaBundle(
+                                        imageUris = imageUris,
+                                        videoUri = videoUri,
+                                        audioUri = effectiveAudioUri
+                                    )
+                                )
                             }
                         }
-                    }
-                    
-                    if (!message.audioUri.isNullOrEmpty()) {
-                        // Show audio player
+                    } else if (hasAudio) {
+                        // 画像なし・音声のみ：従来の音声プレイヤー
                         imageScrollView.visibility = View.GONE
                         singleImageContainer.visibility = View.GONE
                         userImagePreview.visibility = View.GONE
                         audioPlaybackContainer.visibility = View.VISIBLE
-                        setupAudioPlayback(message.audioUri, userAudioPlayButton, userAudioDuration)
+                        setupAudioPlayback(effectiveAudioUri!!, userAudioPlayButton, userAudioDuration)
                     }
                 } else {
                     mediaContainer.visibility = View.GONE
@@ -706,44 +742,58 @@ class MessageAdapter(
 
                 aiMessageTime.text = MessageAdapter.formatTime(message.timestamp)
                 
-                // Media handling
-                if (!message.imageUri.isNullOrEmpty() || !message.audioUri.isNullOrEmpty()) {
+                // Media handling (統一ビュワー対応: User 側と同じロジック)
+                val (aiVideoMeta, aiImageUris) = VideoAttachmentEncoding.split(message.imageUri)
+                val aiVideoUri = aiVideoMeta?.originalVideoUri
+                val aiEffectiveAudioUri = aiVideoMeta?.audioUri ?: message.audioUri
+                val aiHasVideo = !aiVideoUri.isNullOrBlank()
+                val aiHasAudio = !aiEffectiveAudioUri.isNullOrEmpty()
+                val aiHasImages = aiImageUris.isNotEmpty()
+
+                if (aiHasImages || aiHasAudio || aiHasVideo) {
                     mediaContainer.visibility = View.VISIBLE
-                    
-                    if (!message.imageUri.isNullOrEmpty()) {
-                        // Phase 11: 複数画像対応
-                        val imageUris = message.imageUri!!.split(",").filter { it.isNotBlank() }
-                        if (imageUris.size > 1) {
-                            // 複数画像：HorizontalScrollView で表示
+
+                    if (aiHasImages) {
+                        if (aiImageUris.size > 1 || aiHasVideo || aiHasAudio) {
                             imageScrollView.visibility = View.VISIBLE
                             singleImageContainer.visibility = View.GONE
                             aiImagePreview.visibility = View.GONE
                             audioPlaybackContainer.visibility = View.GONE
-                            setupMultipleImagePreview(imageUris, imageContainer, binding.root.context)
+                            setupMultipleImagePreview(
+                                aiImageUris,
+                                imageContainer,
+                                binding.root.context,
+                                videoUri = aiVideoUri,
+                                audioUri = aiEffectiveAudioUri
+                            )
                         } else {
-                            // 単一画像：従来通り表示
                             imageScrollView.visibility = View.GONE
                             singleImageContainer.visibility = View.VISIBLE
                             aiImagePreview.visibility = View.VISIBLE
                             audioPlaybackContainer.visibility = View.GONE
+                            val singleUri = aiImageUris.first()
                             try {
-                                loadImageIntoView(aiImagePreview, message.imageUri!!)
+                                loadImageIntoView(aiImagePreview, singleUri)
                             } catch (e: Exception) {
                                 aiImagePreview.setImageResource(android.R.drawable.ic_menu_gallery)
                             }
                             aiImagePreview.setOnClickListener {
-                                ImageViewerDialog.show(binding.root.context, message.imageUri!!)
+                                MediaViewerDialog.show(
+                                    binding.root.context,
+                                    MediaViewerDialog.MediaBundle(
+                                        imageUris = aiImageUris,
+                                        videoUri = aiVideoUri,
+                                        audioUri = aiEffectiveAudioUri
+                                    )
+                                )
                             }
                         }
-                    }
-                    
-                    if (!message.audioUri.isNullOrEmpty()) {
-                        // Show audio player
+                    } else if (aiHasAudio) {
                         imageScrollView.visibility = View.GONE
                         singleImageContainer.visibility = View.GONE
                         aiImagePreview.visibility = View.GONE
                         audioPlaybackContainer.visibility = View.VISIBLE
-                        setupAudioPlayback(message.audioUri, aiAudioPlayButton, aiAudioDuration)
+                        setupAudioPlayback(aiEffectiveAudioUri!!, aiAudioPlayButton, aiAudioDuration)
                     }
                 } else {
                     mediaContainer.visibility = View.GONE
