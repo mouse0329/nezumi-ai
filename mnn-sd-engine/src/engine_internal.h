@@ -55,27 +55,38 @@ struct MnnSdEngine
     MnnSdModelConfig model_config{};
     volatile bool cancel_requested = false;
 
-    ClipTokenizer tokenizer;
+    ClipTokenizer tokenizer;      // SD1.5: only tokenizer. SDXL: CLIP-L tokenizer.
+    ClipTokenizer tokenizer2;     // SDXL only: CLIP-G tokenizer (own vocab/merges).
 
     // xororz/local-dream embedding tables
     // token_emb: [vocab_size, 768] float32  (loaded from token_emb.bin)
     // pos_emb:   [77, 768]         float32  (loaded from pos_emb.bin)
-    std::vector<float> token_emb; // vocab_size * 768
+    std::vector<float> token_emb; // vocab_size * 768   (SD1.5: only set. SDXL: CLIP-L)
     std::vector<float> pos_emb;   // 77 * 768
     int token_emb_vocab_size = 0;
+
+    // SDXL only: CLIP-G's own token/position embedding tables
+    // (token_emb2.bin / pos_emb2.bin), same layout as above but with
+    // model_config.text_embedding_size_2 columns.
+    std::vector<float> token_emb2;
+    std::vector<float> pos_emb2;
+    int token_emb2_vocab_size = 0;
 
     // Just-in-time load: paths are resolved at mnn_sd_load(), interpreters
     // are created lazily inside mnn_sd_run_pipeline and released between
     // stages to keep peak RAM below the LMK threshold on 2-3 GB devices.
     std::string clip_path;
+    std::string clip2_path; // SDXL only
     std::string unet_path;
     std::string vae_path;
 
     std::shared_ptr<MNN::Interpreter> clip_interpreter;
+    std::shared_ptr<MNN::Interpreter> clip2_interpreter; // SDXL only
     std::shared_ptr<MNN::Interpreter> unet_interpreter;
     std::shared_ptr<MNN::Interpreter> vae_interpreter;
 
     MNN::Session *clip_session = nullptr;
+    MNN::Session *clip2_session = nullptr; // SDXL only
     MNN::Session *unet_session = nullptr;
     MNN::Session *vae_session = nullptr;
 

@@ -76,6 +76,7 @@ events:
       - "C:/Users/mouse/AppData/Local/Microsoft/WinGet/Links/"
       - "C:/Users/mouse/AppData/Local/Programs/cursor/resources/app/bin/"
       - "C:/Users/mouse/AppData/Local/Programs/Devin/bin/"
+      - "C:/Users/mouse/.vscode/extensions/vscjava.vscode-java-debug-0.59.0/bundled/scripts/noConfigScripts/"
     searched_directories:
       - "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe.com"
     found: "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe"
@@ -116,8 +117,8 @@ events:
         - "C:\\Program Files\\nodejs\\"
         - "C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2026.1.1\\"
         - "C:\\nezumi-ai-desktop-core\\target\\debug"
-        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Users\\mouse\\.grok\\bin"
         - "C:\\Users\\mouse\\.cargo\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Python\\Launcher\\"
@@ -135,6 +136,7 @@ events:
         - "C:\\Users\\mouse\\AppData\\Local\\Microsoft\\WinGet\\Links"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Devin\\bin"
+        - "c:\\Users\\mouse\\.vscode\\extensions\\vscjava.vscode-java-debug-0.59.0\\bundled\\scripts\\noConfigScripts"
   -
     kind: "find-v1"
     backtrace:
@@ -197,8 +199,8 @@ events:
         - "C:\\Program Files\\nodejs\\"
         - "C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2026.1.1\\"
         - "C:\\nezumi-ai-desktop-core\\target\\debug"
-        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Users\\mouse\\.grok\\bin"
         - "C:\\Users\\mouse\\.cargo\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Python\\Launcher\\"
@@ -216,6 +218,7 @@ events:
         - "C:\\Users\\mouse\\AppData\\Local\\Microsoft\\WinGet\\Links"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Devin\\bin"
+        - "c:\\Users\\mouse\\.vscode\\extensions\\vscjava.vscode-java-debug-0.59.0\\bundled\\scripts\\noConfigScripts"
       ENV{INCLUDE}:
         - "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.51.36231\\include"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\ucrt"
@@ -337,6 +340,7 @@ events:
       - "C:/Users/mouse/AppData/Local/Microsoft/WinGet/Links/"
       - "C:/Users/mouse/AppData/Local/Programs/cursor/resources/app/bin/"
       - "C:/Users/mouse/AppData/Local/Programs/Devin/bin/"
+      - "C:/Users/mouse/.vscode/extensions/vscjava.vscode-java-debug-0.59.0/bundled/scripts/noConfigScripts/"
     searched_directories:
       - "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/link.com"
     found: "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/link.exe"
@@ -377,8 +381,8 @@ events:
         - "C:\\Program Files\\nodejs\\"
         - "C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2026.1.1\\"
         - "C:\\nezumi-ai-desktop-core\\target\\debug"
-        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Users\\mouse\\.grok\\bin"
         - "C:\\Users\\mouse\\.cargo\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Python\\Launcher\\"
@@ -396,6 +400,7 @@ events:
         - "C:\\Users\\mouse\\AppData\\Local\\Microsoft\\WinGet\\Links"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Devin\\bin"
+        - "c:\\Users\\mouse\\.vscode\\extensions\\vscjava.vscode-java-debug-0.59.0\\bundled\\scripts\\noConfigScripts"
   -
     kind: "find-v1"
     backtrace:
@@ -466,6 +471,7 @@ events:
       - "C:/Users/mouse/AppData/Local/Microsoft/WinGet/Links/"
       - "C:/Users/mouse/AppData/Local/Programs/cursor/resources/app/bin/"
       - "C:/Users/mouse/AppData/Local/Programs/Devin/bin/"
+      - "C:/Users/mouse/.vscode/extensions/vscjava.vscode-java-debug-0.59.0/bundled/scripts/noConfigScripts/"
     searched_directories:
       - "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/lld-link.com"
       - "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/lld-link.exe"
@@ -611,6 +617,9 @@ events:
       - "C:/Users/mouse/AppData/Local/Programs/Devin/bin/lld-link.com"
       - "C:/Users/mouse/AppData/Local/Programs/Devin/bin/lld-link.exe"
       - "C:/Users/mouse/AppData/Local/Programs/Devin/bin/lld-link"
+      - "C:/Users/mouse/.vscode/extensions/vscjava.vscode-java-debug-0.59.0/bundled/scripts/noConfigScripts/lld-link.com"
+      - "C:/Users/mouse/.vscode/extensions/vscjava.vscode-java-debug-0.59.0/bundled/scripts/noConfigScripts/lld-link.exe"
+      - "C:/Users/mouse/.vscode/extensions/vscjava.vscode-java-debug-0.59.0/bundled/scripts/noConfigScripts/lld-link"
     found: false
     search_context:
       ENV{PATH}:
@@ -649,8 +658,8 @@ events:
         - "C:\\Program Files\\nodejs\\"
         - "C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2026.1.1\\"
         - "C:\\nezumi-ai-desktop-core\\target\\debug"
-        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Users\\mouse\\.grok\\bin"
         - "C:\\Users\\mouse\\.cargo\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Python\\Launcher\\"
@@ -668,6 +677,7 @@ events:
         - "C:\\Users\\mouse\\AppData\\Local\\Microsoft\\WinGet\\Links"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Devin\\bin"
+        - "c:\\Users\\mouse\\.vscode\\extensions\\vscjava.vscode-java-debug-0.59.0\\bundled\\scripts\\noConfigScripts"
   -
     kind: "find-v1"
     backtrace:
@@ -736,6 +746,7 @@ events:
       - "C:/Users/mouse/AppData/Local/Microsoft/WinGet/Links/"
       - "C:/Users/mouse/AppData/Local/Programs/cursor/resources/app/bin/"
       - "C:/Users/mouse/AppData/Local/Programs/Devin/bin/"
+      - "C:/Users/mouse/.vscode/extensions/vscjava.vscode-java-debug-0.59.0/bundled/scripts/noConfigScripts/"
     searched_directories:
       - "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/link.com"
     found: "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/link.exe"
@@ -776,8 +787,8 @@ events:
         - "C:\\Program Files\\nodejs\\"
         - "C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2026.1.1\\"
         - "C:\\nezumi-ai-desktop-core\\target\\debug"
-        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Users\\mouse\\.grok\\bin"
         - "C:\\Users\\mouse\\.cargo\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Python\\Launcher\\"
@@ -795,6 +806,7 @@ events:
         - "C:\\Users\\mouse\\AppData\\Local\\Microsoft\\WinGet\\Links"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Devin\\bin"
+        - "c:\\Users\\mouse\\.vscode\\extensions\\vscjava.vscode-java-debug-0.59.0\\bundled\\scripts\\noConfigScripts"
   -
     kind: "find-v1"
     backtrace:
@@ -863,6 +875,7 @@ events:
       - "C:/Users/mouse/AppData/Local/Microsoft/WinGet/Links/"
       - "C:/Users/mouse/AppData/Local/Programs/cursor/resources/app/bin/"
       - "C:/Users/mouse/AppData/Local/Programs/Devin/bin/"
+      - "C:/Users/mouse/.vscode/extensions/vscjava.vscode-java-debug-0.59.0/bundled/scripts/noConfigScripts/"
     searched_directories:
       - "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/mt.com"
       - "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/mt.exe"
@@ -912,8 +925,8 @@ events:
         - "C:\\Program Files\\nodejs\\"
         - "C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2026.1.1\\"
         - "C:\\nezumi-ai-desktop-core\\target\\debug"
-        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Users\\mouse\\.grok\\bin"
         - "C:\\Users\\mouse\\.cargo\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Python\\Launcher\\"
@@ -931,6 +944,7 @@ events:
         - "C:\\Users\\mouse\\AppData\\Local\\Microsoft\\WinGet\\Links"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Devin\\bin"
+        - "c:\\Users\\mouse\\.vscode\\extensions\\vscjava.vscode-java-debug-0.59.0\\bundled\\scripts\\noConfigScripts"
   -
     kind: "find-v1"
     backtrace:
@@ -999,6 +1013,7 @@ events:
       - "C:/Users/mouse/AppData/Local/Microsoft/WinGet/Links/"
       - "C:/Users/mouse/AppData/Local/Programs/cursor/resources/app/bin/"
       - "C:/Users/mouse/AppData/Local/Programs/Devin/bin/"
+      - "C:/Users/mouse/.vscode/extensions/vscjava.vscode-java-debug-0.59.0/bundled/scripts/noConfigScripts/"
     searched_directories:
       - "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/lib.com"
     found: "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/lib.exe"
@@ -1039,8 +1054,8 @@ events:
         - "C:\\Program Files\\nodejs\\"
         - "C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2026.1.1\\"
         - "C:\\nezumi-ai-desktop-core\\target\\debug"
-        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Users\\mouse\\.grok\\bin"
         - "C:\\Users\\mouse\\.cargo\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Python\\Launcher\\"
@@ -1058,6 +1073,7 @@ events:
         - "C:\\Users\\mouse\\AppData\\Local\\Microsoft\\WinGet\\Links"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Devin\\bin"
+        - "c:\\Users\\mouse\\.vscode\\extensions\\vscjava.vscode-java-debug-0.59.0\\bundled\\scripts\\noConfigScripts"
   -
     kind: "find-v1"
     backtrace:
@@ -1129,6 +1145,7 @@ events:
       - "C:/Users/mouse/AppData/Local/Microsoft/WinGet/Links/"
       - "C:/Users/mouse/AppData/Local/Programs/cursor/resources/app/bin/"
       - "C:/Users/mouse/AppData/Local/Programs/Devin/bin/"
+      - "C:/Users/mouse/.vscode/extensions/vscjava.vscode-java-debug-0.59.0/bundled/scripts/noConfigScripts/"
       - "C:/Program Files/bin/"
       - "C:/Program Files/sbin/"
       - "C:/Program Files/"
@@ -1181,8 +1198,8 @@ events:
         - "C:\\Program Files\\nodejs\\"
         - "C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2026.1.1\\"
         - "C:\\nezumi-ai-desktop-core\\target\\debug"
-        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Users\\mouse\\.grok\\bin"
         - "C:\\Users\\mouse\\.cargo\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Python\\Launcher\\"
@@ -1200,6 +1217,7 @@ events:
         - "C:\\Users\\mouse\\AppData\\Local\\Microsoft\\WinGet\\Links"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Devin\\bin"
+        - "c:\\Users\\mouse\\.vscode\\extensions\\vscjava.vscode-java-debug-0.59.0\\bundled\\scripts\\noConfigScripts"
       CMAKE_INSTALL_PREFIX: "C:/Program Files (x86)/mnn_sd_engine"
       CMAKE_SYSTEM_PREFIX_PATH:
         - "C:/Program Files"
@@ -1215,8 +1233,8 @@ events:
     checks:
       - "Detecting CXX compiler ABI info"
     directories:
-      source: "C:/Users/mouse/AndroidStudioProjects/nezumiai/mnn-sd-engine/build/CMakeFiles/CMakeScratch/TryCompile-g3m0z4"
-      binary: "C:/Users/mouse/AndroidStudioProjects/nezumiai/mnn-sd-engine/build/CMakeFiles/CMakeScratch/TryCompile-g3m0z4"
+      source: "C:/Users/mouse/AndroidStudioProjects/nezumiai/mnn-sd-engine/build/CMakeFiles/CMakeScratch/TryCompile-44lgnz"
+      binary: "C:/Users/mouse/AndroidStudioProjects/nezumiai/mnn-sd-engine/build/CMakeFiles/CMakeScratch/TryCompile-44lgnz"
     cmakeVariables:
       CMAKE_CXX_FLAGS: "/DWIN32 /D_WINDOWS /EHsc"
       CMAKE_CXX_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
@@ -1227,11 +1245,11 @@ events:
       variable: "CMAKE_CXX_ABI_COMPILED"
       cached: true
       stdout: |
-        Change Dir: 'C:/Users/mouse/AndroidStudioProjects/nezumiai/mnn-sd-engine/build/CMakeFiles/CMakeScratch/TryCompile-g3m0z4'
+        Change Dir: 'C:/Users/mouse/AndroidStudioProjects/nezumiai/mnn-sd-engine/build/CMakeFiles/CMakeScratch/TryCompile-44lgnz'
         
-        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/18/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe" -v cmTC_b0fb8
-        [1/2] C:\\PROGRA~1\\MICROS~1\\18\\COMMUN~1\\VC\\Tools\\MSVC\\1451~1.362\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -D_MBCS  /DWIN32 /D_WINDOWS /EHsc  /Zi /Ob0 /Od /RTC1 -MDd /showIncludes /FoCMakeFiles\\cmTC_b0fb8.dir\\CMakeCXXCompilerABI.cpp.obj /FdCMakeFiles\\cmTC_b0fb8.dir\\ /FS -c "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\share\\cmake-4.3\\Modules\\CMakeCXXCompilerABI.cpp"
-        [2/2] C:\\WINDOWS\\system32\\cmd.exe /C "cd . && "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe" -E vs_link_exe --msvc-ver=1951 --intdir=CMakeFiles\\cmTC_b0fb8.dir --rc=C:\\PROGRA~2\\WI3CF2~1\\10\\bin\\100261~1.0\\x64\\rc.exe --mt=C:\\PROGRA~2\\WI3CF2~1\\10\\bin\\100261~1.0\\x64\\mt.exe --manifests  -- C:\\PROGRA~1\\MICROS~1\\18\\COMMUN~1\\VC\\Tools\\MSVC\\1451~1.362\\bin\\Hostx64\\x64\\link.exe /nologo CMakeFiles\\cmTC_b0fb8.dir\\CMakeCXXCompilerABI.cpp.obj  /out:cmTC_b0fb8.exe /implib:cmTC_b0fb8.lib /pdb:cmTC_b0fb8.pdb /version:0.0 /machine:x64  /debug /INCREMENTAL /subsystem:console  kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib && cd ."
+        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/18/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe" -v cmTC_f7a88
+        [1/2] C:\\PROGRA~1\\MICROS~1\\18\\COMMUN~1\\VC\\Tools\\MSVC\\1451~1.362\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -D_MBCS  /DWIN32 /D_WINDOWS /EHsc  /Zi /Ob0 /Od /RTC1 -MDd /showIncludes /FoCMakeFiles\\cmTC_f7a88.dir\\CMakeCXXCompilerABI.cpp.obj /FdCMakeFiles\\cmTC_f7a88.dir\\ /FS -c "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\share\\cmake-4.3\\Modules\\CMakeCXXCompilerABI.cpp"
+        [2/2] C:\\WINDOWS\\system32\\cmd.exe /C "cd . && "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe" -E vs_link_exe --msvc-ver=1951 --intdir=CMakeFiles\\cmTC_f7a88.dir --rc=C:\\PROGRA~2\\WI3CF2~1\\10\\bin\\100261~1.0\\x64\\rc.exe --mt=C:\\PROGRA~2\\WI3CF2~1\\10\\bin\\100261~1.0\\x64\\mt.exe --manifests  -- C:\\PROGRA~1\\MICROS~1\\18\\COMMUN~1\\VC\\Tools\\MSVC\\1451~1.362\\bin\\Hostx64\\x64\\link.exe /nologo CMakeFiles\\cmTC_f7a88.dir\\CMakeCXXCompilerABI.cpp.obj  /out:cmTC_f7a88.exe /implib:cmTC_f7a88.lib /pdb:cmTC_f7a88.pdb /version:0.0 /machine:x64  /debug /INCREMENTAL /subsystem:console  kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib && cd ."
         
       exitCode: 0
   -
@@ -1319,8 +1337,8 @@ events:
         - "C:\\Program Files\\nodejs\\"
         - "C:\\Program Files\\NVIDIA Corporation\\Nsight Compute 2026.1.1\\"
         - "C:\\nezumi-ai-desktop-core\\target\\debug"
-        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance Toolkit\\"
+        - "C:\\Program Files\\PowerShell\\7\\"
         - "C:\\Users\\mouse\\.grok\\bin"
         - "C:\\Users\\mouse\\.cargo\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Python\\Launcher\\"
@@ -1338,6 +1356,7 @@ events:
         - "C:\\Users\\mouse\\AppData\\Local\\Microsoft\\WinGet\\Links"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin"
         - "C:\\Users\\mouse\\AppData\\Local\\Programs\\Devin\\bin"
+        - "c:\\Users\\mouse\\.vscode\\extensions\\vscjava.vscode-java-debug-0.59.0\\bundled\\scripts\\noConfigScripts"
       CMAKE_INSTALL_PREFIX: "C:/Program Files (x86)/mnn_sd_engine"
       CMAKE_SYSTEM_PREFIX_PATH:
         - "C:/Program Files"

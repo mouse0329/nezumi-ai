@@ -153,12 +153,29 @@ extern "C"
                       engine->model_config.tokenizer_file);
             return MNN_SD_ERR_MODEL_NOT_FOUND;
         }
+        if (engine->model_config.is_sdxl)
+        {
+            if (engine->model_config.clip2_file[0] == '\0' ||
+                !check_file(engine->model_config.clip2_file))
+            {
+                set_error(out_error, MNN_SD_ERR_MODEL_NOT_FOUND, "clip2 model missing (required for sdxl)",
+                          engine->model_config.clip2_file);
+                return MNN_SD_ERR_MODEL_NOT_FOUND;
+            }
+            if (engine->model_config.tokenizer2_file[0] == '\0' ||
+                !check_file(engine->model_config.tokenizer2_file))
+            {
+                set_error(out_error, MNN_SD_ERR_MODEL_NOT_FOUND, "tokenizer2 missing (required for sdxl)",
+                          engine->model_config.tokenizer2_file);
+                return MNN_SD_ERR_MODEL_NOT_FOUND;
+            }
+        }
 
         engine->model_dir = model_dir;
         engine->loaded = false;
         std::memset(&engine->caps, 0, sizeof(engine->caps));
         engine->caps.supports_opencl = engine->load_options.backend == MNN_SD_BACKEND_OPENCL ? 1 : 0;
-        engine->caps.max_side_px = 768;
+        engine->caps.max_side_px = engine->model_config.is_sdxl ? 1536 : 768;
         engine->caps.default_side_px = engine->model_config.default_size;
         engine->caps.clip_skip = engine->model_config.clip_skip;
         engine->caps.text_embedding_size = engine->model_config.text_embedding_size;

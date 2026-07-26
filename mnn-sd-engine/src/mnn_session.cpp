@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <climits>
+#include <functional>
 #include <memory>
 #include <random>
 #include <set>
@@ -83,6 +84,7 @@ namespace
     enum class SdModelKind
     {
         CLIP,
+        CLIP2, // SDXL's second text encoder (CLIP-G / OpenCLIP ViT-bigG)
         UNET,
         VAE,
     };
@@ -158,6 +160,7 @@ namespace
                                                 : MNN::BackendConfig::Memory_Normal;
                     break;
                 case SdModelKind::CLIP:
+                case SdModelKind::CLIP2:
                 default:
                     backend_config.precision = MNN::BackendConfig::Precision_Normal;
                     backend_config.memory = MNN::BackendConfig::Memory_Normal;
@@ -232,6 +235,9 @@ namespace
             break;
         case SdModelKind::VAE:
             stage = "vae";
+            break;
+        case SdModelKind::CLIP2:
+            stage = "clip2";
             break;
         case SdModelKind::CLIP:
         default:
@@ -317,6 +323,8 @@ extern "C"
             return MNN_SD_ERR_INVALID_PARAMS;
         }
 
+        const bool is_sdxl = engine->model_config.is_sdxl != 0;
+
         const std::string unet_path = build_model_path(engine->model_dir.c_str(), engine->model_config.unet_file);
         const std::string clip_path = build_model_path(engine->model_dir.c_str(), engine->model_config.clip_file);
         const std::string vae_path = build_model_path(engine->model_dir.c_str(), engine->model_config.vae_decoder_file);
@@ -326,6 +334,26 @@ extern "C"
         {
             set_error(out_error, MNN_SD_ERR_MODEL_NOT_FOUND, "failed to load tokenizer.json", tok_path.c_str());
             return MNN_SD_ERR_MODEL_NOT_FOUND;
+        }
+
+        std::string clip2_path;
+        std::string tok2_path;
+        if (is_sdxl)
+        {
+            if (engine->model_config.clip2_file[0] == '\0' || engine->model_config.tokenizer2_file[0] == '\0')
+            {
+                set_error(out_error, MNN_SD_ERR_MODEL_NOT_FOUND,
+                          "sdxl model.json missing clip2/tokenizer2", engine->model_dir.c_str());
+                return MNN_SD_ERR_MODEL_NOT_FOUND;
+            }
+            clip2_path = build_model_path(engine->model_dir.c_str(), engine->model_config.clip2_file);
+            tok2_path = build_model_path(engine->model_dir.c_str(), engine->model_config.tokenizer2_file);
+
+            if (!engine->tokenizer2.load(tok2_path))
+            {
+                set_error(out_error, MNN_SD_ERR_MODEL_NOT_FOUND, "failed to load tokenizer_2.json", tok2_path.c_str());
+                return MNN_SD_ERR_MODEL_NOT_FOUND;
+            }
         }
 
         // Load xororz embedding tables (token_emb.bin, pos_emb.bin).
@@ -525,8 +553,33 @@ extern "C"
                 return true;
             };
 
-            const std::string token_emb_path = build_model_path(engine->model_dir.c_str(), "token_emb.bin");
-            const std::string pos_emb_path = build_model_path(engine->model_dir.c_str(), "pos_emb.bin");
+            // SD1.5 packages this table as token_emb.bin/pos_emb.bin. The
+            // SDXL converter script names CLIP-L's table token_emb1.bin/
+            // pos_emb1.bin (to pair with CLIP-G's token_emb2.bin/pos_emb2.bin
+            // — see model.json's "token_embedding1"/"position_embedding1"
+            // keys). Try the SD1.5 names first, then the "...1.bin" names, so
+            // both packaging conventions work without needing model.json to
+            // spell out exact paths.
+            std::string token_emb_path = build_model_path(engine->model_dir.c_str(), "token_emb.bin");
+            std::string pos_emb_path = build_model_path(engine->model_dir.c_str(), "pos_emb.bin");
+            if (!file_exists(token_emb_path) || !file_exists(pos_emb_path))
+            {
+                std::string alt_token = build_model_path(engine->model_dir.c_str(), "token_emb1.bin");
+                std::string alt_pos = build_model_path(engine->model_dir.c_str(), "pos_emb1.bin");
+                if (file_exists(alt_token) && file_exists(alt_pos))
+                {
+                    token_emb_path = alt_token;
+                    pos_emb_path = alt_pos;
+                }
+            }
+
+            if (is_sdxl && (!file_exists(token_emb_path) || !file_exists(pos_emb_path)))
+            {
+                set_error(out_error, MNN_SD_ERR_MODEL_NOT_FOUND,
+                          "sdxl requires token_emb.bin/token_emb1.bin + pos_emb.bin/pos_emb1.bin (CLIP-L tables)",
+                          engine->model_dir.c_str());
+                return MNN_SD_ERR_MODEL_NOT_FOUND;
+            }
 
             if (file_exists(token_emb_path) && file_exists(pos_emb_path))
             {
@@ -553,6 +606,42 @@ extern "C"
                 }
                 engine->token_emb_vocab_size = detected_vocab;
             }
+
+            if (is_sdxl)
+            {
+                const std::string token_emb2_path = build_model_path(engine->model_dir.c_str(), "token_emb2.bin");
+                const std::string pos_emb2_path = build_model_path(engine->model_dir.c_str(), "pos_emb2.bin");
+
+                if (!file_exists(token_emb2_path) || !file_exists(pos_emb2_path))
+                {
+                    set_error(out_error, MNN_SD_ERR_MODEL_NOT_FOUND,
+                              "sdxl requires token_emb2.bin / pos_emb2.bin", token_emb2_path.c_str());
+                    return MNN_SD_ERR_MODEL_NOT_FOUND;
+                }
+
+                load_fp32(pos_emb2_path, engine->pos_emb2);
+
+                int emb_dim2 = engine->model_config.text_embedding_size_2 > 0
+                                   ? engine->model_config.text_embedding_size_2
+                                   : (int)(engine->pos_emb2.size() / ClipTokenizer::MAX_LEN);
+                if (emb_dim2 <= 0)
+                    emb_dim2 = 1280;
+                PROBE_LOG("pos_emb2.bin: %zu floats, emb_dim2=%d",
+                          engine->pos_emb2.size(), emb_dim2);
+
+                int tokenizer2_vocab_size = (int)engine->tokenizer2.vocab.size();
+                int detected_vocab2 = 0;
+                if (!load_token_emb(token_emb2_path, emb_dim2,
+                                    tokenizer2_vocab_size,
+                                    engine->token_emb2, detected_vocab2,
+                                    "token_emb2.bin"))
+                {
+                    set_error(out_error, MNN_SD_ERR_MODEL_INVALID,
+                              "failed to load token_emb2.bin", token_emb2_path.c_str());
+                    return MNN_SD_ERR_MODEL_INVALID;
+                }
+                engine->token_emb2_vocab_size = detected_vocab2;
+            }
         }
 
         // Just-in-time loading strategy: on low-RAM devices we cannot afford
@@ -575,7 +664,13 @@ extern "C"
             set_error(out_error, MNN_SD_ERR_MODEL_NOT_FOUND, "vae not found", vae_path.c_str());
             return MNN_SD_ERR_MODEL_NOT_FOUND;
         }
+        if (is_sdxl && !file_exists(clip2_path))
+        {
+            set_error(out_error, MNN_SD_ERR_MODEL_NOT_FOUND, "clip2 not found", clip2_path.c_str());
+            return MNN_SD_ERR_MODEL_NOT_FOUND;
+        }
         engine->clip_path = clip_path;
+        engine->clip2_path = clip2_path; // empty string when not SDXL
         engine->unet_path = unet_path;
         engine->vae_path = vae_path;
 
@@ -617,6 +712,13 @@ extern "C"
             engine->clip_session = nullptr;
         }
         engine->clip_interpreter.reset();
+
+        if (engine->clip2_session)
+        {
+            engine->clip2_interpreter->releaseSession(engine->clip2_session);
+            engine->clip2_session = nullptr;
+        }
+        engine->clip2_interpreter.reset();
 
         if (engine->vae_session)
         {
@@ -2330,10 +2432,19 @@ extern "C"
         //   なお params->use_opencl は JNI 側で engine->caps.supports_opencl を
         //   ミラーした値が入るので、use_opencl == 0 だったらユーザーはすでに
         //   CPU を選んでいる。
+        const bool is_sdxl = engine->model_config.is_sdxl != 0;
+
         int32_t max_side = width > height ? width : height;
         int32_t safe_max = engine->load_options.opencl_safe_max_side;
         if (safe_max <= 0)
-            safe_max = 448;
+        {
+            // SD1.5 default (512-class) was tuned for 448px mobile-GPU
+            // safety. SDXL models run at 1024-class resolutions by design;
+            // keeping the SD1.5 default would silently force every SDXL
+            // generation onto CPU. Callers can still override explicitly via
+            // load_options.opencl_safe_max_side.
+            safe_max = is_sdxl ? 1024 : 448;
+        }
         MnnSdBackend effective_backend = engine->load_options.backend;
         if (effective_backend == MNN_SD_BACKEND_OPENCL &&
             (params->use_opencl == 0 || max_side > safe_max))
@@ -2360,19 +2471,57 @@ extern "C"
             };
             probe_session(engine->clip_interpreter.get(), engine->clip_session, "CLIP");
         }
+        if (is_sdxl)
+        {
+            MnnSdError err = create_interpreter_and_session(
+                engine->clip2_path, effective_backend, SdModelKind::CLIP2,
+                false,
+                engine->clip2_interpreter, engine->clip2_session, out_error);
+            if (err != MNN_SD_OK)
+                return err;
+            auto probe_session = [](MNN::Interpreter *net, MNN::Session *sess, const char *label)
+            {
+                for (const auto &kv : net->getSessionInputAll(sess))
+                    PROBE_LOG("%s input: %s", label, kv.first.c_str());
+                for (const auto &kv : net->getSessionOutputAll(sess))
+                    PROBE_LOG("%s output: %s", label, kv.first.c_str());
+            };
+            probe_session(engine->clip2_interpreter.get(), engine->clip2_session, "CLIP2");
+        }
 
-        // --- 1. Tokenize + build per-side input_embedding (batch=1 each) ---
-        // xororz/sd-mnn CLIP graph is fixed to batch=1; we run it twice (uncond + cond)
-        // instead of trying to fit a batch=2 tensor.
+        // --- 1. Tokenize (SD1.5: one tokenizer. SDXL: CLIP-L + CLIP-G, each
+        // with its own vocab, both padded/truncated to 77 tokens). ---
         auto token_ids = engine->tokenizer.encode_pair(
             params->prompt ? params->prompt : "",
             params->negative_prompt ? params->negative_prompt : "");
         // token_ids: [2 * 77] ints (first half = uncond, second half = cond)
 
+        std::vector<int> token_ids2;
+        if (is_sdxl)
+        {
+            token_ids2 = engine->tokenizer2.encode_pair(
+                params->prompt ? params->prompt : "",
+                params->negative_prompt ? params->negative_prompt : "");
+        }
+
         const int seq_len = ClipTokenizer::MAX_LEN;
         const int emb_dim = engine->model_config.text_embedding_size > 0
                                 ? engine->model_config.text_embedding_size
                                 : 768;
+        const int emb_dim2 = is_sdxl
+                                  ? (engine->model_config.text_embedding_size_2 > 0
+                                         ? engine->model_config.text_embedding_size_2
+                                         : 1280)
+                                  : 0;
+        // encoder_hidden_states width the UNet expects: SD1.5 = emb_dim
+        // (768); SDXL = emb_dim + emb_dim2 (768 + 1280 = 2048, CLIP-L and
+        // CLIP-G hidden states concatenated along the feature axis).
+        const int unet_ctx_dim = is_sdxl ? (emb_dim + emb_dim2) : emb_dim;
+        const int pooled_dim = is_sdxl
+                                    ? (engine->model_config.pooled_embedding_size > 0
+                                           ? engine->model_config.pooled_embedding_size
+                                           : emb_dim2)
+                                    : 0;
 
         if (engine->token_emb.empty() || engine->pos_emb.empty())
         {
@@ -2381,28 +2530,37 @@ extern "C"
                               "token_emb.bin / pos_emb.bin not loaded (xororz format required)");
             return MNN_SD_ERR_MODEL_NOT_FOUND;
         }
-
-        auto build_side_embedding = [&](int side /*0=uncond, 1=cond*/,
-                                        std::vector<float> &out)
+        if (is_sdxl && (engine->token_emb2.empty() || engine->pos_emb2.empty()))
         {
-            out.assign((size_t)seq_len * emb_dim, 0.0f);
+            if (out_error)
+                std::snprintf(out_error->message, sizeof(out_error->message),
+                              "token_emb2.bin / pos_emb2.bin not loaded (sdxl requires CLIP-G tables)");
+            return MNN_SD_ERR_MODEL_NOT_FOUND;
+        }
+
+        // Generic "token id -> input_embedding row" builder, reused for both
+        // CLIP-L (token_emb/pos_emb) and, for SDXL, CLIP-G (token_emb2/pos_emb2).
+        auto build_side_embedding_generic = [&](const std::vector<int> &ids, int side, int dim,
+                                                 const std::vector<float> &tok_table,
+                                                 const std::vector<float> &pos_table,
+                                                 int vocab_size,
+                                                 const char *label,
+                                                 std::vector<float> &out)
+        {
+            out.assign((size_t)seq_len * dim, 0.0f);
             for (int p = 0; p < seq_len; ++p)
             {
-                int tok_id = token_ids[side * seq_len + p];
-                tok_id = std::max(0, std::min(tok_id, engine->token_emb_vocab_size - 1));
-                const float *te = engine->token_emb.data() + (size_t)tok_id * emb_dim;
-                const float *pe = engine->pos_emb.data() + (size_t)p * emb_dim;
-                float *dst = out.data() + (size_t)p * emb_dim;
-                for (int d = 0; d < emb_dim; ++d)
+                int tok_id = ids[side * seq_len + p];
+                tok_id = std::max(0, std::min(tok_id, vocab_size - 1));
+                const float *te = tok_table.data() + (size_t)tok_id * dim;
+                const float *pe = pos_table.data() + (size_t)p * dim;
+                float *dst = out.data() + (size_t)p * dim;
+                for (int d = 0; d < dim; ++d)
                     dst[d] = te[d] + pe[d];
             }
 
-            // Diagnostic: sum-of-squares of row 1 and row 5 to make sure the
-            // embedding rows carry sensible float values (should be O(dim) for
-            // a healthy row; near-zero or huge/NaN indicate the token table
-            // was misread as the wrong dtype).
             static int diag_count = 0;
-            if (diag_count < 4)
+            if (diag_count < 8)
             {
                 ++diag_count;
                 auto row_norm2 = [&](int p) -> double
@@ -2410,121 +2568,314 @@ extern "C"
                     if (p >= seq_len)
                         return 0.0;
                     double s = 0.0;
-                    const float *row = out.data() + (size_t)p * emb_dim;
-                    for (int d = 0; d < emb_dim; ++d)
+                    const float *row = out.data() + (size_t)p * dim;
+                    for (int d = 0; d < dim; ++d)
                         s += (double)row[d] * (double)row[d];
                     return s;
                 };
-                PROBE_LOG("build_side_embedding: side=%d row1_norm2=%.3f row5_norm2=%.3f (emb_dim=%d, vocab=%d)",
-                          side, row_norm2(1), row_norm2(5), emb_dim,
-                          engine->token_emb_vocab_size);
+                PROBE_LOG("%s: side=%d row1_norm2=%.3f row5_norm2=%.3f (dim=%d, vocab=%d)",
+                          label, side, row_norm2(1), row_norm2(5), dim, vocab_size);
             }
         };
 
-        // --- 2. CLIP text encoder: explicit resize to {1, 77, emb_dim}, then run
-        // twice (once per side). Concatenate outputs into text_emb [2, 77, emb_dim]. ---
-        //
-        // Bug fix (プロンプト無視の主原因): 以前は入力名として "input_ids" を
-        //   最優先で探し、見つかればそこに float 埋め込みを流し込んでいた。
-        //   しかし xororz/sd-mnn 形式の CLIP モデルは入力名が "input_embedding"
-        //   (float32, [1, 77, emb_dim]) で、"input_ids" は存在しない。
-        //   もし変換違いのモデルで "input_ids" (int32, [1, 77]) が来ると、
-        //   int32 テンソルに float の埋め込みを memcpy し shape も破壊するため、
-        //   CLIP はプロンプトと無関係な出力を返し、UNet が「意味のない条件」で
-        //   デノイズを回してしまう → 生成画像がプロンプトを無視する。
-        //
-        //   対処: 常に "input_embedding" を優先し、見つからない場合のみ他候補に
-        //   フォールバックする。int32 の input_ids エントリしか無いモデルは
-        //   ここではサポート対象外 (本エンジンは token_emb.bin/pos_emb.bin で
-        //   embedding を事前計算する xororz 形式に一本化)。
-        auto *clip_net = engine->clip_interpreter.get();
-        MNN::Tensor *clip_input = nullptr;
-        const auto &all_in = clip_net->getSessionInputAll(engine->clip_session);
-        if (all_in.find("input_embedding") != all_in.end())
+        auto build_side_embedding = [&](int side, std::vector<float> &out)
         {
-            clip_input = all_in.at("input_embedding");
+            build_side_embedding_generic(token_ids, side, emb_dim,
+                                          engine->token_emb, engine->pos_emb,
+                                          engine->token_emb_vocab_size,
+                                          "build_side_embedding(clip1)", out);
+        };
+        auto build_side_embedding2 = [&](int side, std::vector<float> &out)
+        {
+            build_side_embedding_generic(token_ids2, side, emb_dim2,
+                                          engine->token_emb2, engine->pos_emb2,
+                                          engine->token_emb2_vocab_size,
+                                          "build_side_embedding(clip2)", out);
+        };
+
+        // Locates the graph's embedding-input tensor (xororz/sd-mnn
+        // convention: "input_embedding", float32 [1, 77, dim]). Falls back to
+        // the sole input tensor when the graph only exposes one.
+        auto find_clip_input = [&](MNN::Interpreter *net, MNN::Session *sess,
+                                   const char *label) -> MNN::Tensor *
+        {
+            const auto &in = net->getSessionInputAll(sess);
+            auto it = in.find("input_embedding");
+            if (it != in.end())
+                return it->second;
+            if (in.size() == 1)
+            {
+                PROBE_LOG("%s: only one input tensor '%s' - assuming input_embedding layout",
+                          label, in.begin()->first.c_str());
+                return in.begin()->second;
+            }
+            return nullptr;
+        };
+
+        // Runs one CLIP graph for both sides (uncond, cond), writing
+        // per-token hidden states into hidden_out ([2, 77, dim]) and,
+        // optionally, a pooled/text_embeds vector into pooled_out ([2, pooled_dim]).
+        // eos_index for a given side: position of the first EOS_ID token in
+        // that side's 77-token sequence (encode_single always emits exactly
+        // one BOS, the prompt's BPE tokens, then pads the remainder with
+        // EOS_ID — so the first EOS_ID position is the "real" end-of-text
+        // token, matching HuggingFace's input_ids.argmax(-1) for CLIP's
+        // vocab where EOS has the highest id).
+        auto find_eos_index = [&](const std::vector<int> &ids, int side) -> int
+        {
+            for (int p = 0; p < seq_len; ++p)
+            {
+                if (ids[side * seq_len + p] == ClipTokenizer::EOS_ID)
+                    return p;
+            }
+            return seq_len - 1;
+        };
+
+        auto run_clip = [&](MNN::Interpreter *net, MNN::Session *sess, int dim,
+                            const std::function<void(int, std::vector<float> &)> &build_side,
+                            const std::vector<int> *ids_for_eos,
+                            bool want_pooled, const char *label,
+                            std::vector<float> &hidden_out,
+                            std::vector<float> &pooled_out) -> MnnSdError
+        {
+            MNN::Tensor *clip_input = find_clip_input(net, sess, label);
+            if (!clip_input)
+            {
+                if (out_error)
+                    std::snprintf(out_error->message, sizeof(out_error->message),
+                                  "%s: 'input_embedding' tensor not found. Model must be converted "
+                                  "with the xororz/sd-mnn embedding-input CLIP graph.",
+                                  label);
+                return MNN_SD_ERR_MODEL_INVALID;
+            }
+            net->resizeTensor(clip_input, {1, seq_len, dim});
+
+            // SDXL's CLIP-G graph takes a second input, eos_index ([1],
+            // int32), used to gather the pooled hidden state for
+            // text_embeds. SD1.5's CLIP / SDXL's CLIP-L do not have it.
+            MNN::Tensor *eos_input = nullptr;
+            if (ids_for_eos)
+            {
+                const auto &in = net->getSessionInputAll(sess);
+                auto it = in.find("eos_index");
+                if (it != in.end())
+                {
+                    eos_input = it->second;
+                    net->resizeTensor(eos_input, {1});
+                }
+            }
+
+            net->resizeSession(sess);
+            clip_input = find_clip_input(net, sess, label);
+            if (eos_input)
+            {
+                const auto &in = net->getSessionInputAll(sess);
+                auto it = in.find("eos_index");
+                eos_input = (it != in.end()) ? it->second : nullptr;
+            }
+            if (ids_for_eos && !eos_input)
+            {
+                if (out_error)
+                    std::snprintf(out_error->message, sizeof(out_error->message),
+                                  "%s: 'eos_index' input not found on graph (required to pool text_embeds)",
+                                  label);
+                return MNN_SD_ERR_MODEL_INVALID;
+            }
+
+            hidden_out.assign((size_t)2 * seq_len * dim, 0.0f);
+            if (want_pooled)
+                pooled_out.assign((size_t)2 * pooled_dim, 0.0f);
+
+            std::vector<float> side_emb;
+            for (int side = 0; side < 2; ++side)
+            {
+                build_side(side, side_emb);
+
+                MNN::Tensor host(clip_input, MNN::Tensor::CAFFE);
+                if ((size_t)host.elementSize() != side_emb.size())
+                {
+                    if (out_error)
+                        std::snprintf(out_error->message, sizeof(out_error->message),
+                                      "%s: resize failed (host=%d want=%zu)",
+                                      label, host.elementSize(), side_emb.size());
+                    return MNN_SD_ERR_INTERNAL;
+                }
+                std::memcpy(host.host<float>(), side_emb.data(), side_emb.size() * sizeof(float));
+                clip_input->copyFromHostTensor(&host);
+
+                if (eos_input && ids_for_eos)
+                {
+                    int eos_pos = find_eos_index(*ids_for_eos, side);
+                    MNN::Tensor host_eos(eos_input, MNN::Tensor::CAFFE);
+                    if (host_eos.elementSize() != 1)
+                    {
+                        if (out_error)
+                            std::snprintf(out_error->message, sizeof(out_error->message),
+                                          "%s: eos_index tensor has unexpected size", label);
+                        return MNN_SD_ERR_INTERNAL;
+                    }
+                    if (host_eos.getType().code == halide_type_int && host_eos.getType().bits == 32)
+                    {
+                        *host_eos.host<int32_t>() = eos_pos;
+                    }
+                    else
+                    {
+                        *host_eos.host<int64_t>() = eos_pos;
+                    }
+                    eos_input->copyFromHostTensor(&host_eos);
+                }
+
+                net->runSession(sess);
+
+                const auto &all_out = net->getSessionOutputAll(sess);
+
+                MNN::Tensor *out_t = nullptr;
+                for (const char *candidate : {"last_hidden_state", "hidden_states", "text_embeddings", "output"})
+                {
+                    auto it = all_out.find(candidate);
+                    if (it != all_out.end())
+                    {
+                        out_t = it->second;
+                        break;
+                    }
+                }
+                if (!out_t)
+                {
+                    for (const auto &kv : all_out)
+                    {
+                        if (kv.second->elementSize() == seq_len * dim)
+                        {
+                            out_t = kv.second;
+                            break;
+                        }
+                    }
+                }
+                if (!out_t && !all_out.empty())
+                {
+                    out_t = all_out.begin()->second;
+                }
+                if (!out_t)
+                {
+                    if (out_error)
+                        std::snprintf(out_error->message, sizeof(out_error->message),
+                                      "%s: text output not found", label);
+                    return MNN_SD_ERR_INTERNAL;
+                }
+                MNN::Tensor host_out(out_t, MNN::Tensor::CAFFE);
+                out_t->copyToHostTensor(&host_out);
+                std::memcpy(hidden_out.data() + (size_t)side * seq_len * dim,
+                            host_out.host<float>(),
+                            (size_t)seq_len * dim * sizeof(float));
+
+                if (want_pooled)
+                {
+                    MNN::Tensor *pooled_t = nullptr;
+                    for (const char *candidate : {"text_embeds", "pooled_output", "pooler_output"})
+                    {
+                        auto it = all_out.find(candidate);
+                        if (it != all_out.end())
+                        {
+                            pooled_t = it->second;
+                            break;
+                        }
+                    }
+                    if (!pooled_t)
+                    {
+                        for (const auto &kv : all_out)
+                        {
+                            if (kv.second != out_t && kv.second->elementSize() == pooled_dim)
+                            {
+                                pooled_t = kv.second;
+                                break;
+                            }
+                        }
+                    }
+                    if (!pooled_t)
+                    {
+                        if (out_error)
+                            std::snprintf(out_error->message, sizeof(out_error->message),
+                                          "%s: pooled/text_embeds output not found (required for SDXL)",
+                                          label);
+                        return MNN_SD_ERR_MODEL_INVALID;
+                    }
+                    MNN::Tensor host_pooled(pooled_t, MNN::Tensor::CAFFE);
+                    pooled_t->copyToHostTensor(&host_pooled);
+                    int n = std::min(pooled_t->elementSize(), pooled_dim);
+                    std::memcpy(pooled_out.data() + (size_t)side * pooled_dim,
+                                host_pooled.host<float>(),
+                                (size_t)n * sizeof(float));
+                }
+            }
+            return MNN_SD_OK;
+        };
+
+        // text_emb / text_emb2: [2, 77, dim] each (side 0 = uncond, side 1 = cond).
+        // pooled2: [2, pooled_dim], SDXL only (CLIP-G's text_embeds).
+        std::vector<float> text_emb;
+        std::vector<float> text_emb2;
+        std::vector<float> pooled2;
+        {
+            std::vector<float> unused_pooled;
+            MnnSdError err = run_clip(engine->clip_interpreter.get(), engine->clip_session,
+                                      emb_dim, build_side_embedding,
+                                      /*ids_for_eos=*/nullptr,
+                                      /*want_pooled=*/false, "CLIP1",
+                                      text_emb, unused_pooled);
+            if (err != MNN_SD_OK)
+                return err;
         }
-        else if (all_in.size() == 1)
+        if (is_sdxl)
         {
-            // Single-input CLIP graph: safe to treat as input_embedding.
-            clip_input = all_in.begin()->second;
-            PROBE_LOG("CLIP: only one input tensor '%s' - assuming input_embedding layout",
-                      all_in.begin()->first.c_str());
+            MnnSdError err = run_clip(engine->clip2_interpreter.get(), engine->clip2_session,
+                                      emb_dim2, build_side_embedding2,
+                                      /*ids_for_eos=*/&token_ids2,
+                                      /*want_pooled=*/true, "CLIP2",
+                                      text_emb2, pooled2);
+            if (err != MNN_SD_OK)
+                return err;
+        }
+
+        // Concatenate CLIP-L (emb_dim) + CLIP-G (emb_dim2) hidden states
+        // along the feature axis to build the UNet's encoder_hidden_states
+        // ([2, 77, emb_dim+emb_dim2]), matching SDXL's training-time text
+        // conditioning. For SD1.5 this degenerates to a copy of text_emb.
+        std::vector<float> unet_ctx((size_t)2 * seq_len * unet_ctx_dim, 0.0f);
+        if (is_sdxl)
+        {
+            for (int side = 0; side < 2; ++side)
+            {
+                for (int p = 0; p < seq_len; ++p)
+                {
+                    float *dst = unet_ctx.data() + ((size_t)side * seq_len + p) * unet_ctx_dim;
+                    const float *src1 = text_emb.data() + ((size_t)side * seq_len + p) * emb_dim;
+                    const float *src2 = text_emb2.data() + ((size_t)side * seq_len + p) * emb_dim2;
+                    std::memcpy(dst, src1, (size_t)emb_dim * sizeof(float));
+                    std::memcpy(dst + emb_dim, src2, (size_t)emb_dim2 * sizeof(float));
+                }
+            }
         }
         else
         {
-            if (out_error)
-                std::snprintf(out_error->message, sizeof(out_error->message),
-                              "CLIP: 'input_embedding' tensor not found. Model must be converted with the xororz/sd-mnn embedding-input CLIP graph.");
-            return MNN_SD_ERR_MODEL_INVALID;
+            unet_ctx = text_emb;
         }
-        clip_net->resizeTensor(clip_input, {1, seq_len, emb_dim});
-        clip_net->resizeSession(engine->clip_session);
+        // unet_ctx: [2, 77, unet_ctx_dim]  (side 0 = uncond, side 1 = cond)
 
-        std::vector<float> text_emb((size_t)2 * seq_len * emb_dim, 0.0f);
-        std::vector<float> side_emb;
-        for (int side = 0; side < 2; ++side)
-        {
-            build_side_embedding(side, side_emb);
-
-            // Bug fix: 埋め込みは必ず side_emb.size() == elementSize() のはずだが、
-            //   万一 resize が失敗しても静かに壊れないように double-check し、
-            //   OpenCL バックエンドでも host<float>() が backing buffer を取れる
-            //   ケースは直接書き込む (xororz と同じ経路)。取れない場合は従来通り
-            //   一時ホストテンソル経由で copyFromHostTensor に落とす。
-            MNN::Tensor host(clip_input, MNN::Tensor::CAFFE);
-            if ((size_t)host.elementSize() != side_emb.size())
-            {
-                if (out_error)
-                    std::snprintf(out_error->message, sizeof(out_error->message),
-                                  "CLIP: resize failed (host=%d want=%zu)",
-                                  host.elementSize(), side_emb.size());
-                return MNN_SD_ERR_INTERNAL;
-            }
-            std::memcpy(host.host<float>(), side_emb.data(), side_emb.size() * sizeof(float));
-            clip_input->copyFromHostTensor(&host);
-
-            clip_net->runSession(engine->clip_session);
-
-            MNN::Tensor *out_t = nullptr;
-            const auto &all_out = clip_net->getSessionOutputAll(engine->clip_session);
-            for (const char *candidate : {"last_hidden_state", "hidden_states", "text_embeddings", "output"})
-            {
-                auto it = all_out.find(candidate);
-                if (it != all_out.end())
-                {
-                    out_t = it->second;
-                    break;
-                }
-            }
-            if (!out_t && !all_out.empty())
-            {
-                out_t = all_out.begin()->second;
-            }
-            if (!out_t)
-            {
-                if (out_error)
-                    std::snprintf(out_error->message, sizeof(out_error->message),
-                                  "CLIP: text output not found");
-                return MNN_SD_ERR_INTERNAL;
-            }
-            MNN::Tensor host_out(out_t, MNN::Tensor::CAFFE);
-            out_t->copyToHostTensor(&host_out);
-            std::memcpy(text_emb.data() + (size_t)side * seq_len * emb_dim,
-                        host_out.host<float>(),
-                        (size_t)seq_len * emb_dim * sizeof(float));
-        }
-        // text_emb: [2, 77, emb_dim]  (side 0 = uncond, side 1 = cond)
-
-        // Free CLIP now — its weights (~150 MB) are not needed for the rest of
-        // the pipeline. On low-RAM devices (<3 GB) keeping all three interpreters
-        // resident causes the LMK to kill the process before UNet finishes.
+        // Free CLIP now — its weights (~150 MB for CLIP-L, ~1.2 GB for
+        // CLIP-G) are not needed for the rest of the pipeline. On low-RAM
+        // devices (<3 GB) keeping all interpreters resident causes the LMK
+        // to kill the process before UNet finishes.
         if (engine->clip_session)
         {
             engine->clip_interpreter->releaseSession(engine->clip_session);
             engine->clip_session = nullptr;
         }
         engine->clip_interpreter.reset();
+        if (engine->clip2_session)
+        {
+            engine->clip2_interpreter->releaseSession(engine->clip2_session);
+            engine->clip2_session = nullptr;
+        }
+        engine->clip2_interpreter.reset();
 
         // Bug fix (進捗が 3→6 に跳ぶ): 以前は CLIP 完了時に total=steps+2、
         //   UNet 各ステップで total=steps、VAE 完了で total=steps+2 と
@@ -2748,7 +3099,31 @@ extern "C"
         }
         unet_net->resizeTensor(u_sample, {1, 4, lh, lw});
         unet_net->resizeTensor(u_ts, {1});
-        unet_net->resizeTensor(u_enc, {1, seq_len, emb_dim});
+        unet_net->resizeTensor(u_enc, {1, seq_len, unet_ctx_dim});
+
+        // SDXL: UNet's add_embedding path also needs text_embeds (CLIP-G's
+        // pooled output, [1, pooled_dim]) and time_ids ([1, 6]: orig h/w,
+        // crop top/left, target h/w — see diffusers' SDXL micro-conditioning).
+        // Both are optional inputs from the graph's point of view (absent on
+        // SD1.5 UNets), so look them up defensively.
+        MNN::Tensor *u_text_embeds = nullptr;
+        MNN::Tensor *u_time_ids = nullptr;
+        if (is_sdxl)
+        {
+            u_text_embeds = unet_net->getSessionInput(engine->unet_session, "text_embeds");
+            u_time_ids = unet_net->getSessionInput(engine->unet_session, "time_ids");
+            if (!u_text_embeds || !u_time_ids)
+            {
+                if (out_error)
+                    std::snprintf(out_error->message, sizeof(out_error->message),
+                                  "UNet: sdxl model.json set but 'text_embeds'/'time_ids' "
+                                  "inputs not found on unet.mnn (was it exported as SDXL?)");
+                return MNN_SD_ERR_MODEL_INVALID;
+            }
+            unet_net->resizeTensor(u_text_embeds, {1, pooled_dim});
+            unet_net->resizeTensor(u_time_ids, {1, 6});
+        }
+
         unet_net->resizeSession(engine->unet_session);
         // Drop the initial model buffer now that the graph is compiled — MNN
         // still holds the weights mmap'd by the interpreter, but the parsed copy
@@ -2759,6 +3134,11 @@ extern "C"
         u_sample = unet_net->getSessionInput(engine->unet_session, "sample");
         u_ts = unet_net->getSessionInput(engine->unet_session, "timestep");
         u_enc = unet_net->getSessionInput(engine->unet_session, "encoder_hidden_states");
+        if (is_sdxl)
+        {
+            u_text_embeds = unet_net->getSessionInput(engine->unet_session, "text_embeds");
+            u_time_ids = unet_net->getSessionInput(engine->unet_session, "time_ids");
+        }
 
         std::vector<std::vector<float>> ets;
         std::vector<float> pndm_prev;
@@ -2771,12 +3151,31 @@ extern "C"
                 ? std::random_device{}()
                 : (uint32_t)((uint64_t)params->seed ^ 0x9E3779B9u));
 
-        // Per-side text embedding views ([1, 77, emb_dim] each). text_emb is laid
-        // out as [uncond, cond] contiguously.
-        const float *emb_uncond = text_emb.data();
-        const float *emb_cond = text_emb.data() + (size_t)seq_len * emb_dim;
-        const size_t emb_bytes = (size_t)seq_len * emb_dim * sizeof(float);
+        // Per-side context views ([1, 77, unet_ctx_dim] each). unet_ctx is
+        // laid out as [uncond, cond] contiguously.
+        const float *emb_uncond = unet_ctx.data();
+        const float *emb_cond = unet_ctx.data() + (size_t)seq_len * unet_ctx_dim;
+        const size_t emb_bytes = (size_t)seq_len * unet_ctx_dim * sizeof(float);
         const size_t latent_bytes = (size_t)latent_size * sizeof(float);
+
+        // SDXL micro-conditioning vectors (per side: uncond, cond). time_ids
+        // is the same [orig_h, orig_w, crop_top, crop_left, target_h,
+        // target_w] for both sides in the common (no explicit
+        // aesthetic-score / no-crop) case; text_embeds differs per side
+        // (CLIP-G pooled output of the negative vs. positive prompt).
+        std::vector<float> time_ids_vec;
+        const float *pooled_uncond = nullptr;
+        const float *pooled_cond = nullptr;
+        if (is_sdxl)
+        {
+            time_ids_vec = {
+                (float)height, (float)width, // original_size (h, w)
+                0.0f, 0.0f,                  // crop_top_left (top, left)
+                (float)height, (float)width, // target_size (h, w)
+            };
+            pooled_uncond = pooled2.data();
+            pooled_cond = pooled2.data() + (size_t)pooled_dim;
+        }
 
         std::vector<float> pred_uncond(latent_size);
         std::vector<float> pred_cond(latent_size);
@@ -2802,7 +3201,7 @@ extern "C"
         //   `new MNN::Tensor(deviceTensor, MNN::Tensor::CAFFE)` という
         //   コンストラクタ版 (device tensor から派生) を使っており、
         //   CPU/OpenCL 両方で同一の絵が出ている。同じパターンに統一する。
-        auto run_unet_once = [&](const float *emb_ptr, int ts,
+        auto run_unet_once = [&](const float *emb_ptr, const float *pooled_ptr, int ts,
                                  std::vector<float> &out_pred,
                                  const char *tag, int step_index) -> bool
         {
@@ -2825,10 +3224,32 @@ extern "C"
             // Upload encoder_hidden_states for this side
             {
                 std::unique_ptr<MNN::Tensor> host_e(new MNN::Tensor(u_enc, MNN::Tensor::CAFFE));
-                if (!host_e || (size_t)host_e->elementSize() != (size_t)seq_len * emb_dim)
+                if (!host_e || (size_t)host_e->elementSize() != (size_t)seq_len * unet_ctx_dim)
                     return false;
                 std::memcpy(host_e->host<float>(), emb_ptr, emb_bytes);
                 u_enc->copyFromHostTensor(host_e.get());
+            }
+            // SDXL: upload text_embeds (pooled CLIP-G output for this side)
+            // and time_ids (micro-conditioning, same for both sides).
+            if (is_sdxl)
+            {
+                if (!u_text_embeds || !u_time_ids || !pooled_ptr)
+                    return false;
+                {
+                    std::unique_ptr<MNN::Tensor> host_p(new MNN::Tensor(u_text_embeds, MNN::Tensor::CAFFE));
+                    if (!host_p || host_p->elementSize() != pooled_dim)
+                        return false;
+                    std::memcpy(host_p->host<float>(), pooled_ptr, (size_t)pooled_dim * sizeof(float));
+                    u_text_embeds->copyFromHostTensor(host_p.get());
+                }
+                {
+                    std::unique_ptr<MNN::Tensor> host_t(new MNN::Tensor(u_time_ids, MNN::Tensor::CAFFE));
+                    if (!host_t || (size_t)host_t->elementSize() != time_ids_vec.size())
+                        return false;
+                    std::memcpy(host_t->host<float>(), time_ids_vec.data(),
+                                time_ids_vec.size() * sizeof(float));
+                    u_time_ids->copyFromHostTensor(host_t.get());
+                }
             }
 
             unet_net->runSession(engine->unet_session);
@@ -2920,8 +3341,8 @@ extern "C"
 
             int ts = timesteps[i];
 
-            if (!run_unet_once(emb_uncond, ts, pred_uncond, "uncond", i) ||
-                !run_unet_once(emb_cond, ts, pred_cond, "cond", i))
+            if (!run_unet_once(emb_uncond, pooled_uncond, ts, pred_uncond, "uncond", i) ||
+                !run_unet_once(emb_cond, pooled_cond, ts, pred_cond, "cond", i))
             {
                 if (out_error)
                     std::snprintf(out_error->message, sizeof(out_error->message),
@@ -3053,9 +3474,12 @@ extern "C"
         }
 
         // --- 6. VAE decode: explicit resize to {1, 4, lh, lw} ---
-        // scale latent: latent / 0.18215
+        // scale latent: SD1.5 uses 0.18215, SDXL's VAE was retrained with a
+        // different scale (0.13025). Using the wrong constant here produces
+        // a washed-out or oversaturated image without any other symptom.
+        const float vae_scale = is_sdxl ? 0.13025f : 0.18215f;
         for (auto &v : latent)
-            v /= 0.18215f;
+            v /= vae_scale;
 
         auto *vae_net = engine->vae_interpreter.get();
         auto *v_input = vae_net->getSessionInput(engine->vae_session, "latent_sample");

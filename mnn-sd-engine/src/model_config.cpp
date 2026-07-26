@@ -18,6 +18,12 @@ namespace
         cfg->clip_skip = 2;
         cfg->text_embedding_size = 768;
         cfg->default_size = 512;
+
+        cfg->is_sdxl = 0;
+        cfg->clip2_file[0] = '\0';
+        cfg->tokenizer2_file[0] = '\0';
+        cfg->text_embedding_size_2 = 0;
+        cfg->pooled_embedding_size = 0;
     }
 
     bool file_exists(const char *dir, const char *name)
@@ -33,7 +39,7 @@ namespace
 
     void pick_clip_file(const char *dir, MnnSdModelConfig *cfg)
     {
-        const char *candidates[] = {"clip_v2.mnn", "clip_fp16.mnn", "clip.mnn"};
+        const char *candidates[] = {"clip_v2.mnn", "clip_fp16.mnn", "clip.mnn", "clip1.mnn"};
         for (const char *name : candidates)
         {
             if (file_exists(dir, name))
@@ -57,6 +63,34 @@ namespace
             }
         }
         std::snprintf(cfg->unet_file, sizeof(cfg->unet_file), "%s", "unet.mnn");
+    }
+
+    void pick_clip2_file(const char *dir, MnnSdModelConfig *cfg)
+    {
+        const char *candidates[] = {"clip2.mnn", "clip_g.mnn", "clip2_fp16.mnn"};
+        for (const char *name : candidates)
+        {
+            if (file_exists(dir, name))
+            {
+                std::snprintf(cfg->clip2_file, sizeof(cfg->clip2_file), "%s", name);
+                return;
+            }
+        }
+        cfg->clip2_file[0] = '\0';
+    }
+
+    void pick_tokenizer2_file(const char *dir, MnnSdModelConfig *cfg)
+    {
+        const char *candidates[] = {"tokenizer_2.json", "tokenizer2.json"};
+        for (const char *name : candidates)
+        {
+            if (file_exists(dir, name))
+            {
+                std::snprintf(cfg->tokenizer2_file, sizeof(cfg->tokenizer2_file), "%s", name);
+                return;
+            }
+        }
+        cfg->tokenizer2_file[0] = '\0';
     }
 
     void pick_vae_file(const char *dir, MnnSdModelConfig *cfg)
@@ -140,13 +174,95 @@ extern "C"
 
         extract_string(buf, "format", out_config->format, sizeof(out_config->format));
         extract_string(buf, "base", out_config->base, sizeof(out_config->base));
-        extract_string(buf, "clip", out_config->clip_file, sizeof(out_config->clip_file));
+        // Accept both plain SD1.5 keys ("clip") and the SDXL exporter's keys
+        // ("clip1"/"tokenizer1") for the first CLIP/tokenizer.
+        if (!extract_string(buf, "clip1", out_config->clip_file, sizeof(out_config->clip_file)))
+        {
+            extract_string(buf, "clip", out_config->clip_file, sizeof(out_config->clip_file));
+        }
         extract_string(buf, "unet", out_config->unet_file, sizeof(out_config->unet_file));
         extract_string(buf, "vae_decoder", out_config->vae_decoder_file, sizeof(out_config->vae_decoder_file));
-        extract_string(buf, "tokenizer", out_config->tokenizer_file, sizeof(out_config->tokenizer_file));
+        if (!extract_string(buf, "tokenizer1", out_config->tokenizer_file, sizeof(out_config->tokenizer_file)))
+        {
+            extract_string(buf, "tokenizer", out_config->tokenizer_file, sizeof(out_config->tokenizer_file));
+        }
         extract_int(buf, "clip_skip", &out_config->clip_skip);
         extract_int(buf, "text_embedding_size", &out_config->text_embedding_size);
         extract_int(buf, "default_size", &out_config->default_size);
+
+        // --- SDXL detection & fields ---
+        // "base": "sdxl" is the authoritative signal (set by the SDXL
+        // converter script). Fall back to presence of a clip2/tokenizer2
+        // entry so hand-edited model.json files still work.
+        out_config->is_sdxl = 0;
+        if (std::strcmp(out_config->base, "sdxl") == 0)
+        {
+            out_config->is_sdxl = 1;
+        }
+
+        char clip2_key[64] = {0};
+        char tok2_key[64] = {0};
+        bool has_clip2 = extract_string(buf, "clip2", clip2_key, sizeof(clip2_key));
+        bool has_tok2 = extract_string(buf, "tokenizer2", tok2_key, sizeof(tok2_key));
+        if (has_clip2 || has_tok2)
+        {
+            out_config->is_sdxl = 1;
+        }
+
+        if (out_config->is_sdxl)
+        {
+            if (has_clip2)
+            {
+                std::snprintf(out_config->clip2_file, sizeof(out_config->clip2_file), "%s", clip2_key);
+            }
+            else
+            {
+                pick_clip2_file(model_dir, out_config);
+            }
+            if (has_tok2)
+            {
+                std::snprintf(out_config->tokenizer2_file, sizeof(out_config->tokenizer2_file), "%s", tok2_key);
+            }
+            else
+            {
+                pick_tokenizer2_file(model_dir, out_config);
+            }
+
+            // SDXL text_embedding_size in model.json (from the converter) is
+            // the *concatenated* CLIP-L+CLIP-G width (2048), not CLIP-L's own
+            // width. UNet's encoder_hidden_states uses that concatenated
+            // value, so keep it as-is in text_embedding_size, but also derive
+            // the two individual widths (768 for CLIP-L, remainder for
+            // CLIP-G) so the pipeline can size each CLIP's input/output
+            // tensors correctly.
+            int32_t combined = out_config->text_embedding_size;
+            int32_t clip1_dim = 768; // CLIP-L (ViT-L/14) hidden size, standard for SDXL
+            if (combined > clip1_dim)
+            {
+                out_config->text_embedding_size_2 = combined - clip1_dim;
+                out_config->text_embedding_size = clip1_dim;
+            }
+            else if (out_config->text_embedding_size_2 <= 0)
+            {
+                // Fallback: standard SDXL widths if JSON only gave us the
+                // combined value or something unexpected.
+                out_config->text_embedding_size = clip1_dim;
+                out_config->text_embedding_size_2 = 1280;
+            }
+
+            if (out_config->pooled_embedding_size <= 0)
+            {
+                // CLIP-G's pooled_output width feeds UNet's add_embedding
+                // and is conventionally equal to its hidden size (1280).
+                out_config->pooled_embedding_size = out_config->text_embedding_size_2;
+            }
+
+            if (out_config->default_size < 1024)
+            {
+                out_config->default_size = 1024;
+            }
+        }
+
         return 1;
     }
 
