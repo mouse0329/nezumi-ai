@@ -964,12 +964,12 @@ class SettingsComposeFragment : Fragment() {
 
     @Composable
     private fun InferenceParamsCard() {
-        // モデル別のコンテキスト最大値
+        // ★ ユーザー要望: コンテキストウィンドウの上限を 128k まで拡張
         val maxContextWindow = if (selectedModel.equals("Gemma4-2B", ignoreCase = true) ||
                                     selectedModel.equals("Gemma4-4B", ignoreCase = true)) {
-            8192
+            131072
         } else {
-            4096
+            131072
         }
 
         Card(
@@ -2482,12 +2482,12 @@ class SettingsComposeFragment : Fragment() {
         if (maxTokens !in InferenceConfig.MIN_MAX_TOKENS..InferenceConfig.MAX_MAX_TOKENS) {
             return "Max Tokens は ${InferenceConfig.MIN_MAX_TOKENS} - ${InferenceConfig.MAX_MAX_TOKENS} の範囲で入力してください"
         }
-        // モデル別のコンテキストウィンドウ制限を確認
+        // ★ ユーザー要望: コンテキストウィンドウの上限を 128k まで拡張
         val maxContextWindow = if (selectedModel.equals("Gemma4-2B", ignoreCase = true) ||
                                     selectedModel.equals("Gemma4-4B", ignoreCase = true)) {
-            8192
+            131072
         } else {
-            4096
+            131072
         }
         if (contextWindow !in 512..maxContextWindow) {
             return "コンテキストは 512 - $maxContextWindow の範囲で入力してください"

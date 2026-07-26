@@ -415,8 +415,8 @@ open class ModelSettingsFragment : Fragment() {
         renderHfTokenState()
         refreshImportedTasks()
         refreshVoicevoxState()
-        // ★ DLタブ表示時にリポジトリ更新をチェック
-        checkRepositoryUpdates()
+        // ★ モデルのアップデート通知は削除（ユーザー要望）
+        // checkRepositoryUpdates()
     }
 
     @Composable
@@ -603,7 +603,8 @@ open class ModelSettingsFragment : Fragment() {
                     item { DownloadQueueCard() }
                     item { EmbeddingDownloadCard() }
                     item { NetworkSpeedCard() }
-                    item { RepoUpdateNotificationCard() }
+                    // ★ モデルのアップデート通知は削除（ユーザー要望）
+                    // item { RepoUpdateNotificationCard() }
                 }
             }
         }

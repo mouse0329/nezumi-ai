@@ -978,7 +978,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             popupMenu.menu.add(0, 1, 0, "ギャラリーから選択")
             popupMenu.menu.add(0, 2, 1, "カメラで撮影")
             popupMenu.menu.add(0, 3, 2, "クリップボードから貼り付け")
-            popupMenu.menu.add(0, 4, 3, "動画から選択 (最大30秒)")
+            val isGemma3nEmbeddedModel = currentModelKey.equals("E2B", ignoreCase = true) ||
+                currentModelKey.equals("E4B", ignoreCase = true) ||
+                currentModelKey.equals("Gemma3n-2B", ignoreCase = true) ||
+                currentModelKey.equals("Gemma3n-4B", ignoreCase = true)
+            if (isGemma3nEmbeddedModel) {
+                popupMenu.menu.add(0, 4, 3, "動画から選択 (最大30秒)")
+            }
             popupMenu.setOnMenuItemClickListener { menuItem ->
                 when (menuItem.itemId) {
                     1 -> {

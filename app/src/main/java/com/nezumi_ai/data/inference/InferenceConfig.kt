@@ -73,7 +73,7 @@ data class InferenceConfig(
 
     companion object {
         const val MIN_CONTEXT_WINDOW = 512
-        const val MAX_CONTEXT_WINDOW = 8192
+        const val MAX_CONTEXT_WINDOW = 131072
         const val MIN_COMPRESSION_THRESHOLD = 50
         const val MAX_COMPRESSION_THRESHOLD = 95
         const val MIN_TEMPERATURE = 0.0f

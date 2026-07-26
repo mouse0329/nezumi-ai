@@ -238,11 +238,10 @@ class SettingsRepository(
             }
             ?: 4096
         
-        // モデル別の最大値を制約
-        val maxWindow = when {
-            model.equals("Gemma4-2B", ignoreCase = true) || model.equals("Gemma4-4B", ignoreCase = true) -> 8192
-            else -> 4096  // Gemma3n (E2B, E4B) や他のモデル
-        }
+        // ★ ユーザー要望: 標準値は 4096 のまま、最大値のみ 128k (131072) まで拡張する。
+        //   従来はモデル別に 8192 / 4096 でクリップしていたが、これが原因で
+        //   保存済みの大きな値が読み込み時に潰されていた。
+        val maxWindow = 131072
         
         return stored.coerceIn(512, maxWindow)
     }
@@ -264,11 +263,9 @@ class SettingsRepository(
         val normalizedBackend = normalizeBackend(backendType)
         val target = modelToBackendKey(backendTargetModel)
         
-        // モデル別の最大コンテキスト窓を適用
-        fun getMaxContextWindow(key: String): Int = when (key.uppercase()) {
-            MODEL_GEMMA4_2B, MODEL_GEMMA4_4B -> 8192
-            else -> 4096  // Gemma3n (E2B, E4B) や IMPORTED
-        }
+        // ★ ユーザー要望: 標準値は 4096 のまま、最大値のみ 128k (131072) まで拡張する。
+        //   保存時にモデル別の上限で潰さないように全モデル 131072 を許容する。
+        fun getMaxContextWindow(key: String): Int = 131072
         
         val constrainedWindow = contextWindow.coerceIn(512, getMaxContextWindow(backendTargetModel))
         
@@ -525,11 +522,14 @@ class SettingsRepository(
     }
 
     private fun parseContextWindowMap(raw: String): LinkedHashMap<String, Int> {
+        // ★ ユーザー要望: 全モデルの標準値を 4096 に統一する。
+        //   従来は Gemma4 だけ 8192 を初期値にしていたが、これが
+        //   「Gemma4 の標準値が 8192 になる」後退の一因になっていた。
         val map = linkedMapOf(
             MODEL_E2B to 4096,
             MODEL_E4B to 4096,
-            MODEL_GEMMA4_2B to 8192,
-            MODEL_GEMMA4_4B to 8192,
+            MODEL_GEMMA4_2B to 4096,
+            MODEL_GEMMA4_4B to 4096,
             MODEL_IMPORTED to 4096
         )
         if (raw.trim().isEmpty()) {
@@ -550,12 +550,11 @@ class SettingsRepository(
                 } catch (e: Exception) {
                     4096
                 }
+                // ★ ユーザー要望: モデル別の上限クリップを廃止し、
+                //   全モデルで 128k (131072) まで保存可能にする。
                 when (key) {
-                    MODEL_E2B -> map[key] = value.coerceIn(512, 4096)
-                    MODEL_E4B -> map[key] = value.coerceIn(512, 4096)
-                    MODEL_GEMMA4_2B -> map[key] = value.coerceIn(512, 8192)
-                    MODEL_GEMMA4_4B -> map[key] = value.coerceIn(512, 8192)
-                    MODEL_IMPORTED -> map[key] = value.coerceIn(512, 4096)
+                    MODEL_E2B, MODEL_E4B, MODEL_GEMMA4_2B, MODEL_GEMMA4_4B, MODEL_IMPORTED ->
+                        map[key] = value.coerceIn(512, InferenceConfig.MAX_CONTEXT_WINDOW)
                 }
             }
         return map
@@ -570,14 +569,16 @@ class SettingsRepository(
             InferenceConfig.MIN_CONTEXT_WINDOW,
             InferenceConfig.MAX_CONTEXT_WINDOW
         ) ?: 4096
+        // ★ ユーザー要望: 保存時の Gemma4 専用上限クリップ (8192) を廃止し、
+        //   全モデルで 128k (131072) を上限とする。標準値は 4096。
         val gemma42b = map[MODEL_GEMMA4_2B]?.coerceIn(
             InferenceConfig.MIN_CONTEXT_WINDOW,
-            8192
-        ) ?: 8192
+            InferenceConfig.MAX_CONTEXT_WINDOW
+        ) ?: 4096
         val gemma44b = map[MODEL_GEMMA4_4B]?.coerceIn(
             InferenceConfig.MIN_CONTEXT_WINDOW,
-            8192
-        ) ?: 8192
+            InferenceConfig.MAX_CONTEXT_WINDOW
+        ) ?: 4096
         val imported = map[MODEL_IMPORTED]?.coerceIn(
             InferenceConfig.MIN_CONTEXT_WINDOW,
             InferenceConfig.MAX_CONTEXT_WINDOW
@@ -589,14 +590,11 @@ class SettingsRepository(
         val current = currentSettings()
         val map = parseContextWindowMap(current.contextWindowMap).toMutableMap()
         val key = modelToBackendKey(model)
-        // モデル別の最大コンテキストウィンドウを取得
-        val maxWindow = when {
-            model.equals("Gemma4-2B", ignoreCase = true) || model.equals("Gemma4-4B", ignoreCase = true) -> 8192
-            else -> 4096
-        }
+        // ★ ユーザー要望: モデル別の上限クリップ (Gemma4=8192 / その他=4096) を廃止し、
+        //   全モデルで 128k (131072) を上限とする。
         map[key] = contextWindow.coerceIn(
             InferenceConfig.MIN_CONTEXT_WINDOW,
-            maxWindow
+            InferenceConfig.MAX_CONTEXT_WINDOW
         )
         dao.update(
             current.copy(

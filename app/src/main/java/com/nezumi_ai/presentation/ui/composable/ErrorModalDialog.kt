@@ -7,6 +7,10 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -17,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -126,10 +131,49 @@ fun ErrorModalDialogContent(
                 }
             }
 
+            val context = LocalContext.current
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 32.dp),
+                    .padding(top = 24.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(
+                    onClick = {
+                        val fullText = buildString {
+                            append(title)
+                            append("\n\n")
+                            append(message)
+                            detail?.let {
+                                append("\n\n")
+                                append(it)
+                            }
+                        }
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        clipboard?.setPrimaryClip(ClipData.newPlainText("error_message", fullText))
+                        Toast.makeText(context, "エラーメッセージをコピーしました", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier
+                        .height(44.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant,
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+                        ),
+                    contentPadding = PaddingValues(horizontal = 16.dp)
+                ) {
+                    Text(
+                        text = "📋 コピー",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 TextButton(
