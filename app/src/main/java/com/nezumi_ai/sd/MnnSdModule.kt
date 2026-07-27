@@ -20,11 +20,15 @@ class MnnSdModule(private val context: Context) {
 
     companion object {
         private const val TAG = "MnnSdModule"
+        // SD1.5 基準の OpenCL 安全上限。SDXL は別途 resolveMnnBackend() で 0 に切り下げる。
         const val OPENCL_SAFE_MAX_SIDE = 448
+        // SDXL の最大安全上限。mnn-sd-engine 側 sdxl-support.patch で caps.max_side_px=1536 にしているのと合わせる。
+        const val SDXL_MAX_SIDE = 1024
 
         internal fun resolveMnnBackend(
             backend: String,
-            maxSidePx: Int = 0
+            maxSidePx: Int = 0,
+            isSdxl: Boolean = false
         ): Int {
             val normalized = backend.trim().lowercase()
             // NPU (QNN) は廃止。旧識別子 "qnn"/"npu" が渡されても実体は
@@ -35,6 +39,8 @@ class MnnSdModule(private val context: Context) {
                               normalized == "qnn" ||
                               normalized == "npu"
             if (!wantsOpenCl) return MnnSdNative.BACKEND_CPU
+            // SDXL は UNet 重みが大きすぎて mobile GPU の OpenCL tuning が安定しないので強制 CPU。
+            if (isSdxl) return MnnSdNative.BACKEND_CPU
             return if (maxSidePx > OPENCL_SAFE_MAX_SIDE) {
                 MnnSdNative.BACKEND_CPU
             } else {
@@ -47,6 +53,13 @@ class MnnSdModule(private val context: Context) {
     private var currentModelPath: String? = null
     private var currentBackend: String? = null
     var isServerReady = false
+        private set
+
+    /**
+     * 現在ロードしているモデルが SDXL かどうか。UI 側はこれを参照して
+     * サイズスライダーの上限を 512 → 1024 に拡張する。
+     */
+    var isCurrentModelSdxl = false
         private set
 
     private var _safetyChecker: ImageSafetyChecker? = null
@@ -100,12 +113,15 @@ class MnnSdModule(private val context: Context) {
             handle = MnnSdNative.create()
         }
 
-        val mnnBackend = resolveMnnBackend(normalizedBackend)
+        // model.json + ファイル配置から SDXL を事前判定し、backend 選択と caps に反映させる。
+        val sdxl = SdModelLayout.isSdxlModelDir(layout.modelDir)
+        val mnnBackend = resolveMnnBackend(normalizedBackend, isSdxl = sdxl)
+        val safeMaxSide = if (sdxl) MnnSdNative.OPENCL_SAFE_MAX_SIDE_SDXL else OPENCL_SAFE_MAX_SIDE
         val loaded = MnnSdNative.load(
             handle,
             layout.modelDir.absolutePath,
             mnnBackend,
-            OPENCL_SAFE_MAX_SIDE
+            safeMaxSide
         )
 
         if (!loaded) {
@@ -115,8 +131,15 @@ class MnnSdModule(private val context: Context) {
 
         currentModelPath = modelPath
         currentBackend = normalizedBackend
+        // ネイティブの caps を取れるなら優先する。未対応 .so は null を返すので layout 判定にフォールバック。
+        isCurrentModelSdxl = runCatching {
+            val caps = MnnSdNative.getCapabilities(handle)
+            if (!caps.isNullOrBlank()) {
+                org.json.JSONObject(caps).optInt("is_sdxl", if (sdxl) 1 else 0) == 1
+            } else sdxl
+        }.getOrDefault(sdxl)
         isServerReady = true
-        Log.i(TAG, "loadModel: ✓ Loaded ${layout.modelDir.absolutePath} backend=$normalizedBackend")
+        Log.i(TAG, "loadModel: ✓ Loaded ${layout.modelDir.absolutePath} backend=$normalizedBackend sdxl=$isCurrentModelSdxl")
         true
     }
 
@@ -155,6 +178,8 @@ class MnnSdModule(private val context: Context) {
             return@withContext null
         }
 
+        // 大きめの解像度 (≥512) では latent + VAE デコーダのピークを削らすため GC をヒントする。
+        // SDXL は 1024 まで行けるので境界を同じ 512 のまま使う。
         if (kotlin.math.max(width, height) >= 512) {
             System.gc()
         }

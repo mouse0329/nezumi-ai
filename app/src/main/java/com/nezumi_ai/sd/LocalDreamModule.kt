@@ -64,17 +64,23 @@ class LocalDreamModule(private val context: Context) {
         // ネズミ AI は外部バイナリに任せているためこちら側での制御ができない。
         // そこで、大きめの解像度 (>=512) では OpenCL をオフに倒すことで安全側に逃げる。
         internal const val OPENCL_SAFE_MAX_SIDE = 448
+        // SDXL の最大許容辺長 (mnn-sd-engine 側 caps.max_side_px=1536 と合わせて 1024 に丸める)
+        internal const val SDXL_MAX_SIDE = 1024
 
         internal fun resolveEffectiveUseOpenCL(
             userWantsOpenCL: Boolean,
             currentBackend: String?,
-            maxSidePx: Int = 0
+            maxSidePx: Int = 0,
+            isSdxl: Boolean = false
         ): Boolean {
             // NPU (QNN) サポートは廃止済み。currentBackend は "mnn" (CPU) か
             // "qnn" (旧識別子だが実体は GPU/OpenCL) の 2 択で、どちらの経路も
             // MNN 側の OpenCL カーネルに合流するため、ここでは backend 名に
             // 依存せず「解像度と userWantsOpenCL」だけで判断する。
             if (!userWantsOpenCL) return false
+            // SDXL は UNet の latent が 128x128 になるため、mobile GPU の OpenCL では
+            // カーネル tuning が破綻する。強制的に CPU に落とす。
+            if (isSdxl) return false
             // MNN CPU モードでも 512 クラスは OpenCL を避ける。
             //   背景: 512x512 の UNET latent (64x64 * feature) を mobile GPU で tuning させると
             //   カーネル JIT + 重み転送に数 GB の VRAM を使おうとしてドライバが abort する。
@@ -565,7 +571,9 @@ class LocalDreamModule(private val context: Context) {
         try {
             val userWantsOpenCL = PreferencesHelper.isSdUseOpenCL(context)
             val maxSide = kotlin.math.max(width, height)
-            val effectiveUseOpenCL = resolveEffectiveUseOpenCL(userWantsOpenCL, currentBackend, maxSide)
+            // SDXL モデルが読み込まれているかは mnnModule 経由で判定 (HTTP フォールバック時は false)。
+            val isSdxl = mnnModule?.isCurrentModelSdxl == true
+            val effectiveUseOpenCL = resolveEffectiveUseOpenCL(userWantsOpenCL, currentBackend, maxSide, isSdxl)
             if (userWantsOpenCL != effectiveUseOpenCL) {
                 Log.w(TAG, "generateImage: use_opencl の解決結果が期待値と異なりました (requested=$userWantsOpenCL, effective=$effectiveUseOpenCL, side=$maxSide, backend=$currentBackend)")
             }

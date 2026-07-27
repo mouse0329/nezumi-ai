@@ -16,13 +16,27 @@ object SdModelLayout {
     private const val TAG = "SdModelLayout"
 
     val UNET_CANDIDATES = listOf("unet.mnn", "unet_asym_block32.mnn", "unet_min.bin")
-    val CLIP_CANDIDATES = listOf("clip_v2.mnn", "clip_fp16.mnn", "clip.mnn")
+    // SDXL のビルドによっては CLIP-L を "clip1.mnn" と命名する (SDXL は 1/2 のペア)。
+    //   SD1.5 の clip.mnn と共存させるため、clip1.mnn を先頭に入れても後方互換は保つ。
+    val CLIP_CANDIDATES = listOf("clip1.mnn", "clip_v2.mnn", "clip_fp16.mnn", "clip.mnn")
+    // SDXL: CLIP-G (第 2 テキストエンコーダ) の候補。C++ 側 sdxl-support.patch と同じ順序。
+    val CLIP2_CANDIDATES = listOf("clip2_fp16.mnn", "clip2.mnn", "text_encoder_2.mnn")
     val VAE_DECODER_CANDIDATES = listOf("vae_decoder_fp16.mnn", "vae_decoder.mnn", "vae_decoder_min.bin")
     const val TOKENIZER_FILE = "tokenizer.json"
+    // SDXL: CLIP-G 用 tokenizer
+    const val TOKENIZER2_FILE = "tokenizer_2.json"
     const val MODEL_JSON_FILE = "model.json"
     private const val MAX_SEARCH_DEPTH = 3
+    // CLIP-L の埋め込みテーブル。xororz 形式は "token_emb.bin" / "pos_emb.bin"、
+    //   SDXL は 1/2 を揃えるため "token_emb1.bin" / "pos_emb1.bin" とするビルドもあるので両方受け入れる。
+    private val TOKEN_EMB_CANDIDATES = listOf("token_emb.bin", "token_emb1.bin")
+    private val POS_EMB_CANDIDATES = listOf("pos_emb.bin", "pos_emb1.bin")
+    // 後方互換用: 既存コードが参照している定数。ファイル存在チェックは候補リスト側で行う。
     private const val TOKEN_EMB_FILE = "token_emb.bin"
     private const val POS_EMB_FILE = "pos_emb.bin"
+    // SDXL: CLIP-G 用 埋め込みテーブル
+    private const val TOKEN_EMB2_FILE = "token_emb2.bin"
+    private const val POS_EMB2_FILE = "pos_emb2.bin"
     private const val LEGACY_QNN_MARKER = "unet.bin"
     private const val LEGACY_QNN_VAE = "vae_decoder.bin"
     private const val LEGACY_QNN_CLIP = "clip.bin"
@@ -57,9 +71,41 @@ object SdModelLayout {
             if (resolved.clipFile == null) return ValidationResult(false, null, "missing clip")
             if (resolved.vaeDecoderFile == null) return ValidationResult(false, null, "missing vae")
             val hasTokenizer = File(candidate, resolved.tokenizerFile).exists()
-            val hasEmbeddings = File(candidate, TOKEN_EMB_FILE).exists() && File(candidate, POS_EMB_FILE).exists()
+            // token_emb.bin / token_emb1.bin のどちらか + pos_emb.bin / pos_emb1.bin のどちらかがあれば OK。
+            val hasEmbeddings = TOKEN_EMB_CANDIDATES.any { File(candidate, it).exists() } &&
+                                POS_EMB_CANDIDATES.any { File(candidate, it).exists() }
             if (!hasTokenizer && !hasEmbeddings) {
                 return ValidationResult(false, null, "missing tokenizer or embeddings")
+            }
+            // MNN 新形式の外部ウェイト (.mnn.weight) がある場合、ペアで存在することを確認する。
+            //   ユーザの SDXL zip は unet.mnn + unet.mnn.weight など 3.4GB に及ぶ外部ウェイトを伴う。
+            //   .weight が欠けているとロード時に native 側でクラッシュするので、ここで先回しに検出する。
+            val missingWeight = listOf(resolved.unetFile, resolved.clipFile, resolved.vaeDecoderFile,
+                                       if (resolved.isSdxl) resolved.clip2File else null)
+                .filterNotNull()
+                .firstOrNull { mnn ->
+                    val weight = File(candidate, "$mnn.weight")
+                    // .weight が既に取り込まれている (= .mnn 単体で self-contained) パターンもあるので、
+                    // .mnn ファイルサイズが十分に大きい (例: 10MB 以上) なら .weight 不要とみなす。
+                    val mnnFile = File(candidate, mnn)
+                    val looksSelfContained = mnnFile.length() > 10L * 1024L * 1024L
+                    !weight.exists() && !looksSelfContained
+                }
+            if (missingWeight != null) {
+                return ValidationResult(false, null, "missing weight for $missingWeight")
+            }
+            // SDXL の場合は CLIP-G / tokenizer_2 が揃っているか追加検証する。
+            //   model.json の "base":"sdxl" もしくは clip2 系ファイルの存在で SDXL とみなす。
+            if (resolved.isSdxl) {
+                if (resolved.clip2File == null) {
+                    return ValidationResult(false, null, "missing clip2 (required for sdxl)")
+                }
+                val hasTokenizer2 = File(candidate, resolved.tokenizer2File).exists()
+                val hasEmbeddings2 = File(candidate, TOKEN_EMB2_FILE).exists() &&
+                                     File(candidate, POS_EMB2_FILE).exists()
+                if (!hasTokenizer2 && !hasEmbeddings2) {
+                    return ValidationResult(false, null, "missing tokenizer2 or embeddings2 (required for sdxl)")
+                }
             }
             return ValidationResult(true, candidate, "ok")
         }
@@ -108,6 +154,16 @@ object SdModelLayout {
 
     private fun resolveCandidate(modelDir: File): Resolved {
         val override = readModelJson(modelDir)
+        val clip2File = override?.clip2?.takeIf { File(modelDir, it).exists() }
+            ?: pickFirst(modelDir, CLIP2_CANDIDATES)
+        // SDXL 判定:
+        //   1) model.json の "base":"sdxl" が最優先 (C++ 側 model_config.cpp と統一)
+        //   2) それが無い場合は clip2 系ファイルの存在で自動判定
+        val isSdxl = when {
+            override?.base?.equals("sdxl", ignoreCase = true) == true -> true
+            override?.base?.equals("sd1.5", ignoreCase = true) == true -> false
+            else -> clip2File != null
+        }
         return Resolved(
             modelDir = modelDir,
             unetFile = override?.unet?.takeIf { File(modelDir, it).exists() }
@@ -118,7 +174,12 @@ object SdModelLayout {
                 ?: pickFirst(modelDir, VAE_DECODER_CANDIDATES),
             tokenizerFile = override?.tokenizer
                 ?.takeIf { File(modelDir, it).exists() }
-                ?: TOKENIZER_FILE
+                ?: TOKENIZER_FILE,
+            isSdxl = isSdxl,
+            clip2File = clip2File,
+            tokenizer2File = override?.tokenizer2
+                ?.takeIf { File(modelDir, it).exists() }
+                ?: TOKENIZER2_FILE
         )
     }
 
@@ -135,16 +196,26 @@ object SdModelLayout {
         val unetFile: String?,
         val clipFile: String?,
         val vaeDecoderFile: String?,
-        val tokenizerFile: String = TOKENIZER_FILE
+        val tokenizerFile: String = TOKENIZER_FILE,
+        // --- SDXL only (isSdxl=false のときは無視される) ---
+        val isSdxl: Boolean = false,
+        val clip2File: String? = null,
+        val tokenizer2File: String = TOKENIZER2_FILE
     ) {
-        fun probeTargets(): List<String> = listOfNotNull(unetFile, clipFile, vaeDecoderFile)
+        fun probeTargets(): List<String> {
+            val base = listOfNotNull(unetFile, clipFile, vaeDecoderFile)
+            return if (isSdxl) base + listOfNotNull(clip2File) else base
+        }
     }
 
     private data class ModelJsonOverride(
         val clip: String?,
         val unet: String?,
         val vaeDecoder: String?,
-        val tokenizer: String?
+        val tokenizer: String?,
+        val base: String?,
+        val clip2: String?,
+        val tokenizer2: String?
     )
 
     private fun readModelJson(modelDir: File): ModelJsonOverride? {
@@ -156,12 +227,23 @@ object SdModelLayout {
                 clip = obj.optString("clip").ifBlank { null },
                 unet = obj.optString("unet").ifBlank { null },
                 vaeDecoder = obj.optString("vae_decoder").ifBlank { null },
-                tokenizer = obj.optString("tokenizer").ifBlank { null }
+                tokenizer = obj.optString("tokenizer").ifBlank { null },
+                base = obj.optString("base").ifBlank { null },
+                clip2 = obj.optString("clip2").ifBlank { null },
+                tokenizer2 = obj.optString("tokenizer_2").ifBlank {
+                    obj.optString("tokenizer2").ifBlank { null }
+                }
             )
         }.onFailure {
             Log.w(TAG, "model.json の読み込みに失敗: ${f.absolutePath}", it)
         }.getOrNull()
     }
+
+    /**
+     * このモデルディレクトリが SDXL かどうかを、model.json + ファイル配置から判定する。
+     * findModelDir で解決できなかった場合は false。
+     */
+    fun isSdxlModelDir(dir: File): Boolean = resolve(dir)?.isSdxl == true
 
     /** unet 系マーカーでサブディレクトリを探索（最大 3 階層）。 */
     fun findModelDir(dir: File): File? {

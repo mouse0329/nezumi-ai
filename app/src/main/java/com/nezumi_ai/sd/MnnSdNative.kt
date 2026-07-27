@@ -49,6 +49,19 @@ object MnnSdNative {
         backend: Int,
         openclSafeMaxSide: Int
     ): Boolean
+
+    /**
+     * ロード済みモデルの capabilities を取得する。SDXL 判定・最大辺サイズを Kotlin 側で参照するために使う。
+     * 返却フォーマットは JSON 文字列 (例: {"is_sdxl":1,"max_side_px":1536,"default_side_px":1024})。
+     * ネイティブ側が未対応の古い .so では null / 空文字を返す。
+     */
+    fun getCapabilities(handle: Long): String? = try {
+        getCapabilitiesNative(handle)
+    } catch (_: UnsatisfiedLinkError) {
+        null
+    }
+
+    private external fun getCapabilitiesNative(handle: Long): String?
     external fun unload(handle: Long)
     external fun isLoaded(handle: Long): Boolean
     external fun probeModel(mnnPath: String, backend: Int): String
@@ -101,4 +114,10 @@ object MnnSdNative {
     const val SCHEDULER_EULER = 0
     const val SCHEDULER_DDIM = 1
     const val SCHEDULER_DPM = 2
+
+    // SDXL / SD1.5 で使う OpenCL 安全上限。SDXL は latent が 128x128 になるため
+    // OpenCL 経路は現行のモバイル GPU では tuning が破綻するので CPU に落とす。
+    // SD1.5: 448、SDXL: 0 (常に CPU) を推奨。
+    const val OPENCL_SAFE_MAX_SIDE_SD15 = 448
+    const val OPENCL_SAFE_MAX_SIDE_SDXL = 0
 }

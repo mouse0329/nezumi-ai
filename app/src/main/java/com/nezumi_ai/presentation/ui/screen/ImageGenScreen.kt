@@ -284,7 +284,10 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
         }
         
         FieldGroup("サイズ") {
-            val sizeOptions = listOf(128, 192, 256, 320, 384, 448, 512)
+            // SDXL モデルロード時は上限を 1024 に拡張 (mnn-sd-engine 側 caps.max_side_px=1536 と合わせる)。
+            val isSdxl by vm.isSdxl.collectAsState()
+            val sizeOptions = if (isSdxl) listOf(512, 640, 768, 832, 896, 960, 1024)
+                              else listOf(128, 192, 256, 320, 384, 448, 512)
             val selectedIndex = sizeOptions.indexOf(sizePx).coerceAtLeast(0)
 
             Column(

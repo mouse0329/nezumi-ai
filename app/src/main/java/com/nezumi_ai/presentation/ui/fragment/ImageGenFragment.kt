@@ -680,7 +680,10 @@ private fun LegacyImageGenScreen(
                             )
                         }
                 }
-                val sizeOptions = listOf(128, 192, 256, 320, 384, 448, 512)
+                // SDXL モデルをロードしているときは 512…1024 のクラスに上限を拡張する。
+                val isSdxl by vm.isSdxl.collectAsState()
+                val sizeOptions = if (isSdxl) listOf(512, 640, 768, 832, 896, 960, 1024)
+                                  else listOf(128, 192, 256, 320, 384, 448, 512)
                 val selectedSizeIndex = sizeOptions.indexOf(size).coerceAtLeast(0)
                 Column(Modifier.fillMaxWidth()) {
                     Row(

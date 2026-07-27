@@ -59,6 +59,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private val _modelPath = MutableStateFlow(PreferencesHelper.getSdModelPath(application))
     val modelPath: StateFlow<String> = _modelPath.asStateFlow()
 
+    // 現在選択されているモデルが SDXL かどうか。true なら UI スライダーの上限を 512→ 1024 に拡張する。
+    // ★ 初期化順の都合上、init ブロックより前で宣言する必要がある
+    //   (init 中で refreshSdxlFlagFromPath → setModelIsSdxl が _isSdxl.value を触るため)。
+    private val _isSdxl = MutableStateFlow(false)
+    val isSdxl: StateFlow<Boolean> = _isSdxl.asStateFlow()
+
     private val _availableModels = MutableStateFlow<List<String>>(emptyList())
     val availableModels: StateFlow<List<String>> = _availableModels.asStateFlow()
 
@@ -67,7 +73,26 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
     init {
         Log.d(TAG, "[ImageGen] init: Starting initialization")
+        // ★ 前回のインポート失敗で sd_models/ に残っている孤立フォルダ
+        //   (pos_emb2/ / token_emb2/ / clip_v2/ などの SDXL 中断残骸) を削除して
+        //   容量リークを回収する。IO なので必ずバックグラウンドで。
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { com.nezumi_ai.sd.SdModelImporter.cleanupOrphans(getApplication()) }
+                .onSuccess { removed ->
+                    if (removed > 0) {
+                        Log.i(TAG, "[ImageGen] init: cleaned up $removed orphan model folder(s)")
+                        // 残骸を消した後はモデル一覧を再スキャン
+                        loadAvailableModels(force = true)
+                    }
+                }
+        }
         loadAvailableModels()
+        // 初期ロード後に現行のモデルパスで SDXL フラグを反映し、UI スライダー上限を
+        // 1024 に拡張する (ロード前の model.json やファイル存在だけで予備判定できる)。
+        // 例外があってもクラッシュしないよう包む (SdModelLayout 側で例外が出るとアプリが
+        // ViewModel を生成できなくなり、画像生成タブ全体が開けなくなるため)。
+        runCatching { refreshSdxlFlagFromPath(_modelPath.value) }
+            .onFailure { Log.w(TAG, "[ImageGen] init: refreshSdxlFlagFromPath failed", it) }
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 Log.d(TAG, "[ImageGen] init: Checking safety model readiness...")
@@ -233,6 +258,26 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private val _sizePx = MutableStateFlow(512)
     val sizePx: StateFlow<Int> = _sizePx.asStateFlow()
 
+    /** モデルロード後に呼ばれる。SDXL フラグを反映し、不適切なサイズをクランプする。 */
+    fun setModelIsSdxl(sdxl: Boolean) {
+        // 防御的チェック: init ブロック実行順によっては _isSdxl が未初期化のことがあるため。
+        val flow = _isSdxl ?: return
+        if (flow.value == sdxl) return
+        flow.value = sdxl
+        val allowed = supportedSizes(sdxl)
+        val current = _sizePx.value
+        if (current !in allowed) {
+            // SDXL への切り替え時はデフォルト 1024、SD1.5 に戻したときは 512 に丸める。
+            _sizePx.value = if (sdxl) 1024 else 512
+        }
+    }
+
+    /** SD1.5 / SDXL ごとのサイズ候補。UIスライダーと setSize() の coerce で共通で使う。
+     *  仕様: 1024 は SDXL のみに表示。SD1.5 は 512 まで。 */
+    fun supportedSizes(sdxl: Boolean = _isSdxl?.value ?: false): List<Int> =
+        if (sdxl) listOf(512, 640, 768, 832, 896, 960, 1024)
+        else listOf(128, 192, 256, 320, 384, 448, 512)
+
     private val _seed = MutableStateFlow(-1L)
     val seed: StateFlow<Long> = _seed.asStateFlow()
 
@@ -317,6 +362,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             _modelPath.value = path
             PreferencesHelper.setSdModelPath(getApplication(), path)
             updateBackendInfo()
+            refreshSdxlFlagFromPath(path)
         }
     }
 
@@ -346,6 +392,22 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         if (index >= 0) {
             _selectedModelIndex.value = index
         }
+        refreshSdxlFlagFromPath(p)
+    }
+
+    /**
+     * モデルパスを元に SDXL 判定を行い、UI のサイズスライダー上限を 1024 に拡張する。
+     * SdModelLayout.isSdxlModelDir は model.json + ファイル配置から判定するので
+     * モデルを実際にロードしなくても予備判定できる。
+     */
+    private fun refreshSdxlFlagFromPath(path: String) {
+        val sdxl = runCatching {
+            if (path.isBlank()) return@runCatching false
+            val dir = File(path)
+            if (!dir.exists() || !dir.isDirectory) return@runCatching false
+            com.nezumi_ai.sd.SdModelLayout.isSdxlModelDir(dir)
+        }.getOrDefault(false)
+        setModelIsSdxl(sdxl)
     }
 
     fun setPrompt(p: String) {
@@ -369,8 +431,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun setSize(s: Int) {
-        val supportedSizes = listOf(128, 192, 256, 320, 384, 448, 512)
-        _sizePx.value = supportedSizes.minByOrNull { kotlin.math.abs(it - s) } ?: 512
+        val allowed = supportedSizes()
+        _sizePx.value = allowed.minByOrNull { kotlin.math.abs(it - s) } ?: allowed.last()
     }
 
     fun setSeed(s: Long) {
