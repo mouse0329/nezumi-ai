@@ -561,10 +561,11 @@ class SetupWizardFragment : Fragment() {
             val state = modelStates[option.model] ?: DownloadUiState()
             val selected = selectedModel == option.settingValue
             val sizeBytes = getModelSizeBytes(option.model)
-            val isMemoryLow = MemoryObserver.isMemoryLowForFileSize(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent, useAvailable = false)
+            val modelId = ModelFileManager.modelFileName(option.model)
+            val isMemoryLow = MemoryObserver.isMemoryLowForFileSize(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent, useAvailable = false, modelIdentifier = modelId)
             
             val resourceCheck = if (!state.isDownloaded) {
-                ModelFileManager.checkDownloadResources(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent)
+                ModelFileManager.checkDownloadResources(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent, modelIdentifier = modelId)
             } else {
                 ModelFileManager.ResourceCheckResult(false, false, 0f, 0f, null)
             }
@@ -853,7 +854,7 @@ class SetupWizardFragment : Fragment() {
         }
         
         val sizeBytes = getModelSizeBytes(model)
-        val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent)
+        val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent, modelIdentifier = ModelFileManager.modelFileName(model))
         
         if (resourceCheck.isMemoryLow || resourceCheck.isStorageLow) {
             downloadWarningModelName = modelName
@@ -987,7 +988,7 @@ class SetupWizardFragment : Fragment() {
             val option = builtinModelOptions().firstOrNull { it.settingValue == modelToCheck }
             if (option != null) {
                 val sizeBytes = getModelSizeBytes(option.model)
-                if (MemoryObserver.isMemoryLowForFileSize(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent, useAvailable = false)) {
+                if (MemoryObserver.isMemoryLowForFileSize(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent, useAvailable = false, modelIdentifier = ModelFileManager.modelFileName(option.model))) {
                     isCompleting = true
                     chatWarningModelName = modelToCheck
                     chatWarningSystemMemInfo = MemoryObserver.getSystemMemoryInfoSync(requireContext())

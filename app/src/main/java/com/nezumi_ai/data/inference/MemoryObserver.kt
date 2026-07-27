@@ -32,13 +32,31 @@ object MemoryObserver {
     private const val TAG = "MemoryObserver"
 
     // モデルごとの最小メモリ要件（GB） - Gallery の allowlist から取得
-    private val MODEL_MIN_MEMORY = mapOf(
+    val MODEL_MIN_MEMORY = mapOf(
         "GEMMA4-2B" to 8.0f,    // Gemma-4-E2B-it: 最小 8GB
         "GEMMA4-4B" to 12.0f,   // Gemma-4-E4B-it: 最小 12GB ★ Gallery と同じ
         "GEMMA3-2B" to 8.0f,    // Gemma-3n-E2B-it: 最小 8GB
         "GEMMA3-4B" to 12.0f,   // Gemma-3n-E4B-it: 最小 12GB
         "GEMMA3-1B" to 6.0f,    // Gemma3-1B-IT: 最小 6GB
     )
+
+    /**
+     * ファイル名から MODEL_MIN_MEMORY のキーを解決する。
+     * 例: gemma-4-2b.litertlm -> GEMMA4-2B
+     */
+    fun resolveModelMinMemoryKey(fileNameOrPath: String): String? {
+        val lower = fileNameOrPath.lowercase()
+        return when {
+            lower.contains("gemma-4-e4b") || lower.contains("gemma-4-4b") ||
+                lower.contains("gemma4-4b") || lower.contains("gemma4-e4b") -> "GEMMA4-4B"
+            lower.contains("gemma-4-e2b") || lower.contains("gemma-4-2b") ||
+                lower.contains("gemma4-2b") || lower.contains("gemma4-e2b") -> "GEMMA4-2B"
+            lower.contains("gemma-3n-e4b") || lower.contains("gemma-3n-4b") -> "GEMMA3-4B"
+            lower.contains("gemma-3n-e2b") || lower.contains("gemma-3n-2b") -> "GEMMA3-2B"
+            lower.contains("gemma-3-1b") || lower.contains("gemma3-1b") -> "GEMMA3-1B"
+            else -> null
+        }
+    }
 
     // #11 fix: thresholdPercent の意味を再定義。
     //   モデルサイズ × thresholdPercent% のメモリが必要。
@@ -353,12 +371,28 @@ object MemoryObserver {
         context: Context,
         modelFileSizeBytes: Long,
         thresholdPercent: Int = DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT,
-        useAvailable: Boolean = true
+        useAvailable: Boolean = true,
+        modelIdentifier: String? = null
     ): Boolean {
         if (thresholdPercent <= 0) return false
 
         val modelFileSizeGb = modelFileSizeBytes / BYTES_IN_GB
-        val requiredGb = modelFileSizeGb * (thresholdPercent / 100f)
+        // #17 fix: プリセットの gemma4-2b/4b など、ファイルサイズ < 最小メモリ要件のモデルでは、
+        //   従来の「ファイルサイズ × 閾値」だと 99% 以下では絶対に警告が出ない不具合があった。
+        //   これに対処するため、MODEL_MIN_MEMORY にエントリがあるモデルは、
+        //   その最小要件と file*threshold の大きい方を採用する。
+        //   ・thresholdPercent が MAX に近い (>=95%) の場合は完全に min-memory ベースに切り替え
+        //     ⇒ ユーザーが「厳しめに警告出したい」意図で閾値を上げた場合に反応する。
+        val minRequirementGb = modelIdentifier?.let { MODEL_MIN_MEMORY[resolveModelMinMemoryKey(it)?.uppercase()] }
+        val fileBasedRequiredGb = modelFileSizeGb * (thresholdPercent / 100f)
+        val requiredGb = if (minRequirementGb != null) {
+            // 最小要件 × (thresholdPercent / 100) と ファイルサイズ × (thresholdPercent / 100) の大きい方を採用。
+            // これにより 60% でも最小要件ベースで判定でき、99% でも 100% でも同じように反応する。
+            val minBasedRequiredGb = minRequirementGb * (thresholdPercent / 100f)
+            maxOf(minBasedRequiredGb, fileBasedRequiredGb)
+        } else {
+            fileBasedRequiredGb
+        }
 
         val isLow = if (useAvailable) {
             // ロード時: 空きメモリが必要量以上あるかチェック
@@ -368,8 +402,8 @@ object MemoryObserver {
 
             Log.d(
                 TAG,
-                "isMemoryLowForFileSize: modelFileSize=${modelFileSizeGb}GB threshold=${thresholdPercent}% " +
-                    "required=${requiredGb}GB availableGb=${availableGb}GB isLow=${availableGb < requiredGb}"
+                "isMemoryLowForFileSize: modelId=$modelIdentifier modelFileSize=${modelFileSizeGb}GB threshold=${thresholdPercent}% " +
+                    "minReq=${minRequirementGb}GB required=${requiredGb}GB availableGb=${availableGb}GB isLow=${availableGb < requiredGb}"
             )
             availableGb < requiredGb
         } else {
@@ -382,8 +416,8 @@ object MemoryObserver {
 
             Log.d(
                 TAG,
-                "isMemoryLowForFileSize: modelFileSize=${modelFileSizeGb}GB threshold=${thresholdPercent}% " +
-                    "required=${requiredGb}GB totalGb=${totalGb}GB isLow=${totalGb < requiredGb}"
+                "isMemoryLowForFileSize: modelId=$modelIdentifier modelFileSize=${modelFileSizeGb}GB threshold=${thresholdPercent}% " +
+                    "minReq=${minRequirementGb}GB required=${requiredGb}GB totalGb=${totalGb}GB isLow=${totalGb < requiredGb}"
             )
             totalGb < requiredGb
         }

@@ -504,7 +504,7 @@ open class ModelSettingsFragment : Fragment() {
                             val modelKey = "builtin_${model.name}"
                             val isExpanded = expandedModelKey == modelKey
                             val sizeBytes = getModelSizeBytes(model)
-                            val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent)
+                            val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent, modelIdentifier = ModelFileManager.modelFileName(model))
                             ModelAccordionItem(
                                 title = state.title,
                                 status = state.status,
@@ -1896,7 +1896,7 @@ open class ModelSettingsFragment : Fragment() {
                 
                 // ストレージ判定
                 val sizeBytes = getModelSizeBytes(model)
-                val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent)
+                val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent, modelIdentifier = ModelFileManager.modelFileName(model))
                 
                 ModelAccordionItem(
                     title = state.title,
@@ -4341,11 +4341,13 @@ open class ModelSettingsFragment : Fragment() {
     private fun requestNotificationPermissionForDownload(model: ModelFileManager.LocalModel) {
         // ダウンロード前にメモリチェックして警告を設定
         val sizeBytes = getModelSizeBytes(model)
+        val modelId = ModelFileManager.modelFileName(model)
         val isMemoryLow = MemoryObserver.isMemoryLowForFileSize(
             requireContext(),
             sizeBytes,
             preloadMemoryWarningThresholdPercent,
-            useAvailable = false
+            useAvailable = false,
+            modelIdentifier = modelId
         )
 
         if (isMemoryLow) {
@@ -4390,11 +4392,13 @@ open class ModelSettingsFragment : Fragment() {
             
             // メモリチェックを実行して警告を設定
             val sizeBytes = getModelSizeBytes(it)
+            val modelId = ModelFileManager.modelFileName(it)
             val isMemoryLow = MemoryObserver.isMemoryLowForFileSize(
                 requireContext(),
                 sizeBytes,
                 preloadMemoryWarningThresholdPercent,
-                useAvailable = false
+                useAvailable = false,
+                modelIdentifier = modelId
             )
 
             if (isMemoryLow) {
@@ -4450,11 +4454,13 @@ open class ModelSettingsFragment : Fragment() {
                 
                 // ダウンロード完了後にメモリチェック
                 val sizeBytes = getModelSizeBytes(model)
+                val modelId = ModelFileManager.modelFileName(model)
                 val isMemoryLow = MemoryObserver.isMemoryLowForFileSize(
                     requireContext(),
                     sizeBytes,
                     preloadMemoryWarningThresholdPercent,
-                    useAvailable = false
+                    useAvailable = false,
+                    modelIdentifier = modelId
                 )
 
                 if (isMemoryLow) {

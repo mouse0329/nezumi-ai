@@ -4497,13 +4497,16 @@ class ChatViewModel(
                 } else {
                     // ★ 新機能: モデルファイルサイズからメモリ不足を検知
                     // 注意: isMemoryLow()（モデル名ベース）は空きメモリ基準で不正確なため使用しない
+                    // #17 fix: engineModelName を modelIdentifier として渡し、
+                    //   MODEL_MIN_MEMORY にエントリがあるプリセットモデル（gemma4-2b/4b 等）は
+                    //   最小メモリ要件ベースで判定する。
                     val isMemoryLowByFileSize = if (File(engineModelName).exists()) {
                         val fileSize = File(engineModelName).length()
-                        MemoryObserver.isMemoryLowForFileSize(appContext, fileSize, thresholdPercent)
+                        MemoryObserver.isMemoryLowForFileSize(appContext, fileSize, thresholdPercent, modelIdentifier = engineModelName)
                     } else {
                         val knownSize = getEngineModelSizeBytes(engineModelName)
                         if (knownSize != null) {
-                            MemoryObserver.isMemoryLowForFileSize(appContext, knownSize, thresholdPercent)
+                            MemoryObserver.isMemoryLowForFileSize(appContext, knownSize, thresholdPercent, modelIdentifier = engineModelName)
                         } else {
                             Log.w(TAG, "loadModelWithOverlay: unknown model size for engineModelName=$engineModelName, skipping memory size warning")
                             false

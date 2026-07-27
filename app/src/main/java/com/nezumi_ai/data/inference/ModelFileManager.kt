@@ -39,8 +39,8 @@ object ModelFileManager {
      * モデルダウンロード前のリソースチェック（メモリ・ストレージ）
      * ダウンロード時は総メモリでチェック（useAvailable = false）
      */
-    fun checkDownloadResources(context: Context, modelSizeBytes: Long, thresholdPercent: Int = com.nezumi_ai.data.inference.MemoryObserver.DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT): ResourceCheckResult {
-        val isMemoryLow = com.nezumi_ai.data.inference.MemoryObserver.isMemoryLowForFileSize(context, modelSizeBytes, thresholdPercent, useAvailable = false)
+    fun checkDownloadResources(context: Context, modelSizeBytes: Long, thresholdPercent: Int = com.nezumi_ai.data.inference.MemoryObserver.DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT, modelIdentifier: String? = null): ResourceCheckResult {
+        val isMemoryLow = com.nezumi_ai.data.inference.MemoryObserver.isMemoryLowForFileSize(context, modelSizeBytes, thresholdPercent, useAvailable = false, modelIdentifier = modelIdentifier)
         val systemMemInfo = if (isMemoryLow) {
             com.nezumi_ai.data.inference.MemoryObserver.getSystemMemoryInfoSync(context)
         } else null
@@ -226,6 +226,20 @@ object ModelFileManager {
             LocalModel.GEMMA4_4B -> GEMMA4_4B_FILENAME
         }
         return File(dir, filename)
+    }
+
+    /**
+     * LocalModel からファイル名（modelIdentifier）を取得。
+     * MemoryObserver.isMemoryLowForFileSize / checkDownloadResources の
+     * modelIdentifier 引数に渡すために使用する。
+     */
+    fun modelFileName(model: LocalModel): String {
+        return when (model) {
+            LocalModel.GEMMA3N_2B -> GEMMA3N_2B_FILENAME
+            LocalModel.GEMMA3N_4B -> GEMMA3N_4B_FILENAME
+            LocalModel.GEMMA4_2B -> GEMMA4_2B_FILENAME
+            LocalModel.GEMMA4_4B -> GEMMA4_4B_FILENAME
+        }
     }
 
     /**
