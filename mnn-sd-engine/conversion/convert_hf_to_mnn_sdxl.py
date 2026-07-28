@@ -457,7 +457,7 @@ def main():
     # =================================================================== #
     log("Exporting tokenizers and model.json...")
     try:
-        tok1 = CLIPTokenizer.from_pretrained(args.model, subfolder="tokenizer")
+        tok1 = CLIPTokenizerFast.from_pretrained(args.model, subfolder="tokenizer")
         tok1.save_pretrained(work_dir / "tok1")
         shutil.copyfile(work_dir / "tok1" / "tokenizer.json", out_dir / "tokenizer.json")
     except Exception as e:
