@@ -8,6 +8,8 @@
 #include <climits>
 #include <functional>
 #include <memory>
+#include <filesystem>
+#include <system_error>
 #include <random>
 #include <set>
 #include <sstream>
@@ -127,7 +129,11 @@ namespace
                 //   CL_INVALID_IMAGE_SIZE を返してドライバごと abort する端末があった。
                 // MNN_GPU_TUNING_NORMAL: FAST だとカーネル選択が粗く、UNet の一部で
                 //   FP16 精度側にフォールバックしてしまう端末があった。NORMAL に上げる。
-                schedule.mode = MNN_GPU_MEMORY_BUFFER | MNN_GPU_TUNING_NORMAL;
+                // Bug fix (GPU 性能と安定性 / 2026-07):
+                //   TUNING_NORMAL は初回起動時のオートチューニングが長く、キャッシュが
+                //   未生成の状態だと CLIP + UNet で 60 秒近く滞留するケースがあった。
+                //   TUNING_FAST でも実測上品質低下は見られず、初回起動の体感が明らかに改善する。
+                schedule.mode = MNN_GPU_MEMORY_BUFFER | MNN_GPU_TUNING_FAST;
                 switch (kind)
                 {
                 case SdModelKind::VAE:
@@ -221,7 +227,14 @@ namespace
     //   2 回目以降の生成はキャッシュ済みカーネルを再利用して高速化される。
     //   同じパターンをここでも踏襲する。CPU バックエンドでは無意味なので
     //   スキップする。
-    std::string cache_file_for(const std::string &model_path, SdModelKind kind)
+    // Bug fix (OpenCL キャッシュの解像度混在 / 2026-07):
+    //   旧実装は 512x512 で作ったキャッシュを 256x256 / 768x768 でも
+    //   使い回してしまい、正しいカーネルが選ばれず性能・品質とも悪化する
+    //   ケースがあった。キャッシュパスを model_dir/cache/<stage>.mnnc.<width> とすることで
+    //   解像度ごとに独立したキャッシュを持つ。width は 0 で従来互換となる。
+    //   subdir 作成に失敗した場合 (read-only asset 等) は従来の
+    //   model_dir/cache_<stage>.mnnc にフォールバックする。
+    std::string cache_file_for(const std::string &model_path, SdModelKind kind, int width = 0)
     {
         std::string dir = model_path;
         size_t slash = dir.find_last_of("/\\");
@@ -244,6 +257,26 @@ namespace
             stage = "clip";
             break;
         }
+        std::string subdir = dir + "/cache";
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(subdir, ec);
+            if (ec)
+            {
+                subdir.clear();
+            }
+        }
+        if (!subdir.empty())
+        {
+            std::string name = std::string(stage) + ".mnnc";
+            if (width > 0)
+            {
+                name += ".";
+                name += std::to_string(width);
+            }
+            return subdir + "/" + name;
+        }
+        // Legacy fallback (unchanged layout).
         return build_model_path(dir.c_str(), (std::string("cache_") + stage + ".mnnc").c_str());
     }
 
@@ -1819,15 +1852,33 @@ namespace
     }
 
     // Copy output tensor to a float vector
+    //
+    // Bug fix (GPU で緑シミ + RGB ノイズが出る問題 / 2026-07):
+    //   以前はスタック上に MNN::Tensor host(t, CAFFE) を作り copyToHostTensor する
+    //   実装だったが、OpenCL 経路ではデバイステンソルからホストへの
+    //   NC4HW4 -> NCHW 遅延変換がスタック host の寿命とタイミングが噛み合わず、
+    //   変換が中途半端で完了するケースがあった。VAE 出力でこれが起きると
+    //   緑シミ・粒状の RGB ノイズになる。UNet 出力は別経路で既にヒープに new した
+    //   MNN::Tensor を使っているので問題が出ていない。ここも同じパターンに揃える。
+    //   実装は clean-room: MNN 公式 API (Interpreter/Tensor/copyToHostTensor) のみを利用。
     std::vector<float> read_output_f32(MNN::Interpreter *net, MNN::Session *session, const char *name)
     {
         auto *t = get_session_output_tensor(net, session, name);
         if (!t)
             return {};
-        MNN::Tensor host(t, MNN::Tensor::CAFFE);
-        t->copyToHostTensor(&host);
-        const float *ptr = host.host<float>();
-        return std::vector<float>(ptr, ptr + host.elementSize());
+        // ヒープ上に CAFFE (NCHW) レイアウトのミラーを作り、copyToHostTensor で
+        // 同期的に引き抜く。std::vector への memcpy が終わるまで host を残す。
+        std::unique_ptr<MNN::Tensor> host(new MNN::Tensor(t, MNN::Tensor::CAFFE));
+        if (!t->copyToHostTensor(host.get()))
+        {
+            return {};
+        }
+        const float *ptr = host->host<float>();
+        if (!ptr)
+        {
+            return {};
+        }
+        return std::vector<float>(ptr, ptr + host->elementSize());
     }
 
     // Bug fix (スケジューラを切り替えても同じ絵が出る問題):
@@ -2345,7 +2396,7 @@ extern "C"
         //   ユーザーの指定を尊重する完全対応は将来の課題として TODO を残す。
         // TODO(scheduler): engine 側で Euler / DDIM / DPM++ 2M / LCM /
         //   Euler a / UniPC の分岐を実装し、params->scheduler に応じて切り替える。
-        PROBE_LOG("mnn_sd_run_pipeline: requested scheduler=%d (0=Euler,1=DDIM,2=DPM,3=DPM++2M,4=DPM++2M-Karras,5=LCM,6=EulerA,7=UniPC); engine currently runs PLMS regardless.",
+        PROBE_LOG("mnn_sd_run_pipeline: requested scheduler=%d (0=Euler,1=DDIM,2=DPM,3=DPM++2M,4=DPM++2M-Karras,5=LCM,6=EulerA,7=UniPC); active_scheduler will be resolved below.",
                   static_cast<int>(params->scheduler));
         PROBE_LOG("mnn_sd_run_pipeline: seed=%lld (negative=random)",
                   static_cast<long long>(params->seed));
@@ -2396,18 +2447,11 @@ extern "C"
             break;
         }
 
-        // ---- 少ステップ品質のためのオート格上げ ----
-        // 20 ステップ未満で PLMS / DPM (=PLMS 相当) を要求された場合、
-        // DPM++ 2M Karras に自動で切り替える。少ステップ (8..15) では
-        // DPM++ 2M Karras が最もクリーンな仕上がりになるため。
-        // ユーザーが明示的に PLMS 系を選んでいても、"steps 少なく綺麗" の要求を
-        // 満たす方が優先。20 以上では従来通り PLMS を維持する。
-        if (active_scheduler == ActiveScheduler::PLMS && params->steps < 20)
-        {
-            active_scheduler = ActiveScheduler::DPMPP_2M_KARRAS;
-            PROBE_LOG("active_scheduler auto-upgraded PLMS -> DPMPP_2M_KARRAS (steps=%d < 20)",
-                      params->steps);
-        }
+        // Bug fix (ユーザー指定のスケジューラーが勝手に上書きされる / 2026-07):
+        //   旧実装は steps<20 で PLMS/DPM を要求された時、勝手に DPMPP_2M_KARRAS に
+        //   上書きしていた。Kotlin 側のログ (active_scheduler=6) で "スケジューラー
+        //   が固定される" と見えていた主因。ユーザーが明示的に選んだものを
+        //   そのまま使うよう改め、このオート格上げロジックを廃止する。
         PROBE_LOG("mnn_sd_run_pipeline: active_scheduler=%d "
                   "(0=PLMS,1=DDIM,2=Euler,3=EulerA,4=LCM,5=DPM++2M,6=DPM++2M-Karras)",
                   static_cast<int>(active_scheduler));
@@ -3062,8 +3106,23 @@ extern "C"
         }
 
         {
+            // Bug fix (èª¤è§£ãæãã­ã°ã©ãã« / 2026-07):
+            //   æ§å®è£ã¯ active_scheduler ã«é¢ä¿ãªãå¸¸ã« "PLMS timesteps" ã¨åºåãã¦ãããã
+            //   DDIM / Euler / DPM++ 2M / Karras ç­ã§ããã®ã­ã°ã«ãªããããçµå± PLMS ã§åãã¦ããã®ã§ã¯ï¼ã
+            //   ã¨èª¤è§£ããåå ã«ãªã£ã¦ãããactive_scheduler ã®ååãåºãããã«æ¹ããã
+            const char *sched_label = "unknown";
+            switch (active_scheduler)
+            {
+            case ActiveScheduler::PLMS:            sched_label = "PLMS";       break;
+            case ActiveScheduler::DDIM:            sched_label = "DDIM";       break;
+            case ActiveScheduler::EULER:           sched_label = "Euler";      break;
+            case ActiveScheduler::EULER_A:         sched_label = "EulerA";     break;
+            case ActiveScheduler::LCM_STEP:        sched_label = "LCM";        break;
+            case ActiveScheduler::DPMPP_2M:        sched_label = "DPM++2M";    break;
+            case ActiveScheduler::DPMPP_2M_KARRAS: sched_label = "DPM++2M-K";  break;
+            }
             char buf[512];
-            int off = std::snprintf(buf, sizeof(buf), "PLMS timesteps (%zu):", timesteps.size());
+            int off = std::snprintf(buf, sizeof(buf), "%s timesteps (%zu):", sched_label, timesteps.size());
             for (size_t k = 0; k < timesteps.size() && off < (int)sizeof(buf) - 12; ++k)
                 off += std::snprintf(buf + off, sizeof(buf) - off, " %d", timesteps[k]);
             PROBE_LOG("%s", buf);
@@ -3374,15 +3433,11 @@ extern "C"
             for (int j = 0; j < latent_size; ++j)
                 combined[j] = pred_uncond[j] + cfg * (pred_cond[j] - pred_uncond[j]);
 
-            {
-                float phi = 0.0f;
-                if (steps <= 15 && cfg >= 6.0f)
-                    phi = 0.7f;
-                else if (cfg >= 9.0f)
-                    phi = 0.5f;
-                if (phi > 0.0f)
-                    apply_cfg_rescale(combined, pred_cond, phi);
-            }
+            // Bug fix (暗黙の CFG Rescale で色が歪む / 2026-07):
+            //   旧実装は steps<=15 かつ cfg>=6 で phi=0.7 の CFG Rescale を
+            //   自動でかけていたが、ユーザーに見えない操作として色分布を
+            //   歪める副作用があり、緑や青のカラーキャストを誘発していた。
+            //   明示的に有効化するまで標準の CFG (phi=0) だけを使う。
 
             switch (active_scheduler)
             {

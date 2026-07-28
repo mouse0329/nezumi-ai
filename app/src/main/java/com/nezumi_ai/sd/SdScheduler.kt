@@ -84,8 +84,8 @@ enum class SdScheduler(
                 "dpm++2m", "dpmpp2m", "dpmpp_2m" -> DPM_PLUS_PLUS_2M
                 "dpm++2mkarras", "dpmpp2mkarras", "dpmpp_2m_karras", "karras" -> DPM_PLUS_PLUS_2M_KARRAS
                 "lcm" -> LCM
-                "eulera", "euler_a", "eulera" -> EULER_A
-                "unipc", "unipc" -> UNIPC
+                "eulera", "euler_a", "eulerancestral" -> EULER_A
+                "unipc" -> UNIPC
                 else -> DEFAULT
             }
         }
