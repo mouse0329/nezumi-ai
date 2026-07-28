@@ -2438,11 +2438,22 @@ extern "C"
         int32_t safe_max = engine->load_options.opencl_safe_max_side;
         if (safe_max <= 0)
         {
-            // SD1.5 default (512-class) was tuned for 448px mobile-GPU
-            // safety. SDXL models run at 1024-class resolutions by design;
-            // keeping the SD1.5 default would silently force every SDXL
-            // generation onto CPU. Callers can still override explicitly via
-            // load_options.opencl_safe_max_side.
+            // Fail-safe only: mnn_sd_load (c_api.cpp) now always fills
+            // load_options.opencl_safe_max_side with an is_sdxl-aware default
+            // (448 for SD1.5, 1024 for SDXL) right after loading
+            // model_config, so this branch should be unreachable in the
+            // normal mnn_sd_load -> mnn_sd_generate flow.
+            //
+            // Bug fix history: this used to be the *only* place that knew
+            // about the SD1.5-vs-SDXL distinction, while c_api.cpp
+            // unconditionally pinned opencl_safe_max_side to the SD1.5 value
+            // (448) *before* model_config.is_sdxl was even known. The result
+            // was every 1024x1024 SDXL generation with --backend opencl
+            // silently falling back to CPU (max_side=1024 > safe_max=448),
+            // even though this correction here looked right in isolation.
+            // Fixed at the source in c_api.cpp; kept here as a fail-safe for
+            // any caller that hand-constructs MnnSdEngine without going
+            // through mnn_sd_load.
             safe_max = is_sdxl ? 1024 : 448;
         }
         MnnSdBackend effective_backend = engine->load_options.backend;
@@ -2509,19 +2520,19 @@ extern "C"
                                 ? engine->model_config.text_embedding_size
                                 : 768;
         const int emb_dim2 = is_sdxl
-                                  ? (engine->model_config.text_embedding_size_2 > 0
-                                         ? engine->model_config.text_embedding_size_2
-                                         : 1280)
-                                  : 0;
+                                 ? (engine->model_config.text_embedding_size_2 > 0
+                                        ? engine->model_config.text_embedding_size_2
+                                        : 1280)
+                                 : 0;
         // encoder_hidden_states width the UNet expects: SD1.5 = emb_dim
         // (768); SDXL = emb_dim + emb_dim2 (768 + 1280 = 2048, CLIP-L and
         // CLIP-G hidden states concatenated along the feature axis).
         const int unet_ctx_dim = is_sdxl ? (emb_dim + emb_dim2) : emb_dim;
         const int pooled_dim = is_sdxl
-                                    ? (engine->model_config.pooled_embedding_size > 0
-                                           ? engine->model_config.pooled_embedding_size
-                                           : emb_dim2)
-                                    : 0;
+                                   ? (engine->model_config.pooled_embedding_size > 0
+                                          ? engine->model_config.pooled_embedding_size
+                                          : emb_dim2)
+                                   : 0;
 
         if (engine->token_emb.empty() || engine->pos_emb.empty())
         {
@@ -2541,11 +2552,11 @@ extern "C"
         // Generic "token id -> input_embedding row" builder, reused for both
         // CLIP-L (token_emb/pos_emb) and, for SDXL, CLIP-G (token_emb2/pos_emb2).
         auto build_side_embedding_generic = [&](const std::vector<int> &ids, int side, int dim,
-                                                 const std::vector<float> &tok_table,
-                                                 const std::vector<float> &pos_table,
-                                                 int vocab_size,
-                                                 const char *label,
-                                                 std::vector<float> &out)
+                                                const std::vector<float> &tok_table,
+                                                const std::vector<float> &pos_table,
+                                                int vocab_size,
+                                                const char *label,
+                                                std::vector<float> &out)
         {
             out.assign((size_t)seq_len * dim, 0.0f);
             for (int p = 0; p < seq_len; ++p)
@@ -2581,16 +2592,16 @@ extern "C"
         auto build_side_embedding = [&](int side, std::vector<float> &out)
         {
             build_side_embedding_generic(token_ids, side, emb_dim,
-                                          engine->token_emb, engine->pos_emb,
-                                          engine->token_emb_vocab_size,
-                                          "build_side_embedding(clip1)", out);
+                                         engine->token_emb, engine->pos_emb,
+                                         engine->token_emb_vocab_size,
+                                         "build_side_embedding(clip1)", out);
         };
         auto build_side_embedding2 = [&](int side, std::vector<float> &out)
         {
             build_side_embedding_generic(token_ids2, side, emb_dim2,
-                                          engine->token_emb2, engine->pos_emb2,
-                                          engine->token_emb2_vocab_size,
-                                          "build_side_embedding(clip2)", out);
+                                         engine->token_emb2, engine->pos_emb2,
+                                         engine->token_emb2_vocab_size,
+                                         "build_side_embedding(clip2)", out);
         };
 
         // Locates the graph's embedding-input tensor (xororz/sd-mnn
@@ -3169,9 +3180,12 @@ extern "C"
         if (is_sdxl)
         {
             time_ids_vec = {
-                (float)height, (float)width, // original_size (h, w)
-                0.0f, 0.0f,                  // crop_top_left (top, left)
-                (float)height, (float)width, // target_size (h, w)
+                (float)height,
+                (float)width, // original_size (h, w)
+                0.0f,
+                0.0f, // crop_top_left (top, left)
+                (float)height,
+                (float)width, // target_size (h, w)
             };
             pooled_uncond = pooled2.data();
             pooled_cond = pooled2.data() + (size_t)pooled_dim;

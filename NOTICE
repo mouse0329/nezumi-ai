@@ -178,11 +178,6 @@ NATIVE COMPONENTS
   https://github.com/alibaba/MNN
   Note: Native runtime used by the on-device image-generation path.
 
-* stable-diffusion.cpp-mnn
-  License: See upstream project and linked backend licenses
-  https://github.com/xororz/stable-diffusion.cpp-mnn
-  Note: Upstream reference project for the MNN-based Stable Diffusion integration path.
-
 ================================================================================
 ADDITIONAL INFORMATION
 ================================================================================

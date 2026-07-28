@@ -9,7 +9,19 @@
 namespace
 {
 
-    constexpr int kDefaultOpenClSafeMaxSide = 448;
+    // Bug fix (SDXL + --backend opencl が黙って CPU にフォールバックする問題):
+    //   以前は SD1.5 想定の 448px 上限を is_sdxl 判定より前に確定させて
+    //   engine->load_options.opencl_safe_max_side へ書き込んでいたため、
+    //   mnn_sd_run_pipeline 側にあった「SDXL なら 1024px まで許容する」
+    //   という補正が発動する前に値が 448 で埋まってしまい、1024x1024 の
+    //   SDXL 生成は常に (max_side=1024) > (safe_max=448) を満たして
+    //   effective_backend が CPU に落ちていた。ユーザーが --backend opencl
+    //   を明示しても、ログの backend=0 (CPU) しか出ない形で症状が現れる。
+    //   ここでは SD1.5 / SDXL 双方のデフォルト値を持っておき、
+    //   model_config.is_sdxl が判明した後 (mnn_sd_load_model_config 呼び出し
+    //   後) に選択する。
+    constexpr int kDefaultOpenClSafeMaxSideSd15 = 448;
+    constexpr int kDefaultOpenClSafeMaxSideSdxl = 1024;
     constexpr int kMaxScheduler = 7;
 
     void set_error(MnnSdErrorInfo *out, MnnSdError code, const char *message, const char *cause = "")
@@ -111,12 +123,19 @@ extern "C"
         }
 
         engine->load_options = options ? *options : MnnSdLoadOptions{};
-        if (engine->load_options.opencl_safe_max_side <= 0)
-        {
-            engine->load_options.opencl_safe_max_side = kDefaultOpenClSafeMaxSide;
-        }
 
         mnn_sd_load_model_config(model_dir, &engine->model_config);
+
+        // See the kDefaultOpenClSafeMaxSideSd15/Sdxl comment above: this must
+        // run *after* mnn_sd_load_model_config so engine->model_config.is_sdxl
+        // is already known. A caller-supplied positive value always wins.
+        if (engine->load_options.opencl_safe_max_side <= 0)
+        {
+            engine->load_options.opencl_safe_max_side =
+                engine->model_config.is_sdxl
+                    ? kDefaultOpenClSafeMaxSideSdxl
+                    : kDefaultOpenClSafeMaxSideSd15;
+        }
 
         auto check_file = [&](const char *name) -> bool
         {

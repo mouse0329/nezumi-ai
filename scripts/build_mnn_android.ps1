@@ -18,6 +18,9 @@ $ndk = "$env:LOCALAPPDATA\Android\Sdk\ndk\30.0.14904198"
 if (-not (Test-Path $cmake)) { throw "cmake not found: $cmake" }
 if (-not (Test-Path $ndk)) { throw "NDK not found: $ndk" }
 
+$clang     = "$ndk\toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android30-clang.cmd"
+$clangplus = "$ndk\toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android30-clang++.cmd"
+
 Write-Host "=== 1/3 Build MNN (arm64) ===" -ForegroundColor Cyan
 $MnnBuild = Join-Path $MnnRoot "build-android-arm64"
 $LibMnn = Join-Path $MnnBuild "libMNN.so"
@@ -28,9 +31,13 @@ if ($SkipMnn -and (Test-Path $LibMnn)) {
     if (Test-Path $MnnBuild) {
         Remove-Item $MnnBuild -Recurse -Force
     }
+    $clangexe = "$ndk\toolchains\llvm\prebuilt\windows-x86_64\bin\clang.exe"
     & $cmake -S $MnnRoot -B $MnnBuild -G Ninja `
         "-DCMAKE_MAKE_PROGRAM=$ninja" `
         "-DCMAKE_TOOLCHAIN_FILE=$ndk\build\cmake\android.toolchain.cmake" `
+        "-DCMAKE_C_COMPILER=$clang" `
+        "-DCMAKE_CXX_COMPILER=$clangplus" `
+        "-DCMAKE_ASM_COMPILER=$clangexe" `
         -DANDROID_ABI=arm64-v8a `
         -DANDROID_PLATFORM=android-30 `
         -DCMAKE_BUILD_TYPE=Release `
@@ -64,6 +71,8 @@ if (Test-Path $EngineBuild) {
 & $cmake -S $EngineRoot -B $EngineBuild -G Ninja `
     "-DCMAKE_MAKE_PROGRAM=$ninja" `
     "-DCMAKE_TOOLCHAIN_FILE=$ndk\build\cmake\android.toolchain.cmake" `
+    "-DCMAKE_C_COMPILER=$clang" `
+    "-DCMAKE_CXX_COMPILER=$clangplus" `
     -DANDROID_ABI=arm64-v8a `
     -DANDROID_PLATFORM=android-30 `
     -DCMAKE_BUILD_TYPE=Release `
