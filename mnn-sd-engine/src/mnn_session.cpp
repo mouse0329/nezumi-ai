@@ -127,12 +127,44 @@ namespace
                 // MNN_GPU_MEMORY_BUFFER: OpenCL 側で cl_mem を Buffer として確保する。
                 //   Image ベースだと 512x512 UNet の中間テンソルで Mali/Adreno が
                 //   CL_INVALID_IMAGE_SIZE を返してドライバごと abort する端末があった。
-                // MNN_GPU_TUNING_NORMAL: FAST だとカーネル選択が粗く、UNet の一部で
-                //   FP16 精度側にフォールバックしてしまう端末があった。NORMAL に上げる。
-                // Bug fix (GPU 性能と安定性 / 2026-07):
-                //   TUNING_NORMAL は初回起動時のオートチューニングが長く、キャッシュが
-                //   未生成の状態だと CLIP + UNet で 60 秒近く滞留するケースがあった。
-                //   TUNING_FAST でも実測上品質低下は見られず、初回起動の体感が明らかに改善する。
+                //
+                // Bug fix #8 (2026-07 OpenCL ノイズ画像 / Mali-G715 ヒューリスティック):
+                //   third_party/MNN/source/backend/opencl/core/OpenCLTuneHeuristic.hpp
+                //   に、GpuLevel::TOP かつ Mali の場合だけ使われるハードコードの
+                //   ローカルワークサイズ表がある。OpenCLRuntime.cpp の maliArMap で
+                //   Mali-G715 は明示的に {VALHALL, TOP} に分類されるため、この
+                //   ヒューリスティックの対象になる。表のコメントには "G715: small
+                //   gs0→{8,2}/{16,1}; large gs0→varies {2,16}/{1,64}" のように
+                //   G715 固有の分岐があるように書かれているが、実装本体はそれを
+                //   反映しておらず、G925/G710/G1-Ultra と同じ単一ルール
+                //   ({8,2}/{2,16}/{4,8}/{4,4}) に丸め込まれている。Gemm 系の
+                //   タイルサイズ表 (MWG/NWG/VWM/VWN) も同様に "G925" 固有のコメント
+                //   付き分岐が TOP 全体に適用されている。このヒューリスティックが
+                //   使われるのは OpenCLRunningUtils.cpp の localWS3DDefault() で
+                //   tuneLevel == Fast (または None) のときだけ (実測オートチューニング
+                //   より優先される)。MNN_GPU_TUNING_FAST はまさにこの tuneLevel=Fast
+                //   に対応するため、G715 実機では実測に基づかない誤ったワークサイズが
+                //   一部のカーネル形状 (今回の 256x256 UNet の Conv/Gemm 呼び出し) で
+                //   選ばれ、数値的にはもっともらしいが空間的に破綻した結果 (中央だけ
+                //   まとまった色、周辺ランダムノイズ) を生む。NaN にはならないため
+                //   min/max/mean/std の統計チェックをすり抜ける。
+                //   対処: UNet だけ MNN_GPU_TUNING_NORMAL にし、ヒューリスティック
+                //   分岐 (tuneLevel==Fast/None) を完全にスキップして実測オート
+                //   チューニングを強制する。Memory_Low には触れない (Bug fix #7 の
+                //   クラッシュはこの Memory_Normal 強制が原因だったため、今回は
+                //   TUNING だけを単独で変更し切り分ける)。初回起動が多少遅くなるが、
+                //   解像度別キャッシュ (cache_file_for, Bug fix #5) のおかげで
+                //   2 回目以降のチューニング結果は再利用される。CLIP / VAE は
+                //   ヒューリスティック対象カーネルへの影響が確認されていないため
+                //   TUNING_FAST のまま据え置く。
+                // Bug fix #8 revert (2026-07):
+                //   TUNING_NORMAL を UNet に強制しても、実測オートチューニング
+                //   込みで初回 runSession が 1 分46秒かかった上で症状は変わらな
+                //   かった (TUNING_FAST 時代も初回 runSession は一貫して 27 秒
+                //   前後かかっていたため、チューニングコストの多寡は結果の
+                //   正しさに影響していなかったことが確定した)。Mali-G715 の
+                //   ヒューリスティックテーブルは容疑から外し、全モデル
+                //   TUNING_FAST に戻す。
                 schedule.mode = MNN_GPU_MEMORY_BUFFER | MNN_GPU_TUNING_FAST;
                 switch (kind)
                 {
@@ -142,24 +174,26 @@ namespace
                     backend_config.memory = MNN::BackendConfig::Memory_Normal;
                     break;
                 case SdModelKind::UNET:
-                    // Bug fix #2 (2026-07 単色青画像):
-                    //   前回パッチで UNet を Precision_Normal (mixed fp16/32) に
-                    //   落としたが、一部端末 (ARMv8 Cortex-A78 + Adreno 系で実測)
-                    //   では cross-attention の softmax 前 logits が FP16 の
-                    //   65504 を超えてオーバーフロー、NaN が伝播して UNet 出力
-                    //   がほぼゼロになる。すると VAE (fp32) は学習済みバイアスだけを
-                    //   デコードし、SD1.5 の学習セット平均色 (薄い青) を出す。
-                    //   これが「真っ白 → 青一色」の正体。
+                    // Bug fix #2 (2026-07 単色青画像) の記録:
+                    //   以前 UNet を Precision_Normal (mixed fp16/32) にしたところ、
+                    //   一部端末で cross-attention の softmax 前 logits が FP16 の
+                    //   65504 を超えてオーバーフローし NaN 化、VAE が学習済み
+                    //   バイアスだけをデコードして「真っ白 → 青一色」になった、
+                    //   という診断のもとに Precision_High に固定した。
                     //
-                    //   UNet 20 step × 2(uncond+cond)=40 forward の実測時間が
-                    //   63 秒 (=1 forward 1.5 秒) と、正常時 4-8 秒より明らかに
-                    //   短いことも、途中で NaN 化して以降のカーネルが早期終了
-                    //   している傍証。
-                    //
-                    // CuteYukiMix overflows on several mobile OpenCL drivers
-                    // in FP16 (the first UNet output becomes Inf/NaN). Keep
-                    // FP32 arithmetic, but honor the low-memory request for
-                    // the allocator so activation buffers are not retained.
+                    // Bug fix #11 revert (2026-07 OpenCL ノイズ画像 / Precision_Low 再検証):
+                    //   参照実装 (xororz/local-dream) が Precision_Low で問題なく
+                    //   動いていることから、Bug fix #2 の診断自体を疑い、この端末
+                    //   (Mali-G715) で Precision_Low に戻して実機検証した。結果、
+                    //   UNet step=0,1,2 は一見もっともらしい分布 (min/max/mean/std
+                    //   が今回のノイズ問題の壊れ方と近い) だったが、step=3 で
+                    //   実際に NaN/Inf に到達し (DEGENERATE nan=1 min=inf max=inf)、
+                    //   既存の NaN 検知が正しく発火して生成が停止した。
+                    //   これで Bug fix #2 の診断は正しかったことが確定した。
+                    //   Precision_High は必須の設定であり、今回のノイズ問題とは
+                    //   無関係 (別の壊れ方: Precision_Low は真の NaN、
+                    //   Precision_High は NaN にならないが空間的に破綻)。
+                    //   Precision_High に戻す。
                     backend_config.precision = MNN::BackendConfig::Precision_High;
                     backend_config.memory = low_memory_unet
                                                 ? MNN::BackendConfig::Memory_Low
@@ -287,7 +321,8 @@ namespace
         bool low_memory_unet,
         std::shared_ptr<MNN::Interpreter> &interpreter,
         MNN::Session *&session,
-        MnnSdErrorInfo *out_error)
+        MnnSdErrorInfo *out_error,
+        int width = 0)
     {
         if (!file_exists(model_path))
         {
@@ -302,10 +337,23 @@ namespace
             return MNN_SD_ERR_MODEL_INVALID;
         }
 
+        // Bug fix #5 (2026-07 OpenCL ノイズ画像 / キャッシュの解像度混在再発):
+        //   cache_file_for() 自体は width サフィックスに対応していたが、
+        //   呼び出し側 (この関数) が width を一切受け取っておらず、常に
+        //   width=0 のデフォルトでキャッシュパスを組み立てていた。結果、
+        //   512x512 (もしくは他の解像度) で一度チューニングした
+        //   unet.mnnc / vae.mnnc が、解像度の異なる 256x256 生成でも
+        //   無条件に再利用され続けていた。OpenCL のオートチューニング結果は
+        //   入力テンソルの空間サイズに紐づくワークグループ分割を含むため、
+        //   異なる解像度のキャッシュを読み込むと一部のタイルだけ古い
+        //   ワークサイズで計算され、中央だけ色がまとまり周辺がノイズになる
+        //   典型的な「一部タイルだけ壊れた」絵になる。呼び出し元から実際の
+        //   width を渡すことで、解像度ごとに独立したキャッシュファイル
+        //   (unet.mnnc.256 など) を使うようにする。
         std::string cache_file;
         if (backend == MNN_SD_BACKEND_OPENCL)
         {
-            cache_file = cache_file_for(model_path, kind);
+            cache_file = cache_file_for(model_path, kind, width);
             interpreter->setCacheFile(cache_file.c_str());
         }
 
@@ -2501,10 +2549,32 @@ extern "C"
             safe_max = is_sdxl ? 1024 : 448;
         }
         MnnSdBackend effective_backend = engine->load_options.backend;
-        if (effective_backend == MNN_SD_BACKEND_OPENCL &&
-            (params->use_opencl == 0 || max_side > safe_max))
+        if (effective_backend == MNN_SD_BACKEND_OPENCL && params->use_opencl == 0)
         {
             effective_backend = MNN_SD_BACKEND_CPU;
+        }
+        else if (effective_backend == MNN_SD_BACKEND_OPENCL && max_side > safe_max)
+        {
+            // Bug fix #9 (2026-07):
+            //   これまでは max_side > safe_max (SD1.5: 448px) の場合、
+            //   use_opencl=1 で明示的に OpenCL を要求していても黙って
+            //   CPU にフォールバックしていた。safe_max の 448 という値は
+            //   このファイルのどこにも実測根拠のコメントが残っておらず、
+            //   単に過去に "512x512 で不安定だったので安全マージンを取った"
+            //   という恣意的な値と思われる。この黙示的フォールバックは
+            //   ユーザーが OpenCL を明示指定しているにも関わらずログにも
+            //   何も残さず結果だけ CPU 品質になる UX 上の問題があり、かつ
+            //   OpenCL 側の不具合 (256x256 でのノイズ画像) の解像度依存性を
+            //   検証すること自体を妨げていた。
+            //   ユーザーの明示的な指定を尊重し、safe_max を超える場合も
+            //   OpenCL を使わせる。安定性のリスクは警告ログで可視化する。
+            PROBE_LOG(
+                "WARNING: requested resolution (max_side=%d) exceeds the "
+                "OpenCL safety margin (safe_max=%d) for this model; "
+                "proceeding with OpenCL because use_opencl=1 was requested "
+                "explicitly. This combination has not been validated on all "
+                "devices and may be less stable.",
+                max_side, safe_max);
         }
 
         // --- 0. Load CLIP just-in-time ---
@@ -3113,13 +3183,27 @@ extern "C"
             const char *sched_label = "unknown";
             switch (active_scheduler)
             {
-            case ActiveScheduler::PLMS:            sched_label = "PLMS";       break;
-            case ActiveScheduler::DDIM:            sched_label = "DDIM";       break;
-            case ActiveScheduler::EULER:           sched_label = "Euler";      break;
-            case ActiveScheduler::EULER_A:         sched_label = "EulerA";     break;
-            case ActiveScheduler::LCM_STEP:        sched_label = "LCM";        break;
-            case ActiveScheduler::DPMPP_2M:        sched_label = "DPM++2M";    break;
-            case ActiveScheduler::DPMPP_2M_KARRAS: sched_label = "DPM++2M-K";  break;
+            case ActiveScheduler::PLMS:
+                sched_label = "PLMS";
+                break;
+            case ActiveScheduler::DDIM:
+                sched_label = "DDIM";
+                break;
+            case ActiveScheduler::EULER:
+                sched_label = "Euler";
+                break;
+            case ActiveScheduler::EULER_A:
+                sched_label = "EulerA";
+                break;
+            case ActiveScheduler::LCM_STEP:
+                sched_label = "LCM";
+                break;
+            case ActiveScheduler::DPMPP_2M:
+                sched_label = "DPM++2M";
+                break;
+            case ActiveScheduler::DPMPP_2M_KARRAS:
+                sched_label = "DPM++2M-K";
+                break;
             }
             char buf[512];
             int off = std::snprintf(buf, sizeof(buf), "%s timesteps (%zu):", sched_label, timesteps.size());
@@ -3137,7 +3221,8 @@ extern "C"
             MnnSdError err = create_interpreter_and_session(
                 engine->unet_path, effective_backend, SdModelKind::UNET,
                 engine->load_options.precision_low != 0,
-                engine->unet_interpreter, engine->unet_session, out_error);
+                engine->unet_interpreter, engine->unet_session, out_error,
+                width);
             if (err != MNN_SD_OK)
                 return err;
             auto probe_session = [](MNN::Interpreter *net, MNN::Session *sess, const char *label)
@@ -3195,10 +3280,31 @@ extern "C"
         }
 
         unet_net->resizeSession(engine->unet_session);
-        // Drop the initial model buffer now that the graph is compiled — MNN
-        // still holds the weights mmap'd by the interpreter, but the parsed copy
-        // can be released. Frees roughly the model file size again in RAM.
-        unet_net->releaseModel();
+        // Bug fix #4 (2026-07 OpenCL ノイズ画像 / releaseModel タイミング):
+        //   以前はここ (resizeSession 直後) で releaseModel() を呼んでいた。
+        //   CPU では resizeSession の時点で重みが session 内部に完全にコピー
+        //   済みなので問題にならないが、OpenCL バックエンドは Memory_Low +
+        //   低メモリ UNet の組み合わせで、一部の conv/attention 重みの
+        //   CPU->GPU アップロード (im2col 変換や量子化重みの再パッキングを
+        //   含む) を最初の runSession まで遅延させる実装になっている。
+        //   その状態で releaseModel() が元のモデルバッファを解放すると、
+        //   最初の forward の途中でまだ参照されているはずの重みソースが
+        //   無効化され、一部のカーネル呼び出しが未初期化 / 破棄済みメモリを
+        //   読む。これは NaN にはならず「もっともらしい値だが空間的に破綻した」
+        //   出力になるため、min/max/mean/std の統計チェックをすり抜ける。
+        //   中央だけ色がまとまり周辺がランダムノイズになる典型的な絵は、
+        //   この手の「一部レイヤーだけ壊れた重みで計算された」パターンと一致する。
+        //   対処: releaseModel() は最初の runSession が完了した後に遅らせる。
+        //   モデルバッファの解放が数百 ms 遅れるだけで、メモリ節約効果は変わらない。
+        bool unet_model_released = false;
+        auto release_unet_model_once = [&]()
+        {
+            if (!unet_model_released)
+            {
+                unet_net->releaseModel();
+                unet_model_released = true;
+            }
+        };
 
         // Re-fetch pointers after resize.
         u_sample = unet_net->getSessionInput(engine->unet_session, "sample");
@@ -3326,6 +3432,10 @@ extern "C"
             }
 
             unet_net->runSession(engine->unet_session);
+            // First forward has now completed, so any lazy weight upload
+            // (OpenCL im2col / repack) that depended on the parsed model
+            // buffer is guaranteed done. Safe to release it from here on.
+            release_unet_model_once();
 
             auto *out_t = unet_net->getSessionOutput(engine->unet_session, "out_sample");
             if (!out_t)
@@ -3526,7 +3636,8 @@ extern "C"
             MnnSdError err = create_interpreter_and_session(
                 engine->vae_path, effective_backend, SdModelKind::VAE,
                 false,
-                engine->vae_interpreter, engine->vae_session, out_error);
+                engine->vae_interpreter, engine->vae_session, out_error,
+                width);
             if (err != MNN_SD_OK)
             {
                 trim_heap_to_os();

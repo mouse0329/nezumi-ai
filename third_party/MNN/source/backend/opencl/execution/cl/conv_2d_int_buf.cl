@@ -76,7 +76,11 @@ void conv_2d_int_c4h1w1(GLOBAL_SIZE_2_DIMS
         COMPUTE_FLOAT4 offset = (COMPUTE_FLOAT4)(ScaleOffset.s1, ScaleOffset.s3, ScaleOffset.s5, ScaleOffset.s7);
         #else
         COMPUTE_FLOAT4 scale = CONVERT_COMPUTE_FLOAT4(convert_float4(vload4(out_c_idx, dequantScaleOffset + (in_c_idx * 4) / blockDim * out_c_blocks * 4)) / coef);
+        #if QUANT_BIT == 8
+        COMPUTE_FLOAT4 offset = (COMPUTE_FLOAT4)(0);
+        #else
         COMPUTE_FLOAT4 offset = -8 * scale;
+        #endif
         #endif
         //weights  NC4HW4  [1,  4*icC4,  ocC4*kh*kw,  1] xic4
         //index:   [0, 4*in_c_idx, out_c_idx*kh*kw + kh_start*kw + kw_start, 0]
@@ -208,7 +212,11 @@ void conv_2d_int_c4h1w2(GLOBAL_SIZE_2_DIMS
         COMPUTE_FLOAT4 offset = (COMPUTE_FLOAT4)(ScaleOffset.s1, ScaleOffset.s3, ScaleOffset.s5, ScaleOffset.s7);
         #else
         COMPUTE_FLOAT4 scale = CONVERT_COMPUTE_FLOAT4(convert_float4(vload4(out_c_idx, dequantScaleOffset + (in_c_idx * 4) / blockDim * out_c_blocks * 4)) / coef);
+        #if QUANT_BIT == 8
+        COMPUTE_FLOAT4 offset = (COMPUTE_FLOAT4)(0);
+        #else
         COMPUTE_FLOAT4 offset = -8 * scale;
+        #endif
         #endif
         //weights  NC4HW4  [1,  4*icC4,  ocC4*kh*kw,  1] xic4
         //index:   [0, 4*in_c_idx, out_c_idx*kh*kw + kh_start*kw + kw_start, 0]
@@ -360,7 +368,11 @@ void conv_2d_int_c4h1w4(GLOBAL_SIZE_2_DIMS
         COMPUTE_FLOAT4 offset = (COMPUTE_FLOAT4)(ScaleOffset.s1, ScaleOffset.s3, ScaleOffset.s5, ScaleOffset.s7);
         #else
         COMPUTE_FLOAT4 scale = CONVERT_COMPUTE_FLOAT4(convert_float4(vload4(out_c_idx, dequantScaleOffset + (in_c_idx * 4) / blockDim * out_c_blocks * 4)) / coef);
+        #if QUANT_BIT == 8
+        COMPUTE_FLOAT4 offset = (COMPUTE_FLOAT4)(0);
+        #else
         COMPUTE_FLOAT4 offset = -8 * scale;
+        #endif
         #endif
         //weights  NC4HW4  [1,  4*icC4,  ocC4*kh*kw,  1] xic4
         //index:   [0, 4*in_c_idx, out_c_idx*kh*kw + kh_start*kw + kw_start, 0]
@@ -559,7 +571,11 @@ void conv_2d_int_c8h1w4(GLOBAL_SIZE_2_DIMS
         #else
         COMPUTE_FLOAT4 scale1 = CONVERT_COMPUTE_FLOAT4(convert_float4(vload4(out_c_idx_1, dequantScaleOffset + (in_c_idx * 4) / blockDim * out_c_blocks * 4)) / coef);
         #endif
+        #if QUANT_BIT == 8
+        COMPUTE_FLOAT4 offset0 = (COMPUTE_FLOAT4)(0),  offset1 = (COMPUTE_FLOAT4)(0);
+        #else
         COMPUTE_FLOAT4 offset0 = -8 * scale0,  offset1 = -8 * scale1;
+        #endif
         #endif
         //weights  NC4HW4  [1,  4*icC4,  ocC4*kh*kw,  1] xic4
         //index:   [0, 4*in_c_idx, out_c_idx_0*kh*kw + kh_start*kw + kw_start, 0]
