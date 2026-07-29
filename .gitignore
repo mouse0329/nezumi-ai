@@ -19,6 +19,15 @@ local.properties
 build.log
 voicevox_android_report.md
 
+# Test/temp output files
+*.ppm
+*.csv
+tmp_*.py
+tmp_*.json
+deps.txt
+watchdog_*.log
+watchdog_*.csv
+
 # VOICEVOX model/dict runtime downloads
 app/src/main/assets/voicevox/**
 !app/src/main/assets/voicevox/licenses/
