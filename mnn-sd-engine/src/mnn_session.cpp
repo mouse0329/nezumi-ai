@@ -3632,9 +3632,24 @@ extern "C"
         // --- 5b. Load VAE just-in-time (after UNet has been freed) ---
         //   VAE は ScheduleBundle 側で Precision_High (fp32) に固定される。
         //   これで OpenCL でも真っ白画像にならない。
+        //
+        // Bug fix (512x512+ OpenCL OOM kill / 2026-07):
+        //   VAE decoder は fp32 (Precision_High) で動くため、512x512 以上の
+        //   解像度では中間テンソルが GPU メモリを大量に消費する。
+        //   UNet 完了後に OpenCL バッファプールに残存する GPU メモリと重のわって
+        //   CL_OUT_OF_RESOURCES → プロセス OOM kill になる。
+        //   512px 以上では VAE を CPU にフォールバックして GPU メモリ枯渇を
+        //   回避する。CPU VAE は fp32 で数秒で完了するため体感影響は小さい。
+        MnnSdBackend vae_backend = effective_backend;
+        if (vae_backend == MNN_SD_BACKEND_OPENCL && max_side >= 512)
+        {
+            PROBE_LOG("VAE fallback to CPU: max_side=%d exceeds OpenCL GPU memory threshold (512)",
+                      max_side);
+            vae_backend = MNN_SD_BACKEND_CPU;
+        }
         {
             MnnSdError err = create_interpreter_and_session(
-                engine->vae_path, effective_backend, SdModelKind::VAE,
+                engine->vae_path, vae_backend, SdModelKind::VAE,
                 false,
                 engine->vae_interpreter, engine->vae_session, out_error,
                 width);

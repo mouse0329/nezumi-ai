@@ -848,8 +848,22 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             //   スキップする (ユーザーは膡しいターンで SD をやり直したいはず)。
             //   正常完了時のみ LLM をリロードし、SD は keep-warm。
             if (!wasCancelled) {
-                runCatching { EngineManager.releaseSdKeepNone() }
-                runCatching { EngineManager.markLlmActive() }
+                // Bug fix (SDXL 2nd generation OOM crash / 2026-07):
+                //   1枚目完了後に releaseSdKeepNone() + markLlmActive() で
+                //   エンジンを完全破棄していたため、2枚目で再ロード時に
+                //   SDXL の embedding (404MB) + モデル再読み込みで OOM kill していた。
+                //   単体生成後は SD エンジンを生かしておき、LLM
+                //   のリロードだけを行う（SD のリソースは次回生成時に
+                //   EngineManager のキャッシュが使い回される）。
+                //   メモリ不足時だけ SD を解放する。
+                val memInfo = com.nezumi_ai.data.inference.MemoryObserver.getSystemMemoryInfoSync(getApplication())
+                if (memInfo != null && memInfo.availablePercent < 25) {
+                    Log.i(TAG, "[ImageGen] finally: low memory (${memInfo.availablePercent}%), releasing SD")
+                    runCatching { EngineManager.releaseSdKeepNone() }
+                    runCatching { EngineManager.markLlmActive() }
+                } else {
+                    Log.i(TAG, "[ImageGen] finally: keeping SD warm for next generation")
+                }
                 runCatching { reloadChatModel(manager) }
             } else {
                 Log.i(TAG, "[ImageGen] finally: cancelled path - keeping SD backend warm")
