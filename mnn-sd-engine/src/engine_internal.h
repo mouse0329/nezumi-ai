@@ -79,16 +79,21 @@ struct MnnSdEngine
     std::string clip2_path; // SDXL only
     std::string unet_path;
     std::string vae_path;
+    /** img2img 用 VAE encoder (SD1.5)。無いモデルでは空文字列。 */
+    std::string vae_encoder_path;
+    bool has_vae_encoder = false;
 
     std::shared_ptr<MNN::Interpreter> clip_interpreter;
     std::shared_ptr<MNN::Interpreter> clip2_interpreter; // SDXL only
     std::shared_ptr<MNN::Interpreter> unet_interpreter;
     std::shared_ptr<MNN::Interpreter> vae_interpreter;
+    std::shared_ptr<MNN::Interpreter> vae_encoder_interpreter; // img2img only
 
     MNN::Session *clip_session = nullptr;
     MNN::Session *clip2_session = nullptr; // SDXL only
     MNN::Session *unet_session = nullptr;
     MNN::Session *vae_session = nullptr;
+    MNN::Session *vae_encoder_session = nullptr; // img2img only; JIT loaded per request
 
     // PNDM scheduler alphas_cumprod[0..999]
     std::vector<float> alphas_cumprod;

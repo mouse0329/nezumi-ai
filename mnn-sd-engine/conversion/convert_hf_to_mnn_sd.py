@@ -24,6 +24,7 @@ SD1.5 (HuggingFace) → nezumi-ai / xororz-sd-mnn 互換 MNN 変換スクリプ�
 """
 import argparse, json, os, shutil, subprocess, sys, gc
 from pathlib import Path
+from typing import Optional
 import numpy as np
 import torch
 import torch.nn as nn
@@ -209,6 +210,180 @@ def _patch_vae_attn_processor_dynamic():
     AttnProcessor.__call__ = _dynamic_call
 
 
+def make_distribution_zip(out_dir: Path, zip_name: Optional[str]) -> Path:
+    """
+    out_dir 直下の配布対象ファイル (model.json, *.mnn, *.mnn.weight, *.bin,
+    tokenizer.json など) だけを、out_dir と同じ階層に zip としてまとめる。
+    _onnx/ や _diffusers_from_single_file/ のような中間生成ディレクトリは
+    含めない (out_dir 直下のファイルのみを対象にしているため自動的に除外される)。
+
+    これまで手動で行っていた以下のような操作を自動化したもの:
+        cd out && zip -r ../ModelName-mnn-int8-block32.zip .
+    """
+    import zipfile
+
+    name = zip_name or out_dir.name
+    if not name.lower().endswith(".zip"):
+        name += ".zip"
+    zip_path = out_dir.parent / name
+
+    # out_dir 直下に前回実行の .zip が残っている場合、今回の zip の対象から
+    # 除外する (二重梱包・サイズ集計の狂いを防ぐ)。
+    files = sorted(
+        p for p in out_dir.iterdir()
+        if p.is_file() and p.suffix.lower() != ".zip"
+    )
+    if not files:
+        log(f"WARNING: no files found directly under {out_dir}; zip will be empty")
+
+    log(f"Creating distribution zip: {zip_path}")
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for p in files:
+            zf.write(p, arcname=p.name)
+
+    sz = zip_path.stat().st_size
+    log(f"  {zip_path.name}  {sz/1024/1024:8.2f} MB  ({len(files)} files)")
+    return zip_path
+
+
+# --------------------------------------------------------------------------- #
+# single-file (.safetensors / .ckpt) 自動変換
+# --------------------------------------------------------------------------- #
+SINGLE_FILE_EXTS = (".safetensors", ".ckpt", ".pt")
+
+
+def is_single_file_checkpoint(model_arg: str) -> bool:
+    """
+    --model に渡された文字列が「単一 checkpoint ファイル」を指しているかを判定する。
+    以下のいずれの形でも True になる (diffusers.from_single_file がそのまま
+    受け付けられる形式に合わせてある):
+
+      1. ローカルファイルパス            ./rev_1.2.2-fp16.safetensors
+      2. 直接 URL                        https://huggingface.co/.../foo.safetensors
+      3. HF repo_id + ファイル名         s6yx/ReV_Animated/rev_1.2.2/rev_1.2.2-fp16.safetensors
+                                          cyberdelia/CyberRealistic/CyberRealistic_FINAL_FP16.safetensors
+
+    HF repo ID 単体 (例: 'runwayml/stable-diffusion-v1-5', 'emilianJR/majicMIX_realistic_v6')
+    や diffusers 形式のローカルディレクトリはここでは False になる。
+    repo ID 単体との区別は「拡張子で終わっているか」で行う: diffusers 形式の
+    repo は 'org/name' の形でファイル拡張子を持たないため。
+    """
+    return model_arg.lower().endswith(SINGLE_FILE_EXTS)
+
+
+def _looks_like_url(s: str) -> bool:
+    return s.startswith("http://") or s.startswith("https://")
+
+
+def _fix_hf_url_for_single_file(url: str) -> str:
+    """
+    ユーザーが 'resolve/main/' 形式の URL を直接 --model に貼り付けた場合に備えた
+    保険。diffusers.from_single_file は 'blob/main/' を前提に内部で 'resolve/main/'
+    へ変換するため、'resolve/main/' のまま渡すと二重パスになり 404 になる
+    (normalize_single_file_ref のコメント参照)。'resolve/main/' を見つけたら
+    'blob/main/' に置き換えてから渡す。
+    """
+    if "huggingface.co/" in url and "/resolve/main/" in url:
+        fixed = url.replace("/resolve/main/", "/blob/main/")
+        log(f"Rewriting resolve/main URL -> blob/main to avoid double-path 404: "
+            f"'{url}' -> '{fixed}'")
+        return fixed
+    return url
+
+
+def _looks_like_local_path(s: str) -> bool:
+    return s.startswith(".") or s.startswith("/") or s.startswith("~") or (
+        len(s) > 1 and s[1] == ":"  # Windows ドライブレター (C:\...)
+    ) or os.path.exists(s)
+
+
+def normalize_single_file_ref(model_arg: str) -> str:
+    """
+    --model が 'repo_id/subpath/file.safetensors' の形 (HF repo 内のファイルを
+    指す省略形) で渡された場合、diffusers.from_single_file が公式にサポートする
+    'https://huggingface.co/<repo_id>/blob/main/<subpath>/file.safetensors'
+    形式の URL に展開する。ローカルパスや URL、あるいは既に repo 直下のファイルを
+    指す 2 階層形式は diffusers 側がそのまま解釈できるため変更しない。
+
+    ★ 重要: ここは必ず 'blob/main/' を使うこと。'resolve/main/' を使うと、
+      diffusers 内部が (blob -> resolve への変換を前提に) 再度
+      'resolve/main/' を付与してしまい、
+      '.../resolve/main/resolve/main/...' という二重パスになって 404 になる
+      不具合を実機で確認済み。'blob/main/' であれば diffusers 側が正しく
+      1 回だけ 'resolve/main/' に変換してくれる。
+    """
+    if _looks_like_url(model_arg) or _looks_like_local_path(model_arg):
+        return model_arg
+
+    parts = model_arg.split("/")
+    # 'org/repo/....../file.ext' の 3 階層以上だけを URL に展開する。
+    # 'org/repo' や 'org/repo/file.ext' (2 階層) は diffusers が
+    # 直接 repo_id として解釈できるため、そのまま渡す。
+    if len(parts) >= 3 and is_single_file_checkpoint(model_arg):
+        repo_id = "/".join(parts[:2])
+        subpath = "/".join(parts[2:])
+        url = f"https://huggingface.co/{repo_id}/blob/main/{subpath}"
+        log(f"Expanding HF shorthand '{model_arg}' -> '{url}'")
+        return url
+    return model_arg
+
+
+def resolve_model_dir(args, out_dir: Path, work_dir: Path) -> str:
+    """
+    --model が単一 checkpoint ファイル (ローカルパス / URL / HF repo 内の
+    ファイルへのショートハンド) の場合、diffusers 形式に自動変換してそのディレクトリ
+    パスを返す。diffusers 形式 (HF repo ID / ローカルディレクトリ) の場合は
+    そのまま args.model を返す。
+
+    これまで手動で行っていた以下の手順を自動化したもの:
+        huggingface-cli download <repo> <file>
+        pipe = StableDiffusionPipeline.from_single_file(path, ...)
+        pipe.save_pretrained(diffusers_dir)
+    """
+    model_ref = normalize_single_file_ref(args.model)
+
+    if not is_single_file_checkpoint(model_ref) and not _looks_like_url(model_ref):
+        return args.model
+
+    if _looks_like_url(model_ref):
+        model_ref = _fix_hf_url_for_single_file(model_ref)
+
+    from diffusers import StableDiffusionPipeline
+
+    diffusers_dir = out_dir / "_diffusers_from_single_file"
+    if diffusers_dir.exists() and (diffusers_dir / "model_index.json").exists():
+        log(f"Single-file checkpoint already converted, reusing: {diffusers_dir}")
+        return str(diffusers_dir)
+
+    log(f"--model looks like a single-file checkpoint ({model_ref}); "
+        f"auto-converting to diffusers format first...")
+    log("  (this downloads the file directly via diffusers.from_single_file; "
+        "no separate huggingface-cli download step is needed)")
+
+    kwargs = dict(torch_dtype=torch.float32, safety_checker=None)
+    if args.original_config_file:
+        kwargs["original_config_file"] = args.original_config_file
+
+    try:
+        pipe = StableDiffusionPipeline.from_single_file(model_ref, **kwargs)
+    except Exception as e:
+        log(f"ERROR: from_single_file() failed: {e}")
+        log("If this is an architecture-detection error, try passing "
+            "--original-config-file with the matching v1-inference.yaml (or similar).")
+        log("If this is a 404 / repo-not-found error, double check the exact filename "
+            "on the model's 'Files and versions' tab on Hugging Face.")
+        raise
+
+    diffusers_dir.mkdir(parents=True, exist_ok=True)
+    pipe.save_pretrained(str(diffusers_dir))
+    log(f"  Saved intermediate diffusers checkpoint to: {diffusers_dir}")
+
+    del pipe
+    gc.collect()
+
+    return str(diffusers_dir)
+
+
 # --------------------------------------------------------------------------- #
 # ラッパーモデル群
 # --------------------------------------------------------------------------- #
@@ -278,6 +453,37 @@ class VAEDecoderWrapper(nn.Module):
         return self.vae.decode(latent_sample, return_dict=False)[0]
 
 
+class VAEEncoderWrapper(nn.Module):
+    """
+    img2img 用 VAE encoder ラッパー。
+
+    ランタイム側の実装に合わせ、DiagonalGaussianDistribution の
+    サンプリング (mean + std * eps) はここでは行わず、mean と logvar から
+    導いた std を出力し、ノイズのサンプリングと scaling_factor の乗算は
+    ランタイム側 (または呼び出し側) に委ねる設計にしてある。
+    これは、乱数источник をどちら側で持つかを固定しないための判断。
+
+    出力:
+      latent_mean [1, 4, H/8, W/8]  - 潜在分布の平均
+      latent_std  [1, 4, H/8, W/8]  - 潜在分布の標準偏差 (exp(0.5*logvar))
+
+    img2img 呼び出し側は以下を行う想定:
+      latent = (latent_mean + latent_std * randn_like(latent_mean)) * scaling_factor
+      その後、通常の txt2img と同じ流れで denoise_strength に応じた
+      partial diffusion (add_noise から steps 分だけ denoise) を行う。
+    """
+    def __init__(self, vae):
+        super().__init__()
+        self.vae = vae
+
+    def forward(self, image):
+        # image: [1, 3, H, W]  float32, range [-1, 1] (呼び出し側で正規化済み)
+        posterior = self.vae.encode(image, return_dict=False)[0]
+        mean = posterior.mean
+        std = torch.exp(0.5 * posterior.logvar)
+        return mean, std
+
+
 # --------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------- #
@@ -293,16 +499,47 @@ def main():
                     help="UNet の重み量子化 bit 幅。0=無効, 4=小さい/速い, 8=標準")
     ap.add_argument("--unet-block", type=int, default=0, choices=[0, 32, 64, 128],
                     help="UNet の block-wise 量子化サイズ。0=無効（OpenCL GPU 互換）")
+    ap.add_argument("--unet-asymmetric", action="store_true",
+                    help="UNet の量子化を非対称 (asymmetric) にする。既定は対称 (symmetric)。"
+                         "非対称の方がファイルは小さくなるが、一部のモバイル OpenCL ドライバで"
+                         "ノイズ画像になることが実測で確認されているため、既定では無効。"
+                         "CPU バックエンドのみで使う場合や、GPU 側で検証済みの場合に有効化する。")
     ap.add_argument("--clip-bits", type=int, default=8, choices=[0, 4, 8],
                     help="CLIP の重み量子化 bit 幅")
     ap.add_argument("--vae-bits", type=int, default=8, choices=[0, 4, 8],
                     help="VAE の重み量子化 bit 幅 (VAE は 4bit で崩れやすいので 8 推奨)")
     ap.add_argument("--no-vae-fp16", action="store_true",
                     help="指定すると VAE を fp16 化せず fp32 のまま (サイズ 2 倍)")
+    ap.add_argument("--img2img", action="store_true",
+                    help="VAE encoder も書き出し、img2img 対応の model.json を生成する。"
+                         "vae_encoder.mnn (mean, std を出力) が追加される。"
+                         "★ ランタイム (nezumi-ai-sd-cli / app) 側の img2img 実装が"
+                         "揃うまでは、このフラグで出力したファイルは txt2img 専用ランタイムでは"
+                         "無視されるだけで害はないが、model.json の 'vae_encoder' キーの有無を"
+                         "見て機能を切り替えるランタイム実装が前提。")
     ap.add_argument("--no-token-emb-fp16", action="store_true",
                     help="指定すると token_emb.bin を fp32 で保存する (サイズ 2 倍)")
     ap.add_argument("--filenames", choices=["default", "nezumi"], default="nezumi",
                     help="出力ファイル名。nezumi=CuteYukiMix の model.json と同じ名前")
+    ap.add_argument("--original-config-file", default=None,
+                    help="single-file (.safetensors/.ckpt) 変換時に、アーキテクチャ自動推定が"
+                         "失敗する場合に明示的に渡す original config yaml のパス/URL")
+    ap.add_argument("--keep-single-file-diffusers", action="store_true",
+                    help="single-file から変換した中間 diffusers ディレクトリを削除せず残す"
+                         "(--out/_diffusers_from_single_file に保存される)")
+    ap.add_argument("--zip", action="store_true",
+                    help="変換完了後、出力ディレクトリを自動で zip 圧縮する。"
+                         "zip は --out の親ディレクトリに作成され、中身は "
+                         "--out ディレクトリの直下のファイル群 (model.json, *.mnn, "
+                         "*.mnn.weight, *.bin, tokenizer.json) のみを含む "
+                         "(中間生成物の _onnx/, _diffusers_from_single_file/ は含めない)。")
+    ap.add_argument("--zip-name", default=None,
+                    help="--zip 使用時の zip ファイル名 (拡張子 .zip は自動付与)。"
+                         "省略時は --out の最終フォルダ名がそのまま使われる。"
+                         "例: --out ./out/CyberRealistic-mnn-int8-block32 --zip "
+                         "-> CyberRealistic-mnn-int8-block32.zip "
+                         "(命名規則に沿ったファイルが欲しい場合は --out 自体を "
+                         "'{モデル名}-mnn-int{bits}-block{block}' の形にしておくとよい)")
     args = ap.parse_args()
 
     out_dir = Path(args.out).resolve()
@@ -311,6 +548,10 @@ def main():
 
     from diffusers import UNet2DConditionModel, AutoencoderKL
     from transformers import CLIPTextModel, CLIPTokenizer
+
+    # --model が単一 .safetensors/.ckpt の場合、ここで diffusers 形式に自動変換し、
+    # 以降の処理はすべて変換後のディレクトリを参照するようにする。
+    args.model = resolve_model_dir(args, out_dir, work_dir)
 
     _patch_vae_attn_processor_dynamic()
 
@@ -332,10 +573,12 @@ def main():
         # valid but unusable noisy images on some mobile OpenCL drivers.
         f_unet = "unet.mnn"
         f_vae = "vae_decoder_fp16.mnn" if not args.no_vae_fp16 else "vae_decoder.mnn"
+        f_vae_enc = "vae_encoder_fp16.mnn" if not args.no_vae_fp16 else "vae_encoder.mnn"
     else:
         f_clip = "clip.mnn"
         f_unet = "unet.mnn"
         f_vae = "vae_decoder.mnn"
+        f_vae_enc = "vae_encoder.mnn"
 
     # =================================================================== #
     # 1. CLIP TEXT ENCODER
@@ -434,19 +677,27 @@ def main():
         #    ことで、期待通り fp32 の 1/4 サイズ (int8) まで縮む。
         #  - weightQuantBits=4 にすればさらに縮む
         #  - block=32 は品質面で有利 (本家 xororz/sd-mnn と同等の構成)
+        #  - asymmetric はデフォルト False (対称・GPU 安全側)。
+        #    --unet-asymmetric を指定した場合のみ非対称にする。
+        if args.unet_asymmetric:
+            log("  WARNING: --unet-asymmetric specified. Known to produce noisy output on "
+                "some mobile OpenCL (GPU) backends. Verify on-device before shipping a "
+                "GPU-backed build; CPU backend is generally unaffected.")
         onnx_to_mnn(onnx_r, out_dir / f_unet,
                     fp16=False,
                     quant_bits=args.unet_bits,
                     quant_block=args.unet_block,
-                    asymmetric=False)
+                    asymmetric=args.unet_asymmetric)
         del unet, model_to_run
         gc.collect()
 
     # =================================================================== #
-    # 3. VAE Decoder
+    # 3. VAE Decoder / Encoder
     # =================================================================== #
-    if not (out_dir / f_vae).exists():
-        log("Exporting VAE decoder...")
+    need_vae_decoder = not (out_dir / f_vae).exists()
+    need_vae_encoder = args.img2img and not (out_dir / f_vae_enc).exists()
+
+    if need_vae_decoder or need_vae_encoder:
         vae = AutoencoderKL.from_pretrained(
             args.model, subfolder="vae", low_cpu_mem_usage=True, torch_dtype=torch.float32
         ).eval()
@@ -457,27 +708,66 @@ def main():
             if module.__class__.__name__ == "Attention":
                 module.set_processor(AttnProcessor())
         # --------------------------------------------
-        onnx_r = work_dir / "vae.raw.onnx"
 
-        model_to_run = VAEDecoderWrapper(vae).eval()
-        # ランタイムは latent_sample [1, 4, H/8, W/8]
-        dummy_latent = torch.randn(1, 4, args.size // 8, args.size // 8)
-        # ★ UNet と同じ理由で VAE decoder も latent の H/W を動的にする
-        torch.onnx.export(
-            model_to_run, (dummy_latent,), onnx_r.as_posix(),
-            input_names=["latent_sample"],
-            output_names=["sample"],
-            opset_version=14,
-            dynamic_axes={
-                "latent_sample": {0: "batch", 2: "height", 3: "width"},
-                "sample": {0: "batch", 2: "height", 3: "width"},
-            },
-        )
-        # VAE は int4 だと簡単に色が抜ける。int8 のままで fp16 の効果だけ乗せる
-        onnx_to_mnn(onnx_r, out_dir / f_vae,
-                    fp16=not args.no_vae_fp16,
-                    quant_bits=args.vae_bits, quant_block=0, asymmetric=True)
-        del vae, model_to_run
+        if need_vae_decoder:
+            log("Exporting VAE decoder...")
+            onnx_r = work_dir / "vae.raw.onnx"
+
+            model_to_run = VAEDecoderWrapper(vae).eval()
+            # ランタイムは latent_sample [1, 4, H/8, W/8]
+            dummy_latent = torch.randn(1, 4, args.size // 8, args.size // 8)
+            # ★ UNet と同じ理由で VAE decoder も latent の H/W を動的にする
+            torch.onnx.export(
+                model_to_run, (dummy_latent,), onnx_r.as_posix(),
+                input_names=["latent_sample"],
+                output_names=["sample"],
+                opset_version=14,
+                dynamic_axes={
+                    "latent_sample": {0: "batch", 2: "height", 3: "width"},
+                    "sample": {0: "batch", 2: "height", 3: "width"},
+                },
+            )
+            # VAE は int4 だと簡単に色が抜ける。int8 のままで fp16 の効果だけ乗せる
+            onnx_to_mnn(onnx_r, out_dir / f_vae,
+                        fp16=not args.no_vae_fp16,
+                        quant_bits=args.vae_bits, quant_block=0, asymmetric=True)
+            del model_to_run
+            gc.collect()
+        else:
+            log(f"VAE decoder already exists ({f_vae}), skipping re-export.")
+
+        # --------------------------------------------------------------- #
+        # img2img: VAE encoder も書き出す (--img2img 指定時のみ)
+        # 既にロード済みの vae インスタンスを再利用し、二重ロードを避ける。
+        # デコーダが既に存在していて再変換をスキップする場合でも、
+        # ここは独立して実行される (再変換時に --img2img だけ追加したい
+        # ケースに対応するため)。
+        # --------------------------------------------------------------- #
+        if need_vae_encoder:
+            log("Exporting VAE encoder (--img2img)...")
+            onnx_enc = work_dir / "vae_encoder.raw.onnx"
+            encoder_to_run = VAEEncoderWrapper(vae).eval()
+            # image: [1, 3, H, W]  H/W は元画像サイズ (latent の 8 倍)
+            dummy_image = torch.randn(1, 3, args.size, args.size)
+            torch.onnx.export(
+                encoder_to_run, (dummy_image,), onnx_enc.as_posix(),
+                input_names=["image"],
+                output_names=["latent_mean", "latent_std"],
+                opset_version=14,
+                dynamic_axes={
+                    "image": {0: "batch", 2: "height", 3: "width"},
+                    "latent_mean": {0: "batch", 2: "height", 3: "width"},
+                    "latent_std": {0: "batch", 2: "height", 3: "width"},
+                },
+            )
+            # decoder と同じ量子化方針 (int4 は色抜けしやすいため既定は int8)
+            onnx_to_mnn(onnx_enc, out_dir / f_vae_enc,
+                        fp16=not args.no_vae_fp16,
+                        quant_bits=args.vae_bits, quant_block=0, asymmetric=True)
+            del encoder_to_run
+            gc.collect()
+
+        del vae
         gc.collect()
 
     # =================================================================== #
@@ -516,6 +806,13 @@ def main():
         "text_embedding_size": 768,
         "default_size": args.size,
     }
+    if args.img2img and (out_dir / f_vae_enc).exists():
+        # ランタイムはこのキーの有無で img2img 対応可否を判定する想定。
+        # vae_encoder の出力は (latent_mean, latent_std) の2テンソルであり、
+        # サンプリング (mean + std * eps) と scaling_factor の乗算は
+        # ランタイム側で行う。VAEEncoderWrapper のクラスコメント参照。
+        model_json["vae_encoder"] = f_vae_enc
+        model_json["img2img"] = True
     with open(out_dir / "model.json", "w", encoding="utf-8") as f:
         json.dump(model_json, f, ensure_ascii=False, indent=2)
 
@@ -523,11 +820,22 @@ def main():
     log("Done. Files:")
     total = 0
     for p in sorted(out_dir.iterdir()):
-        if p.is_file():
+        if p.is_file() and p.suffix.lower() != ".zip":
             sz = p.stat().st_size
             total += sz
             log(f"  {p.name:35s}  {sz/1024/1024:8.2f} MB")
+        elif p.is_file() and p.suffix.lower() == ".zip":
+            log(f"  {p.name:35s}  (existing zip, excluded from TOTAL below)")
     log(f"  {'TOTAL':35s}  {total/1024/1024:8.2f} MB")
+
+    diffusers_dir = out_dir / "_diffusers_from_single_file"
+    if diffusers_dir.exists() and not args.keep_single_file_diffusers:
+        log(f"Removing intermediate diffusers checkpoint: {diffusers_dir} "
+            f"(pass --keep-single-file-diffusers to keep it)")
+        shutil.rmtree(diffusers_dir, ignore_errors=True)
+
+    if args.zip:
+        make_distribution_zip(out_dir, args.zip_name)
 
 
 if __name__ == "__main__":

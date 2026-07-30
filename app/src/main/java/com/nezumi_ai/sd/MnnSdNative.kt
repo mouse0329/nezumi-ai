@@ -51,8 +51,10 @@ object MnnSdNative {
     ): Boolean
 
     /**
-     * ロード済みモデルの capabilities を取得する。SDXL 判定・最大辺サイズを Kotlin 側で参照するために使う。
-     * 返却フォーマットは JSON 文字列 (例: {"is_sdxl":1,"max_side_px":1536,"default_side_px":1024})。
+     * ロード済みモデルの capabilities を取得する。
+     * 返却フォーマットは JSON 文字列。keys:
+     *   is_sdxl (0/1), supports_img2img (0/1), supports_opencl (0/1),
+     *   max_side_px, default_side_px, clip_skip, text_embedding_size, format_version
      * ネイティブ側が未対応の古い .so では null / 空文字を返す。
      */
     fun getCapabilities(handle: Long): String? = try {
@@ -72,6 +74,10 @@ object MnnSdNative {
     }
 
     /**
+     * @param initImageRgb   null なら txt2img。非 null なら width*height*3 の row-major RGB (0..255)。
+     * @param initImageWidth 0 なら txt2img。非 0 のとき width と一致必須。
+     * @param initImageHeight 同上。
+     * @param denoiseStrength 0.0=init そのまま / 1.0=完全 txt2img 相当。範囲 [0,1]。
      * @return packed RGB: first 8 bytes = width (int LE) + height (int LE), then RGB triplets.
      * Returns null if generation fails or the native symbol is not yet present in the loaded .so.
      */
@@ -85,9 +91,17 @@ object MnnSdNative {
         cfg: Float,
         seed: Long,
         scheduler: Int,
+        initImageRgb: ByteArray? = null,
+        initImageWidth: Int = 0,
+        initImageHeight: Int = 0,
+        denoiseStrength: Float = 0f,
         progressListener: NativeProgressListener? = null
     ): ByteArray? = try {
-        generateNative(handle, prompt, negativePrompt, width, height, steps, cfg, seed, scheduler, progressListener)
+        generateNative(
+            handle, prompt, negativePrompt, width, height, steps, cfg, seed, scheduler,
+            initImageRgb, initImageWidth, initImageHeight, denoiseStrength,
+            progressListener
+        )
     } catch (e: UnsatisfiedLinkError) {
         Log.e(TAG, "generate() not found in libmnn_sd_jni.so — rebuild required: ${e.message}")
         null
@@ -103,6 +117,10 @@ object MnnSdNative {
         cfg: Float,
         seed: Long,
         scheduler: Int,
+        initImageRgb: ByteArray?,
+        initImageWidth: Int,
+        initImageHeight: Int,
+        denoiseStrength: Float,
         progressListener: NativeProgressListener?
     ): ByteArray?
 

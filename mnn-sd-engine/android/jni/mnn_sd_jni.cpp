@@ -1,11 +1,13 @@
 #include <jni.h>
 #include <android/log.h>
 
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
 
 #include "mnn_sd/engine.h"
+#include "engine_internal.h"
 
 #define LOG_TAG "MnnSdJni"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -71,27 +73,16 @@ namespace
         //   default (= DPM) にフォールバックし、事実上「選択されて動いていない」
         //   状態になっていた。types.h の MnnSdScheduler enum に合わせて
         //   0..7 のすべてを正しくマップする。
-        //   ※ 現状 engine 内部は PLMS(PNDM) 固定でサンプラ切替は未実装なので
-        //   ここで正しい enum を渡しても最終的な数値挙動は当面同じだが、
-        //   ログ・診断上「何が要求されたか」が engine に届く点が重要。
         switch (scheduler)
         {
-        case 0:
-            return MNN_SD_SCHEDULER_EULER;
-        case 1:
-            return MNN_SD_SCHEDULER_DDIM;
-        case 2:
-            return MNN_SD_SCHEDULER_DPM;
-        case 3:
-            return MNN_SD_SCHEDULER_DPM_PP_2M;
-        case 4:
-            return MNN_SD_SCHEDULER_DPM_PP_2M_KARRAS;
-        case 5:
-            return MNN_SD_SCHEDULER_LCM;
-        case 6:
-            return MNN_SD_SCHEDULER_EULER_A;
-        case 7:
-            return MNN_SD_SCHEDULER_UNIPC;
+        case 0: return MNN_SD_SCHEDULER_EULER;
+        case 1: return MNN_SD_SCHEDULER_DDIM;
+        case 2: return MNN_SD_SCHEDULER_DPM;
+        case 3: return MNN_SD_SCHEDULER_DPM_PP_2M;
+        case 4: return MNN_SD_SCHEDULER_DPM_PP_2M_KARRAS;
+        case 5: return MNN_SD_SCHEDULER_LCM;
+        case 6: return MNN_SD_SCHEDULER_EULER_A;
+        case 7: return MNN_SD_SCHEDULER_UNIPC;
         default:
             LOGE("to_scheduler: unknown scheduler id=%d, falling back to DPM", scheduler);
             return MNN_SD_SCHEDULER_DPM;
@@ -101,12 +92,8 @@ namespace
     /**
      * Bug fix: MnnSdEngine には load 時点の backend 情報が保持されているが、
      *   JNI 側では generate() 呼び出しごとに use_opencl を 0 で
-     *   ハードコードしていた。これでは engine 内部 (create_interpreter_and_session)
-     *   で backend=OPENCL を選択していても、param.use_opencl フラグを見る
-     *   コードパス (subprocess/HTTP 互換ヘルパ経由) では常に CPU 扱いになり
-     *   ユーザーが GPU を選んだ意図が反映されない。
-     *   ネイティブエンジンの capabilities から supports_opencl を取り出し、
-     *   それを use_opencl の初期値として使う。
+     *   ハードコードしていた。ネイティブエンジンの capabilities から
+     *   supports_opencl を取り出し、それを use_opencl の初期値として使う。
      */
     int32_t resolve_use_opencl(MnnSdEngine *engine)
     {
@@ -211,6 +198,63 @@ extern "C"
         return mnn_sd_is_loaded(from_handle(handle)) ? JNI_TRUE : JNI_FALSE;
     }
 
+    /**
+     * ロード済みモデルの capabilities を JSON で返す。
+     * Kotlin (MnnSdModule) 側は org.json.JSONObject でパースして
+     *   - is_sdxl:          UI スライダーの上限切替 (512 -> 1024)
+     *   - supports_img2img: img2img UI の出し分け (vae_encoder の有無)
+     *   - max_side_px / default_side_px / clip_skip / text_embedding_size / format_version
+     * を取り出す。is_sdxl は MnnSdCapabilities には無いので、engine の
+     * model_config.is_sdxl から補って一緒に JSON に載せる。
+     */
+    JNIEXPORT jstring JNICALL
+    Java_com_nezumi_1ai_sd_MnnSdNative_getCapabilitiesNative(
+        JNIEnv *env,
+        jobject /*thiz*/,
+        jlong handle)
+    {
+        MnnSdEngine *engine_ptr = from_handle(handle);
+        if (!engine_ptr)
+            return nullptr;
+
+        MnnSdCapabilities caps{};
+        MnnSdErrorInfo error{};
+        MnnSdError code = mnn_sd_get_capabilities(engine_ptr, &caps, &error);
+        if (code != MNN_SD_OK)
+        {
+            set_last_error(error);
+            LOGE("getCapabilities failed: %s", g_last_error.c_str());
+            return nullptr;
+        }
+
+        const int is_sdxl = engine_ptr->model_config.is_sdxl ? 1 : 0;
+
+        char buf[768];
+        std::snprintf(
+            buf, sizeof(buf),
+            "{"
+            "\"supports_opencl\":%d,"
+            "\"max_side_px\":%d,"
+            "\"default_side_px\":%d,"
+            "\"clip_skip\":%d,"
+            "\"text_embedding_size\":%d,"
+            "\"format_version\":\"%s\","
+            "\"supports_img2img\":%d,"
+            "\"is_sdxl\":%d"
+            "}",
+            caps.supports_opencl,
+            caps.max_side_px,
+            caps.default_side_px,
+            caps.clip_skip,
+            caps.text_embedding_size,
+            caps.format_version,
+            caps.supports_img2img,
+            is_sdxl);
+
+        g_last_error.clear();
+        return env->NewStringUTF(buf);
+    }
+
     JNIEXPORT jbyteArray JNICALL
     Java_com_nezumi_1ai_sd_MnnSdNative_generateNative(
         JNIEnv *env,
@@ -224,12 +268,43 @@ extern "C"
         jfloat cfg,
         jlong seed,
         jint scheduler,
+        jbyteArray init_image_rgb,
+        jint init_image_width,
+        jint init_image_height,
+        jfloat denoise_strength,
         jobject progress_cb)
     {
         const char *prompt_utf = env->GetStringUTFChars(prompt, nullptr);
         const char *neg_utf = env->GetStringUTFChars(negative_prompt, nullptr);
 
         MnnSdEngine *engine_ptr = from_handle(handle);
+
+        // img2img: 初期画像 RGB をコピーで受け取る (mnn_sd_generate 中の GC で
+        //   JVM 側バッファが動くのを避けるため、値渡しに揃える)。
+        std::vector<uint8_t> init_image_buf;
+        const uint8_t *init_image_ptr = nullptr;
+        if (init_image_rgb != nullptr &&
+            init_image_width > 0 && init_image_height > 0)
+        {
+            const jsize len = env->GetArrayLength(init_image_rgb);
+            const jsize expected =
+                static_cast<jsize>(init_image_width) *
+                static_cast<jsize>(init_image_height) * 3;
+            if (len < expected)
+            {
+                env->ReleaseStringUTFChars(prompt, prompt_utf);
+                env->ReleaseStringUTFChars(negative_prompt, neg_utf);
+                g_last_error = "init_image byte array shorter than width*height*3";
+                LOGE("%s (got=%d expected=%d)", g_last_error.c_str(),
+                     static_cast<int>(len), static_cast<int>(expected));
+                return nullptr;
+            }
+            init_image_buf.resize(static_cast<size_t>(expected));
+            env->GetByteArrayRegion(
+                init_image_rgb, 0, expected,
+                reinterpret_cast<jbyte *>(init_image_buf.data()));
+            init_image_ptr = init_image_buf.data();
+        }
 
         MnnSdGenerateParams params{};
         params.prompt = prompt_utf;
@@ -240,12 +315,19 @@ extern "C"
         params.cfg_scale = cfg;
         params.seed = seed;
         params.scheduler = to_scheduler(scheduler);
-        // Bug fix: 以前は 0 ハードコードで GPU 選択が事実上無効化されていた。
-        //   load 時の backend が OpenCL なら use_opencl=1 を engine に伝える。
         params.use_opencl = resolve_use_opencl(engine_ptr);
-        LOGI("generate: seed=%lld scheduler=%d use_opencl=%d %dx%d steps=%d cfg=%.2f",
+
+        // img2img パラメータ (init_image が無ければ全てゼロで txt2img)
+        params.init_image_rgb = init_image_ptr;
+        params.init_image_width = init_image_ptr ? init_image_width : 0;
+        params.init_image_height = init_image_ptr ? init_image_height : 0;
+        params.denoise_strength = init_image_ptr ? denoise_strength : 0.0f;
+
+        LOGI("generate: seed=%lld scheduler=%d use_opencl=%d %dx%d steps=%d cfg=%.2f "
+             "img2img=%d denoise=%.2f",
              static_cast<long long>(seed), static_cast<int>(params.scheduler),
-             params.use_opencl, width, height, steps, cfg);
+             params.use_opencl, width, height, steps, cfg,
+             init_image_ptr ? 1 : 0, denoise_strength);
 
         ProgressCtx ctx{env, nullptr, nullptr};
         if (progress_cb != nullptr)

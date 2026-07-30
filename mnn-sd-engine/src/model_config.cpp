@@ -14,6 +14,8 @@ namespace
         std::snprintf(cfg->clip_file, sizeof(cfg->clip_file), "%s", "clip.mnn");
         std::snprintf(cfg->unet_file, sizeof(cfg->unet_file), "%s", "unet.mnn");
         std::snprintf(cfg->vae_decoder_file, sizeof(cfg->vae_decoder_file), "%s", "vae_decoder.mnn");
+        // img2img 用 VAE encoder はデフォルトでは空 (モデルになければ img2img 不可)。
+        cfg->vae_encoder_file[0] = '\0';
         std::snprintf(cfg->tokenizer_file, sizeof(cfg->tokenizer_file), "%s", "tokenizer.json");
         cfg->clip_skip = 2;
         cfg->text_embedding_size = 768;
@@ -107,6 +109,22 @@ namespace
         std::snprintf(cfg->vae_decoder_file, sizeof(cfg->vae_decoder_file), "%s", "vae_decoder.mnn");
     }
 
+    // img2img 用 VAE encoder の自動検出。見つからなければ vae_encoder_file は空のまま
+    // にしておき、caps.supports_img2img=0 として UI 側で img2img を無効化する。
+    void pick_vae_encoder_file(const char *dir, MnnSdModelConfig *cfg)
+    {
+        const char *candidates[] = {"vae_encoder_fp16.mnn", "vae_encoder.mnn"};
+        for (const char *name : candidates)
+        {
+            if (file_exists(dir, name))
+            {
+                std::snprintf(cfg->vae_encoder_file, sizeof(cfg->vae_encoder_file), "%s", name);
+                return;
+            }
+        }
+        cfg->vae_encoder_file[0] = '\0';
+    }
+
     // Minimal JSON field extraction (no third_party JSON dep for Phase 1).
     bool extract_string(const char *json, const char *key, char *out, size_t out_cap)
     {
@@ -160,6 +178,7 @@ extern "C"
         pick_clip_file(model_dir, out_config);
         pick_unet_file(model_dir, out_config);
         pick_vae_file(model_dir, out_config);
+        pick_vae_encoder_file(model_dir, out_config);
 
         char path[1024];
         std::snprintf(path, sizeof(path), "%s/model.json", model_dir);
@@ -182,6 +201,16 @@ extern "C"
         }
         extract_string(buf, "unet", out_config->unet_file, sizeof(out_config->unet_file));
         extract_string(buf, "vae_decoder", out_config->vae_decoder_file, sizeof(out_config->vae_decoder_file));
+        // img2img: model.json に vae_encoder キーがあれば優先し、
+        // なければ pick_vae_encoder_file で自動検出した値を保持。
+        {
+            char encoder_key[64] = {0};
+            if (extract_string(buf, "vae_encoder", encoder_key, sizeof(encoder_key)) &&
+                encoder_key[0] != '\0' && file_exists(model_dir, encoder_key))
+            {
+                std::snprintf(out_config->vae_encoder_file, sizeof(out_config->vae_encoder_file), "%s", encoder_key);
+            }
+        }
         if (!extract_string(buf, "tokenizer1", out_config->tokenizer_file, sizeof(out_config->tokenizer_file)))
         {
             extract_string(buf, "tokenizer", out_config->tokenizer_file, sizeof(out_config->tokenizer_file));

@@ -60,6 +60,34 @@ namespace
             set_error(out_error, MNN_SD_ERR_INVALID_PARAMS, "invalid scheduler value (must be 0-7)");
             return false;
         }
+        const bool wants_img2img =
+            params->init_image_rgb != nullptr ||
+            params->init_image_width > 0 ||
+            params->init_image_height > 0;
+        if (wants_img2img)
+        {
+            if (!params->init_image_rgb)
+            {
+                set_error(out_error, MNN_SD_ERR_INVALID_PARAMS, "init_image_rgb is required for img2img");
+                return false;
+            }
+            if (params->init_image_width != params->width || params->init_image_height != params->height)
+            {
+                set_error(out_error, MNN_SD_ERR_INVALID_PARAMS,
+                          "init_image size must match width/height exactly (crop/resize on caller side)");
+                return false;
+            }
+            if (params->init_image_width <= 0 || params->init_image_height <= 0)
+            {
+                set_error(out_error, MNN_SD_ERR_INVALID_PARAMS, "init_image size must be positive");
+                return false;
+            }
+            if (params->denoise_strength < 0.0f || params->denoise_strength > 1.0f)
+            {
+                set_error(out_error, MNN_SD_ERR_INVALID_PARAMS, "denoise_strength must be in [0,1]");
+                return false;
+            }
+        }
         return true;
     }
 
@@ -198,6 +226,7 @@ extern "C"
         engine->caps.default_side_px = engine->model_config.default_size;
         engine->caps.clip_skip = engine->model_config.clip_skip;
         engine->caps.text_embedding_size = engine->model_config.text_embedding_size;
+        engine->caps.supports_img2img = engine->model_config.vae_encoder_file[0] != '\0' ? 1 : 0;
         std::snprintf(engine->caps.format_version, sizeof(engine->caps.format_version), "%s",
                       engine->model_config.format);
 

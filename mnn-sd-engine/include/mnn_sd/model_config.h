@@ -12,6 +12,12 @@ typedef struct MnnSdModelConfig {
     char clip_file[64];         /* SD1.5: single CLIP. SDXL: CLIP-L (clip1) */
     char unet_file[64];
     char vae_decoder_file[64];
+    /**
+     * img2img (SD1.5) 用 VAE encoder。存在しなければ空文字列のままになり、
+     * mnn_sd_get_capabilities().supports_img2img=0 となる。
+     * 候補名: vae_encoder_fp16.mnn / vae_encoder.mnn
+     */
+    char vae_encoder_file[64];
     char tokenizer_file[64];    /* SD1.5: single tokenizer. SDXL: CLIP-L tokenizer */
     int32_t clip_skip;
     int32_t text_embedding_size; /* SD1.5: 768. SDXL: CLIP-L dim, usually 768 */

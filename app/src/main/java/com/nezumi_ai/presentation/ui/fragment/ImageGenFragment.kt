@@ -58,7 +58,11 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.util.Log
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -133,7 +137,12 @@ class ImageGenFragment : Fragment() {
         //   StateFlow を同期させる。UI の入力中値を上書きしないよう、
         //   実際に変わったときだけ代入する。
         viewModel.refreshPreferencesBackedFields()
-
+        // Bug fix ("model.json に img2img:true があるのに UI 上で使えない"):
+        //   モデル切替 / 別画面からの復帰時に img2img capability を再判定し、
+        //   Compose 側の supportsImg2img StateFlow を最新化する。
+        //   acquireLocalDream() 待ち (=生成ボタン押下待ち) では遅すぎるため、
+        //   ここで model.json + ファイル配置から先取り判定する。
+        viewModel.refreshImg2imgCapability()
     }
 
     override fun onDestroyView() {
@@ -261,6 +270,30 @@ private fun LegacyImageGenScreen(
     val queueResultBitmaps by vm.queueResultBitmaps.collectAsState()
     val generationQueue by vm.generationQueue.collectAsState()
     val isQueueRunning by vm.isQueueRunning.collectAsState()
+
+    // ---- img2img ----------------------------------------------------------
+    val supportsImg2img by vm.supportsImg2img.collectAsState()
+    val img2imgEnabled by vm.img2imgEnabled.collectAsState()
+    val initImageBmp by vm.initImageBitmap.collectAsState()
+    val denoiseStrength by vm.denoiseStrength.collectAsState()
+    val pickImageLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val stream = ctx.contentResolver.openInputStream(uri)
+                val bmp = stream?.use { BitmapFactory.decodeStream(it) }
+                if (bmp != null) {
+                    vm.setInitImage(bmp)
+                    vm.setImg2imgEnabled(true)
+                } else {
+                    Log.w("ImageGenFragment", "failed to decode picked image: $uri")
+                }
+            } catch (t: Throwable) {
+                Log.w("ImageGenFragment", "failed to load init image", t)
+            }
+        }
+    }
     
     var selectedTab by remember { mutableStateOf(0) }
     val library = remember { mutableStateListOf<LibraryItem>() }
@@ -758,6 +791,94 @@ private fun LegacyImageGenScreen(
                         style = MaterialTheme.typography.labelMedium
                     )
                 }
+
+                // ============ img2img UI (capability 驅動) ============
+                if (supportsImg2img) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .padding(12.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "初期画像 (img2img)",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Switch(
+                                checked = img2imgEnabled,
+                                onCheckedChange = { on ->
+                                    vm.setImg2imgEnabled(on)
+                                    if (on && initImageBmp == null) {
+                                        pickImageLauncher.launch("image/*")
+                                    }
+                                },
+                                enabled = !loading
+                            )
+                        }
+                        if (img2imgEnabled) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (initImageBmp != null) {
+                                    Image(
+                                        bitmap = initImageBmp!!.asImageBitmap(),
+                                        contentDescription = "init image",
+                                        modifier = Modifier
+                                            .size(72.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                }
+                                Column(Modifier.weight(1f)) {
+                                    TextButton(
+                                        onClick = { pickImageLauncher.launch("image/*") },
+                                        enabled = !loading
+                                    ) {
+                                        Text(if (initImageBmp == null) "画像を選択" else "画像を変更")
+                                    }
+                                    if (initImageBmp != null) {
+                                        TextButton(
+                                            onClick = { vm.clearInitImage() },
+                                            enabled = !loading
+                                        ) {
+                                            Text("クリア", color = MaterialTheme.colorScheme.error)
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "変化の強さ (denoise strength): ${String.format("%.2f", denoiseStrength)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Slider(
+                                value = denoiseStrength,
+                                onValueChange = { vm.setDenoiseStrength(it) },
+                                valueRange = 0f..1f,
+                                steps = 19,
+                                enabled = !loading
+                            )
+                            Text(
+                                "低い = 元画像に忠実 / 高い = プロンプト寄り。0.65 前後が扱いやすい。",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        "このモデルは img2img 非対応 (vae_encoder が同梱されていません)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+                // ============ /img2img UI ============
 
                 var batchCount by remember { mutableStateOf(1) }
                 Column(Modifier.padding(top = 12.dp)) {

@@ -69,6 +69,29 @@ extern "C"
         int64_t seed; /**< negative = random */
         MnnSdScheduler scheduler;
         int32_t use_opencl; /**< honored only if loaded with OpenCL-capable backend */
+
+        /**
+         * img2img (Stable Diffusion 1.5) 用パラメータ。
+         *
+         * `init_image_rgb` が非 NULL かつ `init_image_width` / `init_image_height`
+         * が正のとき、パイプラインは img2img モードで走る:
+         *   1. init_image を VAE encoder で latent に変換
+         *   2. denoise_strength(0..1) に応じたステップ数 (steps * strength)
+         *      だけ denoise
+         *   3. 通常の VAE decoder で RGB 化
+         *
+         * init_image のサイズは `width` / `height` と一致し、8 の倍数であること。
+         * ユーザー側 (Kotlin) が事前にリサイズ/トリミングして揃える。
+         *
+         * VAE encoder がロードされていないモデル (vae_encoder_fp16.mnn が
+         * 存在しない) では `MNN_SD_ERR_MODEL_NOT_FOUND` が返る。
+         *   → 呼び出し側は mnn_sd_get_capabilities().supports_img2img を
+         *   事前確認し、0 なら init_image を渡さないこと。
+         */
+        const uint8_t *init_image_rgb;  /**< row-major RGB, tightly packed (w*h*3 bytes). NULL = txt2img. */
+        int32_t init_image_width;
+        int32_t init_image_height;
+        float denoise_strength;         /**< 0.0 = init そのまま, 1.0 = 完全な txt2img。範囲 [0, 1]。 */
     } MnnSdGenerateParams;
 
     typedef struct MnnSdProgress
@@ -97,6 +120,11 @@ extern "C"
         int32_t clip_skip;
         int32_t text_embedding_size;
         char format_version[32];
+        /**
+         * 1: vae_encoder が見つかっており img2img が使える
+         * 0: エンコーダなし → txt2img のみ (Kotlin/UI 側で img2img UI を無効化する)
+         */
+        int32_t supports_img2img;
     } MnnSdCapabilities;
 
     typedef struct MnnSdErrorInfo

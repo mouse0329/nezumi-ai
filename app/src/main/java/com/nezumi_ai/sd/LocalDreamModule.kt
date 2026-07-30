@@ -502,6 +502,16 @@ class LocalDreamModule(private val context: Context) {
         isServerReady = false
     }
 
+    /**
+     * MnnSdModule の capability を ViewModel/UI に直达させるブリッジ。
+     * HTTP フォールバック経路ではどちらも false / ネイティブ未ロード相当になる。
+     */
+    val isCurrentModelSdxl: Boolean
+        get() = mnnModule?.isCurrentModelSdxl == true
+
+    val supportsImg2img: Boolean
+        get() = mnnModule?.supportsImg2img == true
+
     suspend fun generateImage(
         prompt: String,
         negativePrompt: String,
@@ -511,6 +521,8 @@ class LocalDreamModule(private val context: Context) {
         cfg: Float,
         seed: Long,
         scheduler: SdScheduler = SdScheduler.DEFAULT,
+        initImageRgb: ByteArray? = null,
+        denoiseStrength: Float = 0f,
         onProgress: (Int, Int, Float) -> Unit
     ): Bitmap? = withContext(Dispatchers.IO) {
         // ── 前段：テキストガード ──────────────────────────────────
@@ -551,7 +563,7 @@ class LocalDreamModule(private val context: Context) {
             return@withContext null
         }
         if (mnnModule != null) {
-            Log.d(TAG, "generateImage: Using JNI MNN module for generation")
+            Log.d(TAG, "generateImage: Using JNI MNN module for generation (img2img=${initImageRgb != null})")
             return@withContext mnnModule!!.generateImage(
                 prompt = prompt,
                 negativePrompt = negativePrompt,
@@ -561,8 +573,13 @@ class LocalDreamModule(private val context: Context) {
                 cfg = cfg,
                 seed = seed,
                 scheduler = scheduler,
+                initImageRgb = initImageRgb,
+                denoiseStrength = denoiseStrength,
                 onProgress = onProgress
             )
+        }
+        if (initImageRgb != null) {
+            Log.w(TAG, "generateImage: HTTP fallback path does not support img2img — ignoring init_image")
         }
         if (serverProcess?.isAlive != true) {
             Log.w(TAG, "Server process is not alive but service is marked ready; continuing with HTTP generation")
@@ -804,6 +821,8 @@ class LocalDreamModule(private val context: Context) {
         cfg: Float,
         seed: Long,
         scheduler: SdScheduler = SdScheduler.DEFAULT,
+        initImageRgb: ByteArray? = null,
+        denoiseStrength: Float = 0f,
         onProgress: (Int, Int, Float) -> Unit
     ): Pair<Bitmap?, ImageGenerationMetadata?>? = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
@@ -822,6 +841,8 @@ class LocalDreamModule(private val context: Context) {
             cfg = cfg,
             seed = resolvedSeed,
             scheduler = scheduler,
+            initImageRgb = initImageRgb,
+            denoiseStrength = denoiseStrength,
             onProgress = onProgress
         )
 

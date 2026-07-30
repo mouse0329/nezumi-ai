@@ -22,6 +22,10 @@ object SdModelLayout {
     // SDXL: CLIP-G (第 2 テキストエンコーダ) の候補。C++ 側 sdxl-support.patch と同じ順序。
     val CLIP2_CANDIDATES = listOf("clip2_fp16.mnn", "clip2.mnn", "text_encoder_2.mnn")
     val VAE_DECODER_CANDIDATES = listOf("vae_decoder_fp16.mnn", "vae_decoder.mnn", "vae_decoder_min.bin")
+    // img2img 用 VAE encoder。convert_sd15_to_mnn.py --img2img の出力と完全一致:
+    //   vae_encoder_fp16.mnn (+ .weight) / vae_encoder.mnn (fp32 バジョン)
+    // このリストは mnn-sd-engine/src/model_config.cpp:pick_vae_encoder_file と同順序にすること。
+    val VAE_ENCODER_CANDIDATES = listOf("vae_encoder_fp16.mnn", "vae_encoder.mnn")
     const val TOKENIZER_FILE = "tokenizer.json"
     // SDXL: CLIP-G 用 tokenizer
     const val TOKENIZER2_FILE = "tokenizer_2.json"
@@ -80,7 +84,9 @@ object SdModelLayout {
             // MNN 新形式の外部ウェイト (.mnn.weight) がある場合、ペアで存在することを確認する。
             //   ユーザの SDXL zip は unet.mnn + unet.mnn.weight など 3.4GB に及ぶ外部ウェイトを伴う。
             //   .weight が欠けているとロード時に native 側でクラッシュするので、ここで先回しに検出する。
+            //   img2img: vaeEncoderFile も同じ pair チェックに入れておく (ファイル名食い違いによる島后クラッシュ防止)。
             val missingWeight = listOf(resolved.unetFile, resolved.clipFile, resolved.vaeDecoderFile,
+                                       resolved.vaeEncoderFile,
                                        if (resolved.isSdxl) resolved.clip2File else null)
                 .filterNotNull()
                 .firstOrNull { mnn ->
@@ -156,6 +162,11 @@ object SdModelLayout {
         val override = readModelJson(modelDir)
         val clip2File = override?.clip2?.takeIf { File(modelDir, it).exists() }
             ?: pickFirst(modelDir, CLIP2_CANDIDATES)
+        // img2img: model.json の "vae_encoder" キーがあれば優先し、なければ candidates から自動検出する。
+        //   convert_sd15_to_mnn.py --img2img は model.json に "vae_encoder": "vae_encoder_fp16.mnn"
+        //   を書き出すので、このパスで百発百中する。
+        val vaeEncoderFile = override?.vaeEncoder?.takeIf { File(modelDir, it).exists() }
+            ?: pickFirst(modelDir, VAE_ENCODER_CANDIDATES)
         // SDXL 判定:
         //   1) model.json の "base":"sdxl" が最優先 (C++ 側 model_config.cpp と統一)
         //   2) それが無い場合は clip2 系ファイルの存在で自動判定
@@ -172,6 +183,7 @@ object SdModelLayout {
                 ?: pickFirst(modelDir, CLIP_CANDIDATES),
             vaeDecoderFile = override?.vaeDecoder?.takeIf { File(modelDir, it).exists() }
                 ?: pickFirst(modelDir, VAE_DECODER_CANDIDATES),
+            vaeEncoderFile = vaeEncoderFile,
             tokenizerFile = override?.tokenizer
                 ?.takeIf { File(modelDir, it).exists() }
                 ?: TOKENIZER_FILE,
@@ -196,6 +208,8 @@ object SdModelLayout {
         val unetFile: String?,
         val clipFile: String?,
         val vaeDecoderFile: String?,
+        // img2img: null なら vae_encoder 未同梱 (txt2img only)。
+        val vaeEncoderFile: String? = null,
         val tokenizerFile: String = TOKENIZER_FILE,
         // --- SDXL only (isSdxl=false のときは無視される) ---
         val isSdxl: Boolean = false,
@@ -203,15 +217,19 @@ object SdModelLayout {
         val tokenizer2File: String = TOKENIZER2_FILE
     ) {
         fun probeTargets(): List<String> {
-            val base = listOfNotNull(unetFile, clipFile, vaeDecoderFile)
+            val base = listOfNotNull(unetFile, clipFile, vaeDecoderFile, vaeEncoderFile)
             return if (isSdxl) base + listOfNotNull(clip2File) else base
         }
+
+        /** img2img に対応しているか (vae_encoder が同梱されているか)。 */
+        val supportsImg2img: Boolean get() = vaeEncoderFile != null
     }
 
     private data class ModelJsonOverride(
         val clip: String?,
         val unet: String?,
         val vaeDecoder: String?,
+        val vaeEncoder: String?,
         val tokenizer: String?,
         val base: String?,
         val clip2: String?,
@@ -227,6 +245,11 @@ object SdModelLayout {
                 clip = obj.optString("clip").ifBlank { null },
                 unet = obj.optString("unet").ifBlank { null },
                 vaeDecoder = obj.optString("vae_decoder").ifBlank { null },
+                // convert_sd15_to_mnn.py --img2img は model.json に
+                //   "vae_encoder": "vae_encoder_fp16.mnn"
+                //   "img2img": true
+                // を書き出す。本当の single source of truth はこのキー。
+                vaeEncoder = obj.optString("vae_encoder").ifBlank { null },
                 tokenizer = obj.optString("tokenizer").ifBlank { null },
                 base = obj.optString("base").ifBlank { null },
                 clip2 = obj.optString("clip2").ifBlank { null },

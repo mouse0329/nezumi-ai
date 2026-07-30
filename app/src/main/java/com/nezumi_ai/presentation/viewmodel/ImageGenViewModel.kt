@@ -301,6 +301,84 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private val _lastCompletedMetadata = MutableStateFlow<ImageGenerationMetadata?>(null)
     val lastCompletedMetadata: StateFlow<ImageGenerationMetadata?> = _lastCompletedMetadata.asStateFlow()
 
+    // ---- img2img -----------------------------------------------------------
+    // ネイティブ caps.supports_img2img (vae_encoder 同梱) のミラー。
+    // モデルロード後に acquireLocalDream(...) 直後で確定値へと更新する。
+    private val _supportsImg2img = MutableStateFlow(false)
+    val supportsImg2img: StateFlow<Boolean> = _supportsImg2img.asStateFlow()
+
+    private val _initImageBitmap = MutableStateFlow<Bitmap?>(null)
+    val initImageBitmap: StateFlow<Bitmap?> = _initImageBitmap.asStateFlow()
+
+    private val _img2imgEnabled = MutableStateFlow(false)
+    val img2imgEnabled: StateFlow<Boolean> = _img2imgEnabled.asStateFlow()
+
+    // Diffusers img2img の実用域に合わせ既定 0.65。
+    private val _denoiseStrength = MutableStateFlow(0.65f)
+    val denoiseStrength: StateFlow<Float> = _denoiseStrength.asStateFlow()
+
+    fun setImg2imgEnabled(v: Boolean) { _img2imgEnabled.value = v }
+    fun setDenoiseStrength(v: Float) { _denoiseStrength.value = v.coerceIn(0f, 1f) }
+
+    fun setInitImage(bitmap: Bitmap?) {
+        val prev = _initImageBitmap.value
+        if (prev != null && prev !== bitmap && !prev.isRecycled) {
+            runCatching { prev.recycle() }
+        }
+        _initImageBitmap.value = bitmap
+    }
+
+    fun clearInitImage() {
+        val prev = _initImageBitmap.value
+        if (prev != null && !prev.isRecycled) {
+            runCatching { prev.recycle() }
+        }
+        _initImageBitmap.value = null
+        _img2imgEnabled.value = false
+    }
+
+    /**
+     * Bitmap を width x height にセンタークロップ+スケールしてから
+     * row-major RGB (0..255) の ByteArray に落とす。native は width/height と
+     * バッファサイズの一致を厳密にチェックするので、ここで一致させること。
+     */
+    private fun bitmapToRgbBytes(src: Bitmap, targetW: Int, targetH: Int): ByteArray {
+        val scaled: Bitmap = if (src.width == targetW && src.height == targetH) {
+            src
+        } else {
+            val srcAspect = src.width.toFloat() / src.height.coerceAtLeast(1)
+            val dstAspect = targetW.toFloat() / targetH.coerceAtLeast(1)
+            val cropW: Int
+            val cropH: Int
+            if (srcAspect > dstAspect) {
+                cropH = src.height
+                cropW = (src.height * dstAspect).toInt().coerceAtLeast(1)
+            } else {
+                cropW = src.width
+                cropH = (src.width / dstAspect).toInt().coerceAtLeast(1)
+            }
+            val cx = ((src.width - cropW) / 2).coerceAtLeast(0)
+            val cy = ((src.height - cropH) / 2).coerceAtLeast(0)
+            val cropped = Bitmap.createBitmap(src, cx, cy, cropW, cropH)
+            val out = Bitmap.createScaledBitmap(cropped, targetW, targetH, true)
+            if (cropped !== src && cropped !== out) cropped.recycle()
+            out
+        }
+        val pixels = IntArray(targetW * targetH)
+        scaled.getPixels(pixels, 0, targetW, 0, 0, targetW, targetH)
+        if (scaled !== src) scaled.recycle()
+        val bytes = ByteArray(targetW * targetH * 3)
+        var j = 0
+        for (i in pixels.indices) {
+            val p = pixels[i]
+            bytes[j]     = ((p shr 16) and 0xFF).toByte()  // R
+            bytes[j + 1] = ((p shr 8)  and 0xFF).toByte()  // G
+            bytes[j + 2] = ( p         and 0xFF).toByte()  // B
+            j += 3
+        }
+        return bytes
+    }
+
     private val _scheduler = MutableStateFlow(SdScheduler.fromId(PreferencesHelper.getSdScheduler(application)))
     val scheduler: StateFlow<SdScheduler> = _scheduler.asStateFlow()
 
@@ -408,6 +486,46 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             com.nezumi_ai.sd.SdModelLayout.isSdxlModelDir(dir)
         }.getOrDefault(false)
         setModelIsSdxl(sdxl)
+        refreshImg2imgFlagFromPath(path)
+    }
+
+    /**
+     * モデルパスから img2img (vae_encoder 同梱) の可否を先取り判定する。
+     *
+     * Bug fix ("model.json に img2img:true があるのに UI で使えない"):
+     *   これまで _supportsImg2img の更新は acquireLocalDream() の後、つまり
+     *   ユーザーが生成ボタンを押した瞬間にしか走らなかった。結果、モデル選択
+     *   直後の Compose 再構成では supportsImg2img=false のまま「非対応」
+     *   ラベルが貼り付いてしまい、model.json が "img2img": true / "vae_encoder":
+     *   "vae_encoder_fp16.mnn" を持っていても UI には現れなかった。
+     *
+     *   SdModelLayout.resolve() は model.json の "vae_encoder" キーと実ファイル
+     *   配置の両方を見るので、ロード前に呼んでも native の caps.supports_img2img
+     *   と同じ結論を出せる。ここで先取りしておく。
+     */
+    private fun refreshImg2imgFlagFromPath(path: String) {
+        val supports = runCatching {
+            if (path.isBlank()) return@runCatching false
+            val dir = File(path)
+            if (!dir.exists() || !dir.isDirectory) return@runCatching false
+            com.nezumi_ai.sd.SdModelLayout.resolve(dir)?.supportsImg2img == true
+        }.getOrDefault(false)
+        if (_supportsImg2img.value != supports) {
+            Log.i(TAG, "[ImageGen] refreshImg2imgFlagFromPath: supports_img2img=$supports for $path")
+            _supportsImg2img.value = supports
+            if (!supports && _img2imgEnabled.value) {
+                _img2imgEnabled.value = false
+            }
+        }
+    }
+
+    /**
+     * Fragment の onResume 等から呼ばれる、現在の modelPath に対する img2img
+     * 対応の再評価。モデル差し替え直後や、別画面からモデル import して戻って
+     * きたときに UI トグルを即座に正しく出すためのフック。
+     */
+    fun refreshImg2imgCapability() {
+        refreshImg2imgFlagFromPath(_modelPath.value)
     }
 
     fun setPrompt(p: String) {
@@ -708,15 +826,35 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             }
 
             val ld = EngineManager.acquireLocalDream(app, path, backend)
-            
+
+            // img2img capability はロード後の確定値に合わせて更新する。
+            _supportsImg2img.value = ld.supportsImg2img
+            if (!ld.supportsImg2img && _img2imgEnabled.value) {
+                Log.i(TAG, "[ImageGen] model has no vae_encoder — disabling img2img UI")
+                _img2imgEnabled.value = false
+            }
+
             _currentStep.value = 0
             _progressData.value = ProgressData(0, totalSteps, 0.0f)
-            
+
             // Bug fix (シード指定を無視するバグ):
             //   ここでは _seed.value をそのまま渡す。generateImageWithMetadata 側で
             //   negative の場合のみランダム化される。従来ロジックの中間で int にキャストして
             //   桁落ちしないよう、Long のまま最後まで通すことを担保する。
             val requestedSeed = _seed.value
+
+            // img2img: capability とトグルと実際の Bitmap が全部揃ったときだけ init を使う。
+            val useI2i = _img2imgEnabled.value && ld.supportsImg2img && _initImageBitmap.value != null
+            val initRgb: ByteArray? = if (useI2i) {
+                runCatching { bitmapToRgbBytes(_initImageBitmap.value!!, sz, sz) }
+                    .onFailure { Log.w(TAG, "[ImageGen] init image encode failed", it) }
+                    .getOrNull()
+            } else null
+            val denoiseArg = if (initRgb != null) _denoiseStrength.value else 0f
+            if (useI2i && initRgb != null) {
+                Log.i(TAG, "[ImageGen] img2img mode: denoise=$denoiseArg size=${sz}x${sz}")
+            }
+
             val result = ld.generateImageWithMetadata(
                 prompt = pr,
                 negativePrompt = _negativePrompt.value,
@@ -726,6 +864,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 cfg = _cfg.value,
                 seed = requestedSeed,
                 scheduler = _scheduler.value,
+                initImageRgb = initRgb,
+                denoiseStrength = denoiseArg,
                 onProgress = { step, steps, time ->
                     // 同じ step の連続更新で不必要な recomposition を避ける
                     val clamped = step.coerceAtMost(totalSteps)
@@ -1267,6 +1407,20 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             val ld = EngineManager.acquireLocalDream(app, path, queueBackend)
             ld.clearLastSafetyVerdict()  // 前回の verdict をクリア
 
+            // キュー経路でも img2img capability を UI に同期させる。
+            _supportsImg2img.value = ld.supportsImg2img
+            if (!ld.supportsImg2img && _img2imgEnabled.value) {
+                _img2imgEnabled.value = false
+            }
+
+            val useI2i = _img2imgEnabled.value && ld.supportsImg2img && _initImageBitmap.value != null
+            val initRgb: ByteArray? = if (useI2i) {
+                runCatching { bitmapToRgbBytes(_initImageBitmap.value!!, width, height) }
+                    .onFailure { Log.w(TAG, "[QueueItem] init image encode failed", it) }
+                    .getOrNull()
+            } else null
+            val denoiseArg = if (initRgb != null) _denoiseStrength.value else 0f
+
             val result = ld.generateImageWithMetadata(
                 prompt = item.prompt,
                 negativePrompt = item.negativePrompt,
@@ -1276,6 +1430,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 cfg = item.cfg,
                 seed = item.seed,
                 scheduler = SdScheduler.fromId(item.scheduler),
+                initImageRgb = initRgb,
+                denoiseStrength = denoiseArg,
                 onProgress = { step, totalSteps, _ ->
                     val clamped = step.coerceAtMost(totalSteps)
                     if (_currentStep.value != clamped) {

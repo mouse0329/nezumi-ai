@@ -62,6 +62,13 @@ class MnnSdModule(private val context: Context) {
     var isCurrentModelSdxl = false
         private set
 
+    /**
+     * vae_encoder_fp16.mnn (もしくは vae_encoder.mnn) が同梱されていて
+     * img2img が使えるかどうか。native の caps.supports_img2img と一致。
+     */
+    var supportsImg2img = false
+        private set
+
     private var _safetyChecker: ImageSafetyChecker? = null
     private var _lastSafetyVerdict: SafetyResult.Verdict? = null
 
@@ -132,14 +139,26 @@ class MnnSdModule(private val context: Context) {
         currentModelPath = modelPath
         currentBackend = normalizedBackend
         // ネイティブの caps を取れるなら優先する。未対応 .so は null を返すので layout 判定にフォールバック。
-        isCurrentModelSdxl = runCatching {
-            val caps = MnnSdNative.getCapabilities(handle)
-            if (!caps.isNullOrBlank()) {
-                org.json.JSONObject(caps).optInt("is_sdxl", if (sdxl) 1 else 0) == 1
-            } else sdxl
-        }.getOrDefault(sdxl)
+        runCatching {
+            val capsJson = MnnSdNative.getCapabilities(handle)
+            if (!capsJson.isNullOrBlank()) {
+                val obj = org.json.JSONObject(capsJson)
+                isCurrentModelSdxl = obj.optInt("is_sdxl", if (sdxl) 1 else 0) == 1
+                supportsImg2img = obj.optInt("supports_img2img", 0) == 1
+            } else {
+                isCurrentModelSdxl = sdxl
+                supportsImg2img = false
+            }
+        }.onFailure {
+            isCurrentModelSdxl = sdxl
+            supportsImg2img = false
+        }
         isServerReady = true
-        Log.i(TAG, "loadModel: ✓ Loaded ${layout.modelDir.absolutePath} backend=$normalizedBackend sdxl=$isCurrentModelSdxl")
+        Log.i(
+            TAG,
+            "loadModel: ✓ Loaded ${layout.modelDir.absolutePath} " +
+            "backend=$normalizedBackend sdxl=$isCurrentModelSdxl img2img=$supportsImg2img"
+        )
         true
     }
 
@@ -152,6 +171,8 @@ class MnnSdModule(private val context: Context) {
         cfg: Float,
         seed: Long,
         scheduler: SdScheduler = SdScheduler.DEFAULT,
+        initImageRgb: ByteArray? = null,
+        denoiseStrength: Float = 0f,
         onProgress: (Int, Int, Float) -> Unit
     ): Bitmap? = withContext(Dispatchers.IO) {
         if (com.nezumi_ai.BuildConfig.SAFETY_PROMPT_FILTER_ENABLED &&
@@ -197,6 +218,15 @@ class MnnSdModule(private val context: Context) {
             }
         }
 
+        // img2img ガード: capability=false なら native で MODEL_NOT_FOUND になるので早期に無効化。
+        val effectiveInit: ByteArray? = if (initImageRgb != null && supportsImg2img) initImageRgb else null
+        if (initImageRgb != null && !supportsImg2img) {
+            Log.w(TAG, "generateImage: init_image supplied but model has no vae_encoder — ignoring")
+        }
+        val effInitW = if (effectiveInit != null) width else 0
+        val effInitH = if (effectiveInit != null) height else 0
+        val effDenoise = if (effectiveInit != null) denoiseStrength.coerceIn(0f, 1f) else 0f
+
         val packed = MnnSdNative.generate(
             handle = handle,
             prompt = prompt,
@@ -207,6 +237,10 @@ class MnnSdModule(private val context: Context) {
             cfg = cfg,
             seed = seed,
             scheduler = scheduler.nativeValue,
+            initImageRgb = effectiveInit,
+            initImageWidth = effInitW,
+            initImageHeight = effInitH,
+            denoiseStrength = effDenoise,
             progressListener = progressBridge
         )
 
@@ -231,6 +265,8 @@ class MnnSdModule(private val context: Context) {
         cfg: Float,
         seed: Long,
         scheduler: SdScheduler = SdScheduler.DEFAULT,
+        initImageRgb: ByteArray? = null,
+        denoiseStrength: Float = 0f,
         onProgress: (Int, Int, Float) -> Unit
     ): Pair<Bitmap?, ImageGenerationMetadata?>? = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
@@ -249,6 +285,8 @@ class MnnSdModule(private val context: Context) {
             cfg = cfg,
             seed = resolvedSeed,
             scheduler = scheduler,
+            initImageRgb = initImageRgb,
+            denoiseStrength = denoiseStrength,
             onProgress = onProgress
         )
 
