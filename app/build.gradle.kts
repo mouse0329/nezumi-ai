@@ -145,13 +145,6 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
-
-            // VOICEVOX 無効化期間中は 4KB アライン SO を除外する。
-            // VoicevoxFeatureFlag.ENABLED = true に戻す際はこの excludes を削除すること。
-            excludes += setOf(
-                "lib/arm64-v8a/libvoicevox_onnxruntime.so",
-                "lib/x86_64/libvoicevox_onnxruntime.so"
-            )
         }
     }
 
@@ -223,6 +216,9 @@ dependencies {
 
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
+
+    // VOICEVOX integration
+    implementation(files("libs/voicevoxcore-android-0.16.4.aar"))
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")

@@ -19,5 +19,5 @@ object VoicevoxFeatureFlag {
      * 1. app/build.gradle.kts の excludes と implementation コメントを削除
      * 2. 16KB アライン対応版 ONNX Runtime (1.18.0+) にアップグレード
      */
-    const val ENABLED = false
+    const val ENABLED = true
 }
