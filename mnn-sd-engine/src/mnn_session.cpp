@@ -89,6 +89,7 @@ namespace
         CLIP2, // SDXL's second text encoder (CLIP-G / OpenCLIP ViT-bigG)
         UNET,
         VAE,
+        VAE_ENCODER, // img2img専用。decoder と同じ Precision_High/CPU-safe 選択を使う。
     };
 
     // Bug fix: OpenCL 推論が起動直後に abort する / 出力が真っ黒になる問題は
@@ -169,7 +170,10 @@ namespace
                 switch (kind)
                 {
                 case SdModelKind::VAE:
+                case SdModelKind::VAE_ENCODER:
                     // ★ 真っ白画像を潰す本命 ★ fp32 で走らせる。
+                    // VAE encoder も img2img では fp16 オーバーフローのリスクが同じなので
+                    // 同じ手当てにする (SD1.5 の VAE は encoder/decoder ともに fp32 推奨)。
                     backend_config.precision = MNN::BackendConfig::Precision_High;
                     backend_config.memory = MNN::BackendConfig::Memory_Normal;
                     break;
@@ -282,6 +286,9 @@ namespace
             break;
         case SdModelKind::VAE:
             stage = "vae";
+            break;
+        case SdModelKind::VAE_ENCODER:
+            stage = "vae_enc";
             break;
         case SdModelKind::CLIP2:
             stage = "clip2";
@@ -3028,6 +3035,195 @@ extern "C"
                 v = dist(rng);
         }
 
+
+        // ============ img2img: VAE encoder で初期 latent を作る ============
+        //
+        // params->init_image_rgb が非 NULL のときだけ発動。convert_sd15_to_mnn.py
+        // --img2img の出力 (vae_encoder_fp16.mnn) は入力 "image" [1,3,H,W]
+        // (float32, -1..1)、出力 "latent_mean" / "latent_std" [1,4,H/8,W/8]。
+        // ランタイム側で:
+        //   latent_init = (mean + std * eps) * 0.18215
+        //   t_start = round((1 - denoise_strength) * steps)
+        //   latent = sqrt(a_t) * latent_init + sqrt(1 - a_t) * noise
+        //     where a_t = alphas_cumprod[timesteps[t_start_index]]
+        // を後段で仕上げる。ループは i = t_start_index から回す。
+        std::vector<float> init_latent;
+        int t_start_index = 0; // 0 = 全 timesteps を回す = txt2img
+        bool is_img2img = false;
+
+        if (params->init_image_rgb != nullptr &&
+            params->init_image_width == width &&
+            params->init_image_height == height &&
+            engine->has_vae_encoder &&
+            !engine->vae_encoder_path.empty())
+        {
+            is_img2img = true;
+            PROBE_LOG("img2img: VAE encoder=%s denoise_strength=%.3f",
+                      engine->vae_encoder_path.c_str(), params->denoise_strength);
+
+            // (a) VAE encoder session を JIT で開く。UNet と同居させないためすぐに release する。
+            //     512+ 解像度の OpenCL は OOM リスクがあるので CPU にフォールバック。
+            MnnSdBackend enc_backend = effective_backend;
+            if (enc_backend == MNN_SD_BACKEND_OPENCL && max_side >= 512)
+            {
+                PROBE_LOG("img2img: VAE encoder falls back to CPU (max_side=%d)", max_side);
+                enc_backend = MNN_SD_BACKEND_CPU;
+            }
+            MnnSdError err = create_interpreter_and_session(
+                engine->vae_encoder_path, enc_backend, SdModelKind::VAE_ENCODER,
+                false,
+                engine->vae_encoder_interpreter, engine->vae_encoder_session, out_error,
+                width);
+            if (err != MNN_SD_OK)
+            {
+                PROBE_LOG("img2img: failed to load vae_encoder session");
+                return err;
+            }
+            auto *enc_net = engine->vae_encoder_interpreter.get();
+
+            // (b) 入力テンソル名を探す。convert は "image" 固定だが他 exporter との保険。
+            const char *enc_in_names[] = {"image", "sample", "pixel_values"};
+            MNN::Tensor *enc_in = nullptr;
+            const char *chosen_in = nullptr;
+            for (const char *n : enc_in_names)
+            {
+                auto *t = enc_net->getSessionInput(engine->vae_encoder_session, n);
+                if (t) { enc_in = t; chosen_in = n; break; }
+            }
+            if (!enc_in)
+            {
+                const auto &all_in = enc_net->getSessionInputAll(engine->vae_encoder_session);
+                if (all_in.size() == 1) { enc_in = all_in.begin()->second; chosen_in = all_in.begin()->first.c_str(); }
+            }
+            if (!enc_in)
+            {
+                if (out_error)
+                    std::snprintf(out_error->message, sizeof(out_error->message),
+                                  "img2img: vae_encoder input tensor not found (expected 'image')");
+                enc_net->releaseSession(engine->vae_encoder_session);
+                engine->vae_encoder_session = nullptr;
+                engine->vae_encoder_interpreter.reset();
+                return MNN_SD_ERR_MODEL_INVALID;
+            }
+            PROBE_LOG("img2img: vae_encoder input=%s", chosen_in ? chosen_in : "?");
+
+            enc_net->resizeTensor(enc_in, {1, 3, height, width});
+            enc_net->resizeSession(engine->vae_encoder_session);
+            enc_in = enc_net->getSessionInput(engine->vae_encoder_session, chosen_in);
+
+            // (c) init_image (row-major RGB, 0..255) → float32 CHW, range [-1,1]
+            const int chw = 3 * height * width;
+            std::vector<float> image_chw((size_t)chw);
+            const uint8_t *src = params->init_image_rgb;
+            const int plane = height * width;
+            for (int y = 0; y < height; ++y)
+            {
+                for (int x = 0; x < width; ++x)
+                {
+                    const int off = (y * width + x) * 3;
+                    const float r = (float)src[off + 0] / 127.5f - 1.0f;
+                    const float g = (float)src[off + 1] / 127.5f - 1.0f;
+                    const float b = (float)src[off + 2] / 127.5f - 1.0f;
+                    image_chw[0 * plane + y * width + x] = r;
+                    image_chw[1 * plane + y * width + x] = g;
+                    image_chw[2 * plane + y * width + x] = b;
+                }
+            }
+
+            // (d) アップロード (UNet と同じく CAFFE host tensor 経由で OpenCL 安全化)
+            {
+                std::unique_ptr<MNN::Tensor> host_i(new MNN::Tensor(enc_in, MNN::Tensor::CAFFE));
+                if (!host_i || host_i->elementSize() != chw)
+                {
+                    if (out_error)
+                        std::snprintf(out_error->message, sizeof(out_error->message),
+                                      "img2img: vae_encoder input host tensor size mismatch (got=%d expected=%d)",
+                                      host_i ? host_i->elementSize() : -1, chw);
+                    enc_net->releaseSession(engine->vae_encoder_session);
+                    engine->vae_encoder_session = nullptr;
+                    engine->vae_encoder_interpreter.reset();
+                    return MNN_SD_ERR_INTERNAL;
+                }
+                std::memcpy(host_i->host<float>(), image_chw.data(), (size_t)chw * sizeof(float));
+                enc_in->copyFromHostTensor(host_i.get());
+            }
+
+            enc_net->runSession(engine->vae_encoder_session);
+
+            // (e) 出力 (mean, std) を取り出す。convert スクリプトは
+            //     ["latent_mean", "latent_std"]。他 exporter への保険で候補を探す。
+            auto pick_out = [&](const std::initializer_list<const char *> &cands) -> MNN::Tensor * {
+                for (const char *n : cands)
+                {
+                    auto *t = enc_net->getSessionOutput(engine->vae_encoder_session, n);
+                    if (t) return t;
+                }
+                return nullptr;
+            };
+            MNN::Tensor *mean_t = pick_out({"latent_mean", "posterior_mean", "mean"});
+            MNN::Tensor *std_t = pick_out({"latent_std", "posterior_std", "std", "logvar"});
+            if (!mean_t || !std_t)
+            {
+                if (out_error)
+                    std::snprintf(out_error->message, sizeof(out_error->message),
+                                  "img2img: vae_encoder outputs 'latent_mean'/'latent_std' not found");
+                enc_net->releaseSession(engine->vae_encoder_session);
+                engine->vae_encoder_session = nullptr;
+                engine->vae_encoder_interpreter.reset();
+                return MNN_SD_ERR_MODEL_INVALID;
+            }
+
+            std::vector<float> mean_vec(latent_size), std_vec(latent_size);
+            {
+                std::unique_ptr<MNN::Tensor> hm(new MNN::Tensor(mean_t, MNN::Tensor::CAFFE));
+                std::unique_ptr<MNN::Tensor> hs(new MNN::Tensor(std_t, MNN::Tensor::CAFFE));
+                if (!hm || !hs || hm->elementSize() < latent_size || hs->elementSize() < latent_size)
+                {
+                    if (out_error)
+                        std::snprintf(out_error->message, sizeof(out_error->message),
+                                      "img2img: vae_encoder output element size mismatch");
+                    enc_net->releaseSession(engine->vae_encoder_session);
+                    engine->vae_encoder_session = nullptr;
+                    engine->vae_encoder_interpreter.reset();
+                    return MNN_SD_ERR_INTERNAL;
+                }
+                mean_t->copyToHostTensor(hm.get());
+                std_t->copyToHostTensor(hs.get());
+                std::memcpy(mean_vec.data(), hm->host<float>(), (size_t)latent_size * sizeof(float));
+                std::memcpy(std_vec.data(), hs->host<float>(), (size_t)latent_size * sizeof(float));
+            }
+
+            // (f) latent_init = (mean + std * eps) * 0.18215
+            constexpr float kSdScale = 0.18215f;
+            init_latent.resize(latent_size);
+            std::mt19937 rng_enc(
+                params->seed < 0
+                    ? std::random_device{}()
+                    : (uint32_t)((uint64_t)params->seed ^ 0xB5297A4Du));
+            std::normal_distribution<float> dist_enc(0.0f, 1.0f);
+            for (int i = 0; i < latent_size; ++i)
+            {
+                float s = std_vec[i];
+                if (!std::isfinite(s) || s < 0.0f) s = 0.0f;
+                if (s > 5.0f) s = 5.0f;
+                init_latent[i] = (mean_vec[i] + s * dist_enc(rng_enc)) * kSdScale;
+            }
+
+            // (g) VAE encoder を閉じる (UNet と同居させない)
+            enc_net->releaseSession(engine->vae_encoder_session);
+            engine->vae_encoder_session = nullptr;
+            engine->vae_encoder_interpreter.reset();
+            trim_heap_to_os();
+
+            // (h) t_start_index = round((1 - strength) * steps)
+            const float strength = std::max(0.0f, std::min(1.0f, params->denoise_strength));
+            t_start_index = (int)std::round((1.0f - strength) * (float)steps);
+            if (t_start_index < 0) t_start_index = 0;
+            if (t_start_index >= steps) t_start_index = steps - 1;
+            PROBE_LOG("img2img: strength=%.3f steps=%d -> t_start_index=%d (will run %d denoise iters)",
+                      strength, steps, t_start_index, steps - t_start_index);
+        }
+
         // --- 4. Build PLMS timesteps (Diffusers PNDMScheduler, skip_prk_steps=True) ---
         //
         // Bug fix (見た目 1-2 ステップにしかならない問題):
@@ -3158,13 +3354,55 @@ extern "C"
         // のまま渡す必要がある。ここで倍率を掛けると UNet 入力が破綻して
         // 真っ黒 / 真っ白の VAE 出力になる (旧バグ)。
         // よって init_noise_sigma の適用は EULER_A に限定する。
-        if (active_scheduler == ActiveScheduler::EULER_A &&
+        // img2img: latent はすでに VAE encoder 経由で作られた init_latent を
+        // add_noise で部分ノイズ化する。下の EULER_A の init_noise_sigma 乗算は
+        // txt2img の全ノイズ初期化を前提にしているので、img2img ではスキップする。
+        if (!is_img2img &&
+            active_scheduler == ActiveScheduler::EULER_A &&
             !sigmas.empty() && sigmas[0] > 1.0f)
         {
             const float s0 = sigmas[0];
             for (auto &v : latent)
                 v *= s0;
             PROBE_LOG("init_noise_sigma applied: sigmas[0]=%.4f", s0);
+        }
+
+        // img2img: sqrt(a_t) * init_latent + sqrt(1 - a_t) * noise
+        //   a_t = alphas_cumprod[timesteps[t_start_index]]
+        // この latent を初期値として denoise ループは i = t_start_index から回す。
+        if (is_img2img && (int)init_latent.size() == latent_size &&
+            !timesteps.empty())
+        {
+            int idx = std::min(t_start_index, (int)timesteps.size() - 1);
+            int t_at_start = timesteps[idx];
+            if (t_at_start < 0) t_at_start = 0;
+            if (t_at_start > (int)engine->alphas_cumprod.size() - 1)
+                t_at_start = (int)engine->alphas_cumprod.size() - 1;
+            const float a = engine->alphas_cumprod[t_at_start];
+            const float sa = std::sqrt(std::max(0.0f, a));
+            const float sb = std::sqrt(std::max(0.0f, 1.0f - a));
+            std::mt19937 rng_add(
+                params->seed < 0
+                    ? std::random_device{}() ^ 0x1FA5A5u
+                    : (uint32_t)((uint64_t)params->seed ^ 0x1FA5A5u));
+            std::normal_distribution<float> dist_add(0.0f, 1.0f);
+            for (int k = 0; k < latent_size; ++k)
+            {
+                const float n = dist_add(rng_add);
+                latent[k] = sa * init_latent[k] + sb * n;
+            }
+            PROBE_LOG("img2img: add_noise applied t_at_start=%d a=%.4f sa=%.4f sb=%.4f",
+                      t_at_start, a, sa, sb);
+            // sigma 系スケジューラ (EULER_A) ではさらに sigmas[t_start_index] で
+            //   スケールするとよい (Diffusers img2img 相当)。他のスケジューラは VP
+            //   スケールのまま使うので何もしない。
+            if (active_scheduler == ActiveScheduler::EULER_A &&
+                (int)sigmas.size() > idx && sigmas[idx] > 1.0f)
+            {
+                const float s0 = sigmas[idx];
+                for (auto &v : latent) v *= s0;
+                PROBE_LOG("img2img: init_noise_sigma (EULER_A) applied sigmas[%d]=%.4f", idx, s0);
+            }
         }
         if (!sigmas.empty())
         {
@@ -3513,7 +3751,14 @@ extern "C"
         };
 
         const int num_solver_iters = (int)timesteps.size();
-        for (int i = 0; i < num_solver_iters; ++i)
+        // img2img: t_start_index の手前の step は skip する (add_noise ですでに
+        //   そのノイズレベルに latent を合わせてある)。txt2img は 0 から回る。
+        const int denoise_start = is_img2img ? std::max(0, std::min(t_start_index, num_solver_iters - 1)) : 0;
+        if (is_img2img)
+        {
+            PROBE_LOG("denoise loop: start=%d end=%d (img2img partial)", denoise_start, num_solver_iters);
+        }
+        for (int i = denoise_start; i < num_solver_iters; ++i)
         {
             if (engine->cancel_requested)
             {
