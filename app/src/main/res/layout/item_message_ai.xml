@@ -22,7 +22,7 @@
         </LinearLayout>
 
         <!-- AI Edge Gallery の MessageBodyThinking に相当: タップで開閉、ストリーミング中は常に展開 -->
-        <!-- ★ Bug fix(#Thinking-Layout):
+ <!-- Bug fix(#Thinking-Layout):
                旧実装は wrap_content + maxWidth=280dp を指定していたが、内部の
                ai_thinking_markdown_compose (GalleryMarkdownText の widthIn(max=280dp)) が
                親のパディング/縦線ぶんを無視して膨張し、Thinking ブロックが親コンテナから
@@ -37,7 +37,7 @@
                 <TextView android:id="@+id/ai_thinking_chevron" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="4dp" android:text="▼" android:textColor="@color/text_secondary" android:textSize="14sp" android:importantForAccessibility="no" />
             </LinearLayout>
 
-            <!-- ★ Bug fix(#Thinking-Layout):
+ <!-- Bug fix(#Thinking-Layout):
                    layout_height="match_parent" だった縦線 View は、親 (ai_thinking_body) が
                    wrap_content のとき高さ計算が循環し、ComposeView 側の巨大な要望に引きずられて
                    Thinking ブロック全体が枠外にはみ出す原因となっていた。
@@ -65,8 +65,23 @@
 
         <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="4dp">
             <ImageView android:id="@+id/copy_message_button" android:layout_width="32dp" android:layout_height="32dp" android:src="@drawable/content_copy_24" android:scaleType="centerInside" android:padding="4dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/copy_all" android:clickable="true" android:focusable="true" app:tint="@color/text_primary" />
-            <com.google.android.material.button.MaterialButton android:id="@+id/speak_message_button" style="@style/Widget.Nezumiai.Button.Outlined" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="🔊" android:textSize="11sp" android:minWidth="0dp" android:paddingStart="10dp" android:paddingEnd="10dp" android:minHeight="0dp" android:insetTop="0dp" android:insetBottom="0dp" android:contentDescription="読み上げ" app:cornerRadius="12dp" />
-            <!-- ★ 応答バリアントナビゲーション (◀ n/m ▶)。応答が複数あるときのみ表示。 -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/speak_message_button"
+                style="@style/Widget.Nezumiai.Button.Outlined"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:text=""
+                android:textSize="11sp"
+                android:minWidth="0dp"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:minHeight="0dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:contentDescription="読み上げ"
+                app:cornerRadius="12dp" />
+            <!-- 応答バリアントナビゲーション (◀ n/m ▶)。応答が複数あるときのみ表示。 -->
             <LinearLayout android:id="@+id/variant_nav_container" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginStart="6dp" android:visibility="gone">
                 <ImageView android:id="@+id/variant_prev_button" android:layout_width="28dp" android:layout_height="28dp" android:src="@drawable/ic_chevron_left_24" android:scaleType="centerInside" android:padding="2dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="前の応答" android:clickable="true" android:focusable="true" app:tint="@color/text_primary" />
                 <TextView android:id="@+id/variant_page_info" android:layout_width="wrap_content" android:layout_height="wrap_content" android:minWidth="36dp" android:gravity="center" android:text="1/1" android:textSize="11sp" android:textColor="@color/text_secondary" />

@@ -156,7 +156,7 @@ class MnnSdModule(private val context: Context) {
         isServerReady = true
         Log.i(
             TAG,
-            "loadModel: ✓ Loaded ${layout.modelDir.absolutePath} " +
+ "loadModel: Loaded ${layout.modelDir.absolutePath} "+
             "backend=$normalizedBackend sdxl=$isCurrentModelSdxl img2img=$supportsImg2img"
         )
         true

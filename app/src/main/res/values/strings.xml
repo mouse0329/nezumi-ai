@@ -4,16 +4,16 @@
 
     <!-- Welcome Dialog -->
     <string name="welcome_title">ネズミAI へようこそ</string>
-    <string name="welcome_message">📝 使い方：
+ <string name="welcome_message"> 使い方：
 • サイドバー：チャット履歴や各種メニューを開けます
 • チャット画面：AIとの会話ができます
 • 設定画面：モデルダウンロードやトークン設定ができます
 
-⚙️ 初期設定：
+ 初期設定：
 1. モデルタブで「HuggingFace トークン認証」を行ってください
 2. モデルをダウンロードしてください(おすすめはgemma4 2bです)
 
-✨ その他：
+ その他：
 • ライセンス表示でオープンソースライブラリの情報を確認できます
 
 それでは、AI チャットをお楽しみください！</string>
@@ -59,7 +59,7 @@
     <string name="chat_thinking_follow_settings">シンキング:ON</string>
     <string name="chat_thinking_off_for_session">シンキング:OFF</string>
     <string name="scroll_to_bottom">一番下へ</string>
-    <string name="scroll_to_bottom_icon">⬇</string>
+ <string name="scroll_to_bottom_icon"></string>
     <string name="revoke_prompt">取り消し</string>
     <string name="copy_all">コピー</string>
     <string name="copied_to_clipboard">コピーしました</string>
@@ -69,7 +69,7 @@
     <string name="add_media_menu">メディアメニュー</string>
     <string name="revoke_prompt_done">プロンプトを取り消しました</string>
     <string name="revoke_prompt_none">取り消せるプロンプトがありません</string>
-    <string name="send_icon">➤</string>
+ <string name="send_icon"></string>
     <string name="stop_icon">■</string>
     <string name="inference_title">推論パラメータ</string>
     <string name="context_window_fixed">コンテキスト: 4096 (固定)</string>
@@ -98,14 +98,14 @@
     <string name="gemma_hide_thinking">推論を隠す</string>
     <string name="gemma_thinking_section_title">内部推論（シンキング）</string>
     <string name="gemma_answer_generating_hint">（回答を生成中…）</string>
-    <string name="tool_call_executing_alarm">⏰ アラームを設定中…</string>
-    <string name="tool_call_executing_message">💬 メッセージを送信中…</string>
-    <string name="tool_call_executing_search">🔍 検索中…</string>
-    <string name="tool_call_executing_image">🎨 画像を生成中…</string>
-    <string name="tool_call_executing_generic">🔧 %1$s を実行中…</string>
-    <string name="tool_call_result_success">✅ %1$s: 成功</string>
-    <string name="tool_call_result_error">❌ %1$s: 失敗</string>
-    <string name="tool_call_responding">✍ 回答を作成中…</string>
+ <string name="tool_call_executing_alarm"> アラームを設定中…</string>
+ <string name="tool_call_executing_message"> メッセージを送信中…</string>
+ <string name="tool_call_executing_search"> 検索中…</string>
+ <string name="tool_call_executing_image"> 画像を生成中…</string>
+ <string name="tool_call_executing_generic"> %1$s を実行中…</string>
+ <string name="tool_call_result_success"> %1$s: 成功</string>
+ <string name="tool_call_result_error"> %1$s: 失敗</string>
+ <string name="tool_call_responding"> 回答を作成中…</string>
     <string name="assistant_error_generic_empty">申し訳ありません。応答を生成できませんでした。</string>
     <string name="assistant_error_empty_output_title">モデルの出力がありません</string>
     <string name="assistant_no_response">応答なし</string>
@@ -379,7 +379,7 @@ GGUF、LiteRT-LM、.task、.safetensors、MNN などのモデルファイルは�
     <string name="incognito_mode">プライベートモード</string>
     <string name="incognito_mode_active">プライベートモード：オン</string>
     <string name="incognito_mode_inactive">プライベートモード：オフ</string>
-    <string name="incognito_mode_indicator">🔒 プライベートモード</string>
+ <string name="incognito_mode_indicator"> プライベートモード</string>
     <string name="incognito_mode_help">長押し：プライベートモード開始</string>
 
     <!-- Stable Diffusion / 画像生成 -->

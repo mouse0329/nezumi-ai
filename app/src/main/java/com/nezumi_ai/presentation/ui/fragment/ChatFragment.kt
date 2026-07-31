@@ -153,7 +153,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var currentModelKey = "E2B"
     private var isCompressingNow = false
 
-    // ★ セッション切り替え最適化: navigateToChatSession がフラグメントを再生成する代わりに、
+ // セッション切り替え最適化: navigateToChatSession がフラグメントを再生成する代わりに、
     //   このメソッドを呼んでセッションIDだけ切り替えることでページ遷移の重さを軽減する。
     //   MainActivity.navigateToChatSession から呼ばれる。
     fun switchSession(sessionId: Long) {
@@ -180,7 +180,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var contextMeterText by mutableStateOf("")
     private var contextMeterProgress by mutableStateOf(0f)
     private var contextUsageCharsNow by mutableStateOf(0)
-    // ★ 新: コンテキストメーターの表示可否。全般タブで切り替えられる。既定は表示しない。
+ // 新: コンテキストメーターの表示可否。全般タブで切り替えられる。既定は表示しない。
     private var contextMeterVisible by mutableStateOf(false)
 
     // Bug fix(#43): t/s ・ TTFT トグルの値をフラグメント側でも保持し、onResume で変化を検知して
@@ -225,7 +225,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var postGenerationSettleActive = false
 
     /**
-     * ★ 再生成タップ後、AI メッセージの animateContentSize 完了コールバックを受けたときにだけ
+ * 再生成タップ後、AI メッセージの animateContentSize 完了コールバックを受けたときにだけ
      *   生成物の下端までスクロールさせるワンショットフラグ。
      *   生成中 (isGenerating=true) の普段は既存の shouldAutoFollowBottom() 経路で追従するので
      *   ここでは生成完了後の一回のジャンプだけを担当する。
@@ -541,7 +541,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         responseTypingText = getString(R.string.response_generating)
         modelLoadingText = getString(R.string.model_loading)
         contextMeterText = getString(R.string.context_meter_format, 0, 0)
-        // ★ 初期値として全般タブのコンテキストメーター表示フラグを反映。
+ // 初期値として全般タブのコンテキストメーター表示フラグを反映。
         contextMeterVisible = PreferencesHelper.isShowContextMeter(requireContext())
         compressButtonText = ""
         thinkingToggleText = getString(R.string.chat_thinking_follow_settings)
@@ -555,7 +555,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         val messageRepository = MessageRepository(database.messageDao())
         presetRepository = PresetRepository(database.presetDao(), appContext)
         val memoryRepository = MemoryRepository(database.memoryDao())
-        // ★ 起動直後フリーズ対策: SharedPreferences の初回読み込みはディスク I/O を
+ // 起動直後フリーズ対策: SharedPreferences の初回読み込みはディスク I/O を
         //   ブロックするため、UI スレッドではなく IO スレッドに逃がす。
         //   lastObservedPresetId は onResume() でのプリセット変更検知に使われるが、
         //   起動直後は変更検知が発火しないため null 初期値でも支障なく、
@@ -594,7 +594,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 if (shouldAutoFollowBottom()) {
                     scheduleAutoScrollToBottom()
                 }
-                // ★ 再生成後の animateContentSize 完了を拾って一回だけ下端までジャンプする。
+ // 再生成後の animateContentSize 完了を拾って一回だけ下端までジャンプする。
                 if (scrollToBottomOnNextAiLayout) {
                     scrollToBottomOnNextAiLayout = false
                     autoFollowBottomLocked = true
@@ -605,11 +605,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 viewModel.synthesizeText(message.id, generatedText)
             },
             onAiMessageRegenerate = { message ->
-                // ★ 再生成タップの直後は必ず末尾追従をリセットしておく。
+ // 再生成タップの直後は必ず末尾追従をリセットしておく。
                 userScrolledAwayDuringGeneration = false
                 autoFollowBottomLocked = true
                 postGenerationSettleActive = false
-                // ★ animateContentSize の完了コールバックで下端までジャンプさせるフラグを立てる。
+ // animateContentSize の完了コールバックで下端までジャンプさせるフラグを立てる。
                 scrollToBottomOnNextAiLayout = true
                 viewModel.regenerateLastResponse(message.id)
             },
@@ -625,7 +625,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         binding.messagesRecyclerView.adapter = adapter
         binding.messagesRecyclerView.itemAnimator = null
 
-        // ★ バグ修正: RecyclerView のスクロール状態をリアルタイム監視
+ // バグ修正: RecyclerView のスクロール状態をリアルタイム監視
         binding.messagesRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
                 super.onScrollStateChanged(recyclerView, newState)
@@ -729,7 +729,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         viewLifecycleOwner.lifecycleScope.launch {
             settingsRepository.getSettings().collect { settings ->
                 contextCompressionEnabled = settings?.contextCompressionEnabled == true && BuildConfig.CONTEXT_COMPRESSION_ENABLED
-                // ★ Thinking 表示はアダプタ側で「常時表示」に固定済み。
+ // Thinking 表示はアダプタ側で「常時表示」に固定済み。
                 //   そのため adapter.setThinkingVisible(true) の呼び出しは不要になり、完全に廃止された。
                 updateThinkingToggleVisibility()
                 renderCompressButtonState()
@@ -748,7 +748,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                             Log.d("ChatFragment", "Restoring previous session: $savedSessionId")
                             val prefs = requireContext().getSharedPreferences("nezumi_ai_prefs", android.content.Context.MODE_PRIVATE)
                             prefs.edit().putLong("current_session_id", savedSessionId).apply()
-                            // ★ setCurrentSession は suspend 関数に変更されたため、直接 await する
+ // setCurrentSession は suspend 関数に変更されたため、直接 await する
                             viewModel.setCurrentSession(savedSessionId)
                         } else {
                             Log.d("ChatFragment", "Saved session is unavailable or incognito. Creating new session.")
@@ -764,7 +764,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         settingsRepository.saveCurrentSessionId(newSessionId)
                         val prefs = requireContext().getSharedPreferences("nezumi_ai_prefs", android.content.Context.MODE_PRIVATE)
                         prefs.edit().putLong("current_session_id", newSessionId).apply()
-                        // ★ setCurrentSession は suspend 関数に変更されたため、直接 await する
+ // setCurrentSession は suspend 関数に変更されたため、直接 await する
                         viewModel.setCurrentSession(newSessionId)
                     }
                 } catch (e: Exception) {
@@ -783,7 +783,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         val prefs = requireContext().getSharedPreferences("nezumi_ai_prefs", android.content.Context.MODE_PRIVATE)
                         prefs.edit().putLong("current_session_id", sessionId).apply()
                     }
-                    // ★ setCurrentSession は suspend 関数に変更されたため、直接 await する
+ // setCurrentSession は suspend 関数に変更されたため、直接 await する
                     viewModel.setCurrentSession(sessionId)
 
                     // 検索結果からのジャンプ: scrollToMessageId が指定されている場合
@@ -1016,7 +1016,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             launchAudioRecording()
         }
 
-        // ★ バリアント切り替えスクロール要求を受け取るコレクター。
+ // バリアント切り替えスクロール要求を受け取るコレクター。
         //   ChatViewModel.selectAssistantVariant() から切り替え先メッセージ id が流れてくるので、
         //   そのメッセージの "一番下" をビューポート下側に合わせる。
         viewLifecycleOwner.lifecycleScope.launch {
@@ -1051,7 +1051,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         stopResponseTypingAnimation()
                         responseTypingVisible = false
                         responseTypingText = getString(R.string.response_generating)
-                        // ★ Scroll bug fix: 生成完了の瞬間に、TPS 表示や各アクションボタン（再生成・スピーク）が
+ // Scroll bug fix: 生成完了の瞬間に、TPS 表示や各アクションボタン（再生成・スピーク）が
                         //   登場してアイテムの高さが一度局所的に変わる。この後の onItemRangeChanged は
                         //   isGenerating==false だがゆえに shouldAutoFollowBottom() は false を返し、
                         //   自動追従がかからないまま RecyclerView のレイアウト内部リセットで一番上に飛んでしまう
@@ -1188,7 +1188,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.uiMessage.collect { message ->
-                val duration = if (message.startsWith("🔧 実行ツール")) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
+ val duration = if (message.startsWith("実行ツール")) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
                 Toast.makeText(requireContext(), message, duration).show()
             }
         }
@@ -1259,7 +1259,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
         }
 
-        // ★ 応答バリアント情報を Adapter に流し込む。parent ごとに (全バリアント件数, 現在選択中の index)。
+ // 応答バリアント情報を Adapter に流し込む。parent ごとに (全バリアント件数, 現在選択中の index)。
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.variantInfoByParent.collect { info ->
                 adapter.setVariantInfo(info)
@@ -1485,9 +1485,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     /**
-     * ★ バリアント切り替え後のスクロール: 切り替え先メッセージの「一番下」に合わせる。
-     *   ★ ItemView の底辺が RecyclerView のビューポート底に合わさるよう offset を計算する。
-     *   ★ submitList の後で高さが確定しないことがあるので、複数フレームにわたって追従する。
+ * バリアント切り替え後のスクロール: 切り替え先メッセージの「一番下」に合わせる。
+ * ItemView の底辺が RecyclerView のビューポート底に合わさるよう offset を計算する。
+ * submitList の後で高さが確定しないことがあるので、複数フレームにわたって追従する。
      */
     private fun scrollVariantMessageBottomIntoView(messageId: Long) {
         // ユーザーの能動的スクロール状態をリセットしてこのジャンプを優先する。
@@ -1664,7 +1664,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private fun updateScrollToBottomButtonVisibility() {
         if (_binding == null || !isAdded) return
-        // ★ バグ修正: 生成中に自動スクロールフラグが ON のとき（=末尾追従中）は、
+ // バグ修正: 生成中に自動スクロールフラグが ON のとき（=末尾追従中）は、
         //   ストリーミングで新トークンが挿入されるたびに一瞬底から離れて下矢印が
         //   チカチカ表示されてしまう。追従が有効な間は、そもそもボタンを出さない。
         //   生成完了直後の settle フェーズ中も同じ扱いにする（間もなく確実に底に着地するため）。
@@ -1797,7 +1797,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         compressButtonEnabled = enabled
         compressButtonText = ""
         // シンキングON/OFFはチャット生成中でも切り替え可能にする（次回送信から反映）
-        // ★ Bug fix(#Thinking-Header):
+ // Bug fix(#Thinking-Header):
         //   旧実装は `thinkingToggleEnabled = !isModelLoadingNow && thinkingToggleVisible` だったが、
         //   この式だと thinkingToggleVisible が一旦 false になると enabled も false に固定され、
         //   シンキング生成フェーズで modelSupportsThinking の再評価が遅れるタイミングで
@@ -2168,7 +2168,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             .setIcon(R.drawable.ic_nezumi_ai)
             .setMessage(
                 "モデル「${warning.modelName}」のロード前に確認が必要です。\n\n" +
-                    warning.message.replace("⚠️", "").trim() + "\n\n" +
+ warning.message.replace("", "").trim() + "\n\n"+
                     "ロードを続行しますか？"
             )
             .setPositiveButton("続行") { _, _ ->
@@ -2339,7 +2339,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     @Composable
     private fun ContextMeterSection() {
-        // ★ 全般タブの「コンテキストメーターを表示」フラグが OFF のときは何も描画しない。
+ // 全般タブの「コンテキストメーターを表示」フラグが OFF のときは何も描画しない。
         if (!contextMeterVisible) return
         Column(
             modifier = Modifier
@@ -2372,7 +2372,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 .padding(start = 12.dp, end = 12.dp, bottom = bottomPadding),
             horizontalArrangement = Arrangement.Center
         ) {
-            // ★ 「下に戻る」ボタン：太い白い矢印 + 黒縁取りで見やすくする。
+ // 「下に戻る」ボタン：太い白い矢印 + 黒縁取りで見やすくする。
             //   Compose には Text の outline 描画が直接ないので、
             //   同位置に「太い黒い矢印（stroke）」を下に、「白い矢印」を上に重ねて描く。
             Box(
@@ -2399,7 +2399,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     @Composable
     private fun HeaderActionsSection() {
-        // ★ Bug fix(#Thinking-Header):
+ // Bug fix(#Thinking-Header):
         //   旧実装ではシンキング生成中に
         //   (compressButtonVisible=false + thinkingToggleVisible の一時的な false)
         //   となり、Column が完全に空になってヘッダー UI が消失して見えていた。
@@ -2522,7 +2522,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 // URIが直接利用可能な場合
                 if (item.uri != null) {
                     val uri = item.uri
-                    // ★ 5枚制限に達している場合は、キャッシュファイルを作らずに返す
+ // 5枚制限に達している場合は、キャッシュファイルを作らずに返す
                     if (selectedImageUrisList.size >= 5) {
                         Toast.makeText(requireContext(), "Max 5 images allowed", Toast.LENGTH_SHORT).show()
                         return

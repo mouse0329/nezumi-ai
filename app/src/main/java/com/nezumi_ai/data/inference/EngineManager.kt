@@ -24,7 +24,7 @@ object EngineManager {
     private var active: ActiveEngine = ActiveEngine.NONE
     private var localDream: LocalDreamModule? = null
     private var sdModelPath: String? = null
-    // ★ Bug fix: 以前はキャッシュ判定に backend を含めていなかったため、
+ // Bug fix: 以前はキャッシュ判定に backend を含めていなかったため、
     //   一度 GPU で起動した後にユーザーが CPU を選んでも、同じモデルパスならそのまま
     //   GPU インスタンスが使い回されてしまう「CPU/GPU 切り替えが GPU 常時」バグがあった。
     //   読み込み済み backend を保持し、一致しない場合はロードし直す。
@@ -35,7 +35,7 @@ object EngineManager {
         // cancelCurrentGeneration が cancelMutex を取得している間にここが呼ばれると
         // cancelMutex.withLock で待機する。
         cancelMutex.withLock {
-            // ★ Bug fix: backend が一致している場合のみ再利用する。
+ // Bug fix: backend が一致している場合のみ再利用する。
             //   normalize して "auto" / "cpu" / "gpu" の表記揺れを吸収。
             val requestedBackend = backend.trim().lowercase().ifBlank { "auto" }
             val cachedBackend = sdBackend?.trim()?.lowercase()

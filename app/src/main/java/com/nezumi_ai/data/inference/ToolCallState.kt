@@ -10,14 +10,14 @@ package com.nezumi_ai.data.inference
  */
 sealed class ToolCallState {
     /**
-     * State: ⏳ ツール実行中
+ * State: ツール実行中
      * @param toolName 実行対象のツール名
      * @param elapsedMs 経過時間（ミリ秒）
      */
     data class Executing(val toolName: String, val elapsedMs: Long) : ToolCallState()
 
     /**
-     * State: ✅ / ❌ 実行結果
+ * State: / 実行結果
      * @param toolName ツール名
      * @param status 結果ステータス ("success", "error", など)
      * @param resultMessage オプション：結果メッセージ
@@ -29,7 +29,7 @@ sealed class ToolCallState {
     ) : ToolCallState()
 
     /**
-     * State: ✍️ AI が回答を作成中
+ * State: AI が回答を作成中
      * Tool Call 実行結果を踏まえてAI応答をジェネレート中
      */
     data object Responding : ToolCallState()

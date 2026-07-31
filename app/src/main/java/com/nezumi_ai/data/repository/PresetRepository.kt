@@ -160,7 +160,7 @@ class PresetRepository(
             PresetEntity(
                 id = id,
                 name = displayName,
-                icon = "🔒",
+ icon = "",
                 modelId = modelId,
                 enabledTools = "[]",
                 createdAt = now,
@@ -215,7 +215,7 @@ class PresetRepository(
         return PresetEntity(
             id = DEFAULT_NEZUMI_AI_ID,
             name = "ネズミAI",
-            icon = "🐭",
+ icon = "",
             systemPrompt = "あなたはネズミAIです。親しみやすく、簡潔で、ユーザーの意図に寄り添って日本語で応答してください。",
             modelId = "Gemma4-2B",
             enabledTools = encodeToolIds(PresetConstants.allToolIds),

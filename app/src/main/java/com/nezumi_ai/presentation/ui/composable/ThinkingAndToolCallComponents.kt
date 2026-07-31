@@ -55,7 +55,7 @@ import com.nezumi_ai.data.inference.ToolResultCard
 import com.nezumi_ai.R
 
 /**
- * 🧠 Thinking チャンネル折りたたみ表示コンポーネント
+ * Thinking チャンネル折りたたみ表示コンポーネント
  *
  * @param thinking 思考プロセステキスト（Markdown対応推奨）
  * @param isLoading ストリーミング中フラグ
@@ -201,8 +201,8 @@ private fun toolExecutingLabel(toolName: String): String = when (toolName.lowerc
  * Tool Call 進捗表示コンポーネント
  *
  * 状態マシンの各段階で異なるUI表現を表示します。
- * - Result: ✅ 成功 / ❌ 失敗
- * - Responding: ✍️ 回答を作成中...
+ * - Result: 成功 / 失敗
+ * - Responding: 回答を作成中...
  * - Done: 完了（表示消失）
  *
  * @param state ToolCallState（null の場合は表示しない）
@@ -219,7 +219,7 @@ fun ToolCallProgressBar(
     val (icon, color, message) = when (state) {
         is ToolCallState.Executing -> {
             Triple(
-                "⏳",
+ "",
                 colorResource(id = R.color.text_secondary),
                 toolExecutingLabel(state.toolName)
             )
@@ -239,7 +239,7 @@ fun ToolCallProgressBar(
             }
         }
         ToolCallState.Responding -> {
-            Triple("✍", colorResource(id = R.color.text_secondary), stringResource(R.string.tool_call_responding))
+ Triple("", colorResource(id = R.color.text_secondary), stringResource(R.string.tool_call_responding))
         }
         else -> return
     }
@@ -402,7 +402,7 @@ fun MediaPreviewBar(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // ★ バグ修正: items に key を指定して画像の一意性を保証
+ // バグ修正: items に key を指定して画像の一意性を保証
                 // key を指定しないと、リスト順序が変わった時に古い Composable が再利用される可能性がある
                 // 0) 動画抽出中スピナー (フレーム/音声抽出が終わるまで、動画サムネの代わりに表示)
                 if (isExtractingVideo) {

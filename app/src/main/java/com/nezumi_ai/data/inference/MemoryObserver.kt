@@ -34,7 +34,7 @@ object MemoryObserver {
     // モデルごとの最小メモリ要件（GB） - Gallery の allowlist から取得
     val MODEL_MIN_MEMORY = mapOf(
         "GEMMA4-2B" to 8.0f,    // Gemma-4-E2B-it: 最小 8GB
-        "GEMMA4-4B" to 12.0f,   // Gemma-4-E4B-it: 最小 12GB ★ Gallery と同じ
+        "GEMMA4-4B" to 12.0f, // Gemma-4-E4B-it: 最小 12GB Gallery と同じ
         "GEMMA3-2B" to 8.0f,    // Gemma-3n-E2B-it: 最小 8GB
         "GEMMA3-4B" to 12.0f,   // Gemma-3n-E4B-it: 最小 12GB
         "GEMMA3-1B" to 6.0f,    // Gemma3-1B-IT: 最小 6GB

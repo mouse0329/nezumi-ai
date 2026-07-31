@@ -63,7 +63,7 @@ object SdModelImporter {
         }
         destDir.mkdirs()
 
-        // ★ 完全な一括 try/catch/finally で包む — これまでは flattenSingleNestedDir /
+ // 完全な一括 try/catch/finally で包む — これまでは flattenSingleNestedDir /
         //   validate の失敗が try の外側にあり、例外時に destDir が残骸として
         //   sd_models/ に残ってしまい (毎失敗ごとに GB 単位で容量リーク)。
         //   さらに openInputStream() の戻り値も use{} で包む (例外時の FD リーク対策)。

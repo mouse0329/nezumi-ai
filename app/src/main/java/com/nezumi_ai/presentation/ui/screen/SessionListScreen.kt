@@ -81,7 +81,7 @@ fun SessionListScreen(
                 }
             },
             onCreateIncognitoSession = { 
-                viewModel.createNewSession("🕵️ シークレット") { sessionId ->
+ viewModel.createNewSession("シークレット") { sessionId ->
                     onSessionClick(sessionId)
                 }
             },
@@ -245,7 +245,7 @@ private fun SessionListHeader(
                 modifier = Modifier.size(44.dp)
             ) {
                 Text(
-                    text = "🕵️",
+ text = "",
                     style = MaterialTheme.typography.titleMedium
                 )
             }

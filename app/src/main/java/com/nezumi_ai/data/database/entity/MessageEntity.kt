@@ -35,14 +35,14 @@ data class MessageEntity(
     /** ツール実行結果のJSON配列 e.g. [{"toolName":"setalarm","success":true,"payload":{...}}] */
     val toolResultsJson: String? = null,
     /** 生成速度 (tokens/sec)。生成完了後に保存。null = 未計測。
-     *  ★ 修正: シンキング時間を含めず、可視回答本文の生成時間だけで算出する */
+ * 修正: シンキング時間を含めず、可視回答本文の生成時間だけで算出する */
     val generationTps: Float? = null,
     /** 最初のトークン生成後から完了までの生成時間(ms)。null = 未計測 */
     val generationTimeMs: Long? = null,
-    /** ★ 新: 送信〜最初の出力トークン到達までの時間 (ms)。TTFT = Time To First Token */
+ /** 新: 送信〜最初の出力トークン到達までの時間 (ms)。TTFT = Time To First Token */
     val ttftMs: Long? = null,
     /**
-     * ★ 応答バリアント機能:
+ * 応答バリアント機能:
      * assistant ロールのメッセージのすぐ前の user メッセージの id。同じ parent を共有する
      * assistant メッセージ同士は、同じユーザープロンプトに対する「別の候補回答」として UI で切り替えられる。
      * user ロールのメッセージでは null。既存レコード (マイグレーション前に作られた応答) も null のまま。

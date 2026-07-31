@@ -162,7 +162,7 @@ fun ErrorModalDialogContent(
                     contentPadding = PaddingValues(horizontal = 16.dp)
                 ) {
                     Text(
-                        text = "📋 コピー",
+ text = "コピー",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold

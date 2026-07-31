@@ -173,7 +173,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                     )
                 }
                 Text(
-                    "🛰️ $backendInfo",
+ "$backendInfo",
                     color = Color(0xFF999999),
                     fontSize = 11.sp,
                     modifier = Modifier.padding(top = 4.dp)
@@ -751,13 +751,13 @@ fun LibraryCard(img: GeneratedImage, onClick: (GeneratedImage) -> Unit) {
 fun ImageViewer(img: GeneratedImage, vm: ImageGenViewModel, onClose: () -> Unit) {
     val context = LocalContext.current
 
-    // ★ バグ修正: ライトモードでは背景と Text の色が同化して見えなくなっていた。
+ // バグ修正: ライトモードでは背景と Text の色が同化して見えなくなっていた。
     //   本ビューワーは黒背景の上に画像を見せる目的なので、テーマに依存せずとコントラストの高い白系に固定する。
     val onDarkText = Color(0xFFEEEEEE)
 
     Dialog(
         onDismissRequest = onClose,
-        // ★ バグ修正: usePlatformDefaultWidth = false だけだと Dialog の window 属性が
+ // バグ修正: usePlatformDefaultWidth = false だけだと Dialog の window 属性が
         //   Application Overlay 相当のレイヤになってしまい、一部端末で keyguard
         //   (ロック画面) より前面に出てしまう → securePolicy を SecureOn にし、
         //   decorFitsSystemWindows も見直して本体 Activity の window より前に出さない。
@@ -769,7 +769,7 @@ fun ImageViewer(img: GeneratedImage, vm: ImageGenViewModel, onClose: () -> Unit)
             dismissOnBackPress = true
         )
     ) {
-        // ★ ビューアの window 属性をロック画面より前に出ないよう固定し、
+ // ビューアの window 属性をロック画面より前に出ないよう固定し、
         //   スクリーンショット無効化設定に従って FLAG_SECURE を切り替える。
         val currentView = androidx.compose.ui.platform.LocalView.current
         androidx.compose.runtime.SideEffect {
@@ -817,7 +817,7 @@ fun ImageViewer(img: GeneratedImage, vm: ImageGenViewModel, onClose: () -> Unit)
 
                 Text(
                     "Prompt:\n${img.prompt}",
-                    // ★ ライトモードでも 黒背景の上にテキストが見えるよう、
+ // ライトモードでも 黒背景の上にテキストが見えるよう、
                     //   テーマ依存しない固定の白系色を使う。
                     color = onDarkText,
                     fontSize = 14.sp,

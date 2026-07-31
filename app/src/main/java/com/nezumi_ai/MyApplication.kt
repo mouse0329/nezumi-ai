@@ -27,7 +27,7 @@ class MyApplication : Application() {
         super.onCreate()
         PreferencesHelper.applyThemeMode(this)
 
-        // ★ 起動直後フリーズ対策: Room DB インスタンスと SharedPreferences を
+ // 起動直後フリーズ対策: Room DB インスタンスと SharedPreferences を
         //   バックグラウンド (IO) で先に warmup する。
         //   これにより ChatFragment.onViewCreated がメインスレッドで呼ぶ
         //   NezumiAiDatabase.getInstance() の synchronized(this) 内の

@@ -973,7 +973,7 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         return Result.success(file)
     }
 
-    // ★ リポジトリ更新チェック用: モデルのダウンロード URL を返す
+ // リポジトリ更新チェック用: モデルのダウンロード URL を返す
     fun remoteUrlForModel(model: LocalModel): String? {
         return when (model) {
             LocalModel.GEMMA3N_2B -> GEMMA3N_2B_HF_URL
@@ -983,7 +983,7 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         }
     }
 
-    // ★ SHA256 ハッシュキャッシュ: リポジトリ更新チェックで毎回ファイル全体の
+ // SHA256 ハッシュキャッシュ: リポジトリ更新チェックで毎回ファイル全体の
     //   SHA256 を計算するとコストが高いため、ファイルパス→(lastModified, hash) の
     //   キャッシュを持つ。ファイルの最終更新時刻が変わらなければキャッシュを再利用する。
     private data class Sha256CacheEntry(
@@ -993,7 +993,7 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
     )
     private val sha256Cache = ConcurrentHashMap<String, Sha256CacheEntry>()
 
-    // ★ ローカルファイルの SHA256 を計算（キャッシュ付き）
+ // ローカルファイルの SHA256 を計算（キャッシュ付き）
     fun getCachedLocalSha256(file: File): String? {
         if (!file.exists() || file.length() <= 0L) return null
         val cacheKey = file.absolutePath
@@ -1014,7 +1014,7 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         }.getOrNull()
     }
 
-    // ★ リモートファイルの SHA256 を HEAD リクエストで取得（ETag / X-Linked-Etag から抽出）
+ // リモートファイルの SHA256 を HEAD リクエストで取得（ETag / X-Linked-Etag から抽出）
     fun getRemoteSha256(urlString: String, token: String): String? {
         return try {
             val conn = (URL(urlString).openConnection() as HttpURLConnection).apply {

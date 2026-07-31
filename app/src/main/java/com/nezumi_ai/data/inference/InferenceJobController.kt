@@ -79,7 +79,7 @@ class InferenceJobController {
         sessionId: Long,
         block: suspend () -> T
     ): Result<Pair<Long, T>> {
-        // ★ task 登録だけを mutex 内で実行
+ // task 登録だけを mutex 内で実行
         val taskId = taskMutex.withLock {
             val taskId = generateTaskId()
             val task = InferenceTask(
@@ -95,7 +95,7 @@ class InferenceJobController {
             taskId
         }
         
-        // ★ block() 実行は mutex の外で実行（デッドロック防止）
+ // block() 実行は mutex の外で実行（デッドロック防止）
         return try {
             val task = tasks[taskId] ?: return Result.failure(Exception("Task not found"))
             

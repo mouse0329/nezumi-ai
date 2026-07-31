@@ -227,7 +227,7 @@ class GgufInferenceEngine(
     private val cancelFlag = AtomicBoolean(false)
 
     /**
-     * ★ 「次回推論開始前に KV を強制クリアする」フラグ。
+ * 「次回推論開始前に KV を強制クリアする」フラグ。
      *
      * GGUF では、ユーザーが生成途中で停止ボタンを押すと、その時点で
      * `nativeInterrupt()` が出ても、ネイティブの KV キャッシュには
@@ -391,7 +391,7 @@ class GgufInferenceEngine(
     }
 
     /**
-     * ★ 外部から KV キャッシュを強制クリアするための公開 API。
+ * 外部から KV キャッシュを強制クリアするための公開 API。
      * Thinking トグルやセッション切り替え時に前コンテキストが残って交互動作が崩れるのを防ぐ。
      */
     fun clearKvCacheIfLoaded() {
@@ -407,7 +407,7 @@ class GgufInferenceEngine(
     }
 
     /**
-     * ★ 「次回推論開始前に KV を強制クリア」フラグを立てる。
+ * 「次回推論開始前に KV を強制クリア」フラグを立てる。
      *
      * ユーザー停止 / revoke 直後の「壊れた状態」に備えてコンテキストを一旦リセットさせる。
      * 次回 [inferenceWithMedia] の入り口でこのフラグを見て、立っていたら
@@ -432,7 +432,7 @@ class GgufInferenceEngine(
         //   体感上効かなく見える。
         runCatching { rnllamaCtx?.interrupt() }
             .onFailure { Log.w(TAG, "interrupt() failed", it) }
-        // ★ v5.1 fix: ここで forceClearBeforeNextInference を自動セットしてしまうと、
+ // v5.1 fix: ここで forceClearBeforeNextInference を自動セットしてしまうと、
         //   ユーザー停止だけでなく、モデル切替や unload、推論コードパス内部での
         //   cancelInference() も含めて「本来意図しないケース」で KV がクリアされ、
         //   Thinking やターン間のコンテキスト保持が壊れて
@@ -480,7 +480,7 @@ class GgufInferenceEngine(
         val normalized = config.normalized()
 
         try {
-            // ★ 前回推論がユーザー停止 / revoke / 例外で途中で折れた場合に備えて、
+ // 前回推論がユーザー停止 / revoke / 例外で途中で折れた場合に備えて、
             //   「次回の推論では必ずコンテキストを一旦リセット」してから始める。
             //   途中までの assistant 出力とその終端トークン欠落による「壊れた出力」を防ぐため、
             //   このフラグが立っていたら無条件で KV と lastSessionId をリセットする。

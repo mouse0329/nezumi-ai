@@ -67,14 +67,14 @@ class MessageAdapter(
     private val onAiMessageLayoutChanged: () -> Unit = {},
     private val onAiMessageSpeak: (MessageEntity, String) -> Unit = { _, _ -> },
     private val onAiMessageRegenerate: (MessageEntity) -> Unit = {},
-    // ★ 応答バリアント選択のコールバック: (parentUserMessageId, newIndex) -> Unit
+ // 応答バリアント選択のコールバック: (parentUserMessageId, newIndex) -> Unit
     private val onAiVariantSelect: (Long, Int) -> Unit = { _, _ -> },
     private val lifecycleOwner: LifecycleOwner? = null,
     private val viewModelStoreOwner: ViewModelStoreOwner? = null
 ) : ListAdapter<MessageEntity, RecyclerView.ViewHolder>(MessageDiffCallback()) {
 
     /**
-     * ★ 応答バリアント情報。ChatFragment から setVariantInfo() で代入される。
+ * 応答バリアント情報。ChatFragment から setVariantInfo() で代入される。
      *   キー: parentUserMessageId, 値: (全バリアント件数, 現在選択中の index)。
      *   ここに入っていない parent は応答バリアント = 1 とみなしてナビゲーションを非表示にする。
      */
@@ -95,7 +95,7 @@ class MessageAdapter(
      */
     private var isGenerating: Boolean = false
 
-    // ★ Thinking 表示仕様 (バグ修正後の新仕様)：
+ // Thinking 表示仕様 (バグ修正後の新仕様)：
     //   - モデルが思考を出したら常にブロックを表示する (設定に依存しない)。
     //   - 【生成中】：強制的に展開し、トグル行は一切表示しない (閉じるバタンを消す)。
     //   - 【生成後】：一律に自動で閉じ、トグルボタンを表示してユーザーが開閉できるようにする。
@@ -343,7 +343,7 @@ class MessageAdapter(
                     )
                 }
                 val playIcon = android.widget.TextView(context).apply {
-                    text = "♫▶"
+ text = "▶"
                     setTextColor(android.graphics.Color.WHITE)
                     textSize = 30f
                     gravity = android.view.Gravity.CENTER
@@ -568,7 +568,7 @@ class MessageAdapter(
                         (it as? android.widget.Button)?.text = "▶"
                     } else {
                         mediaPlayer?.start()
-                        (it as? android.widget.Button)?.text = "⏸"
+ (it as? android.widget.Button)?.text = ""
                     }
                 }
             } catch (e: Exception) {
@@ -591,7 +591,7 @@ class MessageAdapter(
         private var lastRenderedThinking: String? = null
         private var lastRenderedContentMode: ContentRenderMode? = null
 
-        // ★ 応答バリアントスワイプ検出用。bind() で差し替える。
+ // 応答バリアントスワイプ検出用。bind() で差し替える。
         private var swipeVariantHandler: ((direction: Int) -> Unit)? = null
 
         fun clearCache() {
@@ -623,7 +623,7 @@ class MessageAdapter(
                     onAiMessageLayoutChanged()
                 }
             }
-            // ★ Scroll fix: aiThinkingMarkdownCompose の layoutChangeListener は
+ // Scroll fix: aiThinkingMarkdownCompose の layoutChangeListener は
             //   Thinking ブロックの展開/折りたたみやトークン追加のたびに冗長発火し、
             //   自動追従スクロールを不安定化させる原因になっていたため削除。
             //   本文 (aiMessageMarkdownCompose / aiMessageText) の高さ変化だけで
@@ -634,7 +634,7 @@ class MessageAdapter(
                 }
             }
 
-            // ★ 応答バリアントの横スワイプ検出。AI メッセージカード全体に仕掛ける。
+ // 応答バリアントの横スワイプ検出。AI メッセージカード全体に仕掛ける。
             //   RecyclerView の縦スクロールと競合しないよう、横方向に十分動いたときだけ requestDisallowInterceptTouchEvent する。
             val touchSlop = android.view.ViewConfiguration.get(binding.root.context).scaledTouchSlop
             val minSwipeDistancePx = touchSlop * 4  // 作図をはっきりさせる
@@ -700,7 +700,7 @@ class MessageAdapter(
                     "BIND_AI_MESSAGE: id=${message.id} content='${message.content.take(50)}'..."
                 )
             }
-            // ★ 再生成ボタン：末尾の AI メッセージかつ非ストリーミング、非生成中にのみ表示する。
+ // 再生成ボタン：末尾の AI メッセージかつ非ストリーミング、非生成中にのみ表示する。
             val canRegenerate = isLastAiMessage && !isGenerating && !message.isStreaming
             binding.regenerateMessageButton.visibility =
                 if (canRegenerate) View.VISIBLE else View.GONE
@@ -709,7 +709,7 @@ class MessageAdapter(
                 if (canRegenerate) onRegenerate(message)
             }
 
-            // ★ 応答バリアントナビゲーション (◀ n/m ▶)
+ // 応答バリアントナビゲーション (◀ n/m ▶)
             //   - 応答が 2 件以上ある場合のみ表示
             //   - ストリーミング中 / 生成中は非表示 (切り替えでレースを避ける)
             val showVariantNav = variantTotal > 1 && !message.isStreaming && !isGenerating
@@ -734,7 +734,7 @@ class MessageAdapter(
                 binding.variantNextButton.setOnClickListener(null)
             }
 
-            // ★ スワイプ検出のハンドラをこの bind() のバリアント情報で差し替える。
+ // スワイプ検出のハンドラをこの bind() のバリアント情報で差し替える。
             //   スワイプ可能なのは "応答が 2 件以上 かつ 非ストリーミング中" だけに限定。
             swipeVariantHandler = if (variantTotal > 1 && !message.isStreaming && !isGenerating) {
                 { direction ->
@@ -743,7 +743,7 @@ class MessageAdapter(
                 }
             } else null
             binding.apply {
-                // ★ v5.1 Thinking 表示仕様：
+ // v5.1 Thinking 表示仕様：
                 //   - 設定スイッチの ON/OFF に一切依存せず、thinkingContent が非空であれば表示。
                 //     (OFF のときに誤って生成されたものもバックグラウンド実行のるつぼとして「隠さず」出す)
                 //   - 生成中は常に展開、閉じトグルは表示しない。
@@ -757,7 +757,7 @@ class MessageAdapter(
                         lastRenderedThinking = thinking
                     }
 
-                    // ★ バグ修正：生成中 = 強制展開、トグル行非表示 (閉じるボタンを消す)。
+ // バグ修正：生成中 = 強制展開、トグル行非表示 (閉じるボタンを消す)。
                     //   生成完了後 = トグル行を表示し、自動で閉じる (ユーザーが手動で開ける)。
                     val streaming = message.isStreaming
                     if (streaming) {
@@ -945,7 +945,7 @@ class MessageAdapter(
                 }
 
                 copyMessageButton.setOnClickListener {
-                    // ★ Thinking (内部推論) はユーザー向けのコピー内容に含めない。
+ // Thinking (内部推論) はユーザー向けのコピー内容に含めない。
                     //   回答本文だけをクリップボードに転送する。
                     copyAllToClipboard(binding.root.context, message.content.stripGemmaTokens())
                 }
@@ -963,7 +963,7 @@ class MessageAdapter(
                     onAiMessageSpeak(message, speakText)
                 }
 
-                // ★ t/s と TTFT は全般タブの設定で非表示にできる。既定は両方とも非表示。
+ // t/s と TTFT は全般タブの設定で非表示にできる。既定は両方とも非表示。
                 // Bug fix(#43): Adapter のキャッシュ値を優先し、未初期化のときだけ SharedPreferences を直接参照する。
                 // これにより、設定フラグメントから戻ってきた直後に refreshPerfIndicatorVisibility() で
                 // 強制リバインドさせれば、スクロールや新規メッセージを待たずに即座で反映される。
@@ -1025,7 +1025,7 @@ class MessageAdapter(
             }
         }
 
-        /** ★ 新: TTFT (Time To First Token) の表示フォーマット。 */
+ /** 新: TTFT (Time To First Token) の表示フォーマット。 */
         private fun formatTtft(ms: Long): String {
             return if (ms < 1000L) {
                 String.format("TTFT %dms", ms)
@@ -1051,21 +1051,21 @@ class MessageAdapter(
         }
 
         private fun renderThinkingMarkdown(content: String) {
-            // ★ Scroll fix:
+ // Scroll fix:
             //   - early-return 判定は lastRenderedThinking の同値だけで十分。
             //     lastRenderedContentMode は「本文」用のフラグなのでここで参照/更新しない。
             //   - aiThinkingMarkdownCompose の visibility は呼び出し元の展開/折りたたみロジックが管理する。
             //   - onAiMessageLayoutChanged() は呼ばない。Thinking ブロックのレイアウト変化で
             //     毎トークン自動スクロールが再スケジュールされ、追従が乱れるため。
             //
-            // ★ バグ修正 (一箱所に重なる/表示されない):
+ // バグ修正 (一箱所に重なる/表示されない):
             //   旧実装は early-return しても lastRenderedThinking を呼び出し元で更新する側だったが、
                 //   同一ビューホルダーの再利用時に Compose のスナップショットがリセットされず、
                 //   setContent が呼ばれないケースがあった。確実に新しい content で setContent するよう、
                 //   キャッシュを renderThinkingMarkdown 内部でも保持する。
             if (lastRenderedThinking == content) return
 
-            // ★ Bug fix(#Thinking-Layout):
+ // Bug fix(#Thinking-Layout):
             //   旧実装は本文用の GalleryMarkdownText (widthIn max=280dp + 内部 padding 11dp) を
             //   Thinking ブロックでも使っていたため、親の ai_thinking_body の枠
             //   (縦線とパディングを除いた実質 248dp 前後) を超えて Compose ビューが膨張し、
@@ -1079,7 +1079,7 @@ class MessageAdapter(
         }
 
         /**
-         * ★ Thinking ブロック専用の Markdown 描画。
+ * Thinking ブロック専用の Markdown 描画。
          * 親の ai_thinking_body 内部で使われるため、自己のカード背景や固定幅は持たない。
          * 幅は常に fillMaxWidth() で親コンテナに合わせ、枠外はみ出しを防ぐ。
          */
@@ -1160,7 +1160,7 @@ class MessageAdapter(
                         (it as? android.widget.Button)?.text = "▶"
                     } else {
                         mediaPlayer?.start()
-                        (it as? android.widget.Button)?.text = "⏸"
+ (it as? android.widget.Button)?.text = ""
                     }
                 }
             } catch (e: Exception) {

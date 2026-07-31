@@ -119,7 +119,7 @@ class SettingsComposeFragment : Fragment() {
     private var sdDefaultSeedInput by mutableStateOf("")
     private var braveSearchApiKeyInput by mutableStateOf("")
     private var selectedSection by mutableStateOf(0)
-    // ★ スマホ版設定画面でリスト表示か詳細表示かを切り替えるフラグ。
+ // スマホ版設定画面でリスト表示か詳細表示かを切り替えるフラグ。
     //   true = カテゴリリスト表示、false = 選択中セクションの詳細表示。
     //   タブレット（幅 >= 600dp）では常にサイドバー+コンテンツの2ペイン表示なので使用しない。
     private var showSettingsListOnPhone by mutableStateOf(true)
@@ -160,11 +160,11 @@ class SettingsComposeFragment : Fragment() {
         //   sectionTitles = [全般, 推論, 画像, メモリ, チャット, デバッグ] なので
         //   「画像」 = index 2。
         val startSection = arguments?.getInt("startSection", -1) ?: -1
-        // ★ デバッグタブは BuildConfig.DEBUG 時のみ存在するので、リリースビルドでは上限を 4 に制限する。
+ // デバッグタブは BuildConfig.DEBUG 時のみ存在するので、リリースビルドでは上限を 4 に制限する。
         val maxAllowedSection = if (BuildConfig.DEBUG) 5 else 4
         if (startSection in 0..maxAllowedSection) {
             selectedSection = startSection
-            // ★ スマホで引数指定セクションの詳細を直接表示する
+ // スマホで引数指定セクションの詳細を直接表示する
             showSettingsListOnPhone = false
         }
 
@@ -341,7 +341,7 @@ class SettingsComposeFragment : Fragment() {
             )
         }
 
-        // ★ レスポンシブ設定画面: タブレット(幅>=600dp)はサイドバー2ペイン、
+ // レスポンシブ設定画面: タブレット(幅>=600dp)はサイドバー2ペイン、
         //   スマホはカテゴリリスト→詳細ページ遷移。
         val isTablet = LocalConfiguration.current.screenWidthDp >= 600
         val sectionTitles = remember {
@@ -392,14 +392,14 @@ class SettingsComposeFragment : Fragment() {
                 )
             }
 
-            // ★ タブレット: サイドバー + コンテンツ / スマホ: リスト or コンテンツ
+ // タブレット: サイドバー + コンテンツ / スマホ: リスト or コンテンツ
             Row(
                 modifier = Modifier
                     .fillMaxSize()
                     .weight(1f)
             ) {
                 if (isTablet) {
-                    // ★ タブレット: 縦型サイドバー
+ // タブレット: 縦型サイドバー
                     Column(
                         modifier = Modifier
                             .width(120.dp)
@@ -446,7 +446,7 @@ class SettingsComposeFragment : Fragment() {
                         }
                     }
                 } else if (showSettingsListOnPhone) {
-                    // ★ スマホ: カテゴリリスト（タップで詳細ページへ遷移）
+ // スマホ: カテゴリリスト（タップで詳細ページへ遷移）
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
@@ -489,7 +489,7 @@ class SettingsComposeFragment : Fragment() {
                     }
                 }
 
-                // ★ コンテンツエリア（タブレットは常時、スマホは詳細表示時のみ）
+ // コンテンツエリア（タブレットは常時、スマホは詳細表示時のみ）
                 if (isTablet || !showSettingsListOnPhone) {
                     LazyColumn(
                         modifier = Modifier
@@ -640,7 +640,7 @@ class SettingsComposeFragment : Fragment() {
 
                                 HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
 
-                                // ★ 新: コンテキストメーターの表示 (既定: 表示しない)
+ // 新: コンテキストメーターの表示 (既定: 表示しない)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -669,7 +669,7 @@ class SettingsComposeFragment : Fragment() {
 
                                 HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
 
-                                // ★ 新: t/s (トークン/秒) の表示 (既定: 表示しない)
+ // 新: t/s (トークン/秒) の表示 (既定: 表示しない)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -698,7 +698,7 @@ class SettingsComposeFragment : Fragment() {
 
                                 HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
 
-                                // ★ 新: TTFT (最初のトークンまでの時間) の表示 (既定: 表示しない)
+ // 新: TTFT (最初のトークンまでの時間) の表示 (既定: 表示しない)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -727,7 +727,7 @@ class SettingsComposeFragment : Fragment() {
 
                                 HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
 
-                                // ★ 新: スクリーンショット無効化 (既定: 無効)
+ // 新: スクリーンショット無効化 (既定: 無効)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -866,7 +866,7 @@ class SettingsComposeFragment : Fragment() {
                     4 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         ChatHistoryCard()
                     }
-                    // ★ デバッグタブは BuildConfig.DEBUG 時のみ表示されるため、index 5 はデバッグビルドでのみ存在する。
+ // デバッグタブは BuildConfig.DEBUG 時のみ表示されるため、index 5 はデバッグビルドでのみ存在する。
                     //   リリースビルドで sectionTitles に含まれていないので selectedSection == 5 にならないが、
                     //   防御的に BuildConfig.DEBUG ガードも入れる。
                     5 -> if (BuildConfig.DEBUG) {
@@ -964,7 +964,7 @@ class SettingsComposeFragment : Fragment() {
 
     @Composable
     private fun InferenceParamsCard() {
-        // ★ ユーザー要望: コンテキストウィンドウの上限を 128k まで拡張
+ // ユーザー要望: コンテキストウィンドウの上限を 128k まで拡張
         val maxContextWindow = if (selectedModel.equals("Gemma4-2B", ignoreCase = true) ||
                                     selectedModel.equals("Gemma4-4B", ignoreCase = true)) {
             131072
@@ -2482,7 +2482,7 @@ class SettingsComposeFragment : Fragment() {
         if (maxTokens !in InferenceConfig.MIN_MAX_TOKENS..InferenceConfig.MAX_MAX_TOKENS) {
             return "Max Tokens は ${InferenceConfig.MIN_MAX_TOKENS} - ${InferenceConfig.MAX_MAX_TOKENS} の範囲で入力してください"
         }
-        // ★ ユーザー要望: コンテキストウィンドウの上限を 128k まで拡張
+ // ユーザー要望: コンテキストウィンドウの上限を 128k まで拡張
         val maxContextWindow = if (selectedModel.equals("Gemma4-2B", ignoreCase = true) ||
                                     selectedModel.equals("Gemma4-4B", ignoreCase = true)) {
             131072

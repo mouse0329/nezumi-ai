@@ -69,6 +69,10 @@ private val TOOL_NAME_MAP = mapOf(
     "generate_image"     to "generateimage",
     "generateImage"      to "generateimage",
     "generateimage"      to "generateimage",
+    // list_sd_models
+    "list_sd_models"     to "listsdmodels",
+    "listSdModels"       to "listsdmodels",
+    "listsdmodels"       to "listsdmodels",
     // search_memory
     "search_memory"      to "searchmemory",
     "searchMemory"       to "searchmemory",
@@ -117,6 +121,7 @@ internal fun buildEnabledToolProviders(context: Context, alarmDao: AlarmDao): Li
         }
         if (NezumiTool.GENERATE_IMAGE in enabled) {
             add(tool(GenerateImageSchema()))
+            add(tool(ListSdModelsSchema()))
         }
         if (NezumiTool.SEARCH_MEMORY in enabled) {
             Log.d(TOOL_TAG, "Adding SearchMemorySchema to tool providers")
@@ -202,13 +207,19 @@ private class ListTimersSchema : ToolSet {
 }
 
 private class GenerateImageSchema : ToolSet {
-    @Tool(description = "Generate an image from a text prompt using Stable Diffusion")
+    @Tool(description = "Generate an image from a text prompt using Stable Diffusion. Call list_sd_models to get available model names.")
     fun generateImage(
         @ToolParam(description = "English image generation prompt, detailed and descriptive") prompt: String,
         @ToolParam(description = "Things to avoid in the image (optional)") negativePrompt: String?,
+        @ToolParam(description = "Model directory name from list_sd_models (optional)") model: String?,
         @ToolParam(description = "256, 512, or 768 (default 256)") width: Int?,
         @ToolParam(description = "256, 512, or 768 (default 256)") height: Int?
     ): Map<String, Any?> = emptyMap()
+}
+
+private class ListSdModelsSchema : ToolSet {
+    @Tool(description = "List available Stable Diffusion image generation models on this device")
+    fun listSdModels(): Map<String, Any?> = emptyMap()
 }
 
 private class SearchMemorySchema : ToolSet {
@@ -300,6 +311,7 @@ internal class NezumiLiteRtToolExecutor(
             "stoptimer"       -> executeStopTimer(toolCall)
             "listtimers"      -> executeListTimers()
             "generateimage"   -> executeGenerateImage(toolCall)
+            "listsdmodels"    -> executeListSdModels()
             "searchmemory"    -> executeSearchMemory(toolCall)
             // CALENDAR_DISABLED
             // "addcalendarevent" -> executeAddCalendarEvent(toolCall)
@@ -327,6 +339,7 @@ internal class NezumiLiteRtToolExecutor(
             "stoptimer" -> NezumiTool.STOP_TIMER
             "listtimers" -> NezumiTool.LIST_TIMERS
             "generateimage" -> NezumiTool.GENERATE_IMAGE
+            "listsdmodels" -> NezumiTool.GENERATE_IMAGE
             "searchmemory" -> NezumiTool.SEARCH_MEMORY
             // CALENDAR_DISABLED
             // "addcalendarevent" -> NezumiTool.ADD_CALENDAR_EVENT
@@ -555,6 +568,74 @@ internal class NezumiLiteRtToolExecutor(
             Log.e(TOOL_TAG, "executeGenerateImage: handler threw", e)
             return ToolExecutionResult(success = false, payload = mapOf("success" to false, "error" to (e.message ?: "handler_error")))
         }
+    }
+
+    private suspend fun executeListSdModels(): ToolExecutionResult {
+        val models = mutableListOf<Map<String, Any>>()
+
+        // sd_models directory
+        val sdModelsDir = java.io.File(context.filesDir, "sd_models")
+        sdModelsDir.listFiles()?.forEach { dir ->
+            if (!dir.isDirectory) return@forEach
+            val targetDir = resolveNestedSdModelDir(dir)
+            if (isProbableSdModelDir(targetDir)) {
+                models.add(mapOf(
+                    "name" to targetDir.name,
+                    "path" to targetDir.absolutePath,
+                    "isSdxl" to com.nezumi_ai.sd.SdModelLayout.isSdxlModelDir(targetDir)
+                ))
+            }
+        }
+
+        // App external files directory
+        val appDir = context.getExternalFilesDir(null)
+        appDir?.listFiles()?.forEach { file ->
+            if (isProbableSdModelDir(file)) {
+                models.add(mapOf(
+                    "name" to file.name,
+                    "path" to file.absolutePath,
+                    "isSdxl" to com.nezumi_ai.sd.SdModelLayout.isSdxlModelDir(file)
+                ))
+            }
+        }
+
+        // Imported models directory
+        val importedDir = java.io.File(context.filesDir, "models/imported")
+        importedDir.listFiles()?.forEach { file ->
+            if (isProbableSdModelDir(file)) {
+                models.add(mapOf(
+                    "name" to file.name,
+                    "path" to file.absolutePath,
+                    "isSdxl" to com.nezumi_ai.sd.SdModelLayout.isSdxlModelDir(file)
+                ))
+            }
+        }
+
+        val savedPath = com.nezumi_ai.utils.PreferencesHelper.getSdModelPath(context).trim()
+        return ToolExecutionResult(
+            success = true,
+            payload = mapOf(
+                "success" to true,
+                "count" to models.size,
+                "models" to models,
+                "defaultModel" to (savedPath.ifEmpty { models.firstOrNull()?.get("name") ?: "" })
+            )
+        )
+    }
+
+    private fun resolveNestedSdModelDir(dir: java.io.File): java.io.File {
+        var current = dir
+        repeat(3) {
+            val children = current.listFiles()?.toList() ?: return current
+            if (children.size == 1 && children[0].isDirectory) current = children[0]
+            else return current
+        }
+        return current
+    }
+
+    private fun isProbableSdModelDir(file: java.io.File): Boolean {
+        return com.nezumi_ai.sd.SdModelLayout.isUsableModelDir(file) ||
+               com.nezumi_ai.sd.SdModelLayout.isLegacyQnnDir(file)
     }
 
     private suspend fun executeSearchMemory(toolCall: ToolCall): ToolExecutionResult {

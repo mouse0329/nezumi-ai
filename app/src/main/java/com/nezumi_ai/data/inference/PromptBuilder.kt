@@ -23,7 +23,7 @@ object PromptBuilder {
     private const val QWEN_NO_THINK_COMMAND = "/no_think"
 
     /**
-     * ★ Qwen3 公式 non-thinking jinja と同じ「空 <think></think>」プレフィル文字列。
+ * Qwen3 公式 non-thinking jinja と同じ「空 <think></think>」プレフィル文字列。
      * Thinking OFF のときに assistant ターン直後 (またはレンダー結果末尾) に注入することで、
      * モデルが chat_template の関係で <think> を吐こうとするのを「もう思考は終わった」と
      * 認識させて思考をスキップさせる。
@@ -136,7 +136,7 @@ object PromptBuilder {
     }
 
     /**
-     * ★ モデル名から Qwen 3 系かを判定し、non-thinking jinja 相当の空 <think></think>
+ * モデル名から Qwen 3 系かを判定し、non-thinking jinja 相当の空 <think></think>
      * プレフィルを使うべきかを返す。ユーザーが Thinking OFF にしたのに
      * モデルが chat_template の関係で <think> を吐くケースの最強の抑止手段。
      */
@@ -308,7 +308,7 @@ object PromptBuilder {
     }
 
     /**
-     * ★ assistant 開始タグの直後に挿入すべきプレフィル文字列を返す。
+ * assistant 開始タグの直後に挿入すべきプレフィル文字列を返す。
      * モデルごとに Thinking ON/OFF を正しく効かせるための中枢ロジック:
      *   - QWEN_COMMAND + OFF → Qwen3 公式 non-thinking jinja と同じ「空 <think>\n\n</think>\n\n」
      *     (デフォルトの chat_template が <think> を吐きそうになっても、これを先に置くことで
@@ -389,7 +389,7 @@ object PromptBuilder {
                 .append(content).append('\n').append("<end_of_turn>\n")
         }
         sb.append("<start_of_turn>model\n")
-        // ★ Bug fix: assistant 側プレフィルを assistantPrefillFor() で一元化。
+ // Bug fix: assistant 側プレフィルを assistantPrefillFor() で一元化。
         //   Qwen OFF 時に「空 <think>\n\n</think>\n\n」をプレフィルして thinking を抑止する。
         sb.append(assistantPrefillFor(style, enableThinking))
         return sb.toString()
@@ -438,7 +438,7 @@ object PromptBuilder {
                 .append(content).append("\n<|im_end|>\n")
         }
         sb.append("<|im_start|>assistant\n")
-        // ★ Bug fix: Qwen OFF 時の「空 <think></think>」も含めてスタイル別に適用。
+ // Bug fix: Qwen OFF 時の「空 <think></think>」も含めてスタイル別に適用。
         sb.append(assistantPrefillFor(style, enableThinking))
         return sb.toString()
     }

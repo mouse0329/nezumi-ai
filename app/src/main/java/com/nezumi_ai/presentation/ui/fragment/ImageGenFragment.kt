@@ -610,7 +610,7 @@ private fun LegacyImageGenScreen(
 
                 if (backendInfo.isNotEmpty()) {
                     Text(
-                        "📡 $backendInfo",
+ "$backendInfo",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 4.dp)

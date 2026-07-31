@@ -32,7 +32,7 @@ object MemoryTextEmbedder {
     // 実行時に決まる場合があるため定数から可変へ変更。ONNX モデルから取得可能なら上書きする。
     var DIMENSION = 1024
 
-    // ★ 埋め込みモデルダウンロード進捗を UI（DLタブ）から直接観測できるようにする。
+ // 埋め込みモデルダウンロード進捗を UI（DLタブ）から直接観測できるようにする。
     //   ChatViewModel を経由せずに ModelSettingsFragment が observe できるよう公開する。
     private val _downloadInProgress = MutableStateFlow(false)
     val downloadInProgress: StateFlow<Boolean> = _downloadInProgress.asStateFlow()

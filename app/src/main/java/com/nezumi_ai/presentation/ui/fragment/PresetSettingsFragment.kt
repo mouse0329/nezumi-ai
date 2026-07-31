@@ -132,12 +132,12 @@ class PresetSettingsFragment : Fragment() {
         var dragIndex by remember { mutableIntStateOf(-1) }
         var dragOffsetY by remember { mutableFloatStateOf(0f) }
         var autoScrollJob by remember { mutableStateOf<Job?>(null) }
-        // ★ 自動スクロールの、ループ内で参照される最新のポインタY位置と方向。
+ // 自動スクロールの、ループ内で参照される最新のポインタY位置と方向。
         // onDrag のローカル変数を while(true) のコルーチン内で参照しても stale になるので、
         // 毎回 onDrag で mutableStateOf に上書きして共有する。
         var autoScrollDirection by remember { mutableIntStateOf(0) } // -1: up, 0: none, 1: down
         var autoScrollDistance by remember { mutableFloatStateOf(0f) } // edge への食い込み量(0..edgeThreshold)
-        // ★ 並び替え確定後、DB からの新しい順序が Flow で届くまで表示する"暫定並び順"。
+ // 並び替え確定後、DB からの新しい順序が Flow で届くまで表示する"暫定並び順"。
         //   これがある間は displayedPresets(=DBの古い順序) を上書きし、
         //   "決定時に一瞬前の状態が表示される" フリッカーを防ぐ。
         var pendingOrderIds by remember { mutableStateOf<List<String>?>(null) }
@@ -315,7 +315,7 @@ class PresetSettingsFragment : Fragment() {
                             }
                         }
 
-                        // ★ 自動スクロール:
+ // 自動スクロール:
                         //   ・従来の while(true){ scrollToItem() } は 1item ごとにジャンプしてカクついていた。
                         //     animateScrollBy と小さめの幅で連続スクロールさせることで滑らかにする。
                         //   ・edge 判定をー pointerYInViewport は Card 内座標なので、
@@ -378,7 +378,7 @@ class PresetSettingsFragment : Fragment() {
                         dragIndex = -1
                         dragOffsetY = 0f
                         if (finalList != null) {
-                            // ★ フリッカー防止:
+ // フリッカー防止:
                             //   draggingList を null に戻す前に、確定した順序を pendingOrderIds に登録する。
                             //   これにより、DB Flow が更新後の順序を配信するまでの間も、
                             //   sortedDisplayed が pendingOrderIds に従って並ぶ。
@@ -513,7 +513,7 @@ class PresetSettingsFragment : Fragment() {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (selected) {
                             Text(
-                                text = "✓",
+ text = "",
                                 color = MaterialTheme.colorScheme.primary,
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
@@ -564,7 +564,7 @@ class PresetSettingsFragment : Fragment() {
         onSave: (PresetEntity) -> Unit
     ) {
         var name by remember { mutableStateOf(initialPreset?.name ?: "") }
-        var icon by remember { mutableStateOf(initialPreset?.icon ?: "🐭") }
+ var icon by remember { mutableStateOf(initialPreset?.icon ?: "") }
         var description by remember { mutableStateOf(initialPreset?.description ?: "") }
         var systemPrompt by remember { mutableStateOf(initialPreset?.systemPrompt ?: "") }
         val availableModels = remember { PresetModelCatalog.downloadedModels(requireContext()) }
@@ -746,7 +746,7 @@ class PresetSettingsFragment : Fragment() {
                             PresetEntity(
                                 id = initialPreset?.id ?: UUID.randomUUID().toString(),
                                 name = trimmedName,
-                                icon = icon.ifBlank { "🐭" },
+ icon = icon.ifBlank { ""},
                                 description = description.trim(),
                                 systemPrompt = systemPrompt.trim(),
                                 modelId = modelId,

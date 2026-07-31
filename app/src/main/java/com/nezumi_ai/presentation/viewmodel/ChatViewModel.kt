@@ -221,16 +221,16 @@ class ChatViewModel(
     val messages: StateFlow<List<MessageEntity>> = _messages
 
     /**
-     * ★ 応答バリアント選択状態:
+ * 応答バリアント選択状態:
      *   key = parentUserMessageId, value = 現在選択中の variantIndex。
      *   未登録の user メッセージは "最新バリアント" をデフォルト選択とする。
-     *   ★ 永続化: セッションごとに SharedPreferences へ JSON で保存し、セッション切り替え時に復元する。
+ * 永続化: セッションごとに SharedPreferences へ JSON で保存し、セッション切り替え時に復元する。
      */
     private val _selectedVariantByParent = MutableStateFlow<Map<Long, Int>>(emptyMap())
     val selectedVariantByParent: StateFlow<Map<Long, Int>> = _selectedVariantByParent
 
     /**
-     * ★ UI へのバリアント切替スクロール要求。
+ * UI へのバリアント切替スクロール要求。
      *   バリアントを切り替えた後に、新しいバリアントの assistant メッセージ id を流す。
      *   UI 側はこの id のメッセージの "一番下" にスクロールする。
      *   SharedFlow にして同じ id を連続で流してもトリガーできるようにする。
@@ -286,7 +286,7 @@ class ChatViewModel(
     /**
      * 同じ parentUserMessageId を持つ assistant メッセージをグループ化して、
      * 現在選択中のバリアント 1 件だけを残したリストを返す。
-     * ★ 既存レコードの互換性: parentUserMessageId == null の assistant メッセージは
+ * 既存レコードの互換性: parentUserMessageId == null の assistant メッセージは
      *   マイグレーション前の旧データなので、バリアントグループ化せずそのまま保持。
      */
     private fun applyVariantSelection(
@@ -331,7 +331,7 @@ class ChatViewModel(
     private val allMessagesSnapshot = MutableStateFlow<List<MessageEntity>>(emptyList())
 
     /**
-     * ★ UI 向けに公開するバリアント情報。
+ * UI 向けに公開するバリアント情報。
      *   key = parentUserMessageId, value = (全バリアント件数, 現在選択中の index)。
      *   allMessagesSnapshot / _selectedVariantByParent が変化するたびに UI へ届くよう combine する。
      */
@@ -356,7 +356,7 @@ class ChatViewModel(
     /**
      * 外部 (UI) から呼ばれる: ある parent のバリアントを切り替える。
      * インデックスはクリップされるので鶴々かな値を渡しても安全。
-     * ★ 切り替え後: (1) 永続化し (2) 切り替え先バリアントの id をスクロール要求として UI に流す。
+ * 切り替え後: (1) 永続化し (2) 切り替え先バリアントの id をスクロール要求として UI に流す。
      */
     fun selectAssistantVariant(parentUserMessageId: Long, newIndex: Int) {
         val all = allMessagesSnapshot.value
@@ -370,12 +370,12 @@ class ChatViewModel(
         _selectedVariantByParent.value = newMap
         _messages.value = applyVariantSelection(all, newMap)
 
-        // ★ セッションごとに永続化
+ // セッションごとに永続化
         _currentSessionId.value?.let { sid ->
             persistVariantSelectionForSession(sid, newMap)
         }
 
-        // ★ 切り替え先バリアントの assistant メッセージの "一番下" にスクロールするため、
+ // 切り替え先バリアントの assistant メッセージの "一番下"にスクロールするため、
         //   そのメッセージ id を UI に通知する。
         val chosen = siblings[clamped]
         viewModelScope.launch { _scrollToVariantMessageId.emit(chosen.id) }
@@ -402,7 +402,7 @@ class ChatViewModel(
     private val _modelLoadingStatus = MutableStateFlow("")
     val modelLoadingStatus: StateFlow<String> = _modelLoadingStatus
 
-    // ★ 「モデル準備中」のフェーズラベルと経過秒数を一元管理し、以前の「[gemma4-2b] エンジンを初期化中」などの
+ // 「モデル準備中」のフェーズラベルと経過秒数を一元管理し、以前の「[gemma4-2b] エンジンを初期化中」などの
     //   モデル名付きバラバラ表記を全て「モデル準備中」に統一し、進捗は (n秒) の形で見えるようにする。
     private val _modelLoadingPhase = MutableStateFlow<String?>(null)
     private val _modelLoadingElapsedSec = MutableStateFlow(0)
@@ -458,7 +458,7 @@ class ChatViewModel(
 
     /**
      * モデルロード待ちのオーバーレイを完全にクリアする。早期 return / 例外 / 既ロードスキップのすべての終端で呼ぶことを想定。
-     * ★ 「モデル準備中が終わらない」バグの防御の中核。
+ * 「モデル準備中が終わらない」バグの防御の中核。
      */
     private fun clearModelLoadingIndicator() {
         modelLoadingTickerJob?.cancel()
@@ -889,7 +889,7 @@ class ChatViewModel(
         val previousSessionId = _currentSessionId.value
         _currentSessionId.value = sessionId
 
-        // ★ セッション切替時に、このセッションのバリアント選択状態を SharedPreferences から復元する。
+ // セッション切替時に、このセッションのバリアント選択状態を SharedPreferences から復元する。
         //   復元しないと setCurrentSession 内で下にある applyVariantSelection が
         //   "前のセッションの選択状態" を使ってしまうので、messages コレクション開始
         //   より前にロードしておく。
@@ -905,7 +905,7 @@ class ChatViewModel(
             _chatSessionThinkingEnabledOverride.value = false
         }
 
-        // ★ Bug fix: セッションを作り直した / 切り替えた際に KV キャッシュをクリアして
+ // Bug fix: セッションを作り直した / 切り替えた際に KV キャッシュをクリアして
         //   前セッションの Thinking コンテキストが残るのを防ぐ。
         //   （「セッションを作り直すと OFF にしても Thinking される」バグの修正）
         if (previousSessionId != sessionId) {
@@ -915,11 +915,11 @@ class ChatViewModel(
 
         stopGenerationInternal()
 
-        // ★ メーター不正確修正: セッション遷移時に圧縮コンテキストキャッシュをクリア（同期的に実行）
+ // メーター不正確修正: セッション遷移時に圧縮コンテキストキャッシュをクリア（同期的に実行）
         clearCompressedContextCache(sessionId)
         Log.d(TAG, "setCurrentSession: Cleared compressed context cache for sessionId=$sessionId")
 
-        // ★ レースコンディション修正: 即座にメッセージをクリアして、前セッションの
+ // レースコンディション修正: 即座にメッセージをクリアして、前セッションの
         //   メッセージが一瞬表示される（チャットカードが切れる）現象を防ぐ。
         //   古いコレクションジョブの最終エミッションが到着しても activeCollectionSessionId
         //   ガードで弾かれるが、UI のちらつきを防ぐために即時クリアも行う。
@@ -931,7 +931,7 @@ class ChatViewModel(
         // キャンセル前のコレクションジョブ
         messagesCollectionJob?.cancel()
 
-        // ★ 新しいコレクションセッションIDを設定してからジョブを起動する。
+ // 新しいコレクションセッションIDを設定してからジョブを起動する。
         //   これにより古いジョブの遅延エミッションが新しいセッションのメッセージを
         //   上書きするのを防ぐ。
         activeCollectionSessionId = sessionId
@@ -940,7 +940,7 @@ class ChatViewModel(
             Log.d(TAG, "START_MESSAGE_COLLECTION: sessionId=$sessionId")
             messageRepository.getMessagesForSession(sessionId)
                 .collect { msgs ->
-                    // ★ レースコンディションガード: このジョブが起動したセッションIDと
+ // レースコンディションガード: このジョブが起動したセッションIDと
                     //   現在アクティブなセッションIDが一致しない場合は、エミッションを破棄する。
                     //   これにより古いセッションのメッセージが新セッションに混入するのを防ぐ。
                     if (activeCollectionSessionId != sessionId) {
@@ -955,15 +955,15 @@ class ChatViewModel(
                     }
                     // Room の Flow は参照を再利用することがあるため、toList() でコピーして新しいオブジェクト参照を作る
                     val snapshot = msgs.toList()
-                    // ★ バリアント適用前の全件を保持しておき、UI 側で切替可能にする
+ // バリアント適用前の全件を保持しておき、UI 側で切替可能にする
                     allMessagesSnapshot.value = snapshot
                     val filtered = applyVariantSelection(snapshot, _selectedVariantByParent.value)
                     val contextUsageChars = estimateContextUsageChars(filtered)
                     withContext(Dispatchers.Main) {
-                        // ★ 二重ガード: メインスレッドに戻った時点でもセッションIDを確認する
+ // 二重ガード: メインスレッドに戻った時点でもセッションIDを確認する
                         if (activeCollectionSessionId == sessionId) {
                             _messages.value = filtered
-                            // ★ メーター不正確修正: キャッシュクリア完了後にメーター計算を実行
+ // メーター不正確修正: キャッシュクリア完了後にメーター計算を実行
                             _contextUsageChars.value = contextUsageChars
                         }
                     }
@@ -1015,7 +1015,7 @@ class ChatViewModel(
         hasUserToggledThinking = true
         _chatSessionDisableThinking.value = disabled
         _chatSessionThinkingEnabledOverride.value = !disabled
-        // ★ Qwen 等の `/think` `/no_think` directive はチャットテンプレ自体を切り替える効果を
+ // Qwen 等の `/think` `/no_think` directive はチャットテンプレ自体を切り替える効果を
         //   持つため、KV キャッシュに前モードの状態が残っているとトグル直後の生成が崩壊する。
         //   Thinking トグルが実際に切り替わったタイミングで KV キャッシュをクリアする。
         val effectiveChanged = previousDisabled != disabled || previousOverride == disabled
@@ -1047,13 +1047,13 @@ class ChatViewModel(
                 val error = result.exceptionOrNull()
                 Log.e(TAG, "Failed to switch model: $normalizedModel", error)
 
-                // ★ 警告ダイアログ表示中はユーザー操作を待つ
+ // 警告ダイアログ表示中はユーザー操作を待つ
                 if (error?.message == "MEMORY_WARNING_SHOWN" || error?.message == "CPU_COMPAT_WARNING_SHOWN") {
                     Log.d(TAG, "Model warning shown - waiting for user action: ${error.message}")
                     return@launch
                 }
 
-                // ★ 修正: ファイル読み込みエラーを先に検出（PATH NOT FOUND など）
+ // 修正: ファイル読み込みエラーを先に検出（PATH NOT FOUND など）
                 // これをメモリエラーより先にチェックすることで、ファイルロード失敗が正規のエラーモーダルで表示される
                 val errorMsg = error?.message ?: ""
                 if (shouldDeleteLocalModelFileOnLoadError(errorMsg)) {
@@ -1150,11 +1150,11 @@ class ChatViewModel(
     fun sendMessage(userMessage: String) {
         if (_isLoading.value) return
 
-        // ★ UI フリーズ対策: 送信タップ直後に UI 状態を同期的に反映する。
+ // UI フリーズ対策: 送信タップ直後に UI 状態を同期的に反映する。
         //   MutableStateFlow.value は thread-safe。ここで先に true にすることで、
         //   ensureValidCurrentSession() 等のサスペンド前に送信ボタン無効化と
         //   ローディングオーバーレイが表示され、フリーズしたように見える問題を回避。
-        //   ★ モデルロード進捗は loadModelWithOverlay() が自身で立てるので、ここで先立てはしない。
+ // モデルロード進捗は loadModelWithOverlay() が自身で立てるので、ここで先立てはしない。
         //     以前は入口で _isModelLoading=true + startModelLoadingIndicator() を先立てしていたが、
         //     モデル既ロード時は loadModelWithOverlay がショートカットして一切のロード処理をしないため、
         //     入口で立てたインジケーターだけが残り「ロード不要なのにグルグルが無限に続く」バグの原因になっていた。
@@ -1204,7 +1204,7 @@ class ChatViewModel(
                 Log.e(TAG, "Error sending message", e)
             } finally {
                 _isLoading.value = false
-                // ★ 早期 return / 例外パスで loadModelWithOverlay に到達せず
+ // 早期 return / 例外パスで loadModelWithOverlay に到達せず
                 //   _isModelLoading が残り UI が固まるのを防止する防御的クリーンアップ。
                 //   loadModelWithOverlay 自体が到達した場合は既に自身の finally でクリア済み。
                 if (_isModelLoading.value) {
@@ -1317,7 +1317,7 @@ class ChatViewModel(
                 _contextUsageChars.value = estimateContextUsageChars(updatedMessages)
 
                 Log.d(TAG, "Context compression completed successfully. Messages will use compressed context on next send.")
-                _uiMessage.emit("✅ コンテキストを圧縮しました\n次のメッセージ送信から圧縮コンテキストが使用されます")
+ _uiMessage.emit("コンテキストを圧縮しました\n次のメッセージ送信から圧縮コンテキストが使用されます")
             } catch (t: Throwable) {
                 _isCompressing.value = false
                 val e = if (t is Exception) t else RuntimeException(t)
@@ -1351,13 +1351,13 @@ class ChatViewModel(
             } else {
                 manager.cancelInference()
             }
-            // ★ Bug fix: ユーザー停止 / 取り消し後は DB 上の履歴とネイティブ KV キャッシュが
+ // Bug fix: ユーザー停止 / 取り消し後は DB 上の履歴とネイティブ KV キャッシュが
             //   乖離しやすい。特に Qwen の `/think` `/no_think` 切替後に途中停止すると、
             //   次の送信でキャッシュ側に残った中途半端な assistant ターンが再利用され、
             //   「こんにちは」に対して `2.0.0 ...` のような壊れた出力を返すことがあった。
             //   停止時点で KV を明示的にクリアして、次回は DB 履歴から組み直す。
             manager.clearKvCache()
-            // ★ GGUF では cancelInference() だけではネイティブ KV に途中トークンが
+ // GGUF では cancelInference() だけではネイティブ KV に途中トークンが
             //   残るケースがあるため、次回推論開始前の force-clear もリクエストしておく。
             //   manager 側は GGUF / LiteRT を含めてエンジンチェーンを踏んだ
             //   ため、未対応エンジンではこの呼び出しは no-op として育てる。
@@ -1394,7 +1394,7 @@ class ChatViewModel(
      * ボタンはUI側で末尾のAIメッセージにのみ表示されるが、万一他のメッセージから呼ばれても安全に動作させる。
      */
     /**
-     * ★ 応答バリアント方式の再生成:
+ * 応答バリアント方式の再生成:
      *   既存の AI 応答は削除せずにそのまま保持し、同じ user プロンプト・同じ会話コンテキストで
      *   新しい assistant バリアントを追加する。UI 側で◀ n/m ▶ で切り替え可能。
      *   引数 aiMessageId は「この応答に対して再生成を走らせる」対象の応答 id 。
@@ -1404,7 +1404,7 @@ class ChatViewModel(
         val sessionId = _currentSessionId.value ?: return
         if (_isLoading.value) return
 
-        // ★ UI フリーズ対策：送信タップ同様に同期的に「生成中」を立てる。
+ // UI フリーズ対策：送信タップ同様に同期的に「生成中」を立てる。
         _isLoading.value = true
 
         viewModelScope.launch(Dispatchers.Default) {
@@ -1487,8 +1487,8 @@ class ChatViewModel(
                     }
                 }
 
-                // ★ 既存 AI 応答は削除しない。
-                // ★ Bug fix: ここで stopGenerationInternal() を呼ぶと、先頭で generationJob に自分自身を
+ // 既存 AI 応答は削除しない。
+ // Bug fix: ここで stopGenerationInternal() を呼ぶと、先頭で generationJob に自分自身を
                 //   登録してしまっているため、currentJob?.cancel(UserStopCancellationException()) が
                 //   自ジョブを cancel し、例外が自分の catch に飛んで generateAIResponse に到達しない。
                 //   代わりにネイティブ側の推論をなも々キャンセルし、KV もクリアするだけにとどめる。
@@ -1522,7 +1522,7 @@ class ChatViewModel(
                 val newSelection = _selectedVariantByParent.value.toMutableMap()
                 newSelection[parentUserMessageId] = existingVariantCount
                 _selectedVariantByParent.value = newSelection
-                // ★ 永続化: 再生成による新バリアントの選択もセッションに保存する。
+ // 永続化: 再生成による新バリアントの選択もセッションに保存する。
                 persistVariantSelectionForSession(sessionId, newSelection)
 
                 // ユーザー側に保存されていた画像/音声を復元して同じ入力で推論を走らせる。
@@ -1562,7 +1562,7 @@ class ChatViewModel(
                     currentTurnMessageId = userMessage.id
                 )
             } catch (t: Throwable) {
-                // ★ Bug fix: 自ジョブの UserStopCancellationException は握りつぶす。
+ // Bug fix: 自ジョブの UserStopCancellationException は握りつぶす。
                 //   旧 generationJob を cancel したときに例外がこちらに伝播しても再生成フローを止めない。
                 if (t is UserStopCancellationException) {
                     Log.d(TAG, "regenerate: UserStopCancellationException swallowed (own cancel signal)")
@@ -1588,7 +1588,7 @@ class ChatViewModel(
     private var _pendingAssistantVariantSpec: AssistantVariantSpec? = null
 
     private suspend fun revokePromptFromMessageInternal(sessionId: Long, promptMessageId: Long) {
-        // ★ Bug fix: 非同期 stopGeneration() だと、取り消し処理が message delete より先に終わる保証がなく、
+ // Bug fix: 非同期 stopGeneration() だと、取り消し処理が message delete より先に終わる保証がなく、
         //   停止中のストリームが削除済みメッセージへ後から書き戻してしまうレースがあった。
         //   ここでは suspend 版を直接呼び、停止完了後に削除する。
         stopGenerationInternal()
@@ -1695,7 +1695,7 @@ class ChatViewModel(
                 val errorMsg = error?.message ?: "Unknown error"
                 Log.e(TAG, "Model loading failed for $selectedModel: $errorMsg", error)
 
-                // ★ 警告ダイアログ表示中はユーザー操作を待つ
+ // 警告ダイアログ表示中はユーザー操作を待つ
                 if (error.isModelLoadWarningMarker()) {
                     Log.d(TAG, "Model warning shown - waiting for user action: $errorMsg")
                     return
@@ -1723,7 +1723,7 @@ class ChatViewModel(
                         details = if (errorMsg.isNotBlank()) "${errorMsg}\nパス: $selectedModel" else "パス: $selectedModel"
                     )
                     // 軽い通知も出す
-                    _uiMessage.emit("❌ モデルファイルが読み込めません。設定画面で再ダウンロードしてください。")
+ _uiMessage.emit("モデルファイルが読み込めません。設定画面で再ダウンロードしてください。")
 
                     // ファイルを削除してリセット
                     try {
@@ -1875,7 +1875,7 @@ class ChatViewModel(
                 }
             }
 
-            // ★ 応答バリアント: 再生成リクエストの場合は _pendingAssistantVariantSpec がセットされているので
+ // 応答バリアント: 再生成リクエストの場合は _pendingAssistantVariantSpec がセットされているので
             //   その parent + variantIndex を使う。通常送信の場合は currentTurnMessageId (user メッセージ id) を
             //   parent にして variantIndex=0 で新規登録する。currentTurnMessageId が null なら旧互換の null。
             val variantSpec = _pendingAssistantVariantSpec
@@ -1892,15 +1892,15 @@ class ChatViewModel(
             val activeStreamingMessageId = streamingMessageId
                 ?: throw IllegalStateException("Failed to create streaming message")
             streamingAssistantMessageIdForTools = activeStreamingMessageId
-            // ★ 新: TTFT (Time To First Token) の基準時刻。推論パイプラインに入った直後の時刻として抱える。
+ // 新: TTFT (Time To First Token) の基準時刻。推論パイプラインに入った直後の時刻として抱える。
             val streamStartedAtMs: Long = SystemClock.elapsedRealtime()
-            // ★ ストリーミングレコードの id が定まったので、この parent の選択ターゲットを
+ // ストリーミングレコードの id が定まったので、この parent の選択ターゲットを
             //   新規作成した variantIndex に合わせておく。UI を新応答にジャンプさせるため。
             if (effectiveParentId != null) {
                 val newSelection = _selectedVariantByParent.value.toMutableMap()
                 newSelection[effectiveParentId] = effectiveVariantIndex
                 _selectedVariantByParent.value = newSelection
-                // ★ 永続化: 新規バリアント選択も保存する。
+ // 永続化: 新規バリアント選択も保存する。
                 _currentSessionId.value?.let { sid ->
                     persistVariantSelectionForSession(sid, newSelection)
                 }
@@ -1925,11 +1925,11 @@ class ChatViewModel(
             var lastPersistAt = 0L
             var toolResultsJson: String? = null
             var firstOutputAtMs: Long? = null
-            // ★ 新: 本文の最初のトークンが到達した時刻 (シンキング間は含めない。TPS 算出に使う)
+ // 新: 本文の最初のトークンが到達した時刻 (シンキング間は含めない。TPS 算出に使う)
             var firstAnswerAtMs: Long? = null
-            // ★ 新: シンキング中の経過時間 (ms) を累積して本文生成時間から引く
+ // 新: シンキング中の経過時間 (ms) を累積して本文生成時間から引く
             var thinkingElapsedMs: Long = 0L
-            // ★ 新: シンキングフェーズ開始時刻 (フェーズが閉じた時に差分を thinkingElapsedMs に加算)
+ // 新: シンキングフェーズ開始時刻 (フェーズが閉じた時に差分を thinkingElapsedMs に加算)
             var thinkingStartedAtMs: Long? = null
             var generationEndAtMs: Long? = null
             var tokenCount = 0f
@@ -2021,7 +2021,7 @@ class ChatViewModel(
                                             answerBuilder.append(resolvedFinal)
                                         }
                                         thinkDelta != null -> {
-                                            // ★ シンキングフェーズ開始を記録 (未開始のときだけ)
+ // シンキングフェーズ開始を記録 (未開始のときだけ)
                                             if (thinkingStartedAtMs == null && firstAnswerAtMs == null) {
                                                 thinkingStartedAtMs = chunkArrivedAt
                                             }
@@ -2064,10 +2064,10 @@ class ChatViewModel(
                                                     }
                                                 }
                                                 val executingMsg = when (toolName) {
-                                                    "set_alarm" -> "⏰ アラームを設定中..."
-                                                    "send_message" -> "💬 メッセージを送信中..."
-                                                    "search" -> "🔍 検索中..."
-                                                    else -> "🔧 $toolName を実行中..."
+ "set_alarm"-> "アラームを設定中..."
+ "send_message"-> "メッセージを送信中..."
+ "search"-> "検索中..."
+ else -> "$toolName を実行中..."
                                                 }
                                                 _uiMessage.emit(executingMsg)
                                                 Log.d(TAG, "Tool execution started: $toolName")
@@ -2088,9 +2088,9 @@ class ChatViewModel(
                                                     )
                                                 }
                                                 val resultMsg = when (status) {
-                                                    "success" -> "✅ $toolName: 成功"
-                                                    "error" -> "❌ $toolName: 実行失敗"
-                                                    else -> "⏳ $toolName: $status"
+ "success"-> "$toolName: 成功"
+ "error"-> "$toolName: 実行失敗"
+ else -> "$toolName: $status"
                                                 }
                                                 _uiMessage.emit(resultMsg)
                                                 Log.d(TAG, "Tool execution completed: $toolName status=$status")
@@ -2112,7 +2112,7 @@ class ChatViewModel(
                                                 Log.d(TAG, "Executed tools list: $executedToolsList")
                                                 if (executedToolsList.isNotEmpty()) {
                                                     val toolsDisplay = executedToolsList.joinToString(", ")
-                                                    val toolListMsg = "🔧 実行ツール: $toolsDisplay"
+ val toolListMsg = "実行ツール: $toolsDisplay"
                                                     _uiMessage.emit(toolListMsg)
                                                 }
                                             } else if (seg.isNotEmpty()) {
@@ -2133,7 +2133,7 @@ class ChatViewModel(
                                                     // TPS 表示を実態に一致させる。
                                                     val deltaText = merged.substring(currentContent.length)
                                                     tokenCount += TextTokenEstimator.estimateOutputTokens(deltaText)
-                                                    // ★ 本文の最初のトークン到達時刻を記録。既にシンキングフェーズに入っていたら
+ // 本文の最初のトークン到達時刻を記録。既にシンキングフェーズに入っていたら
                                                     // その差分を thinkingElapsedMs に一度だけ収めて、シンキングフェーズを閉じる。
                                                     if (firstAnswerAtMs == null) {
                                                         firstAnswerAtMs = chunkArrivedAt
@@ -2155,10 +2155,10 @@ class ChatViewModel(
                                                         )
                                                     }
                                                     if (merged.length - currentContent.length != seg.length) {
-                                                        Log.w(TAG, "⚠ OVERLAP DETECTED: chunk=${seg.length} chars, but added only ${merged.length - currentContent.length} chars")
+ Log.w(TAG, "OVERLAP DETECTED: chunk=${seg.length} chars, but added only ${merged.length - currentContent.length} chars")
                                                     }
                                                 } else if (merged.length < currentContent.length) {
-                                                    Log.w(TAG, "❌ Chunk merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping merge")
+ Log.w(TAG, "Chunk merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping merge")
                                                     if (BuildConfig.DEBUG) {
                                                         Log.w(TAG, "  original chunk: '${seg.take(80)}'")
                                                         Log.w(TAG, "  current: '${currentContent.take(80)}'")
@@ -2236,7 +2236,7 @@ class ChatViewModel(
                                     // Thinking フェーズのみで content が空の場合は persist を遅延させる
                                     // （content が来た時、または最終確定時のみ persist する）
                                     val isThinkingOnlyPhase = contentForUi.isEmpty() && !thinkingForUi.isNullOrBlank()
-                                    // ★ Bug fix(#Thinking-Realtime-1):
+ // Bug fix(#Thinking-Realtime-1):
                                     //   旧実装は Thinking のみのフェーズ中は shouldPersistToDb=false で in-memory 更新のみ
                                     //   行っていたが、その直後に Room の messagesCollectionJob 側の Flow が古い
                                     //   スナップショット (thinkingContent=null, isStreaming=true) を配信してきて、
@@ -2274,7 +2274,7 @@ class ChatViewModel(
                                         lastPersistedThinking = thinkingForUi
                                         lastPersistAt = now
                                     }
-                                    // ★ Bug fix(#Thinking-Realtime-2):
+ // Bug fix(#Thinking-Realtime-2):
                                     //   persist 間隔の合間でも UI へは即座に反映する必要があるため、
                                     //   Thinking フェーズかどうかに関わらず _messages を in-memory 更新する。
                                     //   Room Flow 再配信で古いスナップショットが届いても、次の persist で
@@ -2286,7 +2286,7 @@ class ChatViewModel(
                                         val currentMsgs = _messages.value.toMutableList()
                                         val idx = currentMsgs.indexOfFirst { it.id == id }
                                         if (idx >= 0) {
-                                            // ★ isStreaming フラグを保持したまま thinkingContent のみ更新する。
+ // isStreaming フラグを保持したまま thinkingContent のみ更新する。
                                             //   これがないと MessageAdapter 側で「生成完了」と誤認され、
                                             //   Thinking ブロックのトグル行が表示されてしまう。
                                             val original = currentMsgs[idx]
@@ -2322,7 +2322,7 @@ class ChatViewModel(
                         streamAbortNote =
                             "\n\n（長時間出力が途切れたため、ここで打ち切りました）"
                         withContext(Dispatchers.Main) {
-                            _uiMessage.emit("⏱️ 応答が長時間途切れました。表示された分まで保存しました。")
+ _uiMessage.emit("応答が長時間途切れました。表示された分まで保存しました。")
                         }
                     }
                     collectionError is GenerationWallTimeoutException -> {
@@ -2330,7 +2330,7 @@ class ChatViewModel(
                         streamAbortNote =
                             "\n\n（生成時間の上限に達したため、ここで打ち切りました）"
                         withContext(Dispatchers.Main) {
-                            _uiMessage.emit("⏱️ 生成時間が上限に達しました。表示された分まで保存しました。")
+ _uiMessage.emit("生成時間が上限に達しました。表示された分まで保存しました。")
                         }
                     }
                     collectionError is UserStopCancellationException -> {
@@ -2425,7 +2425,7 @@ class ChatViewModel(
                     else -> note.trim()
                 }
 
-            // ★ ユーザー停止時はツール実行結果カードとして保存
+ // ユーザー停止時はツール実行結果カードとして保存
             val finalToolResultsJson =
                 if (collectionCancelledByUser) withUserStopCard(toolResultsJson) else toolResultsJson
 
@@ -2434,7 +2434,7 @@ class ChatViewModel(
 
             Log.d(TAG, "generateAIResponse finalization: hasPayload=$hasPayload, activeStreamingMessageId=$activeStreamingMessageId, completeResponse.len=${completeResponse.length}, finalThinking=${!finalThinking.isNullOrEmpty()}")
 
-            // ★ TTFT: 送信・推論開始から最初の (シンキングも含む) トークンまでの時間。
+ // TTFT: 送信・推論開始から最初の (シンキングも含む) トークンまでの時間。
             //   generationStartAtMs 相当のベースラインとして requestStartedAtMs を参照したいが、
             //   当スコープでは firstOutputAtMs を得ているのでストリーミング開始 (streamStartedAtMs) を別途使う。
             //   ここでは streamStartedAtMs の代わりに activeStreamingMessageId 取得直後の基準時刻を →
@@ -2443,7 +2443,7 @@ class ChatViewModel(
                 val start = streamStartedAtMs
                 if (start != null && first >= start) (first - start).coerceAtLeast(0L) else null
             }
-            // ★ 修正: 本文生成時間 = (終了 - 最初の本文トークン) − (シンキング中の経過時間)。
+ // 修正: 本文生成時間 = (終了 - 最初の本文トークン) − (シンキング中の経過時間)。
             //   これによりシンキングに長い時間を使っても TPS が不当に小さくならない。
             //   firstAnswerAtMs がない (本文を一切出さなかった) 場合は従来通り firstOutputAtMs を使う。
             val generationTimeMs = firstOutputAtMs?.let { first ->
@@ -2539,7 +2539,7 @@ class ChatViewModel(
                     )
                 }
                 withContext(Dispatchers.Main) {
-                    _uiMessage.emit("⏱️ 応答タイムアウト")
+ _uiMessage.emit("応答タイムアウト")
                 }
                 return
             }
@@ -2547,17 +2547,17 @@ class ChatViewModel(
                 val id = streamingMessageId
                 if (id != null) {
                     withContext(Dispatchers.IO + NonCancellable) {
-                        // ★ 既存の内容を取得して保存（上書きしない）
+ // 既存の内容を取得して保存（上書きしない）
                         val current = messageRepository.getMessageById(id)
                         val existingContent = current?.content?.trim() ?: ""
-                        // ★ 停止時の「途中 assistant 出力」を表示上閉じるための終端補完。
+ // 停止時の「途中 assistant 出力」を表示上閉じるための終端補完。
                         //   コードフェンスの未閉鎖によるレンダリング崩れを防ぐ。
                         val finalContent = if (existingContent.isNotEmpty()) {
                             closePartialAssistantContent(existingContent)
                         } else {
                             ""  // 空の場合は空文字列（後でフォールバックメッセージに置換）
                         }
-                        // ★ thinking ブロックも未閉鎖のまま残っていたら、閉じタグを補う。
+ // thinking ブロックも未閉鎖のまま残っていたら、閉じタグを補う。
                         val finalThinking = closePartialThinking(current?.thinkingContent)
 
                         val updatedToolResultsJson = withUserStopCard(current?.toolResultsJson)
@@ -2571,7 +2571,7 @@ class ChatViewModel(
                         )
                     }
                 }
-                // ★ 停止直後はネイティブ KV に途中トークンが残っているため、
+ // 停止直後はネイティブ KV に途中トークンが残っているため、
                 //   次回推論開始前に必ずクリアさせる。実際のクリアは stopGenerationInternal
                 //   と、次回 inference へのエントリで二重に守られる。
                 runCatching { requireModelManager().requestForceClearBeforeNextInference() }
@@ -2644,7 +2644,7 @@ class ChatViewModel(
                 }
                 // エラーを UI に通知
                 withContext(Dispatchers.Main) {
-                    _uiMessage.emit("❌ " + (e.message?.take(30) ?: "エラーが発生しました"))
+ _uiMessage.emit(" "+ (e.message?.take(30) ?: "エラーが発生しました"))
                 }
             }
         } finally {
@@ -2708,7 +2708,7 @@ class ChatViewModel(
     }
 
     /**
-     * ★ ユーザー停止 / 例外で生成が途中で折れた場合に、partial assistant 出力を
+ * ユーザー停止 / 例外で生成が途中で折れた場合に、partial assistant 出力を
      *   表示上「安全に閉じる」ための軽量な終端補完。
      *
      * モデル言語の終端トークン (`<end_of_turn>` / `<|im_end|>` など) は
@@ -2731,7 +2731,7 @@ class ChatViewModel(
     }
 
     /**
-     * ★ 途中で折れた thinking ブロックの終端補完。
+ * 途中で折れた thinking ブロックの終端補完。
      *
      * `<think>` / `<|think|>` を開いたまま \</think> を出さずに生成が
      * 折れると、後続の MessageAdapter 側で thinking トークン除去が不完全に
@@ -2771,7 +2771,7 @@ class ChatViewModel(
             success = true,
             payload = mapOf(
                 "message" to kotlinx.serialization.json.JsonPrimitive("ユーザーが生成を停止しました"),
-                "icon" to kotlinx.serialization.json.JsonPrimitive("⏸️")
+                "icon" to kotlinx.serialization.json.JsonPrimitive("")
             )
         )
         return ToolResultCard.listToJsonArray(existingCards + stopCard)
@@ -2908,6 +2908,52 @@ class ChatViewModel(
         return SdModelLayout.isUsableModelDir(file) || SdModelLayout.isLegacyQnnDir(file)
     }
 
+    /**
+     * モデル名（ディレクトリ名）から SD モデルパスを解決する。
+     * list_sd_models ツールが返す "name" フィールドと一致するディレクトリを探す。
+     */
+    private fun resolveSdModelPathByName(modelName: String): String? {
+        val name = modelName.trim()
+
+        // sd_models directory
+        val sdModelsDir = File(appContext.filesDir, "sd_models")
+        sdModelsDir.listFiles()?.forEach { dir ->
+            if (!dir.isDirectory) return@forEach
+            val targetDir = resolveNestedSdModelDirForName(dir)
+            if (targetDir.name == name && isProbableSdModelDir(targetDir)) {
+                return targetDir.absolutePath
+            }
+        }
+
+        // App external files directory
+        val appDir = appContext.getExternalFilesDir(null)
+        appDir?.listFiles()?.forEach { file ->
+            if (file.name == name && isProbableSdModelDir(file)) {
+                return file.absolutePath
+            }
+        }
+
+        // Imported models directory
+        val importedDir = File(appContext.filesDir, "models/imported")
+        importedDir.listFiles()?.forEach { file ->
+            if (file.name == name && isProbableSdModelDir(file)) {
+                return file.absolutePath
+            }
+        }
+
+        return null
+    }
+
+    private fun resolveNestedSdModelDirForName(dir: File): File {
+        var current = dir
+        repeat(3) {
+            val children = current.listFiles()?.toList() ?: return current
+            if (children.size == 1 && children[0].isDirectory) current = children[0]
+            else return current
+        }
+        return current
+    }
+
     private suspend fun invokeGenerateImageFromTool(toolCall: ToolCall): ToolExecutionResult {
         val prompt = toolCall.arguments["prompt"]?.toString()?.trim().orEmpty()
         if (prompt.isEmpty()) {
@@ -2919,7 +2965,7 @@ class ChatViewModel(
                     elapsedMs = 0
                 )
             }
-            _uiMessage.emit("🔧 generate_image を実行中...")
+ _uiMessage.emit("generate_image を実行中...")
             return ToolExecutionResult(
                 success = false,
                 payload = mapOf("success" to false, "error" to "missing_prompt")
@@ -2929,6 +2975,12 @@ class ChatViewModel(
             toolCall.arguments["negativePrompt"]
                 ?: toolCall.arguments["negative_prompt"]
         )?.toString()?.trim().orEmpty()
+        // ツール経由でモデル名が指定された場合は、そのモデルパスを解決する
+        val requestedModelName = (
+            toolCall.arguments["model"]
+                ?: toolCall.arguments["model_name"]
+                ?: toolCall.arguments["modelName"]
+        )?.toString()?.trim()?.takeIf { it.isNotBlank() }
         var w = (toolCall.arguments["width"] as? Number)?.toInt() ?: 256
         var h = (toolCall.arguments["height"] as? Number)?.toInt() ?: 256
         val allowed = listOf(256, 512, 768)
@@ -2952,7 +3004,7 @@ class ChatViewModel(
                     resultMessage = "キャンセルしました"
                 )
             }
-            _uiMessage.emit("❌ generate_image: キャンセルしました")
+ _uiMessage.emit("generate_image: キャンセルしました")
             return ToolExecutionResult(
                 success = true,
                 payload = mapOf("success" to true, "message" to "キャンセルしました")
@@ -2979,7 +3031,7 @@ class ChatViewModel(
                     resultMessage = "sd_model_path_missing"
                 )
             }
-            _uiMessage.emit("❌ generate_image: SDモデルパスが見つかりません")
+ _uiMessage.emit("generate_image: SDモデルパスが見つかりません")
             return ToolExecutionResult(
                 success = false,
                 payload = mapOf("success" to false, "error" to "sd_model_path_missing")
@@ -2999,9 +3051,10 @@ class ChatViewModel(
             cfg = cfg,
             seed = seed,
             scheduler = scheduler,
-            sdPath = sdPath
+            sdPath = sdPath,
+            requestedModelName = requestedModelName
         )
-        _uiMessage.emit("🎨 generate_image: 画像生成を開始します")
+ _uiMessage.emit("generate_image: 画像生成を開始します")
         return ToolExecutionResult(
             success = true,
             payload = mapOf(
@@ -3023,7 +3076,8 @@ class ChatViewModel(
         cfg: Float,
         seed: Long,
         scheduler: SdScheduler,
-        sdPath: String
+        sdPath: String,
+        requestedModelName: String? = null
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             if (activeTurnJob != null) {
@@ -3039,7 +3093,7 @@ class ChatViewModel(
                         status = "error",
                         resultMessage = "LLM応答終了待ちタイムアウト"
                     )
-                    _uiMessage.emit("❌ generate_image: LLM応答の終了待ちがタイムアウトしました")
+ _uiMessage.emit("generate_image: LLM応答の終了待ちがタイムアウトしました")
                     return@launch
                 }
             }
@@ -3053,7 +3107,8 @@ class ChatViewModel(
                 cfg = cfg,
                 seed = seed,
                 scheduler = scheduler,
-                sdPath = sdPath
+                sdPath = sdPath,
+                requestedModelName = requestedModelName
             )
         }
     }
@@ -3068,7 +3123,8 @@ class ChatViewModel(
         cfg: Float,
         seed: Long,
         scheduler: SdScheduler,
-        sdPath: String
+        sdPath: String,
+        requestedModelName: String? = null
     ) {
         if (BuildConfig.SAFETY_IMAGE_GUARD_ENABLED &&
             !ModelDownloadWorker.awaitSafetyModelReady(appContext)) {
@@ -3079,7 +3135,7 @@ class ChatViewModel(
                 status = "error",
                 resultMessage = "セーフティモデルDL失敗"
             )
-            _uiMessage.emit("❌ generate_image: セーフティモデルのダウンロードに失敗しました")
+ _uiMessage.emit("generate_image: セーフティモデルのダウンロードに失敗しました")
             return
         }
 
@@ -3104,7 +3160,7 @@ class ChatViewModel(
                 status = "error",
                 resultMessage = "LLMモデル解放失敗"
             )
-            _uiMessage.emit("❌ generate_image: LLMモデルを解放できませんでした")
+ _uiMessage.emit("generate_image: LLMモデルを解放できませんでした")
             return
         }
 
@@ -3114,8 +3170,17 @@ class ChatViewModel(
 
         Log.d(TAG, "performGenerateImageFromTool: Starting image generation server...")
 
+        // モデル名が指定された場合は、対応するモデルパスを解決する
+        val effectiveSdPath = if (!requestedModelName.isNullOrBlank()) {
+            resolveSdModelPathByName(requestedModelName) ?: sdPath.also {
+                Log.w(TAG, "performGenerateImageFromTool: Model '$requestedModelName' not found, using default: $sdPath")
+            }
+        } else {
+            sdPath
+        }
+
         try {
-            val localDream = EngineManager.acquireLocalDream(appContext, sdPath, "auto")
+            val localDream = EngineManager.acquireLocalDream(appContext, effectiveSdPath, "auto")
 
             Log.d(TAG, "performGenerateImageFromTool: LocalDream acquired successfully")
             Log.d(TAG, "performGenerateImageFromTool: Model loaded successfully, starting image generation")
@@ -3127,7 +3192,7 @@ class ChatViewModel(
                     elapsedMs = SystemClock.elapsedRealtime()
                 )
             }
-            _uiMessage.emit("🎨 画像生成中...")
+ _uiMessage.emit("画像生成中...")
             val promptPreview = prompt.trim().replace("\n", " ").let { if (it.length <= 48) it else it.take(48) + "…" }
             ImageGenerationNotificationManager.showChatToolProgress(
                 appContext,
@@ -3136,7 +3201,13 @@ class ChatViewModel(
                 promptPreview = promptPreview
             )
 
-            val bmp = localDream.generateImage(
+            // Bug fix: ツール経由画像生成でライブラリにプロンプトしか保存されない問題を修正。
+            //   旧実装は generateImage (メタデータなし) を呼び出し、ImageLibraryStore.save に
+            //   プロンプトのみ渡していた。手動生成経路は generateImageWithMetadata を使って
+            //   フルメタデータを保存しているため、ツール経由の方が保存される情報が少なかった。
+            //   generateImageWithMetadata を使い、メタデータ付きで ImageLibraryStore.save を
+            //   呼ぶように修正する。
+            val result = localDream.generateImageWithMetadata(
                 prompt = prompt,
                 negativePrompt = negativePrompt,
                 width = width,
@@ -3160,6 +3231,8 @@ class ChatViewModel(
                     Log.d(TAG, "performGenerateImageFromTool: Progress $step/$totalSteps")
                 }
             )
+            val bmp = result?.first
+            val metadata = result?.second
             // 完了後は progress を null に戻す
             _imageGenProgress.value = null
 
@@ -3176,7 +3249,7 @@ class ChatViewModel(
                     status = "error",
                     resultMessage = "生成失敗"
                 )
-                _uiMessage.emit("❌ generate_image: 画像生成失敗")
+ _uiMessage.emit("generate_image: 画像生成失敗")
                 ImageGenerationNotificationManager.showError(
                     appContext,
                     ImageGenerationNotificationManager.chatToolNotificationId(),
@@ -3185,7 +3258,19 @@ class ChatViewModel(
                 )
                 clearImageGenerationStatusSoon()
             } else {
-                ImageLibraryStore.save(appContext, bmp, prompt)
+                // Bug fix: フルメタデータを渡してライブラリに保存する
+                //   (手動生成経路と同じ情報量になるよう修正)
+                ImageLibraryStore.save(
+                    appContext, bmp, prompt,
+                    negativePrompt = metadata?.negativePrompt,
+                    steps = metadata?.steps,
+                    seed = metadata?.seed,
+                    modelName = metadata?.modelName,
+                    width = metadata?.width,
+                    height = metadata?.height,
+                    cfg = metadata?.cfg,
+                    scheduler = metadata?.scheduler
+                )
 
                 if (targetMessageId != null) {
                     val uri = MessageMediaStore.savePngBitmap(appContext, bmp, "chat_sd_$targetMessageId")
@@ -3195,7 +3280,7 @@ class ChatViewModel(
                         }
                     }
                 }
-                Log.d(TAG, "performGenerateImageFromTool: ✓ Image generated successfully")
+                Log.d(TAG, "performGenerateImageFromTool: Image generated successfully")
                 
                 // UI通知：成功
                 _toolCallState.value = ToolCallState.Result(
@@ -3203,7 +3288,7 @@ class ChatViewModel(
                     status = "success",
                     resultMessage = "画像を生成しました"
                 )
-                _uiMessage.emit("✅ generate_image: 画像を生成しました")
+ _uiMessage.emit("generate_image: 画像を生成しました")
                 ImageGenerationNotificationManager.showCompleted(
                     appContext,
                     ImageGenerationNotificationManager.chatToolNotificationId(),
@@ -3227,7 +3312,7 @@ class ChatViewModel(
                 status = "error",
                 resultMessage = e.message ?: "sd_error"
             )
-            _uiMessage.emit("❌ generate_image: エラー - ${e.message ?: "不明なエラー"}")
+ _uiMessage.emit("generate_image: エラー - ${e.message ?: "不明なエラー"}")
             ImageGenerationNotificationManager.showError(
                 appContext,
                 ImageGenerationNotificationManager.chatToolNotificationId(),
@@ -3249,7 +3334,7 @@ class ChatViewModel(
                 Log.e(TAG, "performGenerateImageFromTool: LLM reload failed in finally", reloadError)
                 // UI通知
                 withContext(Dispatchers.Main) {
-                    _uiMessage.emit("⚠️ LLMモデルの再ロードに失敗しました。チャットを再起動してください。")
+ _uiMessage.emit("LLMモデルの再ロードに失敗しました。チャットを再起動してください。")
                 }
             }
         }
@@ -3269,7 +3354,7 @@ class ChatViewModel(
         val base = settingsRepository.getInferenceConfigForModel(model, appContext)
         val disableThinking = _chatSessionDisableThinking.value
         val thinkingEnabledOverride = _chatSessionThinkingEnabledOverride.value
-        // ★ Bug fix: 以前は modelSupportsGemmaThinking() でしか override を受け付けないため、
+ // Bug fix: 以前は modelSupportsGemmaThinking() でしか override を受け付けないため、
         //   Qwen 系 GGUF などで「このチャットで Thinking: ON」にしても enable_thinking が
         //   反映されず、結果として `/no_think` directive のままユーザーには Thinking 表示だけ
         //   ONになるという矛盾が発生していた。Thinking のオーバーライドはモデル種別に依らず
@@ -3574,10 +3659,10 @@ class ChatViewModel(
     ): String {
         val rawMessages = messageRepository.getMessagesForSessionOnce(sessionId)
         if (rawMessages.isEmpty()) return ""
-        // ★ バリアント選択をプロンプトにも反映させる。
+ // バリアント選択をプロンプトにも反映させる。
         //   選択されていない assistant バリアントを除外しないと、同じ user ターンに対して
         //   複数の assistant ターンがプロンプトに並んでしまい、LLM にとって奇妙な会話になる。
-        // ★ 再生成時は「再生成対象の assistant 応答」を履歴から外す。
+ // 再生成時は「再生成対象の assistant 応答」を履歴から外す。
         //   ここで古い応答を会話履歴に残したままだと、モデルはすでに assistant が回答済みだと判断し、
         //   新しい応答を作る代わりに同じ内容を再描画したような挙動になりやすい。
         val selectedMessages = applyVariantSelection(rawMessages, _selectedVariantByParent.value)
@@ -4070,7 +4155,7 @@ class ChatViewModel(
     }
 
     private suspend fun estimateContextUsageChars(messages: List<MessageEntity>): Int {
-        // ★ バグ修正: メーター計算を実際の推論ロジック（buildPromptWithSessionContext）と統一
+ // バグ修正: メーター計算を実際の推論ロジック（buildPromptWithSessionContext）と統一
         // Phase 14: プロンプトの現在の文字数を推定（実際の制限は config.contextWindow（トークン数）に依存）
         val selectedModel = getActiveSelectedModel()
         val engineModelName = toEngineModelName(selectedModel)
@@ -4084,7 +4169,7 @@ class ChatViewModel(
             enableToolCalling = config.enableToolCalling
         )
 
-        // ★ 常に trimPromptToWindow で実際に使用される文字数を計算
+ // 常に trimPromptToWindow で実際に使用される文字数を計算
         val maxChars = config.contextWindow * TOKEN_TO_CHAR_RATIO
         val basePromptSize = trimPromptToWindow(basePrompt, config.contextWindow).length
 
@@ -4098,7 +4183,7 @@ class ChatViewModel(
             return basePromptSize
         }
 
-        // ★ buildPromptWithSessionContext と同じロジックで圧縮判定
+ // buildPromptWithSessionContext と同じロジックで圧縮判定
         val validMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
         val recentMessageCount = recentMessageCountForWindow(config.contextWindow)
         val keepRecentCount = when {
@@ -4120,7 +4205,7 @@ class ChatViewModel(
             ((acc * 31) + msg.role.hashCode()) * 31 + msg.content.hashCode()
         }
 
-        // ★ キャッシュヒット時のみ圧縮サイズを計算
+ // キャッシュヒット時のみ圧縮サイズを計算
         val cached = compressedContextCache[sessionId]
         if (cached != null && cached.signature == signature) {
             val compressedPrompt = buildPromptWithCompressedSummary(
@@ -4136,7 +4221,7 @@ class ChatViewModel(
             return compressedSize
         }
 
-        // ★ キャッシュヒット不成功：未圧縮サイズを返す（推論時に圧縮判定され圧縮される可能性あり）
+ // キャッシュヒット不成功：未圧縮サイズを返す（推論時に圧縮判定され圧縮される可能性あり）
         // この場合、次の推論で圧縮キャッシュが生成されてメーター精度が向上する
         Log.d(TAG, "CONTEXT_METER: No cached compression yet | showing uncompressed=${basePromptSize}ch (may be compressed during inference)")
         return basePromptSize
@@ -4420,7 +4505,7 @@ class ChatViewModel(
         val isSameModelLoaded = manager.isSameModelLoaded(engineModelName)
         val effectiveSkipMemoryWarning = skipMemoryWarning || isModelAlreadyLoaded
 
-        // ★★★ 重要なショートカット:
+ // 重要なショートカット:
         //   モデルが既にロード済みで現コンフィグと互換なら、一切のオーバーレイを出さずに成功を返す。
         //   以前はこのケースでも _isModelLoading = true を一旦立ててしまい、入り口側で先に立てたタイマーと不整合を起こし
         //   「ロード不要なのにグルグルが永遠に続く」バグの主な原因だった。
@@ -4435,7 +4520,7 @@ class ChatViewModel(
         }
 
         _isModelLoading.value = true
-        // ★ モデル名やフェーズごとのラベルは以前「[Gemma4-2B] エンジンを初期化中...」などバラバラだったのを
+ // モデル名やフェーズごとのラベルは以前「[Gemma4-2B] エンジンを初期化中...」などバラバラだったのを
         //   全て「モデル準備中 · <フェーズ> (n秒)」に統一する。タイマーを 1秒毎に回して
         //   進捗ラベルを自動更新。
         startModelLoadingIndicator()
@@ -4460,7 +4545,7 @@ class ChatViewModel(
                         modelName = displayModel,
                         message = warning.userMessage
                     )
-                    // ★ クリーンアップ強化: 以前は _isModelLoading = false だけだったため
+ // クリーンアップ強化: 以前は _isModelLoading = false だけだったため
                     //   _modelLoadingStatus の旧ラベルやタイマージョブが残って
                     //   「モデル準備中」が終わらないのバグの一因だった。
                     clearModelLoadingIndicator()
@@ -4495,7 +4580,7 @@ class ChatViewModel(
                     Log.d(TAG, "loadModelWithOverlay: Memory warning threshold is 0%, skipping check")
                     // 警告を表示しない
                 } else {
-                    // ★ 新機能: モデルファイルサイズからメモリ不足を検知
+ // 新機能: モデルファイルサイズからメモリ不足を検知
                     // 注意: isMemoryLow()（モデル名ベース）は空きメモリ基準で不正確なため使用しない
                     // #17 fix: engineModelName を modelIdentifier として渡し、
                     //   MODEL_MIN_MEMORY にエントリがあるプリセットモデル（gemma4-2b/4b 等）は
@@ -4520,7 +4605,7 @@ class ChatViewModel(
                         // 警告情報を取得
                         val systemMemInfo = MemoryObserver.getSystemMemoryInfo(appContext)
 
-                        // ★ バグ修正: 既に警告が表示されている場合はスキップ
+ // バグ修正: 既に警告が表示されている場合はスキップ
                         if (_memoryWarning.value == null) {
                             _memoryWarning.value = MemoryWarningInfo(
                                 modelName = displayModel,
@@ -4533,7 +4618,7 @@ class ChatViewModel(
                                 usedPercent = systemMemInfo.usedPercent,
                                 lowMemoryFlag = systemMemInfo.lowMemoryFlag
                             )
-                            // ★ 以前は _isModelLoading だけ false にしてラベルを残していたが、
+ // 以前は _isModelLoading だけ false にしてラベルを残していたが、
                             //   メモリ警告ダイアログを閉じた後に UI で「モデル準備中」が見え施けていた
                             //   不具合を防ぐため、タイマー・フェーズも一旦クリアする。
                             clearModelLoadingIndicator()
@@ -4546,7 +4631,7 @@ class ChatViewModel(
             // effectiveSkipMemoryWarning=true の場合はメモリ警告をスキップしてロード続行
             Log.d(TAG, "loadModelWithOverlay: Memory check passed for model=$model")
 
-            // ★ 以前「[Gemma4-2B] エンジンを初期化中...」だったのを「エンジン初期化」フェーズに統一。
+ // 以前「[Gemma4-2B] エンジンを初期化中...」だったのを「エンジン初期化」フェーズに統一。
             updateModelLoadingPhase(if (isModelAlreadyLoaded) "重みロード" else "エンジン初期化")
             Log.d(TAG, "loadModelWithOverlay: model=$model, engineName=$engineModelName, enableThinking=${config.enableThinking}, backend=${config.backendType}, contextWindow=${config.contextWindow}")
 
@@ -4603,11 +4688,11 @@ class ChatViewModel(
     ) {
         if (_isLoading.value) return
 
-        // ★ UI フリーズ対策: 送信タップ直後に UI 状態を同期的に反映する。
+ // UI フリーズ対策: 送信タップ直後に UI 状態を同期的に反映する。
         //   MutableStateFlow.value は thread-safe。ここで先に true にすることで、
         //   generationControlMutex 取得 / ensureValidCurrentSession() 等のサスペンド前に
         //   送信ボタン無効化を反映させる。
-        //   ★ モデルロード表示 (_isModelLoading + startModelLoadingIndicator) はここでは立てない。
+ // モデルロード表示 (_isModelLoading + startModelLoadingIndicator) はここでは立てない。
         //     モデルが既ロードの場合は loadModelWithOverlay がショートカットしてオーバーレイを出さない仕様に統一。
         //     以前は入口で先立てしていたため、既ロード時に「ロード不要なのにグルグルが無限に続く」バグを起こしていた。
         _isLoading.value = true
@@ -4631,7 +4716,7 @@ class ChatViewModel(
             }
             var imagesToCleanup = mutableListOf<Bitmap>()
             try {
-                // ★ 二重送信防止＆UI競合防止（同期側で既に立てているが冪等性のため再度セット）
+ // 二重送信防止＆UI競合防止（同期側で既に立てているが冪等性のため再度セット）
                 withContext(Dispatchers.Main) {
                     _isLoading.value = true
                 }
@@ -4679,7 +4764,7 @@ class ChatViewModel(
                     maybeUpdateSessionTitleFromUserMessage(sessionId, userMessage)
                 }
 
-                // ★ DB保存後にpendingをクリア（messagesフローが更新済みのタイミング）
+ // DB保存後にpendingをクリア（messagesフローが更新済みのタイミング）
                 withContext(Dispatchers.Main) {
                     _inputText.value = ""
                     clearPendingMediaPreview()
@@ -4726,7 +4811,7 @@ class ChatViewModel(
                 // UI 更新 - Main スレッド
                 withContext(Dispatchers.Main) {
                     _isLoading.value = false
-                    // ★ 送信入り口で早期に立てた _isModelLoading が loadModelWithOverlay に
+ // 送信入り口で早期に立てた _isModelLoading が loadModelWithOverlay に
                     //   到達せずに早期 return したケース（モデル未ダウンロード / メモリ不足 等）で
                     //   フラグが残り UI が固まるのを防止する防御的クリーンアップ。
                     if (_isModelLoading.value) {
@@ -5097,9 +5182,9 @@ class ChatViewModel(
                 stopGeneration()  // 推論キャンセル
                 modelManager?.unloadModel()?.let { result ->
                     if (result.isSuccess) {
-                        Log.d(TAG, "✅ Model unloaded in cleanupBeforeDestroy")
+ Log.d(TAG, "Model unloaded in cleanupBeforeDestroy")
                     } else {
-                        Log.w(TAG, "⚠️ Failed to unload model: ${result.exceptionOrNull()?.message}")
+ Log.w(TAG, "Failed to unload model: ${result.exceptionOrNull()?.message}")
                     }
                 }
             } catch (e: Exception) {

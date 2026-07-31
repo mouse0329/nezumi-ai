@@ -64,8 +64,13 @@ object GgufToolPromptBuilder {
         ),
         ToolSchema(
             "generate_image",
-            "Generates an image from a text prompt.",
-            """{"type":"object","properties":{"prompt":{"type":"string"},"negative_prompt":{"type":"string"},"width":{"type":"integer"},"height":{"type":"integer"},"steps":{"type":"integer"},"cfg":{"type":"number"},"seed":{"type":"integer"}},"required":["prompt"]}"""
+            "Generates an image from a text prompt. Call list_sd_models first to get available model names.",
+            """{"type":"object","properties":{"prompt":{"type":"string"},"negative_prompt":{"type":"string"},"model":{"type":"string","description":"Model directory name from list_sd_models. If omitted, the default model is used."},"width":{"type":"integer"},"height":{"type":"integer"},"steps":{"type":"integer"},"cfg":{"type":"number"},"seed":{"type":"integer"}},"required":["prompt"]}"""
+        ),
+        ToolSchema(
+            "list_sd_models",
+            "Returns the list of available Stable Diffusion image generation models on this device.",
+            """{"type":"object","properties":{},"required":[]}"""
         ),
         ToolSchema(
             "search_memory",
@@ -121,6 +126,9 @@ object GgufToolPromptBuilder {
                 (NezumiTool.START_TIMER in enabled || NezumiTool.STOP_TIMER in enabled)
             ) {
                 add("list_timers")
+            }
+            if (NezumiTool.GENERATE_IMAGE in enabled) {
+                add("list_sd_models")
             }
         }
         if (enabledNames.isEmpty()) {

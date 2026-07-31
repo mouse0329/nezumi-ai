@@ -325,7 +325,7 @@ class LocalDreamModule(private val context: Context) {
                     currentModelPath = modelPath
                     currentBackend = selectedBackend
                     isServerReady = mnnModule?.isServerReady == true
-                    Log.i(TAG, "loadModel: ✓ JNI MNN engine loaded, ready=${isServerReady}")
+ Log.i(TAG, "loadModel: JNI MNN engine loaded, ready=${isServerReady}")
                     return@withContext true
                 } else {
                     Log.w(TAG, "loadModel: JNI MNN engine failed to load; will attempt other backends")

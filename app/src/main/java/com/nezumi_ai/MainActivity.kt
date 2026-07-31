@@ -299,7 +299,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun navigateToChatSession(sessionId: Long) {
         val navController = findNavController(R.id.nav_host_fragment_content_main)
-        // ★ セッション遷移最適化: すでに ChatFragment が表示されている場合は、
+ // セッション遷移最適化: すでに ChatFragment が表示されている場合は、
         //   フラグメントを再生成（popBackStack + navigate）する代わりに、
         //   既存の ChatFragment の switchSession() を呼んでセッションIDだけ切り替える。
         //   これによりフラグメントの再作成による重い処理（ViewBinding再生成、RecyclerView再構築、
@@ -370,7 +370,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         refreshDrawerDateLabels()
 
-        // ★ スクリーンショット無効化設定をアプリ全体に反映。
+ // スクリーンショット無効化設定をアプリ全体に反映。
         //   このフラグは既存のシークレットモード/常時ロックの FLAG_SECURE ロジックとは独立して動作する。
         //   非有効のときも、シークレットモード/常時ロック側の既存制御を壊さないように、
         //   後続の clearFlags はここでは呼ばない。

@@ -1322,7 +1322,7 @@ class LiteRtLmEngine(
             } else {
                 cancelActiveConversationNonSuspend()
             }
-            // ★ 外側で例外が発生した場合も必ず release する（generationJob.finally が実行されない可能性あり）
+ // 外側で例外が発生した場合も必ず release する（generationJob.finally が実行されない可能性あり）
             releaseInferenceMutex()
             if (!useExtractionConversation) {
                 normalInferenceRequested = false

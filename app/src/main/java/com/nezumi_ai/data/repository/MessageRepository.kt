@@ -52,7 +52,7 @@ class MessageRepository(private val dao: MessageDao) {
     }
 
     /**
-     * ★ Bug fix: 以前は thinkingContent を無条件代入していたため、以下の 2 つのバグが出ていた:
+ * Bug fix: 以前は thinkingContent を無条件代入していたため、以下の 2 つのバグが出ていた:
      *
      *   1. 生成完了後に Thinking 部分が消えるバグ
      *      - parser が最終パースで thinking=null を返したとき (重複ヒューリスティック等)、
@@ -87,7 +87,7 @@ class MessageRepository(private val dao: MessageDao) {
     }
 
     /**
-     * ★ 新 API: thinkingContent に触れずに本文だけ更新したい場合をサポート。
+ * 新 API: thinkingContent に触れずに本文だけ更新したい場合をサポート。
      * ストリーム中に parser が一瞬 thinking=null を返しても DB 上の既存値を消さないようにする。
      */
     suspend fun updateMessageContentPreservingThinking(
@@ -132,7 +132,7 @@ class MessageRepository(private val dao: MessageDao) {
                 android.util.Log.w("MessageRepository", "updateMessageContent: message not found messageId=$messageId")
                 return
             }
-            // ★ Bug fix: 生成完了後に Thinking が消えるバグへのためのガード。
+ // Bug fix: 生成完了後に Thinking が消えるバグへのためのガード。
             //   - thinkingProvided=true かつ明示的に不ストリーム完了中 (最終 finalize) で
             //     thinkingContent が null だった場合も、既存の thinking があればそのまま保持する。
             //     これにより、parser が途中で thinking=null を返しても UI の Thinking ブロックが
@@ -175,7 +175,7 @@ class MessageRepository(private val dao: MessageDao) {
     }
 
     /**
-     * ★ 応答バリアント機能用: 既存の assistant メッセージに parent (user) リンクと、
+ * 応答バリアント機能用: 既存の assistant メッセージに parent (user) リンクと、
      *   同一 parent 内の並び順 variantIndex を付与する。旧データのマイグレーションと、
      *   新規バリアント作成直後の属性付与の両方で使う。
      */

@@ -120,7 +120,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
         }
 
         /**
-         * ★ 応答バリアント機能 (同一プロンプトに対する複数候補回答) のためのカラム追加。
+ * 応答バリアント機能 (同一プロンプトに対する複数候補回答) のためのカラム追加。
          * - parentUserMessageId: assistant メッセージの元になった user メッセージの id (nullable)
          * - variantIndex: 同じ parent を共有する応答の並び順 (初回=0)
          */
@@ -135,7 +135,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
             }
         }
 
-        // ★ v28: TTFT (最初のトークンまでの時間) カラムを追加
+ // v28: TTFT (最初のトークンまでの時間) カラムを追加
         private val MIGRATION_27_28 = object : androidx.room.migration.Migration(27, 28) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 database.execSQL(

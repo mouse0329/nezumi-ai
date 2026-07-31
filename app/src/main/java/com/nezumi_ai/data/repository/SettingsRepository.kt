@@ -238,7 +238,7 @@ class SettingsRepository(
             }
             ?: 4096
         
-        // ★ ユーザー要望: 標準値は 4096 のまま、最大値のみ 128k (131072) まで拡張する。
+ // ユーザー要望: 標準値は 4096 のまま、最大値のみ 128k (131072) まで拡張する。
         //   従来はモデル別に 8192 / 4096 でクリップしていたが、これが原因で
         //   保存済みの大きな値が読み込み時に潰されていた。
         val maxWindow = 131072
@@ -263,7 +263,7 @@ class SettingsRepository(
         val normalizedBackend = normalizeBackend(backendType)
         val target = modelToBackendKey(backendTargetModel)
         
-        // ★ ユーザー要望: 標準値は 4096 のまま、最大値のみ 128k (131072) まで拡張する。
+ // ユーザー要望: 標準値は 4096 のまま、最大値のみ 128k (131072) まで拡張する。
         //   保存時にモデル別の上限で潰さないように全モデル 131072 を許容する。
         fun getMaxContextWindow(key: String): Int = 131072
         
@@ -522,7 +522,7 @@ class SettingsRepository(
     }
 
     private fun parseContextWindowMap(raw: String): LinkedHashMap<String, Int> {
-        // ★ ユーザー要望: 全モデルの標準値を 4096 に統一する。
+ // ユーザー要望: 全モデルの標準値を 4096 に統一する。
         //   従来は Gemma4 だけ 8192 を初期値にしていたが、これが
         //   「Gemma4 の標準値が 8192 になる」後退の一因になっていた。
         val map = linkedMapOf(
@@ -550,7 +550,7 @@ class SettingsRepository(
                 } catch (e: Exception) {
                     4096
                 }
-                // ★ ユーザー要望: モデル別の上限クリップを廃止し、
+ // ユーザー要望: モデル別の上限クリップを廃止し、
                 //   全モデルで 128k (131072) まで保存可能にする。
                 when (key) {
                     MODEL_E2B, MODEL_E4B, MODEL_GEMMA4_2B, MODEL_GEMMA4_4B, MODEL_IMPORTED ->
@@ -569,7 +569,7 @@ class SettingsRepository(
             InferenceConfig.MIN_CONTEXT_WINDOW,
             InferenceConfig.MAX_CONTEXT_WINDOW
         ) ?: 4096
-        // ★ ユーザー要望: 保存時の Gemma4 専用上限クリップ (8192) を廃止し、
+ // ユーザー要望: 保存時の Gemma4 専用上限クリップ (8192) を廃止し、
         //   全モデルで 128k (131072) を上限とする。標準値は 4096。
         val gemma42b = map[MODEL_GEMMA4_2B]?.coerceIn(
             InferenceConfig.MIN_CONTEXT_WINDOW,
@@ -590,7 +590,7 @@ class SettingsRepository(
         val current = currentSettings()
         val map = parseContextWindowMap(current.contextWindowMap).toMutableMap()
         val key = modelToBackendKey(model)
-        // ★ ユーザー要望: モデル別の上限クリップ (Gemma4=8192 / その他=4096) を廃止し、
+ // ユーザー要望: モデル別の上限クリップ (Gemma4=8192 / その他=4096) を廃止し、
         //   全モデルで 128k (131072) を上限とする。
         map[key] = contextWindow.coerceIn(
             InferenceConfig.MIN_CONTEXT_WINDOW,

@@ -253,7 +253,7 @@ class SetupWizardFragment : Fragment() {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = onCancel,
             title = {
-                Text("⚠️ メモリ警告")
+ Text("メモリ警告")
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -281,9 +281,9 @@ class SetupWizardFragment : Fragment() {
                     }
                     
                     val statusText = when {
-                        systemMemInfo.usedPercent < 70 -> "✓ 正常"
-                        systemMemInfo.usedPercent < 85 -> "⚠️ 注意"
-                        else -> "🔴 危険"
+ systemMemInfo.usedPercent < 70 -> "正常"
+ systemMemInfo.usedPercent < 85 -> "注意"
+ else -> "危険"
                     }
                     
                     Text(
@@ -320,7 +320,7 @@ class SetupWizardFragment : Fragment() {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = onCancel,
             title = {
-                Text("⚠️ ${if (isMemoryLow && isStorageLow) "メモリ・ストレージ警告" else if (isMemoryLow) "メモリ警告" else "ストレージ警告"}")
+ Text("${if (isMemoryLow && isStorageLow) "メモリ・ストレージ警告"else if (isMemoryLow) "メモリ警告"else "ストレージ警告"}")
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -348,7 +348,7 @@ class SetupWizardFragment : Fragment() {
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
-                            if (systemMemInfo.lowMemoryFlag) "⚠️ デバイスがメモリ不足状態です" else "✓ 正常",
+ if (systemMemInfo.lowMemoryFlag) "デバイスがメモリ不足状態です"else "正常",
                             style = MaterialTheme.typography.bodySmall,
                             color = if (systemMemInfo.lowMemoryFlag) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                         )
@@ -620,14 +620,14 @@ class SetupWizardFragment : Fragment() {
                             )
                             if (isMemoryLow) {
                                 Text(
-                                    text = "⚠️ メモリ不足",
+ text = "メモリ不足",
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.labelSmall
                                 )
                             }
                             if (isStorageLow) {
                                 Text(
-                                    text = "⚠️ ストレージ不足",
+ text = "ストレージ不足",
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.labelSmall
                                 )

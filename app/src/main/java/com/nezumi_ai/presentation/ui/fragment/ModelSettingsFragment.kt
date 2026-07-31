@@ -167,7 +167,7 @@ open class ModelSettingsFragment : Fragment() {
     private var importedTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
     private var importedMmprojTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
 
-    // ★ ローカルインポートモデルの「整理」UI 状態
+ // ローカルインポートモデルの「整理」UI 状態
     //   - 検索欄
     //   - 並び替えキー（名前 / 更新 / サイズ）
     //   - 昇順 / 降順
@@ -312,13 +312,13 @@ open class ModelSettingsFragment : Fragment() {
     private val modelStates = mutableStateMapOf<ModelFileManager.LocalModel, ModelUiState>()
     private val ggufCardMetadataStates = mutableStateMapOf<String, GgufCardMetadataUiState>()
 
-    // ★ 埋め込みモデルダウンロード進捗（DLタブで表示）
+ // 埋め込みモデルダウンロード進捗（DLタブで表示）
     private var embeddingDownloadState by mutableStateOf<EmbeddingDownloadUiState?>(null)
 
-    // ★ ダウンロード中のネットワーク速度表示用（DLタブで表示）
+ // ダウンロード中のネットワーク速度表示用（DLタブで表示）
     private var activeDownloadSpeeds by mutableStateOf<Map<String, DownloadSpeedInfo>>(emptyMap())
 
-    // ★ リポジトリ更新通知: ダウンロード済みモデルのリポジトリが更新された場合に表示する
+ // リポジトリ更新通知: ダウンロード済みモデルのリポジトリが更新された場合に表示する
     private var repoUpdateNotifications by mutableStateOf<List<RepoUpdateNotification>>(emptyList())
     private var repoUpdateCheckInProgress by mutableStateOf(false)
 
@@ -415,7 +415,7 @@ open class ModelSettingsFragment : Fragment() {
         renderHfTokenState()
         refreshImportedTasks()
         refreshVoicevoxState()
-        // ★ モデルのアップデート通知は削除（ユーザー要望）
+ // モデルのアップデート通知は削除（ユーザー要望）
         // checkRepositoryUpdates()
     }
 
@@ -528,7 +528,7 @@ open class ModelSettingsFragment : Fragment() {
                         }
                     }
                     item { EmbeddingModelsCard() }
-                    // ★ 「カスタムモデル」見出しと整理 UI（検索 / 並び替え）を、
+ // 「カスタムモデル」見出しと整理 UI（検索 / 並び替え）を、
                     //   importedTasks が 0 件でも常に表示される位置に出す。
                     //   以前は if (importedTasks.isNotEmpty()) { … } の中に入れていたため、
                     //   件数が 0 だと「見えない」状態になっていた。
@@ -603,7 +603,7 @@ open class ModelSettingsFragment : Fragment() {
                     item { DownloadQueueCard() }
                     item { EmbeddingDownloadCard() }
                     item { NetworkSpeedCard() }
-                    // ★ モデルのアップデート通知は削除（ユーザー要望）
+ // モデルのアップデート通知は削除（ユーザー要望）
                     // item { RepoUpdateNotificationCard() }
                 }
             }
@@ -675,7 +675,7 @@ open class ModelSettingsFragment : Fragment() {
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("📦 SD モデル zip を選択")
+ Text("SD モデル zip を選択")
                 }
                 Text(
                     text = "対応形式: unet.mnn / clip*.mnn / vae_decoder*.mnn + (tokenizer.json または pos_emb.bin+token_emb.bin)",
@@ -1145,10 +1145,10 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
-    // ★ TabSelector は ModelSidebarSelector に置き換えられたため削除。
+ // TabSelector は ModelSidebarSelector に置き換えられたため削除。
     //   古い横並びタブはスクロール可能なことに気づきにくかったため、縦型サイドバーに変更した。
 
-    // ★ 埋め込みモデルダウンロード進捗カード（DLタブに表示）
+ // 埋め込みモデルダウンロード進捗カード（DLタブに表示）
     @Composable
     private fun EmbeddingDownloadCard() {
         val state = embeddingDownloadState ?: return
@@ -1199,7 +1199,7 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
-    // ★ ネットワーク速度表示カード（DLタブに表示）
+ // ネットワーク速度表示カード（DLタブに表示）
     @Composable
     private fun NetworkSpeedCard() {
         if (activeDownloadSpeeds.isEmpty()) return
@@ -1253,7 +1253,7 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
-    // ★ リポジトリ更新通知カード（DLタブに表示）
+ // リポジトリ更新通知カード（DLタブに表示）
     @Composable
     private fun RepoUpdateNotificationCard() {
         if (repoUpdateNotifications.isEmpty()) return
@@ -1289,7 +1289,7 @@ open class ModelSettingsFragment : Fragment() {
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        // ★ SHA256 ハッシュ比較による更新検知のため、
+ // SHA256 ハッシュ比較による更新検知のため、
                         //   ローカルファイルサイズを表示する（リモートサイズは取得していない）
                         Text(
                             text = "ローカルファイル: ${formatBytes(notif.localFileSize)}",
@@ -1307,7 +1307,7 @@ open class ModelSettingsFragment : Fragment() {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             TextButton(onClick = {
-                                // ★ 更新ボタン: モデルを削除して再ダウンロード
+ // 更新ボタン: モデルを削除して再ダウンロード
                                 viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                                     val model = ModelFileManager.LocalModel.entries.firstOrNull {
                                         it.name == notif.modelKey
@@ -1992,7 +1992,7 @@ open class ModelSettingsFragment : Fragment() {
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = if (isReady) "✓ 利用可能" else "未ダウンロード",
+ text = if (isReady) "利用可能"else "未ダウンロード",
                         style = MaterialTheme.typography.labelSmall,
                         color = if (isReady) colorResource(id = R.color.primary)
                         else colorResource(id = R.color.text_secondary)
@@ -2255,7 +2255,7 @@ open class ModelSettingsFragment : Fragment() {
                 )
                 if (MemoryObserver.isMemoryLowForFileSize(requireContext(), model.size, preloadMemoryWarningThresholdPercent, useAvailable = false)) {
                     Text(
-                        text = "⚠️ メモリ不足",
+ text = "メモリ不足",
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(top = 4.dp)
@@ -2316,7 +2316,7 @@ open class ModelSettingsFragment : Fragment() {
                     style = MaterialTheme.typography.bodySmall
                 )
                 val listState = rememberLazyListState()
-                // ★ 次ページの自動読み込み:
+ // 次ページの自動読み込み:
                 //   旧: LaunchedEffect(hfSearchResults.size) → trigger item が
                 //       LazyColumn に compose された瞬間に発火していたため、
                 //       ユーザーがスクロールしていなくても全ページを一気に取得してしまう。
@@ -2394,7 +2394,7 @@ open class ModelSettingsFragment : Fragment() {
                             }
                         }
                     }
-                    // ★ 次ページプレースホルダー: スピナーのみ。loadMore のトリガーは
+ // 次ページプレースホルダー: スピナーのみ。loadMore のトリガーは
                     //   上の snapshotFlow 監視で行うので、この item は "現在ロード中に見える" 存在だけ。
                     item {
                         if (hfSearchNextPageUrl != null && hfSearchLoadingMore) {
@@ -2473,7 +2473,7 @@ open class ModelSettingsFragment : Fragment() {
                                     .minByOrNull { it.sizeBytes!! }
                                     ?: hfMmprojCandidates.first()
                                 Text(
-                                    text = "📎 mmproj が見つかりました。DL時に「${autoMmproj.path}」も自動ダウンロードし、画像認識が有効になります。",
+ text = "mmproj が見つかりました。DL時に「${autoMmproj.path}」も自動ダウンロードし、画像認識が有効になります。",
                                     color = colorResource(id = R.color.text_secondary),
                                     style = MaterialTheme.typography.bodySmall,
                                     modifier = Modifier.padding(bottom = 4.dp)
@@ -2534,9 +2534,9 @@ open class ModelSettingsFragment : Fragment() {
                     if (isMemoryLow || resourceCheck.isStorageLow) {
                         Text(
                             text = when {
-                                isMemoryLow && resourceCheck.isStorageLow -> "⚠️ メモリ・ストレージ不足"
-                                isMemoryLow -> "⚠️ メモリ不足"
-                                else -> "⚠️ ストレージ不足"
+ isMemoryLow && resourceCheck.isStorageLow -> "メモリ・ストレージ不足"
+ isMemoryLow -> "メモリ不足"
+ else -> "ストレージ不足"
                             },
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.labelSmall,
@@ -2873,21 +2873,21 @@ open class ModelSettingsFragment : Fragment() {
                             ) {
                                 if (isMemoryLow && isStorageLow) {
                                     Text(
-                                        text = "⚠️ メモリ・ストレージ不足",
+ text = "メモリ・ストレージ不足",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.error,
                                         fontWeight = FontWeight.Bold
                                     )
                                 } else if (isMemoryLow) {
                                     Text(
-                                        text = "⚠️ メモリ不足",
+ text = "メモリ不足",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.error,
                                         fontWeight = FontWeight.Bold
                                     )
                                 } else if (isStorageLow) {
                                     Text(
-                                        text = "⚠️ ストレージ不足",
+ text = "ストレージ不足",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.error,
                                         fontWeight = FontWeight.Bold
@@ -2898,7 +2898,7 @@ open class ModelSettingsFragment : Fragment() {
                         // 組み込みモデルはすべて LiteRT-LM を使用
                         if (!isExpanded) {
                             Text(
-                                text = "🚀 LiteRT-LM",
+ text = "LiteRT-LM",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colorResource(id = R.color.primary),
                                 modifier = Modifier.padding(top = 2.dp)
@@ -2907,7 +2907,7 @@ open class ModelSettingsFragment : Fragment() {
                     }
                     if (!isExpanded && isDownloaded && !isDownloading) {
                         Text(
-                            text = "✓ ダウンロード済み",
+ text = "ダウンロード済み",
                             style = MaterialTheme.typography.labelSmall,
                             color = colorResource(id = R.color.text_secondary),
                             modifier = Modifier.padding(start = 8.dp)
@@ -2925,7 +2925,7 @@ open class ModelSettingsFragment : Fragment() {
                     Spacer(modifier = Modifier.height(8.dp))
                     // 展開時にエンジン情報を表示
                     Text(
-                        text = "🚀 LiteRT-LM",
+ text = "LiteRT-LM",
                         style = MaterialTheme.typography.labelMedium,
                         color = colorResource(id = R.color.primary),
                         fontWeight = FontWeight.SemiBold
@@ -3046,7 +3046,7 @@ open class ModelSettingsFragment : Fragment() {
                         // エンジン情報を表示
                         if (!isExpanded) {
                             Text(
-                                text = "🚀 " + SettingsHelper.inferenceEngineForModel(model.path),
+ text = " "+ SettingsHelper.inferenceEngineForModel(model.path),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colorResource(id = R.color.primary),
                                 modifier = Modifier.padding(top = 2.dp)
@@ -3055,7 +3055,7 @@ open class ModelSettingsFragment : Fragment() {
                     }
                     if (!isExpanded) {
                         Text(
-                            text = "✓ インポート済み",
+ text = "インポート済み",
                             style = MaterialTheme.typography.labelSmall,
                             color = colorResource(id = R.color.text_secondary),
                             modifier = Modifier.padding(start = 8.dp)
@@ -3074,7 +3074,7 @@ open class ModelSettingsFragment : Fragment() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "🚀 " + SettingsHelper.inferenceEngineForModel(model.path),
+ text = " "+ SettingsHelper.inferenceEngineForModel(model.path),
                             style = MaterialTheme.typography.labelMedium,
                             color = colorResource(id = R.color.primary),
                             fontWeight = FontWeight.SemiBold
@@ -3192,7 +3192,7 @@ open class ModelSettingsFragment : Fragment() {
                     }
                     if (!isExpanded) {
                         Text(
-                            text = "✓ mmproj",
+ text = "mmproj",
                             style = MaterialTheme.typography.labelSmall,
                             color = colorResource(id = R.color.text_secondary),
                             modifier = Modifier.padding(start = 8.dp)
@@ -3289,7 +3289,7 @@ open class ModelSettingsFragment : Fragment() {
                     }
                     if (!isExpanded) {
                         Text(
-                            text = "✓ DL済み",
+ text = "DL済み",
                             style = MaterialTheme.typography.labelSmall,
                             color = colorResource(id = R.color.text_secondary),
                             modifier = Modifier.padding(start = 8.dp)
@@ -4036,7 +4036,7 @@ open class ModelSettingsFragment : Fragment() {
             }
     }
 
-    // ★ 埋め込みモデルダウンロード進捗を観測（MemoryTextEmbedder の StateFlow を直接使用）
+ // 埋め込みモデルダウンロード進捗を観測（MemoryTextEmbedder の StateFlow を直接使用）
     //   ChatViewModel に依存せず、MemoryTextEmbedder が公開する StateFlow を直接 observe する。
     private fun observeEmbeddingDownloadWork() {
         viewLifecycleOwner.lifecycleScope.launch {
@@ -4060,7 +4060,7 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
-    // ★ 組み込みモデル + HFカスタム + 画像モデルのダウンロード速度を観測
+ // 組み込みモデル + HFカスタム + 画像モデルのダウンロード速度を観測
     private fun observeDownloadSpeeds() {
         val speedMap = mutableMapOf<String, DownloadSpeedInfo>()
         // 組み込みモデル
@@ -4107,7 +4107,7 @@ open class ModelSettingsFragment : Fragment() {
             }
     }
 
-    // ★ リポジトリ更新チェック: SHA256 ハッシュでローカルとリモートを比較
+ // リポジトリ更新チェック: SHA256 ハッシュでローカルとリモートを比較
     //   HuggingFace の HEAD レスポンスの ETag / X-Linked-Etag に SHA256 が入っているため、
     //   ローカルファイルの SHA256 と比較することで確実に更新を検知できる。
     //   ファイルサイズ比較は HuggingFace とローカルで必ず差が出るため使えない。
@@ -4575,7 +4575,7 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     private fun getModelSizeBytes(model: ModelFileManager.LocalModel): Long {
-        // ★ 実際のダウンロード済みファイルサイズを優先して返す。
+ // 実際のダウンロード済みファイルサイズを優先して返す。
         //   未ダウンロードの場合のみフォールバック値（概算）を使用する。
         //   従来はハードコード値を返していたため、Gemma4 2B/4B の表示サイズが
         //   実際のファイルサイズと一致しない問題があった。
@@ -4713,7 +4713,7 @@ open class ModelSettingsFragment : Fragment() {
         val compatible: Boolean
     )
 
-    // ★ 埋め込みモデルダウンロード進捗用 UI 状態
+ // 埋め込みモデルダウンロード進捗用 UI 状態
     private data class EmbeddingDownloadUiState(
         val fileName: String,
         val downloadedBytes: Long,
@@ -4728,7 +4728,7 @@ open class ModelSettingsFragment : Fragment() {
             }
     }
 
-    // ★ ネットワーク速度表示用
+ // ネットワーク速度表示用
     private data class DownloadSpeedInfo(
         val speedMbps: Double,
         val estimatedRemainingSec: Double,
@@ -4736,7 +4736,7 @@ open class ModelSettingsFragment : Fragment() {
         val totalBytes: Long
     )
 
-    // ★ リポジトリ更新通知用
+ // リポジトリ更新通知用
     private data class RepoUpdateNotification(
         val modelKey: String,
         val displayName: String,
@@ -4900,7 +4900,7 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     /**
-     * ★ ローカルインポートモデルの「検索＋並び替え」バー。
+ * ローカルインポートモデルの「検索＋並び替え」バー。
      *
      * importedTasks が 0 件のときも表示されるように、表示条件不要で常設。
      */
@@ -4954,7 +4954,7 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     /**
-     * ★ importedTasks に「検索クエリ」と「並び替え」を適用して返す。
+ * importedTasks に「検索クエリ」と「並び替え」を適用して返す。
      *
      * - 検索: shortDisplayName / fileNameStem / hfRepoQualifier に部分一致（大文字小文字無視）
      * - 並び替え: NAME / UPDATED (lastModified) / SIZE (length) × 昇順 / 降順

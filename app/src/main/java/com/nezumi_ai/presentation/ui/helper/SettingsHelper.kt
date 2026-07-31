@@ -36,7 +36,7 @@ object SettingsHelper {
         val trimmed = path.trim()
         val extension = modelFileName(trimmed).substringAfterLast('.', missingDelimiterValue = "")
         // 追加モデルでは実ファイル名が .gguf のものだけ llama.cpp を使用する。
-        // ★ バグ修正: 拡張子が .gguf のみ llama.cpp、それ以外は LiteRT-LM
+ // バグ修正: 拡張子が .gguf のみ llama.cpp、それ以外は LiteRT-LM
         return if (extension == "gguf") "llama.cpp" else "LiteRT-LM"
     }
 

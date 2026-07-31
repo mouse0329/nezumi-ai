@@ -9,7 +9,15 @@ import java.io.File
 data class StoredLibraryImage(
     val bitmap: Bitmap,
     val prompt: String,
-    val timestamp: Long
+    val timestamp: Long,
+    val negativePrompt: String? = null,
+    val steps: Int? = null,
+    val seed: Long? = null,
+    val modelName: String? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    val cfg: Float? = null,
+    val scheduler: String? = null
 )
 
 object ImageLibraryStore {
@@ -25,7 +33,29 @@ object ImageLibraryStore {
         return dir
     }
 
-    fun save(context: Context, bitmap: Bitmap, prompt: String): Long {
+    /**
+     * 画像をライブラリに保存する（フルメタデータ対応）。
+     * ImageGenFragment.saveImageToLibrary と同じ JSON 形式で metadata.txt に書き込む。
+     * 旧形式 (timestamp|prompt) との下位互換は load() 側で吸収する。
+     *
+     * Bug fix: ツール経由画像生成でプロンプトしか保存されない問題を修正。
+     *   旧実装は save(context, bitmap, prompt) のみでネガティブプロンプト等の
+     *   メタデータが保存されず、手動生成経路 (ImageGenFragment.saveImageToLibrary)
+     *   と保存内容に差があった。本メソッドをフルメタデータ対応に統一する。
+     */
+    fun save(
+        context: Context,
+        bitmap: Bitmap,
+        prompt: String,
+        negativePrompt: String? = null,
+        steps: Int? = null,
+        seed: Long? = null,
+        modelName: String? = null,
+        width: Int? = null,
+        height: Int? = null,
+        cfg: Float? = null,
+        scheduler: String? = null
+    ): Long {
         val libraryDir = getLibraryDir(context)
         val timestamp = System.currentTimeMillis()
         val imageFile = File(libraryDir, "img_$timestamp.jpg")
@@ -34,8 +64,21 @@ object ImageLibraryStore {
             bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)
         }
 
-        File(libraryDir, METADATA_FILE_NAME).appendText("$timestamp|${sanitizePrompt(prompt)}\n")
-        Log.d(TAG, "Saved image to app library: ${imageFile.absolutePath}")
+        // ImageGenFragment.saveImageToLibrary と同じ JSON 形式で保存
+        val json = org.json.JSONObject().apply {
+            put("timestamp", timestamp)
+            put("prompt", prompt)
+            put("negativePrompt", negativePrompt ?: "")
+            put("steps", steps ?: 0)
+            put("seed", seed ?: -1L)
+            if (!modelName.isNullOrEmpty()) put("modelName", modelName)
+            if (width != null && width > 0) put("width", width)
+            if (height != null && height > 0) put("height", height)
+            if (cfg != null) put("cfg", cfg.toDouble())
+            if (!scheduler.isNullOrEmpty()) put("scheduler", scheduler)
+        }
+        File(libraryDir, METADATA_FILE_NAME).appendText(json.toString() + "\n")
+        Log.d(TAG, "Saved image to app library: ${imageFile.absolutePath} (with full metadata)")
         return timestamp
     }
 
@@ -48,16 +91,43 @@ object ImageLibraryStore {
             .lineSequence()
             .filter { it.isNotBlank() }
             .mapNotNull { line ->
-                val parts = line.split("|", limit = 2)
-                if (parts.size != 2) return@mapNotNull null
-                val timestamp = parts[0].toLongOrNull() ?: return@mapNotNull null
-                val imageFile = File(libraryDir, "img_$timestamp.jpg")
-                val bitmap = if (imageFile.exists()) {
-                    BitmapFactory.decodeFile(imageFile.absolutePath)
+                // JSON 形式 (新形式)
+                if (line.startsWith("{")) {
+                    try {
+                        val obj = org.json.JSONObject(line)
+                        val timestamp = obj.getLong("timestamp")
+                        val imageFile = File(libraryDir, "img_$timestamp.jpg")
+                        val bitmap = if (imageFile.exists()) {
+                            BitmapFactory.decodeFile(imageFile.absolutePath)
+                        } else null ?: return@mapNotNull null
+                        StoredLibraryImage(
+                            bitmap = bitmap,
+                            prompt = obj.getString("prompt"),
+                            timestamp = timestamp,
+                            negativePrompt = obj.optString("negativePrompt").takeIf { it.isNotEmpty() },
+                            steps = obj.optInt("steps").takeIf { it > 0 },
+                            seed = obj.optLong("seed").takeIf { it != -1L },
+                            modelName = obj.optString("modelName").takeIf { it.isNotEmpty() },
+                            width = obj.optInt("width").takeIf { it > 0 },
+                            height = obj.optInt("height").takeIf { it > 0 },
+                            cfg = if (obj.has("cfg")) obj.optDouble("cfg").toFloat() else null,
+                            scheduler = obj.optString("scheduler").takeIf { it.isNotEmpty() }
+                        )
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to parse JSON metadata line", e)
+                        null
+                    }
                 } else {
-                    null
-                } ?: return@mapNotNull null
-                StoredLibraryImage(bitmap, parts[1], timestamp)
+                    // 旧形式 (timestamp|prompt)
+                    val parts = line.split("|", limit = 2)
+                    if (parts.size != 2) return@mapNotNull null
+                    val timestamp = parts[0].toLongOrNull() ?: return@mapNotNull null
+                    val imageFile = File(libraryDir, "img_$timestamp.jpg")
+                    val bitmap = if (imageFile.exists()) {
+                        BitmapFactory.decodeFile(imageFile.absolutePath)
+                    } else null ?: return@mapNotNull null
+                    StoredLibraryImage(bitmap, parts[1], timestamp)
+                }
             }
             .toList()
             .asReversed()
@@ -72,7 +142,17 @@ object ImageLibraryStore {
             val remaining = metadataFile.readText()
                 .lineSequence()
                 .filter { it.isNotBlank() }
-                .filterNot { it.startsWith("$timestamp|") }
+                .filterNot { line ->
+                    if (line.startsWith("{")) {
+                        try {
+                            org.json.JSONObject(line).optLong("timestamp") == timestamp
+                        } catch (e: Exception) {
+                            false
+                        }
+                    } else {
+                        line.startsWith("$timestamp|")
+                    }
+                }
                 .toList()
             metadataFile.writeText(remaining.joinToString("\n") + if (remaining.isNotEmpty()) "\n" else "")
         }

@@ -60,7 +60,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     val modelPath: StateFlow<String> = _modelPath.asStateFlow()
 
     // 現在選択されているモデルが SDXL かどうか。true なら UI スライダーの上限を 512→ 1024 に拡張する。
-    // ★ 初期化順の都合上、init ブロックより前で宣言する必要がある
+ // 初期化順の都合上、init ブロックより前で宣言する必要がある
     //   (init 中で refreshSdxlFlagFromPath → setModelIsSdxl が _isSdxl.value を触るため)。
     private val _isSdxl = MutableStateFlow(false)
     val isSdxl: StateFlow<Boolean> = _isSdxl.asStateFlow()
@@ -73,7 +73,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
     init {
         Log.d(TAG, "[ImageGen] init: Starting initialization")
-        // ★ 前回のインポート失敗で sd_models/ に残っている孤立フォルダ
+ // 前回のインポート失敗で sd_models/ に残っている孤立フォルダ
         //   (pos_emb2/ / token_emb2/ / clip_v2/ などの SDXL 中断残骸) を削除して
         //   容量リークを回収する。IO なので必ずバックグラウンドで。
         viewModelScope.launch(Dispatchers.IO) {
@@ -141,7 +141,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 if (!dir.isDirectory) return@forEach
                 val targetDir = resolveNestedSdModelDir(dir)
                 if (isProbableSdModelDir(targetDir)) {
-                    if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] ✓ sd_models: ${targetDir.absolutePath}")
+ if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] sd_models: ${targetDir.absolutePath}")
                     models.add(targetDir.absolutePath)
                 }
             }
@@ -149,7 +149,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             val appDir = getApplication<Application>().getExternalFilesDir(null)
             appDir?.listFiles()?.forEach { file ->
                 if (isProbableSdModelDir(file)) {
-                    if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] ✓ appDir: ${file.absolutePath}")
+ if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] appDir: ${file.absolutePath}")
                     models.add(file.absolutePath)
                 }
             }
@@ -157,7 +157,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             val importedDir = File(getApplication<Application>().filesDir, "models/imported")
             importedDir.listFiles()?.forEach { file ->
                 if (isProbableSdModelDir(file)) {
-                    if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] ✓ imported: ${file.absolutePath}")
+ if (verboseModelScan) Log.d(TAG, "[loadAvailableModels] imported: ${file.absolutePath}")
                     models.add(file.absolutePath)
                 }
             }
@@ -452,7 +452,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         _selectedBackend.value = normalized
         PreferencesHelper.setSdBackend(getApplication(), normalized)
         updateBackendInfo()
-        // ★ Bug fix: backend を切り替えたら即座に既存の LocalDream サーバーを停止し、
+ // Bug fix: backend を切り替えたら即座に既存の LocalDream サーバーを停止し、
         //   次回 generate() 時に新 backend で起動し直されるようにする。
         //   これをしないと「CPU に切り替えても GPU のまま」バグが再発する。
         if (!previous.equals(normalized, ignoreCase = true)) {

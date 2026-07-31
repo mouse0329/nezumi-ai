@@ -423,7 +423,7 @@ object MediaViewerDialog {
                     playBtn.text = "▶"
                 } else {
                     mp.start()
-                    playBtn.text = "⏸"
+ playBtn.text = ""
                     handler.post(ticker)
                 }
             } catch (_: Throwable) {}
