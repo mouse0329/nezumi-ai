@@ -226,11 +226,14 @@ extern "C"
         engine->caps.default_side_px = engine->model_config.default_size;
         engine->caps.clip_skip = engine->model_config.clip_skip;
         engine->caps.text_embedding_size = engine->model_config.text_embedding_size;
-        engine->caps.supports_img2img = engine->model_config.vae_encoder_file[0] != '\0' ? 1 : 0;
         std::snprintf(engine->caps.format_version, sizeof(engine->caps.format_version), "%s",
                       engine->model_config.format);
 
         MnnSdError init_error = mnn_sd_initialize_sessions(engine, out_error);
+        if (init_error == MNN_SD_OK)
+        {
+            engine->caps.supports_img2img = engine->has_vae_encoder ? 1 : 0;
+        }
         if (init_error != MNN_SD_OK)
         {
             mnn_sd_release_sessions(engine);

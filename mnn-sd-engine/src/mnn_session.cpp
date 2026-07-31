@@ -417,6 +417,9 @@ extern "C"
         const std::string clip_path = build_model_path(engine->model_dir.c_str(), engine->model_config.clip_file);
         const std::string vae_path = build_model_path(engine->model_dir.c_str(), engine->model_config.vae_decoder_file);
         const std::string tok_path = build_model_path(engine->model_dir.c_str(), engine->model_config.tokenizer_file);
+        const std::string vae_encoder_path = engine->model_config.vae_encoder_file[0] != '\0'
+                                                 ? build_model_path(engine->model_dir.c_str(), engine->model_config.vae_encoder_file)
+                                                 : "";
 
         if (!engine->tokenizer.load(tok_path))
         {
@@ -757,10 +760,12 @@ extern "C"
             set_error(out_error, MNN_SD_ERR_MODEL_NOT_FOUND, "clip2 not found", clip2_path.c_str());
             return MNN_SD_ERR_MODEL_NOT_FOUND;
         }
-        engine->clip_path = clip_path;
+                engine->clip_path = clip_path;
         engine->clip2_path = clip2_path; // empty string when not SDXL
         engine->unet_path = unet_path;
         engine->vae_path = vae_path;
+        engine->vae_encoder_path = vae_encoder_path;
+        engine->has_vae_encoder = !vae_encoder_path.empty() && file_exists(vae_encoder_path);
 
         // Precompute PNDM alphas_cumprod (scaled_linear schedule, beta_start=0.00085, beta_end=0.012, T=1000)
         {
@@ -814,6 +819,13 @@ extern "C"
             engine->vae_session = nullptr;
         }
         engine->vae_interpreter.reset();
+
+        if (engine->vae_encoder_session)
+        {
+            engine->vae_encoder_interpreter->releaseSession(engine->vae_encoder_session);
+            engine->vae_encoder_session = nullptr;
+        }
+        engine->vae_encoder_interpreter.reset();
     }
 
     MnnSdError mnn_sd_probe_model(
