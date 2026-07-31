@@ -122,7 +122,7 @@ namespace
         ScheduleBundle(MnnSdBackend backend, SdModelKind kind, bool low_memory_unet)
         {
             backend_config.power = MNN::BackendConfig::Power_High;
-            if (backend == MNN_SD_BACKEND_OPENCL)
+            if (backend == MNN_SD_BACKEND_OPENCL && kind == SdModelKind::UNET)
             {
                 schedule.type = MNN_FORWARD_OPENCL;
                 // MNN_GPU_MEMORY_BUFFER: OpenCL 側で cl_mem を Buffer として確保する。
@@ -358,7 +358,7 @@ namespace
         //   width を渡すことで、解像度ごとに独立したキャッシュファイル
         //   (unet.mnnc.256 など) を使うようにする。
         std::string cache_file;
-        if (backend == MNN_SD_BACKEND_OPENCL)
+        if (backend == MNN_SD_BACKEND_OPENCL && kind == SdModelKind::UNET)
         {
             cache_file = cache_file_for(model_path, kind, width);
             interpreter->setCacheFile(cache_file.c_str());
@@ -376,7 +376,7 @@ namespace
             return MNN_SD_ERR_BACKEND_INIT_FAILED;
         }
 
-        if (backend == MNN_SD_BACKEND_OPENCL && !cache_file.empty())
+        if (backend == MNN_SD_BACKEND_OPENCL && kind == SdModelKind::UNET && !cache_file.empty())
         {
             // Persist the tuning result picked for this session so the next
             // load (same model + backend) skips autotuning entirely.
