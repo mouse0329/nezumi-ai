@@ -65,6 +65,8 @@ import androidx.navigation.fragment.findNavController
 import com.nezumi_ai.R
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.database.entity.PresetEntity
+import com.nezumi_ai.data.mcp.McpPreferences
+import com.nezumi_ai.presentation.ui.component.McpServerManagerDialog
 import com.nezumi_ai.data.preset.PresetConstants
 import com.nezumi_ai.data.preset.PresetModelCatalog
 import com.nezumi_ai.data.repository.PresetRepository
@@ -582,6 +584,12 @@ class PresetSettingsFragment : Fragment() {
         var enabledTools by remember {
             mutableStateOf(parseToolIds(initialPreset?.enabledTools ?: PresetRepository.encodeToolIds(PresetConstants.allToolIds)))
         }
+        val mcpPrefs = remember { McpPreferences.get(requireContext()) }
+        val mcpServers by mcpPrefs.servers.collectAsState()
+        var selectedMcpServerIds by remember {
+            mutableStateOf(McpPreferences.decodeServerIds(initialPreset?.mcpServerIds))
+        }
+        var showMcpManager by remember { mutableStateOf(false) }
 
         val selectedModelToolCallingAllowed by remember(modelId) {
             derivedStateOf {
@@ -724,6 +732,56 @@ class PresetSettingsFragment : Fragment() {
                                         Text(option.label)
                                     }
                                 }
+                                Divider(modifier = Modifier.padding(vertical = 4.dp))
+                                // MCP: プリセットのツール一覧の直下に配置
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("MCP サーバー", fontWeight = FontWeight.Bold)
+                                        val subLabel = if (mcpServers.isEmpty()) {
+                                            "未登録"
+                                        } else {
+                                            val active = mcpServers.count { it.id in selectedMcpServerIds }
+                                            "$active / ${mcpServers.size} 個を有効化"
+                                        }
+                                        Text(
+                                            text = subLabel,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                    TextButton(onClick = { showMcpManager = true }) {
+                                        Text("MCPを追加")
+                                    }
+                                }
+                                if (mcpServers.isNotEmpty()) {
+                                    mcpServers.forEach { server ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    selectedMcpServerIds = toggleId(selectedMcpServerIds, server.id)
+                                                },
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Checkbox(
+                                                checked = server.id in selectedMcpServerIds,
+                                                onCheckedChange = {
+                                                    selectedMcpServerIds = toggleId(selectedMcpServerIds, server.id)
+                                                }
+                                            )
+                                            Column {
+                                                Text(server.name)
+                                                Text(
+                                                    text = "${server.transport.label} • ${server.url}",
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -756,7 +814,8 @@ class PresetSettingsFragment : Fragment() {
                                 isDefault = initialPreset?.isDefault ?: false,
                                 memoryEnabled = memoryEnabled,
                                 isLocked = initialPreset?.isLocked ?: false,
-                                toolCallingEnabled = toolCallingEnabled
+                                toolCallingEnabled = toolCallingEnabled,
+                                mcpServerIds = McpPreferences.encodeServerIds(selectedMcpServerIds)
                             )
                         )
                     }
@@ -770,6 +829,24 @@ class PresetSettingsFragment : Fragment() {
                 }
             }
         )
+
+        if (showMcpManager) {
+            McpServerManagerDialog(
+                servers = mcpServers,
+                selectedIds = selectedMcpServerIds,
+                onSelectionChange = { selectedMcpServerIds = it },
+                onUpsert = { mcpPrefs.upsert(it) },
+                onDelete = {
+                    mcpPrefs.remove(it)
+                    selectedMcpServerIds = selectedMcpServerIds - it
+                },
+                onDismiss = { showMcpManager = false }
+            )
+        }
+    }
+
+    private fun toggleId(current: Set<String>, id: String): Set<String> {
+        return if (id in current) current - id else current + id
     }
 
     private fun parseToolIds(raw: String): Set<String> {

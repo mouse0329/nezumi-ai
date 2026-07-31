@@ -17,6 +17,7 @@ nezumi-aiは、インターネット接続なしで動作するプライベー�
 
 - **チャット履歴管理**: Room DBで会話履歴を永続化
 - **高度なツールコール**: AIが画像生成、アラーム設定、Web検索などのツールを自律的に呼び出し
+- **MCP クライアント対応**: Streamable HTTP / SSE の Model Context Protocol サーバーを登録し、プリセットごとに紐付けて外部ツールを呼び出せる
 
 > **注意**: VOICEVOX音声読み上げ機能は、Android 15以降の16KBページサイズ端末との互換性問題のため、現在無効化されています。現行の Android アプリ配布物およびアプリ内ライセンス画面は、この無効化状態を前提に整理しています。詳細は [VOICEVOX_RESTORE.md](docs/VOICEVOX_RESTORE.md) を参照してください。
 

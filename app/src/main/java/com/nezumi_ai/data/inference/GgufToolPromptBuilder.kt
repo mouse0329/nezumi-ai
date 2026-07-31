@@ -2,6 +2,7 @@ package com.nezumi_ai.data.inference
 
 import android.content.Context
 import android.util.Log
+import com.nezumi_ai.data.mcp.McpToolRegistry
 
 /**
  * GGUF / llama.rn 向けにツール定義をシステムプロンプトへ注入する。
@@ -142,9 +143,16 @@ object GgufToolPromptBuilder {
             return systemPrompt
         }
 
-        val toolsJson = schemas.joinToString("\n") { schema ->
+        val mcpTools = McpToolRegistry.get(context).currentTools()
+        val builtinJson = schemas.joinToString("\n") { schema ->
             """{"type":"function","function":{"name":"${schema.name}","description":"${schema.description}","parameters":${schema.parametersJson}}}"""
         }
+        val mcpJson = mcpTools.joinToString("\n") { desc ->
+            val safeDesc = (desc.description.ifBlank { "MCP tool from ${desc.serverName}" })
+                .replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
+            """{"type":"function","function":{"name":"${desc.qualifiedName}","description":"[MCP:${desc.serverName}] $safeDesc","parameters":${desc.inputSchemaJson.ifBlank { "{\"type\":\"object\",\"properties\":{}}" }}}}"""
+        }
+        val toolsJson = listOf(builtinJson, mcpJson).filter { it.isNotBlank() }.joinToString("\n")
 
         val toolBlock = buildString {
             appendLine()

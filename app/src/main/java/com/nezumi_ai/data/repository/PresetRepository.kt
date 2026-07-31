@@ -4,8 +4,14 @@ import android.content.Context
 import com.nezumi_ai.data.database.dao.PresetDao
 import com.nezumi_ai.data.database.entity.PresetEntity
 import com.nezumi_ai.data.inference.ToolPreferences
+import com.nezumi_ai.data.mcp.McpPreferences
+import com.nezumi_ai.data.mcp.McpToolRegistry
 import com.nezumi_ai.data.preset.PresetConstants
 import com.nezumi_ai.data.preset.PresetModelCatalog
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import com.nezumi_ai.utils.PreferencesHelper
 import kotlinx.coroutines.flow.Flow
@@ -89,8 +95,17 @@ class PresetRepository(
     }
 
     private fun applyPresetTools(preset: PresetEntity) {
-        val tools = if (isPresetToolCallingEnabled(preset)) preset.enabledTools else "[]"
-        ToolPreferences(context).setActivePresetToolIds(tools)
+        val toolCallingOn = isPresetToolCallingEnabled(preset)
+        val tools = if (toolCallingOn) preset.enabledTools else "[]"
+        val prefs = ToolPreferences(context)
+        prefs.setActivePresetToolIds(tools)
+
+        val mcpIds = if (toolCallingOn) McpPreferences.decodeServerIds(preset.mcpServerIds) else emptySet()
+        prefs.setActiveMcpServerIds(mcpIds)
+        // バックグラウンドで MCP ツール一覧をリフレッシュ（ネットワーク待ちになるため UI をブロックしない）
+        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+            McpToolRegistry.get(context).refresh(mcpIds)
+        }
     }
 
     private fun isPresetToolCallingEnabled(preset: PresetEntity): Boolean {

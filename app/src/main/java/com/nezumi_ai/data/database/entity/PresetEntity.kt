@@ -42,5 +42,11 @@ data class PresetEntity(
      * ひとまず「名前検索 + 並び替え + タグフィルタ」のためのストレージ。
      */
     @ColumnInfo(name = "tags_csv")
-    val tagsCsv: String = ""
+    val tagsCsv: String = "",
+    /**
+     * このプリセットに紐付く MCP サーバー ID の JSON 配列。
+     * `[]` (デフォルト) は MCP を使わないことを意味する。
+     */
+    @ColumnInfo(name = "mcp_server_ids")
+    val mcpServerIds: String = "[]"
 )

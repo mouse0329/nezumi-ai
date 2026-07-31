@@ -31,6 +31,7 @@ class ToolPreferences(private val context: Context) {
         private const val KEY_PREFIX = "tool_enabled_"
         private const val KEY_INITIALIZED = "tools_initialized_v2"
         private const val KEY_ACTIVE_PRESET_TOOL_IDS = "active_preset_tool_ids"
+        private const val KEY_ACTIVE_MCP_SERVER_IDS = "active_mcp_server_ids"
 
         fun resetToDefaults(context: Context) {
             val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -122,6 +123,28 @@ class ToolPreferences(private val context: Context) {
 
     fun clearActivePresetToolIds() {
         prefs.edit().remove(KEY_ACTIVE_PRESET_TOOL_IDS).apply()
+    }
+
+    fun setActiveMcpServerIds(serverIds: Set<String>) {
+        val arr = JSONArray()
+        serverIds.forEach { arr.put(it) }
+        prefs.edit().putString(KEY_ACTIVE_MCP_SERVER_IDS, arr.toString()).apply()
+    }
+
+    fun getActiveMcpServerIds(): Set<String> {
+        val raw = prefs.getString(KEY_ACTIVE_MCP_SERVER_IDS, null) ?: return emptySet()
+        return runCatching {
+            val array = JSONArray(raw)
+            buildSet {
+                for (i in 0 until array.length()) {
+                    val id = array.optString(i).trim()
+                    if (id.isNotEmpty()) add(id)
+                }
+            }
+        }.getOrElse {
+            Log.e("ToolPreferences", "Failed to parse active MCP server ids", it)
+            emptySet()
+        }
     }
 
     private fun getActivePresetToolIds(): Set<String>? {

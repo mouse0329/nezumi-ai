@@ -12,6 +12,7 @@ import com.nezumi_ai.data.database.dao.AlarmDao
 import com.nezumi_ai.data.database.entity.AlarmEntity
 import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.memory.MemoryTextEmbedder
+import com.nezumi_ai.data.mcp.McpToolRegistry
 import com.nezumi_ai.data.tools.ToolSystemController
 import com.nezumi_ai.utils.PreferencesHelper
 import java.time.Instant
@@ -89,6 +90,10 @@ private val TOOL_NAME_MAP = mapOf(
     "web_search"           to "websearch",
     "webSearch"            to "websearch",
     "websearch"            to "websearch",
+    // MCP generic dispatcher
+    "mcp_call"             to "mcpcall",
+    "mcpCall"              to "mcpcall",
+    "mcpcall"              to "mcpcall",
 )
 
 // ─────────────────────────────────────────────
@@ -133,6 +138,13 @@ internal fun buildEnabledToolProviders(context: Context, alarmDao: AlarmDao): Li
         if (NezumiTool.WEB_SEARCH in enabled) {
             Log.d(TOOL_TAG, "Adding WebSearchSchema to tool providers")
             add(tool(WebSearchSchema()))
+        }
+        // MCP: 現在のプリセットに MCP サーバーが付いていれば汎用ディスパッチャを公開する。
+        // LiteRT はアノテーション経由の固定スキーマのため、別途 tools/list の内容は
+        // system prompt 側で列挙して LLM に伝え、実行はこの mcp_call に集約する。
+        if (McpToolRegistry.get(context).currentTools().isNotEmpty()) {
+            Log.d(TOOL_TAG, "Adding McpCallSchema to tool providers")
+            add(tool(McpCallSchema()))
         }
     }.also {
         Log.d(TOOL_TAG, "Total tool providers registered: ${it.size}")
@@ -257,6 +269,14 @@ private class ListCalendarEventsSchema : ToolSet {
     ): Map<String, Any?> = emptyMap()
 }
 
+private class McpCallSchema : ToolSet {
+    @Tool(description = "Invoke a tool exposed by a connected MCP server. Use the fully-qualified tool name from the system prompt's <tools> list (starts with 'mcp__'). Arguments must be a JSON object matching that tool's inputSchema.")
+    fun mcpCall(
+        @ToolParam(description = "Fully qualified MCP tool name, e.g. mcp__abcd1234__list_files") name: String,
+        @ToolParam(description = "JSON string of arguments for the tool (defaults to '{}')") argumentsJson: String?
+    ): Map<String, Any?> = emptyMap()
+}
+
 private class WebSearchSchema : ToolSet {
     @Tool(description = "Search the web using Brave Search API")
     fun webSearch(
@@ -317,7 +337,12 @@ internal class NezumiLiteRtToolExecutor(
             // "addcalendarevent" -> executeAddCalendarEvent(toolCall)
             // "listcalendarevents" -> executeListCalendarEvents(toolCall)
             "websearch"       -> executeWebSearch(toolCall)
+            "mcpcall"         -> executeMcpCall(toolCall)
             else -> {
+                // フォールバック: LLM が mcp__... を直接呼んだ場合はそのままディスパッチ
+                if (toolCall.name.startsWith("mcp__")) {
+                    return executeMcpToolByQualifiedName(toolCall)
+                }
                 Log.w(TOOL_TAG, "Unknown tool: ${toolCall.name}")
                 ToolExecutionResult(
                     success = false,
@@ -345,6 +370,8 @@ internal class NezumiLiteRtToolExecutor(
             // "addcalendarevent" -> NezumiTool.ADD_CALENDAR_EVENT
             // "listcalendarevents" -> NezumiTool.LIST_CALENDAR_EVENTS
             "websearch" -> NezumiTool.WEB_SEARCH
+            // mcpcall はプリセット側の MCP サーバー ID で制御されるため、NezumiTool にはマッピングしない
+            "mcpcall" -> null
             else -> null
         }
     }
@@ -844,6 +871,71 @@ internal class NezumiLiteRtToolExecutor(
                 success = false,
                 payload = mapOf("success" to false, "error" to "search_failed:${e.message}")
             )
+        }
+    }
+
+    // ─────────────────────────────────────────────
+    // MCP: 汎用ディスパッチ (mcp_call) と修飾名の直接呼び出し
+    // ─────────────────────────────────────────────
+
+    private suspend fun executeMcpCall(toolCall: ToolCall): ToolExecutionResult {
+        val name = (toolCall.arguments["name"] as? String)?.trim().orEmpty()
+        if (name.isBlank()) {
+            return ToolExecutionResult(
+                success = false,
+                payload = mapOf("success" to false, "error" to "missing_mcp_tool_name")
+            )
+        }
+        val rawArgs = toolCall.arguments["argumentsJson"] as? String
+        val args = parseArgumentsJson(rawArgs)
+        return dispatchMcpTool(name, args)
+    }
+
+    private suspend fun executeMcpToolByQualifiedName(toolCall: ToolCall): ToolExecutionResult {
+        // 引数マップをそのまま MCP へ委譲。argumentsJson が渡ってきた場合はそれを優先。
+        val explicit = toolCall.arguments["argumentsJson"] as? String
+        val args = if (!explicit.isNullOrBlank()) parseArgumentsJson(explicit) else toolCall.arguments
+        return dispatchMcpTool(toolCall.name, args)
+    }
+
+    private suspend fun dispatchMcpTool(qualifiedName: String, args: Map<String, Any?>): ToolExecutionResult {
+        val registry = McpToolRegistry.get(context)
+        val res = registry.callQualified(qualifiedName, args)
+        return if (res.success) {
+            ToolExecutionResult(
+                success = true,
+                payload = mapOf(
+                    "success" to true,
+                    "tool" to qualifiedName,
+                    "result" to (res.resultText ?: "")
+                )
+            )
+        } else {
+            ToolExecutionResult(
+                success = false,
+                payload = mapOf(
+                    "success" to false,
+                    "tool" to qualifiedName,
+                    "error" to (res.errorMessage ?: "mcp_call_failed")
+                )
+            )
+        }
+    }
+
+    private fun parseArgumentsJson(raw: String?): Map<String, Any?> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return runCatching {
+            val obj = org.json.JSONObject(raw)
+            buildMap<String, Any?> {
+                val it = obj.keys()
+                while (it.hasNext()) {
+                    val k = it.next()
+                    put(k, obj.opt(k))
+                }
+            }
+        }.getOrElse {
+            Log.w(TOOL_TAG, "Failed to parse MCP argumentsJson: $raw", it)
+            emptyMap()
         }
     }
 }
