@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -41,6 +43,7 @@ import com.nezumi_ai.data.mcp.McpClient
 import com.nezumi_ai.data.mcp.McpServerConfig
 import com.nezumi_ai.data.mcp.McpToolDescriptor
 import com.nezumi_ai.data.mcp.McpTransport
+import com.nezumi_ai.data.mcp.PrivateIpValidator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -203,6 +206,12 @@ private fun McpServerEditorDialog(
     var testMessage by remember { mutableStateOf<String?>(null) }
     var testedTools by remember { mutableStateOf<List<McpToolDescriptor>>(emptyList()) }
 
+    // http:// はプライベートIP/localhost宛のみ許可。パブリックホストへは https:// を要求する。
+    val urlValidation = remember(url) {
+        if (url.isBlank()) null else PrivateIpValidator.validate(url)
+    }
+    val urlError = (urlValidation as? PrivateIpValidator.ValidationResult.Error)?.message
+
     val scope = rememberCoroutineScope()
 
     // 入力が変わったらテスト結果はリセット
@@ -218,7 +227,8 @@ private fun McpServerEditorDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 520.dp),
+                    .heightIn(max = 520.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedTextField(
@@ -234,7 +244,14 @@ private fun McpServerEditorDialog(
                     label = { Text("エンドポイント URL") },
                     placeholder = { Text("https://example.com/mcp") },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                    singleLine = true,
+                    isError = urlError != null,
+                    supportingText = {
+                        Text(
+                            urlError
+                                ?: "同じLAN内のサーバーは http://192.168.x.x:port/mcp のように入力できます。"
+                        )
+                    }
                 )
                 ExposedDropdownMenuBox(
                     expanded = transportExpanded,
@@ -291,7 +308,7 @@ private fun McpServerEditorDialog(
                 }
                 Divider()
                 TextButton(
-                    enabled = !testing && url.isNotBlank(),
+                    enabled = !testing && url.isNotBlank() && urlError == null,
                     onClick = {
                         testing = true
                         testMessage = "接続中..."
@@ -354,7 +371,7 @@ private fun McpServerEditorDialog(
         },
         confirmButton = {
             Button(
-                enabled = name.isNotBlank() && url.isNotBlank(),
+                enabled = name.isNotBlank() && url.isNotBlank() && urlError == null,
                 onClick = {
                     val cfg = buildConfigFromInputs(
                         initial, name.trim(), url.trim(), transport, enabled, authHeader, extraHeaders

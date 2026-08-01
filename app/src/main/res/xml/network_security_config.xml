@@ -1,6 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  MCPサーバーのURLはユーザーが自由に登録できる仕様であり、
+  同一LAN上のテスト/自宅サーバー（例: http://192.168.x.x:3000/mcp）への接続を
+  本番ビルドでもサポートする。
+
+  Network Security Config はホスト単位のドメイン列挙しかできず、
+  プライベートIPレンジ（10.0.0.0/8, 192.168.0.0/16 等）をCIDRで
+  指定することができないため、ここではOSレベルの平文HTTP自体は許可し、
+  「宛先がプライベートIP/localhostかどうか」の実際の判定と拒否は
+  アプリコード側 (data.mcp.PrivateIpValidator) で行う。
+
+  - McpServerManagerDialog: 保存前にURLを検証し、パブリックホストへの
+    http:// は保存自体をブロックする。
+  - McpClient.buildRequest: 実行時にも同様の判定を行い、
+    パブリックホストへの平文HTTPリクエストを送信しない。
+
+  これにより「ユーザーがLAN内のMCPサーバーにhttp://で接続できる」利便性と、
+  「インターネット上のサーバーには必ずhttps://を使わせる」安全性を両立する。
+-->
 <network-security-config>
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">127.0.0.1</domain>
-    </domain-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
 </network-security-config>

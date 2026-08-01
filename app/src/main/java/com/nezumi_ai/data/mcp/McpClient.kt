@@ -95,6 +95,9 @@ class McpClient(
     suspend fun ping(): RpcResult = initialize()
 
     private fun buildRequest(bodyJson: JSONObject): Request {
+        check(PrivateIpValidator.isCleartextAllowed(config.url)) {
+            "Blocked request to disallowed URL (http:// to non-private host, or invalid scheme): ${config.url}"
+        }
         val builder = Request.Builder()
             .url(config.url)
             .header("Accept", "application/json, text/event-stream")
