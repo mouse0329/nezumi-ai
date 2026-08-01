@@ -893,9 +893,15 @@ internal class NezumiLiteRtToolExecutor(
 
     private suspend fun executeMcpToolByQualifiedName(toolCall: ToolCall): ToolExecutionResult {
         // 引数マップをそのまま MCP へ委譲。argumentsJson が渡ってきた場合はそれを優先。
+        // モデルが argumentsJson と方式の両方を混在させることもあるので、両方をマージしておく。
         val explicit = toolCall.arguments["argumentsJson"] as? String
-        val args = if (!explicit.isNullOrBlank()) parseArgumentsJson(explicit) else toolCall.arguments
-        return dispatchMcpTool(toolCall.name, args)
+        val fromJson = if (!explicit.isNullOrBlank()) parseArgumentsJson(explicit) else emptyMap()
+        val rest = toolCall.arguments.filterKeys { it != "argumentsJson" && it != "name" }
+        val merged = LinkedHashMap<String, Any?>().apply {
+            putAll(rest)
+            putAll(fromJson) // argumentsJson 側を優先
+        }
+        return dispatchMcpTool(toolCall.name, merged)
     }
 
     private suspend fun dispatchMcpTool(qualifiedName: String, args: Map<String, Any?>): ToolExecutionResult {

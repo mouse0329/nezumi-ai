@@ -130,7 +130,11 @@ class LiteRtLmEngine(
     private data class ConversationKey(
         val sessionId: Long,
         val enableThinking: Boolean,
-        val enableToolCalling: Boolean
+        val enableToolCalling: Boolean,
+        /** ビルトインツールの有効 ID 集合の指紋。ツールの ON/OFF を切り替えたら Conversation を作り直す。 */
+        val builtinToolsFingerprint: String,
+        /** MCP ツール集合の指紋。サーバー追加/削除や tools/list_changed で変わる。 */
+        val mcpToolsFingerprint: String
     )
 
     /** セッション遷移検出用 */
@@ -282,10 +286,36 @@ class LiteRtLmEngine(
         config: InferenceConfig
     ): Conversation {
         val normalized = config.normalized()
+        val builtinFp = if (normalized.enableToolCalling) {
+            ToolPreferences(appContext).getEnabledTools()
+                .map { it.name }.toSortedSet().joinToString(",").ifBlank { "none" }
+        } else {
+            "disabled"
+        }
+        val mcpFp = if (normalized.enableToolCalling) {
+            val registry = com.nezumi_ai.data.mcp.McpToolRegistry.get(appContext)
+            val activeMcpIds = ToolPreferences(appContext).getActiveMcpServerIds()
+            // レジストリ未初期化 (アプリ再起動直後など) でアクティブサーバーがある場合、
+            // Conversation のツール定義付与前にここで同期リフレッシュさせることで、
+            // 初回ターンから MCP ツールが使えるようにする。
+            if (registry.currentTools().isEmpty() && activeMcpIds.isNotEmpty()) {
+                Log.d(TAG, "MCP registry empty but ${activeMcpIds.size} server(s) active - syncing")
+                runCatching {
+                    kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+                        registry.refresh(activeMcpIds, force = true)
+                    }
+                }
+            }
+            registry.fingerprint()
+        } else {
+            "mcp:disabled"
+        }
         val requestKey = ConversationKey(
             sessionId,
             normalized.enableThinking,
-            normalized.enableToolCalling
+            normalized.enableToolCalling,
+            builtinFp,
+            mcpFp
         )
         // Bug fix(#5): media を含むセッションでは KV キャッシュ再利用をやめる。
         val mustRecreateForMedia = sessionsWithMediaHistory.contains(sessionId)

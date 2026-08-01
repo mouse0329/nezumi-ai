@@ -104,8 +104,24 @@ class PresetRepository(
         prefs.setActiveMcpServerIds(mcpIds)
         // バックグラウンドで MCP ツール一覧をリフレッシュ（ネットワーク待ちになるため UI をブロックしない）
         CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
-            McpToolRegistry.get(context).refresh(mcpIds)
+            McpToolRegistry.get(context).refresh(mcpIds, force = true)
         }
+    }
+
+    /**
+     * プリセット保存直後など、MCP サーバーの検索完了を待ってから次の推論を回したい
+     * シーン向けの suspend 版。UI コルーチンから呼べば、即時にツール一覧を反映できる。
+     */
+    suspend fun applyActivePresetToolsSync(): Boolean {
+        val currentId = PreferencesHelper.getCurrentPresetId(context)
+        val preset = if (currentId.isNotBlank()) dao.getById(currentId) else null
+        val toolCallingOn = preset?.let(::isPresetToolCallingEnabled) ?: false
+        val prefs = ToolPreferences(context)
+        prefs.setActivePresetToolIds(if (toolCallingOn) preset!!.enabledTools else "[]")
+        val mcpIds = if (toolCallingOn) McpPreferences.decodeServerIds(preset!!.mcpServerIds) else emptySet()
+        prefs.setActiveMcpServerIds(mcpIds)
+        McpToolRegistry.get(context).refresh(mcpIds, force = true)
+        return true
     }
 
     private fun isPresetToolCallingEnabled(preset: PresetEntity): Boolean {

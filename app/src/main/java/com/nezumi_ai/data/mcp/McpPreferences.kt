@@ -16,8 +16,9 @@ import org.json.JSONObject
  * 単純で、設定件数もごく少数（数個〜数十個）想定のため。
  */
 class McpPreferences private constructor(context: Context) {
+    private val appContext: Context = context.applicationContext
     private val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     private val _servers = MutableStateFlow<List<McpServerConfig>>(loadFromPrefs())
     val servers: StateFlow<List<McpServerConfig>> = _servers.asStateFlow()
@@ -34,17 +35,28 @@ class McpPreferences private constructor(context: Context) {
         if (idx >= 0) next[idx] = stamped else next.add(stamped)
         _servers.value = next
         persist(next)
+        notifyRegistry()
     }
 
     fun remove(id: String) {
         val next = _servers.value.filterNot { it.id == id }
         _servers.value = next
         persist(next)
+        notifyRegistry()
     }
 
     fun setEnabled(id: String, enabled: Boolean) {
         val cur = getServer(id) ?: return
         upsert(cur.copy(enabled = enabled))
+    }
+
+    /**
+     * サーバー設定の変更を [McpToolRegistry] に即時反映させる。
+     * 設定を後から変えたときも、プリセットを切り替えなくても
+     * 次のターンからツール一覧が更新されるようにするためのフック。
+     */
+    private fun notifyRegistry() {
+        runCatching { McpToolRegistry.get(appContext).refreshActiveAsync() }
     }
 
     private fun persist(list: List<McpServerConfig>) {

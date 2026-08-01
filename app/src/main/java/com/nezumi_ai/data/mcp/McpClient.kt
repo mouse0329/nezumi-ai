@@ -211,9 +211,27 @@ class McpClient(
             return if (isError) "[MCP error] $sb" else sb.toString()
         }
 
+        /**
+         * MCP tools/call の arguments を作る。null / 空文字列 / 空コレクションは
+         * サーバーの pydantic バリデーション（list_type  / string_type）を避けるため
+         * 字フィールドごとに進んで除外する。LLM が引数を省略した場合は
+         * arguments ごとサーバー側のデフォルトに任せることでエラーを抑制する。
+         */
         fun encodeArguments(args: Map<String, Any?>): JSONObject {
             val obj = JSONObject()
-            args.forEach { (k, v) -> obj.put(k, v ?: JSONObject.NULL) }
+            args.forEach { (k, v) ->
+                when (v) {
+                    null -> Unit
+                    is String -> if (v.isNotBlank()) obj.put(k, v)
+                    is Collection<*> -> if (v.isNotEmpty()) {
+                        val arr = JSONArray()
+                        v.forEach { it?.let(arr::put) }
+                        if (arr.length() > 0) obj.put(k, arr)
+                    }
+                    is Map<*, *> -> if (v.isNotEmpty()) obj.put(k, JSONObject(v as Map<String, Any?>))
+                    else -> obj.put(k, v)
+                }
+            }
             return obj
         }
     }

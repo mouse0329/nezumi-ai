@@ -143,7 +143,21 @@ object GgufToolPromptBuilder {
             return systemPrompt
         }
 
-        val mcpTools = McpToolRegistry.get(context).currentTools()
+        val registry = McpToolRegistry.get(context)
+        var mcpTools = registry.currentTools()
+        val activeIds = ToolPreferences(context).getActiveMcpServerIds()
+        // MCP のレジストリが未初期化なのにアクティブサーバーがある場合はこのターンで同期リフレッシュして取り込む
+        if (mcpTools.isEmpty() && activeIds.isNotEmpty()) {
+            Log.d(TAG, "GgufToolPromptBuilder: MCP cache empty but ${activeIds.size} server(s) active - refreshing synchronously")
+            runCatching {
+                kotlinx.coroutines.runBlocking {
+                    kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+                        registry.refresh(activeIds, force = true)
+                    }
+                }
+            }
+            mcpTools = registry.currentTools()
+        }
         val builtinJson = schemas.joinToString("\n") { schema ->
             """{"type":"function","function":{"name":"${schema.name}","description":"${schema.description}","parameters":${schema.parametersJson}}}"""
         }

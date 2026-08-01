@@ -195,6 +195,13 @@ class PresetSettingsFragment : Fragment() {
                         if (presetRepository.updatePreset(updated)) {
                             editingPreset = null
                             toast("プリセットを保存しました")
+                            // 現在選択中のプリセットを編集した場合は、モデル再ロードなしで
+                            // MCP サーバー・ツール一覧を即時に反映させる
+                            val currentId = com.nezumi_ai.utils.PreferencesHelper
+                                .getCurrentPresetId(requireContext())
+                            if (currentId == updated.id) {
+                                presetRepository.applyActivePresetToolsSync()
+                            }
                         } else {
                             toast("ロックされたプリセットは編集できません")
                         }

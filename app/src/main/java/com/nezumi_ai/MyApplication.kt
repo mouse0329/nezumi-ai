@@ -157,6 +157,17 @@ class MyApplication : Application() {
                 PreferencesHelper.getCurrentPresetId(this@MyApplication)
                 PreferencesHelper.isStopKeyboardLearningEnabled(this@MyApplication)
                 PreferencesHelper.isInitialSetupCompleted(this@MyApplication)
+                // MCP: レジストリを初期ロードし、アクティブなプリセットの MCP サーバーに先行接続しておく。
+                //   これにより初回ターンから tools/list が利用でき、 SSE 契約も開始される。
+                runCatching {
+                    val toolPrefs = com.nezumi_ai.data.inference.ToolPreferences(this@MyApplication)
+                    val ids = toolPrefs.getActiveMcpServerIds()
+                    if (ids.isNotEmpty()) {
+                        com.nezumi_ai.data.mcp.McpToolRegistry
+                            .get(this@MyApplication)
+                            .refresh(ids, force = true)
+                    }
+                }.onFailure { Log.w(TAG, "MCP registry warmup failed (non-fatal)", it) }
                 Log.d(TAG, "Storage warmup completed on IO thread")
             } catch (e: Exception) {
                 Log.w(TAG, "Storage warmup failed (non-fatal)", e)
