@@ -197,6 +197,18 @@ class LicenseFragment : Fragment() {
                 R.string.license_downloaded_models_title,
                 R.string.license_downloaded_models_desc,
                 R.string.license_downloaded_models_url
+            ),
+            // VOICEVOX 本体の許諾内容と、話者ごとのクレジット表記。
+            // 生成音声を公開する際にクレジットが必須なため、アプリ内から常に参照できるようにする。
+            LicenseItem(
+                R.string.license_voicevox_title,
+                R.string.license_voicevox_desc,
+                R.string.license_voicevox_url
+            ),
+            LicenseItem(
+                R.string.license_voicevox_libraries_title,
+                R.string.license_voicevox_libraries_desc,
+                R.string.license_voicevox_libraries_url
             )
         )
 

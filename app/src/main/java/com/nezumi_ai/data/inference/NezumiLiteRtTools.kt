@@ -94,6 +94,10 @@ private val TOOL_NAME_MAP = mapOf(
     "mcp_call"             to "mcpcall",
     "mcpCall"              to "mcpcall",
     "mcpcall"              to "mcpcall",
+    // MCP tool discovery（system prompt が届かなかった場合の保険）
+    "mcp_list_tools"       to "mcplisttools",
+    "mcpListTools"         to "mcplisttools",
+    "mcplisttools"         to "mcplisttools",
 )
 
 // ─────────────────────────────────────────────
@@ -142,9 +146,18 @@ internal fun buildEnabledToolProviders(context: Context, alarmDao: AlarmDao): Li
         // MCP: 現在のプリセットに MCP サーバーが付いていれば汎用ディスパッチャを公開する。
         // LiteRT はアノテーション経由の固定スキーマのため、別途 tools/list の内容は
         // system prompt 側で列挙して LLM に伝え、実行はこの mcp_call に集約する。
-        if (McpToolRegistry.get(context).currentTools().isNotEmpty()) {
-            Log.d(TOOL_TAG, "Adding McpCallSchema to tool providers")
+        //
+        // Bug fix: 以前は「tools/list のキャッシュが既に埋まっていること」を条件にしていたため、
+        // アプリ起動直後（プリセット選択時の非同期 refresh がまだ終わっていない）や
+        // 一時的にサーバーへ到達できなかった場合に mcp_call すら登録されず、
+        // MCP ツールが恒久的に見えなくなっていた。
+        // サーバーが 1 つでも紐付いていれば必ず公開し、一覧は mcp_list_tools で
+        // 実行時に取得できるようにする。
+        val mcpRegistry = McpToolRegistry.get(context)
+        if (mcpRegistry.hasActiveServers() || mcpRegistry.currentTools().isNotEmpty()) {
+            Log.d(TOOL_TAG, "Adding McpCallSchema / McpListToolsSchema to tool providers")
             add(tool(McpCallSchema()))
+            add(tool(McpListToolsSchema()))
         }
     }.also {
         Log.d(TOOL_TAG, "Total tool providers registered: ${it.size}")
@@ -277,6 +290,11 @@ private class McpCallSchema : ToolSet {
     ): Map<String, Any?> = emptyMap()
 }
 
+private class McpListToolsSchema : ToolSet {
+    @Tool(description = "List every tool currently exposed by the connected MCP servers, with its fully-qualified name (mcp__...) and JSON input schema. Call this first when you are unsure which MCP tools exist, then invoke one with mcp_call.")
+    fun mcpListTools(): Map<String, Any?> = emptyMap()
+}
+
 private class WebSearchSchema : ToolSet {
     @Tool(description = "Search the web using Brave Search API")
     fun webSearch(
@@ -338,6 +356,7 @@ internal class NezumiLiteRtToolExecutor(
             // "listcalendarevents" -> executeListCalendarEvents(toolCall)
             "websearch"       -> executeWebSearch(toolCall)
             "mcpcall"         -> executeMcpCall(toolCall)
+            "mcplisttools"    -> executeMcpListTools()
             else -> {
                 // フォールバック: LLM が mcp__... を直接呼んだ場合はそのままディスパッチ
                 if (toolCall.name.startsWith("mcp__")) {
@@ -370,8 +389,10 @@ internal class NezumiLiteRtToolExecutor(
             // "addcalendarevent" -> NezumiTool.ADD_CALENDAR_EVENT
             // "listcalendarevents" -> NezumiTool.LIST_CALENDAR_EVENTS
             "websearch" -> NezumiTool.WEB_SEARCH
-            // mcpcall はプリセット側の MCP サーバー ID で制御されるため、NezumiTool にはマッピングしない
+            // mcpcall / mcplisttools はプリセット側の MCP サーバー ID で制御されるため、
+            // NezumiTool にはマッピングしない
             "mcpcall" -> null
+            "mcplisttools" -> null
             else -> null
         }
     }
@@ -877,6 +898,39 @@ internal class NezumiLiteRtToolExecutor(
     // ─────────────────────────────────────────────
     // MCP: 汎用ディスパッチ (mcp_call) と修飾名の直接呼び出し
     // ─────────────────────────────────────────────
+
+    private suspend fun executeMcpListTools(): ToolExecutionResult {
+        val registry = McpToolRegistry.get(context)
+        runCatching { registry.ensureFresh() }
+            .onFailure { Log.w(TOOL_TAG, "mcp_list_tools: refresh failed", it) }
+        val tools = registry.currentTools()
+        if (tools.isEmpty()) {
+            return ToolExecutionResult(
+                success = true,
+                payload = mapOf(
+                    "success" to true,
+                    "count" to 0,
+                    "tools" to emptyList<Map<String, Any?>>(),
+                    "note" to "No MCP tool is currently available. Check that an MCP server is attached to this preset and reachable."
+                )
+            )
+        }
+        return ToolExecutionResult(
+            success = true,
+            payload = mapOf(
+                "success" to true,
+                "count" to tools.size,
+                "tools" to tools.map { desc ->
+                    mapOf(
+                        "name" to desc.qualifiedName,
+                        "server" to desc.serverName,
+                        "description" to desc.description,
+                        "input_schema" to desc.inputSchemaJson
+                    )
+                }
+            )
+        )
+    }
 
     private suspend fun executeMcpCall(toolCall: ToolCall): ToolExecutionResult {
         val name = (toolCall.arguments["name"] as? String)?.trim().orEmpty()

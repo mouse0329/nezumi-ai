@@ -51,6 +51,7 @@ class ModelDownloadWorker(
             DOWNLOAD_KIND_HF_CUSTOM -> doCustomHfWork(startedAt)
             DOWNLOAD_KIND_IMAGE_MODEL -> doImageModelWork(startedAt)
             DOWNLOAD_KIND_SAFETY_MODEL -> doSafetyModelWork()
+            DOWNLOAD_KIND_VOICEVOX_MODEL -> doVoicevoxModelWork()
             else -> doBuiltinModelWork(startedAt)
         }
     }
@@ -462,6 +463,19 @@ class ModelDownloadWorker(
         const val KEY_IMAGE_MODEL_FILENAME = "image_model_filename"
         const val KEY_IMAGE_MODEL_NAME = "image_model_name"
         const val DOWNLOAD_KIND_SAFETY_MODEL = "safety_model"
+
+        // ── VOICEVOX 音声モデル ─────────────────────────────────
+        // LLM モデルと同じ WorkManager + 進捗通知の仕組みに載せる。
+        const val DOWNLOAD_KIND_VOICEVOX_MODEL = "voicevox_model"
+        const val KEY_VOICEVOX_FILE_NAME = "voicevox_file_name"
+        const val KEY_VOICEVOX_URL = "voicevox_url"
+        const val KEY_VOICEVOX_DISPLAY_NAME = "voicevox_display_name"
+        const val KEY_VOICEVOX_NEEDS_DICTIONARY = "voicevox_needs_dictionary"
+        /** 進捗の対象フェーズ: "model" | "dictionary" */
+        const val KEY_VOICEVOX_PHASE = "voicevox_phase"
+        const val VOICEVOX_PHASE_MODEL = "model"
+        const val VOICEVOX_PHASE_DICTIONARY = "dictionary"
+        const val TAG_VOICEVOX_DOWNLOAD = "voicevox_model_download"
         const val SAFETY_MODEL_WORK_NAME = "safety_model_download"
         const val SAFETY_MODEL_URL =
             "https://huggingface.co/AdamCodd/vit-base-nsfw-detector/resolve/main/onnx/model.onnx?download=true"
@@ -627,6 +641,56 @@ class ModelDownloadWorker(
 
         fun cancelImageModel(context: Context, modelId: String) {
             WorkManager.getInstance(context).cancelUniqueWork(imageModelWorkName(modelId))
+        }
+
+        // ── VOICEVOX ────────────────────────────────────────────
+        const val VOICEVOX_WORK_NAME = "voicevox_model_download"
+
+        /**
+         * VOICEVOX 音声モデル（.vvm）と、必要なら OpenJTalk 辞書をバックグラウンドで取得する。
+         * LLM モデルと同じ進捗表示・通知・キャンセル導線に載る。
+         */
+        fun enqueueVoicevoxModel(
+            context: Context,
+            fileName: String,
+            url: String,
+            displayName: String,
+            needsDictionary: Boolean
+        ): Boolean {
+            val workManager = WorkManager.getInstance(context)
+            val hasActive = runCatching {
+                workManager.getWorkInfosForUniqueWork(VOICEVOX_WORK_NAME)
+                    .get(2, TimeUnit.SECONDS)
+                    .any {
+                        it.state == WorkInfo.State.ENQUEUED ||
+                            it.state == WorkInfo.State.RUNNING ||
+                            it.state == WorkInfo.State.BLOCKED
+                    }
+            }.getOrDefault(false)
+            if (hasActive) return false
+
+            val request = OneTimeWorkRequestBuilder<ModelDownloadWorker>()
+                .setInputData(
+                    workDataOf(
+                        KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_VOICEVOX_MODEL,
+                        KEY_VOICEVOX_FILE_NAME to fileName,
+                        KEY_VOICEVOX_URL to url,
+                        KEY_VOICEVOX_DISPLAY_NAME to displayName,
+                        KEY_VOICEVOX_NEEDS_DICTIONARY to needsDictionary
+                    )
+                )
+                .addTag(TAG_VOICEVOX_DOWNLOAD)
+                .setConstraints(
+                    Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+                )
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
+                .build()
+            workManager.enqueueUniqueWork(VOICEVOX_WORK_NAME, ExistingWorkPolicy.KEEP, request)
+            return true
+        }
+
+        fun cancelVoicevoxModel(context: Context) {
+            WorkManager.getInstance(context).cancelUniqueWork(VOICEVOX_WORK_NAME)
         }
 
         fun safetyModelFile(context: Context): File =
@@ -957,6 +1021,171 @@ class ModelDownloadWorker(
             description = NOTIFICATION_CHANNEL_DESCRIPTION
         }
         manager.createNotificationChannel(channel)
+    }
+
+    /**
+     * VOICEVOX 音声モデルのダウンロード。
+     *
+     * これまで VoicevoxManager が UI スレッド起点のコルーチンで直接ダウンロードしており、
+     * 進捗が一切見えず、画面遷移で中断していた。LLM モデルと同じ ModelDownloadWorker に
+     * 載せ替えることで、進捗バー・通知・バックグラウンド継続を共通化する。
+     */
+    private suspend fun doVoicevoxModelWork(): Result {
+        val fileName = inputData.getString(KEY_VOICEVOX_FILE_NAME)
+            ?: return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "voicevox file name is missing"))
+        val url = inputData.getString(KEY_VOICEVOX_URL)
+            ?: return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "voicevox url is missing"))
+        val displayName = inputData.getString(KEY_VOICEVOX_DISPLAY_NAME) ?: fileName
+        val needsDictionary = inputData.getBoolean(KEY_VOICEVOX_NEEDS_DICTIONARY, false)
+
+        val notificationId = 6001
+        setForeground(createForegroundInfo(displayName, 0L, -1L, notificationId))
+
+        val manager = com.nezumi_ai.voicevox.VoicevoxManager(applicationContext)
+        val entry = manager.catalogEntryFor(fileName)
+            ?: return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "unknown voicevox model: $fileName"))
+
+        val tempFile = File(applicationContext.cacheDir, "$fileName.download")
+        tempFile.delete()
+
+        return try {
+            // ── フェーズ 1: .vvm 本体 ───────────────────────────
+            downloadWithProgress(
+                url = url,
+                destination = tempFile,
+                phase = VOICEVOX_PHASE_MODEL,
+                fileName = fileName,
+                displayName = displayName,
+                notificationId = notificationId
+            )
+
+            val installed = withContext(Dispatchers.IO) {
+                manager.installDownloadedModel(entry, tempFile)
+            }
+            if (!installed) {
+                return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "音声モデルの保存に失敗しました"))
+            }
+
+            // ── フェーズ 2: OpenJTalk 辞書（未取得のときだけ）──
+            if (needsDictionary && !manager.isDictionaryReady()) {
+                setProgressAsync(
+                    workDataOf(
+                        KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_VOICEVOX_MODEL,
+                        KEY_VOICEVOX_FILE_NAME to fileName,
+                        KEY_VOICEVOX_PHASE to VOICEVOX_PHASE_DICTIONARY,
+                        KEY_DOWNLOADED_BYTES to 0L,
+                        KEY_TOTAL_BYTES to -1L
+                    )
+                )
+                val ok = withContext(Dispatchers.IO) {
+                    manager.ensureDictionary { downloaded, total ->
+                        if (isStopped) throw CancellationException("cancel requested")
+                        setProgressAsync(
+                            workDataOf(
+                                KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_VOICEVOX_MODEL,
+                                KEY_VOICEVOX_FILE_NAME to fileName,
+                                KEY_VOICEVOX_PHASE to VOICEVOX_PHASE_DICTIONARY,
+                                KEY_DOWNLOADED_BYTES to downloaded,
+                                KEY_TOTAL_BYTES to total
+                            )
+                        )
+                        setForegroundAsync(
+                            createForegroundInfo("OpenJTalk辞書", downloaded, total, notificationId)
+                        )
+                    }
+                }
+                if (!ok) {
+                    Log.w(TAG, "OpenJTalk dictionary download failed; model itself is installed")
+                }
+            }
+
+            Result.success(
+                workDataOf(
+                    KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_VOICEVOX_MODEL,
+                    KEY_VOICEVOX_FILE_NAME to fileName
+                )
+            )
+        } catch (e: CancellationException) {
+            tempFile.delete()
+            throw e
+        } catch (e: Exception) {
+            tempFile.delete()
+            Log.e(TAG, "VOICEVOX model download failed: ${e.message}", e)
+            if (runAttemptCount < MAX_WORK_RETRY) Result.retry()
+            else Result.failure(workDataOf(KEY_ERROR_MESSAGE to (e.message ?: "failed")))
+        } finally {
+            if (tempFile.exists()) tempFile.delete()
+        }
+    }
+
+    /** VOICEVOX 用のシンプルな進捗付きダウンロード（LLM 側と同じ間引きポリシーを使う）。 */
+    private suspend fun downloadWithProgress(
+        url: String,
+        destination: File,
+        phase: String,
+        fileName: String,
+        displayName: String,
+        notificationId: Int
+    ) = withContext(Dispatchers.IO) {
+        val connection = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+            connectTimeout = 30_000
+            readTimeout = 120_000
+            instanceFollowRedirects = true
+        }
+        try {
+            connection.connect()
+            if (connection.responseCode !in 200..299) {
+                throw java.io.IOException("HTTP ${connection.responseCode} for $url")
+            }
+            val totalBytes = connection.contentLengthLong
+            var lastProgressMs = 0L
+            var lastForegroundMs = 0L
+            var lastProgressBytes = -1L
+            connection.inputStream.use { input ->
+                destination.outputStream().use { output ->
+                    val buffer = ByteArray(8192)
+                    var downloaded = 0L
+                    while (true) {
+                        if (isStopped) throw CancellationException("cancel requested")
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        output.write(buffer, 0, read)
+                        downloaded += read
+
+                        val now = System.currentTimeMillis()
+                        val reachedEnd = totalBytes > 0L && downloaded >= totalBytes
+                        val progressed = (downloaded - lastProgressBytes).coerceAtLeast(0L)
+                        if (reachedEnd ||
+                            now - lastProgressMs >= PROGRESS_UPDATE_INTERVAL_MS ||
+                            progressed >= PROGRESS_UPDATE_MIN_BYTES
+                        ) {
+                            setProgressAsync(
+                                workDataOf(
+                                    KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_VOICEVOX_MODEL,
+                                    KEY_VOICEVOX_FILE_NAME to fileName,
+                                    KEY_VOICEVOX_PHASE to phase,
+                                    KEY_DOWNLOADED_BYTES to downloaded,
+                                    KEY_TOTAL_BYTES to totalBytes
+                                )
+                            )
+                            lastProgressMs = now
+                            lastProgressBytes = downloaded
+                            if (reachedEnd || now - lastForegroundMs >= FOREGROUND_UPDATE_INTERVAL_MS) {
+                                setForegroundAsync(
+                                    createForegroundInfo(displayName, downloaded, totalBytes, notificationId)
+                                )
+                                lastForegroundMs = now
+                            }
+                        }
+                    }
+                }
+            }
+            if (destination.length() == 0L) {
+                throw java.io.IOException("Downloaded file is empty: $url")
+            }
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private suspend fun doImageModelWork(startedAt: Long): Result {

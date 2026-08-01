@@ -22,8 +22,9 @@ class VoicevoxManager(private val context: Context) {
         const val VVM_BASE_URL = "https://raw.githubusercontent.com/VOICEVOX/voicevox_vvm/main/vvms"
         private const val DICT_URL = "https://downloads.sourceforge.net/open-jtalk/open_jtalk_dic_utf_8-1.11.tar.gz"
         private const val DICT_DIR_NAME = "open_jtalk_dic_utf_8-1.11"
-        private const val DEFAULT_MODEL_FILE_NAME = "3.vvm"
-        const val DEFAULT_STYLE_ID = 9
+        // 既定は「ずんだもん / ノーマル」(styleId=3)。これは 0.vvm に含まれる。
+        const val DEFAULT_MODEL_FILE_NAME = "0.vvm"
+        const val DEFAULT_STYLE_ID = 3
         private const val PREFS_NAME = "voicevox_settings"
         private const val KEY_STYLE_ID = "selected_style_id"
         private const val KEY_MODEL_FILE_NAME = "selected_model_file_name"
@@ -43,8 +44,18 @@ class VoicevoxManager(private val context: Context) {
         val styles: List<VoiceStyle>
     ) {
         val url: String = "${VoicevoxManager.VVM_BASE_URL}/$fileName"
-        val displayName: String = "$fileName / ${styles.distinctBy { it.speakerName }.joinToString("・") { it.speakerName }}"
+        val speakerNames: List<String> = styles.map { it.speakerName }.distinct()
+        val displayName: String = "$fileName / ${speakerNames.joinToString("・")}"
         val shortDescription: String = styles.joinToString("、") { "${it.speakerName}/${it.styleName}(${it.styleId})" }
+
+        /** この .vvm に含まれる話者のクレジット表記一覧。 */
+        val credits: List<String> = VoicevoxLicense.creditsFor(speakerNames)
+
+        /** この .vvm に含まれる話者のライセンス項目一覧。 */
+        val licenses: List<VoicevoxLicense.Entry> = VoicevoxLicense.entriesFor(speakerNames)
+
+        /** UI に 1 行で出すクレジット文字列。 */
+        val creditLine: String = credits.joinToString(" / ")
     }
 
     data class VoiceStyle(
@@ -52,7 +63,13 @@ class VoicevoxManager(private val context: Context) {
         val styleName: String,
         val styleId: Int
     ) {
-        val displayName: String = "$speakerName / $styleName ($styleId)"
+        val displayName: String = "$speakerName / $styleName"
+        val detailName: String = "$speakerName / $styleName ($styleId)"
+
+        /** 生成音声に付与すべきクレジット表記。 */
+        val credit: String get() = VoicevoxLicense.creditFor(speakerName)
+
+        val license: VoicevoxLicense.Entry? get() = VoicevoxLicense.forSpeaker(speakerName)
     }
 
     private var onnxruntime: BlockingOnnxruntime? = null
@@ -82,24 +99,97 @@ class VoicevoxManager(private val context: Context) {
         return prefs.getString(KEY_MODEL_FILE_NAME, DEFAULT_MODEL_FILE_NAME) ?: DEFAULT_MODEL_FILE_NAME
     }
 
-    suspend fun downloadSelectedModel(entry: VoiceModelCatalogEntry): Boolean = withContext(Dispatchers.IO) {
+    /** 現在選択中の音声モデルの保存先。 */
+    fun modelFilePath(): File = modelFile
+
+    /** OpenJTalk 辞書ディレクトリ。 */
+    fun dictionaryDir(): File = dictDir
+
+    fun isDictionaryReady(): Boolean = isValidDictionaryDir(dictDir)
+
+    fun catalogEntryFor(fileName: String): VoiceModelCatalogEntry? =
+        modelCatalog.firstOrNull { it.fileName == fileName }
+
+    /**
+     * 音声モデルのダウンロード。
+     *
+     * 進捗表示が必要な UI 経路は [com.nezumi_ai.data.inference.ModelDownloadWorker] 経由で
+     * ダウンロードし、完了後に [installDownloadedModel] を呼ぶ。
+     * こちらは初期化時の自動取得（フォールバック）用。
+     */
+    suspend fun downloadSelectedModel(
+        entry: VoiceModelCatalogEntry,
+        onProgress: ((downloaded: Long, total: Long) -> Unit)? = null
+    ): Boolean = withContext(Dispatchers.IO) {
         try {
             releaseInternal()
             val tmpFile = File(context.filesDir, "${entry.fileName}.download")
             if (tmpFile.exists()) tmpFile.delete()
-            downloadFile(entry.url, tmpFile)
+            downloadFile(entry.url, tmpFile, onProgress)
+            installDownloadedModel(entry, tmpFile)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to download VOICEVOX model: ${entry.fileName}", e)
+            false
+        }
+    }
+
+    /**
+     * ダウンロード済みの一時ファイルを正式な音声モデルとして採用する。
+     * ワーカー側でダウンロードした場合もここを通す。
+     */
+    fun installDownloadedModel(entry: VoiceModelCatalogEntry, downloadedFile: File): Boolean {
+        return try {
+            releaseInternal()
+            require(downloadedFile.isFile && downloadedFile.length() > 0L) {
+                "ダウンロードファイルが不正です: ${downloadedFile.absolutePath}"
+            }
             if (modelFile.exists()) modelFile.delete()
-            check(tmpFile.renameTo(modelFile)) { "モデルファイルを置き換えられませんでした" }
+            val moved = downloadedFile.renameTo(modelFile)
+            if (!moved) {
+                downloadedFile.copyTo(modelFile, overwrite = true)
+                downloadedFile.delete()
+            }
             prefs.edit()
                 .putString(KEY_MODEL_FILE_NAME, entry.fileName)
                 .putInt(KEY_STYLE_ID, defaultStyleIdFor(entry))
                 .apply()
             selectedStyleId = getSavedStyleId()
+            Log.i(TAG, "Installed VOICEVOX model ${entry.fileName} (styleId=$selectedStyleId)")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to download VOICEVOX model: ${entry.fileName}", e)
+            Log.e(TAG, "Failed to install VOICEVOX model: ${entry.fileName}", e)
             false
         }
+    }
+
+    /**
+     * OpenJTalk 辞書を必要なら取得する。進捗コールバック付き。
+     * ModelDownloadWorker のフェーズ 2 から呼ばれる。
+     */
+    fun ensureDictionary(onProgress: ((downloaded: Long, total: Long) -> Unit)? = null): Boolean {
+        if (isValidDictionaryDir(dictDir)) return true
+        return try {
+            val dictArchive = File(context.filesDir, "$DICT_DIR_NAME.tar.gz")
+            dictDir.deleteRecursively()
+            if (dictArchive.exists()) dictArchive.delete()
+            downloadFile(DICT_URL, dictArchive, onProgress)
+            extractTarGz(dictArchive, context.filesDir)
+            dictArchive.delete()
+            isValidDictionaryDir(dictDir)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to prepare OpenJTalk dictionary", e)
+            false
+        }
+    }
+
+    /** 現在選択中の話者に対応するクレジット表記。UI やライセンス画面で使う。 */
+    fun currentCredit(): String {
+        val styleId = getSavedStyleId()
+        val speaker = modelCatalog
+            .flatMap { it.styles }
+            .firstOrNull { it.styleId == styleId }
+            ?.speakerName
+        return if (speaker != null) VoicevoxLicense.creditFor(speaker) else VoicevoxLicense.VOICEVOX_CREDIT
     }
 
     suspend fun initialize(): Boolean {
@@ -261,11 +351,40 @@ class VoicevoxManager(private val context: Context) {
             ?: DEFAULT_STYLE_ID
     }
 
-    private fun downloadFile(url: String, outputFile: File) {
-        URL(url).openStream().use { input ->
-            FileOutputStream(outputFile).use { output ->
-                input.copyTo(output)
+    private fun downloadFile(
+        url: String,
+        outputFile: File,
+        onProgress: ((downloaded: Long, total: Long) -> Unit)? = null
+    ) {
+        val connection = (URL(url).openConnection() as java.net.HttpURLConnection).apply {
+            connectTimeout = 30_000
+            readTimeout = 120_000
+            instanceFollowRedirects = true
+        }
+        try {
+            connection.connect()
+            val total = connection.contentLengthLong
+            connection.inputStream.use { input ->
+                FileOutputStream(outputFile).use { output ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var downloaded = 0L
+                    var lastNotifyMs = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        output.write(buffer, 0, read)
+                        downloaded += read
+                        val now = System.currentTimeMillis()
+                        if (onProgress != null && now - lastNotifyMs >= 300L) {
+                            lastNotifyMs = now
+                            onProgress(downloaded, total)
+                        }
+                    }
+                    onProgress?.invoke(downloaded, total)
+                }
             }
+        } finally {
+            connection.disconnect()
         }
     }
 
@@ -354,6 +473,13 @@ class VoicevoxManager(private val context: Context) {
     }
 }
 
+/**
+ * 同梱する .vvm カタログ。
+ *
+ * 収録方針: 「クレジット表記のみで商用・非商用ともに利用可能」な音声ライブラリのみを載せる。
+ * 商用利用が認められていない No.7 / ユーレイちゃん（6.vvm・20.vvm、および s0.vvm の No.7 スタイル）は
+ * 意図的に除外している。詳細は [VoicevoxLicense] と docs/VOICEVOX_TERMS.md を参照。
+ */
 private fun buildVoiceModelCatalog(): List<VoicevoxManager.VoiceModelCatalogEntry> {
     fun style(speaker: String, name: String, id: Int) = VoicevoxManager.VoiceStyle(speaker, name, id)
     fun entry(
@@ -391,9 +517,6 @@ private fun buildVoiceModelCatalog(): List<VoicevoxManager.VoiceModelCatalogEntr
             style("四国めたん", "ささやき", 36), style("四国めたん", "ヒソヒソ", 37),
             style("ずんだもん", "ささやき", 22), style("ずんだもん", "ヒソヒソ", 38),
             style("九州そら", "ささやき", 19)
-        )),
-        entry("6.vvm", VoicevoxManager.VoiceModelCategory.TALK, listOf(
-            style("No.7", "ノーマル", 29), style("No.7", "アナウンス", 30), style("No.7", "読み聞かせ", 31)
         )),
         entry("7.vvm", VoicevoxManager.VoiceModelCategory.TALK, listOf(
             style("後鬼", "人間ver.", 27), style("後鬼", "ぬいぐるみver.", 28)
@@ -457,11 +580,6 @@ private fun buildVoiceModelCatalog(): List<VoicevoxManager.VoiceModelCatalogEntr
         entry("19.vvm", VoicevoxManager.VoiceModelCategory.TALK, listOf(
             style("離途", "ノーマル", 99), style("離途", "シリアス", 101), style("黒沢冴白", "ノーマル", 100)
         )),
-        entry("20.vvm", VoicevoxManager.VoiceModelCategory.TALK, listOf(
-            style("ユーレイちゃん", "ノーマル", 102), style("ユーレイちゃん", "甘々", 103),
-            style("ユーレイちゃん", "哀しみ", 104), style("ユーレイちゃん", "ささやき", 105),
-            style("ユーレイちゃん", "ツクモちゃん", 106)
-        )),
         entry("21.vvm", VoicevoxManager.VoiceModelCategory.TALK, listOf(
             style("猫使アル", "つよつよ", 110), style("猫使アル", "へろへろ", 111),
             style("猫使ビィ", "つよつよ", 112), style("東北ずん子", "ノーマル", 107),
@@ -492,7 +610,7 @@ private fun buildVoiceModelCatalog(): List<VoicevoxManager.VoiceModelCatalogEntr
             style("青山龍星", "ノーマル", 3013), style("冥鳴ひまり", "ノーマル", 3014),
             style("九州そら", "ノーマル", 3016), style("もち子さん", "ノーマル", 3020),
             style("剣崎雌雄", "ノーマル", 3021), style("WhiteCUL", "ノーマル", 3023),
-            style("後鬼", "人間ver.", 3027), style("No.7", "ノーマル", 3029),
+            style("後鬼", "人間ver.", 3027),
             style("ちび式じい", "ノーマル", 3042), style("櫻歌ミコ", "ノーマル", 3043),
             style("小夜/SAYO", "ノーマル", 3046), style("ナースロボ＿タイプＴ", "ノーマル", 3047),
             style("†聖騎士 紅桜†", "ノーマル", 3051), style("雀松朱司", "ノーマル", 3052),

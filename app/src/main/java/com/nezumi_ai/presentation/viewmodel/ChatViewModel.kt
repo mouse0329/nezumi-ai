@@ -31,6 +31,8 @@ import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.GgufToolPromptBuilder
+import com.nezumi_ai.data.inference.McpToolPromptBuilder
+import com.nezumi_ai.data.mcp.McpToolRegistry
 import com.nezumi_ai.data.inference.EngineManager
 import com.nezumi_ai.data.inference.ImageGenerationNotificationManager
 import com.nezumi_ai.data.inference.GenerateImageToolBridge
@@ -4243,8 +4245,20 @@ class ChatViewModel(
             systemPrompt = "ユーザー名：$userName\n\n$systemPrompt"
         }
         systemPrompt = appendMemoryBlockToSystemPrompt(systemPrompt, memoryBlock)
-        if (isGgufEngine && enableToolCalling) {
-            systemPrompt = GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt)
+        if (enableToolCalling) {
+            // ツール一覧を組み立てる直前にキャッシュを確認する。
+            // TTL 内かつサーバー構成が同じなら即 return するため、通常は追加コストゼロ。
+            runCatching { McpToolRegistry.get(appContext).ensureFresh() }
+                .onFailure { Log.w(TAG, "MCP tool registry refresh failed", it) }
+            systemPrompt = if (isGgufEngine) {
+                GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt)
+            } else {
+                // Bug fix: LiteRT-LM 経路では MCP ツール一覧がどこにも注入されておらず、
+                // mcp_call の説明にある「system prompt の <tools> を見ろ」という前提が
+                // 成立していなかった（＝MCP ツールが 1 つも認識されない）。
+                // ここで LiteRT 用の <mcp_tools> ブロックを明示的に付与する。
+                McpToolPromptBuilder.appendForLiteRt(appContext, systemPrompt)
+            }
         }
         // Tool calling can coexist with thinking directives; do not suppress thinking when tool calling is enabled.
         val enableThinkingForPrompt = enableThinking
@@ -4322,8 +4336,20 @@ class ChatViewModel(
 
         val filteredMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
         var systemPrompt = appendMemoryBlockToSystemPrompt(getActiveSystemPrompt(), memoryBlock)
-        if (isGgufEngine && enableToolCalling) {
-            systemPrompt = GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt)
+        if (enableToolCalling) {
+            // ツール一覧を組み立てる直前にキャッシュを確認する。
+            // TTL 内かつサーバー構成が同じなら即 return するため、通常は追加コストゼロ。
+            runCatching { McpToolRegistry.get(appContext).ensureFresh() }
+                .onFailure { Log.w(TAG, "MCP tool registry refresh failed", it) }
+            systemPrompt = if (isGgufEngine) {
+                GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt)
+            } else {
+                // Bug fix: LiteRT-LM 経路では MCP ツール一覧がどこにも注入されておらず、
+                // mcp_call の説明にある「system prompt の <tools> を見ろ」という前提が
+                // 成立していなかった（＝MCP ツールが 1 つも認識されない）。
+                // ここで LiteRT 用の <mcp_tools> ブロックを明示的に付与する。
+                McpToolPromptBuilder.appendForLiteRt(appContext, systemPrompt)
+            }
         }
 
         val sanitizer = makeSanitizer(isGgufEngine, currentTurnMessageId)

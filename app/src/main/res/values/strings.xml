@@ -294,6 +294,35 @@ Gemma 系モデルの利用条件は Google が提供する規約とモデル文
 
 GGUF、LiteRT-LM、.task、.safetensors、MNN などのモデルファイルは、それぞれの配布元ライセンス・利用規約・モデルカードが優先されます。</string>
 
+    <!-- VOICEVOX -->
+    <string name="license_voicevox_title">VOICEVOX（音声合成エンジン / 音声モデル）</string>
+    <string name="license_voicevox_url">https://voicevox.hiroshiba.jp/term/</string>
+    <string name="license_voicevox_desc">VOICEVOX 音声モデル利用規約
+
+・商用・非商用問わず利用できます。
+・アプリケーションに組み込んで再配布できます。
+・作成された音声を利用する際は、各音声ライブラリの規約に従ってください。
+・作成された音声の利用を他者に許諾する際は、当該他者に対し本許諾内容の 3 及び 4 の遵守を義務付けてください。
+
+禁止事項: 逆コンパイル・リバースエンジニアリング及びこれらの方法の公開、製作者または第三者に不利益をもたらす行為、公序良俗に反する行為。
+
+免責事項: 本ソフトウェアにより生じた損害・不利益について、製作者は一切の責任を負いません。
+
+ご利用の際は VOICEVOX を利用したことがわかるクレジット表記が必要です。</string>
+
+    <string name="license_voicevox_libraries_title">VOICEVOX 音声ライブラリ（話者ごとのクレジット）</string>
+    <string name="license_voicevox_libraries_url">https://github.com/mouse0329/nezumi-ai/blob/main/docs/VOICEVOX_TERMS.md</string>
+    <string name="license_voicevox_libraries_desc">生成音声を公開・配布する際は、話者ごとのクレジット表記が必要です。
+
+本アプリのカタログには「クレジット表記のみで商用・非商用ともに利用可能」な音声ライブラリのみを収録しています。商用利用が認められていない音声ライブラリ（No.7 / ユーレイちゃん）は収録していません。
+
+クレジット表記例:
+VOICEVOX:ずんだもん / VOICEVOX:四国めたん / VOICEVOX:春日部つむぎ / VOICEVOX:波音リツ / VOICEVOX:玄野武宏 / VOICEVOX:白上虎太郎 / VOICEVOX:青山龍星 / VOICEVOX:冥鳴ひまり / VOICEVOX:九州そら / VOICEVOX:もち子(cv 明日葉よもぎ) / VOICEVOX:剣崎雌雄 / VOICEVOX:WhiteCUL / VOICEVOX:後鬼 / VOICEVOX:ちび式じい / VOICEVOX:櫻歌ミコ / VOICEVOX:小夜/SAYO / VOICEVOX:ナースロボ＿タイプＴ / VOICEVOX:†聖騎士 紅桜† / VOICEVOX:雀松朱司 / VOICEVOX:麒ヶ島宗麟 / VOICEVOX:春歌ナナ / VOICEVOX:猫使アル / VOICEVOX:猫使ビィ / VOICEVOX:中国うさぎ / VOICEVOX:栗田まろん / VOICEVOX:あいえるたん / VOICEVOX:満別花丸 / VOICEVOX:琴詠ニア / VOICEVOX:Voidoll(CV:丹下桜) / VOICEVOX:ぞん子 / VOICEVOX:中部つるぎ / VOICEVOX:離途 / VOICEVOX:黒沢冴白 / VOICEVOX:東北ずん子 / VOICEVOX:東北きりたん / VOICEVOX:東北イタコ / VOICEVOX:あんこもん / VOICEVOX:夜語トバリ / VOICEVOX:暁記ミタマ / VOICEVOX:里石ユカ（つぼみ） / VOICEVOX Nemo
+
+企業・法人が携わる形で利用する場合に事前確認が必要な音声ライブラリ: 青山龍星（ななはぴ）、もち子さん（もちぞら模型店。音声作品・音声素材・ゲーム作品等は対象外）、後鬼（ついなちゃんプロジェクト）、Voidoll（ニコニコ）、ぞん子（商用利用時）。
+
+各音声ライブラリの詳細な規約は、設定 &gt; モデル &gt; 音声読み上げ の「利用規約を開く」から確認できます。</string>
+
     <string name="license_open_url">詳細を見る</string>
 
     <!-- Fragments for navigation -->

@@ -2,7 +2,6 @@ package com.nezumi_ai.data.inference
 
 import android.content.Context
 import android.util.Log
-import com.nezumi_ai.data.mcp.McpToolRegistry
 
 /**
  * GGUF / llama.rn 向けにツール定義をシステムプロンプトへ注入する。
@@ -132,39 +131,18 @@ object GgufToolPromptBuilder {
                 add("list_sd_models")
             }
         }
-        if (enabledNames.isEmpty()) {
-            Log.d(TAG, "GgufToolPromptBuilder: Skipped. Reason: No enabled tools selected.")
-            return systemPrompt
-        }
-
         val schemas = allSchemas.filter { it.name in enabledNames }
-        if (schemas.isEmpty()) {
-            Log.d(TAG, "GgufToolPromptBuilder: Skipped. Reason: No matching tool schemas for enabled tools.")
+        // Bug fix: 組み込みツールが 1 つも有効でなくても、MCP サーバーが接続されていれば
+        // MCP ツールだけを列挙する。以前はここで早期 return していたため、
+        //「MCP だけ使いたい」プリセットでは MCP ツールが一切見えなかった。
+        val mcpJson = McpToolPromptBuilder.currentToolsJson(context)
+        if (schemas.isEmpty() && mcpJson.isBlank()) {
+            Log.d(TAG, "GgufToolPromptBuilder: Skipped. Reason: no builtin schema and no MCP tool.")
             return systemPrompt
         }
 
-        val registry = McpToolRegistry.get(context)
-        var mcpTools = registry.currentTools()
-        val activeIds = ToolPreferences(context).getActiveMcpServerIds()
-        // MCP のレジストリが未初期化なのにアクティブサーバーがある場合はこのターンで同期リフレッシュして取り込む
-        if (mcpTools.isEmpty() && activeIds.isNotEmpty()) {
-            Log.d(TAG, "GgufToolPromptBuilder: MCP cache empty but ${activeIds.size} server(s) active - refreshing synchronously")
-            runCatching {
-                kotlinx.coroutines.runBlocking {
-                    kotlinx.coroutines.withTimeoutOrNull(8_000L) {
-                        registry.refresh(activeIds, force = true)
-                    }
-                }
-            }
-            mcpTools = registry.currentTools()
-        }
         val builtinJson = schemas.joinToString("\n") { schema ->
             """{"type":"function","function":{"name":"${schema.name}","description":"${schema.description}","parameters":${schema.parametersJson}}}"""
-        }
-        val mcpJson = mcpTools.joinToString("\n") { desc ->
-            val safeDesc = (desc.description.ifBlank { "MCP tool from ${desc.serverName}" })
-                .replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
-            """{"type":"function","function":{"name":"${desc.qualifiedName}","description":"[MCP:${desc.serverName}] $safeDesc","parameters":${desc.inputSchemaJson.ifBlank { "{\"type\":\"object\",\"properties\":{}}" }}}}"""
         }
         val toolsJson = listOf(builtinJson, mcpJson).filter { it.isNotBlank() }.joinToString("\n")
 
