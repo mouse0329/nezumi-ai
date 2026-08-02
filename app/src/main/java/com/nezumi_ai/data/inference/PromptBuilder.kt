@@ -37,13 +37,22 @@ object PromptBuilder {
          */
         GEMMA_PREFIX,
         /**
-         * Qwen 系: 直近 user ターン末尾に `/think` または `/no_think` を付与する。
+         * Qwen 3.0〜3.4 系: 直近 user ターン末尾に `/think` または `/no_think` を付与する
+         * ソフトスイッチ方式。Qwen 3.5 以降では廃止されているので QWEN_ASSISTANT_PREFILL を使う。
          */
         QWEN_COMMAND,
         /**
+         * Qwen 3.5+ / Qwen3 GGUF 専用: ソフトスイッチ廃止世代のため、
+         * assistant ターン直後に必ず prefill を入れて thinking を制御する。
+         *   - ON  → `<think>\n`             (thinking 発火)
+         *   - OFF → `<think>\n\n</think>\n\n` (公式 non-thinking jinja と同じ空思考 prefill)
+         * これにより llama.cpp 側の chat_template が enable_thinking をサポートしていなくても
+         * 思考 ON/OFF を 100% 制御できる。
+         */
+        QWEN_ASSISTANT_PREFILL,
+        /**
          * llama.cpp で標準的に使われる `<think>...</think>` プレフィル方式。
-         * Gemma 4 GGUF も llama.cpp 上ではこの方式で thinking を吐く（公式 chat-template-kwargs
-         * の enable_thinking=true 相当）。
+         * DeepSeek-R1 / Llama-3.1-R / QwQ など thinking がデフォルト常時 ON なモデルで使う。
          */
         ASSISTANT_TAG,
         /**
@@ -75,11 +84,12 @@ object PromptBuilder {
         val userOverride = hasExplicitUserTemplate(appContext, modelPath)
         return when {
             !userOverride && isGpt2Model(modelPath) -> GgufPromptFormat.PLAIN_COMPLETION
-            // Bug fix(#43): Gemma 4 は system / user / assistant ロールをネイティブにサポートし、
-            // Thinking 機能は ChatML に近い構造 (system ターン内 <|think|>) を期待している。
-            // 旧世代の GEMMA_CHAT (<start_of_turn>) に流すと制御トークンが正しく認識されず
-            // Thinking が発火しない。Gemma 4 のみ CHATML 経路へ振り分ける。
-            isGemma4ModelName(name) -> GgufPromptFormat.CHATML
+            // Bug fix(#45): Gemma 4 の Thinking は公式仕様で「システムターン内に <|think|>、
+            // model ターンの prefill」という Gemma 固有の構造を使う (Google AI 公式ドキュメント参照)。
+            // 前回 CHATML に振ってしまったため <start_of_turn>user\n<|think|>\n... という
+            // GEMMA4_CHANNEL 専用のビルド経路 (buildForGgufGemma) を通らなくなり Thinking が発火しなかった。
+            // Gemma 3/4 は引き続き GEMMA_CHAT でビルドし、Gemma4 固有の Thinking 制御は
+            // buildForGgufGemma 内の GEMMA4_CHANNEL 分岐に任せる。
             "gemma" in name -> GgufPromptFormat.GEMMA_CHAT
             else -> GgufPromptFormat.CHATML
         }
@@ -90,19 +100,43 @@ object PromptBuilder {
         val userOverride = hasExplicitUserTemplate(appContext, modelPath)
         return when {
             !userOverride && isGpt2Model(modelPath) -> ThinkingPromptStyle.PLAIN_COMPLETION
-            // Bug fix(#44): Qwen 判定を精緻化。
-            //   - Qwen 3.0 〜 3.4 系のみ /think・/no_think ソフトスイッチをサポートするため QWEN_COMMAND を使う。
-            //   - Qwen 3.5 以降は仕様変更でソフトスイッチが廃止されデフォルト thinking のため、
-            //     /think を注入せず ASSISTANT_TAG で <think>...</think> の prefill 抑止だけ行う。
-            //   - Qwen 2.5 以下 (QwQ 除く) は thinking 非対応。/think を投げるとモデルが混乱して
-            //     不完全な思考出力を出すため、通常の ASSISTANT_TAG (thinking OFF 時 prefill なし) にする。
-            //   - QwQ は明示的 thinking 対応なので従来どおり ASSISTANT_TAG (Qwen 系コマンドは無効)。
+            // Bug fix(#44,#46): Qwen 判定を世代別に完全分離。
+            //   - Qwen 3.5+ / Qwen3 公式 GGUF : QWEN_ASSISTANT_PREFILL で <think>\n / <think>\n\n</think>\n\n を
+            //     assistant ターン直後に必ず入れる (Hugging Face 公式 non-thinking jinja と同じ形)。
+            //     Qwen3.5-2B は公式仕様で non-thinking がデフォルトだが、llama.rn は公式
+            //     chat_template を使わず自前組立のため prefill を強制しないと <think> が暴発する。
+            //   - Qwen 3.0 〜 3.4 : 从来の /think・/no_think ソフトスイッチ (QWEN_COMMAND)。
+            //   - Qwen 2.x / qwen-max 等 : thinking 非対応なので何も注入せず ASSISTANT_TAG (OFF 時 prefill 無し)。
+            //   - QwQ : thinking 常時 ON。ASSISTANT_TAG。
+            isQwen35OrLaterModelName(name) -> ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL
             isQwenSoftSwitchCompatibleModelName(name) -> ThinkingPromptStyle.QWEN_COMMAND
             // Gemma4 (GGUF / litert) は thinking 構造が Gemma3 と異なるため専用スタイルへ振り分ける。
             // 一致条件: "gemma4", "gemma-4", "gemma_4", e2b/e4b/26b-a4b など Gemma4 サイズ識別子。
             isGemma4ModelName(name) -> ThinkingPromptStyle.GEMMA4_CHANNEL
             "gemma" in name -> ThinkingPromptStyle.GEMMA_PREFIX
             else -> ThinkingPromptStyle.ASSISTANT_TAG
+        }
+    }
+
+    /**
+     * Qwen 3.5 以降のモデルを判定する (QWEN_ASSISTANT_PREFILL の対象)。
+     * Qwen 公式は 3.5、3.6 と minor バージョンを上げているので、
+     * 「major==3 && minor>=5」または「major>=4」ならこれに当てる。
+     */
+    private fun isQwen35OrLaterModelName(loweredName: String): Boolean {
+        if (!Regex("(^|[^a-z])qwen(?![a-z])").containsMatchIn(loweredName)) return false
+        val versionRegex = Regex("qwen[\\-_ ]?(\\d+)(?:[\\.](\\d+))?")
+        val match = versionRegex.find(loweredName) ?: return false
+        val major = match.groupValues[1].toIntOrNull() ?: return false
+        val minorRaw = match.groupValues.getOrNull(2).orEmpty()
+        // "qwen3.4b" というパラメータ数表記は minor バージョンではない
+        val afterMatch = loweredName.substring(match.range.last + 1)
+        val minorIsParamCount = minorRaw.isNotEmpty() && afterMatch.startsWith("b")
+        val minor = if (minorRaw.isNotEmpty() && !minorIsParamCount) minorRaw.toIntOrNull() else null
+        return when {
+            major >= 4 -> true                    // Qwen 4.x 以降も将来の互換のためこちら
+            major == 3 && minor != null && minor >= 5 -> true   // Qwen 3.5, 3.6, ...
+            else -> false
         }
     }
 
@@ -124,7 +158,7 @@ object PromptBuilder {
         // ASSISTANT_TAG 経由で <think>...</think> の抑止・prefill を扱う。
         // "qwen3" / "qwen-3" のように直後に数字やハイフンが来ることを許すため、
         // 一般的な単語境界 ([^a-z0-9]) ではなく (?![a-z]) (英字が直後に来ない) で判定する。
-        // これにより qwq は引っかからず、qwen3 / qwen3.5 / qwen-3-14b を全て拂える。
+        // これにより qwq は引っかからず、qwen3 / qwen-3-14b を全て拂える。
         if (!Regex("(^|[^a-z])qwen(?![a-z])").containsMatchIn(loweredName)) return false
         // 明示的にメジャーバージョンが読み取れる場合はバージョン範囲でフィルタする。
         // 例: qwen3, qwen-3, qwen_3, qwen 3, qwen3.2, qwen-3.4-7b, qwen3.4b ("3.4b" のようなパラメータ数表記に注意)
@@ -185,20 +219,25 @@ object PromptBuilder {
      *
      * 旧実装は ASSISTANT_TAG のみだったが、Gemma4 GGUF (llama.cpp) も `<think>...</think>` 形式で
      * thinking を吐くため、`GEMMA4_CHANNEL` でも assistant 側 prefill を必要とする。
+     * Qwen 3.5+ (QWEN_ASSISTANT_PREFILL) も <think>...</think> プレフィル方式。
      */
     fun usesAssistantThinkingPrefill(modelPath: String): Boolean {
         val style = resolveThinkingPromptStyle(modelPath)
         return style == ThinkingPromptStyle.ASSISTANT_TAG ||
-            style == ThinkingPromptStyle.GEMMA4_CHANNEL
+            style == ThinkingPromptStyle.GEMMA4_CHANNEL ||
+            style == ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL
     }
 
     /**
- * モデル名から Qwen 3 系かを判定し、non-thinking jinja 相当の空 <think></think>
+     * モデル名から Qwen 系かを判定し、non-thinking jinja 相当の空 <think></think>
      * プレフィルを使うべきかを返す。ユーザーが Thinking OFF にしたのに
      * モデルが chat_template の関係で <think> を吐くケースの最強の抑止手段。
+     * Qwen 3.0-3.4 (QWEN_COMMAND) と Qwen 3.5+ (QWEN_ASSISTANT_PREFILL) を両方含む。
      */
     fun usesQwenStyleThinking(modelPath: String): Boolean {
-        return resolveThinkingPromptStyle(modelPath) == ThinkingPromptStyle.QWEN_COMMAND
+        val style = resolveThinkingPromptStyle(modelPath)
+        return style == ThinkingPromptStyle.QWEN_COMMAND ||
+            style == ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL
     }
 
     /** モデル名から Gemma4 系かどうかを判定する公開ヘルパー（パーサ / ストップシーケンス側で参照）。 */
@@ -326,7 +365,13 @@ object PromptBuilder {
             system = systemFinal,
             prompt = lastUserContent,
             response = lastAssistantContent,
-            thinking = enableThinking && style == ThinkingPromptStyle.ASSISTANT_TAG,
+            // Bug fix(#46): thinking プレースホルダは ASSISTANT_TAG だけでなく、Gemma4/Qwen3.5+ の
+            // プレフィル方式でも ON になる必要がある。
+            thinking = enableThinking && (
+                style == ThinkingPromptStyle.ASSISTANT_TAG ||
+                style == ThinkingPromptStyle.GEMMA4_CHANNEL ||
+                style == ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL
+            ),
             history = history
         )
         return try {
@@ -365,20 +410,29 @@ object PromptBuilder {
     }
 
     /**
- * assistant 開始タグの直後に挿入すべきプレフィル文字列を返す。
+     * assistant 開始タグの直後に挿入すべきプレフィル文字列を返す。
      * モデルごとに Thinking ON/OFF を正しく効かせるための中枢ロジック:
-     *   - QWEN_COMMAND + OFF → Qwen3 公式 non-thinking jinja と同じ「空 <think>\n\n</think>\n\n」
-     *     (デフォルトの chat_template が <think> を吐きそうになっても、これを先に置くことで
-     *     モデルは「もう思考は終わった」と認識し、思考をスキップする)
-     *   - QWEN_COMMAND + ON  → prefill なし (Qwen はデフォルトで thinking モード)
-     *   - ASSISTANT_TAG/GEMMA4_CHANNEL + ON → `<think>\n` を付ける
-     *   - それ以外 → 何もしない　
+     *
+     *   - QWEN_COMMAND + OFF          → 空 <think>\n\n</think>\n\n (Qwen3 公式 non-thinking jinja 相当)
+     *   - QWEN_COMMAND + ON           → prefill なし (ソフトスイッチとデフォルト thinking に任せる)
+     *
+     *   - QWEN_ASSISTANT_PREFILL + OFF → 空 <think>\n\n</think>\n\n (Qwen 3.5+ の公式 jinja 相当)
+     *     Bug fix(#46): llama.rn は公式 chat_template の enable_thinking を使わず自前で ChatML を
+     *     組み立てるため、この prefill を必ず入れないと Qwen3.5-2B が <think> を暴発させる。
+     *   - QWEN_ASSISTANT_PREFILL + ON  → `<think>\n` (thinking 発火を確実にする)
+     *
+     *   - ASSISTANT_TAG/GEMMA4_CHANNEL + ON  → `<think>\n`
+     *   - それ以外 → 何もしない
      */
     private fun assistantPrefillFor(style: ThinkingPromptStyle, enableThinking: Boolean): String {
         return when {
-            style == ThinkingPromptStyle.QWEN_COMMAND && !enableThinking -> QWEN_EMPTY_THINK_PREFILL
+            // Qwen 系の OFF: 空 <think></think> を必ず先入れして chat_template の暴発を封じる。
+            !enableThinking && (style == ThinkingPromptStyle.QWEN_COMMAND ||
+                style == ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL) -> QWEN_EMPTY_THINK_PREFILL
+            // Thinking 発火側: <think>\n を assistant 直後に入れる。
             enableThinking && (style == ThinkingPromptStyle.ASSISTANT_TAG ||
-                style == ThinkingPromptStyle.GEMMA4_CHANNEL) -> ASSISTANT_THINK_PREFILL
+                style == ThinkingPromptStyle.GEMMA4_CHANNEL ||
+                style == ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL) -> ASSISTANT_THINK_PREFILL
             else -> ""
         }
     }
