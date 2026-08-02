@@ -65,6 +65,21 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private val _isSdxl = MutableStateFlow(false)
     val isSdxl: StateFlow<Boolean> = _isSdxl.asStateFlow()
 
+    // img2img (vae_encoder 同梱) 対応可否のミラー。
+    // _isSdxl と同じ理由で init ブロックより前で宣言する必要がある
+    //   (init 中の refreshSdxlFlagFromPath が末尾で refreshImg2imgFlagFromPath を呼び、
+    //    そこで _supportsImg2img / _img2imgEnabled の .value に触るため)。
+    // 以前はこの2つを他の img2img 関連プロパティと一緒に後方(300行目付近)で宣言していたが、
+    // init ブロックより後に宣言されるプロパティは Kotlin のプロパティ初期化順序上まだ
+    // バッキングフィールドが確定しておらず、init 内から間接的に参照すると
+    // NullPointerException (MutableStateFlow.getValue() on a null object reference) になる
+    // バグがあったため、ここに前倒しした。
+    private val _supportsImg2img = MutableStateFlow(false)
+    val supportsImg2img: StateFlow<Boolean> = _supportsImg2img.asStateFlow()
+
+    private val _img2imgEnabled = MutableStateFlow(false)
+    val img2imgEnabled: StateFlow<Boolean> = _img2imgEnabled.asStateFlow()
+
     private val _availableModels = MutableStateFlow<List<String>>(emptyList())
     val availableModels: StateFlow<List<String>> = _availableModels.asStateFlow()
 
@@ -304,14 +319,10 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     // ---- img2img -----------------------------------------------------------
     // ネイティブ caps.supports_img2img (vae_encoder 同梱) のミラー。
     // モデルロード後に acquireLocalDream(...) 直後で確定値へと更新する。
-    private val _supportsImg2img = MutableStateFlow(false)
-    val supportsImg2img: StateFlow<Boolean> = _supportsImg2img.asStateFlow()
-
+    // _supportsImg2img / _img2imgEnabled は init ブロックより前で宣言する必要があるため、
+    // クラス冒頭 (_isSdxl の直後) に移動済み。ここでは _initImageBitmap のみ宣言する。
     private val _initImageBitmap = MutableStateFlow<Bitmap?>(null)
     val initImageBitmap: StateFlow<Bitmap?> = _initImageBitmap.asStateFlow()
-
-    private val _img2imgEnabled = MutableStateFlow(false)
-    val img2imgEnabled: StateFlow<Boolean> = _img2imgEnabled.asStateFlow()
 
     // Diffusers img2img の実用域に合わせ既定 0.65。
     private val _denoiseStrength = MutableStateFlow(0.65f)

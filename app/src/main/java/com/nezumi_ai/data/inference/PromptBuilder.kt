@@ -75,6 +75,11 @@ object PromptBuilder {
         val userOverride = hasExplicitUserTemplate(appContext, modelPath)
         return when {
             !userOverride && isGpt2Model(modelPath) -> GgufPromptFormat.PLAIN_COMPLETION
+            // Bug fix(#43): Gemma 4 は system / user / assistant ロールをネイティブにサポートし、
+            // Thinking 機能は ChatML に近い構造 (system ターン内 <|think|>) を期待している。
+            // 旧世代の GEMMA_CHAT (<start_of_turn>) に流すと制御トークンが正しく認識されず
+            // Thinking が発火しない。Gemma 4 のみ CHATML 経路へ振り分ける。
+            isGemma4ModelName(name) -> GgufPromptFormat.CHATML
             "gemma" in name -> GgufPromptFormat.GEMMA_CHAT
             else -> GgufPromptFormat.CHATML
         }
@@ -85,7 +90,14 @@ object PromptBuilder {
         val userOverride = hasExplicitUserTemplate(appContext, modelPath)
         return when {
             !userOverride && isGpt2Model(modelPath) -> ThinkingPromptStyle.PLAIN_COMPLETION
-            Regex("(^|[^a-z0-9])(qwen|qwq)([^a-z0-9]|$)").containsMatchIn(name) -> ThinkingPromptStyle.QWEN_COMMAND
+            // Bug fix(#44): Qwen 判定を精緻化。
+            //   - Qwen 3.0 〜 3.4 系のみ /think・/no_think ソフトスイッチをサポートするため QWEN_COMMAND を使う。
+            //   - Qwen 3.5 以降は仕様変更でソフトスイッチが廃止されデフォルト thinking のため、
+            //     /think を注入せず ASSISTANT_TAG で <think>...</think> の prefill 抑止だけ行う。
+            //   - Qwen 2.5 以下 (QwQ 除く) は thinking 非対応。/think を投げるとモデルが混乱して
+            //     不完全な思考出力を出すため、通常の ASSISTANT_TAG (thinking OFF 時 prefill なし) にする。
+            //   - QwQ は明示的 thinking 対応なので従来どおり ASSISTANT_TAG (Qwen 系コマンドは無効)。
+            isQwenSoftSwitchCompatibleModelName(name) -> ThinkingPromptStyle.QWEN_COMMAND
             // Gemma4 (GGUF / litert) は thinking 構造が Gemma3 と異なるため専用スタイルへ振り分ける。
             // 一致条件: "gemma4", "gemma-4", "gemma_4", e2b/e4b/26b-a4b など Gemma4 サイズ識別子。
             isGemma4ModelName(name) -> ThinkingPromptStyle.GEMMA4_CHANNEL
@@ -94,13 +106,58 @@ object PromptBuilder {
         }
     }
 
+    /**
+     * Qwen 系モデルのうち、`/think` および `/no_think` ソフトスイッチが有効な世代かを判定する。
+     *
+     * サポート対象:
+     *   - Qwen 3.0 〜 3.4 系 (Qwen3, Qwen-3, qwen3-14b, qwen-3.2-4b-instruct など)
+     *
+     * 除外対象:
+     *   - Qwen 3.5 以降: 公式仕様でソフトスイッチが廃止され、常に thinking がデフォルト有効になる。
+     *     コマンド注入は無視されるだけでなく、prefill が効かないと勝手に思考してしまう。
+     *   - Qwen 2.x 以下: そもそも thinking 機能をネイティブに持たない。/think を渡すと
+     *     モデルが「指示に従おうとして」不完全な思考出力を作ってしまう。
+     *   - QwQ 系: thinking がデフォルト常時 ON。ソフトスイッチは提供されていない。
+     */
+    private fun isQwenSoftSwitchCompatibleModelName(loweredName: String): Boolean {
+        // QwQ はソフトスイッチ非対応 (デフォルト常時 thinking) なので除外し、
+        // ASSISTANT_TAG 経由で <think>...</think> の抑止・prefill を扱う。
+        // "qwen3" / "qwen-3" のように直後に数字やハイフンが来ることを許すため、
+        // 一般的な単語境界 ([^a-z0-9]) ではなく (?![a-z]) (英字が直後に来ない) で判定する。
+        // これにより qwq は引っかからず、qwen3 / qwen3.5 / qwen-3-14b を全て拂える。
+        if (!Regex("(^|[^a-z])qwen(?![a-z])").containsMatchIn(loweredName)) return false
+        // 明示的にメジャーバージョンが読み取れる場合はバージョン範囲でフィルタする。
+        // 例: qwen3, qwen-3, qwen_3, qwen 3, qwen3.2, qwen-3.4-7b, qwen3.4b ("3.4b" のようなパラメータ数表記に注意)
+        val versionRegex = Regex("qwen[\\-_ ]?(\\d+)(?:[\\.](\\d+))?")
+        val match = versionRegex.find(loweredName)
+        if (match != null) {
+            val major = match.groupValues[1].toIntOrNull() ?: return false
+            val minorRaw = match.groupValues.getOrNull(2).orEmpty()
+            // "qwen3.4b" のような小数点+ 'b' はマイナーバージョンではなくパラメータ数なので minor = null 扱い。
+            val afterMatch = loweredName.substring(match.range.last + 1)
+            val minorIsParamCount = minorRaw.isNotEmpty() && afterMatch.startsWith("b")
+            val minor = if (minorRaw.isNotEmpty() && !minorIsParamCount) minorRaw.toIntOrNull() else null
+            if (major != 3) return false // Qwen 3 系列以外は非対応
+            // Qwen 3.5 以降はソフトスイッチ廃止 → 除外
+            if (minor != null && minor >= 5) return false
+            return true
+        }
+        // バージョンが名前から取れない Qwen 系 ("qwen-max", "qwen-plus" 等) はソフトスイッチ非対応として扱い、
+        // 誤って /think を注入しないようにする。
+        return false
+    }
+
     private fun isGemma4ModelName(loweredName: String): Boolean {
         if ("gemma" !in loweredName) return false
-        // "gemma4", "gemma-4", "gemma_4", "gemma 4" などの直接表記
-        if (Regex("gemma[\\-_ ]?4(?![0-9])").containsMatchIn(loweredName)) return true
-        // E2B / E4B / 12B-A4B / 26B-A4B / 31B-A4B など Gemma4 サイズ識別子
-        if (Regex("(^|[^a-z0-9])(e2b|e4b)([^a-z0-9]|$)").containsMatchIn(loweredName)) return true
-        if (Regex("(^|[^a-z0-9])(12b|26b|31b)[\\-_]?a4b([^a-z0-9]|$)").containsMatchIn(loweredName)) return true
+        // Bug fix(#43): 命名規則の揺れに対応するため判定を拡張。
+        // "gemma4", "gemma-4", "gemma_4", "gemma 4", "gemma.4" などの直接表記
+        if (Regex("gemma[\\-_ .]?4(?![0-9])").containsMatchIn(loweredName)) return true
+        // E2B / E4B / E8B / E12B (Gemma 4 の "Efficient" シリーズ) など英字プレフィックス系サイズ識別子
+        if (Regex("(^|[^a-z0-9])(e2b|e4b|e8b|e12b)([^a-z0-9]|$)").containsMatchIn(loweredName)) return true
+        // 12B-A4B / 26B-A4B / 31B-A4B / 46B-A4B など MoE 表記 (activated 4B) を伴う Gemma 4 系
+        if (Regex("(^|[^a-z0-9])(12b|26b|31b|46b)[\\-_]?a4b([^a-z0-9]|$)").containsMatchIn(loweredName)) return true
+        // "gemma4b" 等の 4b 単独表記 (Google がリリース時に採用した短縮命名)
+        if (Regex("gemma[\\-_ .]?4b(?![0-9])").containsMatchIn(loweredName)) return true
         return false
     }
 

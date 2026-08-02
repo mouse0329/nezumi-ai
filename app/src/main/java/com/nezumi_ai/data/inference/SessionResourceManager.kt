@@ -138,12 +138,27 @@ class SessionResourceManager {
     
     /**
      * Conversation をセッションに関連付ける
+     *
+     * Bug fix: 通常のチャット会話はこのクラスの createSession() を一度も経由せず、
+     * DB (chat_sessions テーブル) の主キーをそのまま sessionId として渡してくる
+     * (createSession() を実際に呼ぶのは MemoryExtractionWorker の一時セッションのみ)。
+     * そのため sessions マップには該当エントリが存在せず、通常のチャットのたびに
+     * 毎回 "Cannot attach conversation: session not found" が出て、
+     * このクラスが謳うタイムアウト管理・厳密な 1:1 管理・完全クリーンアップが
+     * 通常のチャットセッションには一切効いていなかった。
+     * ここでは未登録の sessionId が来た場合、DB 由来の既存セッションとして
+     * その場で登録してから通常どおり処理を続ける。
      */
     suspend fun attachConversation(sessionId: Long, conversation: Conversation) {
         return sessionMutex.withLock {
             val resource = sessions[sessionId] ?: run {
-                Log.e(TAG, "Cannot attach conversation: session not found ($sessionId)")
-                return
+                Log.i(TAG, "Registering externally-created session: $sessionId")
+                if (sessionId > lastKnownSessionId) {
+                    lastKnownSessionId = sessionId
+                }
+                val newResource = SessionResource(sessionId = sessionId)
+                sessions[sessionId] = newResource
+                newResource
             }
             
             // 既存の conversation がある場合はクローズ

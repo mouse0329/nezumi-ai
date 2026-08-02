@@ -20,6 +20,105 @@ class PromptBuilderTest {
         assertFalse(PromptBuilder.usesAssistantThinkingPrefill("/models/tiny-gpt2.gguf"))
     }
 
+    // ─── Bug fix(#43): Gemma 4 の Thinking ルーティング ─────────────────────────
+
+    @Test
+    fun detectGgufFormat_gemma4UsesChatMl() {
+        // Gemma 4 は system ロールを明示利用する ChatML 経路へ振り分けられる必要がある。
+        val format = PromptBuilder.detectGgufFormat("/models/gemma-4-e4b-it.gguf")
+        assertEquals(PromptBuilder.GgufPromptFormat.CHATML, format)
+    }
+
+    @Test
+    fun detectGgufFormat_gemma3UsesLegacyGemmaChat() {
+        // Gemma 3 以前は従来どおり <start_of_turn> ベースの GEMMA_CHAT を維持。
+        val format = PromptBuilder.detectGgufFormat("/models/gemma-3-9b-it.gguf")
+        assertEquals(PromptBuilder.GgufPromptFormat.GEMMA_CHAT, format)
+    }
+
+    @Test
+    fun resolveThinkingPromptStyle_gemma4NamingVariants() {
+        // "gemma4", "gemma-4", e4b, 12b-a4b, 単独 4b 表記の全てが Gemma 4 判定に入る。
+        val paths = listOf(
+            "/models/gemma4-9b.gguf",
+            "/models/gemma-4-27b-it.gguf",
+            "/models/gemma-e4b-preview.gguf",
+            "/models/gemma-12b-a4b.gguf",
+            "/models/gemma4b.gguf"
+        )
+        for (p in paths) {
+            assertTrue(
+                "expected Gemma4 style for $p",
+                PromptBuilder.isGemma4Model(p)
+            )
+        }
+    }
+
+    // ─── Bug fix(#44): Qwen ソフトスイッチ判定 ───────────────────────────────
+
+    @Test
+    fun buildForGguf_qwen3_5DoesNotInjectThinkCommand() {
+        // Qwen 3.5 以降は /think・/no_think 廃止。誤って注入されないことを保証する。
+        val messages = listOf(
+            MessageEntity(sessionId = 1L, role = "user", content = "Hello", timestamp = 1L)
+        )
+        val prompt = PromptBuilder.buildForGguf(
+            messages = messages,
+            systemPrompt = "",
+            compressedSummary = null,
+            format = PromptBuilder.detectGgufFormat("/models/qwen3.5-2b-instruct.gguf"),
+            enableThinking = false,
+            modelPath = "/models/qwen3.5-2b-instruct.gguf",
+            sanitizeMessageContent = { it.content }
+        )
+        assertFalse(
+            "Qwen 3.5 should not receive /think or /no_think soft-switch",
+            prompt.contains("/think") || prompt.contains("/no_think")
+        )
+    }
+
+    @Test
+    fun buildForGguf_qwen2_5DoesNotInjectThinkCommand() {
+        // Qwen 2.5 は thinking 非対応。/think が注入されて出力が壊れないことを保証する。
+        val messages = listOf(
+            MessageEntity(sessionId = 1L, role = "user", content = "Hello", timestamp = 1L)
+        )
+        val prompt = PromptBuilder.buildForGguf(
+            messages = messages,
+            systemPrompt = "",
+            compressedSummary = null,
+            format = PromptBuilder.detectGgufFormat("/models/qwen2.5-7b-instruct.gguf"),
+            enableThinking = false,
+            modelPath = "/models/qwen2.5-7b-instruct.gguf",
+            sanitizeMessageContent = { it.content }
+        )
+        assertFalse(
+            "Qwen 2.5 should not receive /think or /no_think soft-switch",
+            prompt.contains("/think") || prompt.contains("/no_think")
+        )
+    }
+
+    @Test
+    fun buildForGguf_qwen3InjectsThinkCommandOnlyForCompatibleGeneration() {
+        // Qwen 3.0 系 (3.0〜3.4) では従来どおり /no_think を注入する。
+        val messages = listOf(
+            MessageEntity(sessionId = 1L, role = "user", content = "Hello", timestamp = 1L)
+        )
+        val prompt = PromptBuilder.buildForGguf(
+            messages = messages,
+            systemPrompt = "",
+            compressedSummary = null,
+            format = PromptBuilder.detectGgufFormat("/models/qwen3-14b-instruct.gguf"),
+            enableThinking = false,
+            modelPath = "/models/qwen3-14b-instruct.gguf",
+            sanitizeMessageContent = { it.content }
+        )
+        assertTrue(
+            "Qwen 3.x should receive /no_think for compatible generations",
+            prompt.contains("/no_think")
+        )
+    }
+
     @Test
     fun buildForGguf_plainCompletionUsesTranscriptWithoutThinkTags() {
         val messages = listOf(

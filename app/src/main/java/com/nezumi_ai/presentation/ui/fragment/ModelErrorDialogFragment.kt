@@ -9,7 +9,14 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.ViewModelProvider
+import com.nezumi_ai.data.database.NezumiAiDatabase
+import com.nezumi_ai.data.repository.ChatSessionRepository
+import com.nezumi_ai.data.repository.MemoryRepository
+import com.nezumi_ai.data.repository.MessageRepository
+import com.nezumi_ai.data.repository.PresetRepository
+import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.presentation.viewmodel.ChatViewModel
+import com.nezumi_ai.presentation.viewmodel.ChatViewModelFactory
 
 class ModelErrorDialogFragment : DialogFragment() {
     companion object {
@@ -58,7 +65,30 @@ class ModelErrorDialogFragment : DialogFragment() {
 
     private fun notifyDismissed() {
         try {
-            val vm = ViewModelProvider(requireActivity()).get(ChatViewModel::class.java)
+            // ChatViewModel は引数なしコンストラクタを持たないため、Factory を渡さずに
+            // ViewModelProvider(requireActivity()).get(...) すると
+            // NoSuchMethodException を含む RuntimeException でクラッシュする
+            // （SettingsComposeFragment と同種のバグ。#1 参照）。
+            // requireActivity() スコープの ChatFragment / SettingsComposeFragment が
+            // 既に Factory 付きで取得済みであれば ViewModelProvider は同一インスタンスを
+            // 返すため、ここで Factory を渡してもインスタンスが重複することはない。
+            val ctx = requireContext().applicationContext
+            val database = NezumiAiDatabase.getInstance(ctx)
+            val settingsRepo = SettingsRepository.fromDatabase(database)
+            val sessionRepo = ChatSessionRepository(database.chatSessionDao(), settingsRepo)
+            val messageRepo = MessageRepository(database.messageDao())
+            val presetRepo = PresetRepository(database.presetDao(), ctx)
+            val memoryRepo = MemoryRepository(database.memoryDao())
+            val chatViewModelFactory = ChatViewModelFactory(
+                ctx,
+                sessionRepo,
+                messageRepo,
+                settingsRepo,
+                presetRepo,
+                memoryRepo
+            )
+            val vm = ViewModelProvider(requireActivity(), chatViewModelFactory)
+                .get(ChatViewModel::class.java)
             vm.dismissModelErrorDialogMessage()
         } catch (_: Exception) {
             // ignore
