@@ -40,7 +40,8 @@ data class GenerationQueueItem(
         PENDING,      // 実行待ち
         RUNNING,      // 実行中
         COMPLETED,    // 完了
-        FAILED,       // 失敗
+        FAILED,       // 失敗（モデルエラーやメモリ不足など）
+        BLOCKED,      // セーフティガードによるブロック（onnx nsfw 判定で止められた）
         CANCELLED     // キャンセル
     }
 }
@@ -61,6 +62,9 @@ data class GenerationQueue(
 
     val failedCount: Int
         get() = items.count { it.status == GenerationQueueItem.GenerationStatus.FAILED }
+
+    val blockedCount: Int
+        get() = items.count { it.status == GenerationQueueItem.GenerationStatus.BLOCKED }
 
     fun isComplete(): Boolean = currentIndex >= items.size
 }

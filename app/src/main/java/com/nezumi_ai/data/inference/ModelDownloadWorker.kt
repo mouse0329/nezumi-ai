@@ -476,6 +476,13 @@ class ModelDownloadWorker(
         const val VOICEVOX_PHASE_MODEL = "model"
         const val VOICEVOX_PHASE_DICTIONARY = "dictionary"
         const val TAG_VOICEVOX_DOWNLOAD = "voicevox_model_download"
+
+        /**
+         * VOICEVOX モデル (と必要なら OpenJTalk 辞書) のダウンロード＋インストールが完了したときに
+         * アプリ内向けに送られるローカルブロードキャストのアクション。
+         * MyApplication がこれを受けて、共有 VoicevoxManager の自動初期化を走らせる。
+         */
+        const val ACTION_VOICEVOX_MODEL_READY = "com.nezumi_ai.voicevox.MODEL_READY"
         const val SAFETY_MODEL_WORK_NAME = "safety_model_download"
         const val SAFETY_MODEL_URL =
             "https://huggingface.co/AdamCodd/vit-base-nsfw-detector/resolve/main/onnx/model.onnx?download=true"
@@ -1041,8 +1048,13 @@ class ModelDownloadWorker(
         val notificationId = 6001
         setForeground(createForegroundInfo(displayName, 0L, -1L, notificationId))
 
-        val manager = com.nezumi_ai.voicevox.VoicevoxManager(applicationContext)
-        val entry = manager.catalogEntryFor(fileName)
+        // アプリ全体で共有される VoicevoxManager を使う。
+        //   Worker 内で new VoicevoxManager(...) してしまうと、install した後の
+        //   _installedModelFileName / _isReady が UI 側の別インスタンスに反映されず、
+        //   ダウンロード完了後の自動初期化フローが動かなくなる。
+        val manager = (applicationContext as? com.nezumi_ai.MyApplication)?.getVoicevoxManager()
+            ?: com.nezumi_ai.voicevox.VoicevoxManager(applicationContext)
+        val entry = com.nezumi_ai.voicevox.VoicevoxManager.catalogEntryFor(fileName)
             ?: return Result.failure(workDataOf(KEY_ERROR_MESSAGE to "unknown voicevox model: $fileName"))
 
         val tempFile = File(applicationContext.cacheDir, "$fileName.download")
@@ -1098,6 +1110,17 @@ class ModelDownloadWorker(
                     Log.w(TAG, "OpenJTalk dictionary download failed; model itself is installed")
                 }
             }
+
+            // ダウンロード & インストールが完了したので、アプリ側で自動初期化を走らせるための
+            // ローカルブロードキャストを送る。MyApplication が受け取り、共有 VoicevoxManager の
+            // initialize() を非同期に呼び出す。
+            runCatching {
+                val intent = android.content.Intent(ACTION_VOICEVOX_MODEL_READY).apply {
+                    setPackage(applicationContext.packageName)
+                    putExtra(KEY_VOICEVOX_FILE_NAME, fileName)
+                }
+                applicationContext.sendBroadcast(intent)
+            }.onFailure { Log.w(TAG, "Failed to broadcast VOICEVOX model ready", it) }
 
             Result.success(
                 workDataOf(

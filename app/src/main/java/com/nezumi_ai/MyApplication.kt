@@ -1,11 +1,16 @@
 package com.nezumi_ai
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.util.Log
 import androidx.work.Configuration
 import androidx.work.WorkManager
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.CacheManager
+import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.utils.PreferencesHelper
@@ -39,6 +44,8 @@ class MyApplication : Application() {
         // Initialize VOICEVOX (フラグが false の場合はスタブが返るだけで何もしない)
         voicevoxManager = VoicevoxManager(this)
         if (com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) {
+            // ダウンロード完了ブロードキャストを受けて自動初期化するレシーバーを常駐させる
+            registerVoicevoxModelReadyReceiver()
             initializeVoicevox()
         } else {
             Log.i(TAG, "VOICEVOX is disabled (VoicevoxFeatureFlag.ENABLED=false). Skipping initialization.")
@@ -118,6 +125,14 @@ class MyApplication : Application() {
 
     private fun initializeVoicevox() {
         applicationScope.launch {
+            // ファイルが揃っていない場合は自動初期化しない。
+            // ファイル未取得のまま initialize() を呼ぶと、以前はここで同期ダウンロードが走り、
+                //   UI 側のワーカー DL と並走して releaseInternal() と open が交错し、
+                //   "Null pointer in rust value from Java" (VoiceModelFile.rsDrop) でクラッシュしていた。
+            if (!voicevoxManager.isModelFileReady() || !voicevoxManager.isDictionaryReady()) {
+                Log.i(TAG, "initializeVoicevox: files not ready; will initialize after Worker download completes")
+                return@launch
+            }
             val success = voicevoxManager.initialize()
             if (success) {
                 Log.i(TAG, "VOICEVOX initialized successfully")
@@ -176,7 +191,81 @@ class MyApplication : Application() {
     }
     
     fun getVoicevoxManager(): VoicevoxManager = voicevoxManager
-    
+
+    /**
+     * 任意の styleId への切替をアプリ全体に適用する。
+     *
+     * - styleId の保存
+     * - 必要であれば .vvm の切替 (自動ダウンロード)
+     * - 既に目的 .vvm がインストール済みならその場で自動初期化
+     *
+     * UI 側はこの API だけ呼べばよい（旧 setSelectedStyleId + 手動 initialize 両方を呼ぶ必要なし）。
+     */
+    fun selectVoicevoxStyle(styleId: Int) {
+        if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) return
+        val hostEntry = VoicevoxManager.catalogEntryForStyle(styleId)
+            ?: run {
+                Log.w(TAG, "selectVoicevoxStyle: unknown styleId=$styleId")
+                return
+            }
+        val previousModel = voicevoxManager.getSelectedModelFileName()
+        val sameModel = hostEntry.fileName == previousModel
+        val needsDictionary = !voicevoxManager.isDictionaryReady()
+        val needsModel = !voicevoxManager.isModelFileReady() || !sameModel
+
+        // 別の .vvm へ切替える場合は setSelectedStyleId 内で releaseInternal() が走るので
+        // 先に DL 必要性を確定させる。
+        voicevoxManager.setSelectedStyleId(styleId)
+
+        if (needsModel || needsDictionary) {
+            // ダウンロードをキューし、自動初期化は Worker 完了後のブロードキャストに一本化する。
+            //   ここで initialize() を先行させないのが重要: DL並走で rust の
+            //   VoiceModelFile がごつごつになるのを防ぐ。
+            val enqueued = ModelDownloadWorker.enqueueVoicevoxModel(
+                context = this,
+                fileName = hostEntry.fileName,
+                url = hostEntry.url,
+                displayName = hostEntry.displayName,
+                needsDictionary = needsDictionary
+            )
+            Log.i(TAG, "selectVoicevoxStyle: enqueued=$enqueued fileName=${hostEntry.fileName} needsDictionary=$needsDictionary")
+            return
+        }
+
+        // ボイスファイルも辞書も完備しているケースのみ、その場で初期化する。
+        applicationScope.launch {
+            voicevoxManager.initialize()
+        }
+    }
+
+    private fun registerVoicevoxModelReadyReceiver() {
+        val filter = IntentFilter(ModelDownloadWorker.ACTION_VOICEVOX_MODEL_READY)
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action != ModelDownloadWorker.ACTION_VOICEVOX_MODEL_READY) return
+                Log.i(TAG, "VOICEVOX model ready broadcast received. Auto-initializing.")
+                applicationScope.launch {
+                    // ダウンロード完了を受けた後の自動初期化。
+                    // ファイルが本当に完成していることを確認してから呼ぶ。
+                    if (!voicevoxManager.isModelFileReady() || !voicevoxManager.isDictionaryReady()) {
+                        Log.w(TAG, "MODEL_READY 受信したがファイルが揃っていないため initialize をスキップ")
+                        return@launch
+                    }
+                    // クリーンな状態から新しい .vvm をロードするため、一度 release してから initialize()
+                    voicevoxManager.release()
+                    voicevoxManager.initialize()
+                }
+            }
+        }
+        // Android 14+ は RECEIVER_EXPORTED / RECEIVER_NOT_EXPORTED の明示が必要
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(receiver, filter)
+        }
+    }
+
     companion object {
         private const val TAG = "MyApplication"
     }

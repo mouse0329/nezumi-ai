@@ -60,8 +60,13 @@ import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.memory.MemorySaveMode
+import com.nezumi_ai.MyApplication
+import com.nezumi_ai.data.repository.ChatSessionRepository
 import com.nezumi_ai.data.repository.MemoryRepository
+import com.nezumi_ai.data.repository.MessageRepository
+import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.data.repository.SettingsRepository
+import com.nezumi_ai.presentation.viewmodel.ChatViewModelFactory
 
 import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.presentation.ui.composable.ErrorModalDialog
@@ -250,7 +255,29 @@ class SettingsComposeFragment : Fragment() {
 
     @Composable
     private fun SettingsScreen() {
-        val chatViewModel = ViewModelProvider(requireActivity()).get(com.nezumi_ai.presentation.viewmodel.ChatViewModel::class.java)
+        // ChatViewModel は引数なしコンストラクタを持たないので、Factory を渡さないと
+        // NoSuchMethodException を含む RuntimeException でクラッシュする（#SettingsComposeFragment L253 の旧バグ）。
+        // ChatFragment と同じ Factory を requireActivity() スコープで供給して
+        //   1. このスコープ内で初回取得するときも失敗しない
+        //   2. すでに ChatFragment 側で作られていれば同一インスタンスを共有する
+        // という既存の共有前提を保ちながらクラッシュを回避する。
+        val ctx = requireContext().applicationContext
+        val database = NezumiAiDatabase.getInstance(ctx)
+        val settingsRepo = SettingsRepository.fromDatabase(database)
+        val sessionRepo = ChatSessionRepository(database.chatSessionDao(), settingsRepo)
+        val messageRepo = MessageRepository(database.messageDao())
+        val presetRepo = PresetRepository(database.presetDao(), ctx)
+        val memoryRepo = MemoryRepository(database.memoryDao())
+        val chatViewModelFactory = ChatViewModelFactory(
+            ctx,
+            sessionRepo,
+            messageRepo,
+            settingsRepo,
+            presetRepo,
+            memoryRepo
+        )
+        val chatViewModel = ViewModelProvider(requireActivity(), chatViewModelFactory)
+            .get(com.nezumi_ai.presentation.viewmodel.ChatViewModel::class.java)
         val sharedModelErrorMessage by chatViewModel.modelErrorDialogMessage.collectAsState()
 
         // 自動保存レイヤー: 入力フィールドを snapshotFlow で監視し、全項目を

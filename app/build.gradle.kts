@@ -40,8 +40,8 @@ android {
         applicationId = "com.nezumi_ai"
         minSdk = 30
         targetSdk = 37
-        versionCode = 16
-        versionName = "2.2.1"
+        versionCode = 17
+        versionName = "2.2.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -85,7 +85,7 @@ android {
             applicationIdSuffix = ".open"
         }
 
-        buildConfigField("String", "LITERTLM_VERSION", "\"0.13.1\"")
+        buildConfigField("String", "LITERTLM_VERSION", "\"0.15.0\"")
         buildConfigField("String", "LLAMACPP_VERSION", "\"llama.rn 0.12.5\"")
         buildConfigField("boolean", "CONTEXT_COMPRESSION_ENABLED", "false")
 
@@ -208,8 +208,8 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.11.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.13.1")
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.27.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.15.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.28.0")
 
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("net.openid:appauth:0.11.1")

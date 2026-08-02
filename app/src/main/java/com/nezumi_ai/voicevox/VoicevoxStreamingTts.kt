@@ -13,24 +13,22 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.ArrayDeque
 
 /**
  * VoiceVox 用ストリーミング TTS ヘルパー
- * - テキストを句読点（。.,!?、など）で区切って順次合成
- * - 合成した音声をある程度バッファリングして AudioTrack で滑らかに再生する
  *
- * 使い方:
- * val helper = VoicevoxStreamingTts(voicevoxManager)
- * helper.speakStreaming(scope, text)
- * helper.stop()
+ * 動作モデル (この改修で変更した点):
+ * - テキストを句読点で区切って「文単位」で合成するのは従来通り
+ * - ただし再生は「全ての文の合成が終わってからまとめて開始する」
+ *   これにより、生成に時間がかかった場合の再生ブツ切れや、合成中の音飛びを回避する
+ * - 例外発生・キャンセル・正常終了、いずれの経路でも必ず onComplete を呼ぶ
+ *   (これまで onComplete が呼ばれない経路があり、UI 側でスピナーが永遠に回っていた)
  */
 class VoicevoxStreamingTts(
     private val voicevoxManager: VoicevoxManager
 ) {
     companion object {
         private const val TAG = "VoicevoxStreamingTts"
-        private const val DEFAULT_BUFFER_MS = 400
     }
 
     @Volatile
@@ -70,25 +68,34 @@ class VoicevoxStreamingTts(
 
         playJob = scope.launch(Dispatchers.Default) {
             var track: AudioTrack? = null
-            val queue = ArrayDeque<ByteArray>()
-            var currentSampleRate = 24000
-            var currentChannels = 1
-            val bytesPerSample = 2
-            var bufferedBytes = 0
-            var hasStarted = false
+            var completeInvoked = false
+
+            fun invokeCompleteOnce() {
+                if (!completeInvoked) {
+                    completeInvoked = true
+                    try {
+                        onComplete?.invoke()
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "onComplete threw", e)
+                    }
+                }
+            }
 
             try {
                 val chunks = splitToChunks(text)
                 if (chunks.isEmpty()) {
-                    onComplete?.invoke()
+                    // 空文字などの即時完了。onComplete は finally で呼ぶ
                     return@launch
                 }
 
-                val startThresholdBytes = (currentSampleRate * currentChannels * bytesPerSample * DEFAULT_BUFFER_MS / 1000)
-                var totalBufferedDurationMs = 0L
+                // フェーズ1: 全チャンクを順に合成し、PCM だけをバッファに溜める。
+                // 再生はまだ始めない。
+                val pcmChunks = ArrayList<ByteArray>(chunks.size)
+                var sampleRate = 24000
+                var channels = 1
 
                 for (chunk in chunks) {
-                    if (!isActive) break
+                    if (!isActive) return@launch
                     onChunkStart?.invoke(chunk)
 
                     val audioData = withContext(Dispatchers.IO) {
@@ -106,49 +113,64 @@ class VoicevoxStreamingTts(
                         continue
                     }
 
-                    if (track == null) {
-                        track = createAudioTrack(wavData.sampleRate, wavData.channels)
-                        audioTrack = track
-                        currentSampleRate = wavData.sampleRate
-                        currentChannels = wavData.channels
+                    // 最初に確定した format を使う (全チャンクで同一想定)
+                    if (pcmChunks.isEmpty()) {
+                        sampleRate = wavData.sampleRate
+                        channels = wavData.channels
                     }
-
-                    queue.addLast(wavData.pcmData)
-                    bufferedBytes += wavData.pcmData.size
-                    totalBufferedDurationMs += wavData.pcmData.size.toLong() / (currentChannels * bytesPerSample) * 1000 / currentSampleRate
-
-                    if (!hasStarted && bufferedBytes >= startThresholdBytes) {
-                        track?.play()
-                        hasStarted = true
-                    }
-
-                    while (hasStarted && queue.isNotEmpty() && isActive) {
-                        val chunkBytes = queue.removeFirst()
-                        writeAudioTrack(track, chunkBytes)
-                        bufferedBytes -= chunkBytes.size
-                    }
+                    pcmChunks.add(wavData.pcmData)
                 }
 
                 if (!isActive) return@launch
+                if (pcmChunks.isEmpty()) return@launch
 
-                if (track != null && !hasStarted) {
-                    track.play()
-                    hasStarted = true
-                    while (queue.isNotEmpty() && isActive) {
-                        val chunkBytes = queue.removeFirst()
-                        writeAudioTrack(track, chunkBytes)
-                        bufferedBytes -= chunkBytes.size
-                    }
+                // フェーズ2: まとめて再生する。
+                val bytesPerSample = 2
+                track = createAudioTrack(sampleRate, channels)
+                audioTrack = track
+                track.play()
+
+                var totalBytes = 0L
+                for (data in pcmChunks) {
+                    if (!isActive) return@launch
+                    writeAudioTrack(track, data)
+                    totalBytes += data.size
                 }
 
-                if (track != null && hasStarted) {
-                    val finalDurationMs = totalBufferedDurationMs.coerceAtLeast(DEFAULT_BUFFER_MS.toLong())
-                    val waitMs = finalDurationMs + 200
-                    kotlinx.coroutines.delay(waitMs)
+                // 全書き込み後、AudioTrack の実際の再生位置をポーリングして完了を厳密に待つ。
+                //
+                // 以前は `delay(totalDurationMs + 200)` だけで待っていたが、
+                //   ・ write 完了を基準にしていたためカーネルバッファ内の未再生 PCM を見ていない
+                //   ・ 結果として「声は鍵れているのに Job だけ先に終了 or 逆に鍵れてもスピナーが回り続ける」が発生していた。
+                // getPlaybackHeadPosition() はハードウェアが実際に何サンプル鍵らしたかを返すので、これを監視すれば一致する。
+                val totalFrames = totalBytes / (channels * bytesPerSample)
+                var lastHead = 0
+                var stallLoops = 0
+                while (isActive) {
+                    val head = try {
+                        track.playbackHeadPosition
+                    } catch (_: Exception) {
+                        break
+                    }
+                    if (head >= totalFrames) break
+                    // 鍵り切ったのにハードが進まないとき (underrun やクリップ ズレ後のタイミング) は
+                    // 最大 1 秒で打ち切る。stallLoops は 20 回 × 50ms で 1 秒。
+                    if (head == lastHead) {
+                        stallLoops++
+                        if (stallLoops >= 20) break
+                    } else {
+                        stallLoops = 0
+                        lastHead = head
+                    }
+                    kotlinx.coroutines.delay(50)
                 }
             } catch (e: Throwable) {
                 Log.e(TAG, "Streaming TTS failed", e)
-                onError?.invoke(e)
+                try {
+                    onError?.invoke(e)
+                } catch (inner: Throwable) {
+                    Log.w(TAG, "onError threw", inner)
+                }
             } finally {
                 try {
                     track?.pause()
@@ -163,7 +185,8 @@ class VoicevoxStreamingTts(
                     track?.release()
                 } catch (_: Exception) {}
                 if (audioTrack === track) audioTrack = null
-                onComplete?.invoke()
+                // 正常終了・例外・キャンセルの全経路で onComplete を必ず一度だけ呼ぶ
+                invokeCompleteOnce()
             }
         }
 

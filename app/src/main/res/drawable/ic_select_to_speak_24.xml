@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Material Symbols Outlined / select_to_speak (24dp, wght=400, GRAD=0, opsz=24)
+  出典: https://fonts.google.com/icons?icon.query=select_to_speak
+  原SVGは viewBox="0 -960 960 960" (Google Material Symbols の座標系)。
+  Android の VectorDrawable は viewportHeight を正値で扱うので、
+  viewportWidth=960, viewportHeight=960, translate 0 960 で読み替えている。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960"
+    android:tint="?android:attr/colorControlNormal">
+    <group android:translateY="960">
+        <path
+            android:fillColor="#000000"
+            android:pathData="M560,-131v-82q90,-26 145,-100t55,-168q0,-94 -55,-168T560,-749v-82q124,28 202,125.5T840,-481q0,127 -78,224.5T560,-131ZM480,-160L280,-360L120,-360v-240h160l200,-200v640ZM560,-320v-322q47,22 73.5,66t26.5,96q0,51 -26.5,94.5T560,-320ZM400,-354v-252l-86,86L200,-520v80h114l86,86ZM40,-680v-240h240v80L120,-840v160L40,-680ZM680,-40v-80h160v-160h80v240L680,-40ZM300,-480Z" />
+    </group>
+</vector>

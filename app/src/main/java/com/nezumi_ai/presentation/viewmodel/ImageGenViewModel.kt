@@ -1283,26 +1283,14 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 _resultBitmap.value = null
 
                 val bmp = executeQueueItem(item, idx + 1, totalItems)
-                
-                // セーフティ違反をチェック
-                if (_safetyVerdict.value == SafetyResult.Verdict.BLOCK) {
-                    Log.w(TAG, "[Queue] Safety violation detected at item ${idx + 1}")
-                    _snackbar.value = "不適切なコンテンツが検出されたため、キューを中止しました"
-                    ImageGenerationNotificationManager.showError(
-                        app,
-                        ImageGenerationNotificationManager.queueNotificationId(),
-                        "画像生成キューを停止しました",
-                        "セーフティガードにより ${idx + 1} 枚目で中止しました"
-                    )
-                    _generationQueue.value = currentQueue.copy(
-                        items = currentQueue.items.mapIndexed { itemIndex, queueItem ->
-                            if (itemIndex > idx) queueItem.copy(status = GenerationQueueItem.GenerationStatus.CANCELLED)
-                            else queueItem
-                        }
-                    )
-                    break
-                }
-                
+
+                // BLOCK / FAILED を分ケて集計する。
+                //   - 以前は bmp==null を全て FAILED 扱いにしていたため、
+                //     onnx nsfw 判定で止められたケースも「画像生成に失敗」として表示されていた。
+                //   - BLOCK で止められたときは BLOCKED ステータスで記録し、失敗集計には入れない。
+                //   - ブロックは個別アイテムの問題なのでキュー全体を中止せず、次のアイテムに進む。
+                val wasBlocked = _safetyVerdict.value == SafetyResult.Verdict.BLOCK
+
                 if (bmp != null) {
                     completedCount++
                     _queueResultBitmaps.value = _queueResultBitmaps.value + bmp
@@ -1314,6 +1302,21 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     )
                     _generationQueue.value = currentQueue
                     Log.d(TAG, "[Queue] Item ${idx + 1} completed")
+                } else if (wasBlocked) {
+                    // セーフティガードによるブロックは「失敗」ではない。
+                    currentQueue = currentQueue.copy(
+                        items = currentQueue.items.mapIndexed { itemIndex, queueItem ->
+                            if (itemIndex == idx) queueItem.copy(
+                                status = GenerationQueueItem.GenerationStatus.BLOCKED,
+                                errorMessage = "セーフティガードにより表示を制限しました"
+                            )
+                            else queueItem
+                        }
+                    )
+                    _generationQueue.value = currentQueue
+                    Log.w(TAG, "[Queue] Item ${idx + 1} blocked by safety guard")
+                    // このアイテムの verdict をリセットして次へ進む。
+                    _safetyVerdict.value = SafetyResult.Verdict.ALLOW
                 } else {
                     failedCount++
                     currentQueue = currentQueue.copy(
@@ -1339,14 +1342,19 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             //   同じ backend/model であれば EngineManager のキャッシュを使い回すので不要。
             runCatching { EngineManager.releaseSdKeepNone() }
             runCatching { EngineManager.markLlmActive() }
-            if (_safetyVerdict.value != SafetyResult.Verdict.BLOCK) {
-                ImageGenerationNotificationManager.showCompleted(
-                    app,
-                    ImageGenerationNotificationManager.queueNotificationId(),
-                    "画像生成キューが完了しました",
-                    "$completedCount / $totalItems 枚を保存しました"
-                )
+            // キューの完了通知。BLOCKED は失敗ではないので、保存した枚数と一緒に内訳を提示する。
+            val blockedCount = _generationQueue.value.blockedCount
+            val summary = buildString {
+                append("$completedCount / $totalItems 枚を保存しました")
+                if (blockedCount > 0) append(" (セーフティガードでブロック: ${blockedCount})")
+                if (failedCount > 0) append(" (失敗: ${failedCount})")
             }
+            ImageGenerationNotificationManager.showCompleted(
+                app,
+                ImageGenerationNotificationManager.queueNotificationId(),
+                "画像生成キューが完了しました",
+                summary
+            )
             _isQueueRunning.value = false
             _queueProgress.value = null
             _loading.value = false

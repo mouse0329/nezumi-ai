@@ -5062,6 +5062,22 @@ class ChatViewModel(
         _speakingMessageId.value = messageId
         voicevoxStreamingTts.stop()
 
+        // スピナー永久回転バグ対策:
+        //   onComplete が呼ばれない経路（例外/キャンセル/onComplete 内例外）でも
+        //   必ず _speakingMessageId をクリアするため、
+        //   VoicevoxStreamingTts 側の onComplete と Job の invokeOnCompletion の両方から
+        //   同じクリア処理を叩き、どちらか一方が発火すれば必ず解除されるようにする。
+        val clearedRef = java.util.concurrent.atomic.AtomicBoolean(false)
+        fun clearSpeakingIfMatches() {
+            if (clearedRef.compareAndSet(false, true)) {
+                viewModelScope.launch {
+                    if (_speakingMessageId.value == messageId) {
+                        _speakingMessageId.value = null
+                    }
+                }
+            }
+        }
+
         val job = voicevoxStreamingTts.speakStreaming(
             scope = viewModelScope,
             text = text,
@@ -5074,20 +5090,13 @@ class ChatViewModel(
                 }
             },
             onComplete = {
-                viewModelScope.launch {
-                    if (_speakingMessageId.value == messageId) {
-                        _speakingMessageId.value = null
-                    }
-                }
+                clearSpeakingIfMatches()
             }
         )
 
         job.invokeOnCompletion {
-            viewModelScope.launch {
-                if (_speakingMessageId.value == messageId) {
-                    _speakingMessageId.value = null
-                }
-            }
+            // キャンセルされた場合や onComplete が呼ばれなかった場合の最終保険。
+            clearSpeakingIfMatches()
         }
     }
 

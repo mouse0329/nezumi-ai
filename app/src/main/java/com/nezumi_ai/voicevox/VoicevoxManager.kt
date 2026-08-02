@@ -7,6 +7,9 @@ import jp.hiroshiba.voicevoxcore.blocking.OpenJtalk as BlockingOpenJtalk
 import jp.hiroshiba.voicevoxcore.blocking.Synthesizer as BlockingSynthesizer
 import jp.hiroshiba.voicevoxcore.blocking.VoiceModelFile as BlockingVoiceModelFile
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -15,6 +18,17 @@ import java.io.FileOutputStream
 import java.net.URL
 import java.util.zip.GZIPInputStream
 
+/**
+ * VOICEVOX の音声合成マネージャ。
+ *
+ * 新しい仕様:
+ * - 話者 (styleId) の選択だけを UI から受け付ける
+ * - 選択された話者を含む .vvm がローカルに無ければ自動でダウンロードして自動初期化する
+ * - 既にダウンロード済みならそのまま自動初期化する
+ * - 外部ファイル (.vvm) の手動追加はサポートしない (importFromUri のような API は無い)
+ * - 手動でモデルファイルを選ぶ UI も削除。カタログ側から styleId で解決する
+ * - モデルを削除する API (deleteInstalledModel) は残す
+ */
 class VoicevoxManager(private val context: Context) {
 
     companion object {
@@ -30,6 +44,29 @@ class VoicevoxManager(private val context: Context) {
         private const val KEY_MODEL_FILE_NAME = "selected_model_file_name"
 
         val modelCatalog: List<VoiceModelCatalogEntry> = buildVoiceModelCatalog()
+
+        /** 全ての .vvm を平坦化した話者一覧。UI の「誰の声にするか」ドロップダウンで使う。 */
+        val allStyles: List<VoiceStyle> by lazy {
+            modelCatalog
+                .flatMap { entry -> entry.styles.map { it to entry } }
+                .sortedWith(
+                    compareBy<Pair<VoiceStyle, VoiceModelCatalogEntry>> { it.second.category.ordinal }
+                        .thenBy { it.first.speakerName }
+                        .thenBy { it.first.styleId }
+                )
+                .map { it.first }
+        }
+
+        /** 指定 styleId を含む .vvm カタログエントリを返す。 */
+        fun catalogEntryForStyle(styleId: Int): VoiceModelCatalogEntry? {
+            return modelCatalog.firstOrNull { entry ->
+                entry.styles.any { it.styleId == styleId }
+            }
+        }
+
+        /** ファイル名で .vvm カタログエントリを返す (companion からもアクセスできるように公開)。 */
+        fun catalogEntryFor(fileName: String): VoiceModelCatalogEntry? =
+            modelCatalog.firstOrNull { it.fileName == fileName }
     }
 
     enum class VoiceModelCategory(val label: String) {
@@ -83,6 +120,18 @@ class VoicevoxManager(private val context: Context) {
 
     private val initializeMutex = Mutex()
 
+    /** 現在ロードされている .vvm ファイル名。UI 監視用。 */
+    private val _installedModelFileName = MutableStateFlow<String?>(null)
+    val installedModelFileName: StateFlow<String?> = _installedModelFileName.asStateFlow()
+
+    /** 現在の選択済み styleId。UI が話者切替を即時反映するために監視する。 */
+    private val _selectedStyleIdFlow = MutableStateFlow(DEFAULT_STYLE_ID)
+    val selectedStyleIdFlow: StateFlow<Int> = _selectedStyleIdFlow.asStateFlow()
+
+    /** ロード完了状態。UI がスピナー制御に使う。 */
+    private val _isReady = MutableStateFlow(false)
+    val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
+
     private val modelFile: File by lazy {
         File(context.filesDir, "voicevox_model.vvm")
     }
@@ -93,6 +142,14 @@ class VoicevoxManager(private val context: Context) {
 
     private val prefs by lazy {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    init {
+        selectedStyleId = getSavedStyleId()
+        _selectedStyleIdFlow.value = selectedStyleId
+        if (modelFile.isFile) {
+            _installedModelFileName.value = getSelectedModelFileName()
+        }
     }
 
     fun getSelectedModelFileName(): String {
@@ -107,35 +164,13 @@ class VoicevoxManager(private val context: Context) {
 
     fun isDictionaryReady(): Boolean = isValidDictionaryDir(dictDir)
 
-    fun catalogEntryFor(fileName: String): VoiceModelCatalogEntry? =
-        modelCatalog.firstOrNull { it.fileName == fileName }
+    fun isModelFileReady(): Boolean = modelFile.isFile && modelFile.length() > 0L
 
-    /**
-     * 音声モデルのダウンロード。
-     *
-     * 進捗表示が必要な UI 経路は [com.nezumi_ai.data.inference.ModelDownloadWorker] 経由で
-     * ダウンロードし、完了後に [installDownloadedModel] を呼ぶ。
-     * こちらは初期化時の自動取得（フォールバック）用。
-     */
-    suspend fun downloadSelectedModel(
-        entry: VoiceModelCatalogEntry,
-        onProgress: ((downloaded: Long, total: Long) -> Unit)? = null
-    ): Boolean = withContext(Dispatchers.IO) {
-        try {
-            releaseInternal()
-            val tmpFile = File(context.filesDir, "${entry.fileName}.download")
-            if (tmpFile.exists()) tmpFile.delete()
-            downloadFile(entry.url, tmpFile, onProgress)
-            installDownloadedModel(entry, tmpFile)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to download VOICEVOX model: ${entry.fileName}", e)
-            false
-        }
-    }
+
 
     /**
      * ダウンロード済みの一時ファイルを正式な音声モデルとして採用する。
-     * ワーカー側でダウンロードした場合もここを通す。
+     * ModelDownloadWorker から呼ばれる。
      */
     fun installDownloadedModel(entry: VoiceModelCatalogEntry, downloadedFile: File): Boolean {
         return try {
@@ -149,11 +184,20 @@ class VoicevoxManager(private val context: Context) {
                 downloadedFile.copyTo(modelFile, overwrite = true)
                 downloadedFile.delete()
             }
+            // styleId を保持しつつモデル名を更新
+            val savedStyleId = getSavedStyleId()
+            val styleToUse = if (entry.styles.any { it.styleId == savedStyleId }) {
+                savedStyleId
+            } else {
+                defaultStyleIdFor(entry)
+            }
             prefs.edit()
                 .putString(KEY_MODEL_FILE_NAME, entry.fileName)
-                .putInt(KEY_STYLE_ID, defaultStyleIdFor(entry))
+                .putInt(KEY_STYLE_ID, styleToUse)
                 .apply()
-            selectedStyleId = getSavedStyleId()
+            selectedStyleId = styleToUse
+            _selectedStyleIdFlow.value = selectedStyleId
+            _installedModelFileName.value = entry.fileName
             Log.i(TAG, "Installed VOICEVOX model ${entry.fileName} (styleId=$selectedStyleId)")
             true
         } catch (e: Exception) {
@@ -192,6 +236,14 @@ class VoicevoxManager(private val context: Context) {
         return if (speaker != null) VoicevoxLicense.creditFor(speaker) else VoicevoxLicense.VOICEVOX_CREDIT
     }
 
+    /**
+     * VOICEVOX を初期化する。
+     *
+     * この関数は「既にファイルが揃っている場合のみ」初期化する。
+     * .vvm や OpenJTalk 辞書が未ダウンロードの場合は何もせず false を返す。
+     * ダウンロードは必ず [ModelDownloadWorker.enqueueVoicevoxModel] 経由に一本化している（競合回避）。
+     * Worker 完了後にブロードキャスト経由で initialize() が呼ばれ直す。
+     */
     suspend fun initialize(): Boolean {
         if (isInitialized) return true
 
@@ -200,23 +252,21 @@ class VoicevoxManager(private val context: Context) {
             if (isInitialized) return@withLock true
 
             withContext(Dispatchers.IO) {
+                // ファイルが揃っていないときは何もしない。
+                // 以前はここで同期ダウンロードを走らせていたが、Worker 側の
+                // installDownloadedModel() と並行して releaseInternal() と open が交错し、
+                //   "Null pointer in rust value from Java" (VoiceModelFile.rsDrop)
+                // を起こしていた。DL は必ず Worker に任せる。
+                if (!modelFile.isFile || modelFile.length() == 0L) {
+                    Log.d(TAG, "initialize(): .vvm not present yet; skipping (will re-init after download)")
+                    return@withContext false
+                }
+                if (!isValidDictionaryDir(dictDir)) {
+                    Log.d(TAG, "initialize(): OpenJTalk dictionary not ready; skipping (will re-init after download)")
+                    return@withContext false
+                }
+
                 try {
-                    if (!modelFile.exists()) {
-                        val entry = modelCatalog.firstOrNull { it.fileName == getSelectedModelFileName() }
-                            ?: modelCatalog.first { it.fileName == DEFAULT_MODEL_FILE_NAME }
-                        Log.d(TAG, "Downloading VOICEVOX model: ${entry.fileName}")
-                        downloadFile(entry.url, modelFile)
-                    }
-
-                    if (!isValidDictionaryDir(dictDir)) {
-                        Log.d(TAG, "Downloading OpenJTalk dictionary...")
-                        val dictArchive = File(context.filesDir, "$DICT_DIR_NAME.tar.gz")
-                        dictDir.deleteRecursively()
-                        downloadFile(DICT_URL, dictArchive)
-                        extractTarGz(dictArchive, context.filesDir)
-                        dictArchive.delete()
-                    }
-
                     Log.d(TAG, "Initializing VOICEVOX...")
                     onnxruntime = BlockingOnnxruntime.loadOnce().perform()
                     openJtalk = BlockingOpenJtalk(dictDir.absolutePath)
@@ -226,8 +276,11 @@ class VoicevoxManager(private val context: Context) {
                     synthesizer!!.loadVoiceModel(voiceModelFile!!)
                     Log.d(TAG, "loadVoiceModel done")
                     selectedStyleId = resolveStyleId(voiceModelFile!!)
+                    _selectedStyleIdFlow.value = selectedStyleId
+                    _installedModelFileName.value = getSelectedModelFileName()
 
                     isInitialized = true
+                    _isReady.value = true
                     Log.d(TAG, "VOICEVOX initialized successfully")
                     true
                 } catch (e: Exception) {
@@ -265,6 +318,17 @@ class VoicevoxManager(private val context: Context) {
         releaseInternal()
     }
 
+    /**
+     * 選択中の .vvm を削除する。次回選択時に再ダウンロードが走る。
+     * 呼び出し側は必要に応じて事前に [release] を呼ぶこと。
+     */
+    fun deleteInstalledModel(): Boolean {
+        releaseInternal()
+        val ok = if (modelFile.exists()) modelFile.delete() else true
+        if (ok) _installedModelFileName.value = null
+        return ok
+    }
+
     suspend fun getAvailableStyles(): List<VoiceStyle> = withContext(Dispatchers.IO) {
         if (!modelFile.isFile) return@withContext emptyList()
         var file: BlockingVoiceModelFile? = null
@@ -283,10 +347,41 @@ class VoicevoxManager(private val context: Context) {
         return prefs.getInt(KEY_STYLE_ID, DEFAULT_STYLE_ID)
     }
 
+    /**
+     * 話者 (styleId) を選択する。
+     * - 選択した styleId が現在ロード中の .vvm に含まれる場合は即時反映
+     * - 別の .vvm に属する場合は KEY_MODEL_FILE_NAME を更新し、[isReady] を false に落とす。
+     *   ダウンロード & 初期化の実行は呼び出し側 (ModelDownloadWorker + MyApplication) に委ねる。
+     */
     fun setSelectedStyleId(styleId: Int) {
-        prefs.edit().putInt(KEY_STYLE_ID, styleId).apply()
+        val editor = prefs.edit().putInt(KEY_STYLE_ID, styleId)
+        val hostEntry = catalogEntryForStyle(styleId)
+        val currentModelFileName = getSelectedModelFileName()
+        val needsSwitch = hostEntry != null && hostEntry.fileName != currentModelFileName
+        if (hostEntry != null) {
+            editor.putString(KEY_MODEL_FILE_NAME, hostEntry.fileName)
+        }
+        editor.apply()
         selectedStyleId = styleId
-        Log.d(TAG, "Selected VOICEVOX style ID: $styleId")
+        _selectedStyleIdFlow.value = styleId
+        if (needsSwitch) {
+            // 別モデルへの切替。以降の synthesize は再初期化まで無効。
+            releaseInternal()
+        }
+        Log.d(TAG, "Selected VOICEVOX style ID: $styleId (hostModel=${hostEntry?.fileName}, needsSwitch=$needsSwitch)")
+    }
+
+    /**
+     * 現在の設定に必要な .vvm がローカルに用意されているか。
+     * true なら (init を呼ぶだけで) 追加ダウンロードなしで初期化できる。
+     */
+    fun isCurrentSelectionReady(): Boolean {
+        val fileName = getSelectedModelFileName()
+        val expected = catalogEntryFor(fileName) ?: return false
+        // インストール済みモデル名も揃っている必要がある
+        return modelFile.isFile &&
+            _installedModelFileName.value == expected.fileName &&
+            isValidDictionaryDir(dictDir)
     }
 
     private fun releaseInternal() {
@@ -300,7 +395,9 @@ class VoicevoxManager(private val context: Context) {
         openJtalk = null
         onnxruntime = null
         selectedStyleId = getSavedStyleId()
+        _selectedStyleIdFlow.value = selectedStyleId
         isInitialized = false
+        _isReady.value = false
     }
 
     private fun resolveStyleId(modelFile: BlockingVoiceModelFile): Int {

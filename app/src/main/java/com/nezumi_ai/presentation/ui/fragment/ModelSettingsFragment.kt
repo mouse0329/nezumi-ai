@@ -218,15 +218,8 @@ open class ModelSettingsFragment : Fragment() {
     private var safetyModelDownloadState by mutableStateOf<ImageModelDownloadUiState?>(null)
     private var voicevoxState by mutableStateOf(VoicevoxModelUiState())
     private var voicevoxInitializing by mutableStateOf(false)
-    private var voicevoxAdvancedExpanded by mutableStateOf(false)
     private var voicevoxDownloadState by mutableStateOf<VoicevoxDownloadUiState?>(null)
     private var voicevoxStyleMenuExpanded by mutableStateOf(false)
-    private var voicevoxModelMenuExpanded by mutableStateOf(false)
-    private var voicevoxSelectedCatalogEntry by mutableStateOf(
-        VoicevoxManager.modelCatalog.firstOrNull { it.fileName == "3.vvm" }
-            ?: VoicevoxManager.modelCatalog.firstOrNull()
-            ?: VoicevoxManager.VoiceModelCatalogEntry("", VoicevoxManager.VoiceModelCategory.TALK, emptyList())
-    )
 
     // SD (画像生成) モデル zip ピッカー。
     // zip 内に unet.mnn / clip*.mnn / vae_decoder*.mnn と、
@@ -266,32 +259,7 @@ open class ModelSettingsFragment : Fragment() {
                     .onFailure { toast("mmproj追加失敗: ${it.message}") }
             }
         }
-    private val voicevoxModelPickerLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri == null) return@registerForActivityResult
-            viewLifecycleOwner.lifecycleScope.launch {
-                val result = withContext(Dispatchers.IO) {
-                    runCatching {
-                        val target = voicevoxModelFile()
-                        target.parentFile?.mkdirs()
-                        requireContext().contentResolver.openInputStream(uri).use { input ->
-                            requireNotNull(input) { "入力ファイルを開けませんでした" }
-                            FileOutputStream(target).use { output -> input.copyTo(output) }
-                        }
-                        target
-                    }
-                }
-                result.onSuccess {
-                    (requireContext().applicationContext as MyApplication)
-                        .getVoicevoxManager()
-                        .release()
-                    toast("音声モデルを追加しました")
-                    refreshVoicevoxState()
-                }.onFailure {
-                    toast("音声モデル追加失敗: ${it.message}")
-                }
-            }
-        }
+    // .vvm の外部手動追加は仕様上削除されたため、ピッカー Launcher も削除している。
     private var settingsDialogDisplayName by mutableStateOf("")
     private var settingsDialogStopTokens by mutableStateOf("")
 
@@ -405,6 +373,7 @@ open class ModelSettingsFragment : Fragment() {
         observeImageModelDownloadWork()
         observeSafetyModelDownloadWork()
         observeVoicevoxDownloadWork()
+        observeVoicevoxReadyState()
         observeEmbeddingDownloadWork()
         observeDownloadSpeeds()
         viewLifecycleOwner.lifecycleScope.launch {
@@ -1362,17 +1331,25 @@ open class ModelSettingsFragment : Fragment() {
                     color = colorResource(id = R.color.text_secondary)
                 )
 
-                // ── 話者選択 ───────────────────────────────────
-                if (state.styles.isNotEmpty()) {
+                // ── 話者選択（全モデルの話者を平坦化して1つのメニューから選ぶ） ─────────────
+                // 話者を選んだ瞬間に MyApplication.selectVoicevoxStyle() が呼ばれ、
+                //   ・目的の .vvm が未ダウンロードなら自動でダウンロードし、完了後に自動初期化
+                //   ・ダウンロード済みならその場で自動初期化のみ実行
+                // という 1 アクション制御に統合されている。
+                val allStyles = VoicevoxManager.allStyles
+                if (allStyles.isNotEmpty()) {
                     ExposedDropdownMenuBox(
                         expanded = voicevoxStyleMenuExpanded,
-                        onExpandedChange = { voicevoxStyleMenuExpanded = !voicevoxStyleMenuExpanded }
+                        onExpandedChange = {
+                            if (!busy) voicevoxStyleMenuExpanded = !voicevoxStyleMenuExpanded
+                        }
                     ) {
                         OutlinedTextField(
                             value = state.selectedStyleLabel,
                             onValueChange = {},
                             readOnly = true,
-                            label = { Text("話者") },
+                            enabled = !busy,
+                            label = { Text("読み上げに使う声") },
                             trailingIcon = {
                                 ExposedDropdownMenuDefaults.TrailingIcon(expanded = voicevoxStyleMenuExpanded)
                             },
@@ -1384,13 +1361,12 @@ open class ModelSettingsFragment : Fragment() {
                             expanded = voicevoxStyleMenuExpanded,
                             onDismissRequest = { voicevoxStyleMenuExpanded = false }
                         ) {
-                            state.styles.forEach { style ->
+                            allStyles.forEach { style ->
                                 DropdownMenuItem(
-                                    text = { Text(style.displayName) },
+                                    text = { Text(style.detailName) },
                                     onClick = {
                                         (requireContext().applicationContext as MyApplication)
-                                            .getVoicevoxManager()
-                                            .setSelectedStyleId(style.styleId)
+                                            .selectVoicevoxStyle(style.styleId)
                                         voicevoxStyleMenuExpanded = false
                                         refreshVoicevoxState()
                                     }
@@ -1400,62 +1376,78 @@ open class ModelSettingsFragment : Fragment() {
                     }
                 }
 
-                // ── ダウンロード進捗 ───────────────────────────
-                if (progress != null && progress.isActive) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
-                            text = progress.label,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colorResource(id = R.color.text_primary)
-                        )
-                        if (progress.totalBytes > 0L) {
-                            LinearProgressIndicator(
-                                progress = progress.ratio,
-                                modifier = Modifier.fillMaxWidth()
+                // ── 進行ステータス行（自動DL / 初期化中 / 待機） ─────────────
+                // このブロックは常に同じ位置（カード内の同じスロット）に描画することで、
+                // ボタンを押した瞬間に下のボタンの入れ替わり順がパチパチ変わる以前のバグを防ぐ。
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    when {
+                        progress != null && progress.isActive -> {
+                            Text(
+                                text = progress.label,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorResource(id = R.color.text_primary)
                             )
-                        } else {
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            if (progress.totalBytes > 0L) {
+                                LinearProgressIndicator(
+                                    progress = progress.ratio,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            } else {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                            Text(
+                                text = progress.detail,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorResource(id = R.color.text_secondary)
+                            )
                         }
-                        Text(
-                            text = progress.detail,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colorResource(id = R.color.text_secondary)
-                        )
+                        voicevoxInitializing -> {
+                            Text(
+                                text = "ステップ 2/2: 音声エンジンを初期化しています...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorResource(id = R.color.text_primary)
+                            )
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            Text(
+                                text = "初回ロードは数十秒かかることがあります",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorResource(id = R.color.text_secondary)
+                            )
+                        }
                     }
                 }
 
-                // ── 主要アクション ─────────────────────────────
-                Button(
+                // ── ボタン行（順番は常に固定：中止 → 削除） ─────────────
+                // 以前は「進捗中のときだけ中止ボタンを描く」構造だったため、
+                // 削除ボタンが上に繰り上がり、その位置にあった中止ボタンを押した瞬間に
+                // タップが削除ボタンに乗り移る「ボタン順が変わる」バグが発生していた。
+                // 常に両方描画し、enabled で制御することで座標を固定する。
+                OutlinedButton(
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = !busy,
+                    enabled = progress != null && progress.isActive,
                     onClick = {
-                        if (state.modelExists && state.dictionaryExists) {
-                            initializeVoicevoxFromSettings()
-                        } else {
-                            startVoicevoxDownload(voicevoxSelectedCatalogEntry)
-                        }
+                        ModelDownloadWorker.cancelVoicevoxModel(requireContext())
+                        voicevoxDownloadState = null
+                        toast("ダウンロードを中止しました")
                     }
                 ) {
-                    Text(
-                        when {
-                            progress?.isActive == true -> "ダウンロード中..."
-                            voicevoxInitializing -> "準備中..."
-                            state.modelExists && state.dictionaryExists -> "読み上げを初期化"
-                            else -> "音声を準備する（${voicevoxSelectedCatalogEntry.displayName}）"
-                        }
-                    )
+                    Text("ダウンロードを中止")
                 }
-                if (progress?.isActive == true) {
-                    OutlinedButton(
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = {
-                            ModelDownloadWorker.cancelVoicevoxModel(requireContext())
-                            voicevoxDownloadState = null
-                            toast("ダウンロードを中止しました")
-                        }
-                    ) {
-                        Text("中止")
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = state.modelExists && !busy,
+                    onClick = {
+                        val app = requireContext().applicationContext as MyApplication
+                        val deleted = app.getVoicevoxManager().deleteInstalledModel()
+                        toast(if (deleted) "音声モデルを削除しました" else "削除に失敗しました")
+                        voicevoxStyleMenuExpanded = false
+                        refreshVoicevoxState()
                     }
+                ) {
+                    Text("選択中の音声モデルを削除")
                 }
 
                 // ── クレジット表記 ─────────────────────────────
@@ -1497,119 +1489,10 @@ open class ModelSettingsFragment : Fragment() {
                 ) {
                     Text("利用規約を開く")
                 }
-
-                // ── 詳細設定（折りたたみ）──────────────────────
-                Divider(color = colorResource(id = R.color.border))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { voicevoxAdvancedExpanded = !voicevoxAdvancedExpanded },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "詳細設定",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colorResource(id = R.color.text_secondary)
-                    )
-                    Text(
-                        text = if (voicevoxAdvancedExpanded) "閉じる" else "開く",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorResource(id = R.color.text_secondary)
-                    )
-                }
-
-                if (voicevoxAdvancedExpanded) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ExposedDropdownMenuBox(
-                            expanded = voicevoxModelMenuExpanded,
-                            onExpandedChange = { voicevoxModelMenuExpanded = !voicevoxModelMenuExpanded }
-                        ) {
-                            OutlinedTextField(
-                                value = voicevoxSelectedCatalogEntry.displayName,
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("音声モデル (.vvm)") },
-                                trailingIcon = {
-                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = voicevoxModelMenuExpanded)
-                                },
-                                modifier = Modifier
-                                    .menuAnchor()
-                                    .fillMaxWidth()
-                            )
-                            ExposedDropdownMenu(
-                                expanded = voicevoxModelMenuExpanded,
-                                onDismissRequest = { voicevoxModelMenuExpanded = false }
-                            ) {
-                                VoicevoxManager.modelCatalog.forEach { entry ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Column {
-                                                Text("${entry.category.label} / ${entry.displayName}")
-                                                Text(
-                                                    text = entry.creditLine,
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = colorResource(id = R.color.text_secondary)
-                                                )
-                                            }
-                                        },
-                                        onClick = {
-                                            voicevoxSelectedCatalogEntry = entry
-                                            voicevoxModelMenuExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                        Button(
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !busy,
-                            onClick = { startVoicevoxDownload(voicevoxSelectedCatalogEntry) }
-                        ) {
-                            Text("選択した音声モデルに切り替え")
-                        }
-                        OutlinedButton(
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = { voicevoxModelPickerLauncher.launch(arrayOf("*/*")) }
-                        ) {
-                            Text(".vvm を手動で追加")
-                        }
-                        OutlinedButton(
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = state.modelExists,
-                            onClick = {
-                                (requireContext().applicationContext as MyApplication)
-                                    .getVoicevoxManager()
-                                    .release()
-                                val deleted = voicevoxModelFile().delete()
-                                toast(if (deleted) "音声モデルを削除しました" else "削除に失敗しました")
-                                voicevoxStyleMenuExpanded = false
-                                refreshVoicevoxState()
-                            }
-                        ) {
-                            Text("音声モデルを削除")
-                        }
-                        OutlinedButton(
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = state.dictionaryExists,
-                            onClick = {
-                                val deleted = voicevoxDictionaryDir().deleteRecursively()
-                                toast(if (deleted) "OpenJTalk辞書を削除しました" else "削除に失敗しました")
-                                refreshVoicevoxState()
-                            }
-                        ) {
-                            Text("OpenJTalk辞書を削除")
-                        }
-                        Text(
-                            text = state.modelPath,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colorResource(id = R.color.text_secondary)
-                        )
-                    }
-                }
             }
         }
     }
+
 
 
     @Composable
@@ -4182,49 +4065,35 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
-    private fun initializeVoicevoxFromSettings() {
-        if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) return
-        voicevoxInitializing = true
-        viewLifecycleOwner.lifecycleScope.launch {
-            val success = withContext(Dispatchers.IO) {
-                (requireContext().applicationContext as MyApplication)
-                    .getVoicevoxManager()
-                    .initialize()
-            }
-            voicevoxInitializing = false
-            refreshVoicevoxState()
-            toast(if (success) "VOICEVOXを初期化しました" else "VOICEVOXの初期化に失敗しました")
-        }
-    }
-
     /**
-     * 音声モデルのダウンロードを ModelDownloadWorker に委譲する。
-     *
-     * 以前は Fragment のコルーチンで直接ダウンロードしていたため、進捗が見えず
-     * 画面を離れると中断していた。LLM モデルと同じワーカー／通知／進捗表示に統一する。
+     * VoicevoxManager.isReady を購読して、自動初期化の進行中・完了を
+     * UI の voicevoxInitializing に反映させる。
+     * これにより、ダウンロード完了 → 自動初期化 の間も
+     * 「busy」としてドロップダウンをロックできる。
      */
-    private fun startVoicevoxDownload(entry: VoicevoxManager.VoiceModelCatalogEntry) {
+    private fun observeVoicevoxReadyState() {
         if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) return
-        val needsDictionary = !isValidVoicevoxDictionary(voicevoxDictionaryDir())
-        val started = ModelDownloadWorker.enqueueVoicevoxModel(
-            context = requireContext(),
-            fileName = entry.fileName,
-            url = entry.url,
-            displayName = entry.displayName,
-            needsDictionary = needsDictionary
-        )
-        if (started) {
-            voicevoxDownloadState = VoicevoxDownloadUiState(
-                fileName = entry.fileName,
-                phase = ModelDownloadWorker.VOICEVOX_PHASE_MODEL,
-                downloadedBytes = 0L,
-                totalBytes = -1L,
-                isActive = true
-            )
-            voicevoxAdvancedExpanded = false
-            toast("${entry.displayName} のダウンロードを開始しました")
-        } else {
-            toast("すでにダウンロード中です")
+        val manager = (requireContext().applicationContext as MyApplication).getVoicevoxManager()
+        viewLifecycleOwner.lifecycleScope.launch {
+            manager.isReady.collect { ready ->
+                if (!isAdded) return@collect
+                // ダウンロード中は progress 側で例外なく busy になるので、
+                // ここでは「初期化は未完了だがファイルは揃っている」間を拾う。
+                voicevoxInitializing = !ready && manager.isModelFileReady() && manager.isDictionaryReady()
+                refreshVoicevoxState()
+            }
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            manager.installedModelFileName.collect {
+                if (!isAdded) return@collect
+                refreshVoicevoxState()
+            }
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            manager.selectedStyleIdFlow.collect {
+                if (!isAdded) return@collect
+                refreshVoicevoxState()
+            }
         }
     }
 
@@ -4237,12 +4106,13 @@ open class ModelSettingsFragment : Fragment() {
                 val info = infos?.maxByOrNull { it.state.ordinal }
                     ?: infos?.firstOrNull()
                     ?: return@observe
+                val app = requireContext().applicationContext as MyApplication
                 when (info.state) {
                     WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED -> {
                         val data = info.progress
                         voicevoxDownloadState = VoicevoxDownloadUiState(
                             fileName = data.getString(ModelDownloadWorker.KEY_VOICEVOX_FILE_NAME)
-                                ?: voicevoxSelectedCatalogEntry.fileName,
+                                ?: app.getVoicevoxManager().getSelectedModelFileName(),
                             phase = data.getString(ModelDownloadWorker.KEY_VOICEVOX_PHASE)
                                 ?: ModelDownloadWorker.VOICEVOX_PHASE_MODEL,
                             downloadedBytes = data.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L),
@@ -4280,86 +4150,54 @@ open class ModelSettingsFragment : Fragment() {
     private fun refreshVoicevoxState() {
         if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) return
         if (!isAdded) return
-        val model = voicevoxModelFile()
-        val dict = voicevoxDictionaryDir()
-
-        val modelExists = model.isFile
-        val dictionaryExists = isValidVoicevoxDictionary(dict)
         val manager = (requireContext().applicationContext as MyApplication).getVoicevoxManager()
-        val savedStyleId = manager.getSavedStyleId()
-        val selectedModelFileName = manager.getSelectedModelFileName()
-        val entry = VoicevoxManager.modelCatalog.firstOrNull { it.fileName == selectedModelFileName }
-        if (entry != null) voicevoxSelectedCatalogEntry = entry
+        val model = manager.modelFilePath()
 
-        val catalogStyle = VoicevoxManager.modelCatalog
+        val modelExists: Boolean = manager.isModelFileReady()
+        val dictionaryExists: Boolean = manager.isDictionaryReady()
+        val savedStyleId: Int = manager.getSavedStyleId()
+        val selectedModelFileName: String = manager.getSelectedModelFileName()
+        val entry: VoicevoxManager.VoiceModelCatalogEntry? =
+            VoicevoxManager.catalogEntryFor(selectedModelFileName)
+
+        val catalogStyle: VoicevoxManager.VoiceStyle? = VoicevoxManager.modelCatalog
             .flatMap { it.styles }
             .firstOrNull { it.styleId == savedStyleId }
         val license = catalogStyle?.license
+
+        val summary: String = when {
+            modelExists && dictionaryExists ->
+                "準備完了 · $selectedModelFileName (${formatBytes(model.length())})"
+            modelExists -> "OpenJTalk辞書を準備しています..."
+            else -> "声を選ぶと自動でダウンロードし初期化します"
+        }
+
+        val entryCreditLine: String? = entry?.creditLine
+            ?.takeIf { it.isNotBlank() }
+        val creditLineText: String = catalogStyle?.credit
+            ?: entryCreditLine
+            ?: com.nezumi_ai.voicevox.VoicevoxLicense.VOICEVOX_CREDIT
+
+        val licenseTermsUrl: String? = license?.termsUrl?.takeIf { it.isNotBlank() }
+        val licenseUrlText: String = licenseTermsUrl
+            ?: com.nezumi_ai.voicevox.VoicevoxLicense.VOICEVOX_TERMS_URL
+
+        val licenseNoteText: String? = license?.let { lic ->
+            val parts: List<String> = listOfNotNull(lic.commercialLabel, lic.note)
+            if (parts.isEmpty()) null else parts.joinToString(separator = " / ")
+        }
 
         voicevoxState = VoicevoxModelUiState(
             modelExists = modelExists,
             dictionaryExists = dictionaryExists,
             selectedModelFileName = selectedModelFileName,
             modelPath = model.absolutePath,
-            summaryLine = when {
-                modelExists && dictionaryExists ->
-                    "準備完了 · $selectedModelFileName (${formatBytes(model.length())})"
-                modelExists -> "OpenJTalk辞書が未取得です"
-                else -> "音声モデルがまだありません"
-            },
-            selectedStyleLabel = catalogStyle?.displayName ?: "styleId: $savedStyleId",
-            creditLine = catalogStyle?.credit
-                ?: voicevoxSelectedCatalogEntry.creditLine.ifBlank {
-                    com.nezumi_ai.voicevox.VoicevoxLicense.VOICEVOX_CREDIT
-                },
-            licenseUrl = license?.termsUrl?.ifBlank { null }
-                ?: com.nezumi_ai.voicevox.VoicevoxLicense.VOICEVOX_TERMS_URL,
-            licenseNote = license?.let { lic ->
-                listOfNotNull(lic.commercialLabel, lic.note).joinToString(" / ")
-            }
+            summaryLine = summary,
+            selectedStyleLabel = catalogStyle?.detailName ?: "styleId: $savedStyleId",
+            creditLine = creditLineText,
+            licenseUrl = licenseUrlText,
+            licenseNote = licenseNoteText
         )
-
-        if (modelExists) {
-            viewLifecycleOwner.lifecycleScope.launch {
-                val styles = withContext(Dispatchers.IO) {
-                    manager.getAvailableStyles()
-                }
-                if (!isAdded) return@launch
-                val currentStyleId = manager.getSavedStyleId()
-                val selected = styles.firstOrNull { it.styleId == currentStyleId }
-                    ?: styles.firstOrNull { it.styleId == VoicevoxManager.DEFAULT_STYLE_ID }
-                    ?: styles.firstOrNull()
-                if (selected != null && selected.styleId != currentStyleId) {
-                    manager.setSelectedStyleId(selected.styleId)
-                }
-                val selectedLicense = selected?.license
-                voicevoxState = voicevoxState.copy(
-                    styles = styles,
-                    selectedStyleLabel = selected?.displayName ?: "styleId: $currentStyleId",
-                    creditLine = selected?.credit ?: voicevoxState.creditLine,
-                    licenseUrl = selectedLicense?.termsUrl?.ifBlank { null }
-                        ?: com.nezumi_ai.voicevox.VoicevoxLicense.VOICEVOX_TERMS_URL,
-                    licenseNote = selectedLicense?.let { lic ->
-                        listOfNotNull(lic.commercialLabel, lic.note).joinToString(" / ")
-                    }
-                )
-            }
-        }
-    }
-
-    private fun voicevoxModelFile(): File {
-        return File(requireContext().filesDir, "voicevox_model.vvm")
-    }
-
-    private fun voicevoxDictionaryDir(): File {
-        return File(requireContext().filesDir, "open_jtalk_dic_utf_8-1.11")
-    }
-
-    private fun isValidVoicevoxDictionary(dir: File): Boolean {
-        return dir.isDirectory &&
-            File(dir, "sys.dic").isFile &&
-            File(dir, "unk.dic").isFile &&
-            File(dir, "matrix.bin").isFile
     }
 
     // 16KB ページサイズ互換の判定・表示は削除。
@@ -4748,19 +4586,44 @@ open class ModelSettingsFragment : Fragment() {
             }
 
         val label: String
-            get() = if (phase == ModelDownloadWorker.VOICEVOX_PHASE_DICTIONARY) {
-                "OpenJTalk辞書を取得中"
-            } else {
-                "$fileName をダウンロード中"
+            get() = when (phase) {
+                ModelDownloadWorker.VOICEVOX_PHASE_DICTIONARY ->
+                    "ステップ 2/2: OpenJTalk 辞書を取得中"
+                else ->
+                    "ステップ 1/2: $fileName をダウンロード中"
             }
 
+        /**
+         * 進捗下部の詳細行。
+         * サイズ未判明のときも、現在の受信バイト数を必ず見せる。
+         * 以前は「サイズ計測中...」だけだったため進んでいるのかどうか分からなかった。
+         */
         val detail: String
-            get() = if (totalBytes > 0L) {
-                val percent = (ratio * 100).toInt()
-                "$percent%"
-            } else {
-                "サイズ計測中..."
+            get() {
+                val downloadedText = formatBytesStandalone(downloadedBytes)
+                return if (totalBytes > 0L) {
+                    val percent = (ratio * 100).toInt()
+                    val totalText = formatBytesStandalone(totalBytes)
+                    "$percent% · $downloadedText / $totalText"
+                } else if (downloadedBytes > 0L) {
+                    "$downloadedText 受信中 · サイズ計測中"
+                } else {
+                    "接続中..."
+                }
             }
+
+        companion object {
+            private fun formatBytesStandalone(bytes: Long): String {
+                if (bytes <= 0L) return "0 B"
+                val kb = 1024.0
+                return when {
+                    bytes < kb -> "$bytes B"
+                    bytes < kb * kb -> String.format("%.1f KB", bytes / kb)
+                    bytes < kb * kb * kb -> String.format("%.1f MB", bytes / (kb * kb))
+                    else -> String.format("%.2f GB", bytes / (kb * kb * kb))
+                }
+            }
+        }
     }
 
  // 埋め込みモデルダウンロード進捗用 UI 状態
