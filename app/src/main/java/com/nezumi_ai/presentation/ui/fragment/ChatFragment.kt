@@ -2434,7 +2434,15 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         onCheckedChange = { checked ->
                             viewModel.setChatSessionDisableThinking(!checked)
                         },
-                        enabled = thinkingToggleEnabled && !isGenerating
+                        // Bug fix(#46):
+                        //   旧実装は `enabled = thinkingToggleEnabled && !isGenerating` だったため、
+                        //   生成停止直後に isGenerating フラグの更新順序次第で Switch が
+                        //   触れない状態にロックされるケースがあった。
+                        //   さらに ViewModel 側の setChatSessionDisableThinking は
+                        //   「設定値のみ更新、次回送信時から反映」の設計なので、生成中でも
+                        //   切り替えを受け付けて問題ない。ここでは !isGenerating を外し、
+                        //   モデルロード中でない限り常時切り替え可能にする。
+                        enabled = thinkingToggleEnabled
                     )
                 }
             }

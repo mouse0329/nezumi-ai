@@ -30,6 +30,7 @@ import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
+import com.nezumi_ai.data.inference.ThinkingLeakSalvage
 import com.nezumi_ai.data.inference.GgufToolPromptBuilder
 import com.nezumi_ai.data.inference.McpToolPromptBuilder
 import com.nezumi_ai.data.mcp.McpToolRegistry
@@ -2552,15 +2553,41 @@ class ChatViewModel(
  // 既存の内容を取得して保存（上書きしない）
                         val current = messageRepository.getMessageById(id)
                         val existingContent = current?.content?.trim() ?: ""
- // 停止時の「途中 assistant 出力」を表示上閉じるための終端補完。
-                        //   コードフェンスの未閉鎖によるレンダリング崩れを防ぐ。
-                        val finalContent = if (existingContent.isNotEmpty()) {
-                            closePartialAssistantContent(existingContent)
-                        } else {
-                            ""  // 空の場合は空文字列（後でフォールバックメッセージに置換）
+                        // Bug fix(#47):
+                        //   Thinking 途中に停止すると、DB 上の `content` に未閉鎖の `<think>...` が
+                        //   そのまま残っており、次回 UI 再バインドで stripGemmaTokens() /
+                        //   sanitizeVisibleText() が「閉じタグの無い <think>」を除去しきれず、
+                        //   思考本文が本文欄にそのまま漏れて表示される不具合があった。
+                        //   ここで停止時に一度、content から <think> ブロック (未閉鎖含む) を
+                        //   剥がして、剥がしたテキストは thinkingContent 側へ退避する。
+                        val (contentAfterThinkStrip, salvagedThinking) =
+                            ThinkingLeakSalvage.extractThinkingFromPartialContent(existingContent)
+
+                        // 既存 thinkingContent と、content から救出した思考本文をマージし、
+                        // 未閉鎖なら閉じタグを補う。Thinking フェーズは普段通り表示する。
+                        val mergedThinkingRaw = ThinkingLeakSalvage.mergeThinkingSalvage(
+                            current?.thinkingContent,
+                            salvagedThinking
+                        )
+                        val finalThinking = closePartialThinking(mergedThinkingRaw)
+
+                        // Bug fix(#47) 仕様変更:
+                        //   シンキング中 (本文がまだ一字も出ていない状態) で停止されたときは、
+                        //   本文欄には「生成を停止しました」と表示し、Thinking フェーズは普段通り
+                        //   (折りたたみで見える) のままにしておく。
+                        //   これによりユーザーは「どこまで思考してキャンセルされたか」を後から確認できる。
+                        val stoppedDuringThinking =
+                            contentAfterThinkStrip.isEmpty() && !finalThinking.isNullOrBlank()
+
+                        val finalContent = when {
+                            stoppedDuringThinking ->
+                                appContext.getString(R.string.assistant_stopped_by_user)
+                            contentAfterThinkStrip.isNotEmpty() ->
+                                // 停止時の「途中 assistant 出力」を表示上閉じるための終端補完。
+                                //   コードフェンスの未閉鎖によるレンダリング崩れを防ぐ。
+                                closePartialAssistantContent(contentAfterThinkStrip)
+                            else -> ""  // 空の場合は空文字列（後でフォールバックメッセージに置換）
                         }
- // thinking ブロックも未閉鎖のまま残っていたら、閉じタグを補う。
-                        val finalThinking = closePartialThinking(current?.thinkingContent)
 
                         val updatedToolResultsJson = withUserStopCard(current?.toolResultsJson)
 
@@ -2757,6 +2784,8 @@ class ChatViewModel(
         }
         return result
     }
+
+
 
     private fun withUserStopCard(toolResultsJson: String?): String {
         val existingCards = if (!toolResultsJson.isNullOrBlank() && toolResultsJson != "[]") {
