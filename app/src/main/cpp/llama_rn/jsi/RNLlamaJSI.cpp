@@ -253,12 +253,16 @@ namespace rnllama_jsi {
             return false;
         }
 
-        if (chatParams.thinking_end_tag.empty()) {
-            return true;
+        for (const auto& endTag : chatParams.thinking_end_tags) {
+            if (endTag.empty()) {
+                continue;
+            }
+            const size_t lastEnd = chatParams.generation_prompt.rfind(endTag);
+            if (lastEnd != std::string::npos && lastEnd >= lastStart) {
+                return false;
+            }
         }
-
-        const size_t lastEnd = chatParams.generation_prompt.rfind(chatParams.thinking_end_tag);
-        return lastEnd == std::string::npos || lastEnd < lastStart;
+        return true;
     }
 
     static jsi::Object createModelDetails(jsi::Runtime& runtime, rnllama::llama_rn_context* ctx) {
@@ -508,6 +512,11 @@ namespace rnllama_jsi {
                     }
                 }
 
+                int stateCacheBudgetMb =
+                    getPropertyAsInt(runtime, params, "state_cache_budget_mb", 160);
+                int stateCacheMaxCheckpoints =
+                    getPropertyAsInt(runtime, params, "state_cache_max_checkpoints", 8);
+
                 return createPromiseTask(runtime, callInvoker, [
                     contextId,
                     cparams,
@@ -515,7 +524,9 @@ namespace rnllama_jsi {
                     requestedDevices,
                     devicesProvided,
                     useProgressCallback,
-                    progressData
+                    progressData,
+                    stateCacheBudgetMb,
+                    stateCacheMaxCheckpoints
                 ]() mutable -> PromiseResultGenerator {
                     if (isContextLimitReached()) {
                         throw std::runtime_error("Context limit reached");
@@ -575,6 +586,13 @@ namespace rnllama_jsi {
                     }
 
                     auto ctx = new rnllama::llama_rn_context();
+                    // Prompt state cache tuning (multi-turn KV reuse on
+                    // recurrent/hybrid/SWA models). Budget in MiB; 0 disables it.
+                    {
+                        ctx->state_cache_budget_bytes =
+                            stateCacheBudgetMb > 0 ? (size_t) stateCacheBudgetMb * 1024 * 1024 : 0;
+                        ctx->state_cache_max_checkpoints = stateCacheMaxCheckpoints;
+                    }
                     if (ctx->loadModel(cparams)) {
                          ctx->attachThreadpoolsIfAvailable();
 
@@ -854,8 +872,8 @@ namespace rnllama_jsi {
                               if (!chatParams.thinking_start_tag.empty()) {
                                   result.setProperty(rt, "thinking_start_tag", jsi::String::createFromUtf8(rt, chatParams.thinking_start_tag));
                               }
-                              if (!chatParams.thinking_end_tag.empty()) {
-                                  result.setProperty(rt, "thinking_end_tag", jsi::String::createFromUtf8(rt, chatParams.thinking_end_tag));
+                              if (!chatParams.thinking_end_tags.empty()) {
+                                  result.setProperty(rt, "thinking_end_tag", jsi::String::createFromUtf8(rt, chatParams.thinking_end_tags.front()));
                               }
 
                               // Preserve the same shape as legacy native bridge
@@ -1077,7 +1095,7 @@ namespace rnllama_jsi {
                         throw std::runtime_error("Failed to initialize sampling");
                     }
 
-                    ctx->completion->prefill_text = prefill_text;
+                    ctx->completion->prefill_text = rnllama::utf8_sanitize(prefill_text);
                     ctx->completion->beginCompletion(chat_format, reasoning_format, generation_prompt, chat_parser);
 
                     try {

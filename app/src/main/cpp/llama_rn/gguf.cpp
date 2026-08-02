@@ -557,6 +557,10 @@ static struct lm_gguf_context * lm_gguf_init_from_reader(const struct lm_gguf_re
                 LM_GGML_LOG_ERROR("%s: encountered bad_alloc error while reading key %" PRIi64 "\n", __func__, i);
                 ok = false;
             }
+            if (ok && key.empty()) {
+                LM_GGML_LOG_ERROR("%s: key %" PRIi64 " is empty\n", __func__, i);
+                ok = false;
+            }
             for (size_t j = 0; ok && j < ctx->kv.size(); ++j) {
                 if (key == ctx->kv[j].key) {
                     LM_GGML_LOG_ERROR("%s: duplicate key '%s' for tensors %zu and %" PRIi64 " \n", __func__, key.c_str(), j, i);
@@ -1182,6 +1186,11 @@ const char * lm_gguf_get_tensor_name(const struct lm_gguf_context * ctx, int64_t
     return ctx->info[tensor_id].t.name;
 }
 
+const int64_t * lm_gguf_get_tensor_ne(const struct lm_gguf_context * ctx, int64_t tensor_id) {
+    LM_GGML_ASSERT(tensor_id >= 0 && tensor_id < lm_gguf_get_n_tensors(ctx));
+    return ctx->info[tensor_id].t.ne;
+}
+
 enum lm_ggml_type lm_gguf_get_tensor_type(const struct lm_gguf_context * ctx, int64_t tensor_id) {
     LM_GGML_ASSERT(tensor_id >= 0 && tensor_id < lm_gguf_get_n_tensors(ctx));
     return ctx->info[tensor_id].t.type;
@@ -1415,7 +1424,7 @@ void lm_gguf_set_tensor_data(struct lm_gguf_context * ctx, const char * name, co
 struct lm_gguf_writer_base {
     size_t written_bytes {0u};
 
-    ~lm_gguf_writer_base(void) = default;
+    virtual ~lm_gguf_writer_base(void) = default;
 
     // we bet on devirtualization
     virtual void write(int8_t val) = 0;

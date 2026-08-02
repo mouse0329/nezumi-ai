@@ -40,6 +40,12 @@ struct clip_graph_qwen3vl : clip_graph_qwen2vl {
     lm_ggml_cgraph * build() override;
 };
 
+struct clip_graph_minimax_m3 : clip_graph {
+    clip_graph_minimax_m3(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
+    lm_ggml_cgraph * build() override;
+    lm_ggml_tensor * apply_rope(lm_ggml_tensor * x, lm_ggml_tensor * pos_h, lm_ggml_tensor * pos_w);
+};
+
 struct clip_graph_mimovl : clip_graph {
     clip_graph_mimovl(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
     lm_ggml_cgraph * build() override;
@@ -127,6 +133,7 @@ struct clip_graph_deepseekocr : clip_graph {
     clip_graph_deepseekocr(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
     lm_ggml_cgraph * build() override;
     lm_ggml_tensor * build_sam(lm_ggml_tensor * inp); // build the SAM model
+    // bool support_batch() const override { return true; } // TODO: support batch for DeepSeek-OCR v1
 };
 
 struct clip_graph_deepseekocr2 : clip_graph_deepseekocr {
@@ -200,6 +207,11 @@ struct clip_graph_mobilenetv5 : clip_graph {
 
 struct clip_graph_qwen3a : clip_graph {
     clip_graph_qwen3a(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
+    lm_ggml_cgraph * build() override;
+};
+
+struct clip_graph_mimo_audio : clip_graph {
+    clip_graph_mimo_audio(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
     lm_ggml_cgraph * build() override;
 };
 

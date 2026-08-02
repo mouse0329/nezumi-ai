@@ -86,7 +86,7 @@ android {
         }
 
         buildConfigField("String", "LITERTLM_VERSION", "\"0.15.0\"")
-        buildConfigField("String", "LLAMACPP_VERSION", "\"llama.rn 0.12.5\"")
+        buildConfigField("String", "LLAMACPP_VERSION", "\"llama.rn 0.12.8\"")
         buildConfigField("boolean", "CONTEXT_COMPRESSION_ENABLED", "false")
 
         ndk {

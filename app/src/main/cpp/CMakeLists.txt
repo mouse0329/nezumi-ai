@@ -25,6 +25,7 @@ set(RNLLAMA_INCLUDE_DIRS
         ${RNLLAMA_DIR}/tools/mtmd
 )
 
+# ⚠️ 存在しない自動検出（GLOB）で余計なゴミを拾わないよう、安全にフィルタリングするか明示的に指定します
 file(GLOB MODEL_FILES           ${RNLLAMA_DIR}/models/*.cpp)
 file(GLOB GGML_CPU_C_FILES      ${RNLLAMA_DIR}/ggml-cpu/*.c)
 file(GLOB GGML_CPU_CPP_FILES    ${RNLLAMA_DIR}/ggml-cpu/*.cpp)
@@ -34,6 +35,12 @@ file(GLOB MTMD_FILES            ${RNLLAMA_DIR}/tools/mtmd/*.cpp)
 file(GLOB MTMD_MODEL_FILES      ${RNLLAMA_DIR}/tools/mtmd/models/*.cpp)
 file(GLOB COMMON_FILES          ${RNLLAMA_DIR}/common/*.cpp)
 file(GLOB JINJA_FILES           ${RNLLAMA_DIR}/common/jinja/*.cpp)
+
+# もし不要なファイルが混ざるならここで明示的に除外
+list(REMOVE_ITEM COMMON_FILES
+        ${RNLLAMA_DIR}/common/json-partial.cpp
+        ${RNLLAMA_DIR}/common/regex-partial.cpp
+)
 
 set(RNLLAMA_SOURCE_FILES
         ${RNLLAMA_DIR}/ggml.c

@@ -55,8 +55,7 @@ struct clip_hparams {
     int32_t n_head = 0;
     int32_t n_head_kv = 0;
     int32_t n_layer = 0;
-    // idefics3
-    int32_t n_merge = 0; // number of patch merges **per-side**
+    int32_t n_merge = 1; // number of patch merges **per-side**
 
     // for preprocessor
     int32_t image_longest_edge = 0;
@@ -70,6 +69,7 @@ struct clip_hparams {
     std::vector<clip_image_size> image_res_candidates;
     int32_t preproc_min_tiles = 0;
     int32_t preproc_max_tiles = 0;
+    int32_t preproc_tile_size = 0; // local tile size (deepseek-ocr)
     resize_algo image_resize_algo_rf = RESIZE_ALGO_BICUBIC;
     resize_algo image_resize_algo_ov = RESIZE_ALGO_BILINEAR;
     pad_style image_pad_rf = PAD_CEIL;  // padding style for the refined image (e.g. llava-1.6)
@@ -124,6 +124,14 @@ struct clip_hparams {
     int32_t audio_window_len  = -1;
     int32_t audio_hop_len     = -1;
 
+    // mimo-audio-tokenizer: residual vector quantizer
+    int32_t rvq_num_quantizers = 0;
+    std::vector<int32_t> rvq_codebook_size; // per-quantizer bin count (ragged, e.g. 1024/1024/256/128x17)
+
+    // mimo-v2.5: LLM-side connector (input_local_transformer)
+    int32_t audio_local_n_layer = 0;
+    int32_t audio_local_group_size = 0;
+
     // legacy
     bool has_llava_projector = false;
     int minicpmv_version = 0;
@@ -135,8 +143,7 @@ struct clip_hparams {
     int32_t custom_image_max_tokens = -1;
 
     void set_limit_image_tokens(int n_tokens_min, int n_tokens_max) {
-        const int cur_merge = n_merge == 0 ? 1 : n_merge;
-        const int patch_area = patch_size * patch_size * cur_merge * cur_merge;
+        const int patch_area = patch_size * patch_size * n_merge * n_merge;
         image_min_pixels = (custom_image_min_tokens > 0 ? custom_image_min_tokens : n_tokens_min) * patch_area;
         image_max_pixels = (custom_image_max_tokens > 0 ? custom_image_max_tokens : n_tokens_max) * patch_area;
         warmup_image_size = static_cast<int>(std::sqrt(image_max_pixels));
@@ -145,8 +152,7 @@ struct clip_hparams {
     void set_warmup_n_tokens(int n_tokens) {
         int n_tok_per_side = static_cast<int>(std::sqrt(n_tokens));
         LM_GGML_ASSERT(n_tok_per_side * n_tok_per_side == n_tokens && "n_tokens must be n*n");
-        const int cur_merge = n_merge == 0 ? 1 : n_merge;
-        warmup_image_size = n_tok_per_side * patch_size * cur_merge;
+        warmup_image_size = n_tok_per_side * patch_size * n_merge;
         // TODO: support warmup size for custom token numbers
     }
     // sam vit deepseek-ocr
@@ -399,6 +405,10 @@ struct clip_model {
     lm_ggml_tensor * mm_0_b = nullptr;
     lm_ggml_tensor * mm_2_w = nullptr;
     lm_ggml_tensor * mm_2_b = nullptr;
+    lm_ggml_tensor * mm_merger_fc1_w = nullptr;   // minimax-m3
+    lm_ggml_tensor * mm_merger_fc1_b = nullptr;
+    lm_ggml_tensor * mm_merger_fc2_w = nullptr;
+    lm_ggml_tensor * mm_merger_fc2_b = nullptr;
 
     lm_ggml_tensor * image_newline = nullptr;
     lm_ggml_tensor * view_seperator = nullptr;
@@ -534,6 +544,20 @@ struct clip_model {
     lm_ggml_tensor * mm_norm_pre_w = nullptr;
     lm_ggml_tensor * mm_norm_pre_b = nullptr;
     lm_ggml_tensor * mm_norm_mid_w = nullptr;
+
+    // mimo-audio-tokenizer: post-transformer downsample + RVQ codebook
+    lm_ggml_tensor * downsample_conv_w = nullptr; // no bias
+    lm_ggml_tensor * downsample_norm_w = nullptr;
+    lm_ggml_tensor * downsample_norm_b = nullptr;
+    lm_ggml_tensor * rvq_codebook = nullptr; // merged 3D [n_q, max_bins, dim]
+
+    // mimo-v2.5: text-side RVQ code embedding ("text codebook")
+    lm_ggml_tensor * mm_a_code_embd = nullptr; // merged 3D [n_channels, vocab, dim]
+
+    // mimo-v2.5: LLM-side connector (input_local_transformer, separate from the
+    // audio_tokenizer's own encoder `layers`)
+    std::vector<clip_layer> mm_a_local_layers;
+    lm_ggml_tensor * mm_a_local_norm_w = nullptr;
 
     // qwen3a
     lm_ggml_tensor * conv2d_1_w = nullptr;

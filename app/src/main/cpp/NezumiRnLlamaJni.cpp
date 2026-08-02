@@ -388,8 +388,10 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
     params.cpuparams.n_threads = nThreads;
     params.cpuparams_batch.n_threads = nThreads;
     params.n_gpu_layers = nGpuLayers;
-    params.use_mmap = (useMmap == JNI_TRUE);
-    params.use_mlock = (useMlock == JNI_TRUE);
+    
+    // params.model.use_mmap = (useMmap == JNI_TRUE);
+    // params.model.use_mlock = (useMlock == JNI_TRUE);
+
     params.rope_freq_base = ropeFreqBase;
     params.rope_freq_scale = ropeFreqScale;
     params.flash_attn_type = (flashAttentionEnabled == JNI_TRUE)
@@ -407,7 +409,7 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeCreateContext(
                         params.n_batch,
                         params.cpuparams.n_threads,
                         params.n_gpu_layers,
-                        params.use_mmap ? 1 : 0,
+                        0,
                         params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_DISABLED ? 0 : 1,
                         params.ctx_shift ? 1 : 0);
 
