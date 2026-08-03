@@ -33,4 +33,23 @@ object PresetConstants {
         TOOL_MEMORY,
         TOOL_WEB_SEARCH
     )
+
+    /**
+     * 新規プリセット作成時に初期で有効にするツール ID の集合。
+     * WEB_SEARCH は API キー未設定でここから外し、FLASHLIGHT はカメラ権限の確認が
+     * 必要なため、ユーザーが明示的に有効化するまでは OFF にしておく。
+     */
+    val defaultInitiallyEnabledToolIds: List<String> = listOf(
+        TOOL_ALARM,
+        TOOL_GMAIL,
+        TOOL_SWITCHBOT,
+        // TOOL_FLASHLIGHT は初期オフ（カメラ権限が必要）
+        TOOL_APP_LAUNCH,
+        TOOL_TIME,
+        TOOL_BATTERY,
+        TOOL_TIMER,
+        TOOL_IMAGE_GENERATION,
+        TOOL_MEMORY
+        // TOOL_WEB_SEARCH は初期オフ（API キー未設定）
+    )
 }

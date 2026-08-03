@@ -269,9 +269,24 @@ object ToolSystemController {
         }
     }
 
+    /**
+     * カメラ権限の有無をチェックするヘルパー。
+     * フラッシュライトの setTorchMode は実際にはカメラ権限を必要とするため、
+     * UI 側で事前にリクエストしてもらいやすくする。
+     */
+    fun hasCameraPermission(context: Context): Boolean {
+        return ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
     fun toggleFlashlight(context: Context, on: Boolean): Result<Unit> {
         return runCatching {
             Log.d(TAG, "toggleFlashlight: on=$on")
+            if (!hasCameraPermission(context)) {
+                throw SecurityException("CAMERA permission is required to use flashlight")
+            }
             val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val cameraIdList = manager.cameraIdList
             

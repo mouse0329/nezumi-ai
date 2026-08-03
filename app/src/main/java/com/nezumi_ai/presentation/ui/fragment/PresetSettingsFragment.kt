@@ -3,6 +3,7 @@ package com.nezumi_ai.presentation.ui.fragment
 import android.os.Bundle
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.scrollBy
@@ -82,6 +83,42 @@ import org.json.JSONArray
 
 class PresetSettingsFragment : Fragment() {
     private lateinit var presetRepository: PresetRepository
+
+    // フラッシュライトツールは Android 上では CAMERA 権限が必要なため、
+    // チェックボックスで有効化したときに権限をリクエストする。
+    // 実際の ON/OFF の後処理は Compose 側のコールバックに任せる。
+    private var pendingFlashlightGrant: ((Boolean) -> Unit)? = null
+    private val requestCameraPermissionLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val cb = pendingFlashlightGrant
+        pendingFlashlightGrant = null
+        if (!granted) {
+            Toast.makeText(
+                requireContext(),
+                "フラッシュライトを使うにはカメラ権限が必要です",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+        cb?.invoke(granted)
+    }
+
+    /**
+     * フラッシュライトを有効化しようとしたときにカメラ権限を保証する。
+     * すでに許可済みなら即座に true でコールバックする。
+     * 未許可ならシステムダイアログを出し、結果をコールバックで返す。
+     */
+    private fun ensureCameraPermissionForFlashlight(onResult: (Boolean) -> Unit) {
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            requireContext(), android.Manifest.permission.CAMERA
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            onResult(true)
+            return
+        }
+        pendingFlashlightGrant = onResult
+        requestCameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -474,6 +511,8 @@ class PresetSettingsFragment : Fragment() {
         var itemHeightPx by remember { mutableFloatStateOf(0f) }
         val thresholdPx = if (itemHeightPx > 0f) itemHeightPx else 120f
 
+        // 選択中のプリセットはチェックマークだけだと見落としやすいので、
+        // 背景色 + ボーダー + 左のアクセントバーで強くハイライトする。
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -490,12 +529,20 @@ class PresetSettingsFragment : Fragment() {
                         onDragCancel = { onDragEnd() }
                     )
                 }
-                .clickable(onClick = onSelect),
+                .clickable(onClick = onSelect)
+                .then(
+                    if (selected) Modifier.border(
+                        width = 2.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
+                    ) else Modifier
+                ),
             colors = CardDefaults.cardColors(
-                containerColor = if (isDragging)
-                    MaterialTheme.colorScheme.surfaceVariant
-                else
-                    MaterialTheme.colorScheme.surface
+                containerColor = when {
+                    isDragging -> MaterialTheme.colorScheme.surfaceVariant
+                    selected -> MaterialTheme.colorScheme.primaryContainer
+                    else -> MaterialTheme.colorScheme.surface
+                }
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -521,11 +568,16 @@ class PresetSettingsFragment : Fragment() {
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (selected) {
-                            Text(
- text = "",
-                                color = MaterialTheme.colorScheme.primary,
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
+                            // 選択中バッジ（背景色 + ボーダーだけでは分かりにくいので、
+                            // 明確な「選択中」ラベルをつける）
+                            androidx.compose.material3.AssistChip(
+                                onClick = {},
+                                enabled = false,
+                                label = { Text("選択中", fontWeight = FontWeight.Bold) },
+                                colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(
+                                    disabledContainerColor = MaterialTheme.colorScheme.primary,
+                                    disabledLabelColor = MaterialTheme.colorScheme.onPrimary
+                                ),
                                 modifier = Modifier.padding(end = 4.dp)
                             )
                         }
@@ -724,17 +776,28 @@ class PresetSettingsFragment : Fragment() {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text("ツール", fontWeight = FontWeight.Bold)
                                 toolOptions.forEach { option ->
+                                    // フラッシュライトを有効化するときはカメラ権限を先に確保する。
+                                    val handleToggle: () -> Unit = {
+                                        val willEnable = option.id !in enabledTools
+                                        if (option.id == PresetConstants.TOOL_FLASHLIGHT && willEnable) {
+                                            ensureCameraPermissionForFlashlight { granted ->
+                                                if (granted) {
+                                                    enabledTools = toggleTool(enabledTools, option.id)
+                                                }
+                                            }
+                                        } else {
+                                            enabledTools = toggleTool(enabledTools, option.id)
+                                        }
+                                    }
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clickable {
-                                                enabledTools = toggleTool(enabledTools, option.id)
-                                            },
+                                            .clickable { handleToggle() },
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Checkbox(
                                             checked = option.id in enabledTools,
-                                            onCheckedChange = { enabledTools = toggleTool(enabledTools, option.id) }
+                                            onCheckedChange = { handleToggle() }
                                         )
                                         Text(option.label)
                                     }
@@ -822,6 +885,10 @@ class PresetSettingsFragment : Fragment() {
                                 memoryEnabled = memoryEnabled,
                                 isLocked = initialPreset?.isLocked ?: false,
                                 toolCallingEnabled = toolCallingEnabled,
+                                // バグ修正: 編集保存時に sortOrder / tagsCsv を引き継がないと
+                                // 既定値（Long.MAX_VALUE / 空）に戻され、リストの一番下に飛ばされてしまう。
+                                sortOrder = initialPreset?.sortOrder ?: Long.MAX_VALUE,
+                                tagsCsv = initialPreset?.tagsCsv ?: "",
                                 mcpServerIds = McpPreferences.encodeServerIds(selectedMcpServerIds)
                             )
                         )

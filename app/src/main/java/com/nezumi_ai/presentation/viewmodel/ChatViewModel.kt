@@ -527,6 +527,11 @@ class ChatViewModel(
     private val _contextWindowSize = MutableStateFlow(4096)
     val contextWindowSize: StateFlow<Int> = _contextWindowSize
 
+    // メーターをタップしたときに表示する「実際に組み立てられたプロンプト文字列」。
+    // estimateContextUsageChars でメーター用に組み立てたプロンプトをそのまま保持する。
+    private val _contextRawPrompt = MutableStateFlow("")
+    val contextRawPrompt: StateFlow<String> = _contextRawPrompt
+
     private val _contextWindowCapacityChars = MutableStateFlow(4096 * 4)
     val contextWindowCapacityChars: StateFlow<Int> = _contextWindowCapacityChars
 
@@ -4202,7 +4207,10 @@ class ChatViewModel(
 
  // 常に trimPromptToWindow で実際に使用される文字数を計算
         val maxChars = config.contextWindow * TOKEN_TO_CHAR_RATIO
-        val basePromptSize = trimPromptToWindow(basePrompt, config.contextWindow).length
+        val trimmedBase = trimPromptToWindow(basePrompt, config.contextWindow)
+        val basePromptSize = trimmedBase.length
+        // モーダル表示用に、現時点で組み立てられている生のプロンプト全文を保持しておく
+        _contextRawPrompt.value = trimmedBase
 
         // コンテキスト圧縮が無効な場合、またはGPU使用時は未圧縮のサイズをそのまま返す
         if (!config.isContextCompressionEnabledForRuntime() || config.backendType == "GPU") {
@@ -4247,7 +4255,10 @@ class ChatViewModel(
                 enableThinking = config.enableThinking,
                 enableToolCalling = config.enableToolCalling
             )
-            val compressedSize = trimPromptToWindow(compressedPrompt, config.contextWindow).length
+            val trimmedCompressed = trimPromptToWindow(compressedPrompt, config.contextWindow)
+            val compressedSize = trimmedCompressed.length
+            // 圧縮版が生きているときはそちらを raw プレビューにする
+            _contextRawPrompt.value = trimmedCompressed
             Log.d(TAG, "CONTEXT_METER: Using cached compression | original=${basePromptSize}ch -> compressed=${compressedSize}ch")
             return compressedSize
         }

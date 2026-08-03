@@ -46,6 +46,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -182,6 +184,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var contextUsageCharsNow by mutableStateOf(0)
  // 新: コンテキストメーターの表示可否。全般タブで切り替えられる。既定は表示しない。
     private var contextMeterVisible by mutableStateOf(false)
+    // メーターをタップしたときに表示する raw コンテキストモーダルの可視フラグと中身。
+    private var contextRawDialogVisible by mutableStateOf(false)
+    private var contextRawText by mutableStateOf("")
 
     // Bug fix(#43): t/s ・ TTFT トグルの値をフラグメント側でも保持し、onResume で変化を検知して
     // MessageAdapter に強制リバインドを依頼する。これにより、設定タブでトグルした直後に
@@ -1868,6 +1873,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         )
         binding.contextMeterCompose.setContent {
             ContextMeterSection()
+            ContextRawDialog()
         }
 
         binding.scrollToBottomCompose.setViewCompositionStrategy(
@@ -2345,6 +2351,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             modifier = Modifier
                 .fillMaxWidth()
                 .background(colorResource(id = R.color.surface_card))
+                .clickable {
+                    // メーターをタップしたら raw コンテキストをモーダルで表示する。
+                    // メーターの値は完全に正確ではないため、実際に何が入っているのかを
+                    // ユーザーが確認できるようにする。
+                    contextRawText = viewModel.contextRawPrompt.value
+                    contextRawDialogVisible = true
+                }
                 .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
@@ -2359,7 +2372,52 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 color = colorResource(id = R.color.primary),
                 trackColor = colorResource(id = R.color.context_meter_track)
             )
+            Text(
+                text = "タップで raw コンテキストを表示（メーターは参考値）",
+                color = colorResource(id = R.color.text_secondary),
+                style = MaterialTheme.typography.labelSmall
+            )
         }
+    }
+
+    @Composable
+    private fun ContextRawDialog() {
+        if (!contextRawDialogVisible) return
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { contextRawDialogVisible = false },
+            confirmButton = {
+                TextButton(onClick = { contextRawDialogVisible = false }) {
+                    Text("閉じる")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    val clip = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    clip?.setPrimaryClip(ClipData.newPlainText("raw_context", contextRawText))
+                    Toast.makeText(requireContext(), "コピーしました", Toast.LENGTH_SHORT).show()
+                }) {
+                    Text("コピー")
+                }
+            },
+            title = { Text("現在の raw コンテキスト") },
+            text = {
+                val scrollState = androidx.compose.foundation.rememberScrollState()
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 480.dp)
+                        .verticalScroll(scrollState)
+                ) {
+                    Text(
+                        text = if (contextRawText.isBlank())
+                            "まだプロンプトが構築されていません。一度メッセージを送信するか、新しい内容を入力するとここに反映されます。"
+                        else contextRawText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_primary)
+                    )
+                }
+            }
+        )
     }
 
     @Composable

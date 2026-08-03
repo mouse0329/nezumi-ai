@@ -69,7 +69,16 @@ class PresetRepository(
     suspend fun updatePreset(preset: PresetEntity): Boolean {
         val current = dao.getById(preset.id) ?: return false
         if (current.isLocked) return false
-        dao.update(preset.copy(isLocked = current.isLocked, updatedAt = System.currentTimeMillis()))
+        // バグ修正: 編集保存時に UI 層が sortOrder を引き継がないケースでも
+        // 既存の並び順を壊さないように、DB 側の値を優先して保持する。
+        // (UI から明示的に sort_order を更新したい場合は reorder() を利用する)
+        dao.update(
+            preset.copy(
+                isLocked = current.isLocked,
+                sortOrder = current.sortOrder,
+                updatedAt = System.currentTimeMillis()
+            )
+        )
         return true
     }
 
@@ -226,8 +235,19 @@ class PresetRepository(
 
     private suspend fun updateNezumiAiDefaultTools() {
         val existing = dao.getById(DEFAULT_NEZUMI_AI_ID) ?: return
-        // デフォルトプリセットのツールを最新の allToolIds に更新
-        val updatedTools = encodeToolIds(PresetConstants.allToolIds)
+        // デフォルトプリセットのツールを初期有効化セットに更新。
+        // web_search / flashlight はユーザーが明示的に有効化するまで OFF。
+        // 既にユーザーが有効化していたものは尊重して保持する。
+        val currentTools = runCatching {
+            val arr = org.json.JSONArray(existing.enabledTools)
+            buildList { for (i in 0 until arr.length()) add(arr.optString(i)) }
+        }.getOrDefault(emptyList())
+        val merged = LinkedHashSet<String>().apply {
+            addAll(PresetConstants.defaultInitiallyEnabledToolIds)
+            if (PresetConstants.TOOL_WEB_SEARCH in currentTools) add(PresetConstants.TOOL_WEB_SEARCH)
+            if (PresetConstants.TOOL_FLASHLIGHT in currentTools) add(PresetConstants.TOOL_FLASHLIGHT)
+        }
+        val updatedTools = encodeToolIds(merged.toList())
         if (existing.enabledTools != updatedTools) {
             dao.update(existing.copy(enabledTools = updatedTools, updatedAt = System.currentTimeMillis()))
             // 現在選択中のプリセットがデフォルトなら、ToolPreferences も更新
@@ -249,7 +269,8 @@ class PresetRepository(
  icon = "",
             systemPrompt = "あなたはネズミAIです。親しみやすく、簡潔で、ユーザーの意図に寄り添って日本語で応答してください。",
             modelId = "Gemma4-2B",
-            enabledTools = encodeToolIds(PresetConstants.allToolIds),
+            // web_search は API キー未設定、flashlight はカメラ権限が必要なため、初期は無効
+            enabledTools = encodeToolIds(PresetConstants.defaultInitiallyEnabledToolIds),
             createdAt = now,
             updatedAt = now,
             isDefault = true,
