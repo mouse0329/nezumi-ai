@@ -32,6 +32,14 @@ class MyApplication : Application() {
         super.onCreate()
         PreferencesHelper.applyThemeMode(this)
 
+        // デバッグタブでの事後閲覧用に、自プロセスの logcat を常時バックグラウンド収集する。
+        //   サイズローテーションで古いログから自動的に消えていくため、
+        //   ディスクを圧迫し続けることはない（詳細は LogcatRecorder 参照）。
+        //   BuildConfig.DEBUG 時のみ動作させ、リリースビルドではオーバーヘッドを避ける。
+        if (BuildConfig.DEBUG) {
+            com.nezumi_ai.utils.LogcatRecorder.start(this)
+        }
+
  // 起動直後フリーズ対策: Room DB インスタンスと SharedPreferences を
         //   バックグラウンド (IO) で先に warmup する。
         //   これにより ChatFragment.onViewCreated がメインスレッドで呼ぶ

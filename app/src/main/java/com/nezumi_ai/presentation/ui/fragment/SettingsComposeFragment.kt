@@ -1,5 +1,6 @@
 package com.nezumi_ai.presentation.ui.fragment
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.graphics.Bitmap
@@ -25,6 +26,8 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.*
@@ -40,6 +43,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -68,6 +75,7 @@ import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.presentation.viewmodel.ChatViewModelFactory
 
+import com.nezumi_ai.utils.LogcatRecorder
 import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.presentation.ui.composable.ErrorModalDialog
 import com.nezumi_ai.presentation.ui.composable.SvgSpinner
@@ -148,6 +156,13 @@ class SettingsComposeFragment : Fragment() {
     private var nsfwDebugNsfwProb by mutableStateOf<Float?>(null)
     private var nsfwDebugRunning by mutableStateOf(false)
     private lateinit var nsfwDebugPickLauncher: ActivityResultLauncher<String>
+
+    // logcat 常時収集ビューア用の状態。
+    //   LogcatRecorder がバックグラウンドでファイルに書き続けているログを
+    //   一定間隔で読み込んで表示するだけで、収集自体はこの画面の開閉に依存しない。
+    private var logcatViewerText by mutableStateOf("")
+    private var logcatViewerAutoRefresh by mutableStateOf(true)
+    private var logcatViewerSizeLabel by mutableStateOf("")
 
     // 自動保存制御フラグ。loadInferenceSettings() の初期値適用中は true にして
     // 初期化の emit で保存が回らないようにする。loadInferenceSettings() 完了後に false。
@@ -2372,9 +2387,172 @@ class SettingsComposeFragment : Fragment() {
                 }) {
                     Text("モデルエラーを表示")
                 }
+
+                // ---- logcat ビューア（常時バックグラウンド収集分を閲覧） ----
+                Divider(modifier = Modifier.padding(vertical = 4.dp))
+                LogcatViewerSection()
             }
         }
     }
+
+    /**
+     * LogcatRecorder がバックグラウンドで書き続けているログを表示するセクション。
+     * - 収集自体は MyApplication 起動時から常時継続しているため、この画面を開くたびに
+     *   その時点までの蓄積ログ（古いものは自動削除済み）を読み込むだけでよい。
+     * - 自動更新 ON の間は一定間隔でファイルを再読込し、末尾に追従する。
+     * - テキスト選択・全文コピー・ファイル書き出し（共有）・ログレベル別カラーリングに対応。
+     */
+    @Composable
+    private fun LogcatViewerSection() {
+        val localContext = LocalContext.current
+        val scrollState = rememberScrollState()
+        val clipboardManager = LocalClipboardManager.current
+
+        fun refreshLogcatViewer() {
+            logcatViewerText = LogcatRecorder.readAllLogs(localContext)
+            val bytes = LogcatRecorder.totalSizeBytes(localContext)
+            logcatViewerSizeLabel = "%.1f KB".format(bytes / 1024.0)
+        }
+
+        // 画面表示中、自動更新 ON なら 2 秒おきに再読込して末尾へ追従する。
+        LaunchedEffect(logcatViewerAutoRefresh) {
+            refreshLogcatViewer()
+            while (logcatViewerAutoRefresh) {
+                kotlinx.coroutines.delay(2000)
+                refreshLogcatViewer()
+                scrollState.animateScrollTo(scrollState.maxValue)
+            }
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                text = "logcat (常時収集)",
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleSmall
+            )
+        }
+        Text(
+            text = "アプリ起動中は自プロセスの logcat を常にバックグラウンドで記録しています。" +
+                "一定サイズを超えると古いログから自動的に削除されるため、ここでは直近分だけを確認できます。",
+            color = colorResource(id = R.color.text_secondary),
+            style = MaterialTheme.typography.bodySmall
+        )
+        Text(
+            text = "保存サイズ: $logcatViewerSizeLabel",
+            color = colorResource(id = R.color.text_secondary),
+            style = MaterialTheme.typography.labelSmall
+        )
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Button(onClick = { refreshLogcatViewer() }) {
+                Text("再読み込み")
+            }
+            Button(onClick = { logcatViewerAutoRefresh = !logcatViewerAutoRefresh }) {
+                Text(if (logcatViewerAutoRefresh) "自動更新: ON" else "自動更新: OFF")
+            }
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Button(onClick = {
+                // 表示中の全文をクリップボードへコピーする。
+                clipboardManager.setText(AnnotatedString(logcatViewerText))
+                Toast.makeText(localContext, "ログをコピーしました", Toast.LENGTH_SHORT).show()
+            }) {
+                Text("コピー")
+            }
+            Button(onClick = {
+                // 蓄積ログを1ファイルにマージして cacheDir へ書き出し、
+                // FileProvider 経由で共有 Intent を発行する（メール添付・保存アプリなどに渡せる）。
+                runCatching {
+                    val file = LogcatRecorder.exportToFile(localContext)
+                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                        localContext,
+                        "${localContext.packageName}.fileprovider",
+                        file
+                    )
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    localContext.startActivity(Intent.createChooser(shareIntent, "ログを書き出す"))
+                }.onFailure {
+                    Toast.makeText(localContext, "書き出しに失敗しました: ${it.message}", Toast.LENGTH_SHORT).show()
+                }
+            }) {
+                Text("書き出し")
+            }
+            Button(onClick = {
+                LogcatRecorder.clearAll(localContext)
+                refreshLogcatViewer()
+            }) {
+                Text("ログを消去")
+            }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            // SelectionContainer でログ本文を選択可能にする（部分コピー・共有アプリへの引き渡し用）。
+            SelectionContainer(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 160.dp, max = 320.dp)
+                    .verticalScroll(scrollState)
+                    .padding(8.dp)
+            ) {
+                Text(
+                    text = if (logcatViewerText.isBlank()) {
+                        AnnotatedString("ログはまだありません。")
+                    } else {
+                        colorizeLogcatText(logcatViewerText)
+                    },
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                    color = colorResource(id = R.color.text_secondary)
+                )
+            }
+        }
+    }
+
+    /**
+     * logcat の各行を `threadtime` フォーマットのログレベル1文字（V/D/I/W/E/F）に基づいて色分けする。
+     * 例: "08-03 12:34:56.789  1234  5678 E TAG: message" -> "E" を検出して赤系に着色。
+     * 想定外のフォーマットの行はデフォルト色のまま表示する。
+     */
+    private fun colorizeLogcatText(rawText: String): AnnotatedString {
+        // threadtime 形式: "MM-DD HH:MM:SS.mmm  PID  TID LEVEL TAG: message"
+        // LEVEL 部分（1文字）だけを抜き出す軽量な正規表現。
+        val levelRegex = Regex("""^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3}\s+\d+\s+\d+\s+([VDIWEF])\s""")
+
+        return buildAnnotatedString {
+            val lines = rawText.split("\n")
+            for ((index, line) in lines.withIndex()) {
+                val level = levelRegex.find(line)?.groupValues?.get(1)
+                val color = when (level) {
+                    "E", "F" -> Color(0xFFE57373) // Error / Fatal: 赤
+                    "W" -> Color(0xFFFFB74D)       // Warning: オレンジ
+                    "I" -> Color(0xFF81C784)       // Info: 緑
+                    "D" -> Color(0xFF64B5F6)       // Debug: 青
+                    "V" -> Color(0xFFB0BEC5)       // Verbose: グレー
+                    else -> Color.Unspecified      // 不明なフォーマットはデフォルト色
+                }
+                withStyle(SpanStyle(color = color)) {
+                    append(line)
+                }
+                if (index != lines.lastIndex) append("\n")
+            }
+        }
+    }
+
 
     @Composable
     private fun ChatHistoryCard() {
