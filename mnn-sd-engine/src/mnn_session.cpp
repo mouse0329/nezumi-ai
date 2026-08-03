@@ -760,7 +760,7 @@ extern "C"
             set_error(out_error, MNN_SD_ERR_MODEL_NOT_FOUND, "clip2 not found", clip2_path.c_str());
             return MNN_SD_ERR_MODEL_NOT_FOUND;
         }
-                engine->clip_path = clip_path;
+        engine->clip_path = clip_path;
         engine->clip2_path = clip2_path; // empty string when not SDXL
         engine->unet_path = unet_path;
         engine->vae_path = vae_path;
@@ -2788,7 +2788,7 @@ extern "C"
                 if (out_error)
                     std::snprintf(out_error->message, sizeof(out_error->message),
                                   "%s: 'input_embedding' tensor not found. Model must be converted "
-                                  "with the xororz/sd-mnn embedding-input CLIP graph.",
+                                  "with the sd-mnn embedding-input CLIP graph.",
                                   label);
                 return MNN_SD_ERR_MODEL_INVALID;
             }
@@ -3047,7 +3047,6 @@ extern "C"
                 v = dist(rng);
         }
 
-
         // ============ img2img: VAE encoder で初期 latent を作る ============
         //
         // params->init_image_rgb が非 NULL のときだけ発動。convert_sd15_to_mnn.py
@@ -3100,12 +3099,21 @@ extern "C"
             for (const char *n : enc_in_names)
             {
                 auto *t = enc_net->getSessionInput(engine->vae_encoder_session, n);
-                if (t) { enc_in = t; chosen_in = n; break; }
+                if (t)
+                {
+                    enc_in = t;
+                    chosen_in = n;
+                    break;
+                }
             }
             if (!enc_in)
             {
                 const auto &all_in = enc_net->getSessionInputAll(engine->vae_encoder_session);
-                if (all_in.size() == 1) { enc_in = all_in.begin()->second; chosen_in = all_in.begin()->first.c_str(); }
+                if (all_in.size() == 1)
+                {
+                    enc_in = all_in.begin()->second;
+                    chosen_in = all_in.begin()->first.c_str();
+                }
             }
             if (!enc_in)
             {
@@ -3164,11 +3172,13 @@ extern "C"
 
             // (e) 出力 (mean, std) を取り出す。convert スクリプトは
             //     ["latent_mean", "latent_std"]。他 exporter への保険で候補を探す。
-            auto pick_out = [&](const std::initializer_list<const char *> &cands) -> MNN::Tensor * {
+            auto pick_out = [&](const std::initializer_list<const char *> &cands) -> MNN::Tensor *
+            {
                 for (const char *n : cands)
                 {
                     auto *t = enc_net->getSessionOutput(engine->vae_encoder_session, n);
-                    if (t) return t;
+                    if (t)
+                        return t;
                 }
                 return nullptr;
             };
@@ -3216,8 +3226,10 @@ extern "C"
             for (int i = 0; i < latent_size; ++i)
             {
                 float s = std_vec[i];
-                if (!std::isfinite(s) || s < 0.0f) s = 0.0f;
-                if (s > 5.0f) s = 5.0f;
+                if (!std::isfinite(s) || s < 0.0f)
+                    s = 0.0f;
+                if (s > 5.0f)
+                    s = 5.0f;
                 init_latent[i] = (mean_vec[i] + s * dist_enc(rng_enc)) * kSdScale;
             }
 
@@ -3230,8 +3242,10 @@ extern "C"
             // (h) t_start_index = round((1 - strength) * steps)
             const float strength = std::max(0.0f, std::min(1.0f, params->denoise_strength));
             t_start_index = (int)std::round((1.0f - strength) * (float)steps);
-            if (t_start_index < 0) t_start_index = 0;
-            if (t_start_index >= steps) t_start_index = steps - 1;
+            if (t_start_index < 0)
+                t_start_index = 0;
+            if (t_start_index >= steps)
+                t_start_index = steps - 1;
             PROBE_LOG("img2img: strength=%.3f steps=%d -> t_start_index=%d (will run %d denoise iters)",
                       strength, steps, t_start_index, steps - t_start_index);
         }
@@ -3387,7 +3401,8 @@ extern "C"
         {
             int idx = std::min(t_start_index, (int)timesteps.size() - 1);
             int t_at_start = timesteps[idx];
-            if (t_at_start < 0) t_at_start = 0;
+            if (t_at_start < 0)
+                t_at_start = 0;
             if (t_at_start > (int)engine->alphas_cumprod.size() - 1)
                 t_at_start = (int)engine->alphas_cumprod.size() - 1;
             const float a = engine->alphas_cumprod[t_at_start];
@@ -3412,7 +3427,8 @@ extern "C"
                 (int)sigmas.size() > idx && sigmas[idx] > 1.0f)
             {
                 const float s0 = sigmas[idx];
-                for (auto &v : latent) v *= s0;
+                for (auto &v : latent)
+                    v *= s0;
                 PROBE_LOG("img2img: init_noise_sigma (EULER_A) applied sigmas[%d]=%.4f", idx, s0);
             }
         }

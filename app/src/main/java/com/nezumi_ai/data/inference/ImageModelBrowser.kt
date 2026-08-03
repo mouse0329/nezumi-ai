@@ -19,9 +19,18 @@ data class ImageModel(
 )
 
 object ImageModelBrowser {
-    private const val REPO_MNN = "xororz/sd-mnn"
+    // 複数リポジトリに対応するためのリスト
+    private val REPOS_MNN = listOf(
+        "Mouserat/Illustrious-XL-v2.0-diffusers-mnn",
+        "Mouserat/majicMIX_realistic_v6-mnn",
+        "Mouserat/Realistic_Vision_V6.0_B1-mnn",
+        "Mouserat/CuteYukiMix-mnn",
+        "Mouserat/Anything-V5-mnn",
+        "Mouserat/dreamshaper-8-mnn",
+        "Mouserat/CyberRealistic-mnn",
+        "Mouserat/ReV_Animated-mnn",
+    )
 
-    
     private var cachedModels: List<ImageModel>? = null
     private var cacheTimestamp = 0L
     private const val CACHE_TTL = 5 * 60 * 1000L
@@ -34,21 +43,31 @@ object ImageModelBrowser {
         
         val models = mutableListOf<ImageModel>()
         
-        val mnnFiles = fetchRepoFiles(REPO_MNN).getOrThrow()
-        for (entry in mnnFiles) {
-            if (entry.type != "file") continue
-            val parsed = parseFileName(entry.path, "mnn") ?: continue
-            models.add(ImageModel(
-                id = parsed.id,
-                name = parsed.name,
-                displayName = parsed.displayName,
-                backend = "mnn",
-                variant = null,
-                downloadUrl = "https://huggingface.co/$REPO_MNN/resolve/main/${entry.path}",
-                fileName = entry.path,
-                size = entry.lfs?.size ?: entry.size,
-                repo = REPO_MNN
-            ))
+        // リポジトリ一覧をループ処理
+        for (repo in REPOS_MNN) {
+            val mnnFiles = fetchRepoFiles(repo).getOrNull() ?: continue
+            
+            for (entry in mnnFiles) {
+                if (entry.type != "file") continue
+                val parsed = parseFileName(entry.path, "mnn") ?: continue
+                
+                // リポジトリごとにユニークなIDを生成（重複防止）
+                val uniqueId = "${repo.replace("/", "_")}_${parsed.id}"
+
+                models.add(
+                    ImageModel(
+                        id = uniqueId,
+                        name = parsed.name,
+                        displayName = parsed.displayName,
+                        backend = "mnn",
+                        variant = null,
+                        downloadUrl = "https://huggingface.co/$repo/resolve/main/${entry.path}",
+                        fileName = entry.path,
+                        size = entry.lfs?.size ?: entry.size,
+                        repo = repo
+                    )
+                )
+            }
         }
         
         models.sortBy { it.name }
@@ -98,13 +117,13 @@ object ImageModelBrowser {
             id = "${baseName.lowercase()}_cpu",
             name = baseName,
             displayName = "${insertSpaces(baseName)} (MNN)"
-
         )
     }
     
     private fun insertSpaces(name: String): String {
         return name.replace(Regex("([a-z\\d])([A-Z])")) { "${it.groupValues[1]} ${it.groupValues[2]}" }
     }
+
     fun guessStyle(name: String): String {
         val lower = name.lowercase()
         return if (lower.contains("reality") || lower.contains("realistic") || 
