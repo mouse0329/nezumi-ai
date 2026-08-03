@@ -51,3 +51,6 @@
 # ============================================================================
 # Keep nested data classes inside ImageModelBrowser (TreeEntry, LfsInfo)
 -keep class com.nezumi_ai.data.inference.ImageModelBrowser$* { *; }
+# VOICEVOX Coreなどが参照している missing class の警告を無視
+-dontwarn jakarta.annotation.**
+-dontwarn javax.annotation.**
