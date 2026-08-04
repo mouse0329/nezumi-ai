@@ -30,4 +30,24 @@
     <!-- Thinking Toggle Button (High Contrast) -->
     <color name="thinking_toggle_stroke">#60A5FA</color>
     <color name="thinking_toggle_text">#60A5FA</color>
+
+    <!--
+        Media / Image Viewer palette (dark).
+        従来のハードコード色 (rgb(6,9,14), argb(210,12,16,24) 等) と
+        同系の暗色を採用。文字は白系で背景と同化しないようにする。
+    -->
+    <color name="viewer_bg">#06090E</color>
+    <color name="viewer_surface">#0C1018</color>
+    <color name="viewer_bar_bg">#0C1018</color>
+    <color name="viewer_text_primary">#FFFFFFFF</color>
+    <color name="viewer_text_secondary">#96A5B4</color>
+    <color name="viewer_action_bg">#202630</color>
+    <color name="viewer_action_text">#5BC0FF</color>
+    <color name="viewer_thumb_bg">#1A202C</color>
+    <color name="viewer_thumb_selected">#5BC0FF</color>
+    <color name="viewer_seekbar_track">#374151</color>
+
+    <!-- Raw context dialog -->
+    <color name="raw_context_dialog_bg">#1F2937</color>
+    <color name="raw_context_dialog_text">#F3F4F6</color>
 </resources>

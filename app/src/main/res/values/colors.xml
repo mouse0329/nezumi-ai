@@ -47,4 +47,27 @@
     <color name="text_main">#f8fafc</color>
     <color name="text_sub">#94a3b8</color>
     <color name="input_border">#334155</color>
+
+    <!--
+        Media / Image Viewer palette.
+        バグ修正: 画像ビュワー・Raw コンテキストダイアログがライトモード時に
+        「文字色が黒/白のいずれか固定 かつ 背景色も同系」のせいで
+        テキストが背景と同化していた問題への対応。
+        ライトモード: 明るい背景 + 黒系文字, ダークモード (values-night):
+        従来通り紺系背景 + 白系文字。
+    -->
+    <color name="viewer_bg">#FFFFFFFF</color>
+    <color name="viewer_surface">#F2F3F5</color>
+    <color name="viewer_bar_bg">#F5F6F8</color>
+    <color name="viewer_text_primary">#111827</color>
+    <color name="viewer_text_secondary">#4B5563</color>
+    <color name="viewer_action_bg">#E5E7EB</color>
+    <color name="viewer_action_text">#0284C7</color>
+    <color name="viewer_thumb_bg">#E5E7EB</color>
+    <color name="viewer_thumb_selected">#0284C7</color>
+    <color name="viewer_seekbar_track">#D1D5DB</color>
+
+    <!-- Raw context dialog -->
+    <color name="raw_context_dialog_bg">#FFFFFFFF</color>
+    <color name="raw_context_dialog_text">#111827</color>
 </resources>

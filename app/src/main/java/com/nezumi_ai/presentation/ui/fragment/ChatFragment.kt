@@ -65,6 +65,7 @@ import com.nezumi_ai.presentation.ui.composable.ErrorModalDialog
 import com.nezumi_ai.presentation.ui.composable.ErrorModalDialogContent
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -2362,7 +2363,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 trackColor = colorResource(id = R.color.context_meter_track)
             )
             Text(
-                text = "タップで raw コンテキストを表示（メーターは参考値）",
+                text = stringResource(id = R.string.raw_context_open_hint),
                 color = colorResource(id = R.color.text_secondary),
                 style = MaterialTheme.typography.labelSmall
             )
@@ -2372,23 +2373,34 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     @Composable
     private fun ContextRawDialog() {
         if (!contextRawDialogVisible) return
+        // バグ修正 (ライトモード対応):
+        //   AlertDialog の containerColor / 各 contentColor を明示指定していなかったため、
+        //   ライトモードで背景が白のまま、テキストも白で同化して見えなくなるケースがあった。
+        //   raw_context_dialog_bg / raw_context_dialog_text リソースで
+        //   ライト: 白背景 + 黒文字 / ダーク: 紺背景 + 白文字 を保証する。
+        val dialogBg = colorResource(id = R.color.raw_context_dialog_bg)
+        val dialogText = colorResource(id = R.color.raw_context_dialog_text)
+        val buttonText = colorResource(id = R.color.primary)
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { contextRawDialogVisible = false },
+            containerColor = dialogBg,
+            titleContentColor = dialogText,
+            textContentColor = dialogText,
             confirmButton = {
                 TextButton(onClick = { contextRawDialogVisible = false }) {
-                    Text("閉じる")
+                    Text(stringResource(id = R.string.raw_context_close), color = buttonText)
                 }
             },
             dismissButton = {
                 TextButton(onClick = {
                     val clip = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? ClipboardManager
                     clip?.setPrimaryClip(ClipData.newPlainText("raw_context", contextRawText))
-                    Toast.makeText(requireContext(), "コピーしました", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(requireContext(), getString(R.string.raw_context_copied), Toast.LENGTH_SHORT).show()
                 }) {
-                    Text("コピー")
+                    Text(stringResource(id = R.string.raw_context_copy), color = buttonText)
                 }
             },
-            title = { Text("現在の raw コンテキスト") },
+            title = { Text(stringResource(id = R.string.raw_context_title), color = dialogText) },
             text = {
                 val scrollState = androidx.compose.foundation.rememberScrollState()
                 Column(
@@ -2399,10 +2411,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 ) {
                     Text(
                         text = if (contextRawText.isBlank())
-                            "まだプロンプトが構築されていません。一度メッセージを送信するか、新しい内容を入力するとここに反映されます。"
+                            stringResource(id = R.string.raw_context_empty)
                         else contextRawText,
                         style = MaterialTheme.typography.bodySmall,
-                        color = colorResource(id = R.color.text_primary)
+                        // バグ修正: ダイアログ専用のテキスト色を直接適用して
+                        //   背景とのコントラストを保証する。
+                        color = dialogText
                     )
                 }
             }

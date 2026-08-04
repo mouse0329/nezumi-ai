@@ -13,6 +13,7 @@ import com.nezumi_ai.data.inference.CacheManager
 import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.nezumi_ai.data.repository.PresetRepository
+import com.nezumi_ai.utils.LocaleHelper
 import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.voicevox.VoicevoxManager
 import kotlinx.coroutines.CoroutineScope
@@ -27,7 +28,14 @@ import java.io.File
 class MyApplication : Application() {
     private val applicationScope = CoroutineScope(Dispatchers.Default)
     private lateinit var voicevoxManager: VoicevoxManager
-    
+
+    // i18n: Application の Context にもロケールを適用しておくと、
+    // applicationContext 経由で getString() された場合も選択した言語で
+    // リソースが引けるようになる。
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(LocaleHelper.wrap(base))
+    }
+
     override fun onCreate() {
         super.onCreate()
         PreferencesHelper.applyThemeMode(this)

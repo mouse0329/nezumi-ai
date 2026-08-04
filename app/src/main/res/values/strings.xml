@@ -326,6 +326,204 @@ VOICEVOX:ずんだもん / VOICEVOX:四国めたん / VOICEVOX:春日部つむ�
 
     <string name="license_open_url">詳細を見る</string>
 
+    <!--
+        UI 文字列一括集約 (i18n 対応)。
+        本アプリの UI 文字列は全てこのファイルに集約し、values-en/strings.xml で
+        英訳を管理する。設定「全般」 > 言語 で切り替える。
+    -->
+
+    <!-- 全般設定 -->
+    <string name="settings_title">設定</string>
+    <string name="settings_section_general">全般</string>
+    <string name="settings_section_inference">推論</string>
+    <string name="settings_section_image">画像</string>
+    <string name="settings_section_memory">メモリ</string>
+    <string name="settings_section_chat">チャット</string>
+    <string name="settings_section_debug">デバッグ</string>
+    <string name="settings_general_title">全般設定</string>
+    <string name="settings_theme_label">テーマ</string>
+    <string name="settings_theme_current_format">テーマ (現在: %1$s)</string>
+    <string name="settings_language_label">言語</string>
+    <string name="settings_language_current_format">言語 (現在: %1$s)</string>
+    <string name="settings_language_system">システム</string>
+    <string name="settings_language_japanese">日本語</string>
+    <string name="settings_language_english">English</string>
+
+    <!-- テーマモード -->
+    <string name="settings_theme_system">システム</string>
+    <string name="settings_theme_light">ライト</string>
+    <string name="settings_theme_dark">ダーク</string>
+    <string name="settings_theme_system_display">システム</string>
+    <string name="settings_theme_light_display">ライト</string>
+    <string name="settings_theme_dark_display">ダーク</string>
+
+    <!-- 全般セクションの各項目 -->
+    <string name="settings_always_lock_title">アプリロックを常に有効化</string>
+    <string name="settings_always_lock_desc">アプリ再開時に常に認証を求めます</string>
+    <string name="settings_stop_kb_learning_title">キーボードの学習を停止</string>
+    <string name="settings_stop_kb_learning_desc">IME に入力内容を学習させない</string>
+    <string name="settings_show_context_meter_title">コンテキストメーターを表示</string>
+    <string name="settings_show_context_meter_desc">チャット上に使用量メーターを出します</string>
+    <string name="settings_show_tps_title">TPS を表示</string>
+    <string name="settings_show_tps_desc">トークン/秒 (生成速度) を表示します</string>
+    <string name="settings_show_ttft_title">TTFT を表示</string>
+    <string name="settings_show_ttft_desc">初回応答までの時間を表示します</string>
+    <string name="settings_disable_screenshot_title">スクリーンショットを禁止</string>
+    <string name="settings_disable_screenshot_desc">アプリの画面キャプチャをブロックします</string>
+
+    <!-- チャット履歴 -->
+    <string name="settings_chat_history_title">履歴保存件数</string>
+    <string name="settings_chat_history_10">10</string>
+    <string name="settings_chat_history_30">30</string>
+    <string name="settings_chat_history_50">50</string>
+    <string name="settings_chat_history_unlimited">無制限</string>
+
+    <!-- バックエンド -->
+    <string name="settings_backend_cpu">CPU</string>
+    <string name="settings_backend_gpu">GPU</string>
+    <string name="settings_backend_npu">NPU</string>
+
+    <!-- メモリ -->
+    <string name="settings_memory_delete_all_title">メモリを全削除</string>
+    <string name="settings_memory_delete_all_body">保存済みメモリをすべて削除します。</string>
+    <string name="settings_memory_list_button">一覧表示</string>
+    <string name="settings_memory_delete_all_button">全削除</string>
+    <string name="settings_memory_delete_button">削除</string>
+    <string name="settings_memory_cancel">キャンセル</string>
+    <string name="settings_memory_list_title">保存済みメモリ一覧</string>
+    <string name="settings_memory_close">閉じる</string>
+    <string name="settings_memory_mode_llm">LLM抽出</string>
+    <string name="settings_memory_mode_rule">ルールベース</string>
+
+    <!-- デバッグ -->
+    <string name="settings_debug_show_model_error">モデルエラーを表示</string>
+    <string name="settings_debug_reload">再読み込み</string>
+    <string name="settings_debug_copy">コピー</string>
+    <string name="settings_debug_export">書き出し</string>
+    <string name="settings_debug_clear_log">ログを消去</string>
+    <string name="settings_debug_text_a">テキストA</string>
+    <string name="settings_debug_text_a_ph">犬</string>
+    <string name="settings_debug_text_b">テキストB</string>
+    <string name="settings_debug_text_b_ph">猫</string>
+    <string name="settings_debug_compute">モデルで計算する</string>
+    <string name="settings_debug_clear">クリア</string>
+
+    <!-- 推論入力 -->
+    <string name="settings_inference_context_size">コンテキストサイズ</string>
+    <string name="settings_inference_max_tokens">最大トークン数</string>
+    <string name="settings_inference_check_engine_version">llama.cpp / LiteRT-LM バージョンを確認</string>
+    <string name="settings_inference_engine_version_title">推論エンジンのバージョン</string>
+    <string name="settings_common_close">閉じる</string>
+
+    <!-- Brave Search -->
+    <string name="settings_brave_api_label">APIキー</string>
+    <string name="settings_brave_api_ph">brave_api_key を入力</string>
+
+    <!-- アプリ情報 -->
+    <string name="settings_about_title">このアプリについて</string>
+    <string name="settings_about_license_button">ライセンス</string>
+
+    <!-- セキュリティPIN -->
+    <string name="settings_pin_label">PIN</string>
+    <string name="settings_pin_ph">****</string>
+    <string name="settings_pin_confirm_label">確認用 PIN</string>
+    <string name="settings_pin_next">次へ</string>
+    <string name="settings_pin_retry">やり直し</string>
+    <string name="settings_pin_cancel">キャンセル</string>
+
+    <!-- パラメータプレースホルダー -->
+    <string name="settings_placeholder_seed_random">-1</string>
+
+    <!-- シークレットモード PIN -->
+    <string name="settings_secret_mode_title">シークレットモード PIN</string>
+    <string name="settings_secret_mode_enabled">有効（PIN 設定済み）</string>
+    <string name="settings_secret_mode_disabled">無効</string>
+    <string name="settings_secret_pin_change">PIN 変更</string>
+    <string name="settings_secret_pin_set">PIN 設定</string>
+    <string name="settings_secret_pin_disable">無効化</string>
+    <string name="settings_secret_pin_reset">リセット</string>
+
+    <!-- Brave Search / Backend / Inference cards -->
+    <string name="settings_brave_card_title">Brave Search API</string>
+    <string name="settings_brave_card_desc">Brave Search の API キーを設定します。ツール呼び出し時にこのキーが使用されます。</string>
+    <string name="settings_brave_unset_hint">未設定の場合、ウェブ検索ツールは動作しません。</string>
+    <string name="settings_brave_set_hint">現在設定済みの API キーが保存されています。</string>
+    <string name="settings_backend_card_title">バックエンド</string>
+    <string name="settings_backend_current_format">現在のバックエンド: %1$s</string>
+    <string name="settings_inference_params_title">推論パラメータ</string>
+
+    <!-- デバッグ/ログ -->
+    <string name="settings_debug_title">デバッグ</string>
+    <string name="settings_debug_copy_button">コピー</string>
+    <string name="settings_debug_export_button">書き出し</string>
+    <string name="settings_debug_clear_log_button">ログを消去</string>
+    <string name="settings_debug_reload_button">再読み込み</string>
+    <string name="settings_debug_model_error_button">モデルエラーを表示</string>
+    <string name="settings_debug_compute_button">モデルで計算する</string>
+    <string name="settings_debug_clear_button">クリア</string>
+
+    <!-- メモリ -->
+    <string name="settings_memory_list_show">一覧表示</string>
+    <string name="settings_memory_delete_all_button2">全削除</string>
+    <string name="settings_memory_delete_button2">削除</string>
+    <string name="settings_memory_cancel_button">キャンセル</string>
+    <string name="settings_memory_close_button">閉じる</string>
+    <string name="settings_memory_mode_llm_label">LLM抽出</string>
+    <string name="settings_memory_mode_rule_label">ルールベース</string>
+
+    <!-- チャット履歴 -->
+    <string name="settings_chat_history_unlimited_label">無制限</string>
+
+    <!-- バージョンダイアログ -->
+    <string name="settings_engine_version_title">推論エンジンのバージョン</string>
+    <string name="settings_dialog_close">閉じる</string>
+
+    <!-- アプリ情報ダイアログ -->
+    <string name="settings_about_dialog_title">このアプリについて</string>
+    <string name="settings_about_license_link">ライセンス</string>
+
+    <!-- PINダイアログ -->
+    <string name="settings_pin_dialog_cancel">キャンセル</string>
+    <string name="settings_pin_dialog_next">次へ</string>
+    <string name="settings_pin_dialog_retry">やり直し</string>
+    <string name="settings_pin_confirm_label2">確認用 PIN</string>
+
+    <!-- 共通ボタン -->
+    <string name="common_delete">削除</string>
+    <string name="common_cancel">キャンセル</string>
+    <string name="common_close">閉じる</string>
+    <string name="common_next">次へ</string>
+    <string name="common_retry">やり直し</string>
+    <string name="common_clear">クリア</string>
+
+    <!-- 画像ビュワー / メディアビュワー -->
+    <string name="viewer_image_preview_title">画像プレビュー</string>
+    <string name="viewer_media_preview_title">メディアプレビュー</string>
+    <string name="viewer_close">閉じる</string>
+    <string name="viewer_share">共有</string>
+    <string name="viewer_save_to_folder">フォルダ保存</string>
+    <string name="viewer_save_image">画像を保存</string>
+    <string name="viewer_saved_toast">フォルダに保存しました</string>
+    <string name="viewer_save_failed_toast">保存に失敗しました</string>
+    <string name="viewer_share_chooser_title">共有</string>
+    <string name="viewer_video_audio_label">この動画の音声</string>
+    <string name="viewer_prompt_prefix">Prompt:</string>
+    <string name="viewer_action_save">保存</string>
+    <string name="viewer_bundle_title_video_audio">動画・音声</string>
+    <string name="viewer_bundle_title_image_audio">画像・音声</string>
+
+    <!-- 画像生成タブ -->
+    <string name="image_gen_tab_generate">生成</string>
+    <string name="image_gen_tab_library">ライブラリ</string>
+
+    <!-- Raw コンテキストダイアログ -->
+    <string name="raw_context_title">現在の raw コンテキスト</string>
+    <string name="raw_context_open_hint">タップで raw コンテキストを表示（メーターは参考値）</string>
+    <string name="raw_context_empty">まだプロンプトが構築されていません。一度メッセージを送信するか、新しい内容を入力するとここに反映されます。</string>
+    <string name="raw_context_copy">コピー</string>
+    <string name="raw_context_close">閉じる</string>
+    <string name="raw_context_copied">コピーしました</string>
+
     <!-- Fragments for navigation -->
     <string name="first_fragment_label">First Fragment</string>
     <string name="second_fragment_label">Second Fragment</string>

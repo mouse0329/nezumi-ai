@@ -35,6 +35,7 @@ import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.databinding.ActivityMainBinding
 import com.nezumi_ai.presentation.ui.adapter.DrawerHistoryAdapter
 import com.nezumi_ai.presentation.ui.adapter.DrawerHistoryItem
+import com.nezumi_ai.utils.LocaleHelper
 import com.nezumi_ai.utils.PreferencesHelper
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
@@ -50,6 +51,14 @@ import java.util.Calendar
 import coil.load
 
 class MainActivity : AppCompatActivity() {
+
+    // i18n: アプリの UI 言語 (SYSTEM / JA / EN) を履かせた Context を
+    // Activity に作らせるため、attachBaseContext で LocaleHelper.wrap() を応用する。
+    // これにより Activity 内の stringResource / getString は選択されたロケールの
+    // strings.xml (日 or 英) を参照するようになる。
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleHelper.wrap(newBase))
+    }
 
     companion object {
         private const val TAG = "MainActivity"

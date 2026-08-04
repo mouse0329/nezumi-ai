@@ -386,12 +386,14 @@ class SettingsComposeFragment : Fragment() {
  // レスポンシブ設定画面: タブレット(幅>=600dp)はサイドバー2ペイン、
         //   スマホはカテゴリリスト→詳細ページ遷移。
         val isTablet = LocalConfiguration.current.screenWidthDp >= 600
-        val sectionTitles = remember {
-            buildList {
-                add("全般"); add("推論"); add("画像"); add("メモリ"); add("チャット")
-                if (BuildConfig.DEBUG) add("デバッグ")
-            }
-        }
+        // i18n: セクションタイトルも stringResource にしてロケールごとに切り替わるようにする。
+        val sectionTitles = listOf(
+            stringResource(id = R.string.settings_section_general),
+            stringResource(id = R.string.settings_section_inference),
+            stringResource(id = R.string.settings_section_image),
+            stringResource(id = R.string.settings_section_memory),
+            stringResource(id = R.string.settings_section_chat)
+        ) + if (BuildConfig.DEBUG) listOf(stringResource(id = R.string.settings_section_debug)) else emptyList()
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -424,9 +426,9 @@ class SettingsComposeFragment : Fragment() {
                 }
                 Text(
                     text = if (!isTablet && !showSettingsListOnPhone) {
-                        sectionTitles.getOrElse(selectedSection) { "設定" }
+                        sectionTitles.getOrElse(selectedSection) { stringResource(id = R.string.settings_title) }
                     } else {
-                        "設定"
+                        stringResource(id = R.string.settings_title)
                     },
                     style = MaterialTheme.typography.headlineSmall,
                     color = colorResource(id = R.color.text_primary),
@@ -563,18 +565,24 @@ class SettingsComposeFragment : Fragment() {
                             var isShowTtft by remember { mutableStateOf(PreferencesHelper.isShowTtft(context)) }
                             var isDisableScreenshot by remember { mutableStateOf(PreferencesHelper.isDisableScreenshot(context)) }
                             var pendingAlwaysLockEnable by remember { mutableStateOf(false) }
+                            // i18n: アプリ UI の言語 (SYSTEM / JA / EN) を全般タブから切り替える。
+                            var appLanguage by remember { mutableStateOf(PreferencesHelper.getLanguage(context)) }
 
                             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Text(text = "全般設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                                Text(text = stringResource(id = R.string.settings_general_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
 
                                 // テーマ設定セクション
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    val themeCurrentLabel = stringResource(
+                                        id = R.string.settings_theme_current_format,
+                                        when (themeMode) {
+                                            PreferencesHelper.THEME_LIGHT -> stringResource(id = R.string.settings_theme_light_display)
+                                            PreferencesHelper.THEME_DARK -> stringResource(id = R.string.settings_theme_dark_display)
+                                            else -> stringResource(id = R.string.settings_theme_system_display)
+                                        }
+                                    )
                                     Text(
-                                        text = "テーマ (現在: ${when(themeMode) {
-                                            PreferencesHelper.THEME_LIGHT -> "ライト"
-                                            PreferencesHelper.THEME_DARK -> "ダーク"
-                                            else -> "システム"
-                                        }})",
+                                        text = themeCurrentLabel,
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold
@@ -590,7 +598,7 @@ class SettingsComposeFragment : Fragment() {
                                                 PreferencesHelper.setThemeMode(context, PreferencesHelper.THEME_SYSTEM)
                                                 PreferencesHelper.applyThemeMode(context)
                                             },
-                                            label = { Text("システム") },
+                                            label = { Text(stringResource(id = R.string.settings_theme_system)) },
                                             modifier = Modifier.weight(1f)
                                         )
                                         FilterChip(
@@ -600,7 +608,7 @@ class SettingsComposeFragment : Fragment() {
                                                 PreferencesHelper.setThemeMode(context, PreferencesHelper.THEME_LIGHT)
                                                 PreferencesHelper.applyThemeMode(context)
                                             },
-                                            label = { Text("ライト") },
+                                            label = { Text(stringResource(id = R.string.settings_theme_light)) },
                                             modifier = Modifier.weight(1f)
                                         )
                                         FilterChip(
@@ -610,7 +618,70 @@ class SettingsComposeFragment : Fragment() {
                                                 PreferencesHelper.setThemeMode(context, PreferencesHelper.THEME_DARK)
                                                 PreferencesHelper.applyThemeMode(context)
                                             },
-                                            label = { Text("ダーク") },
+                                            label = { Text(stringResource(id = R.string.settings_theme_dark)) },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+
+                                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+
+                                // i18n: 言語切替 (全般タブ内)。値は PreferencesHelper に保存し、
+                                //   実際のリソース選択は attachBaseContext で LocaleHelper.wrap() することで
+                                //   行う。切り替え直後に activity.recreate() して UI を再構築する。
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    val languageLabel = stringResource(
+                                        id = R.string.settings_language_current_format,
+                                        when (appLanguage) {
+                                            PreferencesHelper.LANG_JA -> stringResource(id = R.string.settings_language_japanese)
+                                            PreferencesHelper.LANG_EN -> stringResource(id = R.string.settings_language_english)
+                                            else -> stringResource(id = R.string.settings_language_system)
+                                        }
+                                    )
+                                    Text(
+                                        text = languageLabel,
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        FilterChip(
+                                            selected = appLanguage == PreferencesHelper.LANG_SYSTEM,
+                                            onClick = {
+                                                if (appLanguage != PreferencesHelper.LANG_SYSTEM) {
+                                                    appLanguage = PreferencesHelper.LANG_SYSTEM
+                                                    PreferencesHelper.setLanguage(context, PreferencesHelper.LANG_SYSTEM)
+                                                    activity?.recreate()
+                                                }
+                                            },
+                                            label = { Text(stringResource(id = R.string.settings_language_system)) },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        FilterChip(
+                                            selected = appLanguage == PreferencesHelper.LANG_JA,
+                                            onClick = {
+                                                if (appLanguage != PreferencesHelper.LANG_JA) {
+                                                    appLanguage = PreferencesHelper.LANG_JA
+                                                    PreferencesHelper.setLanguage(context, PreferencesHelper.LANG_JA)
+                                                    activity?.recreate()
+                                                }
+                                            },
+                                            label = { Text(stringResource(id = R.string.settings_language_japanese)) },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        FilterChip(
+                                            selected = appLanguage == PreferencesHelper.LANG_EN,
+                                            onClick = {
+                                                if (appLanguage != PreferencesHelper.LANG_EN) {
+                                                    appLanguage = PreferencesHelper.LANG_EN
+                                                    PreferencesHelper.setLanguage(context, PreferencesHelper.LANG_EN)
+                                                    activity?.recreate()
+                                                }
+                                            },
+                                            label = { Text(stringResource(id = R.string.settings_language_english)) },
                                             modifier = Modifier.weight(1f)
                                         )
                                     }
@@ -626,12 +697,12 @@ class SettingsComposeFragment : Fragment() {
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "アプリロックを常に有効化",
+                                            text = stringResource(id = R.string.settings_always_lock_title),
                                             color = colorResource(id = R.color.text_primary),
                                             style = MaterialTheme.typography.bodyMedium
                                         )
                                         Text(
-                                            text = "アプリ再開時に常に認証を求めます",
+                                            text = stringResource(id = R.string.settings_always_lock_desc),
                                             color = colorResource(id = R.color.text_secondary),
                                             style = MaterialTheme.typography.bodySmall
                                         )
@@ -661,12 +732,12 @@ class SettingsComposeFragment : Fragment() {
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "キーボードの学習を停止",
+                                            text = stringResource(id = R.string.settings_stop_kb_learning_title),
                                             color = colorResource(id = R.color.text_primary),
                                             style = MaterialTheme.typography.bodyMedium
                                         )
                                         Text(
-                                            text = "ネズミAIでの入力をキーボードに学習させないようにします",
+                                            text = stringResource(id = R.string.settings_stop_kb_learning_desc),
                                             color = colorResource(id = R.color.text_secondary),
                                             style = MaterialTheme.typography.bodySmall
                                         )
@@ -690,12 +761,12 @@ class SettingsComposeFragment : Fragment() {
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "コンテキストメーターを表示",
+                                            text = stringResource(id = R.string.settings_show_context_meter_title),
                                             color = colorResource(id = R.color.text_primary),
                                             style = MaterialTheme.typography.bodyMedium
                                         )
                                         Text(
-                                            text = "チャット画面上部のコンテキスト使用量バーを表示します",
+                                            text = stringResource(id = R.string.settings_show_context_meter_desc),
                                             color = colorResource(id = R.color.text_secondary),
                                             style = MaterialTheme.typography.bodySmall
                                         )
@@ -719,12 +790,12 @@ class SettingsComposeFragment : Fragment() {
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "トークン/秒 (t/s) を表示",
+                                            text = stringResource(id = R.string.settings_show_tps_title),
                                             color = colorResource(id = R.color.text_primary),
                                             style = MaterialTheme.typography.bodyMedium
                                         )
                                         Text(
-                                            text = "AI の回答にトークン/秒と生成時間を表示します",
+                                            text = stringResource(id = R.string.settings_show_tps_desc),
                                             color = colorResource(id = R.color.text_secondary),
                                             style = MaterialTheme.typography.bodySmall
                                         )
@@ -748,12 +819,12 @@ class SettingsComposeFragment : Fragment() {
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "TTFT (最初のトークンまでの時間) を表示",
+                                            text = stringResource(id = R.string.settings_show_ttft_title),
                                             color = colorResource(id = R.color.text_primary),
                                             style = MaterialTheme.typography.bodyMedium
                                         )
                                         Text(
-                                            text = "推論開始から最初のトークンが到達するまでの時間を表示します",
+                                            text = stringResource(id = R.string.settings_show_ttft_desc),
                                             color = colorResource(id = R.color.text_secondary),
                                             style = MaterialTheme.typography.bodySmall
                                         )
@@ -777,12 +848,12 @@ class SettingsComposeFragment : Fragment() {
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "スクリーンショットを無効化",
+                                            text = stringResource(id = R.string.settings_disable_screenshot_title),
                                             color = colorResource(id = R.color.text_primary),
                                             style = MaterialTheme.typography.bodyMedium
                                         )
                                         Text(
-                                            text = "アプリの画面キャプチャ・録画を禁止します (FLAG_SECURE)",
+                                            text = stringResource(id = R.string.settings_disable_screenshot_desc),
                                             color = colorResource(id = R.color.text_secondary),
                                             style = MaterialTheme.typography.bodySmall
                                         )
@@ -811,13 +882,13 @@ class SettingsComposeFragment : Fragment() {
 
                                 // シークレットモード設定
                                 Text(
-                                    text = "シークレットモード PIN",
+                                    text = stringResource(id = R.string.settings_secret_mode_title),
                                     color = colorResource(id = R.color.text_secondary),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = if (isSecretModeEnabled) "有効（PIN 設定済み）" else "無効",
+                                    text = if (isSecretModeEnabled) stringResource(id = R.string.settings_secret_mode_enabled) else stringResource(id = R.string.settings_secret_mode_disabled),
                                     color = if (isSecretModeEnabled) colorResource(id = R.color.success) else colorResource(id = R.color.text_secondary),
                                     style = MaterialTheme.typography.bodySmall
                                 )
@@ -829,7 +900,7 @@ class SettingsComposeFragment : Fragment() {
                                         onClick = { pinDialogVisible = true },
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        Text(text = if (hasSecretModePin) "PIN 変更" else "PIN 設定")
+                                        Text(text = if (hasSecretModePin) stringResource(id = R.string.settings_secret_pin_change) else stringResource(id = R.string.settings_secret_pin_set))
                                     }
                                     if (isSecretModeEnabled) {
                                         Button(
@@ -844,7 +915,7 @@ class SettingsComposeFragment : Fragment() {
                                             ),
                                             modifier = Modifier.weight(1f)
                                         ) {
-                                            Text(text = "リセット")
+                                            Text(text = stringResource(id = R.string.settings_secret_pin_reset))
                                         }
                                     }
                                 }
@@ -955,23 +1026,23 @@ class SettingsComposeFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = "Brave Search API", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Text(text = stringResource(id = R.string.settings_brave_card_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
                 Text(
-                    text = "Brave Search の API キーを設定します。ツール呼び出し時にこのキーが使用されます。",
+                    text = stringResource(id = R.string.settings_brave_card_desc),
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodySmall
                 )
                 OutlinedTextField(
                     value = braveSearchApiKeyInput,
                     onValueChange = { braveSearchApiKeyInput = it },
-                    label = { Text("APIキー") },
-                    placeholder = { Text("brave_api_key を入力") },
+                    label = { Text(stringResource(id = R.string.settings_brave_api_label)) },
+                    placeholder = { Text(stringResource(id = R.string.settings_brave_api_ph)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation()
                 )
                 Text(
-                    text = if (braveSearchApiKeyInput.isBlank()) "未設定の場合、ウェブ検索ツールは動作しません。" else "現在設定済みの API キーが保存されています。",
+                    text = if (braveSearchApiKeyInput.isBlank()) stringResource(id = R.string.settings_brave_unset_hint) else stringResource(id = R.string.settings_brave_set_hint),
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -988,9 +1059,9 @@ class SettingsComposeFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = "バックエンド", fontWeight = FontWeight.Bold)
+                Text(text = stringResource(id = R.string.settings_backend_card_title), fontWeight = FontWeight.Bold)
                 Text(
-                    text = "現在のバックエンド: $backendType",
+                    text = stringResource(id = R.string.settings_backend_current_format, backendType),
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -998,7 +1069,7 @@ class SettingsComposeFragment : Fragment() {
                     onClick = { versionDialogVisible = true },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("llama.cpp / LiteRT-LM バージョンを確認")
+                    Text(stringResource(id = R.string.settings_inference_check_engine_version))
                 }
             }
         }
@@ -1021,7 +1092,7 @@ class SettingsComposeFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = "推論パラメータ", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Text(text = stringResource(id = R.string.settings_inference_params_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
 
                 // コンテキストサイズと最大トークン数を2列グリッド
                 Row(
@@ -1031,7 +1102,7 @@ class SettingsComposeFragment : Fragment() {
                     OutlinedTextField(
                         value = contextWindowInput,
                         onValueChange = { contextWindowInput = it },
-                        label = { Text("コンテキストサイズ") },
+                        label = { Text(stringResource(id = R.string.settings_inference_context_size)) },
                         modifier = Modifier
                             .weight(1f)
                             .height(64.dp),
@@ -1040,7 +1111,7 @@ class SettingsComposeFragment : Fragment() {
                     OutlinedTextField(
                         value = maxTokensInput,
                         onValueChange = { maxTokensInput = it },
-                        label = { Text("最大トークン数") },
+                        label = { Text(stringResource(id = R.string.settings_inference_max_tokens)) },
                         modifier = Modifier
                             .weight(1f)
                             .height(64.dp),
@@ -1800,7 +1871,7 @@ class SettingsComposeFragment : Fragment() {
                     onClick = { versionDialogVisible = true },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("llama.cpp / LiteRT-LM バージョンを確認")
+                    Text(stringResource(id = R.string.settings_inference_check_engine_version))
                 }
                 HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
                 Row(
@@ -2020,8 +2091,8 @@ class SettingsComposeFragment : Fragment() {
         if (confirmDeleteAll) {
             AlertDialog(
                 onDismissRequest = { confirmDeleteAll = false },
-                title = { Text("メモリを全削除") },
-                text = { Text("保存済みメモリをすべて削除します。") },
+                title = { Text(stringResource(id = R.string.settings_memory_delete_all_title)) },
+                text = { Text(stringResource(id = R.string.settings_memory_delete_all_body)) },
                 confirmButton = {
                     Button(onClick = {
                         viewLifecycleOwner.lifecycleScope.launch {
@@ -2030,12 +2101,12 @@ class SettingsComposeFragment : Fragment() {
                             toast("メモリを削除しました")
                         }
                     }) {
-                        Text("削除")
+                        Text(stringResource(id = R.string.common_delete))
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { confirmDeleteAll = false }) {
-                        Text("キャンセル")
+                        Text(stringResource(id = R.string.common_cancel))
                     }
                 }
             )
@@ -2078,13 +2149,13 @@ class SettingsComposeFragment : Fragment() {
                             enabled = memories.isNotEmpty(),
                             onClick = { showMemoryListModal = true }
                         ) {
-                            Text("一覧表示")
+                            Text(stringResource(id = R.string.settings_memory_list_show))
                         }
                         TextButton(
                             enabled = memories.isNotEmpty(),
                             onClick = { confirmDeleteAll = true }
                         ) {
-                            Text("全削除")
+                            Text(stringResource(id = R.string.settings_memory_delete_all_button2))
                         }
                     }
                 }
@@ -2102,13 +2173,13 @@ class SettingsComposeFragment : Fragment() {
                     FilterChip(
                         selected = memorySaveMode == MemorySaveMode.LLM.name,
                         onClick = { memorySaveMode = MemorySaveMode.LLM.name },
-                        label = { Text("LLM抽出") },
+                        label = { Text(stringResource(id = R.string.settings_memory_mode_llm_label)) },
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
                         selected = memorySaveMode == MemorySaveMode.RULE_BASED.name,
                         onClick = { memorySaveMode = MemorySaveMode.RULE_BASED.name },
-                        label = { Text("ルールベース") },
+                        label = { Text(stringResource(id = R.string.settings_memory_mode_rule_label)) },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -2124,7 +2195,7 @@ class SettingsComposeFragment : Fragment() {
     ) {
         AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text("保存済みメモリ一覧") },
+            title = { Text(stringResource(id = R.string.settings_memory_list_title)) },
             text = {
                 LazyColumn(
                     modifier = Modifier
@@ -2151,7 +2222,7 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
                             TextButton(onClick = { onDeleteMemory(memory.id) }) {
-                                Text("削除")
+                                Text(stringResource(id = R.string.common_delete))
                             }
                         }
                         HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.14f), thickness = 1.dp)
@@ -2160,7 +2231,7 @@ class SettingsComposeFragment : Fragment() {
             },
             confirmButton = {
                 TextButton(onClick = onDismiss) {
-                    Text("閉じる")
+                    Text(stringResource(id = R.string.common_close))
                 }
             }
         )
@@ -2233,8 +2304,8 @@ class SettingsComposeFragment : Fragment() {
                 OutlinedTextField(
                     value = debugTextAInput,
                     onValueChange = { debugTextAInput = it },
-                    label = { Text("テキストA") },
-                    placeholder = { Text("犬") },
+                    label = { Text(stringResource(id = R.string.settings_debug_text_a)) },
+                    placeholder = { Text(stringResource(id = R.string.settings_debug_text_a_ph)) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 64.dp),
@@ -2243,8 +2314,8 @@ class SettingsComposeFragment : Fragment() {
                 OutlinedTextField(
                     value = debugTextBInput,
                     onValueChange = { debugTextBInput = it },
-                    label = { Text("テキストB") },
-                    placeholder = { Text("猫") },
+                    label = { Text(stringResource(id = R.string.settings_debug_text_b)) },
+                    placeholder = { Text(stringResource(id = R.string.settings_debug_text_b_ph)) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 64.dp),
@@ -2289,7 +2360,7 @@ class SettingsComposeFragment : Fragment() {
                             }
                         }
                     }) {
-                        Text("モデルで計算する")
+                        Text(stringResource(id = R.string.settings_debug_compute_button))
                     }
                     Button(onClick = {
                         debugTextAInput = ""
@@ -2297,7 +2368,7 @@ class SettingsComposeFragment : Fragment() {
                         debugTextSimilarityResult = null
                         errorDialogMessage = null
                     }) {
-                        Text("クリア")
+                        Text(stringResource(id = R.string.common_clear))
                     }
                 }
 
@@ -2331,7 +2402,7 @@ class SettingsComposeFragment : Fragment() {
                         nsfwDebugSafeProb = null
                         nsfwDebugNsfwProb = null
                     }, enabled = !nsfwDebugRunning) {
-                        Text("クリア")
+                        Text(stringResource(id = R.string.common_clear))
                     }
                 }
                 nsfwDebugStatus?.let {
@@ -2385,7 +2456,7 @@ class SettingsComposeFragment : Fragment() {
                 Button(onClick = {
                     modelErrorDialogMessage = "モデルのロードに失敗しました。デバッグ用モーダルを表示しています。"
                 }) {
-                    Text("モデルエラーを表示")
+                    Text(stringResource(id = R.string.settings_debug_model_error_button))
                 }
 
                 // ---- logcat ビューア（常時バックグラウンド収集分を閲覧） ----
@@ -2448,7 +2519,7 @@ class SettingsComposeFragment : Fragment() {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Button(onClick = { refreshLogcatViewer() }) {
-                Text("再読み込み")
+                Text(stringResource(id = R.string.settings_debug_reload_button))
             }
             Button(onClick = { logcatViewerAutoRefresh = !logcatViewerAutoRefresh }) {
                 Text(if (logcatViewerAutoRefresh) "自動更新: ON" else "自動更新: OFF")
@@ -2463,7 +2534,7 @@ class SettingsComposeFragment : Fragment() {
                 clipboardManager.setText(AnnotatedString(logcatViewerText))
                 Toast.makeText(localContext, "ログをコピーしました", Toast.LENGTH_SHORT).show()
             }) {
-                Text("コピー")
+                Text(stringResource(id = R.string.settings_debug_copy_button))
             }
             Button(onClick = {
                 // 蓄積ログを1ファイルにマージして cacheDir へ書き出し、
@@ -2485,13 +2556,13 @@ class SettingsComposeFragment : Fragment() {
                     Toast.makeText(localContext, "書き出しに失敗しました: ${it.message}", Toast.LENGTH_SHORT).show()
                 }
             }) {
-                Text("書き出し")
+                Text(stringResource(id = R.string.settings_debug_export_button))
             }
             Button(onClick = {
                 LogcatRecorder.clearAll(localContext)
                 refreshLogcatViewer()
             }) {
-                Text("ログを消去")
+                Text(stringResource(id = R.string.settings_debug_clear_log_button))
             }
         }
 
@@ -2597,7 +2668,7 @@ class SettingsComposeFragment : Fragment() {
                     FilterChip(
                         selected = chatHistoryLimit == -1,
                         onClick = { chatHistoryLimit = -1 },
-                        label = { Text("無制限") },
+                        label = { Text(stringResource(id = R.string.settings_chat_history_unlimited_label)) },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -2762,7 +2833,7 @@ class SettingsComposeFragment : Fragment() {
     private fun VersionInfoDialog(onDismiss: () -> Unit) {
         AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text("推論エンジンのバージョン") },
+            title = { Text(stringResource(id = R.string.settings_engine_version_title)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("LiteRT-LM: ${BuildConfig.LITERTLM_VERSION}")
@@ -2776,7 +2847,7 @@ class SettingsComposeFragment : Fragment() {
             },
             confirmButton = {
                 Button(onClick = onDismiss) {
-                    Text("閉じる")
+                    Text(stringResource(id = R.string.common_close))
                 }
             }
         )
@@ -2789,7 +2860,7 @@ class SettingsComposeFragment : Fragment() {
     ) {
         AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text("このアプリについて") },
+            title = { Text(stringResource(id = R.string.settings_about_dialog_title)) },
             text = {
                 Column(
                     modifier = Modifier
@@ -2854,12 +2925,12 @@ class SettingsComposeFragment : Fragment() {
             },
             dismissButton = {
                 TextButton(onClick = onOpenLicenses) {
-                    Text("ライセンス")
+                    Text(stringResource(id = R.string.settings_about_license_link))
                 }
             },
             confirmButton = {
                 Button(onClick = onDismiss) {
-                    Text("閉じる")
+                    Text(stringResource(id = R.string.common_close))
                 }
             }
         )
@@ -3080,7 +3151,7 @@ class SettingsComposeFragment : Fragment() {
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         TextButton(onClick = onDismiss) {
-                            Text("キャンセル")
+                            Text(stringResource(id = R.string.common_cancel))
                         }
 
                         Button(
@@ -3088,7 +3159,7 @@ class SettingsComposeFragment : Fragment() {
                             enabled = pinInput.length == 4,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("次へ")
+                            Text(stringResource(id = R.string.common_next))
                         }
                     }
                 }
@@ -3145,7 +3216,7 @@ class SettingsComposeFragment : Fragment() {
                                 }
                             }
                         },
-                        label = { Text("確認用 PIN") },
+                        label = { Text(stringResource(id = R.string.settings_pin_confirm_label2)) },
                         placeholder = { Text("****") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
@@ -3174,14 +3245,14 @@ class SettingsComposeFragment : Fragment() {
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         TextButton(onClick = onDismiss) {
-                            Text("キャンセル")
+                            Text(stringResource(id = R.string.common_cancel))
                         }
 
                         Button(
                             onClick = onMismatch,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("やり直し")
+                            Text(stringResource(id = R.string.common_retry))
                         }
                     }
                 }

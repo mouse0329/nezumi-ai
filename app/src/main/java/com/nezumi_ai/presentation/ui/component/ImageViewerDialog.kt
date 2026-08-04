@@ -18,6 +18,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import androidx.core.view.setPadding
 import com.nezumi_ai.R
 import com.nezumi_ai.data.media.MessageMediaStore
@@ -45,8 +46,23 @@ object ImageViewerDialog {
             }
         }
 
+        // バグ修正 (ライトモード対応):
+        //   以前は背景を rgb(6,9,14) の暗色にハードコードしていたため、
+        //   ライトモードでも背景は黒、一方でテキストを他の部分で
+        //   テーマ依存にしてしまうと背景 (白) とテキスト (白) が共に
+        //   白くなり見えなくなるケースがあった。
+        //   values / values-night の viewer_* リソースを使って
+        //   背景と前景をセットで切り替えることで、
+        //   ライトモードでは白背景＋黒文字、ダークモードでは
+        //   従来の紺背景＋白文字に自動切り替わる。
+        val viewerBg = ContextCompat.getColor(context, R.color.viewer_bg)
+        val viewerBarBg = ContextCompat.getColor(context, R.color.viewer_bar_bg)
+        val viewerTextPrimary = ContextCompat.getColor(context, R.color.viewer_text_primary)
+        val viewerActionBg = ContextCompat.getColor(context, R.color.viewer_action_bg)
+        val viewerActionText = ContextCompat.getColor(context, R.color.viewer_action_text)
+
         val root = FrameLayout(context).apply {
-            setBackgroundColor(Color.rgb(6, 9, 14))
+            setBackgroundColor(viewerBg)
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -69,7 +85,7 @@ object ImageViewerDialog {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(context, 16), dp(context, 24), dp(context, 16), dp(context, 10))
-            background = ColorDrawable(Color.argb(210, 12, 16, 24))
+            background = ColorDrawable(viewerBarBg)
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(context, 84),
@@ -78,29 +94,29 @@ object ImageViewerDialog {
         }
         topBar.addView(
             TextView(context).apply {
-                text = "画像プレビュー"
-                setTextColor(Color.WHITE)
+                text = context.getString(R.string.viewer_image_preview_title)
+                setTextColor(viewerTextPrimary)
                 textSize = 16f
                 typeface = android.graphics.Typeface.DEFAULT_BOLD
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             }
         )
-        topBar.addView(actionText(context, "閉じる") { dialog.dismiss() })
+        topBar.addView(actionText(context, context.getString(R.string.viewer_close), viewerActionText) { dialog.dismiss() })
         root.addView(topBar)
 
         val bottomBar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(dp(context, 14), dp(context, 12), dp(context, 14), dp(context, 16))
-            background = ColorDrawable(Color.argb(220, 12, 16, 24))
+            background = ColorDrawable(viewerBarBg)
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(context, 84),
                 Gravity.BOTTOM
             )
         }
-        bottomBar.addView(actionButton(context, "共有") { share(context, uri) })
-        bottomBar.addView(actionButton(context, "フォルダ保存") { saveToPictures(context, uri) })
+        bottomBar.addView(actionButton(context, context.getString(R.string.viewer_share), viewerActionText, viewerActionBg) { share(context, uri) })
+        bottomBar.addView(actionButton(context, context.getString(R.string.viewer_save_to_folder), viewerActionText, viewerActionBg) { saveToPictures(context, uri) })
         root.addView(bottomBar)
 
         dialog.setContentView(root)
@@ -109,19 +125,25 @@ object ImageViewerDialog {
         dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
     }
 
-    private fun actionButton(context: Context, label: String, onClick: () -> Unit): TextView =
-        actionText(context, label, onClick).apply {
+    private fun actionButton(
+        context: Context,
+        label: String,
+        textColor: Int,
+        bgColor: Int,
+        onClick: () -> Unit
+    ): TextView =
+        actionText(context, label, textColor, onClick).apply {
             gravity = Gravity.CENTER
-            background = roundedBackground(Color.argb(235, 32, 38, 48), dp(context, 14).toFloat())
+            background = roundedBackground(bgColor, dp(context, 14).toFloat())
             layoutParams = LinearLayout.LayoutParams(0, dp(context, 48), 1f).apply {
                 setMargins(dp(context, 6), 0, dp(context, 6), 0)
             }
         }
 
-    private fun actionText(context: Context, label: String, onClick: () -> Unit): TextView =
+    private fun actionText(context: Context, label: String, textColor: Int, onClick: () -> Unit): TextView =
         TextView(context).apply {
             text = label
-            setTextColor(Color.rgb(91, 192, 255))
+            setTextColor(textColor)
             textSize = 15f
             setPadding(dp(context, 14))
             isClickable = true
@@ -159,9 +181,9 @@ object ImageViewerDialog {
                 @Suppress("DEPRECATION")
                 MediaStore.Images.Media.insertImage(context.contentResolver, bitmap, name, "nezumi-ai")
             }
-            Toast.makeText(context, "フォルダに保存しました", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.viewer_saved_toast), Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            Toast.makeText(context, "保存に失敗しました", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.viewer_save_failed_toast), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -171,7 +193,7 @@ object ImageViewerDialog {
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(share, "共有"))
+        context.startActivity(Intent.createChooser(share, context.getString(R.string.viewer_share_chooser_title)))
     }
 
     private fun openInputStream(context: Context, uri: Uri): InputStream? {

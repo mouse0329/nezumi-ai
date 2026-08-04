@@ -22,7 +22,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.nezumi_ai.R
 import androidx.compose.ui.viewinterop.AndroidView
 import android.widget.EditText
 import android.view.inputmethod.EditorInfo
@@ -43,6 +47,50 @@ import com.nezumi_ai.sd.GenerationQueueItem
 import com.nezumi_ai.sd.ImageGenerationMetadata
 import com.nezumi_ai.sd.SdScheduler
 
+/**
+ * バグ修正 (ライトモード対応):
+ *   当初 `isSystemInDarkTheme()` で dark 判定していたが、
+ *   これは OS レベルのシステムテーマしか見ないため、
+ *   `AppCompatDelegate.setDefaultNightMode(MODE_NIGHT_NO)` で
+ *   アプリ内テーマだけライトに切り替えているケースでも
+ *   dark = true のままになり、画像ビュワーの overlay が黒いままになっていた。
+ *   Activity の実効テーマを `Configuration.UI_MODE_NIGHT_MASK` で見ることで、
+ *   アプリ内テーマ切替にも正しく追従するようにする。
+ */
+@Composable
+private fun isAppInDarkMode(): Boolean {
+    val config = LocalConfiguration.current
+    val night = config.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
+    return night == android.content.res.Configuration.UI_MODE_NIGHT_YES
+}
+
+/**
+ * バグ修正 (ライトモード対応):
+ *   当初 ImageGenScreen 内の各色 (カード背景、入力欄背景、ラベル色 …) を
+ *   0xFF1A1A1A / 0xFF2A2A2A / 0xFF999999 などの暗色にハードコードしていたため、
+ *   ライトモードにしても Generate / Library タブのカード背景が
+ *   黒いままになっていた。ImageViewer だけでなく下層のカードも刅さないと
+ *   ユーザーの見え方上、ビューワーの背景だけ白くなるアンバランスな
+ *   パレットになってしまうので、全体をテーマ連動に切り替える。
+ *
+ *   [darkColor] をライトモードでの代替色に変換する写像。
+ */
+private fun mapDarkToLight(darkColor: Color): Color = when (darkColor) {
+    Color(0xFF121212) -> Color(0xFFF5F6F8)   // ルート背景
+    Color(0xFF1E1E1E) -> Color(0xFFF0F1F4)   // タブヘッダー背景
+    Color(0xFF1A1A1A) -> Color(0xFFE5E7EB)   // カード背景 (深め)
+    Color(0xFF2A2A2A) -> Color(0xFFF3F4F6)   // カード背景 (一般) / 入力欄
+    Color(0xFF333333) -> Color(0xFFD1D5DB)   // divider
+    Color(0xFF444444) -> Color(0xFFCBD1DA)   // border / 未選択 track
+    Color(0xFF666666) -> Color(0xFF4B5563)   // 不活性テキスト / secondary
+    Color(0xFF999999) -> Color(0xFF4B5563)   // プレースホルダー / ラベル
+    Color(0xFFEEEEEE) -> Color(0xFF111827)   // 本文
+    else -> darkColor
+}
+
+@Composable
+private fun themed(darkColor: Color): Color =
+    if (isAppInDarkMode()) darkColor else mapDarkToLight(darkColor)
 data class GeneratedImage(val bitmap: Bitmap, val prompt: String, val timestamp: Long)
 
 @Composable
@@ -66,7 +114,7 @@ fun ImageGenScreen() {
         }
     }
     
-    Column(Modifier.fillMaxSize().background(Color(0xFF121212))) {
+    Column(Modifier.fillMaxSize().background(themed(Color(0xFF121212)))) {
         TabHeader(selectedTab) { selectedTab = it }
         
         when (selectedTab) {
@@ -82,16 +130,24 @@ fun ImageGenScreen() {
 
 @Composable
 fun TabHeader(selected: Int, onSelect: (Int) -> Unit) {
+    // バグ修正 (ライトモード対応):
+    //   タブヘッダーも背景を 0xFF1E1E1E の暗色に固定していたため、
+    //   ライトモードでもヘッダーだけ黒い額縁のようになっていた。
+    //   アプリ内テーマにあわせて背景/未選択タブの文字色を切り替える。
+    val dark = isAppInDarkMode()
+    val headerBg = if (dark) Color(0xFF1E1E1E) else Color(0xFFF5F6F8)
+    val dividerColor = if (dark) Color(0xFF333333) else Color(0xFFD1D5DB)
+    val inactiveText = if (dark) Color(0xFF999999) else Color(0xFF4B5563)
     Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().background(Color(0xFF1E1E1E))) {
+        Row(Modifier.fillMaxWidth().background(headerBg)) {
             Box(
                 Modifier.weight(1f).clickable { onSelect(0) }
                     .padding(vertical = 15.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    "生成",
-                    color = if (selected == 0) Color(0xFF0084FF) else Color(0xFF999999),
+                    stringResource(id = R.string.image_gen_tab_generate),
+                    color = if (selected == 0) Color(0xFF0084FF) else inactiveText,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
                 )
@@ -102,14 +158,14 @@ fun TabHeader(selected: Int, onSelect: (Int) -> Unit) {
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    "ライブラリ",
-                    color = if (selected == 1) Color(0xFF0084FF) else Color(0xFF999999),
+                    stringResource(id = R.string.image_gen_tab_library),
+                    color = if (selected == 1) Color(0xFF0084FF) else inactiveText,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
                 )
             }
         }
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF333333)))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(dividerColor))
         Row(Modifier.fillMaxWidth().height(3.dp)) {
             if (selected == 0) {
                 Box(Modifier.width(100.dp).height(3.dp).background(Color(0xFF0084FF)))
@@ -132,7 +188,7 @@ fun TabButton(text: String, active: Boolean, modifier: Modifier = Modifier, onCl
     ) {
         Text(
             text,
-            color = if (active) Color(0xFF0084FF) else Color(0xFF999999),
+            color = if (active) Color(0xFF0084FF) else themed(Color(0xFF999999)),
             fontWeight = FontWeight.Bold,
             fontSize = 14.sp
         )
@@ -164,22 +220,24 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             if (models.isNotEmpty()) {
                 Box(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF2A2A2A)).padding(10.dp)
+                        .background(themed(Color(0xFF2A2A2A))).padding(10.dp)
                 ) {
                     Text(
                         models.getOrNull(selectedIdx)?.substringAfterLast("/") ?: "未選択",
-                        color = Color.White,
+                        // バグ修正 (ライトモード対応):
+                        //   背景と セットでテーマ連動させないと白背景に白文字で同化する。
+                        color = themed(Color(0xFFEEEEEE)),
                         fontSize = 14.sp
                     )
                 }
                 Text(
  "$backendInfo",
-                    color = Color(0xFF999999),
+                    color = themed(Color(0xFF999999)),
                     fontSize = 11.sp,
                     modifier = Modifier.padding(top = 4.dp)
                 )
             } else {
-                Text("モデルが見つかりません", color = Color(0xFF999999), fontSize = 14.sp)
+                Text("モデルが見つかりません", color = themed(Color(0xFF999999)), fontSize = 14.sp)
             }
         }
         
@@ -187,7 +245,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             val isStopKeyboardLearning = remember { com.nezumi_ai.utils.PreferencesHelper.isStopKeyboardLearningEnabled(context) }
             if (isStopKeyboardLearning) {
                 AndroidView(
-                    modifier = Modifier.fillMaxWidth().height(80.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF2A2A2A)).border(1.dp, Color(0xFF444444), RoundedCornerShape(8.dp)).padding(8.dp),
+                    modifier = Modifier.fillMaxWidth().height(80.dp).clip(RoundedCornerShape(8.dp)).background(themed(Color(0xFF2A2A2A))).border(1.dp, themed(Color(0xFF444444)), RoundedCornerShape(8.dp)).padding(8.dp),
                     factory = { context ->
                         EditText(context).apply {
                             setTextColor(android.graphics.Color.WHITE)
@@ -216,12 +274,12 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                     onValueChange = vm::setPrompt,
                     modifier = Modifier.fillMaxWidth().height(80.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedContainerColor = Color(0xFF2A2A2A),
-                        unfocusedContainerColor = Color(0xFF2A2A2A),
+                        focusedTextColor = themed(Color(0xFFEEEEEE)),
+                        unfocusedTextColor = themed(Color(0xFFEEEEEE)),
+                        focusedContainerColor = themed(Color(0xFF2A2A2A)),
+                        unfocusedContainerColor = themed(Color(0xFF2A2A2A)),
                         focusedBorderColor = Color(0xFF0084FF),
-                        unfocusedBorderColor = Color(0xFF444444)
+                        unfocusedBorderColor = themed(Color(0xFF444444))
                     ),
                     shape = RoundedCornerShape(8.dp)
                 )
@@ -240,7 +298,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             val isStopKeyboardLearning = remember { com.nezumi_ai.utils.PreferencesHelper.isStopKeyboardLearningEnabled(context) }
             if (isStopKeyboardLearning) {
                 AndroidView(
-                    modifier = Modifier.fillMaxWidth().height(80.dp).padding(bottom = 15.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF2A2A2A)).border(1.dp, Color(0xFF444444), RoundedCornerShape(8.dp)).padding(8.dp),
+                    modifier = Modifier.fillMaxWidth().height(80.dp).padding(bottom = 15.dp).clip(RoundedCornerShape(8.dp)).background(themed(Color(0xFF2A2A2A))).border(1.dp, themed(Color(0xFF444444)), RoundedCornerShape(8.dp)).padding(8.dp),
                     factory = { context ->
                         EditText(context).apply {
                             setHint("low quality, blurry...")
@@ -268,15 +326,15 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                 OutlinedTextField(
                     value = negPrompt,
                     onValueChange = vm::setNegativePrompt,
-                    placeholder = { Text("low quality, blurry...", color = Color(0xFF666666)) },
+                    placeholder = { Text("low quality, blurry...", color = themed(Color(0xFF666666))) },
                     modifier = Modifier.fillMaxWidth().height(80.dp).padding(bottom = 15.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedContainerColor = Color(0xFF2A2A2A),
-                        unfocusedContainerColor = Color(0xFF2A2A2A),
+                        focusedTextColor = themed(Color(0xFFEEEEEE)),
+                        unfocusedTextColor = themed(Color(0xFFEEEEEE)),
+                        focusedContainerColor = themed(Color(0xFF2A2A2A)),
+                        unfocusedContainerColor = themed(Color(0xFF2A2A2A)),
                         focusedBorderColor = Color(0xFF0084FF),
-                        unfocusedBorderColor = Color(0xFF444444)
+                        unfocusedBorderColor = themed(Color(0xFF444444))
                     ),
                     shape = RoundedCornerShape(8.dp)
                 )
@@ -292,14 +350,14 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
 
             Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF2A2A2A)).padding(12.dp)
+                    .background(themed(Color(0xFF2A2A2A))).padding(12.dp)
             ) {
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("生成サイズ", color = Color(0xFF999999), fontSize = 12.sp)
+                    Text("生成サイズ", color = themed(Color(0xFF999999)), fontSize = 12.sp)
                     Text(
                         "${sizePx}x$sizePx",
                         color = Color(0xFF0084FF),
@@ -320,9 +378,9 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                     colors = SliderDefaults.colors(
                         thumbColor = Color(0xFF0084FF),
                         activeTrackColor = Color(0xFF0084FF),
-                        inactiveTrackColor = Color(0xFF444444),
-                        activeTickColor = Color.White,
-                        inactiveTickColor = Color(0xFF666666)
+                        inactiveTrackColor = themed(Color(0xFF444444)),
+                        activeTickColor = themed(Color(0xFFEEEEEE)),
+                        inactiveTickColor = themed(Color(0xFF666666))
                     )
                 )
 
@@ -331,7 +389,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     sizeOptions.forEach { size ->
-                        Text(size.toString(), color = Color(0xFF999999), fontSize = 11.sp)
+                        Text(size.toString(), color = themed(Color(0xFF999999)), fontSize = 11.sp)
                     }
                 }
             }
@@ -341,7 +399,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             val schedulerOptions = remember { SdScheduler.values().toList() }
             Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF2A2A2A)).padding(12.dp),
+                    .background(themed(Color(0xFF2A2A2A))).padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 schedulerOptions.chunked(2).forEach { rowOptions ->
@@ -373,7 +431,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             val selectedBackend by vm.selectedBackend.collectAsState()
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF2A2A2A)).padding(8.dp),
+                    .background(themed(Color(0xFF2A2A2A))).padding(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 listOf("mnn" to "CPU (MNN)", "opencl" to "GPU (OpenCL)").forEach { (key, label) ->
@@ -384,7 +442,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             }
             Text(
                 "※ GPU (OpenCL) は対応端末と *_opencl モデルでのみ動作します。",
-                color = Color(0xFF999999),
+                color = themed(Color(0xFF999999)),
                 fontSize = 11.sp,
                 modifier = Modifier.padding(top = 4.dp)
             )
@@ -409,22 +467,22 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                         }
                     },
                     singleLine = true,
-                    placeholder = { Text("空欄でランダム", color = Color(0xFF666666)) },
+                    placeholder = { Text("空欄でランダム", color = themed(Color(0xFF666666))) },
                     modifier = Modifier.weight(1f),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedContainerColor = Color(0xFF2A2A2A),
-                        unfocusedContainerColor = Color(0xFF2A2A2A),
+                        focusedTextColor = themed(Color(0xFFEEEEEE)),
+                        unfocusedTextColor = themed(Color(0xFFEEEEEE)),
+                        focusedContainerColor = themed(Color(0xFF2A2A2A)),
+                        unfocusedContainerColor = themed(Color(0xFF2A2A2A)),
                         focusedBorderColor = Color(0xFF0084FF),
-                        unfocusedBorderColor = Color(0xFF444444)
+                        unfocusedBorderColor = themed(Color(0xFF444444))
                     ),
                     shape = RoundedCornerShape(8.dp)
                 )
                 Button(
                     onClick = { vm.setSeed(-1L) },
                     modifier = Modifier.height(56.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF666666)),
+                    colors = ButtonDefaults.buttonColors(containerColor = themed(Color(0xFF666666))),
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text("ランダム", fontSize = 12.sp)
@@ -432,7 +490,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             }
             Text(
                 if (seed < 0) "現在: ランダム" else "現在: $seed",
-                color = Color(0xFF999999),
+                color = themed(Color(0xFF999999)),
                 fontSize = 11.sp,
                 modifier = Modifier.padding(top = 6.dp)
             )
@@ -450,7 +508,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
         var showQueueDialog by remember { mutableStateOf(false) }
         var batchCount by remember { mutableStateOf(1) }
         
-        Divider(color = Color(0xFF333333), modifier = Modifier.padding(vertical = 16.dp))
+        Divider(color = themed(Color(0xFF333333)), modifier = Modifier.padding(vertical = 16.dp))
         
         Text(
             "一括生成",
@@ -462,23 +520,24 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
         
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                .background(Color(0xFF2A2A2A)).padding(8.dp),
+                .background(themed(Color(0xFF2A2A2A))).padding(8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("生成数:", color = Color(0xFF999999), fontSize = 12.sp)
+            Text("生成数:", color = themed(Color(0xFF999999)), fontSize = 12.sp)
             
             for (count in 1..10) {
                 Box(
                     Modifier.weight(1f).clip(RoundedCornerShape(6.dp))
-                        .background(if (batchCount == count) Color(0xFF0084FF) else Color(0xFF1A1A1A))
+                        .background(if (batchCount == count) Color(0xFF0084FF) else themed(Color(0xFF1A1A1A)))
                         .clickable { batchCount = count }
                         .padding(6.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         count.toString(),
-                        color = if (batchCount == count) Color.White else Color(0xFF666666),
+                        // バグ修正: アクティブ時の背景は青なので白のままで OK。非アクティブをテーマ連動。
+                        color = if (batchCount == count) Color.White else themed(Color(0xFF666666)),
                         fontSize = 11.sp,
                         fontWeight = if (batchCount == count) FontWeight.Bold else FontWeight.Normal
                     )
@@ -506,7 +565,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                 },
                 modifier = Modifier.weight(1f).height(40.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isQueueRunning) Color(0xFF666666) else Color(0xFF00CC00)
+                    containerColor = if (isQueueRunning) themed(Color(0xFF666666)) else Color(0xFF00CC00)
                 ),
                 shape = RoundedCornerShape(8.dp)
             ) {
@@ -518,7 +577,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             Box(
                 Modifier.fillMaxWidth().padding(top = 12.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF1A1A1A))
+                    .background(themed(Color(0xFF1A1A1A)))
                     .padding(10.dp)
             ) {
                 Column {
@@ -542,7 +601,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             Button(
                 onClick = { vm.clearQueue() },
                 modifier = Modifier.padding(top = 8.dp).height(32.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF666666)),
+                colors = ButtonDefaults.buttonColors(containerColor = themed(Color(0xFF666666))),
                 shape = RoundedCornerShape(8.dp)
             ) {
                 Text("クリア", fontSize = 11.sp)
@@ -553,11 +612,11 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
         if (showQueueDialog) {
             AlertDialog(
                 onDismissRequest = { showQueueDialog = false },
-                title = { Text("キューに追加", color = Color.White) },
+                title = { Text("キューに追加", color = themed(Color(0xFFEEEEEE))) },
                 text = {
                     Text(
                         "$batchCount 個の画像を生成キューに追加しますか？",
-                        color = Color(0xFF999999)
+                        color = themed(Color(0xFF999999))
                     )
                 },
                 confirmButton = {
@@ -575,12 +634,12 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                 dismissButton = {
                     Button(
                         onClick = { showQueueDialog = false },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF666666))
+                        colors = ButtonDefaults.buttonColors(containerColor = themed(Color(0xFF666666)))
                     ) {
                         Text("キャンセル")
                     }
                 },
-                containerColor = Color(0xFF2A2A2A)
+                containerColor = themed(Color(0xFF2A2A2A))
             )
         }
         // ==========================================
@@ -589,7 +648,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             onClick = { if (loading) vm.cancel() else vm.generate() },
             modifier = Modifier.padding(vertical = 20.dp).width(120.dp).height(40.dp),
             colors = ButtonDefaults.buttonColors(
-                containerColor = if (loading) Color(0xFF666666) else Color(0xFF0084FF)
+                containerColor = if (loading) themed(Color(0xFF666666)) else Color(0xFF0084FF)
             ),
             shape = RoundedCornerShape(25.dp)
         ) {
@@ -608,7 +667,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             )
             Text(
                 "Step $currentStep / $steps",
-                color = Color(0xFF999999),
+                color = themed(Color(0xFF999999)),
                 fontSize = 12.sp
             )
         }
@@ -653,7 +712,7 @@ fun FieldGroup(label: String, content: @Composable () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(bottom = 20.dp)) {
         Text(
             label,
-            color = Color(0xFF999999),
+            color = themed(Color(0xFF999999)),
             fontSize = 13.sp,
             modifier = Modifier.padding(bottom = 8.dp)
         )
@@ -672,7 +731,8 @@ fun RowScope.SizeTab(text: String, active: Boolean, onClick: () -> Unit) {
     ) {
         Text(
             text,
-            color = if (active) Color.White else Color(0xFF999999),
+            // アクティブ時は青の背景なので白固定。非アクティブはテーマ連動。
+            color = if (active) Color.White else themed(Color(0xFF999999)),
             fontSize = 13.sp,
             fontWeight = if (active) FontWeight.Bold else FontWeight.Normal
         )
@@ -683,14 +743,14 @@ fun RowScope.SizeTab(text: String, active: Boolean, onClick: () -> Unit) {
 fun RowScope.SchedulerChip(text: String, active: Boolean, onClick: () -> Unit) {
     Box(
         Modifier.weight(1f).clip(RoundedCornerShape(7.dp))
-            .background(if (active) Color(0xFF0084FF) else Color(0xFF1A1A1A))
+            .background(if (active) Color(0xFF0084FF) else themed(Color(0xFF1A1A1A)))
             .clickable(onClick = onClick)
             .padding(vertical = 10.dp, horizontal = 8.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text,
-            color = if (active) Color.White else Color(0xFF999999),
+            color = if (active) Color.White else themed(Color(0xFF999999)),
             fontSize = 12.sp,
             fontWeight = if (active) FontWeight.Bold else FontWeight.Normal
         )
@@ -727,7 +787,7 @@ fun LibraryTab(library: List<GeneratedImage>, onImageClick: (GeneratedImage) -> 
 fun LibraryCard(img: GeneratedImage, onClick: (GeneratedImage) -> Unit) {
     Column(
         Modifier.clip(RoundedCornerShape(10.dp))
-            .background(Color(0xFF1E1E1E))
+            .background(themed(Color(0xFF1E1E1E)))
             .clickable { onClick(img) }
     ) {
         androidx.compose.foundation.Image(
@@ -738,7 +798,10 @@ fun LibraryCard(img: GeneratedImage, onClick: (GeneratedImage) -> Unit) {
         )
         Text(
             img.prompt,
-            color = Color(0xFF999999),
+            // バグ修正 (ライトモード対応):
+            //   ライブラリのカード背景をテーマ連動させたのに合わせて、
+            //   キャプションも secondary テキスト色にマッピングする。
+            color = themed(Color(0xFF999999)),
             fontSize = 11.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -751,9 +814,20 @@ fun LibraryCard(img: GeneratedImage, onClick: (GeneratedImage) -> Unit) {
 fun ImageViewer(img: GeneratedImage, vm: ImageGenViewModel, onClose: () -> Unit) {
     val context = LocalContext.current
 
- // バグ修正: ライトモードでは背景と Text の色が同化して見えなくなっていた。
-    //   本ビューワーは黒背景の上に画像を見せる目的なので、テーマに依存せずとコントラストの高い白系に固定する。
-    val onDarkText = Color(0xFFEEEEEE)
+    // バグ修正 (ライトモード対応):
+    //   以前は背景を常に半透明黒 (0xF2000000)、テキストを常に白系に
+    //   固定していたため、ライトモードでも画像ビュワーの背景が真っ黒に
+    //   なっていた。さらに `isSystemInDarkTheme()` だけでは
+    //   AppCompatDelegate でアプリ内テーマだけ切り替えているケースを見逃して
+    //   いたので、Activity の実効テーマを見る `isAppInDarkMode()` を使う。
+    //   テーマに応じて背景と前景のパレットを切り替える:
+    //     - ライト: 白背景 (半透明白) + 黒テキスト
+    //     - ダーク: 従来の黒背景 + 白テキスト
+    val dark = isAppInDarkMode()
+    val overlayColor = if (dark) Color(0xF2000000) else Color(0xF2FFFFFF)
+    val onOverlayText = if (dark) Color(0xFFEEEEEE) else Color(0xFF111827)
+    val closeButtonBg = if (dark) themed(Color(0xFF444444)) else Color(0xFFE5E7EB)
+    val closeButtonText = if (dark) Color.White else Color(0xFF111827)
 
     Dialog(
         onDismissRequest = onClose,
@@ -800,7 +874,7 @@ fun ImageViewer(img: GeneratedImage, vm: ImageGenViewModel, onClose: () -> Unit)
         }
 
         Box(
-            Modifier.fillMaxSize().background(Color(0xF2000000)).clickable { onClose() }
+            Modifier.fillMaxSize().background(overlayColor).clickable { onClose() }
                 .padding(20.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -816,10 +890,10 @@ fun ImageViewer(img: GeneratedImage, vm: ImageGenViewModel, onClose: () -> Unit)
                 )
 
                 Text(
-                    "Prompt:\n${img.prompt}",
- // ライトモードでも 黒背景の上にテキストが見えるよう、
-                    //   テーマ依存しない固定の白系色を使う。
-                    color = onDarkText,
+                    "${stringResource(id = R.string.viewer_prompt_prefix)}\n${img.prompt}",
+                    // バグ修正: overlay の背景色に応じて適切なコントラストを保つ。
+                    //   ライト: 黒文字, ダーク: 白文字。
+                    color = onOverlayText,
                     fontSize = 14.sp,
                     modifier = Modifier.padding(vertical = 20.dp)
                 )
@@ -837,7 +911,7 @@ fun ImageViewer(img: GeneratedImage, vm: ImageGenViewModel, onClose: () -> Unit)
                         ),
                         shape = RoundedCornerShape(25.dp)
                     ) {
-                        Text("保存", fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(stringResource(id = R.string.viewer_action_save), fontWeight = FontWeight.Bold, color = Color.White)
                     }
                     Button(
                         onClick = { vm.share(context) },
@@ -848,7 +922,7 @@ fun ImageViewer(img: GeneratedImage, vm: ImageGenViewModel, onClose: () -> Unit)
                         ),
                         shape = RoundedCornerShape(25.dp)
                     ) {
-                        Text("共有", fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(stringResource(id = R.string.viewer_share), fontWeight = FontWeight.Bold, color = Color.White)
                     }
                 }
 
@@ -856,12 +930,12 @@ fun ImageViewer(img: GeneratedImage, vm: ImageGenViewModel, onClose: () -> Unit)
                     onClick = onClose,
                     modifier = Modifier.padding(top = 20.dp).width(80.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF444444),
-                        contentColor = Color.White
+                        containerColor = closeButtonBg,
+                        contentColor = closeButtonText
                     ),
                     shape = RoundedCornerShape(25.dp)
                 ) {
-                    Text("閉じる", color = Color.White)
+                    Text(stringResource(id = R.string.viewer_close), color = closeButtonText)
                 }
             }
         }

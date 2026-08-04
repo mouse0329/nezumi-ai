@@ -25,6 +25,7 @@ import android.widget.MediaController
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.VideoView
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.core.view.setPadding
@@ -52,7 +53,10 @@ object MediaViewerDialog {
         val imageUris: List<String> = emptyList(),
         val videoUri: String? = null,
         val audioUri: String? = null,
-        val title: String = "メディアプレビュー",
+        // タイトルは i18n 化のため呼び出し側で
+        // context.getString(R.string.viewer_media_preview_title) などを渡すことを推奨。
+        // null を渡された場合は実行時にリソースを参照してフォールバックする。
+        val title: String? = null,
         val initialIndex: Int = 0
     ) {
         fun isEmpty(): Boolean = imageUris.isEmpty() && videoUri.isNullOrBlank() && audioUri.isNullOrBlank()
@@ -71,9 +75,14 @@ object MediaViewerDialog {
     fun show(context: Context, bundle: MediaBundle) {
         if (bundle.isEmpty()) return
 
+        // バグ修正 (ライトモード対応): メディアビュワーの
+        //   背景・バー背景・テキスト色・アクション色を
+        //   values / values-night の viewer_* リソースで定義し、
+        //   テーマに応じて自動切り替わるようにする。
+        val viewerBg = ContextCompat.getColor(context, R.color.viewer_bg)
         val dialog = Dialog(context, android.R.style.Theme_Black_NoTitleBar_Fullscreen).apply {
             requestWindowFeature(Window.FEATURE_NO_TITLE)
-            window?.setBackgroundDrawable(ColorDrawable(Color.rgb(6, 9, 14)))
+            window?.setBackgroundDrawable(ColorDrawable(viewerBg))
             setCancelable(true)
             if (PreferencesHelper.isDisableScreenshot(context)) {
                 window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
@@ -81,7 +90,7 @@ object MediaViewerDialog {
         }
 
         val root = FrameLayout(context).apply {
-            setBackgroundColor(Color.rgb(6, 9, 14))
+            setBackgroundColor(viewerBg)
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -99,7 +108,8 @@ object MediaViewerDialog {
         root.addView(column)
 
         // --- Top bar ---
-        column.addView(buildTopBar(context, bundle.title, onClose = { dialog.dismiss() }))
+        val resolvedTitle = bundle.title ?: context.getString(R.string.viewer_media_preview_title)
+        column.addView(buildTopBar(context, resolvedTitle, onClose = { dialog.dismiss() }))
 
         // --- Center stage (画像 or 動画) ---
         val stage = FrameLayout(context).apply {
@@ -220,7 +230,7 @@ object MediaViewerDialog {
             val player = buildAudioPlayer(
                 context,
                 bundle.audioUri,
-                label = if (hasVideoBundle) "この動画の音声" else null
+                label = if (hasVideoBundle) context.getString(R.string.viewer_video_audio_label) else null
             )
             column.addView(player.view)
             player
@@ -278,11 +288,13 @@ object MediaViewerDialog {
     // ---------------------------------------------------------------------
 
     private fun buildTopBar(context: Context, title: String, onClose: () -> Unit): View {
+        val barBg = ContextCompat.getColor(context, R.color.viewer_bar_bg)
+        val textPrimary = ContextCompat.getColor(context, R.color.viewer_text_primary)
         val bar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(context, 16), dp(context, 24), dp(context, 16), dp(context, 10))
-            background = ColorDrawable(Color.argb(210, 12, 16, 24))
+            background = ColorDrawable(barBg)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(context, 84)
@@ -291,7 +303,7 @@ object MediaViewerDialog {
         bar.addView(
             TextView(context).apply {
                 text = title
-                setTextColor(Color.WHITE)
+                setTextColor(textPrimary)
                 textSize = 16f
                 typeface = android.graphics.Typeface.DEFAULT_BOLD
                 layoutParams = LinearLayout.LayoutParams(
@@ -301,7 +313,7 @@ object MediaViewerDialog {
                 )
             }
         )
-        bar.addView(actionText(context, "閉じる", onClose))
+        bar.addView(actionText(context, context.getString(R.string.viewer_close), onClose))
         return bar
     }
 
@@ -337,11 +349,15 @@ object MediaViewerDialog {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         }
+        val audioTextSecondary = ContextCompat.getColor(context, R.color.viewer_text_secondary)
+        val audioTextPrimary = ContextCompat.getColor(context, R.color.viewer_text_primary)
+        val audioSurface = ContextCompat.getColor(context, R.color.viewer_surface)
+        val audioActionBg = ContextCompat.getColor(context, R.color.viewer_action_bg)
         if (!label.isNullOrBlank()) {
             outer.addView(
                 TextView(context).apply {
                     text = label
-                    setTextColor(Color.rgb(150, 165, 180))
+                    setTextColor(audioTextSecondary)
                     textSize = 11f
                     setPadding(dp(context, 16), dp(context, 4), dp(context, 16), 0)
                 }
@@ -351,7 +367,7 @@ object MediaViewerDialog {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(context, 16), dp(context, 12), dp(context, 16), dp(context, 12))
-            background = ColorDrawable(Color.argb(200, 20, 26, 36))
+            background = ColorDrawable(audioSurface)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -360,17 +376,17 @@ object MediaViewerDialog {
         outer.addView(row)
         val playBtn = TextView(context).apply {
             text = "▶"
-            setTextColor(Color.WHITE)
+            setTextColor(audioTextPrimary)
             textSize = 20f
             gravity = Gravity.CENTER
             setPadding(dp(context, 14), dp(context, 6), dp(context, 14), dp(context, 6))
-            background = roundedBackground(Color.argb(235, 32, 38, 48), dp(context, 20).toFloat())
+            background = roundedBackground(audioActionBg, dp(context, 20).toFloat())
             isClickable = true
             isFocusable = true
         }
         val timeLabel = TextView(context).apply {
             text = "0:00 / 0:00"
-            setTextColor(Color.rgb(200, 210, 220))
+            setTextColor(audioTextSecondary)
             textSize = 12f
             setPadding(dp(context, 10), 0, dp(context, 10), 0)
         }
@@ -456,7 +472,7 @@ object MediaViewerDialog {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(context, 82)
             )
-            setBackgroundColor(Color.argb(180, 12, 16, 24))
+            setBackgroundColor(ContextCompat.getColor(context, R.color.viewer_surface))
             setPadding(dp(context, 8), dp(context, 6), dp(context, 8), dp(context, 6))
         }
         val row = LinearLayout(context).apply {
@@ -473,7 +489,7 @@ object MediaViewerDialog {
                 layoutParams = LinearLayout.LayoutParams(thumbSize, thumbSize).apply {
                     setMargins(margin, margin, margin, margin)
                 }
-                background = roundedBackground(Color.argb(255, 26, 32, 44), dp(context, 6).toFloat())
+                background = roundedBackground(ContextCompat.getColor(context, R.color.viewer_thumb_bg), dp(context, 6).toFloat())
                 isClickable = true
                 isFocusable = true
             }
@@ -502,6 +518,7 @@ object MediaViewerDialog {
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             Gravity.CENTER
                         )
+                        // ライト・ダークどちらでも見える弱い半透明黒 (サムネ上にのるため)
                         background = ColorDrawable(Color.argb(90, 0, 0, 0))
                     }
                     cell.addView(play)
@@ -536,9 +553,11 @@ object MediaViewerDialog {
     }
 
     private fun highlight(cells: Map<String, View>, selected: String, context: Context) {
+        val thumbBg = ContextCompat.getColor(context, R.color.viewer_thumb_bg)
+        val thumbSelected = ContextCompat.getColor(context, R.color.viewer_thumb_selected)
         cells.forEach { (key, v) ->
             v.background = roundedBackground(
-                if (key == selected) Color.rgb(91, 192, 255) else Color.argb(255, 26, 32, 44),
+                if (key == selected) thumbSelected else thumbBg,
                 dp(context, 6).toFloat()
             )
         }
@@ -553,7 +572,7 @@ object MediaViewerDialog {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(dp(context, 14), dp(context, 12), dp(context, 14), dp(context, 16))
-            background = ColorDrawable(Color.argb(220, 12, 16, 24))
+            background = ColorDrawable(ContextCompat.getColor(context, R.color.viewer_bar_bg))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(context, 84)
@@ -564,13 +583,13 @@ object MediaViewerDialog {
             ?: bundle.audioUri
         if (shareUri != null) {
             bar.addView(
-                actionButton(context, "共有") { share(context, shareUri) }
+                actionButton(context, context.getString(R.string.viewer_share)) { share(context, shareUri) }
             )
         }
         val imgToSave = bundle.imageUris.firstOrNull()
         if (imgToSave != null) {
             bar.addView(
-                actionButton(context, "画像を保存") { saveToPictures(context, imgToSave) }
+                actionButton(context, context.getString(R.string.viewer_save_image)) { saveToPictures(context, imgToSave) }
             )
         }
         return bar
@@ -583,7 +602,10 @@ object MediaViewerDialog {
     private fun actionButton(context: Context, label: String, onClick: () -> Unit): TextView =
         actionText(context, label, onClick).apply {
             gravity = Gravity.CENTER
-            background = roundedBackground(Color.argb(235, 32, 38, 48), dp(context, 14).toFloat())
+            background = roundedBackground(
+                ContextCompat.getColor(context, R.color.viewer_action_bg),
+                dp(context, 14).toFloat()
+            )
             layoutParams = LinearLayout.LayoutParams(0, dp(context, 48), 1f).apply {
                 setMargins(dp(context, 6), 0, dp(context, 6), 0)
             }
@@ -592,7 +614,7 @@ object MediaViewerDialog {
     private fun actionText(context: Context, label: String, onClick: () -> Unit): TextView =
         TextView(context).apply {
             text = label
-            setTextColor(Color.rgb(91, 192, 255))
+            setTextColor(ContextCompat.getColor(context, R.color.viewer_action_text))
             textSize = 15f
             setPadding(dp(context, 14))
             isClickable = true
@@ -615,7 +637,7 @@ object MediaViewerDialog {
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(intent, "共有"))
+            context.startActivity(Intent.createChooser(intent, context.getString(R.string.viewer_share_chooser_title)))
         } catch (t: Throwable) {
             Log.w(TAG, "share failed", t)
         }

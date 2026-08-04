@@ -31,10 +31,19 @@ object PreferencesHelper {
     private const val KEY_SHOW_TTFT = "show_ttft"
  // スクリーンショット無効化 (FLAG_SECURE を常時有効化するかどうか)
     private const val KEY_DISABLE_SCREENSHOT = "disable_screenshot"
+ // アプリ UI の言語 (i18n)。SYSTEM / JA / EN のいずれか。
+    private const val KEY_LANGUAGE = "app_language"
 
     const val THEME_SYSTEM = "SYSTEM"
     const val THEME_LIGHT = "LIGHT"
     const val THEME_DARK = "DARK"
+
+    // i18n: 設定画面の「全般」から切り替えられる UI 言語。
+    //  - LANG_SYSTEM: 端末デフォルトのロケールに追従
+    //  - LANG_JA / LANG_EN: 明示的に日本語 / 英語に固定
+    const val LANG_SYSTEM = "SYSTEM"
+    const val LANG_JA = "JA"
+    const val LANG_EN = "EN"
 
     private fun getSharedPreferences(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -84,6 +93,27 @@ object PreferencesHelper {
             else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
         }
         AppCompatDelegate.setDefaultNightMode(nightMode)
+    }
+
+    /**
+     * アプリ UI の言語 (SYSTEM / JA / EN) を取得する。
+     * 設定 > 全般 > 言語 で切り替え可能。実際の適用は
+     * [LocaleHelper.wrap] を Activity / Application の `attachBaseContext` で
+     * 呼び出すことで行う。
+     */
+    fun getLanguage(context: Context): String {
+        val prefs = getSharedPreferences(context)
+        return prefs.getString(KEY_LANGUAGE, LANG_SYSTEM) ?: LANG_SYSTEM
+    }
+
+    fun setLanguage(context: Context, lang: String) {
+        val normalized = when (lang.uppercase()) {
+            LANG_JA -> LANG_JA
+            LANG_EN -> LANG_EN
+            else -> LANG_SYSTEM
+        }
+        val prefs = getSharedPreferences(context)
+        prefs.edit().putString(KEY_LANGUAGE, normalized).apply()
     }
 
     fun isInitialSetupCompleted(context: Context): Boolean {

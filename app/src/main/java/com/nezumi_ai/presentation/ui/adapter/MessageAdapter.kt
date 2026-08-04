@@ -279,7 +279,7 @@ class MessageAdapter(
                             videoUri = videoUri,
                             audioUri = audioUri,
                             initialIndex = 0,
-                            title = "動画・音声"
+                            title = context.getString(com.nezumi_ai.R.string.viewer_bundle_title_video_audio)
                         )
                     )
                 }
@@ -314,7 +314,7 @@ class MessageAdapter(
                             videoUri = videoUri,
                             audioUri = audioUri,
                             initialIndex = idx,
-                            title = "メディアプレビュー"
+                            title = context.getString(com.nezumi_ai.R.string.viewer_media_preview_title)
                         )
                     )
                 }
@@ -375,7 +375,7 @@ class MessageAdapter(
                             videoUri = videoUri,
                             audioUri = audioUri,
                             initialIndex = 0,
-                            title = "画像・音声"
+                            title = context.getString(com.nezumi_ai.R.string.viewer_bundle_title_image_audio)
                         )
                     )
                 }

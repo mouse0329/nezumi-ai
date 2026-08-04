@@ -1,0 +1,410 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    English resources for Nezumi AI.
+    All user-facing UI strings are collected in values/strings.xml (Japanese, default)
+    and mirrored here for the English locale. Switch between them from
+    Settings > General > Language.
+-->
+<resources>
+    <string name="app_name">Nezumi AI</string>
+    <string name="action_settings">Settings</string>
+
+    <!-- Welcome Dialog -->
+    <string name="welcome_title">Welcome to Nezumi AI</string>
+    <string name="welcome_message"> How to use:
+• Sidebar: open chat history and menus
+• Chat screen: talk with the AI
+• Settings: download models and set tokens
+
+ Initial setup:
+1. On the Model tab, run "HuggingFace token auth"
+2. Download a model (Gemma 4 2B is recommended)
+
+ Other:
+• "License" shows information about the open-source libraries used
+
+Enjoy chatting with your AI!</string>
+
+    <!-- Empty State Messages -->
+    <string name="no_sessions_title">No chats yet</string>
+    <string name="no_sessions_message">Make sure a model is downloaded, then tap the "+" button to start a chat.</string>
+    <string name="create_first_session">Start a chat</string>
+
+    <!-- MVP Strings -->
+    <string name="app_title_sessions">Nezumi AI · Chat</string>
+    <string name="new_session">New session</string>
+    <string name="open_sidebar">Open sidebar</string>
+    <string name="chat_title">Chat</string>
+    <string name="switch_model">Switch model</string>
+    <string name="enter_message">Type a message…</string>
+    <string name="send">Send</string>
+    <string name="back">Back</string>
+    <string name="delete">Delete</string>
+    <string name="hf_token_title">Hugging Face token</string>
+    <string name="hf_token_hint">Enter hf_xxx</string>
+    <string name="hf_token_save">Save token</string>
+    <string name="hf_auth_not_linked">OAuth not linked</string>
+    <string name="hf_auth_linked">OAuth linked</string>
+    <string name="hf_oauth_login">Sign in with HF🤗</string>
+    <string name="hf_oauth_logout">Sign out</string>
+    <string name="model_dropdown_hint">Model</string>
+    <string name="model_e2b_label">Gemma 3n E2B</string>
+    <string name="model_e4b_label">Gemma 3n E4B</string>
+    <string name="model_not_downloaded">Model not downloaded</string>
+    <string name="model_loading">Loading model…</string>
+    <string name="context_meter_format">Context: %1$d / %2$d tokens</string>
+    <string name="response_generating">Responding</string>
+    <string name="model_preparing">Preparing model</string>
+    <string name="model_preparing_with_elapsed">Preparing model (%1$ds)</string>
+    <string name="model_preparing_phase_memory">Preparing model · checking memory</string>
+    <string name="model_preparing_phase_engine">Preparing model · initializing engine</string>
+    <string name="model_preparing_phase_load">Preparing model · loading weights</string>
+    <string name="model_preparing_phase_ready">Model ready</string>
+    <string name="response_extracting">⟳ Organizing memory…</string>
+    <string name="chat_thinking_follow_settings">Thinking: ON</string>
+    <string name="chat_thinking_off_for_session">Thinking: OFF</string>
+    <string name="scroll_to_bottom">Scroll to bottom</string>
+    <string name="scroll_to_bottom_icon"></string>
+    <string name="revoke_prompt">Undo</string>
+    <string name="copy_all">Copy</string>
+    <string name="copied_to_clipboard">Copied</string>
+    <string name="message_image">Message image</string>
+    <string name="add_image_button">Add image</string>
+    <string name="add_audio_button">Add audio</string>
+    <string name="add_media_menu">Media menu</string>
+    <string name="revoke_prompt_done">Prompt undone</string>
+    <string name="revoke_prompt_none">Nothing to undo</string>
+    <string name="send_icon"></string>
+    <string name="stop_icon">■</string>
+    <string name="inference_title">Inference parameters</string>
+    <string name="context_window_fixed">Context: 4096 (fixed)</string>
+    <string name="context_window_label">Context</string>
+    <string name="context_window_hint">Context (512 - 8192)</string>
+    <string name="temperature_label">Temperature</string>
+    <string name="temperature_hint">Temperature (0.0 - 2.0)</string>
+    <string name="topk_label">Top-K</string>
+    <string name="topk_hint">Top-K (1 - 128)</string>
+    <string name="max_tokens_label">Max Tokens</string>
+    <string name="max_tokens_hint">Max Tokens (64 - 4096)</string>
+    <string name="user_name_label">Your name</string>
+    <string name="user_name_hint">Your name (optional)</string>
+    <string name="save_inference">Save inference settings</string>
+    <string name="system_prompt_label">System prompt</string>
+    <string name="system_prompt_hint">Instructions for the assistant</string>
+    <string name="backend_label">Backend</string>
+    <string name="theme_mode_label">Theme</string>
+    <string name="theme_mode_system">System</string>
+    <string name="theme_mode_light">Light</string>
+    <string name="theme_mode_dark">Dark</string>
+    <string name="backend_cpu">CPU</string>
+    <string name="backend_gpu">GPU</string>
+    <string name="backend_npu">GPU+CPU</string>
+    <string name="gemma_show_thinking">Show reasoning</string>
+    <string name="gemma_hide_thinking">Hide reasoning</string>
+    <string name="gemma_thinking_section_title">Internal reasoning (thinking)</string>
+    <string name="gemma_answer_generating_hint">(generating answer…)</string>
+    <string name="tool_call_executing_alarm"> Setting alarm…</string>
+    <string name="tool_call_executing_message"> Sending message…</string>
+    <string name="tool_call_executing_search"> Searching…</string>
+    <string name="tool_call_executing_image"> Generating image…</string>
+    <string name="tool_call_executing_generic"> Running %1$s…</string>
+    <string name="tool_call_result_success"> %1$s: success</string>
+    <string name="tool_call_result_error"> %1$s: failed</string>
+    <string name="tool_call_responding"> Writing answer…</string>
+    <string name="assistant_error_generic_empty">Sorry, no response could be generated.</string>
+    <string name="assistant_error_empty_output_title">No model output</string>
+    <string name="assistant_no_response">No response</string>
+    <string name="assistant_stopped_by_user">Generation stopped</string>
+    <string name="assistant_error_gguf_media_empty_with_mmproj">Media was loaded and inference ran, but no text was produced.\n\nFor models that ship vision integrated into a single GGUF, the vision component is initialized from the same file at load time. For LLaVA-style models that need a separate mmproj file, pick the official mmproj under "Model settings", save, then reload the model.\n\nPlease also check GGUF/vision compatibility, file integrity, the mmproj path, and reload after changing settings.</string>
+    <string name="import_task_model">Add model file (.task / .litertlm)</string>
+    <string name="import_task_loading">Loading model file…</string>
+    <string name="open_hf_approval_page">Approve on page</string>
+    <string name="imported_task_title">Added model files (.task / .litertlm)</string>
+    <string name="imported_task_empty">No model files have been added yet.</string>
+    <string name="open_help_page">Help</string>
+    <string name="open_license_page">License</string>
+    <string name="help_title">Help</string>
+    <string name="license_title">Licenses</string>
+    <string name="license_body">This screen lists the main code, runtime and model terms actually shipped in, or referenced at runtime by, the current Android build. Development/test/disabled components are omitted.</string>
+
+    <string name="license_project_title">Project / distribution</string>
+    <string name="license_project_url">https://github.com/mouse0329/nezumi-ai</string>
+    <string name="license_project_desc">Entry point to this app\'s source code, README, LICENSE.md and NOTICE. Check distribution terms here.</string>
+
+    <string name="license_open_url">View details</string>
+
+    <!-- Fragments for navigation -->
+    <string name="first_fragment_label">First Fragment</string>
+    <string name="second_fragment_label">Second Fragment</string>
+    <string name="next">Next</string>
+    <string name="previous">Previous</string>
+    <string name="model_settings">Model</string>
+    <string name="tools_settings">Tools</string>
+
+    <!-- Tool Result Card Strings -->
+    <string name="tool_result_icon">Tool result icon</string>
+    <string name="tool_result_alarm">Alarm</string>
+    <string name="tool_result_alarm_failed">Failed to set</string>
+    <string name="tool_result_dismiss_alarm">Dismiss alarm</string>
+    <string name="tool_result_dismiss_alarm_failed">Failed to dismiss</string>
+    <string name="tool_result_list_alarms">Alarm list</string>
+    <string name="tool_result_list_alarms_failed">Failed to fetch</string>
+    <string name="tool_result_alarms_count">%1$d item(s)</string>
+    <string name="tool_result_timer">Timer</string>
+    <string name="tool_result_timer_start_failed">Failed to start</string>
+    <string name="tool_result_stop_timer">Stop timer</string>
+    <string name="tool_result_timer_stopped">Stopped</string>
+    <string name="tool_result_timer_stop_failed">Failed to stop</string>
+    <string name="tool_result_list_timers">Timer list</string>
+    <string name="tool_result_list_timers_failed">Failed to fetch</string>
+    <string name="tool_result_timers_running">%1$d running</string>
+    <string name="tool_result_battery">Battery</string>
+    <string name="tool_result_battery_failed">Failed to fetch</string>
+    <string name="tool_result_current_time">Current time</string>
+    <string name="tool_result_current_time_failed">Failed to fetch</string>
+    <string name="tool_result_flashlight">Flashlight</string>
+    <string name="tool_result_flashlight_failed">Operation failed</string>
+
+    <!-- Chat History Settings -->
+    <string name="chat_history_limit_title">History size</string>
+    <string name="chat_history_limit_description">Chat history keeps up to %1$d sessions. Older ones are removed automatically.</string>
+    <string name="chat_history_limit_unlimited">Unlimited</string>
+    <string name="chat_history_limit_10">10</string>
+    <string name="chat_history_limit_30">30</string>
+    <string name="chat_history_limit_50">50</string>
+    <string name="chat_history_onboarding_text">Chat history keeps up to 30 sessions. Older ones are removed automatically.</string>
+    <string name="chat_history_onboarding_link">Change in settings</string>
+
+    <!-- Incognito Mode -->
+    <string name="incognito_mode">Private mode</string>
+    <string name="incognito_mode_active">Private mode: ON</string>
+    <string name="incognito_mode_inactive">Private mode: OFF</string>
+    <string name="incognito_mode_indicator"> Private mode</string>
+    <string name="incognito_mode_help">Long-press: start private mode</string>
+
+    <!-- Stable Diffusion / Image generation -->
+    <string name="nav_chat">Chat</string>
+    <string name="nav_image_gen">Image gen</string>
+    <string name="drawer_image_gen_start">Open image generation</string>
+    <string name="image_gen_confirm_title">Generate an image?</string>
+    <string name="image_gen_confirm_yes">Yes</string>
+    <string name="image_gen_confirm_no">No</string>
+    <string name="image_gen_screen_title">Image generation (SD)</string>
+    <string name="image_gen_prompt_hint">Prompt</string>
+    <string name="image_gen_neg_hint">Negative prompt (optional)</string>
+    <string name="image_gen_model_path_hint">Absolute path to SD model .gguf</string>
+    <string name="image_gen_generate">Generate</string>
+    <string name="image_gen_cancel">Cancel</string>
+    <string name="image_gen_save_gallery">Save</string>
+    <string name="image_gen_share">Share</string>
+    <string name="image_gen_snackbar_cancelled">Cancelled</string>
+    <string name="image_gen_back">Back</string>
+    <string name="image_gen_model_path_hint_full">Select SD model (MNN)</string>
+    <string name="image_gen_err_model_missing">Model directory not found (unet.mnn is required)</string>
+    <string name="image_gen_err_prompt_empty">Please enter a prompt</string>
+    <string name="image_gen_delete_model">Delete model</string>
+    <string name="image_gen_delete_model_success">Model deleted</string>
+    <string name="image_gen_delete_model_failure">Failed to delete model</string>
+    <string name="image_gen_delete_model_external">This model is stored outside the app. Delete it using a file manager.</string>
+
+    <string name="model_sd_hf_card_title">Image generation model (Hugging Face)</string>
+    <string name="model_sd_hf_card_body">Use "Hugging Face model search" above to open a repo and download .gguf or .safetensors files. For Stable Diffusion / SDXL repos, mmproj auto-fetch is not performed.</string>
+    <string name="model_sd_hf_preset_stability">stabilityai/stable-diffusion-xl-base-1.0</string>
+    <string name="model_sd_hf_preset_search_sd">stable-diffusion gguf</string>
+    <string name="model_sd_hf_btn_preset_repo">Fill search with SDXL example</string>
+    <string name="model_sd_hf_btn_preset_keyword">Search "SD + GGUF"</string>
+    <string name="model_sd_hf_toast_set_as_image_gen">Set as image-gen model path</string>
+    <string name="model_sd_hf_toast_downloaded">Saved: %1$s (path visible on Image gen screen)</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_section_general">General</string>
+    <string name="settings_section_inference">Inference</string>
+    <string name="settings_section_image">Image</string>
+    <string name="settings_section_memory">Memory</string>
+    <string name="settings_section_chat">Chat</string>
+    <string name="settings_section_debug">Debug</string>
+    <string name="settings_general_title">General settings</string>
+    <string name="settings_theme_label">Theme</string>
+    <string name="settings_theme_current_format">Theme (current: %1$s)</string>
+    <string name="settings_language_label">Language</string>
+    <string name="settings_language_current_format">Language (current: %1$s)</string>
+    <string name="settings_language_system">System</string>
+    <string name="settings_language_japanese">日本語</string>
+    <string name="settings_language_english">English</string>
+
+    <!-- Theme mode -->
+    <string name="settings_theme_system">System</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_theme_system_display">System</string>
+    <string name="settings_theme_light_display">Light</string>
+    <string name="settings_theme_dark_display">Dark</string>
+
+    <!-- General section -->
+    <string name="settings_always_lock_title">Always require app lock</string>
+    <string name="settings_always_lock_desc">Ask for authentication every time the app resumes</string>
+    <string name="settings_stop_kb_learning_title">Stop keyboard learning</string>
+    <string name="settings_stop_kb_learning_desc">Do not let the IME learn from what you type</string>
+    <string name="settings_show_context_meter_title">Show context meter</string>
+    <string name="settings_show_context_meter_desc">Show a usage meter above the chat</string>
+    <string name="settings_show_tps_title">Show TPS</string>
+    <string name="settings_show_tps_desc">Show tokens per second (generation speed)</string>
+    <string name="settings_show_ttft_title">Show TTFT</string>
+    <string name="settings_show_ttft_desc">Show time to first token</string>
+    <string name="settings_disable_screenshot_title">Disable screenshots</string>
+    <string name="settings_disable_screenshot_desc">Block screen capture of this app</string>
+
+    <!-- Chat history -->
+    <string name="settings_chat_history_title">History size</string>
+    <string name="settings_chat_history_10">10</string>
+    <string name="settings_chat_history_30">30</string>
+    <string name="settings_chat_history_50">50</string>
+    <string name="settings_chat_history_unlimited">Unlimited</string>
+
+    <!-- Backend -->
+    <string name="settings_backend_cpu">CPU</string>
+    <string name="settings_backend_gpu">GPU</string>
+    <string name="settings_backend_npu">NPU</string>
+
+    <!-- Memory -->
+    <string name="settings_memory_delete_all_title">Delete all memory</string>
+    <string name="settings_memory_delete_all_body">Delete every saved memory entry.</string>
+    <string name="settings_memory_list_button">Show list</string>
+    <string name="settings_memory_delete_all_button">Delete all</string>
+    <string name="settings_memory_delete_button">Delete</string>
+    <string name="settings_memory_cancel">Cancel</string>
+    <string name="settings_memory_list_title">Saved memory</string>
+    <string name="settings_memory_close">Close</string>
+    <string name="settings_memory_mode_llm">LLM extraction</string>
+    <string name="settings_memory_mode_rule">Rule-based</string>
+
+    <!-- Debug -->
+    <string name="settings_debug_show_model_error">Show model error</string>
+    <string name="settings_debug_reload">Reload</string>
+    <string name="settings_debug_copy">Copy</string>
+    <string name="settings_debug_export">Export</string>
+    <string name="settings_debug_clear_log">Clear log</string>
+    <string name="settings_debug_text_a">Text A</string>
+    <string name="settings_debug_text_a_ph">dog</string>
+    <string name="settings_debug_text_b">Text B</string>
+    <string name="settings_debug_text_b_ph">cat</string>
+    <string name="settings_debug_compute">Compute with the model</string>
+    <string name="settings_debug_clear">Clear</string>
+
+    <!-- Inference inputs -->
+    <string name="settings_inference_context_size">Context size</string>
+    <string name="settings_inference_max_tokens">Max tokens</string>
+    <string name="settings_inference_check_engine_version">Check llama.cpp / LiteRT-LM version</string>
+    <string name="settings_inference_engine_version_title">Inference engine versions</string>
+    <string name="settings_common_close">Close</string>
+
+    <!-- Brave Search -->
+    <string name="settings_brave_api_label">API key</string>
+    <string name="settings_brave_api_ph">Enter brave_api_key</string>
+
+    <!-- About -->
+    <string name="settings_about_title">About this app</string>
+    <string name="settings_about_license_button">Licenses</string>
+
+    <!-- Secret mode PIN -->
+    <string name="settings_pin_label">PIN</string>
+    <string name="settings_pin_ph">****</string>
+    <string name="settings_pin_confirm_label">Confirm PIN</string>
+    <string name="settings_pin_next">Next</string>
+    <string name="settings_pin_retry">Try again</string>
+    <string name="settings_pin_cancel">Cancel</string>
+
+    <!-- Seed placeholder -->
+    <string name="settings_placeholder_seed_random">-1</string>
+
+    <!-- Secret mode PIN -->
+    <string name="settings_secret_mode_title">Secret mode PIN</string>
+    <string name="settings_secret_mode_enabled">Enabled (PIN set)</string>
+    <string name="settings_secret_mode_disabled">Disabled</string>
+    <string name="settings_secret_pin_change">Change PIN</string>
+    <string name="settings_secret_pin_set">Set PIN</string>
+    <string name="settings_secret_pin_disable">Disable</string>
+    <string name="settings_secret_pin_reset">Reset</string>
+
+    <!-- Brave Search / Backend / Inference cards -->
+    <string name="settings_brave_card_title">Brave Search API</string>
+    <string name="settings_brave_card_desc">Set your Brave Search API key. Web search tools use this key when called.</string>
+    <string name="settings_brave_unset_hint">If unset, web search tools will not work.</string>
+    <string name="settings_brave_set_hint">An API key is currently saved.</string>
+    <string name="settings_backend_card_title">Backend</string>
+    <string name="settings_backend_current_format">Current backend: %1$s</string>
+    <string name="settings_inference_params_title">Inference parameters</string>
+
+    <!-- Debug / log -->
+    <string name="settings_debug_title">Debug</string>
+    <string name="settings_debug_copy_button">Copy</string>
+    <string name="settings_debug_export_button">Export</string>
+    <string name="settings_debug_clear_log_button">Clear log</string>
+    <string name="settings_debug_reload_button">Reload</string>
+    <string name="settings_debug_model_error_button">Show model error</string>
+    <string name="settings_debug_compute_button">Compute with the model</string>
+    <string name="settings_debug_clear_button">Clear</string>
+
+    <!-- Memory -->
+    <string name="settings_memory_list_show">Show list</string>
+    <string name="settings_memory_delete_all_button2">Delete all</string>
+    <string name="settings_memory_delete_button2">Delete</string>
+    <string name="settings_memory_cancel_button">Cancel</string>
+    <string name="settings_memory_close_button">Close</string>
+    <string name="settings_memory_mode_llm_label">LLM extraction</string>
+    <string name="settings_memory_mode_rule_label">Rule-based</string>
+
+    <!-- Chat history -->
+    <string name="settings_chat_history_unlimited_label">Unlimited</string>
+
+    <!-- Version dialog -->
+    <string name="settings_engine_version_title">Inference engine versions</string>
+    <string name="settings_dialog_close">Close</string>
+
+    <!-- About dialog -->
+    <string name="settings_about_dialog_title">About this app</string>
+    <string name="settings_about_license_link">Licenses</string>
+
+    <!-- PIN dialogs -->
+    <string name="settings_pin_dialog_cancel">Cancel</string>
+    <string name="settings_pin_dialog_next">Next</string>
+    <string name="settings_pin_dialog_retry">Try again</string>
+    <string name="settings_pin_confirm_label2">Confirm PIN</string>
+
+    <!-- Common buttons -->
+    <string name="common_delete">Delete</string>
+    <string name="common_cancel">Cancel</string>
+    <string name="common_close">Close</string>
+    <string name="common_next">Next</string>
+    <string name="common_retry">Try again</string>
+    <string name="common_clear">Clear</string>
+
+    <!-- Image / Media viewer -->
+    <string name="viewer_image_preview_title">Image preview</string>
+    <string name="viewer_media_preview_title">Media preview</string>
+    <string name="viewer_close">Close</string>
+    <string name="viewer_share">Share</string>
+    <string name="viewer_save_to_folder">Save to folder</string>
+    <string name="viewer_save_image">Save image</string>
+    <string name="viewer_saved_toast">Saved to folder</string>
+    <string name="viewer_save_failed_toast">Failed to save</string>
+    <string name="viewer_share_chooser_title">Share</string>
+    <string name="viewer_video_audio_label">Audio track of this video</string>
+    <string name="viewer_prompt_prefix">Prompt:</string>
+    <string name="viewer_action_save">Save</string>
+    <string name="viewer_bundle_title_video_audio">Video &amp; audio</string>
+    <string name="viewer_bundle_title_image_audio">Image &amp; audio</string>
+
+    <!-- Image generation tab -->
+    <string name="image_gen_tab_generate">Generate</string>
+    <string name="image_gen_tab_library">Library</string>
+
+    <!-- Raw context dialog -->
+    <string name="raw_context_title">Current raw context</string>
+    <string name="raw_context_open_hint">Tap to view raw context (meter is approximate)</string>
+    <string name="raw_context_empty">No prompt has been built yet. Send a message or type new content and it will appear here.</string>
+    <string name="raw_context_copy">Copy</string>
+    <string name="raw_context_close">Close</string>
+    <string name="raw_context_copied">Copied</string>
+</resources>
