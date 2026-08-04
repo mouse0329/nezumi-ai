@@ -4,6 +4,7 @@ import android.Manifest
 import android.animation.ValueAnimator
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
 import android.os.Build
@@ -272,6 +273,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var recordingDialog: androidx.appcompat.app.AlertDialog? = null
     private var recordingStatusTextView: TextView? = null
     private var recordingWaveBars: List<View> = emptyList()
+    // インライン録音バー専用のキャンセルフラグ。
+    // cancelAudioRecording() から stopAudioRecording() を呼んだときだけ true になり、
+    // 録音ファイルを selectedAudioUri に搭載せずに破棄する。
+    private var discardRecordingOnStop = false
     private var embeddingDownloadDialog: androidx.appcompat.app.AlertDialog? = null
     private var embeddingDownloadProgressTextView: TextView? = null
     private var embeddingDownloadProgressBar: ProgressBar? = null
@@ -358,6 +363,28 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             Toast.makeText(requireContext(), "音声を選択しました", Toast.LENGTH_SHORT).show()
             updateMediaPreview()
         }
+    }
+
+    // アクションシート「ファイル」から呼ばれる汎用ファイルピッカー。
+    //   - image  : 画像として selectedImageUrisList に追加
+    //   - video  : Gemma 系のみ processPickedVideo() でフレーム抽出
+    //   - audio  : selectedAudioUri に採用
+    //   - その他 : 拡張子で最終判定。それでも判別できなければ Toast で通知
+    // SAF を経由するので Google ドライブ等の外部プロバイダーからでも選択可能。
+    // NOTE: Kotlin のブロックコメントはネスト可能なので、KDoc 内に `image/*` のような
+    // `/*` を含む文字列を書くと新しいブロックコメント開始と見なされて
+    // ファイル末尾までコメントになってしまう。ここは 行コメントにすること。
+    private val genericFilePickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        try {
+            requireContext().contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (_: Throwable) { /* 一部プロバイダは permission grant 不能 */ }
+        handlePickedGenericFile(uri)
     }
 
     // 権限リクエストランチャー
@@ -954,71 +981,35 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
         }
 
+        // OS の「貼り付け」経由で画像が渡ってきた時のフック。
+        // ClipboardAwareEditText 側で URI ペイロードを検知して呼ばれる。
         binding.messageInput.onClipboardImagePaste = {
             pasteFromClipboard()
         }
 
-        // +ボタン: expanded iconsのトグル
+        // + ボタン: 画像 / カメラ / ファイル (画像・動画・音声) を選ぶアクションシート
         binding.mediaMenuButton.setOnClickListener { view ->
-            val expanded = binding.inputExpandedIcons
-            val isNowVisible = expanded.visibility == View.VISIBLE
-            if (!isNowVisible && !imageInputEnabled && !audioInputEnabled) {
+            if (!imageInputEnabled && !audioInputEnabled) {
                 Toast.makeText(requireContext(), "このモデルは画像・音声入力に対応していません", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
             imm.hideSoftInputFromWindow(view.windowToken, 0)
-            expanded.visibility = if (isNowVisible) View.GONE else View.VISIBLE
-            binding.imageButton.visibility = if (imageInputEnabled) View.VISIBLE else View.GONE
-            binding.micButton.visibility = if (audioInputEnabled) View.VISIBLE else View.GONE
-            binding.mediaMenuButton.animate()
-                .rotation(if (isNowVisible) 0f else 45f)
-                .setDuration(200)
-                .start()
+            showAttachmentActionSheet()
         }
 
-        // 画像ボタン: ギャラリー or カメラ選択
-        binding.imageButton.setOnClickListener { view ->
-            val popupMenu = PopupMenu(requireContext(), view)
-            popupMenu.menu.add(0, 1, 0, "ギャラリーから選択")
-            popupMenu.menu.add(0, 2, 1, "カメラで撮影")
-            popupMenu.menu.add(0, 3, 2, "クリップボードから貼り付け")
-            val isGemma3nEmbeddedModel = currentModelKey.equals("E2B", ignoreCase = true) ||
-                currentModelKey.equals("E4B", ignoreCase = true) ||
-                currentModelKey.equals("Gemma3n-2B", ignoreCase = true) ||
-                currentModelKey.equals("Gemma3n-4B", ignoreCase = true)
-            if (isGemma3nEmbeddedModel) {
-                popupMenu.menu.add(0, 4, 3, "動画から選択 (最大30秒)")
-            }
-            popupMenu.setOnMenuItemClickListener { menuItem ->
-                when (menuItem.itemId) {
-                    1 -> {
-                        imagePickerLauncher.launch(
-                            androidx.activity.result.PickVisualMediaRequest(
-                                ActivityResultContracts.PickVisualMedia.ImageOnly
-                            )
-                        )
-                        true
-                    }
-                    2 -> { launchCamera(); true }
-                    3 -> { pasteFromClipboard(); true }
-                    4 -> {
-                        videoPickerLauncher.launch(
-                            androidx.activity.result.PickVisualMediaRequest(
-                                ActivityResultContracts.PickVisualMedia.VideoOnly
-                            )
-                        )
-                        true
-                    }
-                    else -> false
-                }
-            }
-            popupMenu.show()
-        }
-
-        // マイクボタン: 音声録音
+        // マイクボタン: 音声録音 (インライン録音バーに切り替え)
         binding.micButton.setOnClickListener {
-            launchAudioRecording()
+            if (isRecordingAudio) {
+                stopAudioRecording()
+            } else {
+                launchAudioRecording()
+            }
+        }
+
+        // インライン録音バーの「削除」ボタン: 録音を破棄して入力欄に戻す
+        binding.inlineRecordCancel.setOnClickListener {
+            cancelAudioRecording()
         }
 
  // バリアント切り替えスクロール要求を受け取るコレクター。
@@ -1790,10 +1781,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
         updateMediaPreview()
         binding.mediaMenuButton.visibility = View.VISIBLE
-        if (binding.inputExpandedIcons.visibility == View.VISIBLE) {
-            binding.imageButton.visibility = if (imageInputEnabled) View.VISIBLE else View.GONE
-            binding.micButton.visibility = if (audioInputEnabled) View.VISIBLE else View.GONE
-        }
+        // マイクボタンは入力バーに常設。モデルが音声入力に非対応なら非表示にする。
+        binding.micButton.visibility = if (audioInputEnabled) View.VISIBLE else View.GONE
     }
 
     private fun renderCompressButtonState() {
@@ -2528,6 +2517,145 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         _binding = null
     }
 
+    /**
+     * モデルが動画フレームを扱える Gemma 系 (検索可能な mediapipe LiteRT-LM) かどうか。
+     * 既存の判定と同じ 4 つのモデルキーに一元化する。
+     */
+    private fun isGemmaVideoCapableModel(): Boolean {
+        val key = currentModelKey
+        return key.equals("E2B", ignoreCase = true) ||
+            key.equals("E4B", ignoreCase = true) ||
+            key.equals("Gemma3n-2B", ignoreCase = true) ||
+            key.equals("Gemma3n-4B", ignoreCase = true)
+    }
+
+    /**
+     * + ボタンから開くボトムシート。 UI モックのを役割に BottomSheetDialog で実装し、
+     * 「画像」「カメラ」「ファイル」の 3 タイルと 「キャンセル」を見せる。
+     *   - 画像   → imagePickerLauncher (ギャラリー直行)
+     *   - カメラ → launchCamera()
+     *   - ファイル → genericFilePickerLauncher (画像 / 動画(gemmaのみ) / 音声)
+     */
+    private fun showAttachmentActionSheet() {
+        val ctx = requireContext()
+        val view = LayoutInflater.from(ctx)
+            .inflate(R.layout.sheet_attachment_options, null, false)
+        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(ctx)
+        dialog.setContentView(view)
+
+        view.findViewById<View>(R.id.opt_image).setOnClickListener {
+            dialog.dismiss()
+            if (!imageInputEnabled) {
+                Toast.makeText(ctx, "このモデルでは画像入力は無効です", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            imagePickerLauncher.launch(
+                androidx.activity.result.PickVisualMediaRequest(
+                    ActivityResultContracts.PickVisualMedia.ImageOnly
+                )
+            )
+        }
+        view.findViewById<View>(R.id.opt_camera).setOnClickListener {
+            dialog.dismiss()
+            launchCamera()
+        }
+        view.findViewById<View>(R.id.opt_file).setOnClickListener {
+            dialog.dismiss()
+            // 画像 / 動画(gemmaのみ) / 音声 を履ける MIME リストを作る。
+            val mimes = mutableListOf<String>()
+            if (imageInputEnabled) mimes += "image/*"
+            if (imageInputEnabled && isGemmaVideoCapableModel()) mimes += "video/*"
+            if (audioInputEnabled) mimes += "audio/*"
+            if (mimes.isEmpty()) {
+                Toast.makeText(ctx, "このモデルではファイル添付は無効です", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            try {
+                genericFilePickerLauncher.launch(mimes.toTypedArray())
+            } catch (e: Throwable) {
+                Log.e("ChatFragment", "Error launching file picker", e)
+                Toast.makeText(ctx, "ファイル選択を開けませんでした", Toast.LENGTH_SHORT).show()
+            }
+        }
+        view.findViewById<View>(R.id.opt_cancel).setOnClickListener { dialog.dismiss() }
+
+        dialog.show()
+    }
+
+    /**
+     * OpenDocument で選ばれた任意のファイルを、MIME (フォールバックで拡張子) を見て
+     * 画像 / 動画 / 音声 に振り分ける。
+     */
+    private fun handlePickedGenericFile(uri: Uri) {
+        val cr = requireContext().contentResolver
+        val mime = (cr.getType(uri) ?: "").lowercase()
+        val fallbackExt = try {
+            uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase() ?: ""
+        } catch (_: Throwable) { "" }
+
+        val isImage = mime.startsWith("image/") ||
+            fallbackExt in listOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
+        val isVideo = mime.startsWith("video/") ||
+            fallbackExt in listOf("mp4", "mov", "m4v", "webm", "3gp", "mkv", "avi")
+        val isAudio = mime.startsWith("audio/") ||
+            fallbackExt in listOf("mp3", "m4a", "aac", "wav", "ogg", "flac", "opus", "amr")
+
+        when {
+            isImage -> {
+                if (!imageInputEnabled) {
+                    Toast.makeText(requireContext(), "このモデルでは画像入力は無効です", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                if (selectedImageUrisList.size >= MAX_SELECTABLE_IMAGES) {
+                    Toast.makeText(
+                        requireContext(),
+                        "画像は最大 ${MAX_SELECTABLE_IMAGES} 枚までです",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return
+                }
+                selectedImageUrisList = selectedImageUrisList + uri.toString()
+                updateMediaPreview()
+                Toast.makeText(
+                    requireContext(),
+                    "画像を追加しました (${selectedImageUrisList.size}/${MAX_SELECTABLE_IMAGES})",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            isVideo -> {
+                if (!imageInputEnabled) {
+                    Toast.makeText(requireContext(), "このモデルでは動画入力は無効です", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                if (!isGemmaVideoCapableModel()) {
+                    Toast.makeText(
+                        requireContext(),
+                        "動画は Gemma 3n (E2B/E4B) モデルでのみ対応しています",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return
+                }
+                processPickedVideo(uri)
+            }
+            isAudio -> {
+                if (!audioInputEnabled) {
+                    Toast.makeText(requireContext(), "このモデルでは音声入力は無効です", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                selectedAudioUri = uri.toString()
+                updateMediaPreview()
+                Toast.makeText(requireContext(), "音声を追加しました", Toast.LENGTH_SHORT).show()
+            }
+            else -> {
+                Toast.makeText(
+                    requireContext(),
+                    "対応していないファイル形式です ($mime)",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
     private fun launchCamera() {
         if (!imageInputEnabled) {
             Toast.makeText(requireContext(), "このモデルでは画像入力は無効です", Toast.LENGTH_SHORT).show()
@@ -2700,10 +2828,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 setMaxDuration(MAX_RECORDING_DURATION_MS)
                 setOnInfoListener { _, what, _ ->
                     if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED) {
-                        // メインスレッドで UI 破棄も含む停止処理を実行する。
+                        // メインスレッドで UI 後処理も含めて停止する。
                         _binding?.root?.post {
                             if (isRecordingAudio) {
-                                dismissAudioRecordingDialog()
                                 stopAudioRecording()
                                 Toast.makeText(
                                     requireContext(),
@@ -2718,16 +2845,16 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 start()
             }
 
-            // 録音用モーダルを表示
-            showAudioRecordingDialog()
-            binding.sendButton.isEnabled = false
+            // 録音 UI をインラインに切り替える
+            //  - テキスト入力を隠して録音バーを見せる
+            //  - + ボタンを一時的に隠して誤タップを防ぐ
+            //  - マイクボタンは「停止」へ
+            showInlineRecordingBar()
             binding.messageInput.isEnabled = false
             binding.mediaMenuButton.isEnabled = false
 
             // 録音アニメーションを開始
             startRecordingAmplitudeAnimation()
-
-            Toast.makeText(requireContext(), "録音開始しました", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Log.e("ChatFragment", "Error starting audio recording", e)
             Toast.makeText(requireContext(), "録音の開始に失敗しました", Toast.LENGTH_SHORT).show()
@@ -2758,12 +2885,22 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 // hintを元に戻す（cancelするとアニメJob内の後処理が走らないため明示的に戻す）
                 _binding?.messageInput?.hint = "メッセージを入力..."
 
-                // 送信ボタンはモーダル停止ボタンで分離しているので、通常の送信UIに戻す
+                // インライン録音バーを閉じて通常の入力 UI に戻す
+                hideInlineRecordingBar()
+
                 if (_binding != null) {
                     renderSendButtonState()
                 }
                 _binding?.messageInput?.isEnabled = true
                 _binding?.mediaMenuButton?.isEnabled = true
+
+                // キャンセル時は録音ファイルを破棄する。
+                if (discardRecordingOnStop) {
+                    try { recordingFile?.delete() } catch (_: Throwable) {}
+                    recordingFile = null
+                    discardRecordingOnStop = false
+                    return
+                }
 
                 // 録音ファイルをコンテキストに追加
                 if (recordingFile != null && recordingFile!!.exists()) {
@@ -2788,45 +2925,53 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
     }
 
-    private fun showAudioRecordingDialog() {
-        val dialogView = layoutInflater.inflate(R.layout.dialog_audio_recording, null, false)
-        recordingStatusTextView = dialogView.findViewById(R.id.recording_status)
+    /**
+     * モーダルの代わりに EditText に重ねて表示させるインライン録音バーを開く。
+     * バーの実体は fragment_chat.xml の @+id/inline_record_bar で、
+     * EditText と同じ FrameLayout に入っているので visibility だけで切り替わる。
+     */
+    private fun showInlineRecordingBar() {
+        val b = _binding ?: return
+        b.messageInput.visibility = View.INVISIBLE
+        b.inlineRecordBar.visibility = View.VISIBLE
+        b.inlineRecordTime.text = "0:00"
+        b.micButton.isSelected = true
+        b.micButton.setImageResource(R.drawable.ic_stop)
+        // 録音中アイコンを白にするため tint をリセット。
+        b.micButton.imageTintList = null
+        b.micButton.contentDescription = "録音を停止して送信"
+        // 録音リストを保持して、アニメの少ないフレームでも参照できるようにする。
         recordingWaveBars = listOf(
-            dialogView.findViewById(R.id.recording_bar_1),
-            dialogView.findViewById(R.id.recording_bar_2),
-            dialogView.findViewById(R.id.recording_bar_3),
-            dialogView.findViewById(R.id.recording_bar_4),
-            dialogView.findViewById(R.id.recording_bar_5),
+            b.inlineWave1, b.inlineWave2, b.inlineWave3, b.inlineWave4,
+            b.inlineWave5, b.inlineWave6, b.inlineWave7, b.inlineWave8
         )
-
-        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
-            .setView(dialogView)
-            .setCancelable(false)
-            .create()
-
-        dialog.setOnShowListener {
-            dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.recording_stop_button)
-                .setOnClickListener {
-                    dialog.dismiss()
-                    stopAudioRecording()
-                }
-        }
-
-        dialog.setOnDismissListener {
-            recordingDialog = null
-            recordingStatusTextView = null
-            recordingWaveBars = emptyList()
-        }
-
-        dialog.show()
-        recordingDialog = dialog
+        recordingStatusTextView = b.inlineRecordTime
     }
 
-    private fun dismissAudioRecordingDialog() {
-        recordingDialog?.dismiss()
-        recordingDialog = null
-        recordingStatusTextView = null
+    private fun hideInlineRecordingBar() {
+        val b = _binding ?: return
+        b.messageInput.visibility = View.VISIBLE
+        b.inlineRecordBar.visibility = View.GONE
+        b.micButton.isSelected = false
+        b.micButton.setImageResource(R.drawable.ic_mic)
+        // 平常時のアイコン色に戻す。
+        b.micButton.imageTintList = ColorStateList.valueOf(
+            requireContext().getColor(R.color.text_secondary)
+        )
+        b.micButton.contentDescription = "音声入力"
         recordingWaveBars = emptyList()
+        recordingStatusTextView = null
+    }
+
+    /** 録音を破棄して入力に戻す（インラインバーの「削除」ボタン向け） */
+    private fun cancelAudioRecording() {
+        if (!isRecordingAudio) {
+            // 録音中ではないがバーが残っている場合に備えて閉じる。
+            hideInlineRecordingBar()
+            return
+        }
+        discardRecordingOnStop = true
+        stopAudioRecording()
     }
 
     private fun startRecordingAmplitudeAnimation() {
@@ -2844,10 +2989,15 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     val remainSec = ((MAX_RECORDING_DURATION_MS - elapsedMs).coerceAtLeast(0L) / 1000L).toInt()
 
                     withContext(Dispatchers.Main) {
-                        recordingStatusTextView?.text = "録音中$dots  (あと ${remainSec}s)"
+                        // インラインバーではタイマーを mm:ss で見せる。
+                        val recSec = ((System.currentTimeMillis() - startedAt) / 1000L).toInt()
+                        val mm = recSec / 60
+                        val ss = recSec % 60
+                        _binding?.inlineRecordTime?.text = String.format("%d:%02d", mm, ss)
                         val density = requireContext().resources.displayMetrics.density
                         recordingWaveBars.forEachIndexed { index, bar ->
-                            val heightDp = 24 + ((dotCount + index) % 5) * 10
+                            // インラインバーは 22dp 高さ。 6dp 〜 21dp の間でバーを揺らす。
+                            val heightDp = 6 + ((dotCount + index) % 6) * 3
                             bar.layoutParams = bar.layoutParams.apply {
                                 height = (heightDp * density).toInt()
                             }

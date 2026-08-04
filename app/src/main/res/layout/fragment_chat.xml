@@ -59,96 +59,177 @@
             android:padding="10dp">
 
             <LinearLayout
+                android:id="@+id/input_bar_card"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:background="@drawable/bg_input_bar_card"
-                android:orientation="vertical"
-                android:padding="10dp">
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp">
 
-                <com.nezumi_ai.presentation.ui.widget.ClipboardAwareEditText
-                    android:id="@+id/message_input"
-                    android:layout_width="match_parent"
+                <ImageButton
+                    android:id="@+id/media_menu_button"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_gravity="bottom"
+                    android:background="@drawable/bg_plus_btn_circle"
+                    android:contentDescription="@string/add_media_menu"
+                    android:padding="6dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/ic_add"
+                    android:tint="@color/nezumi_primary" />
+
+                <FrameLayout
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:background="@null"
-                    android:hint="@string/enter_message"
-                    android:imeOptions="actionSend"
-                    android:maxLines="6"
-                    android:minHeight="44dp"
-                    android:padding="8dp"
-                    android:scrollbars="vertical"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_secondary"
-                    android:textSize="15sp" />
+                    android:layout_weight="1"
+                    android:layout_marginStart="6dp"
+                    android:layout_marginEnd="4dp">
 
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <LinearLayout
-                        android:id="@+id/input_action_group"
-                        android:layout_width="0dp"
+                    <com.nezumi_ai.presentation.ui.widget.ClipboardAwareEditText
+                        android:id="@+id/message_input"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
+                        android:background="@null"
+                        android:hint="@string/enter_message"
+                        android:imeOptions="actionSend"
+                        android:maxLines="6"
+                        android:minHeight="36dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:paddingTop="6dp"
+                        android:paddingBottom="6dp"
+                        android:scrollbars="vertical"
+                        android:textColor="@color/text_primary"
+                        android:textColorHint="@color/text_secondary"
+                        android:textSize="15sp" />
+
+                    <!-- 録音中バー: EditTextに重ねて表示 (visibility toggle) -->
+                    <LinearLayout
+                        android:id="@+id/inline_record_bar"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical"
+                        android:background="@color/surface_card"
                         android:gravity="center_vertical"
-                        android:orientation="horizontal">
+                        android:minHeight="36dp"
+                        android:orientation="horizontal"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:visibility="gone">
 
-                        <ImageButton
-                            android:id="@+id/media_menu_button"
-                            android:layout_width="34dp"
-                            android:layout_height="34dp"
-                            android:background="@drawable/bg_icon_btn_circle"
-                            android:contentDescription="@string/add_media_menu"
-                            android:padding="6dp"
-                            android:scaleType="centerInside"
-                            android:src="@drawable/ic_add"
-                            android:tint="@color/text_primary" />
-
-                        <LinearLayout
-                            android:id="@+id/input_expanded_icons"
+                        <TextView
+                            android:id="@+id/inline_record_cancel"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_marginStart="4dp"
-                            android:orientation="horizontal"
-                            android:visibility="gone">
+                            android:background="?android:attr/selectableItemBackground"
+                            android:padding="4dp"
+                            android:text="削除"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
 
-                            <ImageButton
-                                android:id="@+id/image_button"
-                                android:layout_width="34dp"
-                                android:layout_height="34dp"
-                                android:background="@drawable/bg_icon_btn_circle"
-                                android:contentDescription="画像を添付"
-                                android:padding="6dp"
-                                android:scaleType="centerInside"
-                                android:src="@drawable/ic_image" />
+                        <View
+                            android:id="@+id/inline_record_dot"
+                            android:layout_width="9dp"
+                            android:layout_height="9dp"
+                            android:layout_marginStart="10dp"
+                            android:background="@drawable/bg_record_dot" />
 
-                            <ImageButton
-                                android:id="@+id/mic_button"
-                                android:layout_width="34dp"
-                                android:layout_height="34dp"
-                                android:layout_marginStart="4dp"
-                                android:background="@drawable/bg_icon_btn_circle"
-                                android:contentDescription="音声入力"
-                                android:padding="6dp"
-                                android:scaleType="centerInside"
-                                android:src="@drawable/ic_mic" />
+                        <TextView
+                            android:id="@+id/inline_record_time"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:text="0:00"
+                            android:textColor="@color/text_primary"
+                            android:textSize="13sp" />
 
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="22dp"
+                            android:layout_weight="1"
+                            android:layout_marginStart="10dp"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <View
+                                android:id="@+id/inline_wave_1"
+                                android:layout_width="3dp"
+                                android:layout_height="9dp"
+                                android:layout_marginEnd="3dp"
+                                android:background="@drawable/bg_wave_bar" />
+                            <View
+                                android:id="@+id/inline_wave_2"
+                                android:layout_width="3dp"
+                                android:layout_height="18dp"
+                                android:layout_marginEnd="3dp"
+                                android:background="@drawable/bg_wave_bar" />
+                            <View
+                                android:id="@+id/inline_wave_3"
+                                android:layout_width="3dp"
+                                android:layout_height="12dp"
+                                android:layout_marginEnd="3dp"
+                                android:background="@drawable/bg_wave_bar" />
+                            <View
+                                android:id="@+id/inline_wave_4"
+                                android:layout_width="3dp"
+                                android:layout_height="21dp"
+                                android:layout_marginEnd="3dp"
+                                android:background="@drawable/bg_wave_bar" />
+                            <View
+                                android:id="@+id/inline_wave_5"
+                                android:layout_width="3dp"
+                                android:layout_height="8dp"
+                                android:layout_marginEnd="3dp"
+                                android:background="@drawable/bg_wave_bar" />
+                            <View
+                                android:id="@+id/inline_wave_6"
+                                android:layout_width="3dp"
+                                android:layout_height="15dp"
+                                android:layout_marginEnd="3dp"
+                                android:background="@drawable/bg_wave_bar" />
+                            <View
+                                android:id="@+id/inline_wave_7"
+                                android:layout_width="3dp"
+                                android:layout_height="11dp"
+                                android:layout_marginEnd="3dp"
+                                android:background="@drawable/bg_wave_bar" />
+                            <View
+                                android:id="@+id/inline_wave_8"
+                                android:layout_width="3dp"
+                                android:layout_height="19dp"
+                                android:background="@drawable/bg_wave_bar" />
                         </LinearLayout>
                     </LinearLayout>
+                </FrameLayout>
 
-                    <ImageButton
-                        android:id="@+id/send_button"
-                        android:layout_width="34dp"
-                        android:layout_height="34dp"
-                        android:background="@drawable/bg_send_btn_circle"
-                        android:contentDescription="@string/send_icon"
-                        android:padding="6dp"
-                        android:scaleType="centerInside"
-                        android:src="@drawable/ic_send" />
+                <ImageButton
+                    android:id="@+id/mic_button"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_gravity="bottom"
+                    android:background="@drawable/bg_mic_btn_circle"
+                    android:contentDescription="音声入力"
+                    android:padding="6dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/ic_mic"
+                    android:tint="@color/text_secondary" />
 
-                </LinearLayout>
+                <ImageButton
+                    android:id="@+id/send_button"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_gravity="bottom"
+                    android:layout_marginStart="4dp"
+                    android:background="@drawable/bg_send_btn_circle"
+                    android:contentDescription="@string/send_icon"
+                    android:padding="6dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/ic_send" />
+
             </LinearLayout>
         </LinearLayout>
     </LinearLayout>

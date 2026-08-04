@@ -20,6 +20,7 @@
     <color name="drawer_text">#000000</color>
     <color name="success">#22C55E</color>
     <color name="error">#EF4444</color>
+    <color name="recording_red">#B4483A</color>
 
     <!-- Background Colors -->
     <color name="bg_session_list">#F5F6F8</color>
