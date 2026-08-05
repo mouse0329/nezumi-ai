@@ -906,18 +906,19 @@ open class ModelSettingsFragment : Fragment() {
                             onCheckedChange = { capabilityDialogAudioEnabled = it }
                         )
                     }
-                    if (isGguf) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(stringResource(id = R.string.model_settings_enable_thinking), color = MaterialTheme.colorScheme.onSurface)
-                            Switch(
-                                checked = capabilityDialogThinkingEnabled,
-                                onCheckedChange = { capabilityDialogThinkingEnabled = it }
-                            )
-                        }
+                    // Thinking トグルは GGUF/LiteRT-LM 両方（外部インポート .task / .litertlm 含む）で表示する。
+                    // LiteRT-LM 側でも SamplerConfig の enable_thinking を通してモデルに伝達されるため、
+                    // 対応モデル (Gemma3n / Qwen3 系 など) を外部から取り込んだ場合にも Thinking を有効化できる。
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(stringResource(id = R.string.model_settings_enable_thinking), color = MaterialTheme.colorScheme.onSurface)
+                        Switch(
+                            checked = capabilityDialogThinkingEnabled,
+                            onCheckedChange = { capabilityDialogThinkingEnabled = it }
+                        )
                     }
                     if (supportsToolCalling) {
                         Row(

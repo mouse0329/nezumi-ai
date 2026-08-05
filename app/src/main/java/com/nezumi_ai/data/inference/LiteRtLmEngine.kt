@@ -1074,6 +1074,36 @@ class LiteRtLmEngine(
         val visionEnabled = loadedWithVisionAudio
         val hasMultimodalInput = images.isNotEmpty() || audioClips.isNotEmpty()
 
+        // Bug fix: 外部インポート LiteRT-LM (.task / .litertlm) では、モデル設定で
+        // 画像/音声のスイッチが OFF のときに vision/audio executor をロードしようとして
+        // エラーが出ていた。ここで capability を再確認し、OFF ならメディアを捨てて
+        // テキスト専用推論にフォールバックする（勝手に requireMultimodal 再ロードしない）。
+        val capabilityBlockedMultimodal: Boolean = run {
+            if (!hasMultimodalInput) return@run false
+            val path = loadedModelPath ?: return@run false
+            val lower = path.lowercase()
+            val isImportedLiteRt = (lower.endsWith(".task") || lower.endsWith(".litertlm")) &&
+                File(path).isAbsolute
+            if (!isImportedLiteRt) return@run false
+            val caps = com.nezumi_ai.utils.ImportedModelCapabilityStore.get(appContext, path)
+            val imageBlocked = images.isNotEmpty() && !caps.imageEnabled
+            val audioBlocked = audioClips.isNotEmpty() && !caps.audioEnabled
+            imageBlocked || audioBlocked
+        }
+        if (capabilityBlockedMultimodal) {
+            releaseInferenceMutex()
+            Log.w(
+                TAG,
+                "Imported LiteRT-LM: media supplied but capability switches are OFF. " +
+                    "Falling back to text-only inference to avoid unnecessary multimodal reload."
+            )
+            inferenceWithMedia(sessionId, prompt, emptyList(), emptyList(), config).collect { chunk ->
+                trySend(chunk).isSuccess
+            }
+            close()
+            return@callbackFlow
+        }
+
         // マルチモーダル入力があるのにvisionが無効な場合、requireMultimodal=trueで再ロードを1回だけ試みる
         if (hasMultimodalInput && !visionEnabled) {
             releaseInferenceMutex()

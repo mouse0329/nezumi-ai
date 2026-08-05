@@ -1673,9 +1673,22 @@ class ChatViewModel(
             }
             val baseConfig = chatInferenceConfigForModel(selectedModel)
             val backend = settingsRepository.getBackendForModel(selectedModel)
+            // Bug fix: LiteRT-LM 外部インポートモデル (.task / .litertlm) については、
+            // モデル設定で画像/音声のスイッチを ON にしていない限り requireMultimodal を立てない。
+            // これをガードしないと vision/audio executor のロードを試みてエラーになる。
+            val engineLowerForCaps = engineModelName.lowercase()
+            val isImportedLiteRtForCaps = (engineLowerForCaps.endsWith(".task") || engineLowerForCaps.endsWith(".litertlm")) &&
+                File(engineModelName).isAbsolute
+            val importedMultimodalAllowed = if (isImportedLiteRtForCaps) {
+                val caps = com.nezumi_ai.utils.ImportedModelCapabilityStore.get(appContext, engineModelName)
+                (images.isNotEmpty() && caps.imageEnabled) || (audioClips.isNotEmpty() && caps.audioEnabled)
+            } else {
+                // ビルトイン Gemma 等は従来通り hasMediaInput だけで判定
+                hasMediaInput
+            }
             val config = baseConfig.copy(
                 backendType = backend,
-                requireMultimodal = hasMediaInput && !engineModelName.endsWith(".gguf", ignoreCase = true)
+                requireMultimodal = importedMultimodalAllowed && !engineModelName.endsWith(".gguf", ignoreCase = true)
             ).normalized()
             val aiStartMs = System.currentTimeMillis()
             Log.d(TAG, "generateAIResponse START: model=$selectedModel, enableThinking=${config.enableThinking}, backend=${config.backendType}, requestedBackend=$backend, memoryUsage=$memoryPercent%")
@@ -1775,22 +1788,37 @@ class ChatViewModel(
                 currentTurnMessageId = currentTurnMessageId
             )
 
-            if (engineModelName.endsWith(".gguf", ignoreCase = true)) {
+            // Bug fix: 外部インポートモデルの capability チェック。
+            // GGUF（.gguf）に加え、LiteRT-LM インポート（.task / .litertlm）も同様に
+            // 画像/音声のスイッチがオフの場合はエンジンに media を渡さない。
+            // これをガードしないと LiteRtLmEngine 側で hasMultimodalInput=true と判定され、
+            // requireMultimodal=true での再ロードが走り、非マルチモーダルなインポートモデルで
+            // ロードエラーが発生する。
+            val engineLower = engineModelName.lowercase()
+            val isImportedGguf = engineLower.endsWith(".gguf") && File(engineModelName).isAbsolute
+            val isImportedLiteRt = (engineLower.endsWith(".task") || engineLower.endsWith(".litertlm")) &&
+                File(engineModelName).isAbsolute
+            if (isImportedGguf || isImportedLiteRt) {
                 val caps = com.nezumi_ai.utils.ImportedModelCapabilityStore.get(appContext, engineModelName)
+                val modelKindLabel = if (isImportedGguf) "GGUF" else "LiteRT-LM"
                 if (images.isNotEmpty() && !caps.imageEnabled) {
                     Log.w(
                         TAG,
-                        "GGUF: images sent but image capability off. count=${images.size}"
+                        "$modelKindLabel: images sent but image capability off. count=${images.size}"
                     )
-                    _uiMessage.emit("このGGUFモデルでは画像入力がオフです。モデル設定の機能設定で画像を有効にしてください。")
+                    _uiMessage.emit(
+                        "この${modelKindLabel}モデルでは画像入力がオフです。モデル設定の機能設定で画像を有効にしてください。"
+                    )
                     return
                 }
                 if (audioClips.isNotEmpty() && !caps.audioEnabled) {
                     Log.w(
                         TAG,
-                        "GGUF: audio sent but audio capability off. count=${audioClips.size}"
+                        "$modelKindLabel: audio sent but audio capability off. count=${audioClips.size}"
                     )
-                    _uiMessage.emit("このGGUFモデルでは音声入力がオフです。モデル設定の機能設定で音声を有効にしてください。")
+                    _uiMessage.emit(
+                        "この${modelKindLabel}モデルでは音声入力がオフです。モデル設定の機能設定で音声を有効にしてください。"
+                    )
                     return
                 }
             }

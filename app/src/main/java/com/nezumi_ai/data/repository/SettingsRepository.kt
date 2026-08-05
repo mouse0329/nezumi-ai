@@ -166,16 +166,22 @@ class SettingsRepository(
             com.nezumi_ai.data.inference.PromptBuilder.isGemma4Model(model)
         val ggufThinking = isGguf && appContext != null &&
             (isGemma4Gguf || ImportedModelCapabilityStore.get(appContext, model).thinkingEnabled)
+        // 外部インポート LiteRT-LM (.task / .litertlm) も、モデル設定で Thinking を ON にしていれば
+        // enable_thinking を SamplerConfig 経由でモデルに渡す。
+        val isLiteRtImportedEarly = isLiteRtImportedModel(model)
+        val liteRtImportedThinking = isLiteRtImportedEarly && appContext != null &&
+            ImportedModelCapabilityStore.get(appContext, model).thinkingEnabled
         val enableThinking = when {
             isGemma4 -> enableThinkingPref
             isGguf -> enableThinkingPref && ggufThinking
+            isLiteRtImportedEarly -> enableThinkingPref && liteRtImportedThinking
             else -> false
         }
         val base = getInferenceConfig(appContext)
         val customStopTokens = if (model.endsWith(".gguf", ignoreCase = true)) {
             getStopTokensForModel(model)
         } else emptyList()
-        val isLiteRtImported = isLiteRtImportedModel(model)
+        val isLiteRtImported = isLiteRtImportedEarly
         val enableToolCalling = when {
             isGemma4 -> true
             appContext != null && (isGguf || isLiteRtImported) ->
@@ -458,16 +464,22 @@ class SettingsRepository(
             (t.endsWith(".litertlm") || t.endsWith(".task"))
     }
 
-    /** チャット画面の「このチャットでシンキングOFF」トグルを出すか（GGUF は設定で Thinking 有効時のみ） */
+    /** チャット画面の「このチャットでシンキングOFF」トグルを出すか（GGUF / LiteRT-LM は設定で Thinking 有効時のみ） */
     fun modelSupportsGemmaThinking(model: String, appContext: android.content.Context? = null): Boolean {
         if (isBuiltinGemma4Model(model)) return true
-        if (!isGgufModel(model)) return false
         val ctx = appContext ?: return false
-        // ファイル名から Gemma4 と判定されるインポートモデルは、
-        // ユーザーが capability ストアで手動設定をしていなくても Thinking をサポート扱いにする。
-        // (例: gemma-4-12b-it-Q4_K_M.gguf / gemma-4-26B-A4B-it-Q4_K_M.gguf など)
-        if (com.nezumi_ai.data.inference.PromptBuilder.isGemma4Model(model)) return true
-        return ImportedModelCapabilityStore.get(ctx, model).thinkingEnabled
+        if (isGgufModel(model)) {
+            // ファイル名から Gemma4 と判定されるインポートモデルは、
+            // ユーザーが capability ストアで手動設定をしていなくても Thinking をサポート扱いにする。
+            // (例: gemma-4-12b-it-Q4_K_M.gguf / gemma-4-26B-A4B-it-Q4_K_M.gguf など)
+            if (com.nezumi_ai.data.inference.PromptBuilder.isGemma4Model(model)) return true
+            return ImportedModelCapabilityStore.get(ctx, model).thinkingEnabled
+        }
+        // 外部インポート LiteRT-LM (.task / .litertlm) はモデル設定で Thinking を ON にしたときのみ表示する。
+        if (isLiteRtImportedModel(model)) {
+            return ImportedModelCapabilityStore.get(ctx, model).thinkingEnabled
+        }
+        return false
     }
 
     suspend fun remapImportedModelPath(oldPath: String, newPath: String) {
