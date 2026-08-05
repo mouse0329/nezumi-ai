@@ -86,6 +86,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 import kotlin.math.roundToInt
 
 class SettingsComposeFragment : Fragment() {
@@ -348,7 +349,7 @@ class SettingsComposeFragment : Fragment() {
 
         errorDialogMessage?.let { message ->
             ErrorModalDialog(
-                title = "設定エラー",
+                title = stringResource(id = R.string.settings_error_dialog_title),
                 message = message,
                 onDismiss = { errorDialogMessage = null }
             )
@@ -357,7 +358,7 @@ class SettingsComposeFragment : Fragment() {
         sharedModelErrorMessage?.let { message ->
             // Parse message to extract title, body, and details
             val lines = message.split("\n\n")
-            val title = lines.getOrNull(0) ?: "エラー"
+            val title = lines.getOrNull(0) ?: stringResource(id = R.string.settings_error_title)
             val body = lines.getOrNull(1) ?: lines.getOrNull(0) ?: message
             val detail = lines.getOrNull(2)
             ErrorModalDialog(
@@ -439,7 +440,7 @@ class SettingsComposeFragment : Fragment() {
  // タブレット: サイドバー + コンテンツ / スマホ: リスト or コンテンツ
             Row(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
                     .weight(1f)
             ) {
                 if (isTablet) {
@@ -537,8 +538,7 @@ class SettingsComposeFragment : Fragment() {
                 if (isTablet || !showSettingsListOnPhone) {
                     LazyColumn(
                         modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
+                            .fillMaxSize(),
                         contentPadding = PaddingValues(12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
@@ -993,13 +993,13 @@ class SettingsComposeFragment : Fragment() {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { aboutDialogVisible = true }) {
-                        Text(text = "このアプリについて")
+                        Text(text = stringResource(id = R.string.settings_about_dialog_title))
                     }
                     TextButton(onClick = {
                         PreferencesHelper.resetInitialSetupCompleted(requireContext())
                         findNavController().navigate(R.id.setupWizardFragment)
                     }) {
-                        Text(text = "セットアップを開く")
+                        Text(text = stringResource(id = R.string.settings_inference_setup_open))
                     }
                     TextButton(onClick = { findNavController().navigate(R.id.action_settingsFragment_to_helpFragment) }) {
                         Text(text = stringResource(id = R.string.open_help_page))
@@ -1127,7 +1127,7 @@ class SettingsComposeFragment : Fragment() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "温度 (Temperature)",
+                            text = stringResource(id = R.string.settings_inference_temperature_label),
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold
@@ -1157,7 +1157,7 @@ class SettingsComposeFragment : Fragment() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Top-K",
+                            text = stringResource(id = R.string.settings_inference_topk_label),
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold
@@ -1187,7 +1187,7 @@ class SettingsComposeFragment : Fragment() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Top-P",
+                            text = stringResource(id = R.string.settings_inference_topp_label),
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold
@@ -1220,7 +1220,7 @@ class SettingsComposeFragment : Fragment() {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "自動圧縮",
+                                text = stringResource(id = R.string.settings_inference_auto_compress_title),
                                 color = colorResource(id = R.color.text_secondary),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.SemiBold,
@@ -1232,7 +1232,7 @@ class SettingsComposeFragment : Fragment() {
                             )
                         }
                         Text(
-                            text = "有効にすると指定した割合を超えたときに自動的に圧縮します",
+                            text = stringResource(id = R.string.settings_inference_auto_compress_desc),
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -1246,7 +1246,7 @@ class SettingsComposeFragment : Fragment() {
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "圧縮しきい値",
+                                    text = stringResource(id = R.string.settings_inference_compression_threshold_title),
                                     color = colorResource(id = R.color.text_secondary),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.SemiBold
@@ -1275,7 +1275,7 @@ class SettingsComposeFragment : Fragment() {
                                 modifier = Modifier.fillMaxWidth()
                             )
                             Text(
-                                text = "メモリ使用量がこの割合を超えると自動圧縮します",
+                                text = stringResource(id = R.string.settings_inference_compression_threshold_desc),
                                 color = colorResource(id = R.color.text_secondary),
                                 style = MaterialTheme.typography.labelSmall
                             )
@@ -1290,7 +1290,7 @@ class SettingsComposeFragment : Fragment() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "プリロードメモリ警告閾値",
+                            text = stringResource(id = R.string.settings_inference_preload_warning_title),
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold
@@ -1313,7 +1313,7 @@ class SettingsComposeFragment : Fragment() {
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text(
-                        text = "UI では 0-100、内部では 3 倍の 0-300 の値になります",
+                        text = stringResource(id = R.string.settings_inference_preload_warning_desc),
                         color = colorResource(id = R.color.text_secondary),
                         style = MaterialTheme.typography.labelSmall
                     )
@@ -1333,9 +1333,9 @@ class SettingsComposeFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = "GGUF / llama.rn 設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Text(text = stringResource(id = R.string.settings_gguf_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
                 Text(
-                    text = "インポートした GGUF モデル専用の設定です。llama.rn エンジンに適用されます。",
+                    text = stringResource(id = R.string.settings_gguf_desc),
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -1352,7 +1352,7 @@ class SettingsComposeFragment : Fragment() {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "基本設定",
+                            text = stringResource(id = R.string.settings_basic_settings),
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold
@@ -1373,7 +1373,7 @@ class SettingsComposeFragment : Fragment() {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "CPU スレッド数",
+                                        text = stringResource(id = R.string.settings_cpu_threads),
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold
@@ -1402,7 +1402,7 @@ class SettingsComposeFragment : Fragment() {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "GPU レイヤー数 (Offload)",
+                                        text = stringResource(id = R.string.settings_gpu_layers),
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold
@@ -1431,7 +1431,7 @@ class SettingsComposeFragment : Fragment() {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "バッチサイズ",
+                                        text = stringResource(id = R.string.settings_batch_size),
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold
@@ -1460,7 +1460,7 @@ class SettingsComposeFragment : Fragment() {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "内部バッチサイズ (n_ubatch)",
+                                        text = stringResource(id = R.string.settings_internal_batch_size),
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold
@@ -1489,13 +1489,13 @@ class SettingsComposeFragment : Fragment() {
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "kvUnified",
+                                        text = stringResource(id = R.string.settings_kv_unified),
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     Text(
-                                        text = "KV キャッシュの統合モードを有効化します。",
+                                        text = stringResource(id = R.string.settings_kv_unified_desc),
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.bodySmall
                                     )
@@ -1508,7 +1508,7 @@ class SettingsComposeFragment : Fragment() {
 
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(
-                                    text = "RoPE周波数基数",
+                                    text = stringResource(id = R.string.settings_rope_base),
                                     color = colorResource(id = R.color.text_secondary),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.SemiBold
@@ -1524,7 +1524,7 @@ class SettingsComposeFragment : Fragment() {
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                                 )
                                 Text(
-                                    text = "0 = 自動設定",
+                                    text = stringResource(id = R.string.settings_rope_base_hint),
                                     color = colorResource(id = R.color.text_secondary),
                                     style = MaterialTheme.typography.labelSmall
                                 )
@@ -1537,7 +1537,7 @@ class SettingsComposeFragment : Fragment() {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "RoPE周波数スケール",
+                                        text = stringResource(id = R.string.settings_rope_scale),
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold
@@ -1558,7 +1558,7 @@ class SettingsComposeFragment : Fragment() {
                                     modifier = Modifier.fillMaxWidth()
                                 )
                                 Text(
-                                    text = "1.0 = デフォルト",
+                                    text = stringResource(id = R.string.settings_rope_scale_hint),
                                     color = colorResource(id = R.color.text_secondary),
                                     style = MaterialTheme.typography.labelSmall
                                 )
@@ -1579,7 +1579,7 @@ class SettingsComposeFragment : Fragment() {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "パフォーマンス最適化",
+                            text = stringResource(id = R.string.settings_performance_optimization),
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold
@@ -1600,13 +1600,13 @@ class SettingsComposeFragment : Fragment() {
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "MTP (投機的デコーディング)",
+                                        text = stringResource(id = R.string.settings_mtp_title),
                                         color = colorResource(id = R.color.text_primary),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     Text(
-                                        text = "複数トークンを並列生成して高速化（2-3倍）",
+                                        text = stringResource(id = R.string.settings_mtp_desc),
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.bodySmall
                                     )
@@ -1625,7 +1625,7 @@ class SettingsComposeFragment : Fragment() {
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "MTP Draft トークン数",
+                                            text = stringResource(id = R.string.settings_mtp_draft_tokens),
                                             color = colorResource(id = R.color.text_secondary),
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.SemiBold
@@ -1646,7 +1646,7 @@ class SettingsComposeFragment : Fragment() {
                                         modifier = Modifier.fillMaxWidth()
                                     )
                                     Text(
-                                        text = "推奨: 5-8 (多いほど高速だがメモリ消費増)",
+                                        text = stringResource(id = R.string.settings_mtp_recommended),
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.labelSmall
                                     )
@@ -1660,13 +1660,13 @@ class SettingsComposeFragment : Fragment() {
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Flash Attention",
+                                        text = stringResource(id = R.string.settings_flash_attention),
                                         color = colorResource(id = R.color.text_primary),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     Text(
-                                        text = "メモリ効率的な Attention 計算",
+                                        text = stringResource(id = R.string.settings_flash_attention_desc),
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.bodySmall
                                     )
@@ -1684,13 +1684,13 @@ class SettingsComposeFragment : Fragment() {
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "動的バッチサイズ調整",
+                                        text = stringResource(id = R.string.settings_dynamic_batch),
                                         color = colorResource(id = R.color.text_primary),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     Text(
-                                        text = "プロンプト処理と生成で異なるバッチサイズを使用",
+                                        text = stringResource(id = R.string.settings_dynamic_batch_desc),
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.bodySmall
                                     )
@@ -1709,7 +1709,7 @@ class SettingsComposeFragment : Fragment() {
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "プロンプト用バッチサイズ",
+                                            text = stringResource(id = R.string.settings_prompt_batch),
                                             color = colorResource(id = R.color.text_secondary),
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.SemiBold
@@ -1738,7 +1738,7 @@ class SettingsComposeFragment : Fragment() {
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "生成用バッチサイズ",
+                                            text = stringResource(id = R.string.settings_inference_generation_batch_title),
                                             color = colorResource(id = R.color.text_secondary),
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.SemiBold
@@ -1759,7 +1759,7 @@ class SettingsComposeFragment : Fragment() {
                                         modifier = Modifier.fillMaxWidth()
                                     )
                                     Text(
-                                        text = "推奨: プロンプト=512, 生成=128",
+                                        text = stringResource(id = R.string.settings_inference_generation_batch_desc),
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.labelSmall
                                     )
@@ -1773,13 +1773,13 @@ class SettingsComposeFragment : Fragment() {
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "KVキャッシュ最適化",
+                                        text = stringResource(id = R.string.settings_inference_kv_cache_title),
                                         color = colorResource(id = R.color.text_primary),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     Text(
-                                        text = "ハイブリッドモデル対応の賢いキャッシュ管理",
+                                        text = stringResource(id = R.string.settings_inference_kv_cache_desc),
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.bodySmall
                                     )
@@ -1797,13 +1797,13 @@ class SettingsComposeFragment : Fragment() {
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "コンテキストシフト",
+                                        text = stringResource(id = R.string.settings_inference_context_shift_title),
                                         color = colorResource(id = R.color.text_primary),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     Text(
-                                        text = "コンテキスト満杯時に古い部分を自動削除",
+                                        text = stringResource(id = R.string.settings_inference_context_shift_desc),
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.bodySmall
                                     )
@@ -1830,16 +1830,16 @@ class SettingsComposeFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = "LiteRT-LM 設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Text(text = stringResource(id = R.string.settings_inference_literlm_settings_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        text = "バックエンド（LiteRT-LM 専用）",
+                        text = stringResource(id = R.string.settings_inference_backend_title),
                         color = colorResource(id = R.color.text_secondary),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "CPU / GPU / NPU の選択は LiteRT-LM モデルの推論にのみ適用されます。",
+                        text = stringResource(id = R.string.settings_inference_backend_desc),
                         color = colorResource(id = R.color.text_secondary),
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -1850,19 +1850,19 @@ class SettingsComposeFragment : Fragment() {
                         FilterChip(
                             selected = backendType == "CPU",
                             onClick = { backendType = "CPU" },
-                            label = { Text("CPU") },
+                            label = { Text(stringResource(id = R.string.settings_backend_cpu)) },
                             modifier = Modifier.weight(1f)
                         )
                         FilterChip(
                             selected = backendType == "GPU",
                             onClick = { backendType = "GPU" },
-                            label = { Text("GPU") },
+                            label = { Text(stringResource(id = R.string.settings_backend_gpu)) },
                             modifier = Modifier.weight(1f)
                         )
                         FilterChip(
                             selected = backendType == "NPU",
                             onClick = { backendType = "NPU" },
-                            label = { Text("NPU") },
+                            label = { Text(stringResource(id = R.string.settings_backend_npu)) },
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -1881,13 +1881,13 @@ class SettingsComposeFragment : Fragment() {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "投機的デコーディング",
+                            text = stringResource(id = R.string.settings_inference_speculative_decoding_title),
                             color = colorResource(id = R.color.text_primary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = "LiteRT 推論の高速化を有効化します。",
+                            text = stringResource(id = R.string.settings_inference_speculative_decoding_desc),
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -1904,13 +1904,13 @@ class SettingsComposeFragment : Fragment() {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "requireMultimodal",
+                            text = stringResource(id = R.string.settings_require_multimodal),
                             color = colorResource(id = R.color.text_primary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = "vision/audio executor を必須化します。",
+                            text = stringResource(id = R.string.settings_require_multimodal_desc),
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -1935,10 +1935,10 @@ class SettingsComposeFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = "画像生成設定", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Text(text = stringResource(id = R.string.settings_image_generation_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
 
                 Text(
-                    text = "ステップ数・CFG スケールに加え、メインの生成ページで使う「スケジューラ」「シード」の初期値をここで管理します。",
+                    text = stringResource(id = R.string.settings_image_generation_desc),
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -1951,7 +1951,7 @@ class SettingsComposeFragment : Fragment() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "ステップ数",
+                            text = stringResource(id = R.string.settings_steps_title),
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold
@@ -1981,7 +1981,7 @@ class SettingsComposeFragment : Fragment() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "CFG スケール",
+                            text = stringResource(id = R.string.settings_cfg_scale_title),
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold
@@ -2008,7 +2008,7 @@ class SettingsComposeFragment : Fragment() {
                 //   設定画面も縦に弸むため、ここでは 1 行の ExposedDropdownMenu に集約する。
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = "スケジューラ（初期値）",
+                        text = stringResource(id = R.string.settings_scheduler_title),
                         color = colorResource(id = R.color.text_secondary),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold
@@ -2053,7 +2053,7 @@ class SettingsComposeFragment : Fragment() {
                 //   (SD の実際の seed は生成タブ側のフィールドで逐回指定するフローを維持)
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = "シード値（デフォルト、空欄でランダム）",
+                        text = stringResource(id = R.string.settings_seed_title),
                         color = colorResource(id = R.color.text_secondary),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold
@@ -2068,12 +2068,12 @@ class SettingsComposeFragment : Fragment() {
                             sdDefaultSeedInput = cleaned
                         },
                         singleLine = true,
-                        placeholder = { Text("-1") },
+                        placeholder = { Text(stringResource(id = R.string.settings_seed_placeholder)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text(
-                        text = "※ 実際の生成に使うシードはメインの「画像生成」ページ上で逐回確定されます。",
+                        text = stringResource(id = R.string.settings_seed_hint),
                         color = colorResource(id = R.color.text_secondary),
                         style = MaterialTheme.typography.labelSmall
                     )
@@ -2084,6 +2084,7 @@ class SettingsComposeFragment : Fragment() {
 
     @Composable
     private fun MemoryManagementCard() {
+        val localContext = LocalContext.current
         val memories by memoryRepository.observeMemories().collectAsState(initial = emptyList())
         var showMemoryListModal by remember { mutableStateOf(false) }
         var confirmDeleteAll by remember { mutableStateOf(false) }
@@ -2098,7 +2099,7 @@ class SettingsComposeFragment : Fragment() {
                         viewLifecycleOwner.lifecycleScope.launch {
                             memoryRepository.softDeleteAll()
                             confirmDeleteAll = false
-                            toast("メモリを削除しました")
+                            toast(localContext.getString(R.string.settings_memory_deleted_toast))
                         }
                     }) {
                         Text(stringResource(id = R.string.common_delete))
@@ -2137,9 +2138,9 @@ class SettingsComposeFragment : Fragment() {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
-                        Text(text = "メモリ管理", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                        Text(text = stringResource(id = R.string.settings_memory_management_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
                         Text(
-                            text = "${memories.size}件のメモリ",
+                            text = stringResource(id = R.string.settings_memory_count_format, memories.size),
                             color = colorResource(id = R.color.text_secondary),
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -2161,7 +2162,7 @@ class SettingsComposeFragment : Fragment() {
                 }
 
                 Text(
-                    text = "メモリ保存方式",
+                    text = stringResource(id = R.string.settings_memory_save_mode_title),
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold
@@ -2216,7 +2217,7 @@ class SettingsComposeFragment : Fragment() {
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                                 Text(
-                                    text = "重要度 ${String.format("%.2f", memory.importance)} / 参照 ${memory.accessCount}回",
+                                    text = stringResource(id = R.string.settings_memory_importance_format, String.format("%.2f", memory.importance), memory.accessCount),
                                     color = colorResource(id = R.color.text_secondary),
                                     style = MaterialTheme.typography.labelSmall
                                 )
@@ -2247,16 +2248,16 @@ class SettingsComposeFragment : Fragment() {
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(text = "デバッグ", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                    Text(text = stringResource(id = R.string.settings_debug_section_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
                     SvgSpinner(modifier = Modifier.size(32.dp))
                 }
                 Text(
-                    text = "モデル埋め込みによる類似度",
+                    text = stringResource(id = R.string.settings_debug_similarity_title),
                     fontWeight = FontWeight.SemiBold,
                     style = MaterialTheme.typography.titleSmall
                 )
                 Text(
-                    text = "単語やフレーズを入力して、埋め込みモデルを使った類似度を計算します。",
+                    text = stringResource(id = R.string.settings_debug_similarity_desc),
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -2278,23 +2279,23 @@ class SettingsComposeFragment : Fragment() {
                     )
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(text = "システムメモリ状況 (1秒更新)", fontWeight = FontWeight.SemiBold)
+                        Text(text = stringResource(id = R.string.settings_debug_memory_status), fontWeight = FontWeight.SemiBold)
                         Text(
-                            text = "使用率: ${systemMemoryInfo.usedPercent}% / 空き率: ${systemMemoryInfo.availablePercent}%",
+                            text = stringResource(id = R.string.settings_debug_memory_usage, systemMemoryInfo.usedPercent, systemMemoryInfo.availablePercent),
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Text(
-                            text = "合計: ${systemMemoryInfo.totalMemoryMB}MB / 使用: ${systemMemoryInfo.usedMemoryMB}MB / 空き: ${systemMemoryInfo.availableMemoryMB}MB",
+                            text = stringResource(id = R.string.settings_debug_memory_summary, systemMemoryInfo.totalMemoryMB, systemMemoryInfo.usedMemoryMB, systemMemoryInfo.availableMemoryMB),
                             style = MaterialTheme.typography.bodySmall,
                             color = colorResource(id = R.color.text_secondary)
                         )
                         Text(
-                            text = if (systemMemoryInfo.lowMemoryFlag) "低メモリ状態です。" else "メモリ状態は安定しています。",
+                            text = if (systemMemoryInfo.lowMemoryFlag) stringResource(id = R.string.settings_debug_memory_low) else stringResource(id = R.string.settings_debug_memory_stable),
                             style = MaterialTheme.typography.bodySmall,
                             color = if (systemMemoryInfo.lowMemoryFlag) MaterialTheme.colorScheme.error else colorResource(id = R.color.text_secondary)
                         )
                         Text(
-    text = "source: ${systemMemoryInfo.source}",
+    text = stringResource(id = R.string.settings_debug_memory_source_format, systemMemoryInfo.source),
     style = MaterialTheme.typography.bodySmall,
     color = colorResource(id = R.color.text_secondary)
 )
@@ -2327,11 +2328,11 @@ class SettingsComposeFragment : Fragment() {
                         errorDialogMessage = null
                         debugTextSimilarityResult = null
                         if (debugTextAInput.isBlank()) {
-                            errorDialogMessage = "テキストAを入力してください。"
+                            errorDialogMessage = localContext.getString(R.string.settings_debug_text_a_required)
                             return@Button
                         }
                         if (debugTextBInput.isBlank()) {
-                            errorDialogMessage = "テキストBを入力してください。"
+                            errorDialogMessage = localContext.getString(R.string.settings_debug_text_b_required)
                             return@Button
                         }
                         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
@@ -2345,18 +2346,18 @@ class SettingsComposeFragment : Fragment() {
                             }.getOrNull()
                             withContext(Dispatchers.Main) {
                                 if (embeddingA.isEmpty() || embeddingB.isEmpty()) {
-                                    errorDialogMessage = "埋め込みの計算に失敗しました。"
+                                    errorDialogMessage = localContext.getString(R.string.settings_debug_embedding_failed)
                                     return@withContext
                                 }
                                 if (embeddingA.size != embeddingB.size) {
-                                    errorDialogMessage = "埋め込み次元が一致しません。"
+                                    errorDialogMessage = localContext.getString(R.string.settings_debug_embedding_dimension_mismatch)
                                     return@withContext
                                 }
                                 if (normA == 0f || normB == 0f) {
-                                    errorDialogMessage = "埋め込みがゼロベクトルになりました。"
+                                    errorDialogMessage = localContext.getString(R.string.settings_debug_embedding_zero_vector)
                                     return@withContext
                                 }
-                                debugTextSimilarityResult = String.format("モデル埋め込み類似度: %.6f", similarity ?: 0.0)
+                                debugTextSimilarityResult = localContext.getString(R.string.settings_debug_similarity_result_format, similarity ?: 0.0)
                             }
                         }
                     }) {
@@ -2379,13 +2380,12 @@ class SettingsComposeFragment : Fragment() {
                 // ---- NSFW チェッカー (open_nsfw.onnx / Yahoo Open NSFW) ----
                 Divider(modifier = Modifier.padding(vertical = 4.dp))
                 Text(
-                    text = "選択した画像の NSFW チェック",
+                    text = stringResource(id = R.string.settings_debug_nsfw_title),
                     fontWeight = FontWeight.SemiBold,
                     style = MaterialTheme.typography.titleSmall
                 )
                 Text(
-                    text = "ギャラリーから選んだ画像を、内蔵の open_nsfw モデルで判定し、\n" +
-                        "safe / nsfw の確率を表示します。実際の生成フローと別に確認できます。",
+                    text = stringResource(id = R.string.settings_debug_nsfw_desc),
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -2394,7 +2394,7 @@ class SettingsComposeFragment : Fragment() {
                         onClick = { nsfwDebugPickLauncher.launch("image/*") },
                         enabled = !nsfwDebugRunning
                     ) {
-                        Text(if (nsfwDebugRunning) "判定中…" else "画像を選択して NSFW チェック")
+                        Text(if (nsfwDebugRunning) stringResource(id = R.string.settings_debug_nsfw_running) else stringResource(id = R.string.settings_debug_nsfw_pick))
                     }
                     Button(onClick = {
                         nsfwDebugBitmap = null
@@ -2416,7 +2416,7 @@ class SettingsComposeFragment : Fragment() {
                     ) {
                         Image(
                             bitmap = bmp.asImageBitmap(),
-                            contentDescription = "NSFW チェック対象画像",
+                            contentDescription = stringResource(id = R.string.settings_debug_nsfw_image_desc),
                             modifier = Modifier
                                 .size(96.dp)
                                 .clip(RoundedCornerShape(8.dp)),
@@ -2426,24 +2426,24 @@ class SettingsComposeFragment : Fragment() {
                             val safe = nsfwDebugSafeProb
                             val nsfw = nsfwDebugNsfwProb
                             if (safe != null && nsfw != null) {
-                                val verdict = if (nsfw >= 0.8f) "BLOCK (本番ではブロック)" else "ALLOW"
+                                val verdict = if (nsfw >= 0.8f) stringResource(id = R.string.settings_debug_nsfw_verdict_block) else stringResource(id = R.string.settings_debug_nsfw_verdict_allow)
                                 val verdictColor = if (nsfw >= 0.8f)
                                     MaterialTheme.colorScheme.error else colorResource(id = R.color.primary)
                                 Text(
-                                    text = "判定: $verdict",
+                                    text = stringResource(id = R.string.settings_debug_verdict_format, verdict),
                                     color = verdictColor,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = String.format("safe: %.4f", safe),
+                                    text = stringResource(id = R.string.settings_debug_prob_safe_format, String.format(Locale.US, "%.4f", safe)),
                                     style = MaterialTheme.typography.bodySmall
                                 )
                                 Text(
-                                    text = String.format("nsfw: %.4f", nsfw),
+                                    text = stringResource(id = R.string.settings_debug_prob_nsfw_format, String.format(Locale.US, "%.4f", nsfw)),
                                     style = MaterialTheme.typography.bodySmall
                                 )
                                 Text(
-                                    text = "しきい値: nsfw >= 0.8 でブロック",
+                                    text = stringResource(id = R.string.settings_debug_nsfw_threshold),
                                     color = colorResource(id = R.color.text_secondary),
                                     style = MaterialTheme.typography.labelSmall
                                 )
@@ -2454,7 +2454,7 @@ class SettingsComposeFragment : Fragment() {
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(onClick = {
-                    modelErrorDialogMessage = "モデルのロードに失敗しました。デバッグ用モーダルを表示しています。"
+                    modelErrorDialogMessage = localContext.getString(R.string.settings_debug_model_error_message)
                 }) {
                     Text(stringResource(id = R.string.settings_debug_model_error_button))
                 }
@@ -2497,19 +2497,18 @@ class SettingsComposeFragment : Fragment() {
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
-                text = "logcat (常時収集)",
+                text = stringResource(id = R.string.settings_logcat_title),
                 fontWeight = FontWeight.SemiBold,
                 style = MaterialTheme.typography.titleSmall
             )
         }
         Text(
-            text = "アプリ起動中は自プロセスの logcat を常にバックグラウンドで記録しています。" +
-                "一定サイズを超えると古いログから自動的に削除されるため、ここでは直近分だけを確認できます。",
+            text = stringResource(id = R.string.settings_logcat_desc),
             color = colorResource(id = R.color.text_secondary),
             style = MaterialTheme.typography.bodySmall
         )
         Text(
-            text = "保存サイズ: $logcatViewerSizeLabel",
+            text = stringResource(id = R.string.settings_logcat_size, logcatViewerSizeLabel),
             color = colorResource(id = R.color.text_secondary),
             style = MaterialTheme.typography.labelSmall
         )
@@ -2522,7 +2521,7 @@ class SettingsComposeFragment : Fragment() {
                 Text(stringResource(id = R.string.settings_debug_reload_button))
             }
             Button(onClick = { logcatViewerAutoRefresh = !logcatViewerAutoRefresh }) {
-                Text(if (logcatViewerAutoRefresh) "自動更新: ON" else "自動更新: OFF")
+                Text(if (logcatViewerAutoRefresh) stringResource(id = R.string.settings_logcat_auto_on) else stringResource(id = R.string.settings_logcat_auto_off))
             }
         }
         Row(
@@ -2532,7 +2531,7 @@ class SettingsComposeFragment : Fragment() {
             Button(onClick = {
                 // 表示中の全文をクリップボードへコピーする。
                 clipboardManager.setText(AnnotatedString(logcatViewerText))
-                Toast.makeText(localContext, "ログをコピーしました", Toast.LENGTH_SHORT).show()
+                Toast.makeText(localContext, localContext.getString(R.string.settings_logcat_copied), Toast.LENGTH_SHORT).show()
             }) {
                 Text(stringResource(id = R.string.settings_debug_copy_button))
             }
@@ -2551,9 +2550,9 @@ class SettingsComposeFragment : Fragment() {
                         putExtra(Intent.EXTRA_STREAM, uri)
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
-                    localContext.startActivity(Intent.createChooser(shareIntent, "ログを書き出す"))
+                    localContext.startActivity(Intent.createChooser(shareIntent, localContext.getString(R.string.settings_logcat_export_title)))
                 }.onFailure {
-                    Toast.makeText(localContext, "書き出しに失敗しました: ${it.message}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(localContext, localContext.getString(R.string.settings_logcat_export_failed, it.message ?: ""), Toast.LENGTH_SHORT).show()
                 }
             }) {
                 Text(stringResource(id = R.string.settings_debug_export_button))
@@ -2582,7 +2581,7 @@ class SettingsComposeFragment : Fragment() {
             ) {
                 Text(
                     text = if (logcatViewerText.isBlank()) {
-                        AnnotatedString("ログはまだありません。")
+                        AnnotatedString(stringResource(id = R.string.settings_logcat_empty))
                     } else {
                         colorizeLogcatText(logcatViewerText)
                     },
@@ -2634,10 +2633,10 @@ class SettingsComposeFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = "チャット履歴管理", fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Text(text = stringResource(id = R.string.settings_chat_history_management_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
 
                 Text(
-                    text = "履歴保存件数",
+                    text = stringResource(id = R.string.settings_chat_history_count_title),
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold
@@ -2650,19 +2649,19 @@ class SettingsComposeFragment : Fragment() {
                     FilterChip(
                         selected = chatHistoryLimit == 10,
                         onClick = { chatHistoryLimit = 10 },
-                        label = { Text("10") },
+                        label = { Text(stringResource(id = R.string.settings_chat_history_10)) },
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
                         selected = chatHistoryLimit == 30,
                         onClick = { chatHistoryLimit = 30 },
-                        label = { Text("30") },
+                        label = { Text(stringResource(id = R.string.settings_chat_history_30)) },
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
                         selected = chatHistoryLimit == 50,
                         onClick = { chatHistoryLimit = 50 },
-                        label = { Text("50") },
+                        label = { Text(stringResource(id = R.string.settings_chat_history_50)) },
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
@@ -2744,19 +2743,19 @@ class SettingsComposeFragment : Fragment() {
         val contextWindow = contextWindowInput.toIntOrNull()
 
         if (temperature == null || topP == null || topK == null || maxTokens == null || contextWindow == null) {
-            return "推論設定の入力値が不正です"
+            return requireContext().getString(R.string.settings_inference_invalid_input)
         }
         if (temperature !in InferenceConfig.MIN_TEMPERATURE..InferenceConfig.MAX_TEMPERATURE) {
-            return "温度は ${InferenceConfig.MIN_TEMPERATURE} - ${InferenceConfig.MAX_TEMPERATURE} の範囲で入力してください"
+            return requireContext().getString(R.string.settings_inference_temperature_range, InferenceConfig.MIN_TEMPERATURE.toString(), InferenceConfig.MAX_TEMPERATURE.toString())
         }
         if (topP !in InferenceConfig.MIN_TOP_P..InferenceConfig.MAX_TOP_P) {
-            return "Top-P は ${InferenceConfig.MIN_TOP_P} - ${InferenceConfig.MAX_TOP_P} の範囲で入力してください"
+            return requireContext().getString(R.string.settings_inference_topp_range, InferenceConfig.MIN_TOP_P.toString(), InferenceConfig.MAX_TOP_P.toString())
         }
         if (topK !in InferenceConfig.MIN_TOP_K..InferenceConfig.MAX_TOP_K) {
-            return "Top-K は ${InferenceConfig.MIN_TOP_K} - ${InferenceConfig.MAX_TOP_K} の範囲で入力してください"
+            return requireContext().getString(R.string.settings_inference_topk_range, InferenceConfig.MIN_TOP_K.toString(), InferenceConfig.MAX_TOP_K.toString())
         }
         if (maxTokens !in InferenceConfig.MIN_MAX_TOKENS..InferenceConfig.MAX_MAX_TOKENS) {
-            return "Max Tokens は ${InferenceConfig.MIN_MAX_TOKENS} - ${InferenceConfig.MAX_MAX_TOKENS} の範囲で入力してください"
+            return requireContext().getString(R.string.settings_inference_max_tokens_range, InferenceConfig.MIN_MAX_TOKENS.toString(), InferenceConfig.MAX_MAX_TOKENS.toString())
         }
  // ユーザー要望: コンテキストウィンドウの上限を 128k まで拡張
         val maxContextWindow = if (selectedModel.equals("Gemma4-2B", ignoreCase = true) ||
@@ -2766,17 +2765,17 @@ class SettingsComposeFragment : Fragment() {
             131072
         }
         if (contextWindow !in 512..maxContextWindow) {
-            return "コンテキストは 512 - $maxContextWindow の範囲で入力してください"
+            return requireContext().getString(R.string.settings_inference_context_range, maxContextWindow.toString())
         }
         if (contextCompressionThresholdPercent !in
             InferenceConfig.MIN_COMPRESSION_THRESHOLD..InferenceConfig.MAX_COMPRESSION_THRESHOLD
         ) {
-            return "圧縮しきい値は ${InferenceConfig.MIN_COMPRESSION_THRESHOLD} - ${InferenceConfig.MAX_COMPRESSION_THRESHOLD} の範囲で入力してください"
+            return requireContext().getString(R.string.settings_inference_compression_range, InferenceConfig.MIN_COMPRESSION_THRESHOLD.toString(), InferenceConfig.MAX_COMPRESSION_THRESHOLD.toString())
         }
         if (preloadMemoryWarningThresholdPercent !in
             MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT..MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT
         ) {
-            return "プリロードメモリ警告閾値は ${MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT} - ${MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT} の範囲で設定してください"
+            return requireContext().getString(R.string.settings_inference_preload_memory_range, MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT.toString(), MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT.toString())
         }
         return null
     }
@@ -2836,10 +2835,10 @@ class SettingsComposeFragment : Fragment() {
             title = { Text(stringResource(id = R.string.settings_engine_version_title)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("LiteRT-LM: ${BuildConfig.LITERTLM_VERSION}")
-                    Text("llama.cpp: ${BuildConfig.LLAMACPP_VERSION}")
+                    Text(stringResource(id = R.string.settings_engine_version_literlm_format, BuildConfig.LITERTLM_VERSION))
+                    Text(stringResource(id = R.string.settings_engine_version_llamacpp_format, BuildConfig.LLAMACPP_VERSION))
                     Text(
-                        "※実行時には内部 JNI / モデル対応により挙動が変わる場合があります。",
+                        stringResource(id = R.string.settings_engine_version_runtime_notice),
                         style = MaterialTheme.typography.bodySmall,
                         color = colorResource(id = R.color.text_secondary)
                     )
@@ -2872,7 +2871,7 @@ class SettingsComposeFragment : Fragment() {
                 ) {
                     Image(
                         painter = painterResource(id = R.mipmap.ic_launcher_round),
-                        contentDescription = "Nezumi AI アイコン",
+                        contentDescription = stringResource(id = R.string.settings_about_icon_content_description),
                         modifier = Modifier
                             .size(72.dp)
                             .clip(RoundedCornerShape(18.dp))
@@ -2885,38 +2884,38 @@ class SettingsComposeFragment : Fragment() {
                             color = colorResource(id = R.color.text_primary)
                         )
                         Text(
-                            text = "端末上で動くローカルAIチャット",
+                            text = stringResource(id = R.string.settings_about_subtitle),
                             style = MaterialTheme.typography.bodySmall,
                             color = colorResource(id = R.color.text_secondary),
                             textAlign = TextAlign.Center
                         )
                     }
 
-                    AboutSection(title = "アプリ情報") {
-                        AboutInfoRow("バージョン", BuildConfig.VERSION_NAME)
-                        AboutInfoRow("ビルド番号", BuildConfig.VERSION_CODE.toString())
-                        AboutInfoRow("パッケージ", BuildConfig.APPLICATION_ID)
-                        AboutInfoRow("ビルド種別", BuildConfig.BUILD_TYPE)
+                    AboutSection(title = stringResource(id = R.string.settings_about_app_info_title)) {
+                        AboutInfoRow(stringResource(id = R.string.settings_about_version_label), BuildConfig.VERSION_NAME)
+                        AboutInfoRow(stringResource(id = R.string.settings_about_build_number_label), BuildConfig.VERSION_CODE.toString())
+                        AboutInfoRow(stringResource(id = R.string.settings_about_package_label), BuildConfig.APPLICATION_ID)
+                        AboutInfoRow(stringResource(id = R.string.settings_about_build_type_label), BuildConfig.BUILD_TYPE)
                     }
 
-                    AboutSection(title = "推論エンジン") {
-                        AboutInfoRow("LiteRT-LM", BuildConfig.LITERTLM_VERSION)
-                        AboutInfoRow("GGUF / llama.cpp", BuildConfig.LLAMACPP_VERSION)
-                        AboutInfoRow("Stable Diffusion", "MNN 自前エンジン")
+                    AboutSection(title = stringResource(id = R.string.settings_about_engine_title)) {
+                        AboutInfoRow(stringResource(id = R.string.settings_about_engine_literlm), BuildConfig.LITERTLM_VERSION)
+                        AboutInfoRow(stringResource(id = R.string.settings_about_engine_gguf), BuildConfig.LLAMACPP_VERSION)
+                        AboutInfoRow(stringResource(id = R.string.settings_about_engine_stable_diffusion), stringResource(id = R.string.settings_about_engine_stable_diffusion_value))
                         if (com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) {
-                            AboutInfoRow("音声合成", "VOICEVOX CORE 0.16.4")
+                            AboutInfoRow(stringResource(id = R.string.settings_about_tts_label), "VOICEVOX CORE 0.16.4")
                         }
                     }
 
-                    AboutSection(title = "主な機能") {
-                        AboutBullet("Gemma 系モデルのローカルチャット")
-                        AboutBullet("GGUF モデル、画像・音声入力、シンキング表示")
-                        AboutBullet("メモリ抽出、会話履歴、各種ツール連携")
-                        AboutBullet("Web 検索、アラーム、画像生成などのツール連携")
+                    AboutSection(title = stringResource(id = R.string.settings_about_features_title)) {
+                        AboutBullet(stringResource(id = R.string.settings_about_feature_gemma))
+                        AboutBullet(stringResource(id = R.string.settings_about_feature_multimodal))
+                        AboutBullet(stringResource(id = R.string.settings_about_feature_memory))
+                        AboutBullet(stringResource(id = R.string.settings_about_feature_tools))
                     }
 
                     Text(
-                        text = "モデルや外部ライブラリには、それぞれの提供元ライセンスと利用条件が適用されます。",
+                        text = stringResource(id = R.string.settings_about_license_notice),
                         style = MaterialTheme.typography.bodySmall,
                         color = colorResource(id = R.color.text_secondary),
                         textAlign = TextAlign.Center
@@ -3016,7 +3015,7 @@ class SettingsComposeFragment : Fragment() {
             runCatching {
                 persistSettings()
             }.onFailure {
-                toast("設定の保存に失敗しました: ${it.message}")
+                toast(requireContext().getString(R.string.settings_save_failed, it.message ?: ""))
             }
             if (isAdded) {
                 findNavController().navigateUp()
@@ -3112,13 +3111,13 @@ class SettingsComposeFragment : Fragment() {
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     Text(
-                        text = if (hasExistingPin) "PIN の変更" else "シークレットモード PIN 設定",
+                        text = if (hasExistingPin) stringResource(id = R.string.settings_pin_change_title) else stringResource(id = R.string.settings_pin_setup_title),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
 
                     Text(
-                        text = "4 桁の数字を入力してください",
+                        text = stringResource(id = R.string.settings_pin_instruction),
                         style = MaterialTheme.typography.bodyMedium,
                         color = colorResource(id = R.color.text_secondary)
                     )
@@ -3130,8 +3129,8 @@ class SettingsComposeFragment : Fragment() {
                                 pinInput = it
                             }
                         },
-                        label = { Text("PIN") },
-                        placeholder = { Text("****") },
+                        label = { Text(stringResource(id = R.string.settings_pin_label)) },
+                        placeholder = { Text(stringResource(id = R.string.settings_pin_ph)) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.NumberPassword
@@ -3190,13 +3189,13 @@ class SettingsComposeFragment : Fragment() {
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     Text(
-                        text = "確認用 PIN 入力",
+                        text = stringResource(id = R.string.settings_pin_confirm_title),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
 
                     Text(
-                        text = "同じ 4 桁の数字をもう一度入力してください",
+                        text = stringResource(id = R.string.settings_pin_confirm_instruction),
                         style = MaterialTheme.typography.bodyMedium,
                         color = colorResource(id = R.color.text_secondary)
                     )
@@ -3217,7 +3216,7 @@ class SettingsComposeFragment : Fragment() {
                             }
                         },
                         label = { Text(stringResource(id = R.string.settings_pin_confirm_label2)) },
-                        placeholder = { Text("****") },
+                        placeholder = { Text(stringResource(id = R.string.settings_pin_ph)) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.NumberPassword
@@ -3228,7 +3227,7 @@ class SettingsComposeFragment : Fragment() {
                         supportingText = {
                             if (showError) {
                                 Text(
-                                    text = "PIN が一致しません",
+                                    text = stringResource(id = R.string.settings_pin_mismatch),
                                     color = colorResource(id = R.color.error)
                                 )
                             } else {

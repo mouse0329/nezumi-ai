@@ -406,12 +406,12 @@ private fun LegacyImageGenScreen(
             IconButton(onClick = onNavigateUp) {
                 Icon(
                     painter = painterResource(R.drawable.ic_back),
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.back),
                     tint = MaterialTheme.colorScheme.onSurface
                 )
             }
             Text(
-                "画像生成",
+                stringResource(R.string.image_gen_title),
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f)
@@ -419,7 +419,7 @@ private fun LegacyImageGenScreen(
             // Feature: 設定画面へのリンク。スケジューラ / シードのデフォルト値は
             //   設定の「画像」タブに集約されているため、ここから直接飛べるようにする。
             TextButton(onClick = onNavigateToSettings) {
-                Text("設定", color = MaterialTheme.colorScheme.primary)
+                Text(stringResource(R.string.settings_title), color = MaterialTheme.colorScheme.primary)
             }
 
         }
@@ -433,12 +433,12 @@ private fun LegacyImageGenScreen(
             Tab(
                 selected = selectedTab == 0,
                 onClick = { selectedTab = 0 },
-                text = { Text("生成") }
+                text = { Text(stringResource(R.string.image_gen_tab_generate)) }
             )
             Tab(
                 selected = selectedTab == 1,
                 onClick = { selectedTab = 1 },
-                text = { Text("ライブラリ") }
+                text = { Text(stringResource(R.string.image_gen_tab_library)) }
             )
         }
         
@@ -461,7 +461,7 @@ private fun LegacyImageGenScreen(
                         value = if (availableModels.isNotEmpty() && selectedModelIndex in availableModels.indices) {
                             File(availableModels[selectedModelIndex]).name
                         } else {
-                            "モデルが見つかりません"
+                            stringResource(R.string.image_gen_model_missing)
                         },
                         onValueChange = {},
                         label = { Text(stringResource(R.string.image_gen_model_path_hint_full)) },
@@ -508,12 +508,12 @@ private fun LegacyImageGenScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                "シード値",
+                                stringResource(R.string.image_gen_seed_label),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.labelSmall
                             )
                             Text(
-                                if (seedValue == -1L) "ランダム" else seedValue.toString(),
+                                if (seedValue == -1L) stringResource(R.string.image_gen_seed_random) else seedValue.toString(),
                                 color = MaterialTheme.colorScheme.onSurface,
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold
@@ -537,7 +537,7 @@ private fun LegacyImageGenScreen(
                                     val s = it.toLongOrNull() ?: -1L
                                     vm.setSeed(s)
                                 },
-                                label = { Text("-1 でランダム") },
+                                label = { Text(stringResource(R.string.image_gen_seed_placeholder)) },
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
                                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
@@ -549,11 +549,11 @@ private fun LegacyImageGenScreen(
                                 onClick = { vm.setSeed(-1L) },
                                 enabled = seedValue != -1L
                             ) {
-                                Text("リセット")
+                                Text(stringResource(R.string.image_gen_seed_reset))
                             }
                         }
                         Text(
-                            "※ 詳細なデフォルトは「設定 > 画像」で変更できます。",
+                            stringResource(R.string.image_gen_denoise_hint),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.labelSmall,
                             modifier = Modifier.padding(top = 4.dp)
@@ -571,13 +571,13 @@ private fun LegacyImageGenScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "前回使用シード: $used",
+                            stringResource(R.string.image_gen_seed_previous_format, used),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.weight(1f)
                         )
                         TextButton(onClick = { vm.setSeed(used) }) {
-                            Text("再利用")
+                            Text(stringResource(R.string.image_gen_seed_reuse))
                         }
                     }
                 }
@@ -589,12 +589,12 @@ private fun LegacyImageGenScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "バックエンド:",
+                        stringResource(R.string.image_gen_backend_label),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     // CPU (MNN) と GPU (OpenCL) の 2 つを提供
-                    listOf("mnn" to "CPU (MNN)", "opencl" to "GPU (OpenCL)").forEach { (value, label) ->
+                    listOf("mnn" to stringResource(R.string.image_gen_backend_cpu_mnn), "opencl" to stringResource(R.string.image_gen_backend_gpu_opencl)).forEach { (value, label) ->
                         val selected = selectedBackend == value
                         androidx.compose.material3.FilterChip(
                             selected = selected,
@@ -724,8 +724,8 @@ private fun LegacyImageGenScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("サイズ", color = MaterialTheme.colorScheme.onSurface)
-                        Text("${size}x$size", color = MaterialTheme.colorScheme.primary)
+                        Text(stringResource(R.string.image_gen_size_label), color = MaterialTheme.colorScheme.onSurface)
+                        Text(stringResource(R.string.image_gen_size_value_format, size, size), color = MaterialTheme.colorScheme.primary)
                     }
                     Slider(
                         value = selectedSizeIndex.toFloat(),
@@ -782,11 +782,11 @@ private fun LegacyImageGenScreen(
                             )
                         }
                     }
-                    MetricCell("ステップ", steps.toString())
-                    MetricCell("CFG", String.format("%.1f", cfg))
-                    MetricCell("スケジューラ", scheduler.displayName)
+                    MetricCell(stringResource(R.string.image_gen_step_label), steps.toString())
+                    MetricCell(stringResource(R.string.image_gen_cfg_label), String.format("%.1f", cfg))
+                    MetricCell(stringResource(R.string.image_gen_scheduler_label), scheduler.displayName)
                     Text(
-                        "設定へ ›",
+                        stringResource(R.string.image_gen_settings_link),
                         color = MaterialTheme.colorScheme.primary,
                         style = MaterialTheme.typography.labelMedium
                     )
@@ -804,7 +804,7 @@ private fun LegacyImageGenScreen(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                "初期画像 (img2img)",
+                                stringResource(R.string.image_gen_init_image_title),
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.weight(1f)
@@ -826,7 +826,7 @@ private fun LegacyImageGenScreen(
                                 if (initImageBmp != null) {
                                     Image(
                                         bitmap = initImageBmp!!.asImageBitmap(),
-                                        contentDescription = "init image",
+                                        contentDescription = stringResource(R.string.image_gen_init_image_title),
                                         modifier = Modifier
                                             .size(72.dp)
                                             .clip(RoundedCornerShape(6.dp))
@@ -838,21 +838,21 @@ private fun LegacyImageGenScreen(
                                         onClick = { pickImageLauncher.launch("image/*") },
                                         enabled = !loading
                                     ) {
-                                        Text(if (initImageBmp == null) "画像を選択" else "画像を変更")
+                                        Text(if (initImageBmp == null) stringResource(R.string.image_gen_pick_image) else stringResource(R.string.image_gen_change_image))
                                     }
                                     if (initImageBmp != null) {
                                         TextButton(
                                             onClick = { vm.clearInitImage() },
                                             enabled = !loading
                                         ) {
-                                            Text("クリア", color = MaterialTheme.colorScheme.error)
+                                            Text(stringResource(R.string.image_gen_clear), color = MaterialTheme.colorScheme.error)
                                         }
                                     }
                                 }
                             }
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                "変化の強さ (denoise strength): ${String.format("%.2f", denoiseStrength)}",
+                                stringResource(R.string.image_gen_denoise_strength_format, String.format("%.2f", denoiseStrength)),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
@@ -864,7 +864,7 @@ private fun LegacyImageGenScreen(
                                 enabled = !loading
                             )
                             Text(
-                                "低い = 元画像に忠実 / 高い = プロンプト寄り。0.65 前後が扱いやすい。",
+                                stringResource(R.string.image_gen_denoise_hint),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -872,7 +872,7 @@ private fun LegacyImageGenScreen(
                     }
                 } else {
                     Text(
-                        "このモデルは img2img 非対応 (vae_encoder が同梱されていません)",
+                        stringResource(R.string.image_gen_img2img_unsupported),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 8.dp)
@@ -883,7 +883,7 @@ private fun LegacyImageGenScreen(
                 var batchCount by remember { mutableStateOf(1) }
                 Column(Modifier.padding(top = 12.dp)) {
                     Text(
-                        "生成数: $batchCount",
+                        stringResource(R.string.image_gen_batch_count_format, batchCount),
                         color = MaterialTheme.colorScheme.onSurface,
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -922,7 +922,7 @@ private fun LegacyImageGenScreen(
                                     Modifier.size(20.dp)
                                 )
                                 Text(
-                                    "セーフティモデル準備中…",
+                                    stringResource(R.string.image_gen_safety_preparing),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -954,7 +954,7 @@ private fun LegacyImageGenScreen(
                             ) {
                                 SvgSpinner(Modifier.size(24.dp))
                                 Text(
-                                    "生成中 ${currentStep}/${steps}",
+                                    stringResource(R.string.image_gen_generating_format, currentStep, steps),
                                     color = MaterialTheme.colorScheme.primary,
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold
@@ -981,7 +981,7 @@ private fun LegacyImageGenScreen(
 
                 if (generationQueue.items.isNotEmpty()) {
                     Text(
-                        "現在 ${generationQueue.currentIndex + 1}/${generationQueue.items.size} 件目を生成中  |  ステップ ${currentStep}/${steps}",
+                        stringResource(R.string.image_gen_queue_progress_format, generationQueue.currentIndex + 1, generationQueue.items.size, currentStep, steps),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 8.dp)
@@ -1036,7 +1036,7 @@ private fun LegacyImageGenScreen(
                                     modifier = Modifier.height(40.dp).width(40.dp)
                                 )
                                 Text(
-                                    "不適切な表現が含まれる\n可能性があるコンテンツの表示を制限しました",
+                                    stringResource(R.string.image_gen_safety_blocked),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -1057,7 +1057,7 @@ private fun LegacyImageGenScreen(
                                     modifier = Modifier.height(40.dp).width(40.dp)
                                 )
                                 Text(
-                                    "セーフティフィルター適用\n潜在的に不適切なコンテンツは\nぼかし処理されました",
+                                    stringResource(R.string.image_gen_safety_blurred),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -1067,7 +1067,7 @@ private fun LegacyImageGenScreen(
                         // デフォルト：プレースホルダー
                         else -> {
                             Text(
-                                "画像がここに表示されます",
+                                stringResource(R.string.image_gen_placeholder),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodySmall
                             )
@@ -1093,8 +1093,8 @@ private fun LegacyImageGenScreen(
             deleteTarget?.let { target ->
                 AlertDialog(
                     onDismissRequest = { deleteTarget = null },
-                    title = { Text("削除の確認") },
-                    text = { Text("この画像をライブラリから削除しますか？") },
+                    title = { Text(stringResource(R.string.image_gen_delete_confirm_title)) },
+                    text = { Text(stringResource(R.string.image_gen_delete_confirm_message)) },
                     confirmButton = {
                         TextButton(onClick = {
                             val idx = library.indexOfFirst { it.timestamp == target.timestamp }
@@ -1102,10 +1102,10 @@ private fun LegacyImageGenScreen(
                             if (idx >= 0) library.removeAt(idx)
                             if (viewerImage?.timestamp == target.timestamp) viewerImage = null
                             deleteTarget = null
-                        }) { Text("削除", color = MaterialTheme.colorScheme.error) }
+                        }) { Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error) }
                     },
                     dismissButton = {
-                        TextButton(onClick = { deleteTarget = null }) { Text("キャンセル") }
+                        TextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.common_cancel)) }
                     }
                 )
             }
@@ -1137,7 +1137,7 @@ private fun LegacyImageGenScreen(
                                 )
                                 if (!item.negativePrompt.isNullOrEmpty()) {
                                     Text(
-                                        "Neg: ${item.negativePrompt}",
+                                        stringResource(R.string.image_gen_negative_preview_format, item.negativePrompt),
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         style = MaterialTheme.typography.labelSmall,
                                         maxLines = 1,
@@ -1150,14 +1150,14 @@ private fun LegacyImageGenScreen(
                                 ) {
                                     if (item.steps != null) {
                                         Text(
-                                            "Steps: ${item.steps}",
+                                            stringResource(R.string.image_gen_steps_preview_format, item.steps),
                                             color = MaterialTheme.colorScheme.primary,
                                             style = MaterialTheme.typography.labelSmall
                                         )
                                     }
                                     if (item.seed != null) {
                                         Text(
-                                            "Seed: ${item.seed}",
+                                            stringResource(R.string.image_gen_seed_preview_format, item.seed),
                                             color = MaterialTheme.colorScheme.secondary,
                                             style = MaterialTheme.typography.labelSmall,
                                             maxLines = 1,
@@ -1174,7 +1174,7 @@ private fun LegacyImageGenScreen(
                         ) {
                             Icon(
                                 painter = painterResource(R.drawable.ic_delete),
-                                contentDescription = "Delete",
+                                contentDescription = stringResource(R.string.common_delete),
                                 tint = MaterialTheme.colorScheme.error
                             )
                         }
@@ -1188,7 +1188,7 @@ private fun LegacyImageGenScreen(
     if (safetyDownloading) {
         AlertDialog(
             onDismissRequest = {},
-            title = { Text("セーフティモデルを準備中") },
+            title = { Text(stringResource(R.string.image_gen_safety_modal_title)) },
             text = {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -1215,7 +1215,7 @@ private fun LegacyImageGenScreen(
                         SvgSpinner()
                     }
                     Text(
-                        "安全フィルターをダウンロードしています。\n完了後に自動で生成を開始します。",
+                        stringResource(R.string.image_gen_safety_modal_message),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -1242,7 +1242,11 @@ private fun LegacyImageGenScreen(
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.clickable(enabled = false) {}
+                    modifier = Modifier
+                        .clickable(enabled = false) {}
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(16.dp)
                 ) {
                     Image(
                         bitmap = item.bitmap.asImageBitmap(),
@@ -1258,7 +1262,7 @@ private fun LegacyImageGenScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            "Prompt:",
+                            stringResource(R.string.image_gen_viewer_prompt_label),
                             color = MaterialTheme.colorScheme.primary,
                             style = MaterialTheme.typography.labelLarge
                         )
@@ -1270,7 +1274,7 @@ private fun LegacyImageGenScreen(
                         
                         if (!item.negativePrompt.isNullOrEmpty()) {
                             Text(
-                                "Negative Prompt:",
+                                stringResource(R.string.image_gen_viewer_negative_label),
                                 color = MaterialTheme.colorScheme.primary,
                                 style = MaterialTheme.typography.labelLarge
                             )
@@ -1286,17 +1290,17 @@ private fun LegacyImageGenScreen(
                         //    画像サイズ / CFGスケール / スケジューラの種類 / シード値」。
                         //   値がない（旧ファイル）行は飛ばし、存在する値だけ並べる。
                         val metaRows: List<Pair<String, String>> = buildList {
-                            if (!item.modelName.isNullOrEmpty()) add("モデル名" to item.modelName)
+                            if (!item.modelName.isNullOrEmpty()) add(stringResource(R.string.image_gen_viewer_model_label) to item.modelName)
                             if (item.width != null && item.height != null) {
-                                add("画像サイズ" to "${item.width} x ${item.height}")
+                                add(stringResource(R.string.image_gen_viewer_size_label) to "${item.width} x ${item.height}")
                             }
-                            if (item.steps != null) add("Steps" to item.steps.toString())
-                            if (item.cfg != null) add("CFGスケール" to String.format("%.1f", item.cfg))
+                            if (item.steps != null) add(stringResource(R.string.image_gen_viewer_steps_label) to item.steps.toString())
+                            if (item.cfg != null) add(stringResource(R.string.image_gen_viewer_cfg_label) to String.format("%.1f", item.cfg))
                             if (!item.scheduler.isNullOrEmpty()) {
                                 val displayName = com.nezumi_ai.sd.SdScheduler.fromId(item.scheduler).displayName
-                                add("スケジューラ" to displayName)
+                                add(stringResource(R.string.image_gen_viewer_scheduler_label) to displayName)
                             }
-                            if (item.seed != null) add("シード値" to item.seed.toString())
+                            if (item.seed != null) add(stringResource(R.string.image_gen_viewer_seed_label) to item.seed.toString())
                         }
                         metaRows.forEach { (label, value) ->
                             Row(
@@ -1324,7 +1328,7 @@ private fun LegacyImageGenScreen(
                             if (item.steps != null) {
                                 Column {
                                     Text(
-                                        "Steps:",
+                                        stringResource(R.string.image_gen_viewer_steps_label) + ":",
                                         color = MaterialTheme.colorScheme.primary,
                                         style = MaterialTheme.typography.labelLarge
                                     )
@@ -1338,7 +1342,7 @@ private fun LegacyImageGenScreen(
                             if (item.seed != null) {
                                 Column {
                                     Text(
-                                        "Seed:",
+                                        stringResource(R.string.image_gen_viewer_seed_label) + ":",
                                         color = MaterialTheme.colorScheme.primary,
                                         style = MaterialTheme.typography.labelLarge
                                     )
@@ -1360,21 +1364,21 @@ private fun LegacyImageGenScreen(
                             modifier = Modifier.weight(1f).height(48.dp),
                             shape = RoundedCornerShape(24.dp)
                         ) {
-                            Text("保存")
+                            Text(stringResource(R.string.image_gen_save_gallery))
                         }
                         Button(
                             onClick = { vm.shareBitmap(ctx, item.bitmap) },
                             modifier = Modifier.weight(1f).height(48.dp),
                             shape = RoundedCornerShape(24.dp)
                         ) {
-                            Text("共有")
+                            Text(stringResource(R.string.image_gen_share))
                         }
                     }
                     TextButton(
                         onClick = { viewerImage = null },
                         modifier = Modifier.padding(top = 12.dp)
                     ) {
-                        Text("閉じる", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.viewer_close), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }

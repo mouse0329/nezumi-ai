@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -63,7 +64,7 @@ fun HistorySearchModal(
                 value = query,
                 onValueChange = { viewModel.onSearchQueryChange(it) },
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("履歴を検索…") },
+                placeholder = { Text(stringResource(id = R.string.history_search_placeholder)) },
                 leadingIcon = {
                     Icon(
                         painter = painterResource(id = R.drawable.ic_search),
@@ -76,7 +77,7 @@ fun HistorySearchModal(
                         IconButton(onClick = { viewModel.onSearchQueryChange("") }) {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_close),
-                                contentDescription = "クリア",
+                                contentDescription = stringResource(id = R.string.history_search_clear_description),
                                 tint = colorResource(id = R.color.text_secondary)
                             )
                         }
@@ -101,7 +102,7 @@ fun HistorySearchModal(
                 }
                 query.isNotEmpty() && grouped.isEmpty() -> {
                     Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                        Text("結果なし", color = colorResource(id = R.color.text_secondary))
+                        Text(stringResource(id = R.string.history_search_no_results), color = colorResource(id = R.color.text_secondary))
                     }
                 }
                 else -> {
@@ -164,7 +165,7 @@ private fun SessionResultGroup(
                 )
                 if (group.size > 1) {
                     Text(
-                        text = if (isExpanded) "▲" else "▼ ${group.size}件",
+                        text = if (isExpanded) stringResource(id = R.string.history_search_collapse) else stringResource(id = R.string.history_search_expand_count, group.size),
                         style = MaterialTheme.typography.labelSmall,
                         color = colorResource(id = R.color.text_secondary),
                         modifier = Modifier.padding(start = 8.dp)
@@ -208,8 +209,8 @@ private fun ChunkCard(
             ChunkText(result = result, query = query)
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "スコア: ${"%.2f".format(result.score)}",
-                style = MaterialTheme.typography.labelSmall,
+                text = stringResource(id = R.string.history_search_score_format, "%.2f".format(result.score)),
+                style = MaterialTheme.typography.bodySmall,
                 color = colorResource(id = R.color.text_secondary)
             )
         }

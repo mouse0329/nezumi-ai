@@ -55,7 +55,7 @@ class ToolsSettingsFragment : Fragment() {
                     updateToolEnabledDirect(NezumiTool.FLASHLIGHT, true)
                 } else {
                     updateToolEnabledDirect(NezumiTool.FLASHLIGHT, false)
-                    toast("ライト機能にはカメラ権限が必要です")
+                    toast(requireContext().getString(R.string.tools_flashlight_permission_required))
                 }
             }
         }
@@ -122,7 +122,7 @@ class ToolsSettingsFragment : Fragment() {
                         )
                     }
                     Text(
-                        text = "ツール",
+                        text = stringResource(id = R.string.tools_title),
                         style = MaterialTheme.typography.headlineSmall,
                         color = colorResource(id = R.color.text_primary),
                         fontWeight = FontWeight.Bold
@@ -149,7 +149,7 @@ class ToolsSettingsFragment : Fragment() {
             ) {
  Text(text = "ℹ", style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    text = "ツール機能は Gemma 4 モデルでのみ動作します。他のモデルでは無効になります。",
+                    text = stringResource(id = R.string.tools_gemma4_only_notice),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
@@ -170,7 +170,7 @@ class ToolsSettingsFragment : Fragment() {
             ) {
  Text(text = "", style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    text = "アラーム・タイマー系のツール（アラームセット・解除・リスト、タイマー開始・停止・一覧）はベータ版です。予期しない動作が発生する場合があります。",
+                    text = stringResource(id = R.string.tools_beta_notice),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onTertiaryContainer
                 )
@@ -187,7 +187,7 @@ class ToolsSettingsFragment : Fragment() {
             colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = "ツール設定", fontWeight = FontWeight.Bold)
+                Text(text = stringResource(id = R.string.tools_settings_card_title), fontWeight = FontWeight.Bold)
                 // CALENDAR_DISABLED: enum から削除済みのため自動的に非表示
                 NezumiTool.entries.forEach { tool ->
                         val enabled = toolEnabled[tool] ?: (tool == NezumiTool.GET_TIME)
@@ -208,16 +208,16 @@ class ToolsSettingsFragment : Fragment() {
                                 onCheckedChange = { checked -> updateToolEnabled(tool, checked) }
                             )
                         }
-                        if (tool == NezumiTool.LIST_ALARMS && !setAlarmEnabled) {
+                                if (tool == NezumiTool.LIST_ALARMS && !setAlarmEnabled) {
                             Text(
-                                text = "「アラームセット」が有効な場合のみ使用できます",
+                                text = stringResource(id = R.string.tools_alarm_enable_requirement),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colorResource(id = R.color.text_secondary)
                             )
                         }
                         if (tool == NezumiTool.WEB_SEARCH && !hasWebSearchApiKey) {
                             Text(
-                                text = "設定から Brave Search API キーを設定すると有効になります",
+                                text = stringResource(id = R.string.tools_web_search_api_key_hint),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colorResource(id = R.color.text_secondary)
                             )
@@ -234,9 +234,9 @@ class ToolsSettingsFragment : Fragment() {
             colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = "アラーム管理", fontWeight = FontWeight.Bold)
+                Text(text = stringResource(id = R.string.tools_alarm_management), fontWeight = FontWeight.Bold)
                 if (managedAlarms.isEmpty()) {
-                    Text("登録されたアラームはありません", color = colorResource(id = R.color.text_secondary))
+                    Text(stringResource(id = R.string.tools_no_alarms), color = colorResource(id = R.color.text_secondary))
                 } else {
                     managedAlarms.forEach { alarm ->
                         Row(
@@ -300,7 +300,7 @@ class ToolsSettingsFragment : Fragment() {
             if (alarmManager != null && !alarmManager.canScheduleExactAlarms()) {
                 val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
                 runCatching { startActivity(intent) }
-                toast("正確なアラームの許可を有効にしてください")
+                toast(requireContext().getString(R.string.tools_exact_alarm_permission_required))
             }
         }
         updateToolEnabledDirect(tool, enabled)
@@ -308,7 +308,7 @@ class ToolsSettingsFragment : Fragment() {
 
     private fun updateToolEnabledDirect(tool: NezumiTool, enabled: Boolean) {
         if (tool == NezumiTool.LIST_ALARMS && !(toolEnabled[NezumiTool.SET_ALARM] ?: true) && enabled) {
-            toast("「アラームセット」を有効化してください")
+            toast(requireContext().getString(R.string.tools_alarm_set_enable_first))
             return
         }
         toolPreferences.setEnabled(tool, enabled)
@@ -317,7 +317,7 @@ class ToolsSettingsFragment : Fragment() {
         }
         loadToolSettings()
         if (enabled && tool == NezumiTool.SET_ALARM) {
-            toast("アラームセットが有効になりました")
+            toast(requireContext().getString(R.string.tools_alarm_set_enabled))
         }
     }
 

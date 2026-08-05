@@ -37,8 +37,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.nezumi_ai.R
 import com.nezumi_ai.data.mcp.McpClient
 import com.nezumi_ai.data.mcp.McpServerConfig
 import com.nezumi_ai.data.mcp.McpToolDescriptor
@@ -68,7 +71,7 @@ fun McpServerManagerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("MCP サーバー") },
+        title = { Text(stringResource(id = R.string.mcp_server_manager_title)) },
         text = {
             Column(
                 modifier = Modifier
@@ -77,13 +80,13 @@ fun McpServerManagerDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    "Streamable HTTP / SSE で動作する MCP サーバーを登録して、プリセットに紐付けます。",
+                    stringResource(id = R.string.mcp_server_manager_body),
                     style = MaterialTheme.typography.bodySmall
                 )
                 Divider()
                 if (servers.isEmpty()) {
                     Text(
-                        "登録されているサーバーはありません。下の「新規追加」からサーバーを登録してください。",
+                        stringResource(id = R.string.mcp_server_manager_empty),
                         style = MaterialTheme.typography.bodySmall
                     )
                 } else {
@@ -117,12 +120,12 @@ fun McpServerManagerDialog(
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("+ 新規追加")
+                    Text(stringResource(id = R.string.mcp_server_manager_add))
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("完了") }
+            TextButton(onClick = onDismiss) { Text(stringResource(id = R.string.mcp_server_manager_done)) }
         }
     )
 
@@ -171,14 +174,14 @@ private fun McpServerRow(
                 )
                 if (!server.enabled) {
                     Text(
-                        text = "(無効)",
+                        text = stringResource(id = R.string.mcp_server_disabled),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error
                     )
                 }
             }
-            TextButton(onClick = onEdit) { Text("編集") }
-            TextButton(onClick = onDelete) { Text("削除") }
+            TextButton(onClick = onEdit) { Text(stringResource(id = R.string.mcp_server_edit)) }
+            TextButton(onClick = onDelete) { Text(stringResource(id = R.string.mcp_server_delete)) }
         }
     }
 }
@@ -204,7 +207,13 @@ private fun McpServerEditorDialog(
     var transportExpanded by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var testMessage by remember { mutableStateOf<String?>(null) }
+    var testSuccess by remember { mutableStateOf<Boolean?>(null) }
     var testedTools by remember { mutableStateOf<List<McpToolDescriptor>>(emptyList()) }
+
+    val ctx = LocalContext.current
+    val defaultNameStr = stringResource(id = R.string.mcp_server_default_name)
+    val testingText = stringResource(id = R.string.mcp_server_testing)
+    val testConnectText = stringResource(id = R.string.mcp_server_test_connect)
 
     // http:// はプライベートIP/localhost宛のみ許可。パブリックホストへは https:// を要求する。
     val urlValidation = remember(url) {
@@ -217,12 +226,13 @@ private fun McpServerEditorDialog(
     // 入力が変わったらテスト結果はリセット
     LaunchedEffect(url, transport, authHeader, extraHeaders) {
         testMessage = null
+        testSuccess = null
         testedTools = emptyList()
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "MCP サーバーを追加" else "MCP サーバーを編集") },
+        title = { Text(if (initial == null) stringResource(id = R.string.mcp_server_editor_title_add) else stringResource(id = R.string.mcp_server_editor_title_edit)) },
         text = {
             Column(
                 modifier = Modifier
@@ -234,22 +244,22 @@ private fun McpServerEditorDialog(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("表示名") },
+                    label = { Text(stringResource(id = R.string.mcp_server_label_display_name)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
                 OutlinedTextField(
                     value = url,
                     onValueChange = { url = it },
-                    label = { Text("エンドポイント URL") },
-                    placeholder = { Text("https://example.com/mcp") },
+                    label = { Text(stringResource(id = R.string.mcp_server_label_endpoint_url)) },
+                    placeholder = { Text(stringResource(id = R.string.mcp_server_placeholder_endpoint_url)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     isError = urlError != null,
                     supportingText = {
                         Text(
                             urlError
-                                ?: "同じLAN内のサーバーは http://192.168.x.x:port/mcp のように入力できます。"
+                                ?: stringResource(id = R.string.mcp_server_url_hint)
                         )
                     }
                 )
@@ -261,7 +271,7 @@ private fun McpServerEditorDialog(
                         value = transport.label,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Transport") },
+                        label = { Text(stringResource(id = R.string.mcp_server_label_transport)) },
                         trailingIcon = {
                             ExposedDropdownMenuDefaults.TrailingIcon(expanded = transportExpanded)
                         },
@@ -287,15 +297,15 @@ private fun McpServerEditorDialog(
                 OutlinedTextField(
                     value = authHeader,
                     onValueChange = { authHeader = it },
-                    label = { Text("Authorization ヘッダ (任意)") },
-                    placeholder = { Text("Bearer sk-xxxx") },
+                    label = { Text(stringResource(id = R.string.mcp_server_label_auth_header)) },
+                    placeholder = { Text(stringResource(id = R.string.mcp_server_placeholder_auth_header)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
                 OutlinedTextField(
                     value = extraHeaders,
                     onValueChange = { extraHeaders = it },
-                    label = { Text("追加ヘッダ (任意, 1行に1つ: key: value)") },
+                    label = { Text(stringResource(id = R.string.mcp_server_label_extra_headers)) },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp, max = 120.dp)
                 )
                 Row(
@@ -303,7 +313,7 @@ private fun McpServerEditorDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("このサーバーを有効化", fontWeight = FontWeight.Bold)
+                    Text(stringResource(id = R.string.mcp_server_enable_server), fontWeight = FontWeight.Bold)
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
                 Divider()
@@ -311,10 +321,10 @@ private fun McpServerEditorDialog(
                     enabled = !testing && url.isNotBlank() && urlError == null,
                     onClick = {
                         testing = true
-                        testMessage = "接続中..."
+                        testMessage = testingText
                         testedTools = emptyList()
                         val draft = buildConfigFromInputs(
-                            initial, name.ifBlank { "MCP Server" }, url, transport, enabled,
+                            initial, name.ifBlank { defaultNameStr }, url, transport, enabled,
                             authHeader, extraHeaders
                         )
                         scope.launch {
@@ -329,21 +339,24 @@ private fun McpServerEditorDialog(
                             }
                             testing = false
                             result.onSuccess { tools ->
+                                testSuccess = true
                                 testedTools = tools
-                                testMessage = "接続 OK: ${tools.size} 個のツールを取得"
+                                testMessage = ctx.getString(R.string.mcp_server_test_ok, tools.size)
                             }.onFailure { e ->
-                                testMessage = "接続失敗: ${e.message ?: e.javaClass.simpleName}"
+                                testSuccess = false
+                                testMessage = ctx.getString(R.string.mcp_server_test_failed, e.message ?: e.javaClass.simpleName)
                             }
+
                         }
                     }
                 ) {
-                    Text(if (testing) "テスト中..." else "接続テスト")
+                    Text(if (testing) testingText else testConnectText)
                 }
                 testMessage?.let {
                     Text(
                         text = it,
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (it.startsWith("接続 OK")) {
+                        color = if (testSuccess == true) {
                             MaterialTheme.colorScheme.primary
                         } else {
                             MaterialTheme.colorScheme.error
@@ -360,7 +373,7 @@ private fun McpServerEditorDialog(
                         }
                         if (testedTools.size > 8) {
                             Text(
-                                text = "... 他 ${testedTools.size - 8} 件",
+                                text = stringResource(id = R.string.mcp_server_tool_more, testedTools.size - 8),
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -378,10 +391,10 @@ private fun McpServerEditorDialog(
                     )
                     onSave(cfg)
                 }
-            ) { Text("保存") }
+            ) { Text(stringResource(id = R.string.mcp_server_save)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("キャンセル") }
+            TextButton(onClick = onDismiss) { Text(stringResource(id = R.string.mcp_server_cancel)) }
         }
     )
 }

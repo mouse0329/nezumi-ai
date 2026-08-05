@@ -237,7 +237,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                     modifier = Modifier.padding(top = 4.dp)
                 )
             } else {
-                Text("モデルが見つかりません", color = themed(Color(0xFF999999)), fontSize = 14.sp)
+                Text(stringResource(R.string.image_gen_model_missing), color = themed(Color(0xFF999999)), fontSize = 14.sp)
             }
         }
         
@@ -288,7 +288,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
         
         TextButton(onClick = { negExpanded = !negExpanded }) {
             Text(
-                "${if (negExpanded) "▼" else "▶"} ネガティブプロンプト",
+                "${if (negExpanded) "▼" else "▶"} ${stringResource(R.string.image_gen_negative_prompt_label)}",
                 color = Color(0xFF0084FF),
                 fontSize = 14.sp
             )
@@ -296,12 +296,13 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
         
         AnimatedVisibility(negExpanded) {
             val isStopKeyboardLearning = remember { com.nezumi_ai.utils.PreferencesHelper.isStopKeyboardLearningEnabled(context) }
+            val negativePromptPlaceholder = context.getString(R.string.image_gen_negative_prompt_placeholder)
             if (isStopKeyboardLearning) {
                 AndroidView(
                     modifier = Modifier.fillMaxWidth().height(80.dp).padding(bottom = 15.dp).clip(RoundedCornerShape(8.dp)).background(themed(Color(0xFF2A2A2A))).border(1.dp, themed(Color(0xFF444444)), RoundedCornerShape(8.dp)).padding(8.dp),
                     factory = { context ->
                         EditText(context).apply {
-                            setHint("low quality, blurry...")
+                            setHint(negativePromptPlaceholder)
                             setTextColor(android.graphics.Color.WHITE)
                             setHintTextColor(android.graphics.Color.GRAY)
                             setBackground(null)
@@ -326,7 +327,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                 OutlinedTextField(
                     value = negPrompt,
                     onValueChange = vm::setNegativePrompt,
-                    placeholder = { Text("low quality, blurry...", color = themed(Color(0xFF666666))) },
+                    placeholder = { Text(negativePromptPlaceholder, color = themed(Color(0xFF666666))) },
                     modifier = Modifier.fillMaxWidth().height(80.dp).padding(bottom = 15.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = themed(Color(0xFFEEEEEE)),
@@ -357,7 +358,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("生成サイズ", color = themed(Color(0xFF999999)), fontSize = 12.sp)
+                    Text(stringResource(R.string.image_gen_generate_size), color = themed(Color(0xFF999999)), fontSize = 12.sp)
                     Text(
                         "${sizePx}x$sizePx",
                         color = Color(0xFF0084FF),
@@ -467,7 +468,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                         }
                     },
                     singleLine = true,
-                    placeholder = { Text("空欄でランダム", color = themed(Color(0xFF666666))) },
+                    placeholder = { Text(stringResource(R.string.image_gen_seed_empty_hint), color = themed(Color(0xFF666666))) },
                     modifier = Modifier.weight(1f),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = themed(Color(0xFFEEEEEE)),
@@ -485,11 +486,11 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                     colors = ButtonDefaults.buttonColors(containerColor = themed(Color(0xFF666666))),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text("ランダム", fontSize = 12.sp)
+                    Text(stringResource(R.string.image_gen_seed_random), fontSize = 12.sp)
                 }
             }
             Text(
-                if (seed < 0) "現在: ランダム" else "現在: $seed",
+                if (seed < 0) stringResource(R.string.image_gen_seed_current_format, stringResource(R.string.image_gen_seed_random)) else stringResource(R.string.image_gen_seed_current_format, seed),
                 color = themed(Color(0xFF999999)),
                 fontSize = 11.sp,
                 modifier = Modifier.padding(top = 6.dp)
@@ -524,7 +525,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("生成数:", color = themed(Color(0xFF999999)), fontSize = 12.sp)
+            Text(stringResource(R.string.image_gen_queue_count_label), color = themed(Color(0xFF999999)), fontSize = 12.sp)
             
             for (count in 1..10) {
                 Box(
@@ -555,7 +556,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0084FF)),
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Text("キューに追加", fontSize = 12.sp)
+                Text(stringResource(R.string.image_gen_queue_add), fontSize = 12.sp)
             }
             
             Button(
@@ -569,7 +570,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                 ),
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Text(if (isQueueRunning) "停止中..." else "実行", fontSize = 12.sp)
+                Text(if (isQueueRunning) stringResource(R.string.image_gen_queue_running) else stringResource(R.string.image_gen_queue_run), fontSize = 12.sp)
             }
         }
         
@@ -582,7 +583,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             ) {
                 Column {
                     Text(
-                        "キュー: ${queue.completedCount}/${queue.items.size}",
+                        stringResource(R.string.image_gen_queue_status_format, queue.completedCount, queue.items.size),
                         color = Color(0xFF0084FF),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
@@ -604,7 +605,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                 colors = ButtonDefaults.buttonColors(containerColor = themed(Color(0xFF666666))),
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Text("クリア", fontSize = 11.sp)
+                Text(stringResource(R.string.image_gen_clear), fontSize = 11.sp)
             }
         }
         
@@ -612,10 +613,10 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
         if (showQueueDialog) {
             AlertDialog(
                 onDismissRequest = { showQueueDialog = false },
-                title = { Text("キューに追加", color = themed(Color(0xFFEEEEEE))) },
+                title = { Text(stringResource(R.string.image_gen_queue_add), color = themed(Color(0xFFEEEEEE))) },
                 text = {
                     Text(
-                        "$batchCount 個の画像を生成キューに追加しますか？",
+                        stringResource(R.string.image_gen_queue_confirm_message, batchCount),
                         color = themed(Color(0xFF999999))
                     )
                 },
@@ -628,7 +629,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0084FF))
                     ) {
-                        Text("追加")
+                        Text(stringResource(R.string.image_gen_queue_confirm_add))
                     }
                 },
                 dismissButton = {
@@ -636,7 +637,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                         onClick = { showQueueDialog = false },
                         colors = ButtonDefaults.buttonColors(containerColor = themed(Color(0xFF666666)))
                     ) {
-                        Text("キャンセル")
+                        Text(stringResource(R.string.common_cancel))
                     }
                 },
                 containerColor = themed(Color(0xFF2A2A2A))
@@ -653,7 +654,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
             shape = RoundedCornerShape(25.dp)
         ) {
             Text(
-                if (loading) "中止" else "生成",
+                if (loading) stringResource(R.string.image_gen_stop) else stringResource(R.string.image_gen_generate),
                 fontWeight = FontWeight.Bold,
                 fontSize = 16.sp
             )
@@ -666,7 +667,7 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                 color = Color(0xFF0084FF)
             )
             Text(
-                "Step $currentStep / $steps",
+                stringResource(R.string.image_gen_step_progress_format, currentStep, steps),
                 color = themed(Color(0xFF999999)),
                 fontSize = 12.sp
             )
@@ -698,8 +699,8 @@ fun GenerateTab(vm: ImageGenViewModel, onImageClick: (GeneratedImage) -> Unit) {
                         Modifier.fillMaxWidth().padding(top = 12.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        ActionButton("保存", Modifier.weight(1f)) { vm.saveToGallery(context) }
-                        ActionButton("共有", Modifier.weight(1f)) { vm.share(context) }
+                        ActionButton(stringResource(R.string.image_gen_save_gallery), Modifier.weight(1f)) { vm.saveToGallery(context) }
+                        ActionButton(stringResource(R.string.image_gen_share), Modifier.weight(1f)) { vm.share(context) }
                     }
                 }
             }

@@ -1987,21 +1987,21 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     modifier = Modifier.size(128.dp)
                 )
             },
-            title = { Text("メモリ不足") },
+            title = { Text(stringResource(id = R.string.chat_memory_error_title)) },
             text = {
                 Column {
-                    Text("メモリ不足のため、処理を続行できませんでした。")
+                    Text(stringResource(id = R.string.chat_memory_error_body))
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text("使用中: ${error.usedMB}MB / ${error.totalMB}MB (${error.usedPercent}%)")
+                    Text(stringResource(id = R.string.chat_memory_error_usage, error.usedMB, error.totalMB, error.usedPercent))
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "他のアプリを閉じてから再試行してください。",
+                        stringResource(id = R.string.chat_memory_error_advice),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             },
             confirmButton = {
-                TextButton(onClick = onDismiss) { Text("閉じる") }
+                TextButton(onClick = onDismiss) { Text(stringResource(id = R.string.chat_memory_error_close)) }
             }
         )
     }
@@ -2071,30 +2071,30 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 )
             },
             title = {
-                Text("メモリ警告")
+                Text(stringResource(id = R.string.chat_memory_warning_title))
             },
             text = {
                 Column {
-                    Text("モデル「${warning.modelName}」のロードは高メモリ使用率になる可能性があります。")
+                    Text(stringResource(id = R.string.chat_memory_warning_body, warning.modelName))
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text("スマホ本体: ${warning.usedMemoryMB}MB / ${warning.totalMemoryMB}MB")
-                    Text("使用率: ${warning.usedPercent}%")
+                    Text(stringResource(id = R.string.chat_memory_warning_device_info, warning.usedMemoryMB, warning.totalMemoryMB))
+                    Text(stringResource(id = R.string.chat_memory_warning_usage, warning.usedPercent))
                     Text(
-                        if (warning.lowMemoryFlag) "デバイスがメモリ不足状態です" else "正常",
+                        if (warning.lowMemoryFlag) stringResource(id = R.string.chat_memory_low_state) else stringResource(id = R.string.chat_memory_normal_state),
                         color = if (warning.lowMemoryFlag) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text("ロードを続行しますか？")
+                    Text(stringResource(id = R.string.chat_memory_warning_continue))
                 }
             },
             confirmButton = {
                 TextButton(onClick = onConfirm) {
-                    Text("続行")
+                    Text(stringResource(id = R.string.chat_memory_warning_continue))
                 }
             },
             dismissButton = {
                 TextButton(onClick = onDismiss) {
-                    Text("キャンセル")
+                    Text(stringResource(id = R.string.chat_memory_warning_cancel))
                 }
             }
         )
@@ -2953,7 +2953,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         b.micButton.setImageResource(R.drawable.ic_stop)
         // 録音中アイコンを白にするため tint をリセット。
         b.micButton.imageTintList = null
-        b.micButton.contentDescription = "録音を停止して送信"
+        b.micButton.contentDescription = requireContext().getString(R.string.audio_stop_and_send)
         // 録音リストを保持して、アニメの少ないフレームでも参照できるようにする。
         recordingWaveBars = listOf(
             b.inlineWave1, b.inlineWave2, b.inlineWave3, b.inlineWave4,
@@ -2972,7 +2972,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         b.micButton.imageTintList = ColorStateList.valueOf(
             requireContext().getColor(R.color.text_secondary)
         )
-        b.micButton.contentDescription = "音声入力"
+        b.micButton.contentDescription = requireContext().getString(R.string.audio_input)
         recordingWaveBars = emptyList()
         recordingStatusTextView = null
     }

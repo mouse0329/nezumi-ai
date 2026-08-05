@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -171,7 +172,7 @@ class SetupWizardFragment : Fragment() {
             ) {
                 item {
                     Text(
-                        text = "セットアップ",
+                        text = stringResource(id = R.string.setup_title),
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
                         color = textPrimary
@@ -218,7 +219,7 @@ class SetupWizardFragment : Fragment() {
                     showDownloadWarning = false
                     val enqueued = ModelDownloadWorker.enqueue(requireContext(), downloadWarningModel!!)
                     if (!enqueued) {
-                        toast("すでにダウンロード中です")
+                        toast(requireContext().getString(R.string.setup_download_already_in_progress))
                     }
                 },
                 onCancel = {
@@ -253,37 +254,40 @@ class SetupWizardFragment : Fragment() {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = onCancel,
             title = {
- Text("メモリ警告")
+                Text(stringResource(id = R.string.chat_memory_warning_title))
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("モデル「$modelName」は高メモリ使用率になる可能性があります。")
+                    Text(stringResource(id = R.string.chat_memory_warning_body, modelName))
                     Divider()
                     Text(
-                        text = "━━━ デバイスメモリ ━━━",
+                        text = stringResource(id = R.string.setup_memory_warning_device_memory_header),
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.labelMedium
                     )
                     Text(
-                        "スマホ本体: ${systemMemInfo.usedMemoryMB}MB / ${systemMemInfo.totalMemoryMB}MB",
+                        text = stringResource(
+                            id = R.string.chat_memory_warning_device_info,
+                            systemMemInfo.usedMemoryMB,
+                            systemMemInfo.totalMemoryMB
+                        ),
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        "使用率: ${systemMemInfo.usedPercent}%",
+                        text = stringResource(id = R.string.chat_memory_warning_usage, systemMemInfo.usedPercent),
                         style = MaterialTheme.typography.bodySmall
                     )
                     
-                    // 新しい閾値に基づいて色分け表示
                     val statusColor = when {
-                        systemMemInfo.usedPercent < 70 -> MaterialTheme.colorScheme.primary  // 緑：正常
-                        systemMemInfo.usedPercent < 85 -> MaterialTheme.colorScheme.secondary  // 黄：注意
-                        else -> MaterialTheme.colorScheme.error  // 赤：危険
+                        systemMemInfo.usedPercent < 70 -> MaterialTheme.colorScheme.primary
+                        systemMemInfo.usedPercent < 85 -> MaterialTheme.colorScheme.secondary
+                        else -> MaterialTheme.colorScheme.error
                     }
                     
                     val statusText = when {
- systemMemInfo.usedPercent < 70 -> "正常"
- systemMemInfo.usedPercent < 85 -> "注意"
- else -> "危険"
+                        systemMemInfo.usedPercent < 70 -> stringResource(id = R.string.setup_status_normal)
+                        systemMemInfo.usedPercent < 85 -> stringResource(id = R.string.setup_status_warning)
+                        else -> stringResource(id = R.string.setup_status_danger)
                     }
                     
                     Text(
@@ -295,12 +299,12 @@ class SetupWizardFragment : Fragment() {
             },
             confirmButton = {
                 Button(onClick = onContinue) {
-                    Text("続行")
+                    Text(stringResource(id = R.string.chat_memory_warning_continue))
                 }
             },
             dismissButton = {
                 TextButton(onClick = onCancel) {
-                    Text("キャンセル")
+                    Text(stringResource(id = R.string.chat_memory_warning_cancel))
                 }
             }
         )
@@ -320,35 +324,47 @@ class SetupWizardFragment : Fragment() {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = onCancel,
             title = {
- Text("${if (isMemoryLow && isStorageLow) "メモリ・ストレージ警告"else if (isMemoryLow) "メモリ警告"else "ストレージ警告"}")
+                Text(
+                    stringResource(
+                        id = when {
+                            isMemoryLow && isStorageLow -> R.string.setup_warning_title_memory_storage
+                            isMemoryLow -> R.string.setup_warning_title_memory
+                            else -> R.string.setup_warning_title_storage
+                        }
+                    )
+                )
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (isMemoryLow && isStorageLow) {
-                        Text("モデル「$modelName」のダウンロードは高メモリ使用率になり、ストレージも不足しています。")
+                        Text(stringResource(id = R.string.setup_download_memory_storage_low, modelName))
                     } else if (isMemoryLow) {
-                        Text("モデル「$modelName」のダウンロードは高メモリ使用率になる可能性があります。")
+                        Text(stringResource(id = R.string.setup_download_memory_low, modelName))
                     } else {
-                        Text("モデル「$modelName」のダウンロードに必要なストレージが不足しています。")
+                        Text(stringResource(id = R.string.setup_download_storage_low, modelName))
                     }
                     
                     if (isMemoryLow && systemMemInfo != null) {
                         Divider()
                         Text(
-                            text = "━━━ デバイスメモリ ━━━",
+                            text = stringResource(id = R.string.setup_memory_warning_device_memory_header),
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.labelMedium
                         )
                         Text(
-                            "スマホ本体: ${systemMemInfo.usedMemoryMB}MB / ${systemMemInfo.totalMemoryMB}MB",
+                            text = stringResource(
+                                id = R.string.setup_memory_usage_format,
+                                systemMemInfo.usedMemoryMB,
+                                systemMemInfo.totalMemoryMB
+                            ),
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
-                            "使用率: ${systemMemInfo.usedPercent}%",
+                            text = stringResource(id = R.string.setup_memory_percent_format, systemMemInfo.usedPercent),
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
- if (systemMemInfo.lowMemoryFlag) "デバイスがメモリ不足状態です"else "正常",
+                            text = if (systemMemInfo.lowMemoryFlag) stringResource(id = R.string.setup_status_danger) else stringResource(id = R.string.setup_status_normal),
                             style = MaterialTheme.typography.bodySmall,
                             color = if (systemMemInfo.lowMemoryFlag) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                         )
@@ -357,16 +373,16 @@ class SetupWizardFragment : Fragment() {
                     if (isStorageLow) {
                         Divider()
                         Text(
-                            text = "━━━ ストレージ ━━━",
+                            text = stringResource(id = R.string.setup_storage_header),
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.labelMedium
                         )
                         Text(
-                            "利用可能: ${String.format(Locale.US, "%.2f", availableStorageGB)}GB",
+                            text = stringResource(id = R.string.setup_storage_available_format, String.format(Locale.US, "%.2f", availableStorageGB)),
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
-                            "必要容量: ${String.format(Locale.US, "%.2f", requiredStorageGB)}GB",
+                            text = stringResource(id = R.string.setup_storage_required_format, String.format(Locale.US, "%.2f", requiredStorageGB)),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error
                         )
@@ -378,12 +394,12 @@ class SetupWizardFragment : Fragment() {
                     onClick = onDownload,
                     enabled = !isStorageLow
                 ) {
-                    Text(if (isStorageLow) "容量不足" else "ダウンロード")
+                    Text(if (isStorageLow) stringResource(id = R.string.setup_storage_full) else stringResource(id = R.string.setup_download_button))
                 }
             },
             dismissButton = {
                 TextButton(onClick = onCancel) {
-                    Text("キャンセル")
+                    Text(stringResource(id = R.string.setup_cancel))
                 }
             }
         )
@@ -396,10 +412,15 @@ class SetupWizardFragment : Fragment() {
         textPrimary: androidx.compose.ui.graphics.Color,
         textSecondary: androidx.compose.ui.graphics.Color
     ) {
-        val labels = listOf("ウェルカム", "バックエンド", "メモリ", "モデル")
+        val labels = listOf(
+            stringResource(id = R.string.setup_step_welcome),
+            stringResource(id = R.string.setup_step_backend),
+            stringResource(id = R.string.setup_step_memory),
+            stringResource(id = R.string.setup_step_model)
+        )
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(
-                text = "Step ${currentStep + 1} / ${labels.size}",
+                text = stringResource(id = R.string.setup_step_count_format, currentStep + 1, labels.size),
                 color = textSecondary,
                 style = MaterialTheme.typography.labelLarge
             )
@@ -454,27 +475,27 @@ class SetupWizardFragment : Fragment() {
             )
         }
         Text(
-            text = "Nezumi AI へようこそ",
+            text = stringResource(id = R.string.setup_welcome_title),
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
             color = textPrimary
         )
         Text(
-            text = "最初に 4 ステップだけ設定すると、すぐチャットを始められます。",
+            text = stringResource(id = R.string.setup_welcome_desc),
             color = textSecondary
         )
         Text(
-            text = "1.ようこそ\n2. 実行バックエンドを選ぶ\n3. 必須モデルのダウンロード\n4. 使いたいモデルを選ぶ\nダウンロードはあとからでも可能です。",
+            text = stringResource(id = R.string.setup_welcome_steps),
             color = textPrimary
         )
         Text(
-            text = "モデルのダウンロードはあとからでも大丈夫です。",
+            text = stringResource(id = R.string.setup_welcome_ok_later),
             color = textSecondary,
             style = MaterialTheme.typography.bodySmall
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = "チャット履歴は最大30件まで保存されます。古いものから自動的に削除されます。設定から変更できます。",
+            text = stringResource(id = R.string.setup_welcome_history_info),
             color = textSecondary,
             style = MaterialTheme.typography.bodySmall
         )
@@ -484,7 +505,7 @@ class SetupWizardFragment : Fragment() {
             }
         ) {
             Text(
-                text = "設定から変更できます",
+                text = stringResource(id = R.string.setup_welcome_change_in_settings),
                 color = colorResource(id = R.color.primary),
                 style = MaterialTheme.typography.bodySmall
             )
@@ -495,7 +516,7 @@ class SetupWizardFragment : Fragment() {
             horizontalArrangement = Arrangement.End
         ) {
             Button(onClick = { currentStep = 1 }) {
-                Text("はじめる")
+                Text(stringResource(id = R.string.setup_start_button))
             }
         }
     }
@@ -507,13 +528,13 @@ class SetupWizardFragment : Fragment() {
         textSecondary: androidx.compose.ui.graphics.Color
     ) {
         Text(
-            text = "バックエンドを選択",
+            text = stringResource(id = R.string.setup_backend_title),
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
             color = textPrimary
         )
         Text(
-            text = "あとから設定画面で変更できます。",
+            text = stringResource(id = R.string.setup_backend_desc),
             color = textSecondary
         )
 
@@ -532,10 +553,10 @@ class SetupWizardFragment : Fragment() {
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             TextButton(onClick = { currentStep = 0 }) {
-                Text("戻る")
+                Text(stringResource(id = R.string.setup_back_button))
             }
             Button(onClick = { currentStep = 2 }) {
-                Text("次へ")
+                Text(stringResource(id = R.string.setup_next_button))
             }
         }
     }
@@ -547,13 +568,13 @@ class SetupWizardFragment : Fragment() {
         textSecondary: androidx.compose.ui.graphics.Color
     ) {
         Text(
-            text = "モデルを選択",
+            text = stringResource(id = R.string.setup_model_title),
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
             color = textPrimary
         )
         Text(
-            text = "ダウンロード済みモデルならそのまま開始できます。未取得ならここでダウンロードできます。",
+            text = stringResource(id = R.string.setup_model_desc),
             color = textSecondary
         )
 
@@ -612,22 +633,22 @@ class SetupWizardFragment : Fragment() {
                         ) {
                             Text(
                                 text = when {
-                                    state.isDownloaded -> "準備OK"
-                                    state.isDownloading -> "取得中"
-                                    else -> "未取得"
+                                    state.isDownloaded -> stringResource(id = R.string.setup_ready_status)
+                                    state.isDownloading -> stringResource(id = R.string.setup_downloading_status)
+                                    else -> stringResource(id = R.string.setup_not_acquired_status)
                                 },
                                 color = if (state.isDownloaded) accent else textSecondary
                             )
                             if (isMemoryLow) {
                                 Text(
- text = "メモリ不足",
+                                    text = stringResource(id = R.string.setup_memory_low),
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.labelSmall
                                 )
                             }
                             if (isStorageLow) {
                                 Text(
- text = "ストレージ不足",
+                                    text = stringResource(id = R.string.setup_storage_low),
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.labelSmall
                                 )
@@ -641,7 +662,7 @@ class SetupWizardFragment : Fragment() {
                             modifier = Modifier.fillMaxWidth()
                         )
                         Text(
-                            text = state.progressText.ifBlank { "ダウンロード中..." },
+                            text = state.progressText.ifBlank { stringResource(id = R.string.setup_downloading_text) },
                             color = textSecondary,
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -653,10 +674,10 @@ class SetupWizardFragment : Fragment() {
                                 onClick = { requestNotificationPermissionForDownload(option.model) },
                                 enabled = !state.isDownloading && !isStorageLow
                             ) {
-                                Text(if (state.isDownloading) "ダウンロード中" else if (isStorageLow) "容量不足" else "ダウンロード")
+                                Text(if (state.isDownloading) stringResource(id = R.string.setup_downloading_text) else if (isStorageLow) stringResource(id = R.string.setup_storage_full) else stringResource(id = R.string.setup_download_button))
                             }
                             TextButton(onClick = { selectedModel = null }) {
-                                Text("選択解除")
+                                Text(stringResource(id = R.string.setup_deselect_button))
                             }
                         }
                     }
@@ -665,7 +686,7 @@ class SetupWizardFragment : Fragment() {
         }
 
         Text(
-            text = "スキップすると、あとでモデル設定からダウンロードできます。",
+            text = stringResource(id = R.string.setup_skip_hint),
             color = textSecondary,
             style = MaterialTheme.typography.bodySmall
         )
@@ -676,21 +697,21 @@ class SetupWizardFragment : Fragment() {
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextButton(onClick = { currentStep = 2 }, enabled = !isCompleting) {
-                Text("戻る")
+                Text(stringResource(id = R.string.setup_back_button))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = { completeSetup(skipModelSelection = true) },
                     enabled = !isCompleting
                 ) {
-                    Text("スキップ")
+                    Text(stringResource(id = R.string.setup_skip_button))
                 }
                 Button(
                     onClick = { completeSetup(skipModelSelection = false) },
                     enabled = canFinishWithoutSkip() && !isCompleting
                 ) {
                     if (isCompleting) SvgSpinner(modifier = Modifier.size(18.dp))
-                    else Text("チャットへ")
+                    else Text(stringResource(id = R.string.setup_chat_button))
                 }
             }
         }
@@ -703,13 +724,13 @@ class SetupWizardFragment : Fragment() {
         textSecondary: androidx.compose.ui.graphics.Color
     ) {
         Text(
-            text = "メモリ検索モデル",
+            text = stringResource(id = R.string.setup_embedding_title),
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
             color = textPrimary
         )
         Text(
-            text = "メモリ機能・セマンティック検索に使う埋め込みモデルです。約 30MB のダウンロードが必要です。",
+            text = stringResource(id = R.string.setup_embedding_desc),
             color = textSecondary
         )
 
@@ -734,16 +755,16 @@ class SetupWizardFragment : Fragment() {
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = "hotchpotch/static-embedding-japanese · 約30MB",
+                            text = stringResource(id = R.string.setup_embedding_model_subtitle),
                             color = textSecondary,
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
                     Text(
                         text = when {
-                            embeddingDownloaded -> "準備OK"
-                            embeddingDownloading -> "取得中"
-                            else -> "未取得"
+                            embeddingDownloaded -> stringResource(id = R.string.setup_ready_status)
+                            embeddingDownloading -> stringResource(id = R.string.setup_downloading_status)
+                            else -> stringResource(id = R.string.setup_not_acquired_status)
                         },
                         color = if (embeddingDownloaded) accent else textSecondary
                     )
@@ -764,7 +785,7 @@ class SetupWizardFragment : Fragment() {
                         enabled = !embeddingDownloading,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(if (embeddingDownloading) "ダウンロード中..." else "ダウンロード")
+                        Text(if (embeddingDownloading) stringResource(id = R.string.setup_downloading_text) else stringResource(id = R.string.setup_download_button))
                     }
                 }
             }
@@ -776,13 +797,13 @@ class SetupWizardFragment : Fragment() {
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextButton(onClick = { currentStep = 1 }, enabled = !isCompleting) {
-                Text("戻る")
+                Text(stringResource(id = R.string.setup_back_button))
             }
             Button(
                 onClick = { currentStep = 3 },
                 enabled = embeddingDownloaded && !isCompleting
             ) {
-                Text("次へ")
+                Text(stringResource(id = R.string.setup_next_button))
             }
         }
     }
@@ -868,7 +889,7 @@ class SetupWizardFragment : Fragment() {
         } else {
             val enqueued = ModelDownloadWorker.enqueue(requireContext(), model)
             if (!enqueued) {
-                toast("すでにダウンロード中です")
+                toast(requireContext().getString(R.string.setup_download_already_in_progress))
             }
         }
     }
@@ -914,8 +935,9 @@ class SetupWizardFragment : Fragment() {
                     state.progress = percent / 100f
                     state.progressText = "$percent% (${formatGb(downloaded)} / ${formatGb(total)})"
                 } else {
+                    state.isDownloading = true
                     state.progress = 0f
-                    state.progressText = "準備中..."
+                    state.progressText = requireContext().getString(R.string.setup_preparing)
                 }
             }
 
@@ -923,7 +945,7 @@ class SetupWizardFragment : Fragment() {
                 state.isDownloading = false
                 state.isDownloaded = true
                 state.progress = 1f
-                state.progressText = "ダウンロード完了"
+                state.progressText = requireContext().getString(R.string.setup_download_complete)
             }
 
             WorkInfo.State.FAILED -> {
@@ -931,8 +953,8 @@ class SetupWizardFragment : Fragment() {
                 state.isDownloaded = ModelFileManager.isDownloaded(requireContext(), model)
                 state.progress = 0f
                 val error = workInfo.outputData.getString(ModelDownloadWorker.KEY_ERROR_MESSAGE)
-                state.progressText = if (error.isNullOrBlank()) "ダウンロード失敗" else error
-                toast("ダウンロード失敗: ${state.progressText}")
+                state.progressText = if (error.isNullOrBlank()) requireContext().getString(R.string.setup_download_failed) else error
+                toast(requireContext().getString(R.string.setup_download_failed_format, state.progressText))
             }
 
             WorkInfo.State.CANCELLED -> {
@@ -946,7 +968,7 @@ class SetupWizardFragment : Fragment() {
 
     private fun startEmbeddingDownload() {
         embeddingDownloading = true
-        embeddingProgress = "準備中..."
+        embeddingProgress = requireContext().getString(R.string.setup_preparing)
         viewLifecycleOwner.lifecycleScope.launch {
             val ok = runCatching {
                 MemoryTextEmbedder.ensureEmbeddingFilesDownloaded(
@@ -958,7 +980,7 @@ class SetupWizardFragment : Fragment() {
             }.getOrDefault(false)
             embeddingDownloading = false
             embeddingDownloaded = ok
-            if (!ok) toast("ダウンロードに失敗しました")
+            if (!ok) toast(requireContext().getString(R.string.setup_download_failed_generic))
         }
     }
 
@@ -970,7 +992,7 @@ class SetupWizardFragment : Fragment() {
 
     private fun completeSetup(skipModelSelection: Boolean) {
         if (!skipModelSelection && !canFinishWithoutSkip()) {
-            toast("ダウンロード済みモデルを選ぶか、スキップしてください")
+            toast(requireContext().getString(R.string.setup_model_selection_required))
             return
         }
 
@@ -1022,7 +1044,7 @@ class SetupWizardFragment : Fragment() {
                     }
 
                     PreferencesHelper.markInitialSetupCompleted(requireContext())
-                    val sessionId = sessionRepository.createSession("新しいチャット")
+                    val sessionId = sessionRepository.createSession(getString(R.string.setup_default_session_name))
                     if (!modelToApply.isNullOrBlank()) {
                         sessionRepository.updateSessionModel(sessionId, modelToApply)
                     }
@@ -1032,7 +1054,7 @@ class SetupWizardFragment : Fragment() {
                 navigateToChat(sessionId)
             }.onFailure {
                 isCompleting = false
-                toast("セットアップ完了処理に失敗しました: ${it.message}")
+                toast(requireContext().getString(R.string.setup_setup_complete_failed_format, it.message ?: ""))
             }
         }
     }
@@ -1064,12 +1086,12 @@ class SetupWizardFragment : Fragment() {
             runCatching {
                 withContext(Dispatchers.IO) {
                     sessionRepository.getLatestSession()?.id
-                        ?: sessionRepository.createSession("新しいチャット")
+                        ?: sessionRepository.createSession(getString(R.string.setup_default_session_name))
                 }
             }.onSuccess { sessionId ->
                 navigateToChat(sessionId)
             }.onFailure {
-                toast("チャットの復元に失敗しました: ${it.message}")
+                toast(requireContext().getString(R.string.setup_chat_restore_failed_format, it.message ?: ""))
             }
         }
     }
@@ -1080,9 +1102,9 @@ class SetupWizardFragment : Fragment() {
 
     private fun backendOptions(): List<BackendOption> {
         return listOf(
-            BackendOption("NPU", "NPU", "使える端末では最優先。省電力寄りですが、端末依存があります。"),
-            BackendOption("GPU", "GPU", "高速寄り。安定して使いやすい選択です。"),
-            BackendOption("CPU", "CPU", "互換性重視。まず確実に試したいとき向けです。")
+            BackendOption("NPU", "NPU", getString(R.string.setup_backend_desc_npu)),
+            BackendOption("GPU", "GPU", getString(R.string.setup_backend_desc_gpu)),
+            BackendOption("CPU", "CPU", getString(R.string.setup_backend_desc_cpu))
         )
     }
 
@@ -1092,13 +1114,13 @@ class SetupWizardFragment : Fragment() {
                 model = ModelFileManager.LocalModel.GEMMA4_2B,
                 settingValue = "Gemma4-2B",
                 title = "Gemma 4 2B",
-                subtitle = "Gemma 4 系の軽量モデル"
+                subtitle = getString(R.string.setup_model_gemma4_2b_subtitle)
             ),
             ModelOption(
                 model = ModelFileManager.LocalModel.GEMMA4_4B,
                 settingValue = "Gemma4-4B",
                 title = "Gemma 4 4B",
-                subtitle = "より高品質な Gemma 4 モデル"
+                subtitle = getString(R.string.setup_model_gemma4_4b_subtitle)
             )
         )
     }
