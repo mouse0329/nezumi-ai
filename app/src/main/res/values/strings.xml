@@ -795,6 +795,8 @@ VOICEVOX:ずんだもん / VOICEVOX:四国めたん / VOICEVOX:春日部つむ�
     <string name="model_settings_enable_audio_input">音声入力を有効化</string>
     <string name="model_settings_enable_thinking">推論（Thinking）を有効化</string>
     <string name="model_settings_tool_calling_enable">ツール呼び出しを有効化</string>
+    <string name="model_settings_tool_calling_support_litertlm">LiteRT-LM でのツール呼び出しに対応しています</string>
+    <string name="model_settings_tool_calling_support_gguf">GGUF でのツール呼び出しに対応しています</string>
     <string name="model_settings_display_name_title">モデル表示名</string>
     <string name="model_settings_display_name_label">表示名</string>
     <string name="model_settings_forbidden_filename_chars">記号 \ / : * ? " &lt; &gt; | は使用できません。</string>
@@ -802,6 +804,7 @@ VOICEVOX:ずんだもん / VOICEVOX:四国めたん / VOICEVOX:春日部つむ�
     <string name="model_settings_chat_template_description">モデルごとのチャットテンプレートを選択します。「自動検出」ではモデル名から ChatML / Gemma を推定します。</string>
     <string name="model_settings_template_auto_detect">自動検出</string>
     <string name="model_settings_template_custom">カスタム...</string>
+    <string name="model_settings_chat_template_label">チャットテンプレート</string>
     <string name="model_settings_custom_template_label">カスタムテンプレート</string>
     <string name="model_settings_template_variables">利用可能な変数: {{ .System }} / {{ .Prompt }} / {{ .Response }} / {{ .Thinking }} / {{ range .History }} {{ .Role }} {{ .Content }} {{ end }}</string>
     <string name="model_settings_stop_tokens_title">ストップトークン（カンマ区切り）</string>
@@ -855,6 +858,10 @@ VOICEVOX:ずんだもん / VOICEVOX:四国めたん / VOICEVOX:春日部つむ�
 
     <!-- 共通ボタン -->
     <string name="common_delete">削除</string>
+    <string name="common_edit">編集</string>
+    <string name="common_yes">はい</string>
+    <string name="model_tool_calling_disable_confirm_title">ツール呼び出しの無効化</string>
+    <string name="model_tool_calling_disable_confirm_message">このモデルを使用している %1$d 個のプリセットでツール呼び出しが無効になります。よろしいですか？</string>
     <string name="common_deleted">削除しました</string>
     <string name="common_delete_failed">削除に失敗しました</string>
     <string name="common_cancel">キャンセル</string>

@@ -969,13 +969,15 @@ open class ModelSettingsFragment : Fragment() {
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        val templateOptions = remember {
+                        val autoDetectLabel = stringResource(id = R.string.model_settings_template_auto_detect)
+                        val customLabel = stringResource(id = R.string.model_settings_template_custom)
+                        val templateOptions = remember(autoDetectLabel, customLabel) {
                             buildList {
-                                add(PromptTemplateStore.MODE_AUTO to stringResource(id = R.string.model_settings_template_auto_detect))
+                                add(PromptTemplateStore.MODE_AUTO to autoDetectLabel)
                                 PromptTemplateStore.BUILTIN_TEMPLATES.forEach { b ->
                                     add(b.id to b.displayName)
                                 }
-                                add(PromptTemplateStore.MODE_CUSTOM to stringResource(id = R.string.model_settings_template_custom))
+                                add(PromptTemplateStore.MODE_CUSTOM to customLabel)
                             }
                         }
                         val currentLabel = templateOptions.firstOrNull { it.first == capabilityDialogTemplateMode }?.second
