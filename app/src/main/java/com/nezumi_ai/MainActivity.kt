@@ -453,10 +453,10 @@ class MainActivity : AppCompatActivity() {
 
         // BiometricPromptInfo の作成
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("生体認証")
-            .setSubtitle("アプリの再開には生体認証が必要です")
+            .setTitle(getString(R.string.secret_mode_biometrics_title))
+            .setSubtitle(getString(R.string.secret_mode_biometrics_subtitle))
             .setNegativeButtonText(
-                if (PreferencesHelper.hasSecretModePin(this)) "PINで解除" else "キャンセル"
+                if (PreferencesHelper.hasSecretModePin(this)) getString(R.string.secret_mode_pin_unlock) else getString(R.string.common_cancel)
             )
             .setConfirmationRequired(true)
             .build()
@@ -475,15 +475,15 @@ class MainActivity : AppCompatActivity() {
         val ctx = this
         val pinInput = TextInputEditText(ctx).apply {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
-            hint = "4桁のPIN"
+            hint = getString(R.string.secret_mode_pin_hint)
             setText("")
             maxLines = 1
         }
 
         MaterialAlertDialogBuilder(ctx)
-            .setTitle("PINで解除")
+            .setTitle(getString(R.string.secret_mode_pin_unlock))
             .setView(pinInput)
-            .setPositiveButton("解除") { _, _ ->
+            .setPositiveButton(getString(R.string.secret_mode_unlock)) { _, _ ->
                 val pin = pinInput.text?.toString() ?: ""
                 if (pin.length == 4 && PreferencesHelper.verifySecretModePin(ctx, pin)) {
                     removeAuthOverlay()
@@ -492,11 +492,11 @@ class MainActivity : AppCompatActivity() {
                     }
                     Log.d(TAG, "PIN authentication succeeded")
                 } else {
-                    Toast.makeText(ctx, "PINが正しくありません", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(ctx, getString(R.string.secret_mode_invalid_pin), Toast.LENGTH_SHORT).show()
                     showPasswordUnlockDialog()
                 }
             }
-            .setNegativeButton("キャンセル", null)
+            .setNegativeButton(getString(R.string.common_cancel), null)
             .setOnDismissListener {
                 // ロック画面を維持するため、閉じてもオーバーレイはそのままにする
             }
@@ -538,7 +538,7 @@ class MainActivity : AppCompatActivity() {
 
         // 「ロック中」テキスト
         val lockStatusView = android.widget.TextView(this).apply {
-            text = "認証待機中..."
+            text = getString(R.string.secret_mode_waiting)
             textSize = 20f
             setTextColor(android.graphics.Color.WHITE)
             gravity = android.view.Gravity.CENTER
@@ -553,7 +553,7 @@ class MainActivity : AppCompatActivity() {
 
         // サブテキスト
         val subTextView = android.widget.TextView(this).apply {
-            text = "生体認証またはPINでロック解除"
+            text = getString(R.string.secret_mode_biometrics_subtitle)
             textSize = 14f
             setTextColor(android.graphics.Color.LTGRAY)
             gravity = android.view.Gravity.CENTER
@@ -581,7 +581,7 @@ class MainActivity : AppCompatActivity() {
 
         // 「もう一度試す」ボタン
         val retryButton = android.widget.Button(this).apply {
-            text = "もう一度試す"
+            text = getString(R.string.secret_mode_retry)
             textSize = 18f
             setBackgroundColor(android.graphics.Color.parseColor("#4A90E2"))
             setTextColor(android.graphics.Color.WHITE)
@@ -601,7 +601,7 @@ class MainActivity : AppCompatActivity() {
         // 「PINで解除」ボタン
         if (PreferencesHelper.hasSecretModePin(this)) {
             val pinUnlockButton = android.widget.Button(this).apply {
-                text = "PINで解除"
+                text = getString(R.string.secret_mode_pin_unlock)
                 textSize = 18f
                 setBackgroundColor(android.graphics.Color.parseColor("#6A5ACD"))
                 setTextColor(android.graphics.Color.WHITE)
@@ -622,7 +622,7 @@ class MainActivity : AppCompatActivity() {
         // 「シークレットモードを終了」ボタン（シークレットモード時のみ表示）
         if (isIncognitoModeActive) {
             val exitButton = android.widget.Button(this).apply {
-                text = "シークレットモードを終了"
+                text = getString(R.string.secret_mode_exit)
                 textSize = 18f
                 setBackgroundColor(android.graphics.Color.parseColor("#E24A4A"))
                 setTextColor(android.graphics.Color.WHITE)

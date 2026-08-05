@@ -293,15 +293,23 @@ open class ModelSettingsFragment : Fragment() {
 
     private val authLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            val data = result.data ?: return@registerForActivityResult
+            // Custom Tabs 経由で result.data が null になるケースがあるため、
+            //   戻ってきただけでも SharedPreferences のトークン状態を見直す。
+            val data = result.data
+            if (data == null) {
+                renderHfTokenState()
+                return@registerForActivityResult
+            }
             val authResponse = AuthorizationResponse.fromIntent(data)
             val authError = AuthorizationException.fromIntent(data)
             if (authError != null) {
                 toast("OAuth失敗: ${authError.errorDescription}")
+                renderHfTokenState()
                 return@registerForActivityResult
             }
             if (authResponse == null) {
                 toast("OAuthレスポンスが取得できませんでした")
+                renderHfTokenState()
                 return@registerForActivityResult
             }
             exchangeToken(authResponse)
@@ -438,7 +446,7 @@ open class ModelSettingsFragment : Fragment() {
                         )
                     }
                     Text(
-                        text = "モデル",
+                        text = stringResource(id = R.string.model_settings),
                         style = MaterialTheme.typography.headlineSmall,
                         color = colorResource(id = R.color.text_primary),
                         fontWeight = FontWeight.Bold
@@ -454,7 +462,7 @@ open class ModelSettingsFragment : Fragment() {
                     item { HfModelSearchCard() }
                     item {
                         Text(
-                            text = "組み込みモデル",
+                            text = stringResource(id = R.string.model_settings_builtin_models),
                             style = MaterialTheme.typography.labelSmall,
                             color = colorResource(id = R.color.text_secondary),
                             fontWeight = FontWeight.SemiBold,
@@ -484,7 +492,7 @@ open class ModelSettingsFragment : Fragment() {
                                 onDownload = { requestNotificationPermissionForDownload(model) },
                                 onDelete = {
                                     val ok = ModelFileManager.deleteModel(requireContext(), model)
-                                    toast(if (ok) "削除しました" else "削除に失敗しました")
+                                    toast(if (ok) getString(R.string.common_deleted) else getString(R.string.common_delete_failed))
                                     refreshModelStatus(model)
                                     expandedModelKey = null
                                 },
@@ -494,7 +502,8 @@ open class ModelSettingsFragment : Fragment() {
                                 progressText = state.progressText,
                                 isMemoryLow = state.memoryWarning != null,
                                 isStorageLow = resourceCheck.isStorageLow,
-                                fileSizeLabel = formatBytes(sizeBytes)
+                                fileSizeLabel = formatBytes(sizeBytes),
+                                speedInfo = activeDownloadSpeeds[model.name]
                             )
                         }
                     }
@@ -505,7 +514,7 @@ open class ModelSettingsFragment : Fragment() {
                     //   件数が 0 だと「見えない」状態になっていた。
                     item {
                         Text(
-                            text = "カスタムモデル",
+                            text = stringResource(id = R.string.model_settings_custom_models),
                             style = MaterialTheme.typography.labelSmall,
                             color = colorResource(id = R.color.text_secondary),
                             fontWeight = FontWeight.SemiBold,
@@ -517,7 +526,7 @@ open class ModelSettingsFragment : Fragment() {
                     if (importedTasks.isEmpty()) {
                         item {
                             Text(
-                                text = "カスタムモデルはまだインポートされていません。",
+                                text = stringResource(id = R.string.model_settings_custom_models_empty),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colorResource(id = R.color.text_secondary),
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
@@ -526,7 +535,7 @@ open class ModelSettingsFragment : Fragment() {
                     } else if (displayedImportedTasks.isEmpty()) {
                         item {
                             Text(
-                                text = "検索条件に一致するカスタムモデルがありません。",
+                                text = stringResource(id = R.string.model_settings_custom_models_empty_search),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colorResource(id = R.color.text_secondary),
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
@@ -571,7 +580,7 @@ open class ModelSettingsFragment : Fragment() {
                 ModelType.DOWNLOAD_QUEUE -> {
                     item { DownloadQueueCard() }
                     item { EmbeddingDownloadCard() }
-                    item { NetworkSpeedCard() }
+                    // 各カードに通信速度を集約したため、独立した NetworkSpeedCard は削除
  // モデルのアップデート通知は削除（ユーザー要望）
                     // item { RepoUpdateNotificationCard() }
                 }
@@ -640,14 +649,14 @@ open class ModelSettingsFragment : Fragment() {
                     onClick = {
                         runCatching {
                             sdZipPickerLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
-                        }.onFailure { toast("zip を選択できませんでした: ${it.message}") }
+                        }.onFailure { toast(getString(R.string.model_settings_sd_zip_select_failed, it.message ?: "")) }
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
- Text("SD モデル zip を選択")
+                    Text(stringResource(id = R.string.model_settings_sd_zip_select))
                 }
                 Text(
-                    text = "対応形式: unet.mnn / clip*.mnn / vae_decoder*.mnn + (tokenizer.json または pos_emb.bin+token_emb.bin)",
+                    text = stringResource(id = R.string.model_settings_sd_zip_formats),
                     style = MaterialTheme.typography.bodySmall,
                     color = colorResource(id = R.color.text_secondary),
                     modifier = Modifier.padding(top = 6.dp)
@@ -763,7 +772,7 @@ open class ModelSettingsFragment : Fragment() {
                         }) {
                             Icon(
                                 imageVector = Icons.Filled.Close,
-                                contentDescription = "閉じる",
+                                contentDescription = stringResource(id = R.string.common_close),
                                 tint = MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -786,7 +795,7 @@ open class ModelSettingsFragment : Fragment() {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("画像入力を有効化", color = MaterialTheme.colorScheme.onSurface)
+                        Text(stringResource(id = R.string.model_settings_enable_image_input), color = MaterialTheme.colorScheme.onSurface)
                         Switch(
                             checked = capabilityDialogImageEnabled,
                             onCheckedChange = { capabilityDialogImageEnabled = it }
@@ -794,7 +803,10 @@ open class ModelSettingsFragment : Fragment() {
                     }
                     if (isGguf && capabilityDialogImageEnabled) {
                         Text(
-                            text = "mmproj: ${capabilityDialogMmprojPath.takeIf { it.isNotBlank() }?.let { java.io.File(it).name } ?: "未選択"}",
+                            text = stringResource(
+                                id = R.string.model_settings_mmproj_status,
+                                if (capabilityDialogMmprojPath.isNotBlank()) java.io.File(capabilityDialogMmprojPath).name else stringResource(id = R.string.model_settings_mmproj_unselected)
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(start = 8.dp)
@@ -804,10 +816,10 @@ open class ModelSettingsFragment : Fragment() {
                             onExpandedChange = { mmprojDropdownExpanded = it }
                         ) {
                             OutlinedTextField(
-                                value = if (capabilityDialogMmprojPath.isBlank()) "未選択" else java.io.File(capabilityDialogMmprojPath).name,
+                                value = if (capabilityDialogMmprojPath.isBlank()) stringResource(id = R.string.model_settings_mmproj_unselected) else java.io.File(capabilityDialogMmprojPath).name,
                                 onValueChange = {},
                                 readOnly = true,
-                                label = { Text("mmprojファイル") },
+                                label = { Text(stringResource(id = R.string.model_settings_mmproj_file_label)) },
                                 trailingIcon = {
                                     ExposedDropdownMenuDefaults.TrailingIcon(expanded = mmprojDropdownExpanded)
                                 },
@@ -818,14 +830,14 @@ open class ModelSettingsFragment : Fragment() {
                                 onDismissRequest = { mmprojDropdownExpanded = false }
                             ) {
                                 DropdownMenuItem(
-                                    text = { Text("未選択") },
+                                    text = { Text(stringResource(id = R.string.model_settings_mmproj_unselected)) },
                                     onClick = {
                                         capabilityDialogMmprojPath = ""
                                         mmprojDropdownExpanded = false
                                     }
                                 )
                                 if (capabilityDialogRepoMmprojLoading) {
-                                    DropdownMenuItem(text = { Text("候補を取得中…") }, onClick = {})
+                                    DropdownMenuItem(text = { Text(stringResource(id = R.string.model_settings_mmproj_loading_candidates)) }, onClick = {})
                                 } else {
                                     val repoQualifier = model.hfRepoQualifier
                                     val localRepoMmprojTasks = if (repoQualifier != null) {
@@ -888,7 +900,7 @@ open class ModelSettingsFragment : Fragment() {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("音声入力を有効化", color = MaterialTheme.colorScheme.onSurface)
+                        Text(stringResource(id = R.string.model_settings_enable_audio_input), color = MaterialTheme.colorScheme.onSurface)
                         Switch(
                             checked = capabilityDialogAudioEnabled,
                             onCheckedChange = { capabilityDialogAudioEnabled = it }
@@ -900,7 +912,7 @@ open class ModelSettingsFragment : Fragment() {
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("推論（Thinking）を有効化", color = MaterialTheme.colorScheme.onSurface)
+                            Text(stringResource(id = R.string.model_settings_enable_thinking), color = MaterialTheme.colorScheme.onSurface)
                             Switch(
                                 checked = capabilityDialogThinkingEnabled,
                                 onCheckedChange = { capabilityDialogThinkingEnabled = it }
@@ -914,9 +926,9 @@ open class ModelSettingsFragment : Fragment() {
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("ツール呼び出しを有効化", color = MaterialTheme.colorScheme.onSurface)
+                                Text(stringResource(id = R.string.model_settings_tool_calling_enable), color = MaterialTheme.colorScheme.onSurface)
                                 Text(
-                                    text = if (isLiteRt) "LiteRT-LM のツール呼び出しに対応します" else "GGUF / llama.rn のツール呼び出しに対応します",
+                                    text = if (isLiteRt) stringResource(id = R.string.model_settings_tool_calling_support_litertlm) else stringResource(id = R.string.model_settings_tool_calling_support_gguf),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -929,7 +941,7 @@ open class ModelSettingsFragment : Fragment() {
                     }
                     Divider()
                     Text(
-                        text = "モデル表示名",
+                        text = stringResource(id = R.string.model_settings_display_name_title),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -937,33 +949,33 @@ open class ModelSettingsFragment : Fragment() {
                         modifier = Modifier.fillMaxWidth(),
                         value = settingsDialogDisplayName,
                         onValueChange = { settingsDialogDisplayName = it },
-                        label = { Text("表示名") },
+                        label = { Text(stringResource(id = R.string.model_settings_display_name_label)) },
                         singleLine = true
                     )
                     Text(
-                        text = "記号 \\ / : * ? \" < > | は使用できません。",
+                        text = stringResource(id = R.string.model_settings_forbidden_filename_chars),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (isGguf) {
                         Divider()
                         Text(
-                            text = "プロンプトテンプレート",
+                            text = stringResource(id = R.string.model_settings_chat_template_title),
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = "モデルごとのチャットテンプレートを選択します。「自動検出」ではモデル名から ChatML / Gemma を推定します。",
+                            text = stringResource(id = R.string.model_settings_chat_template_description),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         val templateOptions = remember {
                             buildList {
-                                add(PromptTemplateStore.MODE_AUTO to "自動検出")
+                                add(PromptTemplateStore.MODE_AUTO to stringResource(id = R.string.model_settings_template_auto_detect))
                                 PromptTemplateStore.BUILTIN_TEMPLATES.forEach { b ->
                                     add(b.id to b.displayName)
                                 }
-                                add(PromptTemplateStore.MODE_CUSTOM to "カスタム...")
+                                add(PromptTemplateStore.MODE_CUSTOM to stringResource(id = R.string.model_settings_template_custom))
                             }
                         }
                         val currentLabel = templateOptions.firstOrNull { it.first == capabilityDialogTemplateMode }?.second
@@ -979,7 +991,7 @@ open class ModelSettingsFragment : Fragment() {
                                 value = currentLabel,
                                 onValueChange = {},
                                 readOnly = true,
-                                label = { Text("チャットテンプレート") },
+                                label = { Text(stringResource(id = R.string.model_settings_chat_template_label)) },
                                 trailingIcon = {
                                     ExposedDropdownMenuDefaults.TrailingIcon(expanded = capabilityDialogTemplateExpanded)
                                 }
@@ -1026,13 +1038,13 @@ open class ModelSettingsFragment : Fragment() {
                                     capabilityDialogTemplateCustom = it
                                     capabilityDialogTemplateError = null
                                 },
-                                label = { Text("カスタムテンプレート") },
+                                label = { Text(stringResource(id = R.string.model_settings_custom_template_label)) },
                                 placeholder = { Text("{{ if .System }}...{{ end }}{{ range .History }}...{{ end }}") },
                                 minLines = 5,
                                 isError = capabilityDialogTemplateError != null
                             )
                             Text(
-                                text = "利用可能な変数: {{ .System }} / {{ .Prompt }} / {{ .Response }} / {{ .Thinking }} / {{ range .History }} {{ .Role }} {{ .Content }} {{ end }}",
+                                text = stringResource(id = R.string.model_settings_template_variables),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1047,7 +1059,7 @@ open class ModelSettingsFragment : Fragment() {
                     }
                     Divider()
                     Text(
-                        text = "ストップトークン（カンマ区切り）",
+                        text = stringResource(id = R.string.model_settings_stop_tokens_title),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -1055,12 +1067,12 @@ open class ModelSettingsFragment : Fragment() {
                         modifier = Modifier.fillMaxWidth(),
                         value = settingsDialogStopTokens,
                         onValueChange = { settingsDialogStopTokens = it },
-                        label = { Text("追加ストップトークン") },
+                        label = { Text(stringResource(id = R.string.model_settings_additional_stop_tokens_label)) },
                         placeholder = { Text("<|im_end|>,<|im_start|>") },
                         minLines = 2
                     )
                     Text(
-                        text = "デフォルトのストップトークンに追加されます。",
+                        text = stringResource(id = R.string.model_settings_stop_tokens_description),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1074,9 +1086,9 @@ open class ModelSettingsFragment : Fragment() {
         if (showToolCallingDisableConfirmDialog && toolCallingDisableConfirmModel != null && toolCallingDisableConfirmNewCapabilities != null) {
             AlertDialog(
                 onDismissRequest = { showToolCallingDisableConfirmDialog = false },
-                title = { Text("モデルツール呼び出しを無効化しますか？") },
+                title = { Text(stringResource(id = R.string.model_tool_calling_disable_confirm_title)) },
                 text = {
-                    Text("このモデルを使用する $toolCallingDisableConflictCount 件のプリセットのツール呼び出し設定も無効になりますがよろしいですか？")
+                    Text(stringResource(id = R.string.model_tool_calling_disable_confirm_message, toolCallingDisableConflictCount))
                 },
                 confirmButton = {
                     Button(onClick = {
@@ -1093,7 +1105,7 @@ open class ModelSettingsFragment : Fragment() {
                             }
                             persistModelSettings(modelForConfirm, newCapabilitiesForConfirm, isGguf, tokensForConfirm)
                         }
-                    }) { Text("はい") }
+                    }) { Text(stringResource(id = R.string.common_yes)) }
                 },
                 dismissButton = {
                     TextButton(onClick = {
@@ -1121,6 +1133,9 @@ open class ModelSettingsFragment : Fragment() {
     @Composable
     private fun EmbeddingDownloadCard() {
         val state = embeddingDownloadState ?: return
+        // 埋め込みモデルの速度を activeDownloadSpeeds から拾う（キーはファイル名）
+        val speedInfo = activeDownloadSpeeds[state.fileName]
+            ?: activeDownloadSpeeds.entries.firstOrNull { it.key.contains("embedding", ignoreCase = true) }?.value
         Text(
             text = "埋め込みモデル（メモリ検索用）ダウンロード",
             style = MaterialTheme.typography.labelSmall,
@@ -1164,57 +1179,26 @@ open class ModelSettingsFragment : Fragment() {
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
-            }
-        }
-    }
-
- // ネットワーク速度表示カード（DLタブに表示）
-    @Composable
-    private fun NetworkSpeedCard() {
-        if (activeDownloadSpeeds.isEmpty()) return
-        Text(
-            text = "ネットワーク速度",
-            style = MaterialTheme.typography.labelSmall,
-            color = colorResource(id = R.color.text_secondary),
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = 16.dp)
-        )
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = colorResource(id = R.color.surface_card)
-            )
-        ) {
-            Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                activeDownloadSpeeds.forEach { (key, info) ->
+                // 各カード内に通信速度と残り時間を表示
+                speedInfo?.let { info ->
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = key,
+                            text = String.format("%.1f MB/s", info.speedMbps),
                             style = MaterialTheme.typography.bodySmall,
-                            color = colorResource(id = R.color.text_secondary)
+                            color = colorResource(id = R.color.primary),
+                            fontWeight = FontWeight.Bold
                         )
-                        Column(horizontalAlignment = Alignment.End) {
+                        if (info.estimatedRemainingSec > 0) {
+                            val remainMin = (info.estimatedRemainingSec / 60).toInt()
+                            val remainSec = (info.estimatedRemainingSec % 60).toInt()
                             Text(
-                                text = String.format("%.1f MB/s", info.speedMbps),
+                                text = "残り ${remainMin}分${remainSec}秒",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = colorResource(id = R.color.primary),
-                                fontWeight = FontWeight.Bold
+                                color = colorResource(id = R.color.text_secondary)
                             )
-                            if (info.estimatedRemainingSec > 0) {
-                                val remainMin = (info.estimatedRemainingSec / 60).toInt()
-                                val remainSec = (info.estimatedRemainingSec % 60).toInt()
-                                Text(
-                                    text = "残り ${remainMin}分${remainSec}秒",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = colorResource(id = R.color.text_secondary)
-                                )
-                            }
                         }
                     }
                 }
@@ -1548,6 +1532,10 @@ open class ModelSettingsFragment : Fragment() {
             )
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 hfQueuedDownloads.forEach { item ->
+                    // HF カスタム DL の速度キーは observeDownloadSpeeds() で
+                    //   "{modelId}/{fileName}" 形式で登録される。
+                    val speedKey = "${item.modelId}/${item.filePath.substringAfterLast('/')}"
+                    val speedInfo = activeDownloadSpeeds[speedKey]
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
@@ -1575,6 +1563,29 @@ open class ModelSettingsFragment : Fragment() {
                                 )
                             }
                             Text(text = item.statusText, color = colorResource(id = R.color.text_secondary), style = MaterialTheme.typography.bodySmall)
+                            // 各カードに通信速度と残り時間を表示
+                            speedInfo?.let { info ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = String.format("%.1f MB/s", info.speedMbps),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorResource(id = R.color.primary),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    if (info.estimatedRemainingSec > 0) {
+                                        val remainMin = (info.estimatedRemainingSec / 60).toInt()
+                                        val remainSec = (info.estimatedRemainingSec % 60).toInt()
+                                        Text(
+                                            text = "残り ${remainMin}分${remainSec}秒",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = colorResource(id = R.color.text_secondary)
+                                        )
+                                    }
+                                }
+                            }
                             if (item.isActive) {
                                 Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                                     TextButton(onClick = {
@@ -1821,7 +1832,8 @@ open class ModelSettingsFragment : Fragment() {
                     progressText = state.progressText,
                     isMemoryLow = state.memoryWarning != null,
                     isStorageLow = resourceCheck.isStorageLow,
-                    fileSizeLabel = formatBytes(sizeBytes)
+                    fileSizeLabel = formatBytes(sizeBytes),
+                    speedInfo = activeDownloadSpeeds[model.name]
                 )
             }
         }
@@ -2484,6 +2496,8 @@ open class ModelSettingsFragment : Fragment() {
                     )
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.heightIn(max = 300.dp)) {
                         items(hfQueuedDownloads, key = { "${it.modelId}/${it.filePath}" }) { item ->
+                            val speedKey = "${item.modelId}/${item.filePath.substringAfterLast('/')}"
+                            val speedInfo = activeDownloadSpeeds[speedKey]
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
                                 colors = CardDefaults.cardColors(
@@ -2511,6 +2525,29 @@ open class ModelSettingsFragment : Fragment() {
                                         )
                                     }
                                     Text(text = item.statusText, color = colorResource(id = R.color.text_secondary), style = MaterialTheme.typography.bodySmall)
+                                    // 各カードに通信速度と残り時間を表示
+                                    speedInfo?.let { info ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(
+                                                text = String.format("%.1f MB/s", info.speedMbps),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = colorResource(id = R.color.primary),
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            if (info.estimatedRemainingSec > 0) {
+                                                val remainMin = (info.estimatedRemainingSec / 60).toInt()
+                                                val remainSec = (info.estimatedRemainingSec % 60).toInt()
+                                                Text(
+                                                    text = "残り ${remainMin}分${remainSec}秒",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = colorResource(id = R.color.text_secondary)
+                                                )
+                                            }
+                                        }
+                                    }
                                     if (item.isActive) {
                                         Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                                             TextButton(onClick = {
@@ -2587,7 +2624,8 @@ open class ModelSettingsFragment : Fragment() {
                             isDownloaded = state.isDownloaded,
                             progress = state.progress,
                             progressText = state.progressText,
-                            fileSizeLabel = formatBytes(sizeBytes)
+                            fileSizeLabel = formatBytes(sizeBytes),
+                            speedInfo = activeDownloadSpeeds[model.name]
                         )
                     }
                 }
@@ -2630,13 +2668,13 @@ open class ModelSettingsFragment : Fragment() {
                     }
                 } else {
                     Text(
-                        text = "画像生成モデル (MNN)",
+                        text = stringResource(id = R.string.model_settings_image_generation_section),
                         style = MaterialTheme.typography.labelSmall,
                         color = colorResource(id = R.color.text_secondary),
                         modifier = Modifier.padding(top = 8.dp)
                     )
                     Text(
-                        text = "上記の「画像生成モデル (MNN)」カードからダウンロードするか、下のボタンから zip をインポートできます",
+                        text = stringResource(id = R.string.model_settings_image_generation_help),
                         style = MaterialTheme.typography.bodySmall,
                         color = colorResource(id = R.color.text_secondary)
                     )
@@ -2645,7 +2683,7 @@ open class ModelSettingsFragment : Fragment() {
                 // インポートされたモデル
                 if (importedTasks.isNotEmpty()) {
                     Text(
-                        text = "カスタムモデル",
+                        text = stringResource(id = R.string.model_settings_imported_models_section),
                         style = MaterialTheme.typography.labelSmall,
                         color = colorResource(id = R.color.text_secondary),
                         modifier = Modifier.padding(top = 8.dp)
@@ -2677,7 +2715,7 @@ open class ModelSettingsFragment : Fragment() {
 
                 // mmprojファイル管理
                 Text(
-                    text = "mmproj ファイル",
+                    text = stringResource(id = R.string.model_settings_mmproj_file_management),
                     style = MaterialTheme.typography.labelSmall,
                     color = colorResource(id = R.color.text_secondary),
                     modifier = Modifier.padding(top = 12.dp)
@@ -2743,7 +2781,8 @@ open class ModelSettingsFragment : Fragment() {
         progressText: String = "",
         isMemoryLow: Boolean = false,
         isStorageLow: Boolean = false,
-        fileSizeLabel: String? = null
+        fileSizeLabel: String? = null,
+        speedInfo: DownloadSpeedInfo? = null
     ) {
         Card(
             modifier = Modifier
@@ -2851,6 +2890,29 @@ open class ModelSettingsFragment : Fragment() {
                             style = MaterialTheme.typography.bodySmall,
                             color = colorResource(id = R.color.text_secondary)
                         )
+                        // 各カード内に通信速度と残り時間を表示
+                        speedInfo?.let { info ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = String.format("%.1f MB/s", info.speedMbps),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colorResource(id = R.color.primary),
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (info.estimatedRemainingSec > 0) {
+                                    val remainMin = (info.estimatedRemainingSec / 60).toInt()
+                                    val remainSec = (info.estimatedRemainingSec % 60).toInt()
+                                    Text(
+                                        text = "残り ${remainMin}分${remainSec}秒",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorResource(id = R.color.text_secondary)
+                                    )
+                                }
+                            }
+                        }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(
@@ -3288,7 +3350,7 @@ open class ModelSettingsFragment : Fragment() {
         imageModelsError = null
         viewLifecycleOwner.lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                com.nezumi_ai.data.inference.ImageModelBrowser.fetchAvailableModels()
+                com.nezumi_ai.data.inference.ImageModelBrowser.fetchAvailableModels(requireContext())
             }
             result.onSuccess { models ->
                 availableImageModels = models
@@ -4373,12 +4435,22 @@ open class ModelSettingsFragment : Fragment() {
         val tokenRequest = HfOAuthManager.buildTokenRequest(response)
         val service = authService ?: return
         HfOAuthManager.performTokenRequest(service, tokenRequest) { accessToken, error ->
+            // Fragment が detach 済みの場合もトークンは必ず保存する。
+            //   UI 反映は isAdded チェック後に行うことでクラッシュを避ける。
+            val ctx = context?.applicationContext
+            if (!accessToken.isNullOrBlank() && ctx != null) {
+                HfAuthManager.setToken(ctx, accessToken)
+            }
+            if (!isAdded) return@performTokenRequest
             requireActivity().runOnUiThread {
+                if (!isAdded) return@runOnUiThread
                 if (accessToken.isNullOrBlank()) {
                     toast("トークン取得失敗: $error")
+                    renderHfTokenState()
                     return@runOnUiThread
                 }
-                HfAuthManager.setToken(requireContext(), accessToken)
+                // トークンはすでに保存済み。UI 状態を強制的に更新。
+                hfLinked = true
                 renderHfTokenState()
                 toast("OAuthログイン成功")
             }
@@ -4502,6 +4574,10 @@ open class ModelSettingsFragment : Fragment() {
         item: ImageModelDownloadUiState,
         onCancel: (() -> Unit)? = null
     ) {
+        // 画像モデルの速度キーは modelName または modelId で登録される可能性があるため内包フォールバックする。
+        val speedInfo = activeDownloadSpeeds[item.modelName]
+            ?: activeDownloadSpeeds[item.modelId]
+            ?: activeDownloadSpeeds.entries.firstOrNull { it.key.contains(item.modelId) }?.value
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -4532,6 +4608,29 @@ open class ModelSettingsFragment : Fragment() {
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodySmall
                 )
+                // 各カードに通信速度と残り時間を表示
+                speedInfo?.let { info ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = String.format("%.1f MB/s", info.speedMbps),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorResource(id = R.color.primary),
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (info.estimatedRemainingSec > 0) {
+                            val remainMin = (info.estimatedRemainingSec / 60).toInt()
+                            val remainSec = (info.estimatedRemainingSec % 60).toInt()
+                            Text(
+                                text = "残り ${remainMin}分${remainSec}秒",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorResource(id = R.color.text_secondary)
+                            )
+                        }
+                    }
+                }
                 if (item.isActive && onCancel != null) {
                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                         TextButton(onClick = onCancel) { Text("キャンセル") }

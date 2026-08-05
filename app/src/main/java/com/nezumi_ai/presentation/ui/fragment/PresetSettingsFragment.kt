@@ -217,7 +217,7 @@ class PresetSettingsFragment : Fragment() {
                     scope.launch {
                         presetRepository.createPreset(preset)
                         showCreateDialog = false
-                        toast("プリセットを作成しました")
+                        toast(getString(R.string.preset_toast_created))
                     }
                 }
             )
@@ -231,7 +231,7 @@ class PresetSettingsFragment : Fragment() {
                     scope.launch {
                         if (presetRepository.updatePreset(updated)) {
                             editingPreset = null
-                            toast("プリセットを保存しました")
+                            toast(getString(R.string.preset_toast_saved))
                             // 現在選択中のプリセットを編集した場合は、モデル再ロードなしで
                             // MCP サーバー・ツール一覧を即時に反映させる
                             val currentId = com.nezumi_ai.utils.PreferencesHelper
@@ -240,7 +240,7 @@ class PresetSettingsFragment : Fragment() {
                                 presetRepository.applyActivePresetToolsSync()
                             }
                         } else {
-                            toast("ロックされたプリセットは編集できません")
+                            toast(getString(R.string.preset_toast_locked_edit))
                         }
                     }
                 }
@@ -272,7 +272,7 @@ class PresetSettingsFragment : Fragment() {
                             )
                         }
                         Text(
-                            text = "プリセット",
+                            text = stringResource(id = R.string.preset_screen_title),
                             style = MaterialTheme.typography.headlineSmall,
                             color = MaterialTheme.colorScheme.onBackground,
                             fontWeight = FontWeight.Bold
@@ -285,17 +285,17 @@ class PresetSettingsFragment : Fragment() {
                                     val manager = com.nezumi_ai.data.inference.ModelManager.getInstance(requireContext())
                                     manager.unloadModel()
                                     withContext(Dispatchers.Main) {
-                                        toast("モデルを開放しました")
+                                        toast(getString(R.string.preset_toast_model_released))
                                     }
                                 } catch (e: Exception) {
                                     withContext(Dispatchers.Main) {
-                                        toast("モデル開放に失敗: ${e.message}")
+                                        toast(getString(R.string.preset_toast_model_release_failed, e.message ?: ""))
                                     }
                                 }
                             }
                         }
                     ) {
-                        Text("モデル開放")
+                        Text(stringResource(id = R.string.preset_release_model))
                     }
                 }
             }
@@ -305,19 +305,19 @@ class PresetSettingsFragment : Fragment() {
                     OutlinedTextField(
                         value = presetSearchQuery,
                         onValueChange = { presetSearchQuery = it },
-                        label = { Text("プリセットを検索") },
+                        label = { Text(stringResource(id = R.string.preset_search_label)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     if (presets.isEmpty()) {
                         Text(
-                            text = "プリセットはまだありません。",
+                            text = stringResource(id = R.string.preset_empty_no_presets),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     } else if (displayedPresets.isEmpty()) {
                         Text(
-                            text = "検索条件に一致するプリセットがありません。",
+                            text = stringResource(id = R.string.preset_empty_no_matches),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -463,7 +463,7 @@ class PresetSettingsFragment : Fragment() {
                         scope.launch {
                             presetRepository.selectPreset(preset.id)
                             currentPresetId = preset.id
-                            toast("${preset.name} を選択しました")
+                            toast(getString(R.string.preset_toast_selected, preset.name))
                         }
                     },
                     onEdit = { editingPreset = preset },
@@ -471,9 +471,9 @@ class PresetSettingsFragment : Fragment() {
                         scope.launch {
                             if (presetRepository.deletePreset(preset.id)) {
                                 currentPresetId = PreferencesHelper.getCurrentPresetId(requireContext())
-                                toast("プリセットを削除しました")
+                                toast(getString(R.string.preset_toast_deleted))
                             } else {
-                                toast("このプリセットは削除できません")
+                                toast(getString(R.string.preset_toast_cannot_delete))
                             }
                         }
                     }
@@ -485,7 +485,7 @@ class PresetSettingsFragment : Fragment() {
                     onClick = { showCreateDialog = true },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("＋ 新しいプリセット")
+                    Text(stringResource(id = R.string.preset_new_button))
                 }
             }
         }
@@ -573,7 +573,7 @@ class PresetSettingsFragment : Fragment() {
                             androidx.compose.material3.AssistChip(
                                 onClick = {},
                                 enabled = false,
-                                label = { Text("選択中", fontWeight = FontWeight.Bold) },
+                                label = { Text(stringResource(id = R.string.preset_selected_badge), fontWeight = FontWeight.Bold) },
                                 colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(
                                     disabledContainerColor = MaterialTheme.colorScheme.primary,
                                     disabledLabelColor = MaterialTheme.colorScheme.onPrimary
@@ -592,11 +592,16 @@ class PresetSettingsFragment : Fragment() {
                 Text(
                     text = buildString {
                         append(modelLabel(preset.modelId))
-                        append(" / メモリ ${if (preset.memoryEnabled) "ON" else "OFF"}")
+                        append(" / ")
+                        append(stringResource(id = R.string.preset_status_memory, if (preset.memoryEnabled) stringResource(id = R.string.status_on) else stringResource(id = R.string.status_off)))
                         if (preset.toolCallingEnabled) {
-                            append(" / ツール呼び出し ON")
                             val toolLabels = formatToolLabels(preset.enabledTools)
-                            if (toolLabels.isNotEmpty()) append(" ($toolLabels)")
+                            append(" / ")
+                            if (toolLabels.isNotEmpty()) {
+                                append(stringResource(id = R.string.preset_status_tool_calling_with_list, toolLabels))
+                            } else {
+                                append(stringResource(id = R.string.preset_status_tool_calling))
+                            }
                         }
                     },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -605,11 +610,11 @@ class PresetSettingsFragment : Fragment() {
                 if (!preset.isLocked) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = onEdit) {
-                            Text("編集")
+                            Text(stringResource(id = R.string.common_edit))
                         }
                         if (!preset.isDefault) {
                             TextButton(onClick = onDelete) {
-                                Text("削除")
+                                Text(stringResource(id = R.string.delete))
                             }
                         }
                     }
@@ -709,7 +714,7 @@ class PresetSettingsFragment : Fragment() {
                     }
                     item {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("モデル", fontWeight = FontWeight.Bold)
+                            Text(stringResource(id = R.string.preset_edit_model_label), fontWeight = FontWeight.Bold)
                             if (availableModels.isEmpty()) {
                                 Text(
                                     text = "ダウンロード済みモデルがありません",
@@ -750,15 +755,15 @@ class PresetSettingsFragment : Fragment() {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("ツール呼び出し", fontWeight = FontWeight.Bold)
+                                Text(stringResource(id = R.string.preset_edit_tool_calling_label), fontWeight = FontWeight.Bold)
                                 Text(
-                                    text = "有効時のみプリセットにツールを表示・適用します",
+                                    text = stringResource(id = R.string.preset_edit_tool_calling_desc),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 if (!selectedModelToolCallingAllowed) {
                                     Text(
-                                        text = "選択中のモデルはツール呼び出しが無効です。モデル設定から有効化してください",
+                                        text = stringResource(id = R.string.preset_edit_tool_calling_disabled_desc),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.error
                                     )
@@ -810,12 +815,12 @@ class PresetSettingsFragment : Fragment() {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("MCP サーバー", fontWeight = FontWeight.Bold)
+                                        Text(stringResource(id = R.string.preset_edit_mcp_server_label), fontWeight = FontWeight.Bold)
                                         val subLabel = if (mcpServers.isEmpty()) {
-                                            "未登録"
+                                            stringResource(id = R.string.preset_edit_mcp_servers_unregistered)
                                         } else {
                                             val active = mcpServers.count { it.id in selectedMcpServerIds }
-                                            "$active / ${mcpServers.size} 個を有効化"
+                                            stringResource(id = R.string.preset_edit_mcp_servers_enabled_format, active, mcpServers.size)
                                         }
                                         Text(
                                             text = subLabel,
@@ -823,7 +828,7 @@ class PresetSettingsFragment : Fragment() {
                                         )
                                     }
                                     TextButton(onClick = { showMcpManager = true }) {
-                                        Text("MCPを追加")
+                                        Text(stringResource(id = R.string.preset_edit_mcp_add))
                                     }
                                 }
                                 if (mcpServers.isNotEmpty()) {
@@ -862,11 +867,11 @@ class PresetSettingsFragment : Fragment() {
                     onClick = {
                         val trimmedName = name.trim()
                         if (trimmedName.isBlank()) {
-                            toast("プリセット名を入力してください")
+                            toast(getString(R.string.preset_toast_name_required))
                             return@Button
                         }
                         if (modelId.isBlank()) {
-                            toast("ダウンロード済みモデルがありません")
+                            toast(getString(R.string.preset_toast_no_downloaded_models))
                             return@Button
                         }
                         val now = System.currentTimeMillis()
@@ -894,12 +899,12 @@ class PresetSettingsFragment : Fragment() {
                         )
                     }
                 ) {
-                    Text("保存")
+                    Text(stringResource(id = R.string.preset_save))
                 }
             },
             dismissButton = {
                 TextButton(onClick = onDismiss) {
-                    Text("キャンセル")
+                    Text(stringResource(id = R.string.preset_cancel))
                 }
             }
         )

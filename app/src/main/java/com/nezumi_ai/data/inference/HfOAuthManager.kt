@@ -21,6 +21,11 @@ object HfOAuthManager {
     )
 
     fun buildAuthorizationRequest(): AuthorizationRequest {
+        // state と nonce を明示的に設定しておかないと、一部の Custom Tabs 経由で
+        //   AuthorizationResponse.fromIntent(data) が null を返して「OAuthレスポンスが
+        //   取得できませんでした」となり、連携済みに切り替わらないことがある。
+        val state = java.util.UUID.randomUUID().toString()
+        val nonce = java.util.UUID.randomUUID().toString()
         return AuthorizationRequest.Builder(
             serviceConfig,
             ProjectConfig.HF_CLIENT_ID,
@@ -28,6 +33,8 @@ object HfOAuthManager {
             Uri.parse(ProjectConfig.HF_REDIRECT_URI)
         )
             .setScope("openid profile read-repos")
+            .setState(state)
+            .setNonce(nonce)
             .build()
     }
 

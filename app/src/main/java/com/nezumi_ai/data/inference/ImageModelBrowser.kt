@@ -1,5 +1,6 @@
 package com.nezumi_ai.data.inference
 
+import android.content.Context
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.decodeFromString
@@ -35,7 +36,7 @@ object ImageModelBrowser {
     private var cacheTimestamp = 0L
     private const val CACHE_TTL = 5 * 60 * 1000L
     
-    suspend fun fetchAvailableModels(forceRefresh: Boolean = false): Result<List<ImageModel>> = runCatching {
+    suspend fun fetchAvailableModels(context: Context? = null, forceRefresh: Boolean = false): Result<List<ImageModel>> = runCatching {
 
         if (!forceRefresh && cachedModels != null && System.currentTimeMillis() - cacheTimestamp < CACHE_TTL) {
             return@runCatching cachedModels!!
@@ -45,7 +46,7 @@ object ImageModelBrowser {
         
         // リポジトリ一覧をループ処理
         for (repo in REPOS_MNN) {
-            val mnnFiles = fetchRepoFiles(repo).getOrNull() ?: continue
+            val mnnFiles = fetchRepoFiles(context, repo).getOrNull() ?: continue
             
             for (entry in mnnFiles) {
                 if (entry.type != "file") continue
@@ -98,12 +99,19 @@ object ImageModelBrowser {
         val variant: String? = null
     )
     
-    private suspend fun fetchRepoFiles(repo: String): Result<List<TreeEntry>> = runCatching {
+    private suspend fun fetchRepoFiles(context: Context?, repo: String): Result<List<TreeEntry>> = runCatching {
         val url = "https://huggingface.co/api/models/$repo/tree/main"
-        val response = java.net.URL(url).openConnection().apply {
-            connectTimeout = 15000
-            readTimeout = 15000
-        }.getInputStream().bufferedReader().use { it.readText() }
+        // HF 連携済みの場合は必ずトークンを付与する（プライベートリポジトリや
+        // レート制限対策のため）
+        val token = context?.let { HfAuthManager.getToken(it) }.orEmpty()
+        val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        conn.connectTimeout = 15000
+        conn.readTimeout = 15000
+        conn.setRequestProperty("User-Agent", "nezumi-ai/1.0")
+        if (token.isNotBlank()) {
+            conn.setRequestProperty("Authorization", "Bearer $token")
+        }
+        val response = conn.getInputStream().bufferedReader().use { it.readText() }
         val json = Json { ignoreUnknownKeys = true }
         json.decodeFromString<Array<TreeEntry>>(response).toList()
     }

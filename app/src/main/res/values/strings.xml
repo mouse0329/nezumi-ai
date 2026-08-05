@@ -713,6 +713,101 @@ VOICEVOX:ずんだもん / VOICEVOX:四国めたん / VOICEVOX:春日部つむ�
     <string name="settings_secret_pin_disable">無効化</string>
     <string name="settings_secret_pin_reset">リセット</string>
 
+    <!-- Preset screen -->
+    <string name="preset_screen_title">プリセット</string>
+    <string name="preset_release_model">モデル開放</string>
+    <string name="preset_search_label">プリセットを検索</string>
+    <string name="preset_empty_no_presets">プリセットはまだありません。</string>
+    <string name="preset_empty_no_matches">検索条件に一致するプリセットがありません。</string>
+    <string name="preset_new_button">＋ 新しいプリセット</string>
+    <string name="preset_selected_badge">選択中</string>
+    <string name="preset_status_memory">メモリ %1$s</string>
+    <string name="preset_status_tool_calling">ツール呼び出し ON</string>
+    <string name="preset_status_tool_calling_with_list">ツール呼び出し ON (%1$s)</string>
+    <string name="preset_edit_new_title">新しいプリセット</string>
+    <string name="preset_edit_title">プリセット編集</string>
+    <string name="preset_edit_icon_label">アイコン</string>
+    <string name="preset_edit_name_label">名前</string>
+    <string name="preset_edit_description_label">説明</string>
+    <string name="preset_edit_system_prompt_label">システムプロンプト</string>
+    <string name="preset_edit_model_label">モデル</string>
+    <string name="preset_edit_no_downloaded_models">ダウンロード済みモデルがありません</string>
+    <string name="preset_edit_memory_label">メモリ機能</string>
+    <string name="preset_edit_tool_calling_label">ツール呼び出し</string>
+    <string name="preset_edit_tool_calling_desc">有効時のみプリセットにツールを表示・適用します</string>
+    <string name="preset_edit_tool_calling_disabled_desc">選択中のモデルはツール呼び出しが無効です。モデル設定から有効化してください</string>
+    <string name="preset_edit_tools_label">ツール</string>
+    <string name="preset_edit_mcp_server_label">MCP サーバー</string>
+    <string name="preset_edit_mcp_servers_unregistered">未登録</string>
+    <string name="preset_edit_mcp_servers_enabled_format">%1$d / %2$d 個を有効化</string>
+    <string name="preset_edit_mcp_add">MCPを追加</string>
+    <string name="preset_save">保存</string>
+    <string name="preset_cancel">キャンセル</string>
+    <string name="preset_toast_created">プリセットを作成しました</string>
+    <string name="preset_toast_saved">プリセットを保存しました</string>
+    <string name="preset_toast_locked_edit">ロックされたプリセットは編集できません</string>
+    <string name="preset_toast_model_released">モデルを開放しました</string>
+    <string name="preset_toast_model_release_failed">モデル開放に失敗: %1$s</string>
+    <string name="preset_toast_selected">「%1$s」を選択しました</string>
+    <string name="preset_toast_deleted">プリセットを削除しました</string>
+    <string name="preset_toast_cannot_delete">このプリセットは削除できません</string>
+    <string name="preset_toast_name_required">プリセット名を入力してください</string>
+    <string name="preset_toast_no_downloaded_models">ダウンロード済みモデルがありません</string>
+    <string name="preset_tool_name_time">現在時刻</string>
+    <string name="preset_tool_name_battery">バッテリー</string>
+    <string name="preset_tool_name_alarm">アラーム</string>
+    <string name="preset_tool_name_timer">タイマー</string>
+    <string name="preset_tool_name_flashlight">フラッシュライト</string>
+    <string name="preset_tool_name_image_generation">画像生成</string>
+    <string name="preset_tool_name_memory">メモリ検索</string>
+    <string name="preset_tool_name_web_search">ウェブ検索</string>
+    <string name="status_on">ON</string>
+    <string name="status_off">OFF</string>
+
+    <!-- Secret mode dialogs -->
+    <string name="secret_mode_biometrics_title">生体認証</string>
+    <string name="secret_mode_biometrics_subtitle">アプリの再開には生体認証が必要です</string>
+    <string name="secret_mode_pin_unlock">PINで解除</string>
+    <string name="secret_mode_pin_hint">4桁のPIN</string>
+    <string name="secret_mode_unlock">解除</string>
+    <string name="secret_mode_invalid_pin">PINが正しくありません</string>
+    <string name="secret_mode_setup_title">PIN を設定してください</string>
+    <string name="secret_mode_setup_message">シークレットモードを使用するには 4 桁の PIN を設定する必要があります。設定画面で PIN を登録してください。</string>
+    <string name="secret_mode_setup_positive">設定画面へ</string>
+    <string name="secret_mode_exit">シークレットモードを終了</string>
+    <string name="secret_mode_waiting">認証待機中...</string>
+    <string name="secret_mode_retry">もう一度試す</string>
+
+    <string name="model_settings_builtin_models">組み込みモデル</string>
+    <string name="model_settings_custom_models">カスタムモデル</string>
+    <string name="model_settings_custom_models_empty">カスタムモデルはまだインポートされていません。</string>
+    <string name="model_settings_custom_models_empty_search">検索条件に一致するカスタムモデルがありません。</string>
+    <string name="model_settings_sd_zip_import_title">SD モデル zip をインポート</string>
+    <string name="model_settings_sd_zip_select">SD モデル zip を選択</string>
+    <string name="model_settings_sd_zip_formats">対応形式: unet.mnn / clip*.mnn / vae_decoder*.mnn + (tokenizer.json または pos_emb.bin+token_emb.bin)</string>
+    <string name="model_settings_sd_zip_select_failed">zip を選択できませんでした: %1$s</string>
+    <string name="model_settings_dialog_title">設定</string>
+    <string name="model_settings_enable_image_input">画像入力を有効化</string>
+    <string name="model_settings_mmproj_status">mmproj: %1$s</string>
+    <string name="model_settings_mmproj_file_label">mmprojファイル</string>
+    <string name="model_settings_mmproj_unselected">未選択</string>
+    <string name="model_settings_mmproj_loading_candidates">候補を取得中…</string>
+    <string name="model_settings_enable_audio_input">音声入力を有効化</string>
+    <string name="model_settings_enable_thinking">推論（Thinking）を有効化</string>
+    <string name="model_settings_tool_calling_enable">ツール呼び出しを有効化</string>
+    <string name="model_settings_display_name_title">モデル表示名</string>
+    <string name="model_settings_display_name_label">表示名</string>
+    <string name="model_settings_forbidden_filename_chars">記号 \ / : * ? " &lt; &gt; | は使用できません。</string>
+    <string name="model_settings_chat_template_title">プロンプトテンプレート</string>
+    <string name="model_settings_chat_template_description">モデルごとのチャットテンプレートを選択します。「自動検出」ではモデル名から ChatML / Gemma を推定します。</string>
+    <string name="model_settings_template_auto_detect">自動検出</string>
+    <string name="model_settings_template_custom">カスタム...</string>
+    <string name="model_settings_custom_template_label">カスタムテンプレート</string>
+    <string name="model_settings_template_variables">利用可能な変数: {{ .System }} / {{ .Prompt }} / {{ .Response }} / {{ .Thinking }} / {{ range .History }} {{ .Role }} {{ .Content }} {{ end }}</string>
+    <string name="model_settings_stop_tokens_title">ストップトークン（カンマ区切り）</string>
+    <string name="model_settings_additional_stop_tokens_label">追加ストップトークン</string>
+    <string name="model_settings_stop_tokens_description">デフォルトのストップトークンに追加されます。</string>
+
     <!-- Brave Search / Backend / Inference cards -->
     <string name="settings_brave_card_title">Brave Search API</string>
     <string name="settings_brave_card_desc">Brave Search の API キーを設定します。ツール呼び出し時にこのキーが使用されます。</string>
@@ -760,6 +855,8 @@ VOICEVOX:ずんだもん / VOICEVOX:四国めたん / VOICEVOX:春日部つむ�
 
     <!-- 共通ボタン -->
     <string name="common_delete">削除</string>
+    <string name="common_deleted">削除しました</string>
+    <string name="common_delete_failed">削除に失敗しました</string>
     <string name="common_cancel">キャンセル</string>
     <string name="common_close">閉じる</string>
     <string name="common_next">次へ</string>
@@ -983,5 +1080,9 @@ VOICEVOX:ずんだもん / VOICEVOX:四国めたん / VOICEVOX:春日部つむ�
     <string name="model_sd_hf_btn_preset_keyword">SD+GGUF で検索</string>
     <string name="model_sd_hf_toast_set_as_image_gen">画像生成のモデルパスに設定しました</string>
     <string name="model_sd_hf_toast_downloaded">保存しました: %1$s（画像生成画面でパスを確認できます）</string>
-
+    <string name="model_settings_additional_downloads_title">追加モデル ダウンロード中</string>
+    <string name="model_settings_image_generation_section">画像生成モデル (MNN)</string>
+    <string name="model_settings_image_generation_help">上記の「画像生成モデル (MNN)」カードからダウンロードするか、下のボタンから zip をインポートできます</string>
+    <string name="model_settings_imported_models_section">インポートされたモデル</string>
+    <string name="model_settings_mmproj_file_management">mmproj ファイル</string>
 </resources>

@@ -264,36 +264,43 @@ object PromptBuilder {
                 compressedSummary = compressedSummary,
                 enableThinking = injectGemmaThinkTrigger,
                 sanitizeMessageContent = sanitizeMessageContent,
-                modelPath = modelPath
+                modelPath = modelPath,
+                appContext = appContext
             )
         }
 
-        val contextBuilder = StringBuilder()
+        // Bug fix(#47): カスタムテンプレ未設定の LiteRT 経路は、以前は
+        //   "User: xxx\nAssistant: yyy\nAssistant:" というプレーンな role prefix を吐いていたが、
+        //   これが Gemma / Llama 系の LiteRT ランタイムでもチャットテンプレを回避してしまい、
+        //   モデルが自身の chat_template を適用したときに "User:" / "Assistant:" が生の
+        //   トークンとして混入する不具合の主要因になっていた。
+        //   ここでは常に Gemma 標準の <start_of_turn> / <end_of_turn> ChatML 相当に統一して
+        //   プレフィックス role リテラルが二度と混入しないようにする。
+        val gemmaBuilder = StringBuilder()
         if (injectGemmaThinkTrigger) {
-            contextBuilder.append(GEMMA_THINK_PREFIX)
+            gemmaBuilder.append(GEMMA_THINK_PREFIX)
         }
-        if (systemPrompt.isNotEmpty()) {
-            contextBuilder.append(systemPrompt)
-            contextBuilder.append("\n\n")
+        val preludeContent = buildString {
+            if (systemPrompt.isNotEmpty()) append(systemPrompt)
+            if (!compressedSummary.isNullOrBlank()) {
+                if (isNotEmpty()) append("\n\n")
+                append(COMPRESSED_CONTEXT_HEADER).append('\n').append(compressedSummary)
+            }
         }
-        if (!compressedSummary.isNullOrBlank()) {
-            contextBuilder.append(COMPRESSED_CONTEXT_HEADER)
-            contextBuilder.append('\n')
-            contextBuilder.append(compressedSummary)
-            contextBuilder.append("\n\n")
+        if (preludeContent.isNotEmpty()) {
+            gemmaBuilder.append("<start_of_turn>user\n")
+                .append(preludeContent)
+                .append("\n<end_of_turn>\n")
         }
-
         for (msg in messages) {
             val content = sanitizeMessageContent(msg)
             if (content.isBlank()) continue
-            val role = if (msg.role == "assistant") "Assistant" else "User"
-            contextBuilder.append(role)
-                .append(": ")
-                .append(content)
-                .append('\n')
+            val role = if (msg.role == "assistant") "model" else "user"
+            gemmaBuilder.append("<start_of_turn>").append(role).append('\n')
+                .append(content).append("\n<end_of_turn>\n")
         }
-        contextBuilder.append("Assistant:")
-        return contextBuilder.toString()
+        gemmaBuilder.append("<start_of_turn>model\n")
+        return gemmaBuilder.toString()
     }
 
     fun buildForGguf(
@@ -318,7 +325,8 @@ object PromptBuilder {
                 compressedSummary = compressedSummary,
                 enableThinking = enableThinking,
                 sanitizeMessageContent = sanitizeMessageContent,
-                modelPath = modelPath
+                modelPath = modelPath,
+                appContext = appContext
             )
         }
 
@@ -342,7 +350,8 @@ object PromptBuilder {
         compressedSummary: String?,
         enableThinking: Boolean,
         sanitizeMessageContent: (MessageEntity) -> String,
-        modelPath: String
+        modelPath: String,
+        appContext: Context? = null
     ): String {
         val systemFinal = buildString {
             if (systemPrompt.isNotEmpty()) append(systemPrompt)
@@ -351,7 +360,7 @@ object PromptBuilder {
                 append(COMPRESSED_CONTEXT_HEADER).append('\n').append(compressedSummary)
             }
         }
-        val style = resolveThinkingPromptStyle(modelPath, null)
+        val style = resolveThinkingPromptStyle(modelPath, appContext)
         val rawHistory = messages.mapNotNull { msg ->
             val content = sanitizeMessageContent(msg)
             if (content.isBlank()) return@mapNotNull null
@@ -359,8 +368,16 @@ object PromptBuilder {
             PromptTemplateEngine.HistoryMessage(role = role, content = content)
         }
         val history = decorateHistoryForThinkingStyle(rawHistory, style, enableThinking)
-        val lastUserContent = history.lastOrNull { it.role == "user" }?.content.orEmpty()
-        val lastAssistantContent = history.lastOrNull { it.role == "assistant" }?.content.orEmpty()
+        // Bug fix(#48): テンプレが `{{ .Prompt }}` と `{{ range .History }}` の両方を持つ場合、
+        // これまでは最後の user / assistant を Prompt / Response に **もコピー** して渡していたため、
+        // 「履歴末尾がラップされた形」と「Prompt/Response でラップされない裸のテキスト」の
+        // 二重展開が起きて `user:` / `assistant:` 相当の生ロールが混入するケースがあった。
+        // History に既に最後のユーザー / アシスタントターンが含まれる場合は、
+        // Prompt / Response を空文字にして二重展開を封じる。
+        val hasHistoryUser = history.any { it.role == "user" }
+        val hasHistoryAssistant = history.any { it.role == "assistant" }
+        val lastUserContent = if (hasHistoryUser) "" else ""
+        val lastAssistantContent = if (hasHistoryAssistant) "" else ""
         val ctx = PromptTemplateEngine.PromptContext(
             system = systemFinal,
             prompt = lastUserContent,
@@ -386,19 +403,27 @@ object PromptBuilder {
             thinkingGlobalPrefix(style, enableThinking) + rendered + suffix
         } catch (e: Exception) {
             // フォールバック: テンプレ崩壊時もモデル種別に応じた既定フォーマットで再構築する。
-            // Bug fix(#42): ここでの detectGgufFormat は appContext を渡せない (buildWithCustomTemplate の呼び出し元にない) ため、
-            // GPT-2 判定で PLAIN_COMPLETION に落とす前に、テンプレ自身の内容 (例: <|im_start|> / <start_of_turn>) からフォーマットを推定する。
+            // Bug fix(#42, #47): buildWithCustomTemplate の呼び出し元から appContext を受け取れるようになったので、
+            // フォールバック時も detectGgufFormat(modelPath, appContext) を通してユーザー選択を尊重する。
+            // これにより GPT-2 アーキ判定であってもユーザー選択の ChatML / Gemma を優先し、
+            // PLAIN_COMPLETION に落ちて `user:` / `assistant:` が混入するのを防ぐ。
             val fallbackFormat = when {
                 template.contains("<|im_start|>") || template.contains("<|im_end|>") -> GgufPromptFormat.CHATML
                 template.contains("<start_of_turn>") || template.contains("<end_of_turn>") -> GgufPromptFormat.GEMMA_CHAT
                 template.contains("<|start_header_id|>") || template.contains("<|eot_id|>") -> GgufPromptFormat.CHATML
                 template.contains("<|user|>") || template.contains("<|assistant|>") -> GgufPromptFormat.CHATML
-                else -> detectGgufFormat(modelPath)
+                else -> detectGgufFormat(modelPath, appContext)
             }
-            when (fallbackFormat) {
+            // Bug fix(#47): カスタムテンプレを明示的に選んでいるユーザーが
+            // PLAIN_COMPLETION に落ちて `user:` / `assistant:` を混入させるのを防ぐため、
+            // ここでは PLAIN_COMPLETION を選択肢から排除し ChatML に統一する。
+            val safeFallback = if (fallbackFormat == GgufPromptFormat.PLAIN_COMPLETION) {
+                GgufPromptFormat.CHATML
+            } else fallbackFormat
+            when (safeFallback) {
                 GgufPromptFormat.GEMMA_CHAT -> buildForGgufGemma(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
                 GgufPromptFormat.CHATML -> buildForGgufChatMl(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
-                GgufPromptFormat.PLAIN_COMPLETION -> buildForGgufPlainCompletion(messages, systemPrompt, compressedSummary, sanitizeMessageContent)
+                GgufPromptFormat.PLAIN_COMPLETION -> buildForGgufChatMl(messages, systemPrompt, compressedSummary, enableThinking, modelPath, sanitizeMessageContent)
             }
         }
     }
@@ -554,6 +579,18 @@ object PromptBuilder {
         return sb.toString()
     }
 
+    /**
+     * Bug fix(#47): `user:` / `assistant:` の生ロールプレフィックスを吐く唯一のビルダー。
+     *
+     * GPT-2 / distilgpt2 のような「チャットテンプレートを持たない completion モデル」向けだが、
+     * ここを以前は「フォールバック先」として使っていたため、Gemma や ChatML を選択しても
+     * レンダリング中の例外や GPT-2 名判定でここへ飛ばされ "user:" / "assistant:" が混入していた。
+     *
+     * 現在は以下パスのみから到達する:
+     *   - detectGgufFormat が PLAIN_COMPLETION を返し、かつ buildWithCustomTemplate を通らないケース
+     *     (= ユーザーが MODE_AUTO のまま GPT-2 モデルを使う場合)
+     * 将来カスタムテンプレのフォールバックからは呼ばないため、ユーザー選択を談しに押しつぶす安全性は確保された。
+     */
     private fun buildForGgufPlainCompletion(
         messages: List<MessageEntity>,
         systemPrompt: String,

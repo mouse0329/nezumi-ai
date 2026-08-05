@@ -43,6 +43,19 @@ class ModelDownloadWorker(
     workerParams: WorkerParameters
 ) : CoroutineWorker(appContext, workerParams) {
 
+    /** URL が HuggingFace のホストなら true。 */
+    private fun isHuggingFaceUrl(url: String): Boolean {
+        return try {
+            val host = java.net.URL(url).host.orEmpty().lowercase()
+            host == "huggingface.co" ||
+                host.endsWith(".huggingface.co") ||
+                host == "cdn-lfs.huggingface.co" ||
+                host.endsWith(".hf.co")
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     override suspend fun doWork(): Result {
         val startedAt = System.currentTimeMillis()
         val downloadKind = inputData.getString(KEY_DOWNLOAD_KIND) ?: DOWNLOAD_KIND_BUILTIN
@@ -1245,9 +1258,19 @@ class ModelDownloadWorker(
 
             withContext(Dispatchers.IO) {
                 val url = java.net.URL(downloadUrl)
-                val connection = url.openConnection()
+                val connection = url.openConnection() as java.net.HttpURLConnection
                 connection.connectTimeout = 30000
                 connection.readTimeout = 30000
+                connection.instanceFollowRedirects = true
+                connection.setRequestProperty("User-Agent", "nezumi-ai/1.0")
+                // HF 連携済みの場合は必ずトークンを付与（レート制限回避と
+                // 非公開リポジトリ・規約同意後のファイルへのアクセスのため）
+                if (isHuggingFaceUrl(downloadUrl)) {
+                    val token = HfAuthManager.getToken(applicationContext)
+                    if (token.isNotBlank()) {
+                        connection.setRequestProperty("Authorization", "Bearer $token")
+                    }
+                }
                 connection.connect()
 
                 val totalBytes = connection.contentLengthLong

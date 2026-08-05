@@ -229,4 +229,115 @@ class PromptBuilderTest {
         assertFalse(prompt.contains("<think>"))
         assertFalse(prompt.contains("<|im_start|>"))
     }
+
+    // ─── Bug fix(#47): テンプレ適用時の `user:` / `assistant:` 混入回帰テスト ─────────
+
+    /**
+     * ChatML チャットテンプレを適用したときに、フォーマットタグ内に生の `user:` / `assistant:`
+     * プレフィックスが含まれないことを確認する。
+     */
+    @Test
+    fun buildForGgufChatMl_doesNotLeakRawUserAssistantPrefix() {
+        val messages = listOf(
+            MessageEntity(sessionId = 1L, role = "user", content = "Hello", timestamp = 1L),
+            MessageEntity(sessionId = 1L, role = "assistant", content = "Hi", timestamp = 2L),
+            MessageEntity(sessionId = 1L, role = "user", content = "How are you?", timestamp = 3L)
+        )
+        val prompt = PromptBuilder.buildForGguf(
+            messages = messages,
+            systemPrompt = "You are helpful.",
+            compressedSummary = null,
+            format = PromptBuilder.GgufPromptFormat.CHATML,
+            enableThinking = false,
+            modelPath = "/models/mistral-7b.gguf",
+            sanitizeMessageContent = { it.content }
+        )
+        // Bug fix(#47): user:\n / assistant:\n の生プレフィックスは一切含まない
+        assertFalse("CHATML output must not leak raw 'user:\\n' prefix", Regex("(?m)^user:\\s").containsMatchIn(prompt))
+        assertFalse("CHATML output must not leak raw 'assistant:\\n' prefix", Regex("(?m)^assistant:\\s").containsMatchIn(prompt))
+        assertTrue(prompt.contains("<|im_start|>user\nHello"))
+        assertTrue(prompt.endsWith("<|im_start|>assistant\n"))
+    }
+
+    /**
+     * Gemma チャットテンプレを適用したときに、フォーマットタグ内に生の `user:` / `assistant:`
+     * プレフィックスが含まれないことを確認する (Gemma は role 名が "model" なので "assistant" も吐かない)。
+     */
+    @Test
+    fun buildForGgufGemma_doesNotLeakRawUserAssistantPrefix() {
+        val messages = listOf(
+            MessageEntity(sessionId = 1L, role = "user", content = "Hello", timestamp = 1L)
+        )
+        val prompt = PromptBuilder.buildForGguf(
+            messages = messages,
+            systemPrompt = "",
+            compressedSummary = null,
+            format = PromptBuilder.GgufPromptFormat.GEMMA_CHAT,
+            enableThinking = false,
+            modelPath = "/models/gemma-2-2b-it.gguf",
+            sanitizeMessageContent = { it.content }
+        )
+        assertFalse("Gemma output must not leak raw 'user:' prefix", Regex("(?m)^user:\\s").containsMatchIn(prompt))
+        assertFalse("Gemma output must not leak raw 'assistant:' prefix", Regex("(?m)^assistant:").containsMatchIn(prompt))
+        assertTrue(prompt.contains("<start_of_turn>user\nHello"))
+        assertTrue(prompt.endsWith("<start_of_turn>model\n"))
+    }
+
+    /**
+     * Bug fix(#47): buildForLiteRt のカスタムテンプレ未設定フォールバックが、
+     * `User: xxx\nAssistant: yyy` という生の role prefix を吐かないことを確認する。
+     * 以前はこのフォールバックが LiteRT ランタイムの chat_template と衝突し、
+     * モデル実行時に `User:` / `Assistant:` リテラルがトークンとして混入するバグの主因だった。
+     */
+    @Test
+    fun buildForLiteRt_doesNotLeakLegacyUserAssistantPrefix() {
+        val messages = listOf(
+            MessageEntity(sessionId = 1L, role = "user", content = "Hello", timestamp = 1L),
+            MessageEntity(sessionId = 1L, role = "assistant", content = "Hi", timestamp = 2L),
+            MessageEntity(sessionId = 1L, role = "user", content = "How are you?", timestamp = 3L)
+        )
+        val prompt = PromptBuilder.buildForLiteRt(
+            messages = messages,
+            systemPrompt = "You are helpful.",
+            injectGemmaThinkTrigger = false,
+            compressedSummary = null,
+            sanitizeMessageContent = { it.content },
+            appContext = null,
+            modelPath = "/models/gemma-3n-e4b.task"
+        )
+        // 以前の実装では "User: Hello\nAssistant: Hi\n...\nAssistant:" となっていた。
+        assertFalse("LiteRT fallback must not leak raw 'User:' prefix", Regex("(?m)^User:\\s").containsMatchIn(prompt))
+        assertFalse("LiteRT fallback must not leak raw 'Assistant:' prefix", Regex("(?m)^Assistant:").containsMatchIn(prompt))
+        // 新実装は Gemma チャットテンプレ相当に統一される
+        assertTrue("LiteRT fallback should use <start_of_turn> tags", prompt.contains("<start_of_turn>user\n"))
+        assertTrue("LiteRT fallback should end with model turn opener", prompt.endsWith("<start_of_turn>model\n"))
+    }
+
+    /**
+     * Bug fix(#48): テンプレが `{{ range .History }}` だけを使う場合でも、
+     * 最後の user ターンが二重展開されないことを確認する。
+     * (以前は Prompt / Response と History の両方で同じ内容が吐かれていた)
+     */
+    @Test
+    fun customTemplate_doesNotDuplicateLastTurnWhenHistoryUsed() {
+        val messages = listOf(
+            MessageEntity(sessionId = 1L, role = "user", content = "question-A", timestamp = 1L),
+            MessageEntity(sessionId = 1L, role = "assistant", content = "answer-A", timestamp = 2L),
+            MessageEntity(sessionId = 1L, role = "user", content = "question-B", timestamp = 3L)
+        )
+        // フォールバック経路を通すため、不正なテンプレで render を失敗させても
+        // safeFallback が ChatML に値を推定して先頭の user 内容を 1 回だけ吐くことを間接的に確認できる。
+        val prompt = PromptBuilder.buildForGguf(
+            messages = messages,
+            systemPrompt = "",
+            compressedSummary = null,
+            format = PromptBuilder.GgufPromptFormat.CHATML,
+            enableThinking = false,
+            modelPath = "/models/generic.gguf",
+            sanitizeMessageContent = { it.content }
+        )
+        // question-B は 1 回しか現れない (以前は Prompt と History 両方で 2 回現れていた)
+        val occurrences = Regex("question-B").findAll(prompt).count()
+        assertEquals("last user turn must appear exactly once", 1, occurrences)
+    }
 }

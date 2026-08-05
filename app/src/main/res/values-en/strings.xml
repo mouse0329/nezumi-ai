@@ -27,7 +27,7 @@ Enjoy chatting with your AI!</string>
 
     <!-- Empty State Messages -->
     <string name="no_sessions_title">No chats yet</string>
-    <string name="no_sessions_message">Make sure a model is downloaded, then tap the "+" button to start a chat.</string>
+    <string name="no_sessions_message">Make sure a model is downloaded, then tap the \"+\" button to start a chat.</string>
     <string name="create_first_session">Start a chat</string>
 
     <!-- MVP Strings -->
@@ -115,7 +115,7 @@ Enjoy chatting with your AI!</string>
     <string name="assistant_error_empty_output_title">No model output</string>
     <string name="assistant_no_response">No response</string>
     <string name="assistant_stopped_by_user">Generation stopped</string>
-    <string name="assistant_error_gguf_media_empty_with_mmproj">Media was loaded and inference ran, but no text was produced.\n\nFor models that ship vision integrated into a single GGUF, the vision component is initialized from the same file at load time. For LLaVA-style models that need a separate mmproj file, pick the official mmproj under "Model settings", save, then reload the model.\n\nPlease also check GGUF/vision compatibility, file integrity, the mmproj path, and reload after changing settings.</string>
+    <string name="assistant_error_gguf_media_empty_with_mmproj">Media was loaded and inference ran, but no text was produced.\n\nFor models that ship vision integrated into a single GGUF, the vision component is initialized from the same file at load time. For LLaVA-style models that need a separate mmproj file, pick the official mmproj under \"Model settings\", save, then reload the model.\n\nPlease also check GGUF/vision compatibility, file integrity, the mmproj path, and reload after changing settings.</string>
     <string name="import_task_model">Add model file (.task / .litertlm)</string>
     <string name="import_task_loading">Loading model file…</string>
     <string name="open_hf_approval_page">Approve on page</string>
@@ -277,13 +277,18 @@ Enjoy chatting with your AI!</string>
     <string name="image_gen_queue_note">Note: the generation queue runs in the background.</string>
 
     <string name="model_sd_hf_card_title">Image generation model (Hugging Face)</string>
-    <string name="model_sd_hf_card_body">Use "Hugging Face model search" above to open a repo and download .gguf or .safetensors files. For Stable Diffusion / SDXL repos, mmproj auto-fetch is not performed.</string>
+    <string name="model_sd_hf_card_body">Use \"Hugging Face model search\" above to open a repo and download .gguf or .safetensors files. For Stable Diffusion / SDXL repos, mmproj auto-fetch is not performed.</string>
     <string name="model_sd_hf_preset_stability">stabilityai/stable-diffusion-xl-base-1.0</string>
     <string name="model_sd_hf_preset_search_sd">stable-diffusion gguf</string>
     <string name="model_sd_hf_btn_preset_repo">Fill search with SDXL example</string>
-    <string name="model_sd_hf_btn_preset_keyword">Search "SD + GGUF"</string>
+    <string name="model_sd_hf_btn_preset_keyword">Search \"SD + GGUF\"</string>
     <string name="model_sd_hf_toast_set_as_image_gen">Set as image-gen model path</string>
     <string name="model_sd_hf_toast_downloaded">Saved: %1$s (path visible on Image gen screen)</string>
+    <string name="model_settings_additional_downloads_title">Additional models downloading</string>
+    <string name="model_settings_image_generation_section">Image generation models (MNN)</string>
+    <string name="model_settings_image_generation_help">Download from the cards above or import a zip using the button below.</string>
+    <string name="model_settings_imported_models_section">Imported models</string>
+    <string name="model_settings_mmproj_file_management">mmproj files</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>
@@ -596,7 +601,7 @@ Enjoy chatting with your AI!</string>
     <string name="settings_debug_nsfw_image_desc">Image for NSFW check</string>
     <string name="settings_debug_nsfw_verdict_block">BLOCK (will block in production)</string>
     <string name="settings_debug_nsfw_verdict_allow">ALLOW</string>
-    <string name="settings_debug_nsfw_threshold">Threshold: block when nsfw >= 0.8</string>
+    <string name="settings_debug_nsfw_threshold">Threshold: block when nsfw &gt;= 0.8</string>
     <string name="settings_debug_model_error_message">The model failed to load. Showing the debug modal.</string>
     <string name="settings_logcat_title">logcat (always collected)</string>
     <string name="settings_logcat_desc">The app continuously records this process’s logcat in the background while running. Once it exceeds a size limit, older logs are deleted automatically, so only the recent portion is available here.</string>
@@ -661,7 +666,111 @@ Enjoy chatting with your AI!</string>
     <string name="settings_secret_pin_disable">Disable</string>
     <string name="settings_secret_pin_reset">Reset</string>
 
-    <!-- Brave Search / Backend / Inference cards -->
+    <!-- Preset screen -->
+    <string name="preset_screen_title">Presets</string>
+    <string name="preset_release_model">Release model</string>
+    <string name="preset_search_label">Search presets</string>
+    <string name="preset_empty_no_presets">No presets yet.</string>
+    <string name="preset_empty_no_matches">No matching presets.</string>
+    <string name="preset_new_button">+ New preset</string>
+    <string name="preset_selected_badge">Selected</string>
+    <string name="preset_status_memory">Memory %1$s</string>
+    <string name="preset_status_tool_calling">Tool calling ON</string>
+    <string name="preset_status_tool_calling_with_list">Tool calling ON (%1$s)</string>
+    <string name="preset_edit_new_title">New preset</string>
+    <string name="preset_edit_title">Edit preset</string>
+    <string name="preset_edit_icon_label">Icon</string>
+    <string name="preset_edit_name_label">Name</string>
+    <string name="preset_edit_description_label">Description</string>
+    <string name="preset_edit_system_prompt_label">System prompt</string>
+    <string name="preset_edit_model_label">Model</string>
+    <string name="preset_edit_no_downloaded_models">No downloaded models</string>
+    <string name="preset_edit_memory_label">Memory</string>
+    <string name="preset_edit_tool_calling_label">Tool calling</string>
+    <string name="preset_edit_tool_calling_desc">Only applies tools to presets when enabled</string>
+    <string name="preset_edit_tool_calling_disabled_desc">The selected model does not support tool calling. Enable it in model settings.</string>
+    <string name="preset_edit_tools_label">Tools</string>
+    <string name="preset_edit_mcp_server_label">MCP server</string>
+    <string name="preset_edit_mcp_servers_unregistered">Not registered</string>
+    <string name="preset_edit_mcp_servers_enabled_format">%1$d / %2$d enabled</string>
+    <string name="preset_edit_mcp_add">Add MCP</string>
+    <string name="preset_save">Save</string>
+    <string name="preset_cancel">Cancel</string>
+    <string name="preset_toast_created">Preset created</string>
+    <string name="preset_toast_saved">Preset saved</string>
+    <string name="preset_toast_locked_edit">Locked presets cannot be edited</string>
+    <string name="preset_toast_model_released">Model released</string>
+    <string name="preset_toast_model_release_failed">Failed to release model: %1$s</string>
+    <string name="preset_toast_selected">Selected \"%1$s\"</string>
+    <string name="preset_toast_deleted">Preset deleted</string>
+    <string name="preset_toast_cannot_delete">This preset cannot be deleted</string>
+    <string name="preset_toast_name_required">Please enter a preset name</string>
+    <string name="preset_toast_no_downloaded_models">No downloaded models</string>
+    <string name="preset_tool_name_time">Current time</string>
+    <string name="preset_tool_name_battery">Battery</string>
+    <string name="preset_tool_name_alarm">Alarm</string>
+    <string name="preset_tool_name_timer">Timer</string>
+    <string name="preset_tool_name_flashlight">Flashlight</string>
+    <string name="preset_tool_name_image_generation">Image generation</string>
+    <string name="preset_tool_name_memory">Memory search</string>
+    <string name="preset_tool_name_web_search">Web search</string>
+    <string name="status_on">ON</string>
+    <string name="status_off">OFF</string>
+
+    <!-- Secret mode dialogs -->
+    <string name="secret_mode_biometrics_title">Biometric authentication</string>
+    <string name="secret_mode_biometrics_subtitle">Biometric authentication is required to resume the app</string>
+    <string name="secret_mode_pin_unlock">Unlock with PIN</string>
+    <string name="secret_mode_pin_hint">4-digit PIN</string>
+    <string name="secret_mode_unlock">Unlock</string>
+    <string name="secret_mode_invalid_pin">PIN is incorrect</string>
+    <string name="secret_mode_setup_title">Set a PIN</string>
+    <string name="secret_mode_setup_message">To use secret mode, you must set a 4-digit PIN. Register it in settings.</string>
+    <string name="secret_mode_setup_positive">Go to settings</string>
+    <string name="secret_mode_exit">Exit secret mode</string>
+    <string name="secret_mode_waiting">Waiting for authentication...</string>
+    <string name="secret_mode_retry">Try again</string>
+
+    <string name="model_settings_builtin_models">Built-in models</string>
+    <string name="model_settings_custom_models">Custom models</string>
+    <string name="model_settings_custom_models_empty">No custom models have been imported yet.</string>
+    <string name="model_settings_custom_models_empty_search">No custom models match the search filter.</string>
+    <string name="model_settings_sd_zip_import_title">Import SD model zip</string>
+    <string name="model_settings_sd_zip_select">Select SD model zip</string>
+    <string name="model_settings_sd_zip_formats">Supported formats: unet.mnn / clip*.mnn / vae_decoder*.mnn + (tokenizer.json or pos_emb.bin+token_emb.bin)</string>
+    <string name="model_settings_sd_zip_select_failed">Unable to select zip: %1$s</string>
+    <string name="model_settings_dialog_title">Settings</string>
+    <string name="model_settings_enable_image_input">Enable image input</string>
+    <string name="model_settings_mmproj_status">mmproj: %1$s</string>
+    <string name="model_settings_mmproj_file_label">mmproj file</string>
+    <string name="model_settings_mmproj_unselected">Unselected</string>
+    <string name="model_settings_mmproj_loading_candidates">Loading candidates…</string>
+    <string name="model_settings_enable_audio_input">Enable audio input</string>
+    <string name="model_settings_enable_thinking">Enable inference (Thinking)</string>
+    <string name="model_settings_tool_calling_enable">Enable tool calling</string>
+    <string name="model_settings_display_name_title">Model display name</string>
+    <string name="model_settings_display_name_label">Display name</string>
+    <string name="model_settings_forbidden_filename_chars">The characters \ / : * ? \" &lt; &gt; | cannot be used.</string>
+    <string name="model_settings_chat_template_title">Prompt template</string>
+    <string name="model_settings_chat_template_description">Choose a model-specific chat template. Auto-detect will infer ChatML / Gemma from the model name.</string>
+    <string name="model_settings_template_auto_detect">Auto detect</string>
+    <string name="model_settings_template_custom">Custom...</string>
+    <string name="model_settings_custom_template_label">Custom template</string>
+    <string name="model_settings_template_variables">Available variables: {{ .System }} / {{ .Prompt }} / {{ .Response }} / {{ .Thinking }} / {{ range .History }} {{ .Role }} {{ .Content }} {{ end }}</string>
+    <string name="model_settings_stop_tokens_title">Stop tokens (comma-separated)</string>
+    <string name="model_settings_additional_stop_tokens_label">Additional stop tokens</string>
+    <string name="model_settings_stop_tokens_description">Added to the default stop tokens.</string>
+
+    <string name="model_tool_calling_disable_confirm_title">Disable model tool calling?</string>
+    <string name="model_tool_calling_disable_confirm_message">This will also disable tool calling for %1$d presets using this model. Continue?</string>
+    <string name="model_settings_tool_calling_support_litertlm">Supports tool calling for LiteRT-LM</string>
+    <string name="model_settings_tool_calling_support_gguf">Supports tool calling for GGUF / llama.rn</string>
+    <string name="model_settings_chat_template_label">Chat template</string>
+    <string name="model_settings_close">Close</string>
+    <string name="model_settings_settings_title">Settings</string>
+    <string name="common_yes">Yes</string>
+
+    <!-- Secret mode PIN -->
     <string name="settings_brave_card_title">Brave Search API</string>
     <string name="settings_brave_card_desc">Set your Brave Search API key. Web search tools use this key when called.</string>
     <string name="settings_brave_unset_hint">If unset, web search tools will not work.</string>
