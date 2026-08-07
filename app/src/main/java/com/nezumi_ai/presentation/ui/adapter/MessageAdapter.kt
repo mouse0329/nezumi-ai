@@ -45,6 +45,7 @@ import com.nezumi_ai.R
 import com.nezumi_ai.databinding.ItemMessageUserBinding
 import com.nezumi_ai.databinding.ItemMessageAiBinding
 import com.nezumi_ai.data.database.entity.MessageEntity
+import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.stripGemmaTokens
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.halilibo.richtext.commonmark.Markdown
@@ -54,10 +55,8 @@ import com.nezumi_ai.data.inference.ToolResultCard
 import com.nezumi_ai.presentation.ui.component.ImageViewerDialog
 import com.nezumi_ai.presentation.ui.component.MediaViewerDialog
 import com.nezumi_ai.data.media.VideoAttachmentEncoding
-import com.nezumi_ai.presentation.ui.component.ToolResultCardView
-import com.nezumi_ai.presentation.ui.composable.PersistedToolCallIndicators
-import com.nezumi_ai.presentation.ui.composable.StreamingToolCallIndicator
 import com.nezumi_ai.presentation.ui.composable.MarkdownLatexText
+import com.nezumi_ai.presentation.ui.composable.InlineToolCallMessageBody
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -804,57 +803,45 @@ class MessageAdapter(
                     thinkingExpandedByMessageId.remove(message.id)
                 }
 
-                val visibleContent = message.content.stripGemmaTokens()
+                // インライン tool-call カード表示のため、表示用テキストのみ <tool_call> タグを
+                // 保持したまま sanitize する。stripGemmaTokens() はタグを常に除去するデフォルト
+                // 実装 (preserveToolCallTags=false) なので、この行だけは直接呼び出しに変更している。
+                // コピー・読み上げ用の他の stripGemmaTokens() 呼び出しは、タグを含めない従来通り
+                // の挙動のままでよいため変更しない。
+                val visibleContent = Gemma4ThinkingParser.sanitizeVisibleText(
+                    message.content,
+                    preserveToolCallTags = true
+                )
                 val visibleThinking = thinking
 
-                val persistedToolCards = if (!message.isStreaming && !message.toolResultsJson.isNullOrBlank()) {
+                // インライン tool-call カード化後は、本文の <tool_call> タグ位置で
+                // InlineToolCallMessageBody がカードを差し込むので、旧 aiStreamingToolCallCompose
+                // は常に非表示にしておく (レイアウトXMLは下位互換のため残存)。
+                aiStreamingToolCallCompose.visibility = View.GONE
+
+                val persistedToolCards = if (!message.toolResultsJson.isNullOrBlank()) {
                     ToolResultCard.listFromJsonArray(message.toolResultsJson)
                 } else {
                     emptyList()
                 }
-                val showStreamingToolCall = message.isStreaming &&
-                    message.id == streamingMessageId &&
-                    streamingToolCallState != null &&
-                    streamingToolCallState !is ToolCallState.Done
-                when {
-                    showStreamingToolCall -> {
-                        aiStreamingToolCallCompose.visibility = View.VISIBLE
-                        val toolState = streamingToolCallState!!
-                        aiStreamingToolCallCompose.setContent {
-                            NezumiComposeTheme {
-                                StreamingToolCallIndicator(state = toolState)
-                            }
-                        }
 
-                        // 画像生成中の場合は、画像コンテナを表示して領域を確保
-                        val toolName = when (toolState) {
-                            is ToolCallState.Executing -> toolState.toolName
-                            is ToolCallState.Result -> toolState.toolName
-                            else -> null
-                        }
-                        if (toolName == "generate_image") {
-                            mediaContainer.visibility = View.VISIBLE
-                            singleImageContainer.visibility = View.VISIBLE
-                            aiImagePreview.visibility = View.VISIBLE
-                            aiImagePreview.setImageResource(R.drawable.ic_image)
-                            aiImagePreview.alpha = 0.3f
-                        }
+                // 画像生成中のプレースホルダーはインラインカードとは別系統なので残す。
+                val streamingToolName = if (message.isStreaming && message.id == streamingMessageId) {
+                    when (val s = streamingToolCallState) {
+                        is ToolCallState.Executing -> s.toolName
+                        is ToolCallState.Result -> s.toolName
+                        else -> null
                     }
-                    persistedToolCards.isNotEmpty() -> {
-                        aiStreamingToolCallCompose.visibility = View.VISIBLE
-                        aiStreamingToolCallCompose.setContent {
-                            NezumiComposeTheme {
-                                PersistedToolCallIndicators(cards = persistedToolCards)
-                            }
-                        }
-                        aiImagePreview.alpha = 1.0f
-                        aiImagePreview.setOnClickListener(null)
-                    }
-                    else -> {
-                        aiStreamingToolCallCompose.visibility = View.GONE
-                        aiImagePreview.alpha = 1.0f
-                        aiImagePreview.setOnClickListener(null)
-                    }
+                } else null
+                if (streamingToolName == "generate_image") {
+                    mediaContainer.visibility = View.VISIBLE
+                    singleImageContainer.visibility = View.VISIBLE
+                    aiImagePreview.visibility = View.VISIBLE
+                    aiImagePreview.setImageResource(R.drawable.ic_image)
+                    aiImagePreview.alpha = 0.3f
+                } else {
+                    aiImagePreview.alpha = 1.0f
+                    aiImagePreview.setOnClickListener(null)
                 }
 
                 when {
@@ -862,7 +849,11 @@ class MessageAdapter(
                         renderPlaceholder(visibleThinking)
                     }
                     else -> {
-                        renderMarkdown(visibleContent)
+                        renderInlineBody(
+                            content = visibleContent,
+                            toolResults = persistedToolCards,
+                            isStreaming = message.isStreaming
+                        )
                     }
                 }
 
@@ -926,23 +917,9 @@ class MessageAdapter(
                     aiImagePreview.visibility = View.GONE
                 }
                 
+                // 旧・末尾一括カードはインライン化に伴い廃止。コンテナは常に非表示。
                 toolResultsContainer.removeAllViews()
-                if (!message.isStreaming && persistedToolCards.isNotEmpty()) {
-                    toolResultsContainer.visibility = View.VISIBLE
-                    for (card in persistedToolCards) {
-                        val cardView = ToolResultCardView(binding.root.context)
-                        cardView.bind(card)
-                        cardView.layoutParams = LinearLayout.LayoutParams(
-                            LinearLayout.LayoutParams.MATCH_PARENT,
-                            LinearLayout.LayoutParams.WRAP_CONTENT
-                        ).apply {
-                            bottomMargin = 8
-                        }
-                        toolResultsContainer.addView(cardView)
-                    }
-                } else {
-                    toolResultsContainer.visibility = View.GONE
-                }
+                toolResultsContainer.visibility = View.GONE
 
                 copyMessageButton.setOnClickListener {
  // Thinking (内部推論) はユーザー向けのコピー内容に含めない。
@@ -1045,6 +1022,34 @@ class MessageAdapter(
 
             binding.aiMessageMarkdownCompose.setContent {
                 GalleryMarkdownText(content = content)
+            }
+            lastRenderedContent = content
+            lastRenderedContentMode = ContentRenderMode.Markdown
+        }
+
+        /**
+         * インライン tool-call カード対応の本文描画。
+         * 本文中の <tool_call> タグ位置にカードを差し込み、前後のテキストと
+         * 順に縦に並べる。レガシー本文 (タグなし) は Composable 内部で
+         * 従来のバブルテキストにフォールバックされるので、旧レコードも安全に描画される。
+         */
+        private fun renderInlineBody(
+            content: String,
+            toolResults: List<ToolResultCard>,
+            isStreaming: Boolean
+        ) {
+            // インライン描画では本文とカードを含めて常に Compose で描画する。
+            // renderMarkdown のキャッシュと衝突しないよう、嬉 lastRenderedContent をリセット。
+            binding.aiMessageText.visibility = View.GONE
+            binding.aiMessageMarkdownCompose.visibility = View.VISIBLE
+            binding.aiMessageMarkdownCompose.setContent {
+                NezumiComposeTheme {
+                    InlineToolCallMessageBody(
+                        content = content,
+                        toolResults = toolResults,
+                        isStreaming = isStreaming
+                    )
+                }
             }
             lastRenderedContent = content
             lastRenderedContentMode = ContentRenderMode.Markdown

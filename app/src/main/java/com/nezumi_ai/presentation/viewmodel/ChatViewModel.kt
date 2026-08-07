@@ -2055,7 +2055,10 @@ class ChatViewModel(
                                         finalFromModel != null -> {
                                             Log.d(TAG, "FINAL received: length=${finalFromModel.length}")
                                             val sanitizedFinal =
-                                                Gemma4ThinkingParser.sanitizeVisibleText(finalFromModel)
+                                                Gemma4ThinkingParser.sanitizeVisibleText(
+                                                    finalFromModel,
+                                                    preserveToolCallTags = true
+                                                )
                                             val resolvedFinal = sanitizedFinal.ifBlank {
                                                 lastPersistedContent.ifBlank { finalFromModel }
                                             }
@@ -2224,7 +2227,10 @@ class ChatViewModel(
                                         contentForUi =
                                             sanitizeAssistantOutputForModel(
                                                 engineModelName = engineModelName,
-                                                text = Gemma4ThinkingParser.sanitizeVisibleText(answerBuilder.toString())
+                                                text = Gemma4ThinkingParser.sanitizeVisibleText(
+                                                    answerBuilder.toString(),
+                                                    preserveToolCallTags = true
+                                                )
                                             )
                                         thinkingForUi =
                                             Gemma4ThinkingParser.sanitizeVisibleText(thinkingBuilder.toString())
@@ -2240,7 +2246,8 @@ class ChatViewModel(
                                         val parsedStream =
                                             Gemma4ThinkingParser.parseStreaming(
                                                 rawInput = answerBuilder.toString(),
-                                                treatUnmarkedInputAsThinking = false
+                                                treatUnmarkedInputAsThinking = false,
+                                                preserveToolCallTags = true
                                             )
                                         // Instant / Thinking OFF 中でも、モデルが実際に <think> を吐いた場合は
                                         // それを捨てずに UI へ表示する。本文側は従来どおり visible answer のみを使う。
@@ -2261,7 +2268,10 @@ class ChatViewModel(
                                             contentForUi =
                                                 sanitizeAssistantOutputForModel(
                                                     engineModelName = engineModelName,
-                                                    text = Gemma4ThinkingParser.sanitizeVisibleText(rawNoThink)
+                                                    text = Gemma4ThinkingParser.sanitizeVisibleText(
+                                                        rawNoThink,
+                                                        preserveToolCallTags = true
+                                                    )
                                                 )
                                             thinkingForUi = extractedThinking
                                         }
@@ -2399,18 +2409,25 @@ class ChatViewModel(
                 completeResponse =
                     sanitizeAssistantOutputForModel(
                         engineModelName = engineModelName,
-                        text = Gemma4ThinkingParser.sanitizeVisibleText(rawAnswer)
+                        text = Gemma4ThinkingParser.sanitizeVisibleText(
+                            rawAnswer,
+                            preserveToolCallTags = true
+                        )
                     )
                 finalThinking =
                     Gemma4ThinkingParser.sanitizeVisibleText(thinkingBuilder.toString()).ifBlank { null }
             } else {
                 val sanitizedAnswer =
-                    Gemma4ThinkingParser.sanitizeVisibleText(answerBuilder.toString())
+                    Gemma4ThinkingParser.sanitizeVisibleText(
+                        answerBuilder.toString(),
+                        preserveToolCallTags = true
+                    )
                 // See the comment near answerBuilder initialization: with the `<think>` prefill
                 // applied, raw text without tags is always a real answer, never thinking.
                 val finalParsed = Gemma4ThinkingParser.parse(
                     rawInput = answerBuilder.toString(),
-                    treatUnmarkedInputAsThinking = false
+                    treatUnmarkedInputAsThinking = false,
+                    preserveToolCallTags = true
                 )
                 if (!config.enableThinking) {
                     // Instant / Thinking OFF 中でも、漏れ出た <think> は本文へ混ぜずに別表示する。
@@ -2418,7 +2435,10 @@ class ChatViewModel(
                     completeResponse =
                         sanitizeAssistantOutputForModel(
                             engineModelName = engineModelName,
-                            text = Gemma4ThinkingParser.sanitizeVisibleText(visibleOnly)
+                            text = Gemma4ThinkingParser.sanitizeVisibleText(
+                                visibleOnly,
+                                preserveToolCallTags = true
+                            )
                                 .ifBlank { sanitizedAnswer.ifBlank { finalParsed.answer } }
                                 .ifBlank { lastPersistedContent }
                         )

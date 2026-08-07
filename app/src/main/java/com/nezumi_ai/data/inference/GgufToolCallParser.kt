@@ -28,6 +28,83 @@ object GgufToolCallParser {
         val textAfterTools: String
     )
 
+    /**
+     * 本文を本文セグメントと tool_call セグメントに順序保存で分割したリスト。
+     * UI のインラインカード描画で使う。
+     */
+    sealed class Segment {
+        /** 普通の本文 (Markdown 可) */
+        data class TextSegment(val text: String) : Segment()
+
+        /**
+         * `<tool_call>...</tool_call>` タグの位置に対応するセグメント。
+         * @param index 本文中での 0 律基づきの出現順。ツール実行結果の順と揃えて使う。
+         * @param toolCall パース完了の ToolCall (未完なら null)
+         * @param rawJson タグの中身の生テキスト。UI アコーディオン健开時のフォールバック表示に使う。
+         * @param isComplete 閉じタグ `</tool_call>` まで届いているかどうか。ストリーミング中の未完タグでは false となり、カードは Running 表示となる。
+         */
+        data class ToolCallSegment(
+            val index: Int,
+            val toolCall: ToolCall?,
+            val rawJson: String,
+            val isComplete: Boolean
+        ) : Segment()
+    }
+
+    private val openToolCallTag = Regex("(?is)<tool_call>")
+    private val closeToolCallTag = Regex("(?is)</tool_call>")
+
+    /**
+     * 本文を `<tool_call>...</tool_call>` の位置でセグメント化する。
+     * - 閉じタグがまだ来ていないストリーミング中の未完タグは、末尾の Running カードとして 1件分割する。
+     * - 閉じタグが先で開きタグがさきにない孤儿タグは本文として描画される。
+     * - タグ中身の JSON パースに失敗しても `ToolCallSegment(toolCall=null, isComplete=true)` としてセグメントは保持する。
+     */
+    fun parseSegments(text: String): List<Segment> {
+        if (text.isEmpty()) return emptyList()
+        val segments = mutableListOf<Segment>()
+        var cursor = 0
+        var toolIndex = 0
+        while (cursor < text.length) {
+            val open = openToolCallTag.find(text, cursor) ?: break
+            val before = text.substring(cursor, open.range.first)
+            if (before.isNotEmpty()) {
+                segments += Segment.TextSegment(before)
+            }
+            val payloadStart = open.range.last + 1
+            val close = closeToolCallTag.find(text, payloadStart)
+            if (close == null) {
+                // 未完タグ → 末尾 Running セグメント
+                val rawJson = text.substring(payloadStart)
+                segments += Segment.ToolCallSegment(
+                    index = toolIndex,
+                    toolCall = null,
+                    rawJson = rawJson.trim(),
+                    isComplete = false
+                )
+                cursor = text.length
+                break
+            }
+            val rawJson = text.substring(payloadStart, close.range.first).trim()
+            val parsedCall = parseToolCallPayload(rawJson)
+            segments += Segment.ToolCallSegment(
+                index = toolIndex,
+                toolCall = parsedCall,
+                rawJson = rawJson,
+                isComplete = true
+            )
+            toolIndex++
+            cursor = close.range.last + 1
+        }
+        if (cursor < text.length) {
+            val tail = text.substring(cursor)
+            if (tail.isNotEmpty()) {
+                segments += Segment.TextSegment(tail)
+            }
+        }
+        return segments
+    }
+
     fun parse(text: String): ParseResult {
         val matches = toolCallTagPattern.findAll(text).toList()
         val toolCalls = if (matches.isNotEmpty()) {

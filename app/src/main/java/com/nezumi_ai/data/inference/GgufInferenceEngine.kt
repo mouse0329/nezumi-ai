@@ -574,20 +574,15 @@ class GgufInferenceEngine(
                 )
                 isFirstGenerationRound = false
 
-                val visibleRoundText = if (toolCallingEnabled) {
-                    val parsed = GgufToolCallParser.parse(roundText)
-                    if (parsed.toolCalls.isNotEmpty()) {
-                        buildString {
-                            append(parsed.textBeforeTools)
-                            if (parsed.textAfterTools.isNotBlank()) append(parsed.textAfterTools)
-                        }
-                    } else {
-                        roundText
-                    }
-                } else {
-                    roundText
-                }
-                fullAnswer.append(Gemma4ThinkingParser.sanitizeVisibleText(visibleRoundText))
+                // インライン表示対応: <tool_call> タグは本文に保持したまま
+                // sanitize する。UI 側で GgufToolCallParser.parseSegments() を使って
+                // セグメント化し、タグの位置でカードをインライン描画するため。
+                fullAnswer.append(
+                    Gemma4ThinkingParser.sanitizeVisibleText(
+                        roundText,
+                        preserveToolCallTags = toolCallingEnabled
+                    )
+                )
 
                 if (!toolCallingEnabled) break
 
@@ -662,7 +657,10 @@ class GgufInferenceEngine(
 
             trySend(
                 InferenceStreamProtocol.encodeFinal(
-                    Gemma4ThinkingParser.sanitizeVisibleText(fullAnswer.toString())
+                    Gemma4ThinkingParser.sanitizeVisibleText(
+                        fullAnswer.toString(),
+                        preserveToolCallTags = toolCallingEnabled
+                    )
                 )
             )
             close()

@@ -41,12 +41,30 @@ object Gemma4ThinkingParser {
         "</tool_response>"
     )
 
+    /**
+     * インライン tool-call カード表示用に、tool-call/tool-response タグは保持したい経路がある。
+     * その場合に限り STRIP_TOKEN_SEQUENCES / removeToolTagSegments から除外するタグの集合。
+     */
+    private val TOOL_CALL_TAG_TOKENS = setOf(
+        "<tool_call>",
+        "</tool_call>",
+        "<tool_response>",
+        "</tool_response>"
+    )
+
     /** llama.cpp の Gemma4 F16 バグで flood する <unusedNN> を一括除去するためのパターン。 */
     private val UNUSED_TOKEN_REGEX: Regex = Regex("<unused\\d+>")
 
+    /**
+     * @param preserveToolCallTags true のとき、返却する [Gemma4ThinkingParseResult.answer] 内の
+     *   `<tool_call>`/`</tool_call>`・`<tool_response>`/`</tool_response>` タグを保持する。
+     *   インライン tool-call カード表示のため、本文中のタグ出現位置を保つ必要がある呼び出し元で使う。
+     *   [Gemma4ThinkingParseResult.thinking] 側は常に非保持 (thinking はタグ付きで見せる要件がないため)。
+     */
     fun parse(
         rawInput: String,
-        treatUnmarkedInputAsThinking: Boolean = false
+        treatUnmarkedInputAsThinking: Boolean = false,
+        preserveToolCallTags: Boolean = false
     ): Gemma4ThinkingParseResult {
         val raw = rawInput.trim()
         if (raw.isEmpty()) return Gemma4ThinkingParseResult(null, "")
@@ -56,7 +74,7 @@ object Gemma4ThinkingParser {
             val parts = raw.split(THINK_END, limit = 2)
             val thinkingRaw = parts[0].removePrefix(THINK_START).trim()
             val (thinking, remainder) = splitThinkingBySpecialToken(thinkingRaw)
-            val answer = sanitizeVisibleText((remainder + (parts.getOrNull(1) ?: "")).trim())
+            val answer = sanitizeVisibleText((remainder + (parts.getOrNull(1) ?: "")).trim(), preserveToolCallTags)
             return Gemma4ThinkingParseResult(
                 thinking = thinking.ifBlank { null },
                 answer = answer
@@ -65,7 +83,7 @@ object Gemma4ThinkingParser {
         if (raw.startsWith(THINK_START)) {
             val thinkingRaw = raw.removePrefix(THINK_START).trim()
             val (thinking, remainder) = splitThinkingBySpecialToken(thinkingRaw)
-            val answer = sanitizeVisibleText(remainder)
+            val answer = sanitizeVisibleText(remainder, preserveToolCallTags)
             return Gemma4ThinkingParseResult(
                 thinking = thinking.ifBlank { null },
                 answer = answer
@@ -77,7 +95,7 @@ object Gemma4ThinkingParser {
         if (THINKING_END in deduped) {
             val parts = deduped.split(THINKING_END, limit = 2)
             val thinkingBlock = parts[0]
-            val answerPart = if (parts.size > 1) sanitizeVisibleText(parts[1]) else ""
+            val answerPart = if (parts.size > 1) sanitizeVisibleText(parts[1], preserveToolCallTags) else ""
 
             var thinking = if (THINKING_START in thinkingBlock) {
                 thinkingBlock.substringAfter(THINKING_START, "")
@@ -88,12 +106,12 @@ object Gemma4ThinkingParser {
             val (finalThinking, remainder) = splitThinkingBySpecialToken(thinking)
             return Gemma4ThinkingParseResult(
                 thinking = finalThinking.ifBlank { null },
-                answer = sanitizeVisibleText((remainder + answerPart).trim())
+                answer = sanitizeVisibleText((remainder + answerPart).trim(), preserveToolCallTags)
             )
         }
 
         var answer = stripThoughtLabel(deduped)
-        answer = sanitizeVisibleText(answer)
+        answer = sanitizeVisibleText(answer, preserveToolCallTags)
         return if (treatUnmarkedInputAsThinking) {
             Gemma4ThinkingParseResult(answer.ifBlank { null }, "")
         } else {
@@ -104,10 +122,13 @@ object Gemma4ThinkingParser {
     /**
      * ストリーミング中: 終了タグ未到達でも thought チャンネル内のテキストを返す。
      * 特殊トークンがデコードに含まれないバックエンドでは [thinking] も [answer] も生テキスト扱いになる。
+     *
+     * @param preserveToolCallTags [parse] と同様。answer 側の tool-call タグ保持有無を制御する。
      */
     fun parseStreaming(
         rawInput: String,
-        treatUnmarkedInputAsThinking: Boolean = false
+        treatUnmarkedInputAsThinking: Boolean = false,
+        preserveToolCallTags: Boolean = false
     ): Gemma4ThinkingParseResult {
         if (rawInput.isEmpty()) return Gemma4ThinkingParseResult(null, "")
 
@@ -115,7 +136,7 @@ object Gemma4ThinkingParser {
         if (THINK_END in rawInput) {
             val idx = rawInput.indexOf(THINK_END)
             val thinking = rawInput.substring(0, idx).removePrefix(THINK_START).trim()
-            val answer = sanitizeVisibleText(rawInput.substring(idx + THINK_END.length))
+            val answer = sanitizeVisibleText(rawInput.substring(idx + THINK_END.length), preserveToolCallTags)
             return Gemma4ThinkingParseResult(
                 thinking = thinking.ifBlank { null },
                 answer = answer
@@ -142,7 +163,7 @@ object Gemma4ThinkingParser {
             val (finalThinking, remainder) = splitThinkingBySpecialToken(thinking)
             return Gemma4ThinkingParseResult(
                 thinking = sanitizeVisibleText(finalThinking).ifBlank { null },
-                answer = sanitizeVisibleText((remainder + afterEnd).trim())
+                answer = sanitizeVisibleText((remainder + afterEnd).trim(), preserveToolCallTags)
             )
         }
 
@@ -156,12 +177,12 @@ object Gemma4ThinkingParser {
                 val (finalThinking, remainder) = splitThinkingBySpecialToken(thinking)
                 Gemma4ThinkingParseResult(
                     thinking = sanitizeVisibleText(finalThinking).ifBlank { null },
-                    answer = sanitizeVisibleText(remainder)
+                    answer = sanitizeVisibleText(remainder, preserveToolCallTags)
                 )
             }
         }
 
-        val visible = sanitizeVisibleText(stripThoughtLabel(rawInput))
+        val visible = sanitizeVisibleText(stripThoughtLabel(rawInput), preserveToolCallTags)
         return if (treatUnmarkedInputAsThinking) {
             Gemma4ThinkingParseResult(visible.ifBlank { null }, "")
         } else {
@@ -275,8 +296,13 @@ object Gemma4ThinkingParser {
 
     /**
      * 表示用テキストから Gemma / トークナイザ由来の制御トークンをすべて除去する。
+     *
+     * @param preserveToolCallTags true のとき `<tool_call>`/`</tool_call>` および
+     *   `<tool_response>`/`</tool_response>` の中身（およびタグ自体）を保持する。
+     *   インライン tool-call カード描画のために本文中の出現位置を保存する保存パスで使う。
+     *   既存の呼び出しは false のままで挙動が変わらない。
      */
-    fun sanitizeVisibleText(text: String): String {
+    fun sanitizeVisibleText(text: String, preserveToolCallTags: Boolean = false): String {
         var t = text.trim()
         if (t.isEmpty()) return ""
         // Gemma4 GGUF (F16) で thinking ON 時に連打される <unusedNN> トークンを一括削除。
@@ -284,14 +310,19 @@ object Gemma4ThinkingParser {
             t = UNUSED_TOKEN_REGEX.replace(t, "").trim()
             if (t.isEmpty()) return ""
         }
-        t = removeToolTagSegments(t)
+        t = removeToolTagSegments(t, preserveToolCallTags)
         t = removeRedactedThinkingBlocks(t)
-        t = stripLeadingControlPrefix(t)
-        t = removeTrailingIncompleteTags(t)
+        t = stripLeadingControlPrefix(t, preserveToolCallTags)
+        t = removeTrailingIncompleteTags(t, preserveToolCallTags)
         val original = t
+        val stripSequences = if (preserveToolCallTags) {
+            STRIP_TOKEN_SEQUENCES.filter { it !in TOOL_CALL_TAG_TOKENS }
+        } else {
+            STRIP_TOKEN_SEQUENCES
+        }
         for (i in 0 until 64) {
             val before = t
-            for (seq in STRIP_TOKEN_SEQUENCES) {
+            for (seq in stripSequences) {
                 t = t.replace(seq, "")
             }
             t = t.replace(Regex("^[ \t]+$", RegexOption.MULTILINE), "")
@@ -324,12 +355,14 @@ object Gemma4ThinkingParser {
     }
 
     /** 先頭に付いた tool / thinking 制御ブロックを除去し、後続の回答本文は残す。 */
-    private fun stripLeadingControlPrefix(text: String): String {
+    private fun stripLeadingControlPrefix(text: String, preserveToolCallTags: Boolean = false): String {
         var t = text.trimStart()
         repeat(16) {
             val before = t
-            t = Regex("(?is)^<tool_call>\\s*").replace(t, "")
-            t = Regex("(?is)^</tool_call>\\s*").replace(t, "")
+            if (!preserveToolCallTags) {
+                t = Regex("(?is)^<tool_call>\\s*").replace(t, "")
+                t = Regex("(?is)^</tool_call>\\s*").replace(t, "")
+            }
             t = Regex("(?is)^<think>\\s*</think>\\s*").replace(t, "")
             t = Regex("(?is)^<think>.*?</think>\\s*").replace(t, "")
             t = Regex("(?is)^<\\|channel>thought\\n.*?(?:<channel\\|>\\s*)").replaceFirst(t, "")
@@ -339,9 +372,11 @@ object Gemma4ThinkingParser {
     }
 
     /** ストリーミング末尾の未閉じタグのみ除去（本文の後ろに付いた断片用）。 */
-    private fun removeTrailingIncompleteTags(text: String): String {
+    private fun removeTrailingIncompleteTags(text: String, preserveToolCallTags: Boolean = false): String {
         var t = text
+        val skipTags = if (preserveToolCallTags) setOf("tool_call", "tool_response") else emptySet()
         for (tag in listOf("tool_call", "tool_result", "tool_response", "tools", "redacted_thinking")) {
+            if (tag in skipTags) continue
             val open = "<$tag>"
             val close = "</$tag>"
             val start = t.lastIndexOf(open)
@@ -353,14 +388,15 @@ object Gemma4ThinkingParser {
         return t
     }
 
-    private fun removeToolTagSegments(text: String): String {
+    private fun removeToolTagSegments(text: String, preserveToolCallTags: Boolean = false): String {
         var t = text
-        val patterns = listOf(
-            Regex("(?is)<tool_call>.*?</tool_call>"),
-            Regex("(?is)<tool_result>.*?</tool_result>"),
-            Regex("(?is)<tool_response>.*?</tool_response>"),
-            Regex("(?is)<tools>.*?</tools>")
-        )
+        val patterns = mutableListOf<Regex>()
+        if (!preserveToolCallTags) {
+            patterns += Regex("(?is)<tool_call>.*?</tool_call>")
+            patterns += Regex("(?is)<tool_response>.*?</tool_response>")
+        }
+        patterns += Regex("(?is)<tool_result>.*?</tool_result>")
+        patterns += Regex("(?is)<tools>.*?</tools>")
         for (pattern in patterns) {
             t = t.replace(pattern, "")
         }

@@ -1264,6 +1264,14 @@ class LiteRtLmEngine(
                             val calls = message.toolCalls
                             if (calls.isNotEmpty()) {
                                 toolCallsInTurn = calls
+                                // インライン tool_call カード表示: LiteRt は構造化 API 経由でツール呼び出しを返すため、
+                                // モデルの生テキストには <tool_call> タグが含まれない。UI 側 (GgufToolCallParser.parseSegments)
+                                // が本文中の出現位置でカードを差し込めるよう、ここで answerAccum にタグを合成挿入する。
+                                for (call in calls) {
+                                    answerAccum.append("\n<tool_call>\n")
+                                    answerAccum.append(buildToolCallJson(call))
+                                    answerAccum.append("\n</tool_call>\n")
+                                }
                                 trySend(
                                     InferenceStreamProtocol.encodeToolCallChunk(
                                         calls.map { it.name }
@@ -1520,6 +1528,23 @@ class LiteRtLmEngine(
         val stream = ByteArrayOutputStream()
         compress(Bitmap.CompressFormat.PNG, 100, stream)
         return stream.toByteArray()
+    }
+
+    /**
+     * LiteRt の ToolCall (構造化) を、GGUF 系と同じ `{"name":..,"arguments":..}` 形の
+     * JSON テキストに変換する。answerAccum に <tool_call>...</tool_call> として
+     * 埋め込むために使う (UI 側のインラインカード表示で必要)。
+     */
+    private fun buildToolCallJson(call: ToolCall): String {
+        val argsJson = try {
+            val entries = call.arguments.entries.joinToString(",") { (k, v) ->
+                "\"${k.replace("\"", "\\\"")}\":" + anyToJsonElement(v).toString()
+            }
+            "{$entries}"
+        } catch (_: Throwable) {
+            "{}"
+        }
+        return "{\"name\":\"${call.name}\",\"arguments\":$argsJson}"
     }
 
     private fun anyToJsonElement(value: Any?): JsonElement {

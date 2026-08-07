@@ -128,65 +128,10 @@ fun ExpandableThinkingBlock(
     }
 }
 
-/**
- * ストリーミング中の AI メッセージ内に表示するツール呼び出しインジケーター。
- * 下部の ToolResultCard とは別に、出力欄内で呼び出しタイミングを示す。
- */
-/**
- * 生成完了後も履歴に残すツール呼び出しインジケーター。
- * ストリーミング中の [StreamingToolCallIndicator] と同じ位置・スタイルで表示する。
- */
-@Composable
-fun PersistedToolCallIndicators(cards: List<ToolResultCard>) {
-    if (cards.isEmpty()) return
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        cards.forEach { card ->
-            val label = if (card.success) {
-                stringResource(R.string.tool_call_result_success, card.toolName)
-            } else {
-                stringResource(R.string.tool_call_result_error, card.toolName)
-            }
-            Text(
-                text = label,
-                modifier = Modifier.fillMaxWidth(),
-                fontSize = 13.sp,
-                color = colorResource(id = R.color.text_secondary),
-                fontStyle = FontStyle.Italic
-            )
-        }
-    }
-}
-
-@Composable
-fun StreamingToolCallIndicator(state: ToolCallState) {
-    if (state is ToolCallState.Done) return
-
-    val label = when (state) {
-        is ToolCallState.Executing -> toolExecutingLabel(state.toolName)
-        is ToolCallState.Result -> when (state.status) {
-            "success" -> stringResource(R.string.tool_call_result_success, state.toolName)
-            else -> stringResource(R.string.tool_call_result_error, state.toolName)
-        }
-        ToolCallState.Responding -> stringResource(R.string.tool_call_responding)
-        else -> return
-    }
-
-    Text(
-        text = label,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 6.dp),
-        fontSize = 13.sp,
-        color = colorResource(id = R.color.text_secondary),
-        fontStyle = FontStyle.Italic
-    )
-}
+// PersistedToolCallIndicators / StreamingToolCallIndicator は InlineToolCallCard
+// (インラインカード) に統合したため削除。本文中の <tool_call> タグ位置で
+// InlineToolCallMessageBody が InlineToolCallCard を差し込む方式に切り替え済み。
+// ToolCallProgressBar (画面下部のグローバル進捗バー・画像生成プログレスなど) はここに残す。
 
 @Composable
 private fun toolExecutingLabel(toolName: String): String = when (toolName.lowercase()) {
