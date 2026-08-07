@@ -1,4 +1,4 @@
-#include "mnn_sd/model_config.h"
+﻿#include "mnn_sd/model_config.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -296,3 +296,4 @@ extern "C"
     }
 
 } // extern "C"
+

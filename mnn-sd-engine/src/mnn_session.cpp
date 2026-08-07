@@ -1,4 +1,4 @@
-#include "mnn_sd/engine.h"
+﻿#include "mnn_sd/engine.h"
 #include "engine_internal.h"
 
 #include <algorithm>
@@ -2948,6 +2948,37 @@ extern "C"
                     std::memcpy(pooled_out.data() + (size_t)side * pooled_dim,
                                 host_pooled.host<float>(),
                                 (size_t)n * sizeof(float));
+
+                    // TEMP DEBUG (remove after diagnosing SDXL color/structure
+                    // corruption): print the pooled/text_embeds vector's norm
+                    // and first few values for this side, so they can be
+                    // compared directly against the Python/HF reference
+                    // (check_pooled.py). A healthy CLIP-G text_embeds norm
+                    // for a real prompt is typically in the 15-25 range;
+                    // a near-zero or wildly different norm here (vs. the
+                    // Python reference) pinpoints the pooled path as broken.
+                    {
+                        double sumsq = 0.0;
+                        for (int k = 0; k < n; ++k)
+                        {
+                            double v = (double)pooled_out[(size_t)side * pooled_dim + k];
+                            sumsq += v * v;
+                        }
+                        double norm = std::sqrt(sumsq);
+                        PROBE_LOG("pooled(%s): side=%d eos_pos=%d norm=%.4f "
+                                  "first8=[%.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f]",
+                                  label, side,
+                                  ids_for_eos ? find_eos_index(*ids_for_eos, side) : -1,
+                                  norm,
+                                  n > 0 ? pooled_out[(size_t)side * pooled_dim + 0] : 0.0f,
+                                  n > 1 ? pooled_out[(size_t)side * pooled_dim + 1] : 0.0f,
+                                  n > 2 ? pooled_out[(size_t)side * pooled_dim + 2] : 0.0f,
+                                  n > 3 ? pooled_out[(size_t)side * pooled_dim + 3] : 0.0f,
+                                  n > 4 ? pooled_out[(size_t)side * pooled_dim + 4] : 0.0f,
+                                  n > 5 ? pooled_out[(size_t)side * pooled_dim + 5] : 0.0f,
+                                  n > 6 ? pooled_out[(size_t)side * pooled_dim + 6] : 0.0f,
+                                  n > 7 ? pooled_out[(size_t)side * pooled_dim + 7] : 0.0f);
+                    }
                 }
             }
             return MNN_SD_OK;
