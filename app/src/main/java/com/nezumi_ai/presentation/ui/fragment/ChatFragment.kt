@@ -882,8 +882,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         "DISPLAY_MESSAGES: count=${displayMessages.size} messages=${displayMessages.map { "${it.role}:${it.content}" }}"
                     )
                 }
+                // インライン tool-call カード表示のため、UI 側に流す content では
+                // <tool_call>...</tool_call> タグを保持したまま sanitize する。
+                // タグ位置は MessageAdapter → InlineToolCallMessageBody でセグメント化され、
+                // カードを差し込む目印として使われる。コピー・読み上げなどは
+                // 引き続きタグなしパス (stripGemmaTokens() default = false) を使う。
                 val filteredMessages = displayMessages.map { msg ->
-                    msg.copy(content = msg.content.stripGemmaTokens())
+                    msg.copy(content = msg.content.stripGemmaTokens(preserveToolCallTags = true))
                 }
                 val empty = filteredMessages.isEmpty()
                 messagesIsEmpty = empty

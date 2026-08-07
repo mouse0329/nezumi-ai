@@ -1250,6 +1250,16 @@ class LiteRtLmEngine(
                     while (isActive && toolRound < maxToolRounds) {
                         toolRound++
                         var toolCallsInTurn: List<ToolCall> = emptyList()
+                        // バグ修正 (インライン tool-call カード・ストリーミング対応):
+                        //   LiteRt の messageFlow は各ラウンド内で「そのラウンドのメッセージ全文」を
+                        //   逐次送信してくるが、ラウンドをまたいでは累積しない。旧実装は
+                        //   answerAccum (全ラウンド累積) と text (今ラウンド内の全文) を直接比較していたため、
+                        //   ラウンド2以降は startsWith が失敗して text 全体が answerAccum に二重追記され、
+                        //   trySend も text 全体を送ってしまって UI 側の merge ロジックが
+                        //   既追記済み <tool_call> タグを見失うケースがあった。
+                        //   ラウンド単位の累積 roundAccum を使い、ラウンド内の差分だけを
+                        //   answerAccum / trySend に流すことで修正する。
+                        var roundAccum = ""
                         val messageFlow = if (firstRequest) {
                             firstRequest = false
                             conv.sendMessageAsync(Contents.of(contents), extraContext)
@@ -1264,14 +1274,20 @@ class LiteRtLmEngine(
                             val calls = message.toolCalls
                             if (calls.isNotEmpty()) {
                                 toolCallsInTurn = calls
-                                // インライン tool_call カード表示: LiteRt は構造化 API 経由でツール呼び出しを返すため、
-                                // モデルの生テキストには <tool_call> タグが含まれない。UI 側 (GgufToolCallParser.parseSegments)
-                                // が本文中の出現位置でカードを差し込めるよう、ここで answerAccum にタグを合成挿入する。
-                                for (call in calls) {
-                                    answerAccum.append("\n<tool_call>\n")
-                                    answerAccum.append(buildToolCallJson(call))
-                                    answerAccum.append("\n</tool_call>\n")
+                                // インライン tool_call カード表示:
+                                //   LiteRt は構造化 API 経由でツール呼び出しを返すため、モデルの生テキストには
+                                //   <tool_call> タグが含まれない。UI 側 (GgufToolCallParser.parseSegments) が本文中の
+                                //   出現位置でカードを差し込めるよう、タグを answerAccum に合成挿入して
+                                //   同じ内容を trySend もする (ストリーミング UI でもタグを見えるように)。
+                                val tagPayload = buildString {
+                                    for (call in calls) {
+                                        append("\n<tool_call>\n")
+                                        append(buildToolCallJson(call))
+                                        append("\n</tool_call>\n")
+                                    }
                                 }
+                                answerAccum.append(tagPayload)
+                                trySend(tagPayload).isSuccess
                                 trySend(
                                     InferenceStreamProtocol.encodeToolCallChunk(
                                         calls.map { it.name }
@@ -1291,26 +1307,32 @@ class LiteRtLmEngine(
                                     val ttft = firstTokenMs - inferenceStartMs
                                     Log.d(TAG, "TTFT: ${ttft}ms session=$sessionId")
                                 }
-                                
-                                // Bug fix(#6): LiteRT から送られる text は「逐次更新されるメッセージ全文」であり\u3001
-                                // 単純に加算すると token 数が雪ダマ式に過大計上されてしまう。
-                                // 累積の answerAccum との差分を取って実際のデルタテキストを求め\u3001その分だけ token 化して加算する。
-                                val deltaText = if (text.startsWith(answerAccum.toString())) {
-                                    text.substring(answerAccum.length)
-                                } else text
+
+                                // ラウンド内の累積 (roundAccum) との差分を取る。LiteRt の text は
+                                // ラウンド内で逐次伸びる全文なので、text.startsWith(roundAccum) は常に true
+                                // (モデルが既存トークンを上書きしない場合) 。万一 startsWith が false なら
+                                // ささい上書き修正と見なして text 全体をデルタとする (安全側に倒す)。
+                                val deltaText = if (text.startsWith(roundAccum)) {
+                                    text.substring(roundAccum.length)
+                                } else {
+                                    text
+                                }
                                 if (deltaText.isNotEmpty()) {
                                     tokenCount += TextTokenEstimator.estimateOutputTokens(deltaText)
                                 }
-                                
+
                                 // TPS ログ
                                 if (tokenCount.toInt() % 10 == 0) {
                                     val elapsedMs = System.currentTimeMillis() - inferenceStartMs
                                     val tps = if (elapsedMs > 0) tokenCount * 1000.0 / elapsedMs else 0.0
                                     Log.d(TAG, "TPS: %.1f tok/s (tokens=%.1f, elapsed=${elapsedMs}ms) session=$sessionId".format(tps, tokenCount))
                                 }
-                                
-                                answerAccum.append(text)
-                                trySend(text).isSuccess
+
+                                roundAccum = text
+                                if (deltaText.isNotEmpty()) {
+                                    answerAccum.append(deltaText)
+                                    trySend(deltaText).isSuccess
+                                }
                             }
                         }
 
