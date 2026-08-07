@@ -797,6 +797,8 @@ Enjoy chatting with your AI!</string>
     <string name="settings_memory_close_button">Close</string>
     <string name="settings_memory_mode_llm_label">LLM extraction</string>
     <string name="settings_memory_mode_rule_label">Rule-based</string>
+    <string name="settings_memory_mode_tool_only_label">Tool only</string>
+    <string name="settings_memory_mode_tool_only_desc">Save memory only when the LLM explicitly calls the save_memory tool. No automatic extraction. (Recommended default)</string>
 
     <!-- Chat history -->
     <string name="settings_chat_history_unlimited_label">Unlimited</string>

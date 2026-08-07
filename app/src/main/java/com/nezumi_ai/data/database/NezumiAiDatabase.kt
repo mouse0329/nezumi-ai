@@ -32,7 +32,7 @@ import com.nezumi_ai.data.database.entity.SettingsEntity
         MemoryEntity::class,
         MemorySessionEntity::class
     ],
-    version = 29,
+    version = 30,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
@@ -57,7 +57,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                     NezumiAiDatabase::class.java,
                     "nezumi_ai.db"
                 )
-                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29)
+                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30)
                     // 開発中: スキーマ不一致時は再作成して起動クラッシュを回避
                     .fallbackToDestructiveMigration()
                     .build()
@@ -248,6 +248,21 @@ abstract class NezumiAiDatabase : RoomDatabase() {
         private val MIGRATION_19_20 = object : androidx.room.migration.Migration(19, 20) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE settings ADD COLUMN memorySaveMode TEXT NOT NULL DEFAULT 'LLM'")
+            }
+        }
+
+        /**
+         * v30: 新規インストール時のメモリ保存モードデフォルトを
+         *   'LLM' → 'TOOL_ONLY' へ切り替える。
+         *
+         * 既存ユーザーの選択は尊重するため、UPDATE は行わない。
+         * 新規レコードの DEFAULT 値は SettingsEntity / SettingsDao の
+         * insertDefaultIfEmpty() 側で TOOL_ONLY を使うように切り替える。
+         */
+        private val MIGRATION_29_30 = object : androidx.room.migration.Migration(29, 30) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                // no-op migration: schema は変わらず、バージョンバンプのみ。
+                // (新規導入カラムはこの先予定しているためのプレースホルダー)
             }
         }
     }

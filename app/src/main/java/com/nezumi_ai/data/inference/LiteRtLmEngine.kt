@@ -134,7 +134,16 @@ class LiteRtLmEngine(
         /** ビルトインツールの有効 ID 集合の指紋。ツールの ON/OFF を切り替えたら Conversation を作り直す。 */
         val builtinToolsFingerprint: String,
         /** MCP ツール集合の指紋。サーバー追加/削除や tools/list_changed で変わる。 */
-        val mcpToolsFingerprint: String
+        val mcpToolsFingerprint: String,
+        /**
+         * ToolPreferences の revision カウンタ。
+         *
+         * これを ConversationKey に混ぜることで、モデル再ロード不要で
+         * 「ツール構成が変わった → Conversation を作り直す → buildEnabledToolProviders() が再収集される」
+         * という動的登録の効果が得られる。ツールの見た目・名前・スキーマは今まで通り維持したまま、
+         * 反映のタイミングだけを動的化する。
+         */
+        val toolPrefsRevision: Int
     )
 
     /** セッション遷移検出用 */
@@ -315,7 +324,10 @@ class LiteRtLmEngine(
             normalized.enableThinking,
             normalized.enableToolCalling,
             builtinFp,
-            mcpFp
+            mcpFp,
+            // v2.1+: ツール ON/OFF / プリセット切替 / MCP サーバー集合変更を revision で拾い、
+            //        モデル再ロード無しに Conversation だけを作り直せるようにする。
+            ToolPreferences.currentRevision()
         )
         // Bug fix(#5): media を含むセッションでは KV キャッシュ再利用をやめる。
         val mustRecreateForMedia = sessionsWithMediaHistory.contains(sessionId)
@@ -362,6 +374,18 @@ class LiteRtLmEngine(
                         } else {
                             emptyList()
                         }
+                        // v2.1+: 実機で「ツールが LiteRT-LM に届いたか」を追えるように詳細ログを出す。
+                        // tools が empty のまま LLM に渡ってしまう典型的な失敗 (
+                        //   InferenceConfig.enableToolCalling=false / ToolPreferences 空 /
+                        //   presetToolCallingOn=false / capability off など) を切り分けやすくする。
+                        Log.i(
+                            TAG,
+                            "createConversation: enableToolCalling=${normalized.enableToolCalling} " +
+                                "builtinToolProviders=${tools.size} " +
+                                "enabledNezumiTools=${ToolPreferences(appContext).getEnabledTools().map { it.name }} " +
+                                "toolPrefsRevision=${ToolPreferences.currentRevision()} " +
+                                "sessionId=$sessionId"
+                        )
                         val conv = try {
                             eng.createConversation(
                                 ConversationConfig(
@@ -977,7 +1001,24 @@ class LiteRtLmEngine(
         }
 
         val totalTimeMs = System.currentTimeMillis() - modelStartTimeMs
-        Log.d(TAG, "loadModel SUCCESS: $modelPath backend=${normalizedConfig.backendType} totalDuration=${totalTimeMs}ms")
+        // v2.1+: 要求バックエンドと実効バックエンドの一致状況を残し、
+        //        「GPU を選んだのに実際は CPU で動いていた」等の齟齬を実機ログで検出できるようにする。
+        val requestedBackendUpper = normalizedConfig.backendType.uppercase()
+        val effectiveBackendUpper = effectiveBackendType.uppercase()
+        val backendMatched = requestedBackendUpper == effectiveBackendUpper
+        Log.i(
+            TAG,
+            "loadModel SUCCESS: model=$modelPath " +
+                "requestedBackend=$requestedBackendUpper effectiveBackend=$effectiveBackendUpper " +
+                "match=$backendMatched visionAudio=$withVA totalDuration=${totalTimeMs}ms"
+        )
+        if (!backendMatched) {
+            Log.w(
+                TAG,
+                "Backend fallback occurred: requested=$requestedBackendUpper -> effective=$effectiveBackendUpper. " +
+                    "Check device support (NPU dispatch lib / GPU OpenCL / TPU delegate) and native library manifest."
+            )
+        }
         return Result.success(Unit)
     }
 

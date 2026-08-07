@@ -182,12 +182,52 @@ class SettingsRepository(
             getStopTokensForModel(model)
         } else emptyList()
         val isLiteRtImported = isLiteRtImportedEarly
-        val enableToolCalling = when {
+        // Bug fix: LiteRT-LM の埋め込みツールがモデルに渡らない問題の主因。
+        //
+        // 以前は「Gemma4 は無条件 true / GGUF or インポート LiteRT-LM は capability 参照 / それ以外 false」
+        // という単純分岐で、以下の穴があった:
+        //   - プレインストール LiteRT-LM モデル (Gemma3n E2B/E4B など) が else に落ち、
+        //     プリセットで toolCallingEnabled=true にしても常に false 固定。
+        //   - プリセット側の toolCallingEnabled フラグ自体を全く見ておらず、
+        //     ユーザーがプリセットでツールコールを OFF にしても config には反映されない。
+        //
+        // 修正方針:
+        //   1) 「モデル自体がツール対応か」の可否判定 (modelSupportsToolCall) を分離。
+        //      ビルトイン Gemma4 / プレインストール LiteRT-LM は既定で true。
+        //      GGUF / インポート LiteRT-LM は capability ストアを参照。
+        //   2) 現在アクティブなプリセットの toolCallingEnabled を SharedPreferences 経由で取得し、
+        //      両者の AND を最終値とする (プリセット未選択時はモデル側可否のみで判定)。
+        val modelSupportsToolCall = when {
             isGemma4 -> true
             appContext != null && (isGguf || isLiteRtImported) ->
                 ImportedModelCapabilityStore.get(appContext, model).toolCallingEnabled
-            else -> false
+            // プレインストール LiteRT-LM (Gemma3n など): モデル側は対応可能、プリセット側で制御。
+            else -> true
         }
+        val presetToolCallingOn = appContext?.let { ctx ->
+            runCatching {
+                val presetId = PreferencesHelper.getCurrentPresetId(ctx)
+                if (presetId.isBlank()) {
+                    // プリセット未選択時は「未設定 = 制約なし」と解釈する。
+                    true
+                } else {
+                    val db = NezumiAiDatabase.getInstance(ctx)
+                    val preset = db.presetDao().getById(presetId)
+                    // preset 取得失敗時は保守的に true にして、モデル側可否のみで判定させる。
+                    preset?.toolCallingEnabled ?: true
+                }
+            }.getOrElse {
+                Log.w("SettingsRepository", "Failed to read preset toolCallingEnabled; treating as ON", it)
+                true
+            }
+        } ?: true
+        val enableToolCalling = modelSupportsToolCall && presetToolCallingOn
+        Log.d(
+            "SettingsRepository",
+            "enableToolCalling resolve: model=$model isGemma4=$isGemma4 isGguf=$isGguf " +
+                "isLiteRtImported=$isLiteRtImported modelSupportsToolCall=$modelSupportsToolCall " +
+                "presetToolCallingOn=$presetToolCallingOn -> $enableToolCalling"
+        )
         return base.copy(
             backendType = backend,
             contextWindow = contextWindow,
@@ -402,7 +442,8 @@ class SettingsRepository(
     suspend fun getMemorySaveMode(): MemorySaveMode {
         val current = currentSettings()
         return runCatching { MemorySaveMode.valueOf(current.memorySaveMode) }
-            .getOrDefault(MemorySaveMode.LLM)
+            // v2.1+ デフォルト: LLM が明示的に save_memory ツールを呼んだときのみ保存。
+            .getOrDefault(MemorySaveMode.TOOL_ONLY)
     }
 
     suspend fun updateMemorySaveMode(mode: MemorySaveMode) {

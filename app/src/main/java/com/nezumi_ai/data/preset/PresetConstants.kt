@@ -17,6 +17,9 @@ object PresetConstants {
     const val TOOL_TIMER = "timer"
     const val TOOL_IMAGE_GENERATION = "image_generation"
     const val TOOL_MEMORY = "memory"
+    // メモリ保存専用ツールのプリセット ID。これを有効にすると LLM に save_memory ツールが見える。
+    // MEMORY_ONLY モードではこのツールの呼び出しが唇一の保存経路になる。
+    const val TOOL_MEMORY_SAVE = "memory_save"
     const val TOOL_WEB_SEARCH = "web_search"
 
     val allToolIds: List<String> = listOf(
@@ -31,25 +34,15 @@ object PresetConstants {
         TOOL_TIMER,
         TOOL_IMAGE_GENERATION,
         TOOL_MEMORY,
+        TOOL_MEMORY_SAVE,
         TOOL_WEB_SEARCH
     )
 
     /**
      * 新規プリセット作成時に初期で有効にするツール ID の集合。
-     * WEB_SEARCH は API キー未設定でここから外し、FLASHLIGHT はカメラ権限の確認が
-     * 必要なため、ユーザーが明示的に有効化するまでは OFF にしておく。
+     *
+     * v2.1+ 仕様変更: ツールコールを ON にしても全ツールを自動でチェックしない
+     * 方針に変更されたため、ここは空リスト。ユーザーは使いたいツールを選択する。
      */
-    val defaultInitiallyEnabledToolIds: List<String> = listOf(
-        TOOL_ALARM,
-        TOOL_GMAIL,
-        TOOL_SWITCHBOT,
-        // TOOL_FLASHLIGHT は初期オフ（カメラ権限が必要）
-        TOOL_APP_LAUNCH,
-        TOOL_TIME,
-        TOOL_BATTERY,
-        TOOL_TIMER,
-        TOOL_IMAGE_GENERATION,
-        TOOL_MEMORY
-        // TOOL_WEB_SEARCH は初期オフ（API キー未設定）
-    )
+    val defaultInitiallyEnabledToolIds: List<String> = emptyList()
 }

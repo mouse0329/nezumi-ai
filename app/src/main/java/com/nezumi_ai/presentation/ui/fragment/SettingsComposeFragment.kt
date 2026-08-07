@@ -120,7 +120,7 @@ class SettingsComposeFragment : Fragment() {
     private var llamaCppRopeFreqBase by mutableStateOf(0.0f)
     private var llamaCppRopeFreqScale by mutableStateOf(1.0f)
     private var ropeFreqBaseInput by mutableStateOf("0.0")
-    private var memorySaveMode by mutableStateOf(MemorySaveMode.LLM.name)
+    private var memorySaveMode by mutableStateOf(MemorySaveMode.TOOL_ONLY.name)
     private var chatHistoryLimit by mutableStateOf(30)
     private var sdSteps by mutableStateOf(8)
     private var sdCfg by mutableStateOf(7.0f)
@@ -2171,6 +2171,13 @@ class SettingsComposeFragment : Fragment() {
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
+                    // v2.1+ デフォルト方式: LLM が明示的に save_memory ツールを呼んだときのみ保存する。
+                    FilterChip(
+                        selected = memorySaveMode == MemorySaveMode.TOOL_ONLY.name,
+                        onClick = { memorySaveMode = MemorySaveMode.TOOL_ONLY.name },
+                        label = { Text(stringResource(id = R.string.settings_memory_mode_tool_only_label)) },
+                        modifier = Modifier.weight(1f)
+                    )
                     FilterChip(
                         selected = memorySaveMode == MemorySaveMode.LLM.name,
                         onClick = { memorySaveMode = MemorySaveMode.LLM.name },

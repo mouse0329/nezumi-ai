@@ -163,8 +163,13 @@ class GgufInferenceEngine(
                 )
             } else {
                 NativeGenerationSettings(
-                    batchSize = config.llamaCppBatchSize.coerceAtMost(512),
-                    ubatchSize = config.llamaCppUBatchSize.coerceAtMost(512),
+                    // Bug fix: ユーザーが InferenceConfig で指定した値を尊重する。
+                    // 以前は .coerceAtMost(512) で上限を強制していたため、
+                    // ユーザーが 1024/2048 などを設定してもネイティブに 512 として渡り
+                    // 「設定が反映されない」バグの原因になっていた。
+                    // 上下限は InferenceConfig.normalized() で MIN/MAX_BATCH_SIZE により丸め済み。
+                    batchSize = config.llamaCppBatchSize,
+                    ubatchSize = config.llamaCppUBatchSize,
                     flashAttentionEnabled = config.flashAttentionEnabled,
                     contextShiftEnabled = config.contextShiftEnabled,
                     maxTokensCap = MAX_NEW_TOKENS
@@ -285,8 +290,32 @@ class GgufInferenceEngine(
                 // 既存コンテキストを解放
                 freeNativeCtx()
 
-                val optimalThreads = getOptimalThreadCount()
-                val gpuLayers = getAdaptiveGpuLayers(normalized.backendType)
+                // Bug fix: ユーザーが InferenceConfig.llamaCppThreads / llamaCppGpuLayers で
+                // 明示指定した値をエンジンに反映する。以前は毎回 getOptimalThreadCount() /
+                // getAdaptiveGpuLayers(backendType) で上書きしていたため、ユーザーが設定画面から
+                // スレッド数や GPU レイヤ数を変えても llama.cpp に届かないバグがあった。
+                //
+                // - スレッド数: 0 以下（未設定扱い）の場合のみ自動検出値にフォールバック
+                // - GPU レイヤ数: backendType が "CPU" のときは 0 で強制、
+                //   "GPU" のときは config.llamaCppGpuLayers を尊重し、0 の場合のみ従来の
+                //   getAdaptiveGpuLayers() で自動判定する。
+                val optimalThreads = if (normalized.llamaCppThreads > 0) {
+                    normalized.llamaCppThreads.coerceIn(
+                        InferenceConfig.MIN_THREADS,
+                        InferenceConfig.MAX_THREADS
+                    )
+                } else {
+                    getOptimalThreadCount()
+                }
+                val gpuLayers = when (normalized.backendType.uppercase()) {
+                    "GPU" -> if (normalized.llamaCppGpuLayers > 0) {
+                        normalized.llamaCppGpuLayers
+                    } else {
+                        getAdaptiveGpuLayers(normalized.backendType)
+                    }
+                    // NPU/その他は llama.cpp では GPU オフロード不可 → 0
+                    else -> 0
+                }
                 val nativeSettings = resolveNativeGenerationSettings(modelPath, normalized, appContext)
                 if (nativeSettings.batchSize <= 0 || nativeSettings.ubatchSize <= 0) {
                     return@withLock Result.failure(IllegalStateException("Invalid GGUF batch size configuration"))
@@ -301,7 +330,18 @@ class GgufInferenceEngine(
                 if (PromptBuilder.detectGgufFormat(modelPath, appContext) == PromptBuilder.GgufPromptFormat.PLAIN_COMPLETION) {
                     Log.w(TAG, "Using conservative native settings for GPT-2 model: batch=${nativeSettings.batchSize}, ubatch=${nativeSettings.ubatchSize}, flashAttention=${nativeSettings.flashAttentionEnabled}, ctxShift=${nativeSettings.contextShiftEnabled}")
                 }
-                Log.i(TAG, "Loading GGUF model: $modelPath backend=${normalized.backendType} threads=$optimalThreads gpuLayers=$gpuLayers")
+                Log.i(
+                    TAG,
+                    "Loading GGUF model: $modelPath backend=${normalized.backendType} " +
+                        "threads=$optimalThreads gpuLayers=$gpuLayers " +
+                        "nBatch=${nativeSettings.batchSize} nUbatch=${nativeSettings.ubatchSize} " +
+                        "ropeFreqBase=${normalized.llamaCppRopeFreqBase} " +
+                        "ropeFreqScale=${normalized.llamaCppRopeFreqScale} " +
+                        "flashAttention=${nativeSettings.flashAttentionEnabled} " +
+                        "ctxShift=${nativeSettings.contextShiftEnabled} " +
+                        "kvUnified=${normalized.llamaCppKvUnified} " +
+                        "mtpEnabled=${normalized.mtpEnabled} mtpDraft=${normalized.mtpDraftTokens}"
+                )
 
                 if (modelFile.extension.equals("gguf", ignoreCase = true) && !hasGgufMagicHeader(modelFile)) {
                     return@withLock Result.failure(
@@ -325,7 +365,15 @@ class GgufInferenceEngine(
                         nGpuLayers = gpuLayers,
                         mmprojPath = mmprojPath,
                         flashAttentionEnabled = nativeSettings.flashAttentionEnabled,
-                        contextShiftEnabled = nativeSettings.contextShiftEnabled
+                        contextShiftEnabled = nativeSettings.contextShiftEnabled,
+                        // Bug fix: RoPE 周波数と MTP / KV 最適化のユーザー設定を
+                        // ネイティブ側にきちんと渡す。従来はコンストラクタに渡していなかったため
+                        // 常にデフォルト値 (base=0f / scale=1f, mtp=off) で動いていた。
+                        ropeFreqBase = normalized.llamaCppRopeFreqBase,
+                        ropeFreqScale = normalized.llamaCppRopeFreqScale,
+                        mtpEnabled = normalized.mtpEnabled,
+                        mtpDraftTokens = normalized.mtpDraftTokens,
+                        kvCacheOptimizationEnabled = normalized.kvCacheOptimizationEnabled
                     )
                 }
 

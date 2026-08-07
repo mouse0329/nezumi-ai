@@ -78,6 +78,11 @@ private val TOOL_NAME_MAP = mapOf(
     "search_memory"      to "searchmemory",
     "searchMemory"       to "searchmemory",
     "searchmemory"       to "searchmemory",
+    // save_memory (LLM が明示的にメモリを追加保存するためのツール)
+    "save_memory"        to "savememory",
+    "saveMemory"         to "savememory",
+    "savememory"         to "savememory",
+    "remember"           to "savememory",
     // CALENDAR_DISABLED
     // "add_calendar_event" to "addcalendarevent",
     // "addCalendarEvent"   to "addcalendarevent",
@@ -135,6 +140,10 @@ internal fun buildEnabledToolProviders(context: Context, alarmDao: AlarmDao): Li
         if (NezumiTool.SEARCH_MEMORY in enabled) {
             Log.d(TOOL_TAG, "Adding SearchMemorySchema to tool providers")
             add(tool(SearchMemorySchema()))
+        }
+        if (NezumiTool.SAVE_MEMORY in enabled) {
+            Log.d(TOOL_TAG, "Adding SaveMemorySchema to tool providers")
+            add(tool(SaveMemorySchema()))
         }
         // CALENDAR_DISABLED
         // if (NezumiTool.ADD_CALENDAR_EVENT in enabled) add(tool(AddCalendarEventSchema()))
@@ -255,6 +264,22 @@ private class SearchMemorySchema : ToolSet {
     ): Map<String, Any?> = emptyMap()
 }
 
+/**
+ * LLM が「これを覚えておいて」と明示的に呼ぶツール。
+ * TOOL_ONLY モードではこのツールの呼び出しが唯一のメモリ保存経路になる。
+ */
+private class SaveMemorySchema : ToolSet {
+    @Tool(
+        description = "Persist an important fact for future recall. " +
+            "Call this when the user shares information worth remembering (preferences, profile, key decisions, plans). " +
+            "Content should be concise, self-contained, third-person or declarative, and stand on its own without conversation context."
+    )
+    fun saveMemory(
+        @ToolParam(description = "The fact to remember. Concise, self-contained, third-person or declarative form.") content: String,
+        @ToolParam(description = "Importance from 0.0 to 1.0 (default 0.7)") importance: Double?
+    ): Map<String, Any?> = emptyMap()
+}
+
 private class AddCalendarEventSchema : ToolSet {
     @Tool(description = "Add an event to the device calendar")
     fun addCalendarEvent(
@@ -351,6 +376,7 @@ internal class NezumiLiteRtToolExecutor(
             "generateimage"   -> executeGenerateImage(toolCall)
             "listsdmodels"    -> executeListSdModels()
             "searchmemory"    -> executeSearchMemory(toolCall)
+            "savememory"      -> executeSaveMemory(toolCall)
             // CALENDAR_DISABLED
             // "addcalendarevent" -> executeAddCalendarEvent(toolCall)
             // "listcalendarevents" -> executeListCalendarEvents(toolCall)
@@ -385,6 +411,7 @@ internal class NezumiLiteRtToolExecutor(
             "generateimage" -> NezumiTool.GENERATE_IMAGE
             "listsdmodels" -> NezumiTool.GENERATE_IMAGE
             "searchmemory" -> NezumiTool.SEARCH_MEMORY
+            "savememory" -> NezumiTool.SAVE_MEMORY
             // CALENDAR_DISABLED
             // "addcalendarevent" -> NezumiTool.ADD_CALENDAR_EVENT
             // "listcalendarevents" -> NezumiTool.LIST_CALENDAR_EVENTS
@@ -732,6 +759,86 @@ internal class NezumiLiteRtToolExecutor(
         )
     }
 
+    /**
+     * LLM が「これを覚えておいて」と呼ぶ save_memory ツールの実行体。
+     * MemorySaveMode.TOOL_ONLY ではここが唯一のメモリ保存経路になる。
+     */
+    private suspend fun executeSaveMemory(toolCall: ToolCall): ToolExecutionResult {
+        val content = toolCall.arguments["content"]?.toString()?.trim()?.takeIf { it.isNotBlank() }
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_content"))
+
+        // 安全弁: 作り込み防止と LLM の暴走防止
+        val trimmedContent = when {
+            content.length > MAX_MEMORY_CONTENT_LEN ->
+                content.substring(0, MAX_MEMORY_CONTENT_LEN)
+            else -> content
+        }
+
+        val importance = (toolCall.arguments["importance"] as? Number)?.toFloat()
+            ?: (toolCall.arguments["importance"] as? String)?.toFloatOrNull()
+            ?: 0.7f
+
+        if (memoryRepository == null) {
+            return ToolExecutionResult(
+                success = false,
+                payload = mapOf("success" to false, "error" to "memory_not_initialized")
+            )
+        }
+
+        // Embedder を IO で確実に初期化
+        if (!MemoryTextEmbedder.initializeAsync(context)) {
+            Log.w(TOOL_TAG, "MemoryTextEmbedder initialization failed for save_memory")
+        }
+
+        val embedding = MemoryTextEmbedder.embed(trimmedContent)
+        if (embedding.isEmpty()) {
+            return ToolExecutionResult(
+                success = false,
+                payload = mapOf("success" to false, "error" to "embedding_failed")
+            )
+        }
+
+        // 重複ガード: 既存メモリと高類似なものは保存しない（LLM の同一ターン連呼を防ぐ）
+        val existing = memoryRepository.search(
+            embedding,
+            topK = 1,
+            markAccessed = false
+        )
+        val topSim = existing.firstOrNull()?.similarity ?: 0f
+        if (topSim >= DUPLICATE_SAVE_THRESHOLD) {
+            Log.d(TOOL_TAG, "executeSaveMemory: skipped near-duplicate (similarity=$topSim) content=\"$trimmedContent\"")
+            return ToolExecutionResult(
+                success = true,
+                payload = mapOf(
+                    "success" to true,
+                    "saved" to false,
+                    "reason" to "duplicate",
+                    "similarity" to topSim,
+                    "content" to trimmedContent
+                )
+            )
+        }
+
+        val id = memoryRepository.saveMemory(
+            content = trimmedContent,
+            embedding = embedding,
+            importance = importance.coerceIn(0f, 1f),
+            source = com.nezumi_ai.data.database.entity.MemoryEntity.SOURCE_ASSISTANT
+        )
+        Log.i(TOOL_TAG, "executeSaveMemory: saved id=$id importance=$importance content=\"$trimmedContent\"")
+
+        return ToolExecutionResult(
+            success = true,
+            payload = mapOf(
+                "success" to true,
+                "saved" to true,
+                "id" to id,
+                "content" to trimmedContent,
+                "importance" to importance
+            )
+        )
+    }
+
     private suspend fun executeAddCalendarEvent(toolCall: ToolCall): ToolExecutionResult {
         val title = toolCall.arguments["title"]?.toString()?.takeIf { it.isNotBlank() }
             ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_title"))
@@ -997,6 +1104,11 @@ internal class NezumiLiteRtToolExecutor(
             Log.w(TOOL_TAG, "Failed to parse MCP argumentsJson: $raw", it)
             emptyMap()
         }
+    }
+
+    private companion object {
+        const val MAX_MEMORY_CONTENT_LEN = 1024
+        const val DUPLICATE_SAVE_THRESHOLD = 0.95f
     }
 }
 

@@ -77,6 +77,11 @@ object GgufToolPromptBuilder {
             "Searches stored conversation memories.",
             """{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer"}},"required":["query"]}"""
         ),
+        ToolSchema(
+            "save_memory",
+            "Persist an important fact for future recall. Call this when the user shares information worth remembering (preferences, profile, key decisions, plans). Content should be concise, self-contained, third-person or declarative, and stand on its own without conversation context.",
+            """{"type":"object","properties":{"content":{"type":"string","description":"The fact to remember. Concise, self-contained."},"importance":{"type":"number","description":"0.0-1.0 (default 0.7)"}},"required":["content"]}"""
+        ),
         // CALENDAR_DISABLED
         // ToolSchema(
         //     "add_calendar_event",
@@ -107,13 +112,18 @@ object GgufToolPromptBuilder {
         NezumiTool.LIST_TIMERS to "list_timers",
         NezumiTool.GENERATE_IMAGE to "generate_image",
         NezumiTool.SEARCH_MEMORY to "search_memory",
+        NezumiTool.SAVE_MEMORY to "save_memory",
         // CALENDAR_DISABLED
         // NezumiTool.ADD_CALENDAR_EVENT to "add_calendar_event",
         // NezumiTool.LIST_CALENDAR_EVENTS to "list_calendar_events",
         NezumiTool.WEB_SEARCH to "web_search"
     )
 
-    fun appendToolDefinitions(context: Context, systemPrompt: String): String {
+    /**
+     * 有効化されたビルトインツールと MCP ツールを列挙した JSON を返す。
+     * (改行区切り。空文字なら有効ツールなし)
+     */
+    private fun collectEnabledToolsJson(context: Context): String {
         val enabled = ToolPreferences(context).getEnabledTools()
         val enabledNames = buildSet {
             enabled.forEach { tool -> schemaByTool[tool]?.let { add(it) } }
@@ -132,19 +142,28 @@ object GgufToolPromptBuilder {
             }
         }
         val schemas = allSchemas.filter { it.name in enabledNames }
-        // Bug fix: 組み込みツールが 1 つも有効でなくても、MCP サーバーが接続されていれば
-        // MCP ツールだけを列挙する。以前はここで早期 return していたため、
-        //「MCP だけ使いたい」プリセットでは MCP ツールが一切見えなかった。
         val mcpJson = McpToolPromptBuilder.currentToolsJson(context)
-        if (schemas.isEmpty() && mcpJson.isBlank()) {
-            Log.d(TAG, "GgufToolPromptBuilder: Skipped. Reason: no builtin schema and no MCP tool.")
-            return systemPrompt
-        }
-
         val builtinJson = schemas.joinToString("\n") { schema ->
             """{"type":"function","function":{"name":"${schema.name}","description":"${schema.description}","parameters":${schema.parametersJson}}}"""
         }
         val toolsJson = listOf(builtinJson, mcpJson).filter { it.isNotBlank() }.joinToString("\n")
+        Log.d(
+            TAG,
+            "collectEnabledToolsJson: enabled=${enabled.map { it.name }} " +
+                "builtinSchemas=${schemas.size} mcpJsonEmpty=${mcpJson.isBlank()}"
+        )
+        return toolsJson
+    }
+
+    fun appendToolDefinitions(context: Context, systemPrompt: String): String {
+        val toolsJson = collectEnabledToolsJson(context)
+        // Bug fix: 組み込みツールが 1 つも有効でなくても、MCP サーバーが接続されていれば
+        // MCP ツールだけを列挙する。以前はここで早期 return していたため、
+        //「MCP だけ使いたい」プリセットでは MCP ツールが一切見えなかった。
+        if (toolsJson.isBlank()) {
+            Log.d(TAG, "GgufToolPromptBuilder: Skipped. Reason: no builtin schema and no MCP tool.")
+            return systemPrompt
+        }
 
         val toolBlock = buildString {
             appendLine()
@@ -161,6 +180,42 @@ object GgufToolPromptBuilder {
             append("</tools>")
         }
 
+        return if (systemPrompt.isBlank()) toolBlock.trim() else systemPrompt + toolBlock
+    }
+
+    /**
+     * v2.1+: LiteRT-LM 経路向けのツールブロック注入。
+     *
+     * 以前は LiteRT-LM ではビルトインツール定義がシステムプロンプトに一切書かれず、
+     * ネイティブ ToolProvider として `createConversation(tools=...)` に渡してはいるものの、
+     * automaticToolCalling=false のためモデル自身が「呼び出せるツールがある」ことに気付かず、
+     * 結果としてツールが有効化されているのに使われない状態になっていた。
+     * ここで GGUF と同じ <tools> ブロックを LiteRT-LM 側にも注入する。
+     *
+     * MCP ツールもこの <tools> にマージされるため、`McpToolPromptBuilder.appendForLiteRt`
+     * を追加で呼ぶ必要はない (二重注入回避)。
+     */
+    fun appendForLiteRt(context: Context, systemPrompt: String): String {
+        val toolsJson = collectEnabledToolsJson(context)
+        if (toolsJson.isBlank()) {
+            Log.d(TAG, "appendForLiteRt: no builtin schema and no MCP tool - skipping")
+            return systemPrompt
+        }
+        val toolBlock = buildString {
+            appendLine()
+            appendLine()
+            appendLine("You can call tools to help the user.")
+            appendLine("Available tools are listed in <tools></tools>.")
+            appendLine("When calling a tool, respond ONLY with:")
+            appendLine("<tool_call>")
+            appendLine("""{"name":"<tool-name>","arguments":{...}}""")
+            appendLine("</tool_call>")
+            appendLine("<tools>")
+            append(toolsJson)
+            appendLine()
+            append("</tools>")
+        }
+        Log.i(TAG, "appendForLiteRt: injected <tools> block into LiteRT-LM system prompt")
         return if (systemPrompt.isBlank()) toolBlock.trim() else systemPrompt + toolBlock
     }
 }

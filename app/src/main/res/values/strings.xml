@@ -838,6 +838,8 @@ VOICEVOX:ずんだもん / VOICEVOX:四国めたん / VOICEVOX:春日部つむ�
     <string name="settings_memory_close_button">閉じる</string>
     <string name="settings_memory_mode_llm_label">LLM抽出</string>
     <string name="settings_memory_mode_rule_label">ルールベース</string>
+    <string name="settings_memory_mode_tool_only_label">ツールのみ</string>
+    <string name="settings_memory_mode_tool_only_desc">LLMが「これを覚えて」と明示的に save_memory ツールを呼んだ場合にのみ保存します。自動抽出は行いません。（推奨・デフォルト）</string>
 
     <!-- チャット履歴 -->
     <string name="settings_chat_history_unlimited_label">無制限</string>

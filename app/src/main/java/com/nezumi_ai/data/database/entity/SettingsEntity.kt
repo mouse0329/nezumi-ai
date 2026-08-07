@@ -36,8 +36,9 @@ data class SettingsEntity(
     val llamaCppNKeep: Int = 0,
     val llamaCppRopeFreqBase: Float = 0.0f,
     val llamaCppRopeFreqScale: Float = 1.0f,
-    // Memory save mode: LLM extraction or rule-based extraction
-    val memorySaveMode: String = "LLM",
+    // Memory save mode: LLM / RULE_BASED / TOOL_ONLY
+    // Default is TOOL_ONLY (v2.1+) — LLM saves memory only via explicit save_memory tool call.
+    val memorySaveMode: String = "TOOL_ONLY",
     // Per-model custom stop tokens (path=token1,token2;path2=token3)
     val stopTokensMap: String = "",
     // Session persistence

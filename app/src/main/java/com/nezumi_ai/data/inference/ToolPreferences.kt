@@ -5,7 +5,11 @@ import android.content.SharedPreferences
 import android.util.Log
 import com.nezumi_ai.data.preset.PresetConstants
 import com.nezumi_ai.utils.PreferencesHelper
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
+import java.util.concurrent.atomic.AtomicInteger
 
 enum class NezumiTool(val displayName: String) {
     GET_TIME("現在時刻取得"),
@@ -19,6 +23,7 @@ enum class NezumiTool(val displayName: String) {
     LIST_TIMERS("タイマー一覧"),
     GENERATE_IMAGE("画像生成(SD)"),
     SEARCH_MEMORY("メモリ検索"),
+    SAVE_MEMORY("メモリ保存"),
     // CALENDAR_DISABLED: 復活時は下2行のコメントを外し、presetIdsForTool/isEnabled/setEnabled の対応箇所も戻す
     // ADD_CALENDAR_EVENT("カレンダー追加"),
     // LIST_CALENDAR_EVENTS("カレンダー一覧"),
@@ -33,9 +38,29 @@ class ToolPreferences(private val context: Context) {
         private const val KEY_ACTIVE_PRESET_TOOL_IDS = "active_preset_tool_ids"
         private const val KEY_ACTIVE_MCP_SERVER_IDS = "active_mcp_server_ids"
 
+        /**
+         * プロセス内で共有する revision カウンタ。
+         *
+         * ツールの ON/OFF やプリセット切替、MCP サーバー集合の変更などを一元化して
+         * 「ツール構成が変わった」というイベントを LiteRT-LM などのエンジンに伝える。
+         * LiteRT-LM はこの値を ConversationKey に含めることで、モデル再ロードを伴わず
+         * Conversation だけを作り直し、新しい buildEnabledToolProviders() を収集する。
+         */
+        private val revisionCounter = AtomicInteger(0)
+        private val _revisionFlow = MutableStateFlow(0)
+        val revision: StateFlow<Int> = _revisionFlow.asStateFlow()
+        fun currentRevision(): Int = revisionCounter.get()
+
+        private fun bumpRevision() {
+            val v = revisionCounter.incrementAndGet()
+            _revisionFlow.value = v
+            Log.d("ToolPreferences", "revision bumped -> $v")
+        }
+
         fun resetToDefaults(context: Context) {
             val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs.edit().clear().commit()
+            bumpRevision()
         }
 
         fun presetIdsForTool(tool: NezumiTool): Set<String> = when (tool) {
@@ -50,6 +75,9 @@ class ToolPreferences(private val context: Context) {
             NezumiTool.LIST_TIMERS -> setOf(PresetConstants.TOOL_TIMER)
             NezumiTool.GENERATE_IMAGE -> setOf(PresetConstants.TOOL_IMAGE_GENERATION)
             NezumiTool.SEARCH_MEMORY -> setOf(PresetConstants.TOOL_MEMORY)
+            // メモリ保存ツールは、プリセットの「メモリ」ツール（検索と共通）または
+            // 専用の「メモリ保存」ツール ID で有効化される。どちらか一方で OK。
+            NezumiTool.SAVE_MEMORY -> setOf(PresetConstants.TOOL_MEMORY, PresetConstants.TOOL_MEMORY_SAVE)
             // NezumiTool.ADD_CALENDAR_EVENT,
             // NezumiTool.LIST_CALENDAR_EVENTS -> setOf(PresetConstants.TOOL_CALENDAR)
             NezumiTool.WEB_SEARCH -> setOf(PresetConstants.TOOL_WEB_SEARCH)
@@ -110,7 +138,9 @@ class ToolPreferences(private val context: Context) {
     }
 
     fun setEnabled(tool: NezumiTool, enabled: Boolean) {
+        val before = prefs.getBoolean(keyFor(tool), defaultEnabled(tool))
         prefs.edit().putBoolean(keyFor(tool), enabled).apply()
+        if (before != enabled) bumpRevision()
     }
 
     fun getEnabledTools(): Set<NezumiTool> {
@@ -118,17 +148,24 @@ class ToolPreferences(private val context: Context) {
     }
 
     fun setActivePresetToolIds(toolIdsJson: String) {
+        val before = prefs.getString(KEY_ACTIVE_PRESET_TOOL_IDS, null)
         prefs.edit().putString(KEY_ACTIVE_PRESET_TOOL_IDS, toolIdsJson).apply()
+        if (before != toolIdsJson) bumpRevision()
     }
 
     fun clearActivePresetToolIds() {
+        val had = prefs.contains(KEY_ACTIVE_PRESET_TOOL_IDS)
         prefs.edit().remove(KEY_ACTIVE_PRESET_TOOL_IDS).apply()
+        if (had) bumpRevision()
     }
 
     fun setActiveMcpServerIds(serverIds: Set<String>) {
         val arr = JSONArray()
         serverIds.forEach { arr.put(it) }
-        prefs.edit().putString(KEY_ACTIVE_MCP_SERVER_IDS, arr.toString()).apply()
+        val next = arr.toString()
+        val before = prefs.getString(KEY_ACTIVE_MCP_SERVER_IDS, null)
+        prefs.edit().putString(KEY_ACTIVE_MCP_SERVER_IDS, next).apply()
+        if (before != next) bumpRevision()
     }
 
     fun getActiveMcpServerIds(): Set<String> {

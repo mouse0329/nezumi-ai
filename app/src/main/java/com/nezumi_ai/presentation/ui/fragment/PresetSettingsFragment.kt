@@ -646,8 +646,19 @@ class PresetSettingsFragment : Fragment() {
         var toolCallingEnabled by remember {
             mutableStateOf(initialPreset?.toolCallingEnabled ?: false)
         }
+        // 新規プリセット作成時はすべてのツールをチェックを外した状態（空集合）で始める。
+        // 以前は PresetConstants.allToolIds を初期値にしていたため、ツールコールを ON にすると
+        // 全ツールが自動で有効化されてしまう仕様だったが、
+        // ここではユーザーが明示的に選ぶ仕様に変更する。
+        // 既存プリセットの編集時は保存された選択を尊重する。
         var enabledTools by remember {
-            mutableStateOf(parseToolIds(initialPreset?.enabledTools ?: PresetRepository.encodeToolIds(PresetConstants.allToolIds)))
+            mutableStateOf(
+                if (initialPreset != null) {
+                    parseToolIds(initialPreset.enabledTools)
+                } else {
+                    emptySet()
+                }
+            )
         }
         val mcpPrefs = remember { McpPreferences.get(requireContext()) }
         val mcpServers by mcpPrefs.servers.collectAsState()
@@ -1032,6 +1043,7 @@ class PresetSettingsFragment : Fragment() {
         ToolOption(PresetConstants.TOOL_FLASHLIGHT, "フラッシュライト"),
         ToolOption(PresetConstants.TOOL_IMAGE_GENERATION, "画像生成"),
         ToolOption(PresetConstants.TOOL_MEMORY, "メモリ検索"),
+        ToolOption(PresetConstants.TOOL_MEMORY_SAVE, "メモリ保存"),
         ToolOption(PresetConstants.TOOL_WEB_SEARCH, "ウェブ検索"),
         // CALENDAR_DISABLED: ToolOption(PresetConstants.TOOL_CALENDAR, "カレンダー")
     )

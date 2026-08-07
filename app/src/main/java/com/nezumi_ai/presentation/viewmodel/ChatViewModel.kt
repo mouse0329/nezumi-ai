@@ -32,7 +32,6 @@ import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.ThinkingLeakSalvage
 import com.nezumi_ai.data.inference.GgufToolPromptBuilder
-import com.nezumi_ai.data.inference.McpToolPromptBuilder
 import com.nezumi_ai.data.mcp.McpToolRegistry
 import com.nezumi_ai.data.inference.EngineManager
 import com.nezumi_ai.data.inference.ImageGenerationNotificationManager
@@ -1768,16 +1767,24 @@ class ChatViewModel(
             Log.d(TAG, "Starting inference for session $sessionId")
 
             // ① 起動時 pending 抽出処理（モデルロード完了後に1回だけ実行）
+            //
+            // v2.1+: TOOL_ONLY モードのときは pending 自体が発生しないはずだが、
+            // 以前のバージョンで作られた pending フラグが残っている可能性があるため
+            // Worker 内部でも共に安全側にガードしている。
             if (!pendingExtractionProcessed) {
                 pendingExtractionProcessed = true
                 val pendingSaveMode = settingsRepository.getMemorySaveMode()
-                memoryExtractionWorker?.processPending(manager, config.copy(
-                    temperature = 0.1f,
-                    enableThinking = false,
-                    contextCompressionEnabled = false
-                ), pendingSaveMode, { fetchSessionId ->
-                    messageRepository.getMessagesForSessionOnce(fetchSessionId)
-                }, suppressContradictionDeletion = true)
+                if (pendingSaveMode != com.nezumi_ai.data.memory.MemorySaveMode.TOOL_ONLY) {
+                    memoryExtractionWorker?.processPending(manager, config.copy(
+                        temperature = 0.1f,
+                        enableThinking = false,
+                        contextCompressionEnabled = false
+                    ), pendingSaveMode, { fetchSessionId ->
+                        messageRepository.getMessagesForSessionOnce(fetchSessionId)
+                    }, suppressContradictionDeletion = true)
+                } else {
+                    Log.d(TAG, "MEMORY_PENDING: TOOL_ONLY mode - skipping pending processing")
+                }
             }
 
             val promptForModel = buildPromptWithSessionContext(
@@ -3999,6 +4006,16 @@ class ChatViewModel(
 
             // メモリ抽出はメモリ設定が有効な場合のみ
             if (!isMemoryEnabledForCurrentPreset()) return@launch
+
+            // v2.1+: TOOL_ONLY モードでは自動抽出を一切スキップする。
+            // 保存は LLM が save_memory ツールを呼んだときにのみ発生するため、
+            // ここでモデルマネージャを取ったり Worker を叩いたりする必要はない。
+            val saveMode = settingsRepository.getMemorySaveMode()
+            if (saveMode == com.nezumi_ai.data.memory.MemorySaveMode.TOOL_ONLY) {
+                Log.d(TAG, "MEMORY_EXTRACT: TOOL_ONLY mode - skipping enqueue for session=$sessionId")
+                return@launch
+            }
+
             val manager = try { requireModelManager() } catch (e: Exception) {
                 Log.w(TAG, "MEMORY_EXTRACT: no model manager available, skipping", e)
                 return@launch
@@ -4009,7 +4026,6 @@ class ChatViewModel(
                 enableThinking = false,
                 contextCompressionEnabled = false
             ).normalized()
-            val saveMode = settingsRepository.getMemorySaveMode()
             worker.enqueue(sessionId, messages, manager, config, saveMode)
         }
     }
@@ -4321,11 +4337,15 @@ class ChatViewModel(
             systemPrompt = if (isGgufEngine) {
                 GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt)
             } else {
-                // Bug fix: LiteRT-LM 経路では MCP ツール一覧がどこにも注入されておらず、
-                // mcp_call の説明にある「system prompt の <tools> を見ろ」という前提が
-                // 成立していなかった（＝MCP ツールが 1 つも認識されない）。
-                // ここで LiteRT 用の <mcp_tools> ブロックを明示的に付与する。
-                McpToolPromptBuilder.appendForLiteRt(appContext, systemPrompt)
+                // Bug fix (v2.1+): LiteRT-LM 経路ではビルトインツールの定義がシステムプロンプトに
+                // 一切注入されていなかった。ネイティブ ToolProvider として createConversation(tools=...)
+                // に渡してはいたが、automaticToolCalling=false のためモデル自身が「呼び出せるツールが
+                // ある」ことに気付かず、ツールを有効化しても LLM から一切見えない状態だった。
+                //
+                // GgufToolPromptBuilder.appendForLiteRt は GGUF と同じ <tools> ブロックを組み立てて
+                // ビルトイン + MCP をまとめてシステムプロンプトに追加する。二重注入を避けるため、
+                // 従来の McpToolPromptBuilder.appendForLiteRt はここでは呼ばない。
+                GgufToolPromptBuilder.appendForLiteRt(appContext, systemPrompt)
             }
         }
         // Tool calling can coexist with thinking directives; do not suppress thinking when tool calling is enabled.
@@ -4412,11 +4432,15 @@ class ChatViewModel(
             systemPrompt = if (isGgufEngine) {
                 GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt)
             } else {
-                // Bug fix: LiteRT-LM 経路では MCP ツール一覧がどこにも注入されておらず、
-                // mcp_call の説明にある「system prompt の <tools> を見ろ」という前提が
-                // 成立していなかった（＝MCP ツールが 1 つも認識されない）。
-                // ここで LiteRT 用の <mcp_tools> ブロックを明示的に付与する。
-                McpToolPromptBuilder.appendForLiteRt(appContext, systemPrompt)
+                // Bug fix (v2.1+): LiteRT-LM 経路ではビルトインツールの定義がシステムプロンプトに
+                // 一切注入されていなかった。ネイティブ ToolProvider として createConversation(tools=...)
+                // に渡してはいたが、automaticToolCalling=false のためモデル自身が「呼び出せるツールが
+                // ある」ことに気付かず、ツールを有効化しても LLM から一切見えない状態だった。
+                //
+                // GgufToolPromptBuilder.appendForLiteRt は GGUF と同じ <tools> ブロックを組み立てて
+                // ビルトイン + MCP をまとめてシステムプロンプトに追加する。二重注入を避けるため、
+                // 従来の McpToolPromptBuilder.appendForLiteRt はここでは呼ばない。
+                GgufToolPromptBuilder.appendForLiteRt(appContext, systemPrompt)
             }
         }
 

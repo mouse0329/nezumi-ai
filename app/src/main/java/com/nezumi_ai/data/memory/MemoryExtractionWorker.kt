@@ -109,6 +109,15 @@ class MemoryExtractionWorker(
             return
         }
 
+        // TOOL_ONLY モードでは自動抽出を一切行わない。
+        // 保存は LLM が明示的に `save_memory` ツールを呼んだときにのみ発生する。
+        if (saveMode == MemorySaveMode.TOOL_ONLY) {
+            Log.d(TAG, "MEMORY_EXTRACT: TOOL_ONLY mode - skipping auto extraction for session=$sessionId")
+            // pending フラグをクリアしておく（再起動時に無駄な処理を走らせない）
+            memorySessionRepository.markPending(sessionId.toString(), false)
+            return
+        }
+
         _isExtracting.value = true
         try {
             // アプリが落ちた場合に備えて pending=true をマーク
@@ -117,6 +126,7 @@ class MemoryExtractionWorker(
             val candidates = when (saveMode) {
                 MemorySaveMode.LLM -> runLlmExtraction(sessionId, recentMessages, manager, config)
                 MemorySaveMode.RULE_BASED -> runRuleBasedExtraction(recentMessages)
+                MemorySaveMode.TOOL_ONLY -> emptyList() // 前段で早期 return 済みだが when を網羅するため
             }
             Log.d(TAG, "MEMORY_EXTRACT: session=$sessionId extracted ${candidates.size} candidates with mode=$saveMode")
 
