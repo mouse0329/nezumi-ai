@@ -49,12 +49,17 @@ fun InlineToolCallMessageBody(
     modifier: Modifier = Modifier
 ) {
     val segments = GgufToolCallParser.parseSegments(content)
+    val inlineToolResponseCards = GgufToolCallParser.parseToolResponseCards(content)
 
     // タグが 1 つも無いレガシー本文 (旧DBレコード) はセグメント化されないので、
     // 従来通り単一の Markdown ブロックとして描画する。
+    // ただし `<tool_response>` は履歴保持用メタデータであり UI では非表示にする。
     if (segments.none { it is GgufToolCallParser.Segment.ToolCallSegment }) {
+        val visibleText = segments
+            .filterIsInstance<GgufToolCallParser.Segment.TextSegment>()
+            .joinToString(separator = "") { it.text }
         BubbleContainer(modifier = modifier) {
-            BubbleText(text = content)
+            BubbleText(text = visibleText)
         }
         return
     }
@@ -72,6 +77,7 @@ fun InlineToolCallMessageBody(
                 }
                 is GgufToolCallParser.Segment.ToolCallSegment -> {
                     val card = toolResults.getOrNull(seg.index)
+                        ?: inlineToolResponseCards.getOrNull(seg.index)
                     // バグ修正 (最後のツールコールだけ「結果を待機中」で止まる問題):
                     //   従来は `card == null && isStreaming` のとき Running のまま
                     //   表示していたが、ツール実行は既に完了しモデルへ結果を返した後で

@@ -3,6 +3,7 @@ package com.nezumi_ai.data.inference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -95,5 +96,42 @@ class GgufToolCallParserSegmentTest {
         assertEquals(3, calls.size)
         assertEquals(listOf(0, 1, 2), calls.map { it.index })
         calls.forEach { assertTrue(it.isComplete) }
+    }
+
+    @Test
+    fun parseSegments_hidesToolResponseBlocksFromVisibleText() {
+        val raw = buildString {
+            append("前文\n")
+            append("<tool_call>\n{\"name\":\"get_current_time\",\"arguments\":{}}\n</tool_call>\n")
+            append("<tool_response>\n{\"name\":\"get_current_time\",\"content\":{\"time\":\"10:00\"}}\n</tool_response>\n")
+            append("後文")
+        }
+
+        val segments = GgufToolCallParser.parseSegments(raw)
+        val visibleText = segments
+            .filterIsInstance<GgufToolCallParser.Segment.TextSegment>()
+            .joinToString(separator = "") { it.text }
+
+        assertTrue(visibleText.contains("前文"))
+        assertTrue(visibleText.contains("後文"))
+        assertFalse(visibleText.contains("tool_response"))
+        assertFalse(visibleText.contains("10:00"))
+    }
+
+    @Test
+    fun parseToolResponseCards_parsesMultipleResponsesInOrder() {
+        val raw = buildString {
+            append("<tool_response>\n{\"name\":\"get_current_time\",\"content\":{\"time\":\"10:00\"}}\n</tool_response>\n")
+            append("<tool_response>\n{\"name\":\"get_battery_level\",\"content\":{\"level\":\"85\"}}\n</tool_response>")
+        }
+
+        val cards = GgufToolCallParser.parseToolResponseCards(raw)
+
+        assertEquals(2, cards.size)
+        assertEquals("get_current_time", cards[0].toolName)
+        assertEquals("10:00", cards[0].getPayloadString("time"))
+        assertEquals("get_battery_level", cards[1].toolName)
+        assertEquals("85", cards[1].getPayloadString("level"))
+        assertNull(cards.getOrNull(2))
     }
 }

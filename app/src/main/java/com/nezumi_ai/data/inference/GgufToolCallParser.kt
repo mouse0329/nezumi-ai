@@ -3,6 +3,7 @@ package com.nezumi_ai.data.inference
 import com.google.ai.edge.litertlm.ToolCall
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -20,6 +21,11 @@ object GgufToolCallParser {
 
     private val bareToolCallJsonPattern = Regex(
         """\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"arguments"\s*:\s*(\{[\s\S]*?\}|"[\s\S]*?")\s*\}"""
+    )
+
+    private val toolResponseTagPattern = Regex(
+        "<tool_response>\\s*(.+?)\\s*</tool_response>",
+        setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
     )
 
     data class ParseResult(
@@ -59,6 +65,8 @@ object GgufToolCallParser {
      * - 閉じタグがまだ来ていないストリーミング中の未完タグは、末尾の Running カードとして 1件分割する。
      * - 閉じタグが先で開きタグがさきにない孤儿タグは本文として描画される。
      * - タグ中身の JSON パースに失敗しても `ToolCallSegment(toolCall=null, isComplete=true)` としてセグメントは保持する。
+     * - `<tool_response>...</tool_response>` は履歴コンテキストには残すが、UI ではカード本文に生表示しないため、
+     *   TextSegment 生成前に除去する。
      */
     fun parseSegments(text: String): List<Segment> {
         if (text.isEmpty()) return emptyList()
@@ -67,7 +75,7 @@ object GgufToolCallParser {
         var toolIndex = 0
         while (cursor < text.length) {
             val open = openToolCallTag.find(text, cursor) ?: break
-            val before = text.substring(cursor, open.range.first)
+            val before = stripToolResponseBlocks(text.substring(cursor, open.range.first))
             if (before.isNotEmpty()) {
                 segments += Segment.TextSegment(before)
             }
@@ -97,12 +105,40 @@ object GgufToolCallParser {
             cursor = close.range.last + 1
         }
         if (cursor < text.length) {
-            val tail = text.substring(cursor)
+            val tail = stripToolResponseBlocks(text.substring(cursor))
             if (tail.isNotEmpty()) {
                 segments += Segment.TextSegment(tail)
             }
         }
         return segments
+    }
+
+    /**
+     * 本文に埋め込まれた `<tool_response>` を UI 用のカード一覧として取り出す。
+     * DB の live `toolResultsJson` がまだ未反映でも、本文内の tool_response から
+     * 直近ラウンドの結果をカードへ反映できるようにする。
+     */
+    fun parseToolResponseCards(text: String): List<ToolResultCard> {
+        if (text.isEmpty()) return emptyList()
+        return toolResponseTagPattern.findAll(text).mapNotNull { match ->
+            runCatching {
+                val obj = json.parseToJsonElement(match.groupValues[1].trim()).jsonObject
+                val name = obj["name"]?.jsonPrimitive?.content?.lowercase().orEmpty()
+                if (name.isBlank()) return@runCatching null
+                val content = obj["content"]
+                val payload = when (content) {
+                    is JsonObject -> content.toMap()
+                    null -> emptyMap()
+                    else -> mapOf("value" to content)
+                }
+                val success = payload["success"]?.jsonPrimitive?.booleanOrNull ?: true
+                ToolResultCard(
+                    toolName = name,
+                    success = success,
+                    payload = payload
+                )
+            }.getOrNull()
+        }.toList()
     }
 
     fun parse(text: String): ParseResult {
@@ -135,6 +171,11 @@ object GgufToolCallParser {
 
     fun hasToolCalls(text: String): Boolean =
         toolCallTagPattern.containsMatchIn(text) || bareToolCallJsonPattern.containsMatchIn(text)
+
+    fun stripToolResponseBlocks(text: String): String {
+        if (text.isEmpty()) return text
+        return toolResponseTagPattern.replace(text, "")
+    }
 
     fun formatToolResults(results: List<Pair<ToolCall, ToolExecutionResult>>): String {
         if (results.isEmpty()) return ""
