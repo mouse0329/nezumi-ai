@@ -2,6 +2,7 @@ package com.nezumi_ai.presentation.ui.composable
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -143,6 +144,214 @@ private fun toolExecutingLabel(toolName: String): String = when (toolName.lowerc
 }
 
 /**
+ * generate_image 専用の進捗カード。
+ * モック `nezumi-imagegen-progress-v1` に準拠:
+ * - % 表示 + シマーアニメーションするグラデーションバー
+ * - 「プロンプトを解析 → 拡散モデルで生成 (step x/y) → 仕上げ処理」の 3 ステップチェックリスト
+ * - 生成中プレースホルダー（完成前のプレビュー枠）
+ *
+ * フェーズはツール側から明示的に渡されないため、step/totalSteps から推定する:
+ *   step == 0            → まだ拡散ループに入っていない「プロンプトを解析」中
+ *   0 < step < totalSteps → 拡散ループ実行中「拡散モデルで生成」
+ *   step >= totalSteps    → 最終デコード/後処理中「仕上げ処理」
+ * (実エンジンは今のところこの3値以上の粒度を返さないため、この近似で十分な体感を作れる。
+ *  将来 onProgress にフェーズ文字列が追加されたら、ここで直接使うよう差し替える。)
+ */
+@Composable
+fun ImageGenProgressCard(
+    step: Int,
+    totalSteps: Int
+) {
+    val safeTotal = totalSteps.coerceAtLeast(1)
+    val safeStep = step.coerceIn(0, safeTotal)
+    val fraction = (safeStep.toFloat() / safeTotal.toFloat()).coerceIn(0f, 1f)
+    val percent = (fraction * 100).toInt()
+
+    val phase = when {
+        safeStep <= 0 -> ImageGenPhase.ANALYZING
+        safeStep < safeTotal -> ImageGenPhase.DIFFUSING
+        else -> ImageGenPhase.FINISHING
+    }
+
+    // シマー: バー内をゆっくり流れる光のアニメーション。
+    val infiniteTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "imagegen_shimmer")
+    val shimmerOffset by infiniteTransition.animateFloat(
+        initialValue = -1f,
+        targetValue = 1f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(1400, easing = androidx.compose.animation.core.LinearEasing),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Restart
+        ),
+        label = "imagegen_shimmer_offset"
+    )
+
+    val cardBg = colorResource(id = R.color.image_gen_progress_bg)
+    val accent = colorResource(id = R.color.image_gen_progress_accent)
+    val accentLight = colorResource(id = R.color.image_gen_progress_accent_light)
+    val trackColor = colorResource(id = R.color.image_gen_progress_track)
+    val titleColor = colorResource(id = R.color.image_gen_progress_title)
+    val dimText = colorResource(id = R.color.image_gen_progress_dim_text)
+    val faintText = colorResource(id = R.color.image_gen_progress_faint_text)
+    val previewBg = colorResource(id = R.color.image_gen_progress_preview_bg)
+    val previewBorder = colorResource(id = R.color.image_gen_progress_preview_border)
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(8.dp),
+        colors = CardDefaults.cardColors(containerColor = cardBg),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // --- ヘッダー: タイトル + % ---
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("◈", fontSize = 14.sp, color = accent, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = stringResource(id = R.string.image_gen_progress_title),
+                        color = titleColor,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Text(
+                    text = "$percent%",
+                    color = accent,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // --- シマーグラデーションバー ---
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .background(trackColor, shape = androidx.compose.foundation.shape.RoundedCornerShape(99.dp))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(fraction.coerceAtLeast(0.03f))
+                        .height(6.dp)
+                        .background(
+                            androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                colors = listOf(accent, accentLight, accent),
+                                startX = -400f + shimmerOffset * 800f,
+                                endX = 400f + shimmerOffset * 800f
+                            ),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(99.dp)
+                        )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // --- 3 ステップ チェックリスト ---
+            ImageGenStepRow(
+                label = stringResource(id = R.string.image_gen_progress_step_analyze),
+                status = if (phase == ImageGenPhase.ANALYZING) StepRowStatus.ACTIVE else StepRowStatus.DONE,
+                accent = accent,
+                doneColor = dimText,
+                pendingColor = faintText,
+                trackColor = trackColor
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            ImageGenStepRow(
+                label = stringResource(
+                    id = R.string.image_gen_progress_step_diffuse,
+                    safeStep.coerceAtMost(safeTotal),
+                    safeTotal
+                ),
+                status = when {
+                    phase == ImageGenPhase.DIFFUSING -> StepRowStatus.ACTIVE
+                    phase == ImageGenPhase.FINISHING -> StepRowStatus.DONE
+                    else -> StepRowStatus.PENDING
+                },
+                accent = accent,
+                doneColor = dimText,
+                pendingColor = faintText,
+                trackColor = trackColor
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            ImageGenStepRow(
+                label = stringResource(id = R.string.image_gen_progress_step_finish),
+                status = if (phase == ImageGenPhase.FINISHING) StepRowStatus.ACTIVE else StepRowStatus.PENDING,
+                accent = accent,
+                doneColor = dimText,
+                pendingColor = faintText,
+                trackColor = trackColor
+            )
+        }
+    }
+}
+
+private enum class ImageGenPhase { ANALYZING, DIFFUSING, FINISHING }
+private enum class StepRowStatus { DONE, ACTIVE, PENDING }
+
+@Composable
+private fun ImageGenStepRow(
+    label: String,
+    status: StepRowStatus,
+    accent: Color,
+    doneColor: Color,
+    pendingColor: Color,
+    trackColor: Color
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier.size(16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            when (status) {
+                StepRowStatus.DONE -> {
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .background(accent, shape = androidx.compose.foundation.shape.CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("✓", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                StepRowStatus.ACTIVE -> {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        color = accent
+                    )
+                }
+                StepRowStatus.PENDING -> {
+                    Box(
+                        modifier = Modifier
+                            .size(14.dp)
+                            .border(2.dp, trackColor, shape = androidx.compose.foundation.shape.CircleShape)
+                    )
+                }
+            }
+        }
+        Spacer(modifier = Modifier.width(9.dp))
+        Text(
+            text = label,
+            fontSize = 12.5.sp,
+            color = when (status) {
+                StepRowStatus.ACTIVE -> doneColor.copy(alpha = 1f)
+                StepRowStatus.DONE -> doneColor
+                StepRowStatus.PENDING -> pendingColor
+            },
+            fontWeight = if (status == StepRowStatus.ACTIVE) FontWeight.SemiBold else FontWeight.Normal
+        )
+    }
+}
+
+/**
  * Tool Call 進捗表示コンポーネント
  *
  * 状態マシンの各段階で異なるUI表現を表示します。
@@ -158,6 +367,15 @@ fun ToolCallProgressBar(
     imageGenProgress: Pair<Int, Int>? = null
 ) {
     if (state == null || state is ToolCallState.Done) {
+        return
+    }
+
+    // 画像生成の実行中は、汎用のシンプルなバーではなく専用のリッチな進捗カードを表示する。
+    // (モック `nezumi-imagegen-progress-v1` 準拠: % 表示 + ステップチェックリスト + プレビュー枠)
+    // 完了/失敗 (ToolCallState.Result) になった後は、従来通り下の汎用カードで結果を表示する。
+    if (state is ToolCallState.Executing && state.toolName.equals("generate_image", ignoreCase = true)) {
+        val (step, total) = imageGenProgress ?: Pair(0, 1)
+        ImageGenProgressCard(step = step, totalSteps = total)
         return
     }
 
@@ -199,38 +417,16 @@ fun ToolCallProgressBar(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            // 画像生成ツール専用：進捗表示は generate_image ツールのみ
-            val progress = if (
-                state is ToolCallState.Executing &&
-                    state.toolName.equals("generate_image", ignoreCase = true)
-            ) {
-                imageGenProgress
-            } else {
-                null
-            }
-            
-            val progressFraction = progress?.let { (step, total) ->
-                if (total > 0) (step.toFloat() / total.toFloat()).coerceIn(0f, 1f) else null
-            }
-
-            if (progressFraction != null) {
-                LinearProgressIndicator(
-                    progress = progressFraction,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(4.dp),
-                    color = color,
-                    trackColor = color.copy(alpha = 0.2f)
-                )
-            } else {
-                LinearProgressIndicator(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(4.dp),
-                    color = color,
-                    trackColor = color.copy(alpha = 0.2f)
-                )
-            }
+            // ここに到達する時点で generate_image の Executing は上のガードで処理済みのため、
+            // 残るのは Result（成功/失敗）・Responding・他ツールの Executing のみ。
+            // いずれも段階的な進捗値を持たないため、不確定（indeterminate）バーで表示する。
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp),
+                color = color,
+                trackColor = color.copy(alpha = 0.2f)
+            )
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -245,15 +441,6 @@ fun ToolCallProgressBar(
                     color = color,
                     fontWeight = FontWeight.SemiBold
                 )
-                
-                if (progress != null) {
-                    Text(
-                        text = "${progress.first}/${progress.second}",
-                        fontSize = 12.sp,
-                        color = Color(0xFFFF6F00),
-                        fontWeight = FontWeight.Bold
-                    )
-                }
             }
         }
     }

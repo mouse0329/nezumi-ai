@@ -73,4 +73,30 @@
     <color name="tool_card_details_bg">#33000000</color>
     <color name="tool_card_details_label">#B8C0CC</color>
     <color name="tool_card_details_text">#F3F4F6</color>
+
+    <!-- 画像生成確認カード (ImageGenConfirmationDialog) 専用パレット・ダーク版。 -->
+    <color name="image_gen_confirm_bg">#1F2937</color>
+    <color name="image_gen_confirm_title_text">#F3F4F6</color>
+    <color name="image_gen_confirm_subtitle_text">#B8C0CC</color>
+    <color name="image_gen_confirm_icon_bg">#1F2E4A</color>
+    <color name="image_gen_confirm_icon_tint">#7BB8FF</color>
+    <color name="image_gen_confirm_box_bg">#141B26</color>
+    <color name="image_gen_confirm_box_border">#374151</color>
+    <color name="image_gen_confirm_label_text">#8892A0</color>
+    <color name="image_gen_confirm_row_bg">#141B26</color>
+    <color name="image_gen_confirm_row_border">#374151</color>
+    <color name="image_gen_confirm_stepper_btn_bg">#1F2937</color>
+    <color name="image_gen_confirm_accent">#5BC0FF</color>
+    <color name="image_gen_confirm_accent_soft">#1F2E4A</color>
+
+    <!-- 生成中プログレスカード (ImageGenProgressCard) 専用パレット。ダークモード。 -->
+    <color name="image_gen_progress_bg">#1F2937</color>
+    <color name="image_gen_progress_accent">#5BC0FF</color>
+    <color name="image_gen_progress_accent_light">#B4E0FF</color>
+    <color name="image_gen_progress_track">#374151</color>
+    <color name="image_gen_progress_title">#F3F4F6</color>
+    <color name="image_gen_progress_dim_text">#D1D5DB</color>
+    <color name="image_gen_progress_faint_text">#8892A0</color>
+    <color name="image_gen_progress_preview_bg">#141B26</color>
+    <color name="image_gen_progress_preview_border">#374151</color>
 </resources>

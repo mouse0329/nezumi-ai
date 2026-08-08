@@ -87,6 +87,36 @@ import kotlinx.coroutines.isActive
 
 class UserStopCancellationException : CancellationException("Stopped by user")
 
+/**
+ * 画像生成前のユーザー確認ダイアログに渡すリクエスト情報。
+ * プロンプトに加え、確認時点で選択可能なモデル一覧・デフォルト値をまとめて渡すことで、
+ * ダイアログ側 (Compose) でモデル・ステップ数をその場で変更できるようにする。
+ *
+ * @param prompt 元のプロンプト (編集可能)
+ * @param availableModels 選択可能な SD モデルのディレクトリ名 (表示名) 一覧。空なら現行モデル固定。
+ * @param defaultModelName 現在選択されているモデルの表示名 (availableModels に含まれない場合もある)
+ * @param defaultSteps ツール呼び出し時点で解決済みのステップ数 (未指定なら設定のデフォルト値)
+ * @param minSteps / maxSteps ステップ数スライダーの範囲
+ */
+data class ImageGenConfirmationRequest(
+    val prompt: String,
+    val availableModels: List<String> = emptyList(),
+    val defaultModelName: String? = null,
+    val defaultSteps: Int,
+    val minSteps: Int = 8,
+    val maxSteps: Int = 60
+)
+
+/**
+ * ユーザーが確認ダイアログで「はい」を押した際に返す編集後の値。
+ * modelName が null の場合はツール呼び出し時点で解決済みのモデルをそのまま使う。
+ */
+data class ImageGenConfirmationResult(
+    val prompt: String,
+    val modelName: String? = null,
+    val steps: Int
+)
+
 class ChatViewModel(
     private val appContext: Context,
     private val sessionRepository: ChatSessionRepository,
@@ -609,10 +639,10 @@ class ChatViewModel(
     private val _currentTps = MutableStateFlow<Float?>(null)
     val currentTps: StateFlow<Float?> = _currentTps.asStateFlow()
 
-    private val _confirmationRequest = MutableStateFlow<String?>(null)
-    val confirmationRequest: StateFlow<String?> = _confirmationRequest.asStateFlow()
+    private val _confirmationRequest = MutableStateFlow<ImageGenConfirmationRequest?>(null)
+    val confirmationRequest: StateFlow<ImageGenConfirmationRequest?> = _confirmationRequest.asStateFlow()
 
-    private var imageGenConfirmCont: CancellableContinuation<String?>? = null
+    private var imageGenConfirmCont: CancellableContinuation<ImageGenConfirmationResult?>? = null
 
     @Volatile
     private var streamingAssistantMessageIdForTools: Long? = null
@@ -2885,12 +2915,45 @@ class ChatViewModel(
         return ToolResultCard.listToJsonArray(existingCards + stopCard)
     }
 
-    private suspend fun awaitImageGenerationConfirmation(initialPrompt: String): String? =
+    /**
+     * findAvailableSdModelPath / resolveSdModelPathByName と同じ 3 箇所 (sd_models / appDir /
+     * imported) を走査し、確認ダイアログのモデル選択に使う「ディレクトリ名 (表示名) のリスト」を返す。
+     * 実ファイルスキャンなので呼び出しはダイアログ表示前の 1 回のみに留める。
+     */
+    private fun listAvailableSdModelNames(): List<String> {
+        val names = mutableListOf<String>()
+        val sdModelsDir = File(appContext.filesDir, "sd_models")
+        sdModelsDir.listFiles()?.forEach { dir ->
+            if (!dir.isDirectory) return@forEach
+            val targetDir = resolveNestedSdModelDirForName(dir)
+            if (isProbableSdModelDir(targetDir)) names.add(targetDir.name)
+        }
+        val appDir = appContext.getExternalFilesDir(null)
+        appDir?.listFiles()?.forEach { file ->
+            if (isProbableSdModelDir(file)) names.add(file.name)
+        }
+        val importedDir = File(appContext.filesDir, "models/imported")
+        importedDir.listFiles()?.forEach { file ->
+            if (isProbableSdModelDir(file)) names.add(file.name)
+        }
+        return names.distinct()
+    }
+
+    private suspend fun awaitImageGenerationConfirmation(
+        initialPrompt: String,
+        defaultSteps: Int,
+        defaultModelName: String?
+    ): ImageGenConfirmationResult? =
         coroutineScope {
             withTimeoutOrNull(120_000L) {  // 120 秒タイムアウトに延長
                 suspendCancellableCoroutine { cont ->
                     imageGenConfirmCont = cont
-                    _confirmationRequest.value = initialPrompt
+                    _confirmationRequest.value = ImageGenConfirmationRequest(
+                        prompt = initialPrompt,
+                        availableModels = runCatching { listAvailableSdModelNames() }.getOrDefault(emptyList()),
+                        defaultModelName = defaultModelName,
+                        defaultSteps = defaultSteps
+                    )
                     Log.d(TAG, "awaitImageGenerationConfirmation: Waiting for user confirmation. Prompt: ${initialPrompt.take(50)}...")
                     cont.invokeOnCancellation {
                         Log.d(TAG, "awaitImageGenerationConfirmation: Coroutine cancelled")
@@ -2900,20 +2963,26 @@ class ChatViewModel(
                 }
             }.also { result ->
                 // タイムアウトまたは戻り値に関わらず、状態をクリア
-                Log.d(TAG, "awaitImageGenerationConfirmation: Completed with result: ${if (result == null) "null/cancelled" else "success (prompt=${result.take(30)}...)"}")
+                Log.d(TAG, "awaitImageGenerationConfirmation: Completed with result: ${if (result == null) "null/cancelled" else "success (prompt=${result.prompt.take(30)}..., model=${result.modelName}, steps=${result.steps})"}")
                 _confirmationRequest.value = null
                 imageGenConfirmCont = null
             }
         }
 
-    fun onConfirmGenerateImage(editedPrompt: String) {
-        Log.d(TAG, "onConfirmGenerateImage: Called with prompt: ${editedPrompt.take(50)}...")
+    fun onConfirmGenerateImage(editedPrompt: String, modelName: String?, steps: Int) {
+        Log.d(TAG, "onConfirmGenerateImage: Called with prompt: ${editedPrompt.take(50)}..., model=$modelName, steps=$steps")
         _confirmationRequest.value = null
         val c = imageGenConfirmCont
         imageGenConfirmCont = null
         if (c != null) {
             Log.d(TAG, "onConfirmGenerateImage: Resuming continuation")
-            c.resume(editedPrompt.trim())
+            c.resume(
+                ImageGenConfirmationResult(
+                    prompt = editedPrompt.trim(),
+                    modelName = modelName?.trim()?.takeIf { it.isNotBlank() },
+                    steps = steps
+                )
+            )
         } else {
             Log.w(TAG, "onConfirmGenerateImage: No continuation to resume (already cleared?)")
         }
@@ -3101,8 +3170,12 @@ class ChatViewModel(
         val seed = (toolCall.arguments["seed"] as? Number)?.toLong() ?: -1L
         val scheduler = SdScheduler.fromId(toolCall.arguments["scheduler"] as? String)
 
-        val edited = awaitImageGenerationConfirmation(prompt)
-        if (edited == null) {
+        val confirmation = awaitImageGenerationConfirmation(
+            initialPrompt = prompt,
+            defaultSteps = steps,
+            defaultModelName = requestedModelName ?: File(findAvailableSdModelPath()).name.takeIf { it.isNotBlank() }
+        )
+        if (confirmation == null) {
             // UI通知：キャンセル
             _imageGenProgress.value = null
             viewModelScope.launch {
@@ -3118,6 +3191,10 @@ class ChatViewModel(
                 payload = mapOf("success" to true, "message" to "キャンセルしました")
             )
         }
+        val edited = confirmation.prompt
+        // ユーザーが確認ダイアログでモデル/ステップ数を変更していれば、それを優先する。
+        val finalSteps = confirmation.steps.coerceIn(1, 50)
+        val finalRequestedModelName = confirmation.modelName ?: requestedModelName
 
         // 初期状態を早期にセットして、チャット画面へ進捗表示を開始する
         viewModelScope.launch {
@@ -3125,7 +3202,7 @@ class ChatViewModel(
                 toolName = "generate_image",
                 elapsedMs = SystemClock.elapsedRealtime()
             )
-            _imageGenProgress.value = Pair(0, steps)
+            _imageGenProgress.value = Pair(0, finalSteps)
         }
 
         val sdPath = findAvailableSdModelPath()
@@ -3155,12 +3232,12 @@ class ChatViewModel(
             negativePrompt = neg,
             width = w,
             height = h,
-            steps = steps,
+            steps = finalSteps,
             cfg = cfg,
             seed = seed,
             scheduler = scheduler,
             sdPath = sdPath,
-            requestedModelName = requestedModelName
+            requestedModelName = finalRequestedModelName
         )
  _uiMessage.emit("generate_image: 画像生成を開始します")
         return ToolExecutionResult(

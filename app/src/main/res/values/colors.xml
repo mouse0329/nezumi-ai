@@ -92,4 +92,35 @@
     <color name="tool_card_details_bg">#14000000</color>
     <color name="tool_card_details_label">#6B7280</color>
     <color name="tool_card_details_text">#2B2530</color>
+
+    <!--
+        画像生成確認カード (ImageGenConfirmationDialog) 専用パレット。
+        raw_context_dialog と同じく AlertDialog コンテナだが、内部にプロンプトボックス /
+        設定行 (モデル・ステップ数) を持つため、それぞれ独立した色リソースを用意する。
+        ライトモード: 白背景カード + ごく薄いグレーの内側ボックス。
+    -->
+    <color name="image_gen_confirm_bg">#FFFFFFFF</color>
+    <color name="image_gen_confirm_title_text">#111827</color>
+    <color name="image_gen_confirm_subtitle_text">#6B7280</color>
+    <color name="image_gen_confirm_icon_bg">#E7F0FE</color>
+    <color name="image_gen_confirm_icon_tint">#0284C7</color>
+    <color name="image_gen_confirm_box_bg">#F3F4F6</color>
+    <color name="image_gen_confirm_box_border">#E5E7EB</color>
+    <color name="image_gen_confirm_label_text">#9AA1AC</color>
+    <color name="image_gen_confirm_row_bg">#F3F4F6</color>
+    <color name="image_gen_confirm_row_border">#E5E7EB</color>
+    <color name="image_gen_confirm_stepper_btn_bg">#FFFFFFFF</color>
+    <color name="image_gen_confirm_accent">#0284C7</color>
+    <color name="image_gen_confirm_accent_soft">#E0F0FF</color>
+
+    <!-- 生成中プログレスカード (ImageGenProgressCard) 専用パレット。ライトモード。 -->
+    <color name="image_gen_progress_bg">#FFFFFFFF</color>
+    <color name="image_gen_progress_accent">#0284C7</color>
+    <color name="image_gen_progress_accent_light">#7BB8FF</color>
+    <color name="image_gen_progress_track">#E5E7EB</color>
+    <color name="image_gen_progress_title">#111827</color>
+    <color name="image_gen_progress_dim_text">#374151</color>
+    <color name="image_gen_progress_faint_text">#9AA1AC</color>
+    <color name="image_gen_progress_preview_bg">#F3F4F6</color>
+    <color name="image_gen_progress_preview_border">#E5E7EB</color>
 </resources>

@@ -991,8 +991,25 @@ VOICEVOX:ずんだもん / VOICEVOX:四国めたん / VOICEVOX:春日部つむ�
     <string name="nav_image_gen">画像生成</string>
     <string name="drawer_image_gen_start">画像生成を開く</string>
     <string name="image_gen_confirm_title">画像を生成しますか？</string>
-    <string name="image_gen_confirm_yes">はい</string>
+    <string name="image_gen_confirm_subtitle">この内容でリクエストを送ります</string>
+    <string name="image_gen_confirm_yes">はい、生成する</string>
     <string name="image_gen_confirm_no">いいえ</string>
+    <string name="image_gen_confirm_prompt_label">プロンプト</string>
+    <string name="image_gen_confirm_settings_label">生成設定</string>
+    <string name="image_gen_confirm_model_label">モデル</string>
+    <string name="image_gen_confirm_steps_label">ステップ数</string>
+    <string name="image_gen_confirm_steps_low">高速・粗い</string>
+    <string name="image_gen_confirm_steps_fast">速め</string>
+    <string name="image_gen_confirm_steps_std">標準</string>
+    <string name="image_gen_confirm_steps_high">高品質</string>
+    <string name="image_gen_confirm_steps_max">最高品質・低速</string>
+
+    <!-- 生成中プログレスカード (ImageGenProgressCard) -->
+    <string name="image_gen_progress_title">画像を生成中</string>
+    <string name="image_gen_progress_step_analyze">プロンプトを解析</string>
+    <string name="image_gen_progress_step_diffuse">拡散モデルで画像を生成（step %1$d/%2$d）</string>
+    <string name="image_gen_progress_step_finish">仕上げ処理</string>
+    <string name="image_gen_progress_preview_placeholder">プレビューをここに表示</string>
     <string name="image_gen_screen_title">画像生成 (SD)</string>
     <string name="image_gen_prompt_hint">プロンプト</string>
     <string name="image_gen_neg_hint">ネガティブプロンプト（任意）</string>
