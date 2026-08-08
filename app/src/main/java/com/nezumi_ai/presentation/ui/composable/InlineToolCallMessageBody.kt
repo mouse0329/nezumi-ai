@@ -3,8 +3,10 @@ package com.nezumi_ai.presentation.ui.composable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -27,6 +29,9 @@ import com.nezumi_ai.data.inference.ToolResultCard
  *
  * 依頼書の要件:
  *   [本文テキスト] → [ツールカード] → [本文テキスト] → [ツールカード] → [本文テキスト]
+ *   これら全体が「1つの吹き出し」の中に収まっている必要がある
+ *   (テキストとカードをそれぞれ別々の背景ブロックにして縦に並べるのではなく、
+ *    吹き出し背景は外側の Column に1つだけ持たせ、内部でテキスト/カードを重ねる)。
  *
  * ツール結果 (toolResults) と `<tool_call>` の対応付けは出現順マッチ。
  * 対応する結果が無い / まだ届いていない場合は Running カードとして表示する
@@ -48,19 +53,21 @@ fun InlineToolCallMessageBody(
     // タグが 1 つも無いレガシー本文 (旧DBレコード) はセグメント化されないので、
     // 従来通り単一の Markdown ブロックとして描画する。
     if (segments.none { it is GgufToolCallParser.Segment.ToolCallSegment }) {
-        BubbleTextBlock(text = content, modifier = modifier)
+        BubbleContainer(modifier = modifier) {
+            BubbleText(text = content)
+        }
         return
     }
 
-    Column(
-        modifier = modifier.fillMaxWidth()
-    ) {
+    // 吹き出し背景は BubbleContainer 側で1回だけ描画し、
+    // テキストセグメント・カードは同じ吹き出しの内側で縦に並べる。
+    BubbleContainer(modifier = modifier) {
         for (seg in segments) {
             when (seg) {
                 is GgufToolCallParser.Segment.TextSegment -> {
                     val t = seg.text.trim('\n', ' ', '\t')
                     if (t.isNotEmpty()) {
-                        BubbleTextBlock(text = t)
+                        BubbleText(text = t)
                     }
                 }
                 is GgufToolCallParser.Segment.ToolCallSegment -> {
@@ -84,14 +91,15 @@ fun InlineToolCallMessageBody(
 }
 
 /**
- * 吹き出し内テキスト用の Markdown ブロック。
- * MessageAdapter.GalleryMarkdownText と同等の見た目 (widthIn max=280dp, カード背景, padding 11dp)。
- * 依頼書「カード前後の本文は通常の吹き出し内テキストと同じスタイルで」に相当する。
+ * 吹き出し背景。MessageAdapter.GalleryMarkdownText と同等の見た目
+ * (widthIn max=280dp, カード背景, padding 11dp) を外側で1回だけ描画し、
+ * 内部にテキスト・ツールカードを isStreaming や tool_call の有無に関わらず
+ * 同じ1つの吹き出しとして縦に並べる。
  */
 @Composable
-private fun BubbleTextBlock(
-    text: String,
-    modifier: Modifier = Modifier
+private fun BubbleContainer(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
 ) {
     val shape = RoundedCornerShape(18.dp)
     Box(
@@ -104,18 +112,32 @@ private fun BubbleTextBlock(
             )
             .padding(11.dp)
     ) {
-        SelectionContainer {
-            ProvideTextStyle(
-                value = TextStyle(
-                    fontSize = 14.sp,
-                    lineHeight = 21.sp,
-                    color = colorResource(id = R.color.text_primary),
-                    letterSpacing = 0.2.sp
-                )
-            ) {
-                MaterialTheme {
-                    MarkdownLatexText(text = text, textSize = 40f)
-                }
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            content()
+        }
+    }
+}
+
+/**
+ * 吹き出し内側のテキストセグメント。背景・枠線は持たず、
+ * 外側の BubbleContainer が提供する吹き出し背景の上にそのまま乗る。
+ */
+@Composable
+private fun BubbleText(text: String) {
+    SelectionContainer {
+        ProvideTextStyle(
+            value = TextStyle(
+                fontSize = 14.sp,
+                lineHeight = 21.sp,
+                color = colorResource(id = R.color.text_primary),
+                letterSpacing = 0.2.sp
+            )
+        ) {
+            MaterialTheme {
+                MarkdownLatexText(text = text, textSize = 40f)
             }
         }
     }

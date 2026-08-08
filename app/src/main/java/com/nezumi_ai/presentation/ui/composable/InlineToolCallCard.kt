@@ -95,7 +95,6 @@ fun InlineToolCallCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
     ) {
         Column(
             modifier = Modifier

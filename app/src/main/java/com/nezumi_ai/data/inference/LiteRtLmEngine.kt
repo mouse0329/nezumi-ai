@@ -1347,9 +1347,15 @@ class LiteRtLmEngine(
                         inferenceStartMs = System.currentTimeMillis()
                         firstTokenMs = -1L
                         tokenCount = 0f
-                        val toolResponses = mutableListOf<Content>()
-                        // 複数ツール実行を並列化（非ブロッキング）
-                        val toolJobs = toolCallsInTurn.map { toolCall ->
+                        // 修正: 並列実行の速度は維持したまま、各ツールの結果を toolCallsInTurn の
+                        // インデックス位置に対応する配列スロットへ書き込み、全ツール完了後に
+                        // インデックス順で toolResultCards / toolResponses へ追記する。
+                        // toolResponses (モデルへの再入力用) も同じ理由で、実行完了順ではなく
+                        // 呼び出し順にしないと、モデルが「どの呼び出しに対する応答か」を
+                        // 取り違える可能性がある。
+                        val roundResultSlots = arrayOfNulls<ToolResultCard>(toolCallsInTurn.size)
+                        val roundResponseSlots = arrayOfNulls<Content.ToolResponse>(toolCallsInTurn.size)
+                        val toolJobs = toolCallsInTurn.mapIndexed { callIndex, toolCall ->
                             launch(Dispatchers.IO) {
                                 try {
                                     val result = toolExecutor.execute(toolCall)
@@ -1360,22 +1366,19 @@ class LiteRtLmEngine(
                                             status
                                         )
                                     ).isSuccess
-                                    synchronized(toolResponses) {
-                                        toolResponses.add(Content.ToolResponse(toolCall.name, result.payload))
+                                    roundResponseSlots[callIndex] =
+                                        Content.ToolResponse(toolCall.name, result.payload)
+                                    // ToolResultCard を蓄積（UI表示用）。
+                                    // toolCallsInTurn 内での元の呼び出し順 (callIndex) のスロットに
+                                    // 書き込むことで、実行完了順ではなく呼び出し順を保つ。
+                                    val jsonPayload = result.payload.mapValues { (_, v) ->
+                                        anyToJsonElement(v)
                                     }
-                                    // ToolResultCard を蓄積（UI表示用）
-                                    synchronized(toolResultCards) {
-                                        val jsonPayload = result.payload.mapValues { (_, v) ->
-                                            anyToJsonElement(v)
-                                        }
-                                        toolResultCards.add(
-                                            ToolResultCard(
-                                                toolName = toolCall.name.lowercase(),
-                                                success = result.success,
-                                                payload = jsonPayload
-                                            )
-                                        )
-                                    }
+                                    roundResultSlots[callIndex] = ToolResultCard(
+                                        toolName = toolCall.name.lowercase(),
+                                        success = result.success,
+                                        payload = jsonPayload
+                                    )
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Tool execution error: ${toolCall.name}", e)
                                     trySend(
@@ -1389,7 +1392,15 @@ class LiteRtLmEngine(
                         }
                         // すべてのツール実行が完了するまで待機
                         toolJobs.forEach { it.join() }
-                        pendingToolResponseMessage = Message.Companion.tool(Contents.of(toolResponses))
+                        // 呼び出し順 (callIndex) のまま toolResultCards / モデル応答へ追記する。
+                        // 例外で書き込まれなかったスロット (null) はスキップする。
+                        synchronized(toolResultCards) {
+                            roundResultSlots.forEach { card ->
+                                if (card != null) toolResultCards.add(card)
+                            }
+                        }
+                        val orderedToolResponses: List<Content> = roundResponseSlots.filterNotNull()
+                        pendingToolResponseMessage = Message.Companion.tool(Contents.of(orderedToolResponses))
                     }
 
                     // 最終サマリーログ
