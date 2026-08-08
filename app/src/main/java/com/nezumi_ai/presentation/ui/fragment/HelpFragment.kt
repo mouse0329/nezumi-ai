@@ -163,8 +163,34 @@ class HelpFragment : Fragment() {
     }
 
     private fun loadHelpText(): String {
-        val raw = requireContext().assets.open("nezumi-ai-help.md").bufferedReader().use { it.readText() }
+        // 現在の UI ロケール (LocaleHelper.wrap で attachBaseContext 後の resources.configuration) を
+        // 見て、英語履歴のときだけ assets/nezumi-ai-help-en.md をロードする。
+        // 英語版が見つからない・I/O エラーなどの保险として、失敗時は日本語版にフォールバックする。
+        val ctx = requireContext()
+        val assetName = pickHelpAssetName(ctx)
+        val raw = runCatching {
+            ctx.assets.open(assetName).bufferedReader().use { it.readText() }
+        }.getOrElse {
+            ctx.assets.open("nezumi-ai-help.md").bufferedReader().use { it.readText() }
+        }
         return raw.replace("\${appversion}", BuildConfig.VERSION_NAME)
+    }
+
+    /**
+     * 現在の UI ロケールに合わせてロードするヘルプ md のファイル名を選ぶ。
+     * ロケールは LocaleHelper.wrap によって既に Context に適用済みなので、
+     * `resources.configuration` の locale を見れば十分。日本語以外は英語版を採用する
+     * (使える UI 言語は現状 ja / en の 2 つだけなので、非-ja はすべて en に集約する)。
+     */
+    private fun pickHelpAssetName(ctx: android.content.Context): String {
+        val locale = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            ctx.resources.configuration.locales.get(0)
+        } else {
+            @Suppress("DEPRECATION")
+            ctx.resources.configuration.locale
+        }
+        val lang = locale?.language?.lowercase() ?: ""
+        return if (lang == "ja") "nezumi-ai-help.md" else "nezumi-ai-help-en.md"
     }
 
     private fun buildHeadingScrollOffsets(helpText: String, density: Float): Map<String, Int> {

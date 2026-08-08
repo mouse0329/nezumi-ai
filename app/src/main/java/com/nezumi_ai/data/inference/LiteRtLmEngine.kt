@@ -1401,6 +1401,46 @@ class LiteRtLmEngine(
                         }
                         val orderedToolResponses: List<Content> = roundResponseSlots.filterNotNull()
                         pendingToolResponseMessage = Message.Companion.tool(Contents.of(orderedToolResponses))
+
+                        // バグ修正 (tool_response が履歴コンテキストに保存されない):
+                        //   LiteRt は構造化 API (Message.Companion.tool(...)) でモデルにツール結果を戻すため、
+                        //   answerAccum (= チャット履歴の assistant.content になる文字列) には `<tool_response>`
+                        //   タグが残らない。次ターンのプロンプトを履歴から再構築する際に「モデルがどのツールを
+                        //   呼んで何が返ったか」の対応関係が完全に失われるので、GGUF 側と揃えて同じ `<tool_response>` フォーマットで
+                        //   answerAccum に合成挿入する。UI 側 (InlineToolCallCard) は card.payload を見て result を
+                        //   描画するので見た目は変わらないが、履歴プロンプトにはここで初めて tool_response が乗る。
+                        val toolResponseBlock = buildString {
+                            appendLine()
+                            // タグに乗せる name は呼び出し側の ToolCall.name を使う (litertlm の Content.ToolResponse の
+                            // プロパティ名に依存しないようにする)。roundResponseSlots と toolCallsInTurn は
+                            // 同じ callIndex の位置に対応している。
+                            roundResponseSlots.forEachIndexed { i, resp ->
+                                if (resp == null) return@forEachIndexed
+                                val card = roundResultSlots.getOrNull(i) ?: return@forEachIndexed
+                                val name = toolCallsInTurn.getOrNull(i)?.name ?: card.toolName
+                                appendLine("<tool_response>")
+                                appendLine("{\"name\":\"$name\",\"content\":${buildToolResponseContentJson(card)}}")
+                                appendLine("</tool_response>")
+                            }
+                        }
+                        if (toolResponseBlock.isNotBlank()) {
+                            answerAccum.append(toolResponseBlock)
+                            trySend(toolResponseBlock).isSuccess
+                        }
+
+                        // ライブ persist: ラウンド完了ごとに現時点の toolResultCards を JSON 化して送出し、
+                        //   UI 側がツールカードの result を生成中に展開できるようにする。
+                        //   以前は close() 直前の 1 回しか送らなかったため、モデルが最終回答を吐き終えるまで
+                        //   カードの “result” 行は (モデルへ送信済み) のプレースホルダーのままだった。
+                        synchronized(toolResultCards) {
+                            if (toolResultCards.isNotEmpty()) {
+                                trySend(
+                                    InferenceStreamProtocol.encodeToolResults(
+                                        ToolResultCard.listToJsonArray(toolResultCards)
+                                    )
+                                ).isSuccess
+                            }
+                        }
                     }
 
                     // 最終サマリーログ
@@ -1569,6 +1609,10 @@ class LiteRtLmEngine(
      * 埋め込むために使う (UI 側のインラインカード表示で必要)。
      */
     private fun buildToolCallJson(call: ToolCall): String {
+        return buildToolCallJsonInternal(call)
+    }
+
+    private fun buildToolCallJsonInternal(call: ToolCall): String {
         val argsJson = try {
             val entries = call.arguments.entries.joinToString(",") { (k, v) ->
                 "\"${k.replace("\"", "\\\"")}\":" + anyToJsonElement(v).toString()
@@ -1578,6 +1622,17 @@ class LiteRtLmEngine(
             "{}"
         }
         return "{\"name\":\"${call.name}\",\"arguments\":$argsJson}"
+    }
+
+    /**
+     * ToolResultCard の payload を GGUF 側の formatToolResults() と同じ `{"key":value,...}` 形式の
+     * JSON テキストにシリアライズする。<tool_response> タグの content フィールドに埋め込むために使う。
+     */
+    private fun buildToolResponseContentJson(card: ToolResultCard): String {
+        return runCatching {
+            val obj = JsonObject(card.payload)
+            obj.toString()
+        }.getOrElse { "{\"success\":${card.success}}" }
     }
 
     private fun anyToJsonElement(value: Any?): JsonElement {

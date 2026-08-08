@@ -70,4 +70,26 @@
     <!-- Raw context dialog -->
     <color name="raw_context_dialog_bg">#FFFFFFFF</color>
     <color name="raw_context_dialog_text">#111827</color>
+
+    <!--
+        Inline tool-call card palette.
+        旧ハードコードの薄青/薄紫/薄赤 + 白アイコン少底 (モック `nezumi-tool-calls-v2.html`) を
+        セマンティックカラーリソース化。values-night ではダーク背景にコントラストする
+        額と同系色の淡い色に差し替える。
+    -->
+    <color name="tool_card_running_bg">#E7F0FE</color>
+    <color name="tool_card_running_icon_bg">#FFFFFFFF</color>
+    <color name="tool_card_running_icon_tint">#2F9BFF</color>
+    <color name="tool_card_success_bg">#EDE6F3</color>
+    <color name="tool_card_success_icon_bg">#FFFFFFFF</color>
+    <color name="tool_card_success_icon_tint">#5A4B7A</color>
+    <color name="tool_card_error_bg">#FBE9E9</color>
+    <color name="tool_card_error_icon_bg">#FFFFFFFF</color>
+    <color name="tool_card_error_icon_tint">#C63A3A</color>
+    <color name="tool_card_title">#2B2530</color>
+    <color name="tool_card_subtitle">#6B7280</color>
+    <color name="tool_card_chevron">#9AA1AC</color>
+    <color name="tool_card_details_bg">#14000000</color>
+    <color name="tool_card_details_label">#6B7280</color>
+    <color name="tool_card_details_text">#2B2530</color>
 </resources>

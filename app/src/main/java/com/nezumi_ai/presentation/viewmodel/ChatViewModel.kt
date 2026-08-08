@@ -676,7 +676,7 @@ class ChatViewModel(
         selectedModel: String,
         error: Throwable?,
         title: String = "モデルロードエラー",
-        message: String = "モデルのロードに失敗しました。設定画面で再ダウンロードしてください。"
+        message: String = "モデルのロードに失敗しました。モデル管理画面で再ダウンロードしてください。"
     ) {
         val errorMsg = error?.message?.trim().takeUnless { it.isNullOrBlank() }
         val details = errorMsg?.let { "$it\nモデル: $selectedModel" }
@@ -1067,7 +1067,7 @@ class ChatViewModel(
                     Log.w(TAG, "モデルファイルの読み込みエラー: $normalizedModel")
                     _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
                         title = "モデルロードエラー",
-                        message = "モデルファイルが読み込めません。設定画面で再ダウンロードしてください。",
+                        message = "モデルファイルが読み込めません。モデル管理画面で再ダウンロードしてください。",
                         details = errorMsg
                     )
                     // ファイルを削除してリセット
@@ -1739,11 +1739,11 @@ class ChatViewModel(
                     // モーダルダイアログ用に詳細をセット
                     _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
                         title = "モデルロードエラー",
-                        message = "モデルファイルが読み込めません。設定画面で再ダウンロードしてください。",
+                        message = "モデルファイルが読み込めません。モデル管理画面で再ダウンロードしてください。",
                         details = if (errorMsg.isNotBlank()) "${errorMsg}\nパス: $selectedModel" else "パス: $selectedModel"
                     )
                     // 軽い通知も出す
- _uiMessage.emit("モデルファイルが読み込めません。設定画面で再ダウンロードしてください。")
+ _uiMessage.emit("モデルファイルが読み込めません。モデル管理画面で再ダウンロードしてください。")
 
                     // ファイルを削除してリセット
                     try {
@@ -2146,6 +2146,23 @@ class ChatViewModel(
                                             toolCallInProgress.set(false)
                                             if (toolResults != "[]") {
                                                 toolResultsJson = toolResults
+                                                // バグ修正 (生成中にツール結果がカードに見えない):
+                                                //   以前は finalFromModelGlobal != null の persist しか toolResultsJson を DB に
+                                                //   写さなかったため、モデルが最終回答を吐き終えるまでカードを展開しても
+                                                //   result 行が “(モデルへ送信済み)” のプレースホルダーのままだった。
+                                                //   ラウンド完了ごとに エンジン側 (Gguf/LiteRt) が送ってくるため、ここで即剋に
+                                                //   toolResultsJson だけを preserve で persist する (content は他パスの
+                                                //   タイミングで写かれるのでここでは触らない)。
+                                                viewModelScope.launch(Dispatchers.IO) {
+                                                    runCatching {
+                                                        messageRepository.updateToolResultsJson(
+                                                            messageId = activeStreamingMessageId,
+                                                            toolResultsJson = toolResults
+                                                        )
+                                                    }.onFailure {
+                                                        Log.w(TAG, "live updateToolResultsJson failed id=$activeStreamingMessageId", it)
+                                                    }
+                                                }
                                             }
                                             Log.d(TAG, "Tool results JSON received: length=${toolResults.length}")
                                         }
@@ -2676,13 +2693,13 @@ class ChatViewModel(
                 e.message?.contains("Web用モデル") == true ->
                     "このモデルはWeb用です。AndroidアプリではWeb用モデルは使用できません。本体デバイス用の.taskファイルをお使いください。"
                 e.message?.contains("END header") == true || e.message?.contains("zip END header") == true ->
-                    "モデルファイル(.task)のダウンロードが不完全です。ダウンロード中に中断された可能性があります。設定画面でモデルを削除して再度ダウンロードしてください。"
+                    "モデルファイル(.task)のダウンロードが不完全です。ダウンロード中に中断された可能性があります。モデル管理画面でモデルを削除して再度ダウンロードしてください。"
                 e.message?.contains("ZIPファイルが破損") == true ->
                     "モデルファイル(.task)が破損しています。コピー中にエラーが発生した可能性があります。ファイルを削除して再度追加してください。"
                 e.message?.contains("Unable to open zip archive") == true ->
-                    "モデルファイルが破損しているか不正な形式です。設定画面でモデルを再度ダウンロードしてください。"
+                    "モデルファイルが破損しているか不正な形式です。モデル管理画面でモデルを再度ダウンロードしてください。"
                 e.message?.contains("ZIP archive") == true ->
-                    "モデルファイルの整合性チェックに失敗しました。ダウンロードが不完全な可能性があります。設定画面でモデルを削除して再度ダウンロードしてください。"
+                    "モデルファイルの整合性チェックに失敗しました。ダウンロードが不完全な可能性があります。モデル管理画面でモデルを削除して再度ダウンロードしてください。"
                 e.message?.contains("Model not loaded") == true ->
                     "モデルがロードされていません。もう一度全てリセットしてから試してください。"
                 else -> "エラー: ${e.message ?: "Unknown error"}"
@@ -2941,7 +2958,7 @@ class ChatViewModel(
                     selectedModel = selectedModel,
                     error = result.exceptionOrNull(),
                     title = "モデル再ロードエラー",
-                    message = "LLMモデルの再ロードに失敗しました。設定画面で再ダウンロードしてください。"
+                    message = "LLMモデルの再ロードに失敗しました。モデル管理画面で再ダウンロードしてください。"
                 )
                 return
             }
@@ -2951,7 +2968,7 @@ class ChatViewModel(
                 selectedModel = selectedModel,
                 error = e,
                 title = "モデル再ロードエラー",
-                message = "LLMモデルの再ロードに失敗しました。設定画面で再ダウンロードしてください。"
+                message = "LLMモデルの再ロードに失敗しました。モデル管理画面で再ダウンロードしてください。"
             )
             return
         }

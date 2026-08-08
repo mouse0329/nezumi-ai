@@ -615,6 +615,18 @@ class GgufInferenceEngine(
                     }
                 }
 
+                // バグ修正 (tool_response が履歴コンテキストに入らない):
+                //   本文には `<tool_call>...</tool_call>` だけが残っており、対応する `<tool_response>`
+                //   タグはモデルへの次ラウンド入力 (currentPrompt) にしか入らないため、DB に保存される
+                //   assistant.content を次ターンのプロンプトへ再構築した際に「モデルがどのツールを呼んで
+                //   何が返ったか」の対応関係が完全に失われる。同じ formatToolResults を fullAnswer にも埋め込むことで、
+                //   タグごと保存され・UI の InlineToolCallCard は依然として展開時に `card.payload` を見て
+                //   result を描画できるので見た目は変わらない。
+                val toolResponseBlock = GgufToolCallParser.formatToolResults(toolResults)
+                if (toolResponseBlock.isNotEmpty()) {
+                    fullAnswer.append(toolResponseBlock)
+                }
+
                 if (toolResultCards.isNotEmpty()) {
                     val toolResultsJson = ToolResultCard.listToJsonArray(toolResultCards)
                     trySend(InferenceStreamProtocol.encodeToolResults(toolResultsJson))
@@ -628,7 +640,7 @@ class GgufInferenceEngine(
                 currentPrompt = buildString {
                     append(prompt)
                     append(Gemma4ThinkingParser.stripThinkingForModelPrompt(roundText))
-                    append(GgufToolCallParser.formatToolResults(toolResults))
+                    append(toolResponseBlock)
                 }
                 withContext(Dispatchers.IO) {
                     ctx.clearKvCache()

@@ -50,4 +50,27 @@
     <!-- Raw context dialog -->
     <color name="raw_context_dialog_bg">#1F2937</color>
     <color name="raw_context_dialog_text">#F3F4F6</color>
+
+    <!--
+        Inline tool-call card palette (dark).
+        カード背景は周囲の吹き出し (surface_card = #1F2937) と 4〜6% のコントラストを保ちつつ
+        ライトモードと同じ「青/紫/赤のハロ」を保つように彩度低めの次百一色系を使う。
+        アイコン少底はライトモードでは白だったが、ダークではカード内部でも背景とのコントラストを
+        保つため同系の一段道いトーンにし、アイコンの tint をハイレイトカラーに変えて視認性を確保する。
+    -->
+    <color name="tool_card_running_bg">#1F2E4A</color>
+    <color name="tool_card_running_icon_bg">#0F1A33</color>
+    <color name="tool_card_running_icon_tint">#7BB8FF</color>
+    <color name="tool_card_success_bg">#312A3E</color>
+    <color name="tool_card_success_icon_bg">#1B1626</color>
+    <color name="tool_card_success_icon_tint">#C7B8E3</color>
+    <color name="tool_card_error_bg">#40272A</color>
+    <color name="tool_card_error_icon_bg">#241416</color>
+    <color name="tool_card_error_icon_tint">#F19191</color>
+    <color name="tool_card_title">#F3F4F6</color>
+    <color name="tool_card_subtitle">#B8C0CC</color>
+    <color name="tool_card_chevron">#8892A0</color>
+    <color name="tool_card_details_bg">#33000000</color>
+    <color name="tool_card_details_label">#B8C0CC</color>
+    <color name="tool_card_details_text">#F3F4F6</color>
 </resources>

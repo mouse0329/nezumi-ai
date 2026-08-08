@@ -249,11 +249,21 @@ object Gemma4ThinkingParser {
     /**
      * モデルコンテキスト（プロンプト・圧縮入力）用。
      * DB の assistant [content] に思考タグやチャネルマーカーが残っていても、可視回答のみを返す。
+     *
+     * `<tool_call>` / `<tool_response>` タグは意図的に保持する。会話履歴を次ターンのプロンプトへ
+     * 再構築する際、タグごとそのままコンテキストに含めておかないと以下の 2 点が壊れるため：
+     *   - モデル側がツール呼び出しと結果の対応関係を追えなくなる
+     *   - UI 側 (GgufToolCallParser.parseSegments) が再表示時にインライン tool-call カードの
+     *     位置を復元できず、履歴の該当メッセージでカードが消える
+     * 思考タグ (`<think>` / `<|channel|>thought`) はここでも従来どおり除去される。
      */
     fun answerOnlyForModelContext(assistantContent: String): String {
         val t = assistantContent.trim()
         if (t.isEmpty()) return ""
-        return sanitizeVisibleText(parse(t).answer).trim()
+        return sanitizeVisibleText(
+            parse(t, preserveToolCallTags = true).answer,
+            preserveToolCallTags = true
+        ).trim()
     }
 
     /**

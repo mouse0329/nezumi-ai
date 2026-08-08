@@ -112,6 +112,27 @@ class MessageRepository(private val dao: MessageDao) {
         )
     }
 
+    /**
+     * ライブ更新専用: toolResultsJson だけを即剋に上書きする。
+     *
+     * バグ修正 (生成中にツール結果がカードに見えない):
+     *   以前はツール結果を finalFromModelGlobal != null の persist でしか DB に写いていなかったため、
+     *   モデルが最終回答を吐き終えるまでカードを展開しても result 行がプレースホルダー
+     *   のままだった。 エンジン側 (Gguf / LiteRt) がラウンド完了ごとに toolResults を送って
+     *   くるので、ChatViewModel がこのメソッドで即剋に DB へ反映すると Room の Flow 経由で UI へ
+     *   直接届く (展開中カードの result 行も現実の値になる)。
+     *
+     *   content / isStreaming / thinkingContent は他パスのタイミングで写かれるので、ここでは
+     *   触らない (既存値を保持する)。
+     */
+    suspend fun updateToolResultsJson(
+        messageId: Long,
+        toolResultsJson: String
+    ) {
+        val current = dao.getMessageById(messageId) ?: return
+        dao.update(current.copy(toolResultsJson = toolResultsJson))
+    }
+
     private suspend fun updateMessageContentInternal(
         messageId: Long,
         content: String,

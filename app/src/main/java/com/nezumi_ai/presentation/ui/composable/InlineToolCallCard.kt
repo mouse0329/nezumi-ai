@@ -30,10 +30,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nezumi_ai.R
 import com.nezumi_ai.data.inference.ToolResultCard
 import com.google.ai.edge.litertlm.ToolCall
 
@@ -67,26 +69,33 @@ fun InlineToolCallCard(
     status: InlineToolCallStatus,
     modifier: Modifier = Modifier
 ) {
+    // ダークモード対応: 背景・アイコン少底・アイコン tint はセマンティックな color リソースに列す、
+    // values-night でダーク背景とコントラストする値に差し替える。ハードコードはポーシーズ・ハネリスト
+    // マークなどをハードコードしていた旧実装は、ダークモードでカードが周囲の吹き出しと一体化して
+    // 見えなくなる問題があったためこのリソース化を行う。
     val (bgColor, iconBg, iconContent, iconColor) = when (status) {
         InlineToolCallStatus.Running -> ToolCardVisuals(
-            bg = Color(0xFFE7F0FE),
-            iconBg = Color(0xFFFFFFFF),
+            bg = colorResource(id = R.color.tool_card_running_bg),
+            iconBg = colorResource(id = R.color.tool_card_running_icon_bg),
             iconContent = ToolCardIcon.Spinner,
-            iconTint = Color(0xFF2F9BFF)
+            iconTint = colorResource(id = R.color.tool_card_running_icon_tint)
         )
         is InlineToolCallStatus.Success -> ToolCardVisuals(
-            bg = Color(0xFFEDE6F3),
-            iconBg = Color(0xFFFFFFFF),
+            bg = colorResource(id = R.color.tool_card_success_bg),
+            iconBg = colorResource(id = R.color.tool_card_success_icon_bg),
             iconContent = ToolCardIcon.Check,
-            iconTint = Color(0xFF5A4B7A)
+            iconTint = colorResource(id = R.color.tool_card_success_icon_tint)
         )
         is InlineToolCallStatus.Error -> ToolCardVisuals(
-            bg = Color(0xFFFBE9E9),
-            iconBg = Color(0xFFFFFFFF),
+            bg = colorResource(id = R.color.tool_card_error_bg),
+            iconBg = colorResource(id = R.color.tool_card_error_icon_bg),
             iconContent = ToolCardIcon.Cross,
-            iconTint = Color(0xFFC63A3A)
+            iconTint = colorResource(id = R.color.tool_card_error_icon_tint)
         )
     }
+    val titleColor = colorResource(id = R.color.tool_card_title)
+    val subtitleColor = colorResource(id = R.color.tool_card_subtitle)
+    val chevronColor = colorResource(id = R.color.tool_card_chevron)
 
     var expanded by remember { mutableStateOf(false) }
     val title = titleForToolCall(toolCall, rawJson)
@@ -140,7 +149,7 @@ fun InlineToolCallCard(
                 ) {
                     Text(
                         text = title,
-                        color = Color(0xFF2B2530),
+                        color = titleColor,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                         lineHeight = 18.sp
@@ -149,7 +158,7 @@ fun InlineToolCallCard(
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = subtitle,
-                            color = Color(0xFF6B7280),
+                            color = subtitleColor,
                             fontSize = 12.sp,
                             fontFamily = FontFamily.Monospace,
                             lineHeight = 16.sp
@@ -158,7 +167,7 @@ fun InlineToolCallCard(
                 }
                 Text(
                     text = if (expanded) "▾" else "▸",
-                    color = Color(0xFF9AA1AC),
+                    color = chevronColor,
                     fontSize = 14.sp
                 )
             }
@@ -212,15 +221,18 @@ private fun InlineToolCallDetails(
         }.ifBlank { "(エラー詳細なし)" }
     }
 
+    val detailsBg = colorResource(id = R.color.tool_card_details_bg)
+    val labelColor = colorResource(id = R.color.tool_card_details_label)
+    val textColor = colorResource(id = R.color.tool_card_details_text)
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0x14000000), shape = RoundedCornerShape(8.dp))
+            .background(detailsBg, shape = RoundedCornerShape(8.dp))
             .padding(10.dp)
     ) {
         Text(
             text = "arguments",
-            color = Color(0xFF6B7280),
+            color = labelColor,
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold
         )
@@ -228,7 +240,7 @@ private fun InlineToolCallDetails(
         SelectionContainer {
             Text(
                 text = argumentsText,
-                color = Color(0xFF2B2530),
+                color = textColor,
                 fontSize = 12.sp,
                 fontFamily = FontFamily.Monospace,
                 lineHeight = 16.sp,
@@ -241,7 +253,7 @@ private fun InlineToolCallDetails(
         Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = "result",
-            color = Color(0xFF6B7280),
+            color = labelColor,
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold
         )
@@ -249,7 +261,7 @@ private fun InlineToolCallDetails(
         SelectionContainer {
             Text(
                 text = resultText,
-                color = Color(0xFF2B2530),
+                color = textColor,
                 fontSize = 12.sp,
                 fontFamily = FontFamily.Monospace,
                 lineHeight = 16.sp,
