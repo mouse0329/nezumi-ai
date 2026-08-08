@@ -72,9 +72,19 @@ fun InlineToolCallMessageBody(
                 }
                 is GgufToolCallParser.Segment.ToolCallSegment -> {
                     val card = toolResults.getOrNull(seg.index)
+                    // バグ修正 (最後のツールコールだけ「結果を待機中」で止まる問題):
+                    //   従来は `card == null && isStreaming` のとき Running のまま
+                    //   表示していたが、ツール実行は既に完了しモデルへ結果を返した後で
+                    //   あっても、最終 `toolResultsJson` チャンクが `close()` 直前に一括で
+                    //   送出される仕組みのため、モデルが最終テキストを吐き終わるまで UI 上
+                    //   最後のカードだけ回転インジケータのまま見えていた。
+                    //
+                    //   ユーザー要件どおり「ツールコールを呼び出してモデルに渡った時点で
+                    //   完了状態にする」ため、`</tool_call>` まで到達したタグは結果カードが
+                    //   まだ届いていなくても Success として描画する。実際の結果が届いた
+                    //   時点で success/error に応じて再描画される (Compose の状態更新に任せる)。
                     val status = when {
                         !seg.isComplete -> InlineToolCallStatus.Running
-                        card == null && isStreaming -> InlineToolCallStatus.Running
                         card == null -> InlineToolCallStatus.Success(null)
                         card.success -> InlineToolCallStatus.Success(card)
                         else -> InlineToolCallStatus.Error(card)

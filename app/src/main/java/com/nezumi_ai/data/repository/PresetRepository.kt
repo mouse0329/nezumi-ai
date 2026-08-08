@@ -235,24 +235,35 @@ class PresetRepository(
 
     private suspend fun updateNezumiAiDefaultTools() {
         val existing = dao.getById(DEFAULT_NEZUMI_AI_ID) ?: return
-        // デフォルトプリセットのツールを初期有効化セットに更新。
-        // web_search / flashlight はユーザーが明示的に有効化するまで OFF。
-        // 既にユーザーが有効化していたものは尊重して保持する。
-        val currentTools = runCatching {
+        // バグ修正 (プリセットを保存してもアプリを再起動すると戻る問題):
+        //   旧実装は起動のたびに `defaultInitiallyEnabledToolIds` (現在は空リスト) +
+        //   WEB_SEARCH/FLASHLIGHT だけの狭い集合を再構築して DB を上書きしていた。
+        //   このためユーザーが GET_TIME / GET_BATTERY / MEMORY / IMAGE_GENERATION
+        //   などにチェックを入れて保存しても、次回起動で強制的に外されて
+        //   しまうというリグレッションが発生していた。
+        //
+        //   修正方針:
+        //     (a) 既存の enabledTools JSON が正常にパースできる場合は、
+        //         ユーザーの選択を一切上書きしない。
+        //     (b) パースに失敗したケース(旧バージョンからの壊れデータなど)
+        //         だけ、`defaultInitiallyEnabledToolIds` で初期化し直す。
+        //     (c) 新ツールが PresetConstants に追加されても自動で現在の
+        //         プリセットには入れない。ユーザーが明示的に選択する仕様に揃える。
+        val parsed = runCatching {
             val arr = org.json.JSONArray(existing.enabledTools)
             buildList { for (i in 0 until arr.length()) add(arr.optString(i)) }
-        }.getOrDefault(emptyList())
-        val merged = LinkedHashSet<String>().apply {
-            addAll(PresetConstants.defaultInitiallyEnabledToolIds)
-            if (PresetConstants.TOOL_WEB_SEARCH in currentTools) add(PresetConstants.TOOL_WEB_SEARCH)
-            if (PresetConstants.TOOL_FLASHLIGHT in currentTools) add(PresetConstants.TOOL_FLASHLIGHT)
         }
-        val updatedTools = encodeToolIds(merged.toList())
-        if (existing.enabledTools != updatedTools) {
-            dao.update(existing.copy(enabledTools = updatedTools, updatedAt = System.currentTimeMillis()))
-            // 現在選択中のプリセットがデフォルトなら、ToolPreferences も更新
+        if (parsed.isSuccess) {
+            // パース成功 = ユーザーの選択は保存されているとみなし、一切変更しない。
+            // (新規デフォルトツールの追加は createNezumiAiDefault 側で行う)
+            return
+        }
+        // パース失敗 (壊れている or 形式変更) のときだけリセットする。
+        val fallback = encodeToolIds(PresetConstants.defaultInitiallyEnabledToolIds)
+        if (existing.enabledTools != fallback) {
+            dao.update(existing.copy(enabledTools = fallback, updatedAt = System.currentTimeMillis()))
             if (PreferencesHelper.getCurrentPresetId(context) == DEFAULT_NEZUMI_AI_ID) {
-                applyPresetTools(existing.copy(enabledTools = updatedTools))
+                applyPresetTools(existing.copy(enabledTools = fallback))
             }
         }
     }

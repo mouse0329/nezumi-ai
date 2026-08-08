@@ -193,7 +193,13 @@ private fun InlineToolCallDetails(
             ?.entries
             ?.joinToString("\n") { (k, v) -> "$k: $v" }
             ?.ifBlank { "(結果なし)" }
-            ?: "(結果を待機中)"
+        // バグ修正 (最後のツールコールだけ結果が出ないバグ):
+        //   InlineToolCallMessageBody 側でタグが complete になった時点で Success に
+        //   遷移させるようにしたため、ここでは `card == null` = 「モデルへ送信済みで
+        //   結果 JSON はまだ流れてきていない」状態を意味する。旧文言「(結果を待機中)」は
+        //   ユーザーには「ツールが止まっている」ように見えてしまうため、送信済みで
+        //   あることが伝わる表記に置き換える。
+            ?: "(モデルへ送信済み)"
         is InlineToolCallStatus.Error -> buildString {
             val msg = status.message?.takeIf { it.isNotBlank() }
             if (msg != null) {
