@@ -20,14 +20,38 @@ object TextFileAttachmentEncoding {
 
     data class TextFileEntry(
         val name: String,
-        val uri: String
+        val uri: String,
+        /**
+         * PDF/Word/Excel 等のドキュメントをピック時点で Markdown 変換し、
+         * uri が変換後の .md ファイルを指している場合に true。
+         * ビュワーはこのフラグを見て「プレビュー可」と「変換前バイナリ」を区別する
+         * (name には元の拡張子が残るため、拡張子だけでは判定できない)。
+         */
+        val isConvertedDocument: Boolean = false
     )
 
     fun encode(entry: TextFileEntry): String {
-        return "$SCHEME?name=${enc(entry.name)}&uri=${enc(entry.uri)}"
+        val docParam = if (entry.isConvertedDocument) "&doc=1" else ""
+        return "$SCHEME?name=${enc(entry.name)}&uri=${enc(entry.uri)}$docParam"
     }
 
     fun isMarker(token: String): Boolean = token.startsWith(MARKER_PREFIX)
+
+    /**
+     * Word / PDF / Excel / PowerPoint などのバイナリドキュメントかどうかを
+     * 拡張子で判定する。
+     *
+     * これらのファイルはプレーンテキストとして読み込めないため、添付の送信時に
+     * Chaquopy 経由の MarkItDown で Markdown 変換し、変換結果の本文を
+     * プレーンテキスト添付と同じ <txtfile> ブロックとしてモデルに渡す。
+     */
+    fun isDocumentFile(name: String): Boolean =
+        name.substringAfterLast('.', "").lowercase() in DOCUMENT_FILE_EXTENSIONS
+
+    /** UI 層のファイルピッカーと同じ定義。拡張子は小文字・ドット無しで持つ。 */
+    private val DOCUMENT_FILE_EXTENSIONS = setOf(
+        "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx"
+    )
 
     fun tryDecode(token: String): TextFileEntry? {
         if (!isMarker(token)) return null
@@ -38,7 +62,8 @@ object TextFileAttachmentEncoding {
         }.toMap()
         val name = map["name"]?.takeIf { it.isNotBlank() } ?: return null
         val uri = map["uri"]?.takeIf { it.isNotBlank() } ?: return null
-        return TextFileEntry(name = name, uri = uri)
+        val isConvertedDocument = map["doc"] == "1"
+        return TextFileEntry(name = name, uri = uri, isConvertedDocument = isConvertedDocument)
     }
 
     /**

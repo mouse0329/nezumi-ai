@@ -13,9 +13,11 @@ private const val AUTHORITY_SUFFIX = ".fileprovider"
 private const val DOCS_DIR_NAME = "generated_documents"
 
 /**
- * Markdown ⇔ Word/PDF/Excel 変換の窓口。
- * NezumiLiteRtTools (ツールディスパッチャ) から呼ばれ、ファイル生成・保存・
- * FileProvider URI 発行までを一括して行う。
+ * Markdown → Word/PDF/Excel 生成、および添付ドキュメントの Markdown 抽出の窓口。
+ * 生成側は NezumiLiteRtTools (ツールディスパッチャ) 経由で呼ばれ、
+ * ファイル生成・保存・FileProvider URI 発行までを一括して行う。
+ * 読み取り側 (extractMarkdownText) は ChatFragment がドキュメント添付を
+ * ピックした時点で (送信を待たずに) 直接呼ばれる。
  */
 object DocumentConversionManager {
 
@@ -125,34 +127,40 @@ object DocumentConversionManager {
     }
 
     /**
-     * PDF/Word/Excel などのファイルを Markdown に変換する（Chaquopy 経由の MarkItDown）。
+     * 添付時にドキュメント (PDF/Word/Excel/PowerPoint) をその場で Markdown に変換し、
+     * 本文テキストとして返す。.md ファイルは残さず、
+     * 変換後の一時ファイルもここで削除する (モデルへ渡す本文だけが必要なため)。
      *
-     * @param sourceFilePath 変換元ファイルの絶対パス（content:// URI はあらかじめ
-     *   filesDir 配下等にコピーしておくこと。Python 側は file:// のローカルパスのみ扱う）
+     * @param sourceRef 生パス / file:// / content:// / nezumi://txtfile マーカー
      */
-    suspend fun convertFileToMarkdown(
+    suspend fun extractMarkdownText(
         context: Context,
-        sourceFilePath: String,
-        baseName: String? = null
+        sourceRef: String
     ): ExtractResult = withContext(Dispatchers.IO) {
-        val sourceFile = resolveToLocalFile(context, sourceFilePath)
+        val sourceFile = resolveToLocalFile(context, sourceRef)
             ?: return@withContext ExtractResult(
                 success = false,
                 errorCode = "file_not_found",
-                errorMessage = "Could not resolve source file: $sourceFilePath"
+                errorMessage = "Could not resolve source file: $sourceRef"
             )
 
-        val safeName = sanitizeFileName(baseName)
-            ?: sourceFile.nameWithoutExtension.ifBlank { "document_${UUID.randomUUID().toString().take(8)}" }
-        val outputFile = File(getDocsDir(context), "$safeName.md")
+        // 出力は tmp_in 配下の使い捨てファイル。読み戻したら即削除する。
+        val tmpDir = File(getDocsDir(context), "tmp_in").apply { mkdirs() }
+        val outputFile = File(tmpDir, "attach_${UUID.randomUUID().toString().take(8)}.md")
 
-        val result = DocToMdPythonBridge.convertFileToMarkdown(
-            context = context,
-            inputPath = sourceFile.absolutePath,
-            outputPath = outputFile.absolutePath
-        )
+        val result = try {
+            DocToMdPythonBridge.convertFileToMarkdown(
+                context = context,
+                inputPath = sourceFile.absolutePath,
+                outputPath = outputFile.absolutePath
+            )
+        } finally {
+            // 変換元が content:// 由来の一時コピーの場合は、ここではまだ消さない
+            // (添付ファイル自体は送信後もカード表示・再参照に使うため)。
+        }
 
         if (!result.success) {
+            outputFile.delete()
             return@withContext ExtractResult(
                 success = false,
                 errorCode = result.errorCode,
@@ -163,15 +171,15 @@ object DocumentConversionManager {
         val markdownText = try {
             outputFile.readText(Charsets.UTF_8)
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to read back generated markdown file, using preview only", e)
+            Log.w(TAG, "Failed to read back attachment markdown, using preview only", e)
             result.preview.orEmpty()
+        } finally {
+            outputFile.delete()
         }
 
         ExtractResult(
             success = true,
             markdown = markdownText,
-            markdownFilePath = outputFile.absolutePath,
-            markdownFileUri = uriFor(context, outputFile),
             charCount = result.charCount
         )
     }

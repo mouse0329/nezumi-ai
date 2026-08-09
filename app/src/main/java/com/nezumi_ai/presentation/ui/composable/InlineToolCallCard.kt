@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -67,7 +68,13 @@ fun InlineToolCallCard(
     toolCall: ToolCall?,
     rawJson: String,
     status: InlineToolCallStatus,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    // ドキュメント生成ツール (convert_md_to_document) の結果カード用の「保存」コールバック。
+    //   ツールは Markdown 本文とファイル名をカードに載せるだけで、実際の
+    //   docx/pdf/xlsx への変換はこのコールバック内 (ChatFragment) で行われる。
+    //   onComplete は変換+保存が終わった時点で必ず呼ぶこと (カード側の
+    //   スピナーを止めるために使う)。null なら保存ボタンは表示しない。
+    onSaveDocument: ((markdown: String, format: String, fileName: String, onComplete: (Boolean) -> Unit) -> Unit)? = null
 ) {
     // ダークモード対応: 背景・アイコン少底・アイコン tint はセマンティックな color リソースに列す、
     // values-night でダーク背景とコントラストする値に差し替える。ハードコードはポーシーズ・ハネリスト
@@ -170,6 +177,62 @@ fun InlineToolCallCard(
                     color = chevronColor,
                     fontSize = 14.sp
                 )
+            }
+
+            // ドキュメント生成 (convert_md_to_document) のカードには「保存」ボタンを添える。
+            //   ツール実行時点では実体ファイルはまだ無く、カードの payload に載っている
+            //   Markdown 本文 (markdown) とファイル名 (fileName) ・形式 (format) を
+            //   ボタン押下時に ChatFragment へ渡し、そこで初めて変換→保存が行われる。
+            //   変換中はボタンがスピナーに変わる。複数のカードが同時にあっても、
+            //   それぞれが独立した saving 状態とボタンを持つため個別に保存できる。
+            if (status is InlineToolCallStatus.Success && onSaveDocument != null) {
+                val markdown = status.card?.getPayloadString("markdown")
+                val format = status.card?.getPayloadString("format")
+                val fileName = status.card?.getPayloadString("fileName")
+                val toolName = status.card?.toolName ?: ""
+                if (!markdown.isNullOrBlank() && !format.isNullOrBlank() &&
+                    !fileName.isNullOrBlank() &&
+                    (toolName == "convert_md_to_document" || toolName == "convertmdtodocument")
+                ) {
+                    var saving by remember { mutableStateOf(false) }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier
+                                .background(
+                                    colorResource(id = R.color.tool_card_details_bg),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                                .clickable(enabled = !saving) {
+                                    saving = true
+                                    onSaveDocument.invoke(markdown, format, fileName) { saving = false }
+                                }
+                                .padding(horizontal = 14.dp, vertical = 7.dp)
+                        ) {
+                            if (saving) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                    color = colorResource(id = R.color.primary)
+                                )
+                            }
+                            Text(
+                                text = stringResource(
+                                    id = if (saving) R.string.docgen_saving_button
+                                    else R.string.docgen_save_button
+                                ),
+                                color = colorResource(id = R.color.primary),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
             }
 
             if (expanded) {
@@ -309,8 +372,7 @@ private fun titleForToolCall(toolCall: ToolCall?, rawJson: String): String {
         "get_current_time", "getcurrenttime" -> "現在時刻を確認"
         "get_battery_level", "getbatterylevel" -> "バッテリー残量を確認"
         "generate_image", "generateimage" -> "画像を生成"
-        "convert_md_to_document", "convertmdtodocument" -> "ドキュメントに変換"
-        "convert_document_to_md", "convertdocumenttomd" -> "Markdownに変換"
+        "convert_md_to_document", "convertmdtodocument" -> "ドキュメントを準備"
         else -> name
     }
 }

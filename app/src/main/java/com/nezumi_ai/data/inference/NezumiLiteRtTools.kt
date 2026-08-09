@@ -107,10 +107,6 @@ private val TOOL_NAME_MAP = mapOf(
     "convert_md_to_document" to "convertmdtodocument",
     "convertMdToDocument"    to "convertmdtodocument",
     "convertmdtodocument"    to "convertmdtodocument",
-    // convert_document_to_md: PDF/Word/Excel → Markdown
-    "convert_document_to_md" to "convertdocumenttomd",
-    "convertDocumentToMd"    to "convertdocumenttomd",
-    "convertdocumenttomd"    to "convertdocumenttomd",
 )
 
 // ─────────────────────────────────────────────
@@ -163,10 +159,6 @@ internal fun buildEnabledToolProviders(context: Context, alarmDao: AlarmDao): Li
         if (NezumiTool.CONVERT_MD_TO_DOCUMENT in enabled) {
             Log.d(TOOL_TAG, "Adding ConvertMdToDocumentSchema to tool providers")
             add(tool(ConvertMdToDocumentSchema()))
-        }
-        if (NezumiTool.CONVERT_DOCUMENT_TO_MD in enabled) {
-            Log.d(TOOL_TAG, "Adding ConvertDocumentToMdSchema to tool providers")
-            add(tool(ConvertDocumentToMdSchema()))
         }
         // MCP: 現在のプリセットに MCP サーバーが付いていれば汎用ディスパッチャを公開する。
         // LiteRT はアノテーション経由の固定スキーマのため、別途 tools/list の内容は
@@ -352,24 +344,12 @@ private class ConvertMdToDocumentSchema : ToolSet {
     @Tool(
         description = "Convert Markdown text into a Word (.docx), PDF (.pdf), or Excel (.xlsx) file. " +
             "Supports headings, paragraphs, bullet/numbered lists, tables, code blocks, quotes, bold/italic text. " +
-            "The generated file is saved and shown to the user in the chat."
+            "The content is placed on a card in the chat. The actual file is converted and saved when the user taps Save."
     )
     fun convertMdToDocument(
         @ToolParam(description = "The Markdown text to convert") markdown: String,
         @ToolParam(description = "Output format: 'docx', 'pdf', or 'xlsx'") format: String,
         @ToolParam(description = "Optional output file name without extension") fileName: String?
-    ): Map<String, Any?> = emptyMap()
-}
-
-private class ConvertDocumentToMdSchema : ToolSet {
-    @Tool(
-        description = "Convert a PDF, Word (.docx), or Excel (.xlsx/.xls) file that the user has uploaded/attached " +
-            "into Markdown text. Use the file path or attachment reference from the current conversation. " +
-            "Returns the converted Markdown content."
-    )
-    fun convertDocumentToMd(
-        @ToolParam(description = "Absolute file path or content URI of the source PDF/Word/Excel file") filePath: String,
-        @ToolParam(description = "Optional output file name (without extension) for the resulting .md file") fileName: String?
     ): Map<String, Any?> = emptyMap()
 }
 
@@ -423,7 +403,6 @@ internal class NezumiLiteRtToolExecutor(
             // "listcalendarevents" -> executeListCalendarEvents(toolCall)
             "websearch"       -> executeWebSearch(toolCall)
             "convertmdtodocument"  -> executeConvertMdToDocument(toolCall)
-            "convertdocumenttomd"  -> executeConvertDocumentToMd(toolCall)
             "mcpcall"         -> executeMcpCall(toolCall)
             "mcplisttools"    -> executeMcpListTools()
             else -> {
@@ -460,7 +439,6 @@ internal class NezumiLiteRtToolExecutor(
             // "listcalendarevents" -> NezumiTool.LIST_CALENDAR_EVENTS
             "websearch" -> NezumiTool.WEB_SEARCH
             "convertmdtodocument" -> NezumiTool.CONVERT_MD_TO_DOCUMENT
-            "convertdocumenttomd" -> NezumiTool.CONVERT_DOCUMENT_TO_MD
             // mcpcall / mcplisttools はプリセット側の MCP サーバー ID で制御されるため、
             // NezumiTool にはマッピングしない
             "mcpcall" -> null
@@ -1065,25 +1043,6 @@ internal class NezumiLiteRtToolExecutor(
             throw e
         } catch (e: Exception) {
             Log.e(TOOL_TAG, "executeConvertMdToDocument: handler threw", e)
-            ToolExecutionResult(
-                success = false,
-                payload = mapOf("success" to false, "error" to (e.message ?: "handler_error"))
-            )
-        }
-    }
-
-    private suspend fun executeConvertDocumentToMd(toolCall: ToolCall): ToolExecutionResult {
-        val handler = DocumentToolBridge.convertDocumentToMdHandler
-            ?: return ToolExecutionResult(
-                success = false,
-                payload = mapOf("success" to false, "error" to "convert_document_to_md_handler_missing")
-            )
-        return try {
-            handler.handle(toolCall)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e(TOOL_TAG, "executeConvertDocumentToMd: handler threw", e)
             ToolExecutionResult(
                 success = false,
                 payload = mapOf("success" to false, "error" to (e.message ?: "handler_error"))

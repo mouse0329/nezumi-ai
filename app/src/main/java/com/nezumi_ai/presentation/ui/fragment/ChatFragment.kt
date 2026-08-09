@@ -97,6 +97,7 @@ import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.stripGemmaTokens
 import com.nezumi_ai.data.inference.stripTxtFileBlocks
+import com.nezumi_ai.data.inference.stripVideoBlocks
 import com.nezumi_ai.data.repository.ChatSessionRepository
 import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.MessageRepository
@@ -270,7 +271,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     /**
      * 選択された元動画 URI とメタ情報。DB スキーマを変えない方針でメモリ内のみ保持。
      * ビュワーとプレビューでの "動画を見せる" 用と、送信時に Gemma 4 向けプロンプトに
-     * 【音声・尺】 / 【フレーム一覧】 ヘッダを差し込むための情報源として使う。
+     * <video> ブロック (音声メタ / フレーム一覧) を差し込むための情報源として使う。
      */
     private var selectedVideoUri by mutableStateOf<String?>(null)
     private var selectedVideoDurationMs: Long = 0L
@@ -283,6 +284,14 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var selectedTextFiles by mutableStateOf<List<com.nezumi_ai.data.media.TextFileAttachmentEncoding.TextFileEntry>>(emptyList())
     /** 動画選択後、フレーム/音声抽出が完了するまで true。抽出中は送信不可にする。 */
     private var isExtractingVideo by mutableStateOf(false)
+    /**
+     * ドキュメント添付 (PDF/Word/Excel等) の Markdown 変換が進行中かどうか。
+     * 動画のフレーム抽出 (isExtractingVideo) と同じ思想で、変換完了までは
+     * 送信ボタンを無効化し、プレビューバーにスピナーチップを表示する。
+     */
+    private var isConvertingDocument by mutableStateOf(false)
+    /** 現在変換中のドキュメント名 (複数同時添付は逐次処理。表示用) */
+    private var convertingDocumentName by mutableStateOf<String?>(null)
     private var cameraImageUri: Uri? = null
     private var imageInputEnabled = true
     private var audioInputEnabled = true
@@ -399,6 +408,78 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     // NOTE: Kotlin のブロックコメントはネスト可能なので、KDoc 内に `image/*` のような
     // `/*` を含む文字列を書くと新しいブロックコメント開始と見なされて
     // ファイル末尾までコメントになってしまう。ここは 行コメントにすること。
+    // ドキュメント生成カード (convert_md_to_document) の「保存」ボタン用。
+    //   ツール実行時点では実体ファイルは無く、カードの payload に載っている
+    //   Markdown 本文だけがある。保存ボタンが押されたら pendingDocumentSaveRequest に
+    //   Markdown/形式/ファイル名を保持して SAF の保存ダイアログを開き、
+    //   保存先が決まった時点で初めて Markdown → docx/pdf/xlsx の変換を行う。
+    //   カード側のスピナーは onComplete コールバックで止める。
+    private data class PendingDocumentSave(
+        val markdown: String,
+        val format: String,
+        val fileName: String,
+        val onComplete: (Boolean) -> Unit
+    )
+    private var pendingDocumentSaveRequest: PendingDocumentSave? = null
+
+    private val documentSaverLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("*/*")
+    ) { destUri ->
+        val request = pendingDocumentSaveRequest
+        pendingDocumentSaveRequest = null
+        if (request == null) return@registerForActivityResult
+        if (destUri == null) {
+            // ユーザーが保存ダイアログをキャンセルした。スピナーだけ止める。
+            request.onComplete(false)
+            return@registerForActivityResult
+        }
+        val ctx = requireContext().applicationContext
+        val format = when (request.format) {
+            "docx" -> com.nezumi_ai.data.document.DocumentConversionManager.TargetFormat.DOCX
+            "pdf" -> com.nezumi_ai.data.document.DocumentConversionManager.TargetFormat.PDF
+            "xlsx" -> com.nezumi_ai.data.document.DocumentConversionManager.TargetFormat.XLSX
+            else -> null
+        }
+        if (format == null) {
+            request.onComplete(false)
+            return@registerForActivityResult
+        }
+        // 変換 (Apache POI / PDFBox) は IO スレッドで行う。
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val ok = runCatching {
+                val result = com.nezumi_ai.data.document.DocumentConversionManager
+                    .generateFromMarkdown(
+                        context = ctx,
+                        markdown = request.markdown,
+                        format = format,
+                        baseName = request.fileName.substringBeforeLast('.')
+                    )
+                if (!result.success || result.filePath.isNullOrBlank()) {
+                    throw java.io.IOException(result.errorMessage ?: "conversion failed")
+                }
+                java.io.File(result.filePath).inputStream().use { input ->
+                    ctx.contentResolver.openOutputStream(destUri)?.use { output ->
+                        input.copyTo(output)
+                    } ?: throw java.io.IOException("openOutputStream returned null")
+                }
+            }.onFailure { e ->
+                Log.e(TAG, "Failed to convert/save generated document: ${request.fileName}", e)
+            }.isSuccess
+            withContext(Dispatchers.Main) {
+                request.onComplete(ok)
+                context?.let {
+                    Toast.makeText(
+                        it,
+                        getString(
+                            if (ok) R.string.docgen_saved_toast else R.string.docgen_save_failed_toast
+                        ),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    }
+
     private val genericFilePickerLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -448,11 +529,15 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     com.nezumi_ai.data.media.VideoFrameExtractor.extract(ctx, uri)
                 }
                 if (extracted == null || extracted.frames.isEmpty()) {
-                    Toast.makeText(
-                        requireContext(),
-                        "動画のフレーム抽出に失敗しました",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    // コルーチン完了時にビューが破棄済みだと requireContext() が落ちるため
+                    // context?.let でガードする (NPE クラッシュの修正)。
+                    context?.let {
+                        Toast.makeText(
+                            it,
+                            "動画のフレーム抽出に失敗しました",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                     return@launch
                 }
                 // フレームを PNG としてキャッシュに書き出し、 file:// URI にする
@@ -475,11 +560,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     }
                 }
                 if (frameUris.isEmpty()) {
-                    Toast.makeText(
-                        requireContext(),
-                        "動画フレームの保存に失敗しました",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    context?.let {
+                        Toast.makeText(
+                            it,
+                            "動画フレームの保存に失敗しました",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                     return@launch
                 }
                 // 既存の手動選択画像はクリアして、動画のフレームに入れ替える
@@ -501,13 +588,103 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     /**
+     * ピッカーで選ばれたドキュメント (PDF/Word/Excel/PowerPoint) を、送信を待たず
+     * この時点で Markdown に変換する。動画のフレーム抽出 (processPickedVideo) と
+     * 同じ思想で、変換が完了するまで送信ボタンを無効化し、プレビューバーには
+     * 変換中スピナーを表示する。
+     *
+     * 変換に成功すると、変換後の .md を message_media に保存した URI を持つ
+     * TextFileEntry (isConvertedDocument=true) として添付一覧に載せる。
+     * こうすることで、
+     *   - 送信時のプロンプト埋め込みは既存の <txtfile> 経路 (buildTxtFilePromptBlocks)
+     *     がそのまま .md を読むだけで済む
+     *   - 添付チップ / 送信後カードのタップでビュワーから内容を確認できる
+     * 変換に失敗した場合は添付せずトーストで通知する。
+     */
+    private fun processPickedDocument(uri: Uri, displayName: String) {
+        val ctx = requireContext().applicationContext
+        isConvertingDocument = true
+        convertingDocumentName = displayName
+        renderSendButtonState()
+        updateMediaPreview()
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    com.nezumi_ai.data.document.DocumentConversionManager
+                        .extractMarkdownText(ctx, uri.toString())
+                }
+                if (!result.success || result.markdown.isNullOrBlank()) {
+                    Log.w(
+                        TAG,
+                        "Document conversion failed for $displayName: " +
+                            "${result.errorCode} / ${result.errorMessage}"
+                    )
+                    context?.let {
+                        Toast.makeText(
+                            it,
+                            getString(R.string.docfile_convert_failed_toast, displayName),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    return@launch
+                }
+                // 変換結果を .md として永続化し、ビュワー表示と <txtfile> 埋め込みの
+                // 両方で再利用できるようにする。name には元のファイル名 (拡張子付き) を
+                // 残し、isConvertedDocument=true で「中身は .md」であることを示す。
+                val mdUri = withContext(Dispatchers.IO) {
+                    com.nezumi_ai.data.media.MessageMediaStore.persistTextContent(
+                        ctx, result.markdown, displayName
+                    )
+                }
+                if (mdUri == null) {
+                    context?.let {
+                        Toast.makeText(
+                            it,
+                            getString(R.string.docfile_convert_failed_toast, displayName),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    return@launch
+                }
+                val entry = com.nezumi_ai.data.media.TextFileAttachmentEncoding.TextFileEntry(
+                    name = displayName,
+                    uri = mdUri,
+                    isConvertedDocument = true
+                )
+                if (selectedTextFiles.any { it.uri == entry.uri }) {
+                    context?.let {
+                        Toast.makeText(it, "このファイルは既に追加されています", Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                selectedTextFiles = selectedTextFiles + entry
+                context?.let {
+                    Toast.makeText(
+                        it,
+                        getString(R.string.txtfile_added_toast, displayName),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } finally {
+                // 成功・失敗・早期returnのいずれでも必ずスピナーを止め、送信を再度可能にする。
+                isConvertingDocument = false
+                convertingDocumentName = null
+                renderSendButtonState()
+                updateMediaPreview()
+            }
+        }
+    }
+
+    /**
      * Gemma 4 (LiteRT-LM) 向けのプロンプト整形。
-     * 動画を送信するときだけ、ユーザー本文の先頭に
-     *   【音声（0秒～N秒、モデルに音声を直接添付）】
-     *   【動画フレーム一覧（1fps、合計M枚）】
-     *   img_<uuid>.jpg: 0秒
-     *   img_<uuid>.jpg: 1秒
+     * 動画を送信するときだけ、ユーザー本文の先頭に英語の <video> ブロックとして
+     *   <video>
+     *   Audio track (0s to Ns) is attached directly to the model.
+     *   Video frames sampled at 1 fps, M frames in total:
+     *   img_<uuid>.jpg: 0s
+     *   img_<uuid>.jpg: 1s
      *   ...
+     *   </video>
      * を差し込む。
      *
      * フレームの識別子は、モデルに実際に添付される画像の basename
@@ -522,18 +699,24 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         durationMs: Long,
         hasAudio: Boolean
     ): String {
+        // 動画メタ情報は <video>...</video> で囲んでモデルに渡す。
+        //   - 日本語ヘッダ (【音声…】【動画フレーム一覧…】) だと Gemma 4 が日本語説明文に
+        //     引っ張られて英語質問への回答も日本語化しがちだったため、英語の記述に変更。
+        //   - UI の吹き出し・セッションタイトルには出さない
+        //     (stripVideoBlocks で除去 / buildSessionTitle 側でも除外)。
         val frameCount = frameUris.size
         val sec = (durationMs / 1000L).coerceAtLeast(1L)
         val sb = StringBuilder()
+        sb.append("<video>")
         if (hasAudio) {
-            sb.append("【音声（0秒～${sec}秒、モデルに音声を直接添付）】\n")
+            sb.append("Audio track (0s to ${sec}s) is attached directly to the model.\n")
         }
-        sb.append("【動画フレーム一覧（1fps、合計${frameCount}枚）】\n")
+        sb.append("Video frames sampled at 1 fps, ${frameCount} frames in total:\n")
         for (i in 0 until frameCount) {
             val name = extractDisplayName(frameUris[i], fallback = "frame_${i + 1}")
-            sb.append("$name: ${i}秒\n")
+            sb.append("$name: ${i}s\n")
         }
-        sb.append("\n")
+        sb.append("</video>\n")
         sb.append(userText)
         return sb.toString()
     }
@@ -685,7 +868,28 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 viewModel.selectAssistantVariant(parentId, newIndex)
             },
             lifecycleOwner = viewLifecycleOwner,
-            viewModelStoreOwner = this
+            viewModelStoreOwner = this,
+            // 生成ドキュメント (docx/pdf/xlsx) の「保存」ボタン。
+            //   カード側からファイル名と内部 URI を受け取り、SAF の保存ダイアログを開く。
+            //   ランチャーの結果コールバックに対象 URI を引き渡すため pending に保持する
+            //   (複数カードがあっても「最後に押されたカード」のファイルだけが対象になる)。
+            onSaveGeneratedDocument = { markdown, format, fileName, onComplete ->
+                pendingDocumentSaveRequest = PendingDocumentSave(markdown, format, fileName, onComplete)
+                runCatching {
+                    documentSaverLauncher.launch(fileName)
+                }.onFailure { e ->
+                    Log.e(TAG, "Error launching document saver", e)
+                    pendingDocumentSaveRequest = null
+                    onComplete(false)
+                    context?.let {
+                        Toast.makeText(
+                            it,
+                            getString(R.string.docgen_save_failed_toast),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
         )
         binding.messagesRecyclerView.layoutManager = LinearLayoutManager(requireContext()).apply {
             stackFromEnd = false
@@ -889,6 +1093,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         content = msg.content
                             .stripGemmaTokens(preserveToolCallTags = true)
                             .stripTxtFileBlocks()
+                            .stripVideoBlocks()
                     )
                 }
                 val empty = filteredMessages.isEmpty()
@@ -914,9 +1119,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 viewModel.stopGeneration()
                 return@setOnClickListener
             }
-            // isEnabled 制御の取りこぼし対策。動画のフレーム/音声抽出がまだ終わっていない間は
+            // isEnabled 制御の取りこぼし対策。動画のフレーム/音声抽出や
+            // ドキュメントの Markdown 変換がまだ終わっていない間は
             // 送信できる添付物が確定していないため、ここでも明示的にブロックする。
-            if (isExtractingVideo) {
+            if (isExtractingVideo || isConvertingDocument) {
                 return@setOnClickListener
             }
             val message = binding.messageInput.text.toString().trim()
@@ -928,88 +1134,102 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             // (「これ何？」すら打たずに音声/画像だけ送る) が弾かれてしまっていたため、
             // メディアが1つでも添付されていればテキスト空でも送信できるようにする。
             if (message.isNotEmpty() || hasMediaToSend) {
-                val imagesToSend = if (imageInputEnabled) selectedImageUrisList else emptyList()
-                val audioToSend = if (audioInputEnabled) selectedAudioUri else null
-                val videoUriToSend = selectedVideoUri
-                // Gemma 4 向けのプロンプト整形: 動画を送っているときだけ先頭に
-                // 【音声(0秒〜本体直接添付)】 / 【フレーム一覧(1fps)】ヘッダを差し込む。
-                // フレームの basename をプロンプトに埋め込むので、モデルが実際に受け取る
-                // img_<uuid>.jpg と一致させるためここで先行 persist して確定ファイル名を得る。
-                val imagesPersisted = if (videoUriToSend != null && imagesToSend.isNotEmpty()) {
-                    imagesToSend.map { uriStr ->
-                        com.nezumi_ai.data.media.MessageMediaStore.persistUriIfNeeded(
-                            requireContext().applicationContext, uriStr
-                        ) ?: uriStr
-                    }
-                } else imagesToSend
-                // 動画本体もセッション削除時に一緒に掃除できるよう message_media にコピーしておく。
-                // 以前はピッカーが返した content:// をそのまま DB に入れていたため、
-                // セッションごと削除しても外部ストレージ側の動画は残り続けていた。
-                val videoPersisted = if (videoUriToSend != null) {
-                    com.nezumi_ai.data.media.MessageMediaStore.persistVideoUriIfNeeded(
-                        requireContext().applicationContext, videoUriToSend
-                    ) ?: videoUriToSend
-                } else null
-                // テキストファイル添付: 実体を message_media に永続化した上で、
-                // 内容を <txtfile>{name:"...",body:"..."}</txtfile> としてプロンプト先頭に挿入する。
-                // このタグはモデル向けの情報であり、UI の吹き出しには表示しない
-                // (stripTxtFileBlocks で除去する)。
-                val persistedTextFiles = selectedTextFiles.mapNotNull { entry ->
-                    val persisted = com.nezumi_ai.data.media.MessageMediaStore.persistTextFileIfNeeded(
-                        requireContext().applicationContext, entry.uri, entry.name
-                    )
-                    if (persisted != null) entry.copy(uri = persisted) else null
-                }
-                val messageWithTextFiles = if (persistedTextFiles.isNotEmpty()) {
-                    com.nezumi_ai.data.media.MessageMediaStore.buildTxtFilePromptBlocks(
-                        persistedTextFiles, requireContext().applicationContext
-                    ) + message
-                } else {
-                    message
-                }
-                val effectiveMessage = if (videoPersisted != null && imagesPersisted.isNotEmpty()) {
-                    buildVideoAwarePrompt(
-                        userText = messageWithTextFiles,
-                        frameUris = imagesPersisted,
-                        durationMs = selectedVideoDurationMs,
-                        hasAudio = audioToSend != null
-                    )
-                } else {
-                    messageWithTextFiles
-                }
-                // 元動画 URI + 音声 URI + 長さ を "フレーム列の先頭にマーカーとして差し込む"
-                // ことで DB スキーマを変えずに後から MediaViewerDialog で展開できるようにする。
-                // テキスト添付は nezumi://txtfile マーカーとして imageUri 列に載せる。
-                //   DB スキーマを変えずに「このメッセージに添付されたテキストファイル一覧」を
-                //   復元できるようにするため (VideoAttachmentEncoding と同じ思想)。
-                val textFileMarkers = persistedTextFiles.map {
-                    com.nezumi_ai.data.media.TextFileAttachmentEncoding.encode(it)
-                }
-                val imagesFinal = if (videoPersisted != null && imagesPersisted.isNotEmpty()) {
-                    listOf(
-                        com.nezumi_ai.data.media.VideoAttachmentEncoding.encode(
-                            com.nezumi_ai.data.media.VideoAttachmentEncoding.Meta(
-                                originalVideoUri = videoPersisted,
-                                audioUri = audioToSend,
-                                durationMs = selectedVideoDurationMs
-                            )
+                // ドキュメント添付 (PDF/Word/Excel等) の Markdown 変換が suspend 関数のため、
+                // 送信処理全体をコルーチンで実行する。変換は IO スレッドで行い、
+                // 失敗時のトーストと sendMessageWithMedia は Main に戻して呼ぶ。
+                viewLifecycleOwner.lifecycleScope.launch {
+                    // Fragment が変換中に detach される可能性があるため、
+                    // コルーチン冒頭で applicationContext をキャプチャして使い回す。
+                    val appCtx = requireContext().applicationContext
+                    val imagesToSend = if (imageInputEnabled) selectedImageUrisList else emptyList()
+                    val audioToSend = if (audioInputEnabled) selectedAudioUri else null
+                    val videoUriToSend = selectedVideoUri
+                    // Gemma 4 向けのプロンプト整形: 動画を送っているときだけ先頭に
+                    // 英語の <video> ブロック (音声メタ / フレーム一覧) を差し込む。
+                    // フレームの basename をプロンプトに埋め込むので、モデルが実際に受け取る
+                    // img_<uuid>.jpg と一致させるためここで先行 persist して確定ファイル名を得る。
+                    val imagesPersisted = if (videoUriToSend != null && imagesToSend.isNotEmpty()) {
+                        imagesToSend.map { uriStr ->
+                            com.nezumi_ai.data.media.MessageMediaStore.persistUriIfNeeded(
+                                appCtx, uriStr
+                            ) ?: uriStr
+                        }
+                    } else imagesToSend
+                    // 動画本体もセッション削除時に一緒に掃除できるよう message_media にコピーしておく。
+                    // 以前はピッカーが返した content:// をそのまま DB に入れていたため、
+                    // セッションごと削除しても外部ストレージ側の動画は残り続けていた。
+                    val videoPersisted = if (videoUriToSend != null) {
+                        com.nezumi_ai.data.media.MessageMediaStore.persistVideoUriIfNeeded(
+                            appCtx, videoUriToSend
+                        ) ?: videoUriToSend
+                    } else null
+                    // テキストファイル添付: 実体を message_media に永続化した上で、
+                    // 内容を <txtfile>{name:"...",body:"..."}</txtfile> としてプロンプト先頭に挿入する。
+                    // このタグはモデル向けの情報であり、UI の吹き出しには表示しない
+                    // (stripTxtFileBlocks で除去する)。
+                    val persistedTextFiles = selectedTextFiles.mapNotNull { entry ->
+                        val persisted = com.nezumi_ai.data.media.MessageMediaStore.persistTextFileIfNeeded(
+                            appCtx, entry.uri, entry.name
                         )
-                    ) + imagesPersisted + textFileMarkers
-                } else {
-                    imagesPersisted + textFileMarkers
+                        if (persisted != null) entry.copy(uri = persisted) else null
+                    }
+                    // ドキュメント添付 (PDF/Word/Excel/PowerPoint) はピック時点で
+                    // Markdown に変換済み (processPickedDocument) で、uri は変換後の
+                    // .md ファイルを指している。プレーンテキスト添付と同じく
+                    // buildTxtFilePromptBlocks が <txtfile>{name,body} を組み立てるだけでよい。
+                    val attachmentPromptPrefix =
+                        com.nezumi_ai.data.media.MessageMediaStore.buildTxtFilePromptBlocks(
+                            persistedTextFiles, appCtx
+                        )
+                    val messageWithTextFiles = if (attachmentPromptPrefix.isNotEmpty()) {
+                        attachmentPromptPrefix + message
+                    } else {
+                        message
+                    }
+                    val effectiveMessage = if (videoPersisted != null && imagesPersisted.isNotEmpty()) {
+                        buildVideoAwarePrompt(
+                            userText = messageWithTextFiles,
+                            frameUris = imagesPersisted,
+                            durationMs = selectedVideoDurationMs,
+                            hasAudio = audioToSend != null
+                        )
+                    } else {
+                        messageWithTextFiles
+                    }
+                    // 元動画 URI + 音声 URI + 長さ を "フレーム列の先頭にマーカーとして差し込む"
+                    // ことで DB スキーマを変えずに後から MediaViewerDialog で展開できるようにする。
+                    // テキスト添付は nezumi://txtfile マーカーとして imageUri 列に載せる。
+                    //   DB スキーマを変えずに「このメッセージに添付されたテキストファイル一覧」を
+                    //   復元できるようにするため (VideoAttachmentEncoding と同じ思想)。
+                    val textFileMarkers = persistedTextFiles.map {
+                        com.nezumi_ai.data.media.TextFileAttachmentEncoding.encode(it)
+                    }
+                    val imagesFinal = if (videoPersisted != null && imagesPersisted.isNotEmpty()) {
+                        listOf(
+                            com.nezumi_ai.data.media.VideoAttachmentEncoding.encode(
+                                com.nezumi_ai.data.media.VideoAttachmentEncoding.Meta(
+                                    originalVideoUri = videoPersisted,
+                                    audioUri = audioToSend,
+                                    durationMs = selectedVideoDurationMs
+                                )
+                            )
+                        ) + imagesPersisted + textFileMarkers
+                    } else {
+                        imagesPersisted + textFileMarkers
+                    }
+                    userScrolledAwayDuringGeneration = false
+                    autoFollowBottomLocked = true
+                    postGenerationSettleActive = false
+                    viewModel.sendMessageWithMedia(effectiveMessage, imagesFinal, audioToSend)
+                    binding.messageInput.text?.clear()
+                    selectedImageUrisList = emptyList()
+                    selectedAudioUri = null
+                    selectedVideoUri = null
+                    selectedVideoDurationMs = 0L
+                    selectedVideoFrameCount = 0
+                    selectedTextFiles = emptyList()
+                    updateMediaPreview()
                 }
-                userScrolledAwayDuringGeneration = false
-                autoFollowBottomLocked = true
-                postGenerationSettleActive = false
-                viewModel.sendMessageWithMedia(effectiveMessage, imagesFinal, audioToSend)
-                binding.messageInput.text?.clear()
-                selectedImageUrisList = emptyList()
-                selectedAudioUri = null
-                selectedVideoUri = null
-                selectedVideoDurationMs = 0L
-                selectedVideoFrameCount = 0
-                selectedTextFiles = emptyList()
-                updateMediaPreview()
             }
         }
 
@@ -1786,13 +2006,17 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     )
 
     private fun renderSendButtonState() {
-        binding.sendButton.setImageResource(
+        // NPE 修正: processPickedVideo 等のコルーチン完了時に Fragment のビューが
+        // 既に破棄されていると binding (_binding!!) が NPE を投げてクラッシュする。
+        // ビューが無いなら描画すべきボタン自体が存在しないので、安全に何もしない。
+        val b = _binding ?: return
+        b.sendButton.setImageResource(
             if (isGenerating) R.drawable.ic_stop else R.drawable.ic_send
         )
         // 動画のフレーム/音声抽出中は、まだ送信できる添付物が確定していないため送信不可にする。
         // 生成停止ボタンとしての利用（isGenerating時）は動画抽出中とは独立に常に有効のままにする。
-        binding.sendButton.isEnabled =
-            isGenerating || (!isModelLoadingNow && !isExtractingVideo)
+        b.sendButton.isEnabled =
+            isGenerating || (!isModelLoadingNow && !isExtractingVideo && !isConvertingDocument)
     }
 
     private fun updateMediaAvailability(modelKey: String) {
@@ -1950,6 +2174,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         selectedAudioUri = null
                     },
                     isExtractingVideo = isExtractingVideo,
+                    isConvertingDocument = isConvertingDocument,
+                    convertingDocumentName = convertingDocumentName,
                     onOpenViewer = { selectedKey ->
                         val bundle = com.nezumi_ai.presentation.ui.component.MediaViewerDialog.MediaBundle(
                             imageUris = selectedImageUrisList,
@@ -2625,6 +2851,18 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             //   拡張子だけで MIME が application/octet-stream になるものは、後段の
             //   handlePickedGenericFile() で拡張子フォールバック判定する。
             mimes += listOf("text/*", "application/json", "application/octet-stream")
+            // ドキュメント (PDF / Word / Excel / PowerPoint)。
+            //   バイナリ本文はモデルに直接渡せないため、送信時に Chaquopy 経由の
+            //   MarkItDown で Markdown 変換し、その本文を <txtfile> としてモデルに渡す。
+            mimes += listOf(
+                "application/pdf",
+                "application/msword",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/vnd.ms-excel",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "application/vnd.ms-powerpoint",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            )
             if (mimes.isEmpty()) {
                 Toast.makeText(ctx, "このモデルではファイル添付は無効です", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
@@ -2670,6 +2908,19 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             mime == "application/json" ||
             fallbackExt in TEXT_FILE_EXTENSIONS ||
             displayNameExt in TEXT_FILE_EXTENSIONS
+        // ドキュメント (PDF / Word / Excel / PowerPoint) 判定。
+        //   表示名の拡張子も見るのは isText と同じ理由 (SAF 経由だと lastPathSegment に
+        //   拡張子が載らないことがあるため)。
+        val isDocument = mime == "application/pdf" ||
+            mime == "application/msword" ||
+            mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+            mime == "application/vnd.ms-excel" ||
+            mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+            mime == "application/vnd.ms-powerpoint" ||
+            mime == "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+            com.nezumi_ai.data.media.TextFileAttachmentEncoding.isDocumentFile(
+                extractDisplayName(uri.toString(), fallback = "")
+            )
 
         when {
             isImage -> {
@@ -2716,6 +2967,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 selectedAudioUri = uri.toString()
                 updateMediaPreview()
                 Toast.makeText(requireContext(), "音声を追加しました", Toast.LENGTH_SHORT).show()
+            }
+            isDocument -> {
+                // ドキュメント (PDF/Word/Excel/PowerPoint) はピック時点で
+                // Markdown に変換する (動画のフレーム抽出と同じ思想)。
+                // 変換が済んでから送信可能になり、変換後の .md はビュワーで閲覧できる。
+                val displayName = extractDisplayName(uri.toString(), fallback = "document.pdf")
+                processPickedDocument(uri, displayName)
             }
             isText -> {
                 val displayName = extractDisplayName(uri.toString(), fallback = "text.txt")

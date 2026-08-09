@@ -40,13 +40,19 @@ import com.nezumi_ai.data.inference.ToolResultCard
  * @param content <tool_call>...</tool_call> タグを保持したままの本文
  * @param toolResults 出現順に並んだツール実行結果 (無ければ空)
  * @param isStreaming ストリーミング中フラグ (末尾未完タグの扱いに影響)
+ * @param onSaveDocument ドキュメント生成カードの「保存」ボタンのコールバック。
+ *   カードごとに独立して呼ばれるため、1メッセージ内で複数ドキュメントが
+ *   生成されても個別に保存先を選べる。実際の docx/pdf/xlsx 変換はこの
+ *   コールバック内で行われ、完了時に onComplete が呼ばれる。
+ *   null なら保存ボタン自体を出さない。
  */
 @Composable
 fun InlineToolCallMessageBody(
     content: String,
     toolResults: List<ToolResultCard>,
     isStreaming: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onSaveDocument: ((markdown: String, format: String, fileName: String, onComplete: (Boolean) -> Unit) -> Unit)? = null
 ) {
     val segments = GgufToolCallParser.parseSegments(content)
     val inlineToolResponseCards = GgufToolCallParser.parseToolResponseCards(content)
@@ -98,7 +104,8 @@ fun InlineToolCallMessageBody(
                     InlineToolCallCard(
                         toolCall = seg.toolCall,
                         rawJson = seg.rawJson,
-                        status = status
+                        status = status,
+                        onSaveDocument = onSaveDocument
                     )
                 }
             }

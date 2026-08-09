@@ -476,13 +476,17 @@ fun MediaPreviewBar(
     videoUri: String? = null,
     onClearVideo: () -> Unit = {},
     isExtractingVideo: Boolean = false,
+    // ドキュメント (PDF/Word/Excel等) の Markdown 変換が進行中かどうか。
+    //   動画抽出 (isExtractingVideo) と同じく、完了まで送信はブロックされる。
+    isConvertingDocument: Boolean = false,
+    convertingDocumentName: String? = null,
     onOpenViewer: (selectedKey: String) -> Unit = {},
     textFiles: List<com.nezumi_ai.data.media.TextFileAttachmentEncoding.TextFileEntry> = emptyList(),
     onRemoveTextFile: (index: Int) -> Unit = {},
     onOpenTextFile: (com.nezumi_ai.data.media.TextFileAttachmentEncoding.TextFileEntry) -> Unit = {}
 ) {
     val hasVideo = !videoUri.isNullOrBlank()
-    if (!hasImage && !hasAudio && !hasVideo && !isExtractingVideo && textFiles.isEmpty()) {
+    if (!hasImage && !hasAudio && !hasVideo && !isExtractingVideo && !isConvertingDocument && textFiles.isEmpty()) {
         return
     }
 
@@ -501,6 +505,9 @@ fun MediaPreviewBar(
         run {
             val labelParts = buildList {
                 if (isExtractingVideo) add("動画を解析中…")
+                if (isConvertingDocument) {
+                    add("ドキュメントを変換中…" + (convertingDocumentName?.let { " ($it)" } ?: ""))
+                }
                 if (hasVideo) add("動画1本")
                 // 動画には音声トラックが含まれているので、hasVideo のときは
                 // 「音声あり」を別途表示しない (チップ側と揃えて一元化)
@@ -519,7 +526,7 @@ fun MediaPreviewBar(
             }
         }
 
-        if (hasVideo || hasAudio || imagesToShow.isNotEmpty() || isExtractingVideo || textFiles.isNotEmpty()) {
+        if (hasVideo || hasAudio || imagesToShow.isNotEmpty() || isExtractingVideo || isConvertingDocument || textFiles.isNotEmpty()) {
             
             LazyRow(
                 modifier = Modifier
@@ -562,6 +569,32 @@ fun MediaPreviewBar(
                                 modifier = Modifier.size(28.dp),
                                 strokeWidth = 2.5.dp,
                                 color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+                // 0.5) ドキュメント変換中スピナー (変換が終わるまで添付チップの代わりに表示)
+                if (isConvertingDocument) {
+                    item(key = "doc_converting") {
+                        Box(
+                            modifier = Modifier
+                                .width(90.dp)
+                                .height(90.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.surfaceDim,
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                                )
+                                .border(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f),
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier.size(28.dp),
+                                strokeWidth = 2.5.dp,
+                                color = MaterialTheme.colorScheme.tertiary
                             )
                         }
                     }

@@ -209,6 +209,43 @@ class LicenseFragment : Fragment() {
                 R.string.license_voicevox_libraries_title,
                 R.string.license_voicevox_libraries_desc,
                 R.string.license_voicevox_libraries_url
+            ),
+            // ドキュメント変換 (Markdown → Word/PDF/Excel 生成、
+            // Word/PDF/Excel → Markdown 読み取り) で追加した依存群。
+            LicenseItem(
+                R.string.license_apache_poi_title,
+                R.string.license_apache_poi_desc,
+                R.string.license_apache_poi_url
+            ),
+            LicenseItem(
+                R.string.license_xmlbeans_title,
+                R.string.license_xmlbeans_desc,
+                R.string.license_xmlbeans_url
+            ),
+            LicenseItem(
+                R.string.license_woodstox_title,
+                R.string.license_woodstox_desc,
+                R.string.license_woodstox_url
+            ),
+            LicenseItem(
+                R.string.license_pdfbox_android_title,
+                R.string.license_pdfbox_android_desc,
+                R.string.license_pdfbox_android_url
+            ),
+            LicenseItem(
+                R.string.license_chaquopy_title,
+                R.string.license_chaquopy_desc,
+                R.string.license_chaquopy_url
+            ),
+            LicenseItem(
+                R.string.license_markitdown_title,
+                R.string.license_markitdown_desc,
+                R.string.license_markitdown_url
+            ),
+            LicenseItem(
+                R.string.license_markitdown_deps_title,
+                R.string.license_markitdown_deps_desc,
+                R.string.license_markitdown_deps_url
             )
         )
 

@@ -23,8 +23,6 @@ object PresetConstants {
     const val TOOL_WEB_SEARCH = "web_search"
     // Markdown → Word/PDF/Excel 生成
     const val TOOL_CONVERT_MD_TO_DOCUMENT = "convert_md_to_document"
-    // PDF/Word/Excel → Markdown 変換 (Chaquopy/MarkItDown)
-    const val TOOL_CONVERT_DOCUMENT_TO_MD = "convert_document_to_md"
 
     val allToolIds: List<String> = listOf(
         TOOL_ALARM,
@@ -40,8 +38,7 @@ object PresetConstants {
         TOOL_MEMORY,
         TOOL_MEMORY_SAVE,
         TOOL_WEB_SEARCH,
-        TOOL_CONVERT_MD_TO_DOCUMENT,
-        TOOL_CONVERT_DOCUMENT_TO_MD
+        TOOL_CONVERT_MD_TO_DOCUMENT
     )
 
     /**

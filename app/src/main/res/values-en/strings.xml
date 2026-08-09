@@ -131,6 +131,247 @@ Enjoy chatting with your AI!</string>
     <string name="license_project_url">https://github.com/mouse0329/nezumi-ai</string>
     <string name="license_project_desc">Entry point to this app\'s source code, README, LICENSE.md and NOTICE. Check distribution terms here.</string>
 
+
+    <string name="license_androidx_title">AndroidX / Material / ConstraintLayout</string>
+    <string name="license_androidx_url">https://github.com/androidx/androidx</string>
+    <string name="license_androidx_desc">Apache License 2.0
+
+Core Android UI and runtime libraries such as AndroidX Core, AppCompat, ConstraintLayout and Material Components.</string>
+
+    <string name="license_navigation_title">AndroidX Navigation</string>
+    <string name="license_navigation_url">https://github.com/androidx/androidx</string>
+    <string name="license_navigation_desc">Apache License 2.0
+
+Fragment-based screen navigation.</string>
+
+    <string name="license_room_title">AndroidX Room Database</string>
+    <string name="license_room_url">https://github.com/androidx/androidx</string>
+    <string name="license_room_desc">Apache License 2.0
+
+Local persistence layer for chat sessions, messages, presets and memories.</string>
+
+    <string name="license_workmanager_title">AndroidX WorkManager</string>
+    <string name="license_workmanager_url">https://github.com/androidx/androidx</string>
+    <string name="license_workmanager_desc">Apache License 2.0
+
+Background model downloads and deferred tasks.</string>
+
+    <string name="license_lifecycle_title">AndroidX Lifecycle / ViewModel</string>
+    <string name="license_lifecycle_url">https://github.com/androidx/androidx</string>
+    <string name="license_lifecycle_desc">Apache License 2.0
+
+Lifecycle-aware state management for the chat UI.</string>
+
+    <string name="license_biometric_title">AndroidX Biometric</string>
+    <string name="license_biometric_url">https://github.com/androidx/androidx</string>
+    <string name="license_biometric_desc">Apache License 2.0
+
+Biometric authentication for app lock.</string>
+
+    <string name="license_kotlin_title">Kotlin Standard Library</string>
+    <string name="license_kotlin_url">https://github.com/JetBrains/kotlin</string>
+    <string name="license_kotlin_desc">Apache License 2.0
+
+The primary language runtime of this app.</string>
+
+    <string name="license_kotlin_coroutines_title">Kotlin Coroutines</string>
+    <string name="license_kotlin_coroutines_url">https://github.com/Kotlin/kotlinx.coroutines</string>
+    <string name="license_kotlin_coroutines_desc">Apache License 2.0
+
+Asynchronous inference streaming and background processing.</string>
+
+    <string name="license_kotlin_serialization_title">Kotlin Serialization</string>
+    <string name="license_kotlin_serialization_url">https://github.com/Kotlin/kotlinx.serialization</string>
+    <string name="license_kotlin_serialization_desc">Apache License 2.0
+
+JSON handling for settings, presets and tool calls.</string>
+
+    <string name="license_compose_title">Jetpack Compose</string>
+    <string name="license_compose_url">https://github.com/androidx/androidx</string>
+    <string name="license_compose_desc">Apache License 2.0
+
+Declarative UI toolkit used across the app.</string>
+
+    <string name="license_richtext_title">compose-richtext</string>
+    <string name="license_richtext_url">https://github.com/halilibo/compose-richtext</string>
+    <string name="license_richtext_desc">Apache License 2.0
+
+Markdown rendering inside chat bubbles.</string>
+
+    <string name="license_jlatexmath_title">JLatexMath Android</string>
+    <string name="license_jlatexmath_url">https://github.com/noties/jlatexmath-android</string>
+    <string name="license_jlatexmath_desc">GNU General Public License v2.0
+
+Renders LaTeX math expressions in chat responses.</string>
+
+    <string name="license_litertlm_title">Google AI Edge LiteRT-LM</string>
+    <string name="license_litertlm_url">https://ai.google.dev/edge/litert</string>
+    <string name="license_litertlm_desc">Apache License 2.0
+
+On-device LLM inference engine for Gemma models.</string>
+
+    <string name="license_tflite_title">TensorFlow Lite / Play Services TFLite</string>
+    <string name="license_tflite_url">https://github.com/tensorflow/tensorflow</string>
+    <string name="license_tflite_desc">Apache License 2.0
+
+On-device inference runtime and memory embedding.</string>
+
+    <string name="license_onnxruntime_title">ONNX Runtime</string>
+    <string name="license_onnxruntime_url">https://github.com/microsoft/onnxruntime</string>
+    <string name="license_onnxruntime_desc">MIT License
+
+Used for the on-device NSFW image detection model.</string>
+
+    <string name="license_appauth_title">AppAuth for Android</string>
+    <string name="license_appauth_url">https://github.com/openid/AppAuth-Android</string>
+    <string name="license_appauth_desc">Apache License 2.0
+
+OAuth / OpenID Connect sign-in flows.</string>
+
+    <string name="license_coil_title">Coil</string>
+    <string name="license_coil_url">https://github.com/coil-kt/coil</string>
+    <string name="license_coil_desc">Apache License 2.0
+
+Image loading for Compose.</string>
+
+    <string name="license_okhttp_title">OkHttp</string>
+    <string name="license_okhttp_url">https://github.com/square/okhttp</string>
+    <string name="license_okhttp_desc">Apache License 2.0
+
+HTTP client used for API calls and downloads.</string>
+
+    <string name="license_llamacpp_title">llama.cpp</string>
+    <string name="license_llamacpp_url">https://github.com/ggerganov/llama.cpp</string>
+    <string name="license_llamacpp_desc">MIT License
+
+Native inference engine for GGUF models, used via JNI.</string>
+
+    <string name="license_llamarn_title">llama.rn</string>
+    <string name="license_llamarn_url">https://github.com/mybigday/llama.rn</string>
+    <string name="license_llamarn_desc">MIT License
+
+Parts of the llama.cpp integration layer are derived from this project.</string>
+
+    <string name="license_ggml_title">ggml</string>
+    <string name="license_ggml_url">https://github.com/ggml-org/ggml</string>
+    <string name="license_ggml_desc">MIT License
+
+Low-level tensor / compute backend used by llama.cpp.</string>
+
+    <string name="license_nlohmann_title">nlohmann/json</string>
+    <string name="license_nlohmann_url">https://github.com/nlohmann/json</string>
+    <string name="license_nlohmann_desc">MIT License
+
+JSON processing in the native inference layer.</string>
+
+    <string name="license_anyascii_title">anyascii</string>
+    <string name="license_anyascii_url">https://github.com/anyascii/anyascii</string>
+    <string name="license_anyascii_desc">ISC License
+
+Unicode normalization / transliteration code embedded in the native layer.</string>
+
+    <string name="license_mnn_title">MNN</string>
+    <string name="license_mnn_url">https://github.com/alibaba/MNN</string>
+    <string name="license_mnn_desc">Apache License 2.0
+
+Native runtime used by the on-device image generation pipeline.</string>
+
+    <string name="license_stable_diffusion_mnn_title">stable-diffusion.cpp-mnn</string>
+    <string name="license_stable_diffusion_mnn_url">https://github.com/xororz/stable-diffusion.cpp-mnn</string>
+    <string name="license_stable_diffusion_mnn_desc">Subject to the licenses of the upstream project and related backends.
+
+Reference project for the MNN-based Stable Diffusion integration.</string>
+
+    <string name="license_huggingface_title">Hugging Face Hub</string>
+    <string name="license_huggingface_url">https://huggingface.co</string>
+    <string name="license_huggingface_desc">Model distribution platform
+
+Source of some downloadable models. Check each model page / model card for its individual terms.</string>
+
+    <string name="license_gemma_title">Gemma model terms</string>
+    <string name="license_gemma_url">https://ai.google.dev/gemma</string>
+    <string name="license_gemma_desc">Gemma Terms / Model Terms
+
+Use of Gemma models is governed by Google\'s terms and model documentation.</string>
+
+    <string name="license_downloaded_models_title">Downloaded / added models</string>
+    <string name="license_downloaded_models_url">https://github.com/mouse0329/nezumi-ai/blob/main/NOTICE</string>
+    <string name="license_downloaded_models_desc">Each model is subject to its own license.
+
+GGUF, LiteRT-LM, .task, .safetensors and MNN model files are governed by their respective distributor licenses, terms of use and model cards.</string>
+
+    <!-- VOICEVOX -->
+    <string name="license_voicevox_title">VOICEVOX (speech synthesis engine / voice models)</string>
+    <string name="license_voicevox_url">https://voicevox.hiroshiba.jp/term/</string>
+    <string name="license_voicevox_desc">VOICEVOX voice model terms of use
+
+- Usable for both commercial and non-commercial purposes.
+- May be embedded and redistributed within applications.
+- When using generated audio, follow the terms of each voice library.
+- When licensing generated audio to others, you must obligate them to comply with sections 3 and 4 of these terms.
+
+Prohibited: decompilation / reverse engineering and publication of such methods, acts that disadvantage the creator or third parties, and acts contrary to public order and morals.
+
+Disclaimer: The creator assumes no responsibility for any damages or disadvantages caused by this software.
+
+Credit indicating the use of VOICEVOX is required.</string>
+
+    <string name="license_voicevox_libraries_title">VOICEVOX voice libraries (per-speaker credits)</string>
+    <string name="license_voicevox_libraries_url">https://github.com/mouse0329/nezumi-ai/blob/main/docs/VOICEVOX_TERMS.md</string>
+    <string name="license_voicevox_libraries_desc">When publishing or distributing generated audio, per-speaker credit is required.
+
+This app\'s catalog only includes voice libraries usable for both commercial and non-commercial purposes with credit alone. Libraries that do not allow commercial use (No.7 / Yurei-chan) are not included.
+
+Credit examples:
+VOICEVOX:Zundamon / VOICEVOX:Shikoku Metan / VOICEVOX:Kasukabe Tsumugi / VOICEVOX:Namine Ritsu / VOICEVOX:Genno Takehiro / VOICEVOX:Shirakami Kotarou / VOICEVOX:Aoyama Ryusei / VOICEVOX:Meimei Himari / VOICEVOX:Kyushu Sora / VOICEVOX:Mochiko (cv Ashitaba Yomogi) / VOICEVOX:Kenzaki Mesuo / VOICEVOX:WhiteCUL / VOICEVOX:Goki / VOICEVOX:Chibi-shikiji / VOICEVOX:Ouka Miko / VOICEVOX:Sayo / VOICEVOX:Nurse Robo_Type T / VOICEVOX:†Holy Knight Benizakura† / VOICEVOX:Chibimatsu Shuji / VOICEVOX:Kigashima Sourin / VOICEVOX:Haruka Nana / VOICEVOX:Nekotsuka Aru / VOICEVOX:Nekotsuka Bi / VOICEVOX:Chugoku Usagi / VOICEVOX:Kurita Maron / VOICEVOX:Aiertan / VOICEVOX:Manbetsu Hanamaru / VOICEVOX:Kotoyomi Nia / VOICEVOX:Voidoll (CV: Tange Sakura) / VOICEVOX:Zonko / VOICEVOX:Chubu Tsurugi / VOICEVOX:Rito / VOICEVOX:Kurosawa Saebyakku / VOICEVOX:Tohoku Zunko / VOICEVOX:Tohoku Kiritan / VOICEVOX:Tohoku Itako / VOICEVOX:Ankomon / VOICEVOX:Yogatari Tobari / VOICEVOX:Kenshou Mitama / VOICEVOX:Satoishi Yuka (Tsubomi) / VOICEVOX Nemo
+
+Voice libraries requiring prior confirmation when used in a corporate / business context: Aoyama Ryusei (Nanahapi), Mochiko-san (Mochizora model store; excluding audio works, audio materials, game works, etc.), Goki (Tsuina-chan Project), Voidoll (Niconico), Zonko (commercial use).
+
+Detailed terms for each voice library can be opened from Settings &gt; Model &gt; Voice reading &gt; "Open terms of use".</string>
+
+    <!-- Document conversion (Markdown → Word/PDF/Excel, Word/PDF/Excel → Markdown) -->
+    <string name="license_apache_poi_title">Apache POI</string>
+    <string name="license_apache_poi_url">https://poi.apache.org/</string>
+    <string name="license_apache_poi_desc">Apache License 2.0
+
+Used to generate Word (.docx) / Excel (.xlsx) files from Markdown. Version: 5.4.0.</string>
+
+    <string name="license_xmlbeans_title">Apache XMLBeans</string>
+    <string name="license_xmlbeans_url">https://xmlbeans.apache.org/</string>
+    <string name="license_xmlbeans_desc">Apache License 2.0
+
+XML binding library used by Apache POI (ooxml) to handle Office Open XML documents.</string>
+
+    <string name="license_woodstox_title">Woodstox / StAX2 API</string>
+    <string name="license_woodstox_url">https://github.com/FasterXML/woodstox</string>
+    <string name="license_woodstox_desc">Apache License 2.0
+
+StAX (javax.xml.stream) implementation not bundled with Android, used for Apache POI XML processing.</string>
+
+    <string name="license_pdfbox_android_title">PDFBox-Android</string>
+    <string name="license_pdfbox_android_url">https://github.com/TomRoush/PdfBox-Android</string>
+    <string name="license_pdfbox_android_desc">Apache License 2.0
+
+Android port of Apache PDFBox, used for Markdown → PDF generation. Version: 2.0.27.0.</string>
+
+    <string name="license_chaquopy_title">Chaquopy (Python-on-Android)</string>
+    <string name="license_chaquopy_url">https://chaquo.com/chaquopy/</string>
+    <string name="license_chaquopy_desc">Chaquopy license (open-source edition; attribution required)
+
+On-device Python runtime used for PDF/Word/Excel → Markdown conversion. This app uses Chaquopy to run Python on Android.</string>
+
+    <string name="license_markitdown_title">MarkItDown</string>
+    <string name="license_markitdown_url">https://github.com/microsoft/markitdown</string>
+    <string name="license_markitdown_desc">MIT License
+
+Converts PDF / Word / Excel / PowerPoint files into Markdown, executed in Python via Chaquopy.</string>
+
+    <string name="license_markitdown_deps_title">pdfminer.six / python-docx / openpyxl / python-pptx</string>
+    <string name="license_markitdown_deps_url">https://pypi.org/project/markitdown/</string>
+    <string name="license_markitdown_deps_desc">MIT License / BSD License and others
+
+Python libraries used by MarkItDown to read each Office / PDF format. Bundled via Chaquopy pip.</string>
+
     <string name="license_open_url">View details</string>
 
     <!-- Fragments for navigation -->
@@ -832,6 +1073,14 @@ Enjoy chatting with your AI!</string>
     <string name="txtfile_viewer_loading">Loading…</string>
     <string name="txtfile_viewer_load_failed">Could not load the file</string>
     <string name="txtfile_viewer_truncated_suffix">…(truncated)</string>
+    <string name="docfile_convert_failed_toast">Could not convert %1$s to Markdown. The file was attached by name only.</string>
+    <string name="docgen_save_button">Save</string>
+    <string name="docgen_saving_button">Converting…</string>
+    <string name="docgen_saved_toast">File saved</string>
+    <string name="docgen_save_failed_toast">Could not save the file</string>
+    <string name="docfile_viewer_not_supported">This file type (Word / PDF / Excel / PowerPoint) cannot be previewed in the app.
+
+When you attach and send it, the contents are automatically converted to Markdown and passed to the model. Ask about the contents in the conversation.</string>
     <string name="viewer_close">Close</string>
     <string name="viewer_share">Share</string>
     <string name="viewer_save_to_folder">Save to folder</string>

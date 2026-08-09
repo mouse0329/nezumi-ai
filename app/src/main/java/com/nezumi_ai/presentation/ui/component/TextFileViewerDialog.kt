@@ -42,6 +42,12 @@ object TextFileViewerDialog {
     private const val PREVIEW_MAX_BYTES = 512 * 1024
 
     fun show(context: Context, entry: TextFileAttachmentEncoding.TextFileEntry) {
+        // ドキュメント添付 (Word/PDF/Excel/PowerPoint) はバイナリのため
+        // プレーンテキストプレビューができない。ただしピック時点で Markdown 変換済みの
+        // もの (isConvertedDocument=true、uri が変換後の .md を指す) は通常のテキスト
+        // ビュワーとしてそのまま内容を表示できる。
+        val isDocument = TextFileAttachmentEncoding.isDocumentFile(entry.name) &&
+            !entry.isConvertedDocument
         val viewerBg = ContextCompat.getColor(context, R.color.viewer_bg)
         val barBg = ContextCompat.getColor(context, R.color.viewer_bar_bg)
         val textPrimary = ContextCompat.getColor(context, R.color.viewer_text_primary)
@@ -144,20 +150,25 @@ object TextFileViewerDialog {
             ViewGroup.LayoutParams.MATCH_PARENT
         )
 
-        // ファイル本体は IO で読み込む。ダイアログを閉じたら結果は捨てる。
-        val job = SupervisorJob()
-        val scope = CoroutineScope(job + Dispatchers.IO)
-        scope.launch {
-            val text = runCatching { readTextFile(context, entry.uri) }.getOrElse {
-                Log.w(TAG, "Failed to read text file: ${entry.uri}", it)
-                null
+        if (isDocument) {
+            bodyText.typeface = android.graphics.Typeface.DEFAULT
+            bodyText.text = context.getString(R.string.docfile_viewer_not_supported)
+        } else {
+            // ファイル本体は IO で読み込む。ダイアログを閉じたら結果は捨てる。
+            val job = SupervisorJob()
+            val scope = CoroutineScope(job + Dispatchers.IO)
+            scope.launch {
+                val text = runCatching { readTextFile(context, entry.uri) }.getOrElse {
+                    Log.w(TAG, "Failed to read text file: ${entry.uri}", it)
+                    null
+                }
+                withContext(Dispatchers.Main) {
+                    if (!dialog.isShowing) return@withContext
+                    bodyText.text = text ?: context.getString(R.string.txtfile_viewer_load_failed)
+                }
             }
-            withContext(Dispatchers.Main) {
-                if (!dialog.isShowing) return@withContext
-                bodyText.text = text ?: context.getString(R.string.txtfile_viewer_load_failed)
-            }
+            dialog.setOnDismissListener { job.cancel() }
         }
-        dialog.setOnDismissListener { job.cancel() }
     }
 
     private fun readTextFile(context: Context, uriString: String): String? {

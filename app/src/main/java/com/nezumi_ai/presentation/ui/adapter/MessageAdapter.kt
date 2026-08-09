@@ -48,6 +48,7 @@ import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.stripGemmaTokens
 import com.nezumi_ai.data.inference.stripTxtFileBlocks
+import com.nezumi_ai.data.inference.stripVideoBlocks
 import com.nezumi_ai.data.media.TextFileAttachmentEncoding
 import com.nezumi_ai.presentation.ui.component.TextFileViewerDialog
 import com.nezumi_ai.data.media.MessageMediaStore
@@ -72,7 +73,11 @@ class MessageAdapter(
  // 応答バリアント選択のコールバック: (parentUserMessageId, newIndex) -> Unit
     private val onAiVariantSelect: (Long, Int) -> Unit = { _, _ -> },
     private val lifecycleOwner: LifecycleOwner? = null,
-    private val viewModelStoreOwner: ViewModelStoreOwner? = null
+    private val viewModelStoreOwner: ViewModelStoreOwner? = null,
+    // ドキュメント生成ツール (convert_md_to_document) の結果カードに付ける
+    // 「保存」ボタンのコールバック。ChatFragment 側で SAF (CreateDocument) と
+    // Markdown→docx/pdf/xlsx 変換に繋いである。onComplete は変換+保存の完了時に呼ぶ。
+    private val onSaveGeneratedDocument: (markdown: String, format: String, fileName: String, onComplete: (Boolean) -> Unit) -> Unit = { _, _, _, _ -> }
 ) : ListAdapter<MessageEntity, RecyclerView.ViewHolder>(MessageDiffCallback()) {
 
     /**
@@ -417,10 +422,21 @@ class MessageAdapter(
                         android.view.ViewGroup.LayoutParams.MATCH_PARENT
                     )
                 }
+                // ドキュメント添付 (Word/PDF/Excel/PowerPoint) は拡張子バッジで区別する。
+                //   プレーンテキスト添付の "T" とは別表示にする。
+                //   ピック時に Markdown 変換済みのもの (isConvertedDocument) は中身が
+                //   読める .md なので "MD" バッジにする (タップでビュワーが開く)。
+                val isDocument = TextFileAttachmentEncoding.isDocumentFile(entry.name) &&
+                    !entry.isConvertedDocument
                 val icon = android.widget.TextView(context).apply {
-                    text = "T"
+                    text = when {
+                        isDocument -> entry.name.substringAfterLast('.', "").uppercase().take(4)
+                            .ifBlank { "DOC" }
+                        entry.isConvertedDocument -> "MD"
+                        else -> "T"
+                    }
                     setTextColor(android.graphics.Color.WHITE)
-                    textSize = 28f
+                    textSize = if (isDocument) 20f else 28f
                     gravity = android.view.Gravity.CENTER
                     typeface = android.graphics.Typeface.DEFAULT_BOLD
                     layoutParams = android.widget.FrameLayout.LayoutParams(
@@ -530,8 +546,8 @@ class MessageAdapter(
                 Log.d("MessageAdapter", "BIND_USER_MESSAGE: id=${message.id} content='${message.content}'")
             }
             binding.apply {
-                // <txtfile> ブロックはモデル向けの埋め込みなので吹き出しには出さない
-                userMessageText.text = message.content.stripTxtFileBlocks()
+                // <txtfile> / <video> ブロックはモデル向けの埋め込みなので吹き出しには出さない
+                userMessageText.text = message.content.stripTxtFileBlocks().stripVideoBlocks()
                 userMessageTime.text = MessageAdapter.formatTime(message.timestamp)
                 
                 // Media handling (統一ビュワー対応)
@@ -1187,6 +1203,11 @@ class MessageAdapter(
             toolResults: List<ToolResultCard>,
             isStreaming: Boolean
         ) {
+            // ドキュメント生成カードの保存ボタンは、生成終了後 (ストリーミング完了後)
+            // にのみ有効にする。生成中に押されても中身が未確定のファイルを
+            // コピーしてしまうため。
+            val saveHandler: ((String, String, String, (Boolean) -> Unit) -> Unit)? =
+                if (isStreaming) null else onSaveGeneratedDocument
             // インライン描画では本文とカードを含めて常に Compose で描画する。
             // renderMarkdown のキャッシュと衝突しないよう、嬉 lastRenderedContent をリセット。
             binding.aiMessageText.visibility = View.GONE
@@ -1196,7 +1217,8 @@ class MessageAdapter(
                     InlineToolCallMessageBody(
                         content = content,
                         toolResults = toolResults,
-                        isStreaming = isStreaming
+                        isStreaming = isStreaming,
+                        onSaveDocument = saveHandler
                     )
                 }
             }

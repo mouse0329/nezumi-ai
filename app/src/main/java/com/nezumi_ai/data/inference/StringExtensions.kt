@@ -22,3 +22,15 @@ fun String.stripTxtFileBlocks(): String {
     return replace(Regex("<txtfile>.*?</txtfile>\n?", setOf(RegexOption.DOT_MATCHES_ALL)), "")
         .trimStart('\n', '\r', ' ', '　')
 }
+
+/**
+ * プロンプト挿入用の <video> ブロック (動画フレーム一覧のメタ情報) を
+ * UI 表示用テキストから取り除く。
+ * 動画メタはモデル向けの情報であり、吹き出し・コピー・読み上げ・セッションタイトルには
+ * 出さない (stripTxtFileBlocks と同じ思想)。
+ */
+fun String.stripVideoBlocks(): String {
+    if (!contains("<video>")) return this
+    return replace(Regex("<video>.*?</video>\n?", setOf(RegexOption.DOT_MATCHES_ALL)), "")
+        .trimStart('\n', '\r', ' ', '　')
+}

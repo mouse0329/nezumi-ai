@@ -33,4 +33,34 @@ class ChatViewModelTitleTest {
 
         assertEquals(DEFAULT_SESSION_TITLE, title)
     }
+
+    @Test
+    fun `buildSessionTitle strips txtfile blocks so attachment body is not used as title`() {
+        val title = buildSessionTitle(
+            userMessage = "<txtfile>{name:\"report.pdf\",body:\"第1章 事業計画の概要…\"}</txtfile>\n要約して",
+            aiResponse = ""
+        )
+
+        assertEquals("要約して", title)
+    }
+
+    @Test
+    fun `buildSessionTitle strips video blocks so video metadata is not used as title`() {
+        val title = buildSessionTitle(
+            userMessage = "<video>Video frames sampled at 1 fps, 12 frames in total:\nimg_a.jpg: 0s\n</video>\nこの動画の内容は？",
+            aiResponse = ""
+        )
+
+        assertEquals("この動画の内容は？", title)
+    }
+
+    @Test
+    fun `buildSessionTitle falls back to AI response when user message is only injection blocks`() {
+        val title = buildSessionTitle(
+            userMessage = "<txtfile>{name:\"a.txt\",body:\"hello\"}</txtfile>",
+            aiResponse = "ファイルの内容を確認しました。"
+        )
+
+        assertEquals("ファイルの内容を確認しました。", title)
+    }
 }

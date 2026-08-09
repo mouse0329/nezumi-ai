@@ -65,7 +65,14 @@ def convert_file(input_path: str, output_path: str) -> str:
                 f"Failed to import markitdown package: {e}",
             )
 
-        md = MarkItDown(enable_plugins=False)
+        # markitdown のバージョンによっては enable_plugins 引数が廃止されており、
+        # 渡すと TypeError になる (0.1.4 で "unexpected keyword argument" になることを
+        # 実機ログで確認)。新しめのバージョンではデフォルトでプラグイン無効なので、
+        # 引数なしで初期化する。念のため古い版互換でフォールバックも用意する。
+        try:
+            md = MarkItDown()
+        except TypeError:
+            md = MarkItDown(enable_plugins=False)
 
         try:
             result = md.convert(input_path)

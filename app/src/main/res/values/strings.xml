@@ -324,6 +324,50 @@ VOICEVOX:ずんだもん / VOICEVOX:四国めたん / VOICEVOX:春日部つむ�
 
 各音声ライブラリの詳細な規約は、設定 &gt; モデル &gt; 音声読み上げ の「利用規約を開く」から確認できます。</string>
 
+
+    <!-- ドキュメント変換 (Markdown → Word/PDF/Excel、Word/PDF/Excel → Markdown) -->
+    <string name="license_apache_poi_title">Apache POI</string>
+    <string name="license_apache_poi_url">https://poi.apache.org/</string>
+    <string name="license_apache_poi_desc">Apache License 2.0
+
+Markdown から Word (.docx) / Excel (.xlsx) ファイルを生成するために使用しています。利用バージョン: 5.4.0。</string>
+
+    <string name="license_xmlbeans_title">Apache XMLBeans</string>
+    <string name="license_xmlbeans_url">https://xmlbeans.apache.org/</string>
+    <string name="license_xmlbeans_desc">Apache License 2.0
+
+Apache POI (ooxml) が Office Open XML 文書を扱うために利用する XML バインディングライブラリです。</string>
+
+    <string name="license_woodstox_title">Woodstox / StAX2 API</string>
+    <string name="license_woodstox_url">https://github.com/FasterXML/woodstox</string>
+    <string name="license_woodstox_desc">Apache License 2.0
+
+Android に標準搭載されていない StAX (javax.xml.stream) 実装として、Apache POI の XML 処理で使用しています。</string>
+
+    <string name="license_pdfbox_android_title">PDFBox-Android</string>
+    <string name="license_pdfbox_android_url">https://github.com/TomRoush/PdfBox-Android</string>
+    <string name="license_pdfbox_android_desc">Apache License 2.0
+
+Apache PDFBox の Android 移植版です。Markdown からの PDF 生成で使用しています。利用バージョン: 2.0.27.0。</string>
+
+    <string name="license_chaquopy_title">Chaquopy (Python-on-Android)</string>
+    <string name="license_chaquopy_url">https://chaquo.com/chaquopy/</string>
+    <string name="license_chaquopy_desc">Chaquopy ライセンス (オープンソース版。要出典クレジット)
+
+PDF/Word/Excel → Markdown 変換のための端末上 Python ランタイムとして使用しています。This app uses Chaquopy to run Python on Android.</string>
+
+    <string name="license_markitdown_title">MarkItDown</string>
+    <string name="license_markitdown_url">https://github.com/microsoft/markitdown</string>
+    <string name="license_markitdown_desc">MIT License
+
+PDF / Word / Excel / PowerPoint ファイルを Markdown に変換するために、Chaquopy 上の Python で実行しています。</string>
+
+    <string name="license_markitdown_deps_title">pdfminer.six / python-docx / openpyxl / python-pptx</string>
+    <string name="license_markitdown_deps_url">https://pypi.org/project/markitdown/</string>
+    <string name="license_markitdown_deps_desc">MIT License / BSD License など
+
+MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ライブラリ群です。Chaquopy の pip により同梱されます。</string>
+
     <string name="license_open_url">詳細を見る</string>
 
     <!--
@@ -879,6 +923,14 @@ VOICEVOX:ずんだもん / VOICEVOX:四国めたん / VOICEVOX:春日部つむ�
     <string name="txtfile_viewer_loading">読み込み中…</string>
     <string name="txtfile_viewer_load_failed">ファイルを読み込めませんでした</string>
     <string name="txtfile_viewer_truncated_suffix">…(以降は省略されました)</string>
+    <string name="docfile_convert_failed_toast">%1$s をMarkdownに変換できませんでした。ファイル名のみを添付して送信します。</string>
+    <string name="docgen_save_button">保存</string>
+    <string name="docgen_saving_button">変換中…</string>
+    <string name="docgen_saved_toast">ファイルを保存しました</string>
+    <string name="docgen_save_failed_toast">ファイルを保存できませんでした</string>
+    <string name="docfile_viewer_not_supported">このファイル形式 (Word / PDF / Excel / PowerPoint) はアプリ内プレビューに対応していません。
+
+添付して送信すると、内容は自動的に Markdown に変換されてモデルに渡されます。会話の中で内容について質問してください。</string>
     <string name="viewer_close">閉じる</string>
     <string name="viewer_share">共有</string>
     <string name="viewer_save_to_folder">フォルダ保存</string>

@@ -237,6 +237,29 @@ object MessageMediaStore {
     }
 
     /**
+     * 変換済みテキスト (ドキュメントの Markdown 変換結果など) を message_media に
+     * .md ファイルとして保存し、FileProvider URI を返す。
+     * 添付ドキュメントはピック時点で Markdown に変換され、この URI が
+     * ビュワー表示と <txtfile> 本文埋め込みの両方に使われる。
+     */
+    fun persistTextContent(context: Context, text: String, baseName: String): String? {
+        return try {
+            val mediaDir = getMediaDir(context)
+            val safeBase = baseName
+                .replace(Regex("[/\\\\:*?\"<>|]"), "_")
+                .take(40)
+                .ifBlank { "doc" }
+            val destFile = File(mediaDir, "doc_${safeBase}_${UUID.randomUUID().toString().take(8)}.md")
+            destFile.writeText(text, Charsets.UTF_8)
+            val authority = context.packageName + AUTHORITY_SUFFIX
+            FileProvider.getUriForFile(context, authority, destFile).toString()
+        } catch (e: Exception) {
+            Log.w(TAG, "persistTextContent failed: ${e.message}")
+            null
+        }
+    }
+
+    /**
      * 添付テキストファイルの内容を読み込む。プロンプトに <txtfile> タグとして挿入するためのもの。
      * 巨大ファイルでコンテキストを食い潰さないよう既定 512KB で打ち切る。
      */
