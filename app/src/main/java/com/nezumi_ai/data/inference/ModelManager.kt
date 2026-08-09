@@ -284,38 +284,46 @@ class ModelManager(
                 }
                 
                 // 前のモデルをアンロード（エンジン切替時も明示）
+                // エンジン切り替え時はマルチモーダルプロジェクターとLLMを強制停止してから切り替える。
+                // 生成中のネイティブループや mmproj が残っていると、次エンジンのロードで
+                // メモリ競合・クラッシュ・不正な KV/vision 状態が起きるため、
+                // cancel → (interrupt) → unload を確実に実行する。
                 if (currentModelName != null || activeEngine !== targetEngine) {
                     val previousEngine = activeEngine
                     val switchingEngine = previousEngine !== targetEngine
                     Log.d(TAG, "Unloading previous model before loading new one (backend change: ${currentConfig?.backendType} -> ${normalizedConfig.backendType})")
 
+                    // 強制停止: 推論中のLLM / マルチモーダルプロジェクターを即座に止める
                     runCatching { previousEngine.cancelInference() }
                         .onFailure { Log.w(TAG, "cancelInference failed", it) }
-                    delay(50)
+                    // GGUF の場合は nativeInterrupt が cancelInference 内で呼ばれる。
+                    // エンジン切替時は待機を少し長くして完了を待つ。
+                    delay(if (switchingEngine) 100 else 50)
                     runCatching { previousEngine.unloadModel() }
                         .onFailure { Log.w(TAG, "unloadModel failed", it) }
 
-                    // エンジン切り替え時は非アクティブ側も unload
+                    // エンジン切り替え時は非アクティブ側も強制停止・unload
+                    // （LLM + マルチモーダルプロジェクターを確実に解放）
                     if (switchingEngine) {
                         val inactiveEngine: AIInferenceEngine? =
                             if (previousEngine is GgufInferenceEngine) liteRtEngine else ggufEngine
                         inactiveEngine?.let { eng ->
-                            Log.i(TAG, "Unloading inactive engine (${currentEngineLabel(eng)}) to prevent resource conflicts")
+                            Log.i(TAG, "Forcibly stopping inactive engine (${currentEngineLabel(eng)}) including multimodal projector and LLM to prevent resource conflicts")
                             runCatching {
                                 eng.cancelInference()
-                                delay(50)
+                                delay(100)
                                 eng.unloadModel()
                             }.onFailure { Log.w(TAG, "Failed to unload inactive engine", it) }
                         }
 
-                        // バックエンド切り替え時のメモリ解放
-                        Log.i(TAG, "Backend change detected. Clearing memory pools...")
+                        // バックエンド/エンジン切り替え時のメモリ解放
+                        Log.i(TAG, "Engine/backend change detected. Forcing memory cleanup after multimodal projector + LLM stop...")
                         System.gc()
-                        delay(300)
+                        delay(400)
                     }
 
-                    // GPU リソース解放待機
-                    delay(200)
+                    // GPU / ネイティブリソース解放待機
+                    delay(if (switchingEngine) 300 else 200)
                 }
                 
                 // 新しいモデルをロード

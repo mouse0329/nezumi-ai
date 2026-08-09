@@ -402,12 +402,14 @@ class GgufInferenceEngine(
 
     override suspend fun unloadModel(): Result<Unit> {
         cancelFlag.set(true)
-        // モデル切り替え時の生成停止バグ修正:
+        // モデル/エンジン切り替え時の強制停止:
         //   nativeComplete / nativeCompleteWithMedia は JNI レベルで blocking なため、
         //   Kotlin 側の cancelFlag だけだとネイティブループは止まらず、
         //   inferenceMutex を取れずに unloadModel が永遠にブロックしてしまう。
         //   ctx.interrupt() (= nativeInterrupt) を先に呼んでネイティブの
         //   is_interrupted フラグを立てることで、生成ループを即座に脱出させる。
+        //   その後 freeNativeCtx() で LLM 本体とマルチモーダルプロジェクター (mmproj)
+        //   を含む RnLlamaContext を完全に解放する。
         runCatching { rnllamaCtx?.interrupt() }
             .onFailure { Log.w(TAG, "interrupt() before unload failed", it) }
         return try {
@@ -416,7 +418,7 @@ class GgufInferenceEngine(
                     try {
                         freeNativeCtx()
                         lastSessionId = null
-                        Log.i(TAG, "GGUF model unloaded")
+                        Log.i(TAG, "GGUF model unloaded (LLM + multimodal projector forced stop)")
                         Result.success(Unit)
                     } catch (t: Throwable) {
                         Result.failure(if (t is Exception) t else RuntimeException(t))
@@ -431,6 +433,10 @@ class GgufInferenceEngine(
         }
     }
 
+    /**
+     * LLM コンテキストとマルチモーダルプロジェクターを強制解放する。
+     * nativeReleaseContext 経由で mmproj を含む全リソースを破棄する。
+     */
     private fun freeNativeCtx() {
         rnllamaCtx?.release()
         rnllamaCtx = null
