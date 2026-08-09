@@ -476,10 +476,13 @@ fun MediaPreviewBar(
     videoUri: String? = null,
     onClearVideo: () -> Unit = {},
     isExtractingVideo: Boolean = false,
-    onOpenViewer: (selectedKey: String) -> Unit = {}
+    onOpenViewer: (selectedKey: String) -> Unit = {},
+    textFiles: List<com.nezumi_ai.data.media.TextFileAttachmentEncoding.TextFileEntry> = emptyList(),
+    onRemoveTextFile: (index: Int) -> Unit = {},
+    onOpenTextFile: (com.nezumi_ai.data.media.TextFileAttachmentEncoding.TextFileEntry) -> Unit = {}
 ) {
     val hasVideo = !videoUri.isNullOrBlank()
-    if (!hasImage && !hasAudio && !hasVideo && !isExtractingVideo) {
+    if (!hasImage && !hasAudio && !hasVideo && !isExtractingVideo && textFiles.isEmpty()) {
         return
     }
 
@@ -503,6 +506,7 @@ fun MediaPreviewBar(
                 // 「音声あり」を別途表示しない (チップ側と揃えて一元化)
                 if (hasAudio && !hasVideo) add("音声あり")
                 if (imagesToShow.isNotEmpty()) add("${imagesToShow.size}/5 画像")
+                if (textFiles.isNotEmpty()) add("テキスト${textFiles.size}件")
             }
             if (labelParts.isNotEmpty()) {
                 Text(
@@ -515,7 +519,7 @@ fun MediaPreviewBar(
             }
         }
 
-        if (hasVideo || hasAudio || imagesToShow.isNotEmpty() || isExtractingVideo) {
+        if (hasVideo || hasAudio || imagesToShow.isNotEmpty() || isExtractingVideo || textFiles.isNotEmpty()) {
             
             LazyRow(
                 modifier = Modifier
@@ -621,6 +625,68 @@ fun MediaPreviewBar(
                                     modifier = Modifier.size(14.dp)
                                 )
                             }
+                        }
+                    }
+                }
+
+                // 1.5) テキスト添付チップ。タップでテキストビュワーを開く。
+                //    画像/動画/音声と同じストリップに並べて、送信前に何が添付されているか
+                //    一覧できるようにする。
+                items(
+                    count = textFiles.size,
+                    key = { index -> "txt:" + (textFiles.getOrNull(index)?.uri ?: index.toString()) }
+                ) { index ->
+                    val entry = textFiles.getOrNull(index) ?: return@items
+                    Box(
+                        modifier = Modifier
+                            .width(90.dp)
+                            .height(90.dp)
+                            .background(
+                                MaterialTheme.colorScheme.tertiaryContainer,
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                            )
+                            .border(
+                                1.dp,
+                                MaterialTheme.colorScheme.tertiary,
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                            )
+                            .clickable { onOpenTextFile(entry) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(4.dp)
+                        ) {
+                            Text(
+                                text = "T",
+                                color = MaterialTheme.colorScheme.tertiary,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = entry.name,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
+                        IconButton(
+                            onClick = { onRemoveTextFile(index) },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .size(24.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.error.copy(alpha = 0.85f),
+                                    shape = androidx.compose.foundation.shape.CircleShape
+                                )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear text file",
+                                tint = MaterialTheme.colorScheme.onError,
+                                modifier = Modifier.size(14.dp)
+                            )
                         }
                     }
                 }

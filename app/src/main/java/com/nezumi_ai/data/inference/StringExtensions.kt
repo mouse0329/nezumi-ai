@@ -10,3 +10,15 @@ package com.nezumi_ai.data.inference
 fun String.stripGemmaTokens(preserveToolCallTags: Boolean = false): String {
     return Gemma4ThinkingParser.sanitizeVisibleText(this, preserveToolCallTags)
 }
+
+/**
+ * プロンプト挿入用の <txtfile> ブロックを UI 表示用テキストから取り除く。
+ * テキスト添付の内容はモデルには <txtfile>{name:"...",body:"..."}</txtfile> として
+ * 渡すが、チャットの吹き出しにはファイル一覧 (カード) だけを見せる設計のため、
+ * 生のタグは表示しない。コピー・読み上げ経路でも同じく除去する。
+ */
+fun String.stripTxtFileBlocks(): String {
+    if (!contains("<txtfile>")) return this
+    return replace(Regex("<txtfile>.*?</txtfile>\n?", setOf(RegexOption.DOT_MATCHES_ALL)), "")
+        .trimStart('\n', '\r', ' ', '　')
+}

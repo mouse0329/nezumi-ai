@@ -47,6 +47,9 @@ import com.nezumi_ai.databinding.ItemMessageAiBinding
 import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.stripGemmaTokens
+import com.nezumi_ai.data.inference.stripTxtFileBlocks
+import com.nezumi_ai.data.media.TextFileAttachmentEncoding
+import com.nezumi_ai.presentation.ui.component.TextFileViewerDialog
 import com.nezumi_ai.data.media.MessageMediaStore
 import com.halilibo.richtext.commonmark.Markdown
 import com.halilibo.richtext.ui.material3.RichText
@@ -224,7 +227,8 @@ class MessageAdapter(
             container: LinearLayout,
             context: Context,
             videoUri: String? = null,
-            audioUri: String? = null
+            audioUri: String? = null,
+            textFiles: List<TextFileAttachmentEncoding.TextFileEntry> = emptyList()
         ) {
             container.removeAllViews()
 
@@ -283,6 +287,8 @@ class MessageAdapter(
                     )
                 }
                 container.addView(cardView)
+                // 動画カードの後ろにテキスト添付カードを並べる
+                appendTextFileCards(container, context, textFiles)
                 return
             }
 
@@ -380,6 +386,70 @@ class MessageAdapter(
                 }
                 container.addView(audioCard)
             }
+
+            // 画像・音声の後ろにテキスト添付カードを並べる。
+            //   これがないと「テキストファイルだけ添付」したメッセージが送信後に
+            //   何も添付されていないように見えてしまう。
+            appendTextFileCards(container, context, textFiles)
+        }
+
+        /**
+         * テキスト添付 (nezumi://txtfile) をファイル名カードとして並べる。
+         * タップすると TextFileViewerDialog で中身を開く。
+         */
+        private fun appendTextFileCards(
+            container: LinearLayout,
+            context: Context,
+            textFiles: List<TextFileAttachmentEncoding.TextFileEntry>
+        ) {
+            for (entry in textFiles) {
+                val card = androidx.cardview.widget.CardView(context).apply {
+                    layoutParams = LinearLayout.LayoutParams(250, 250).apply {
+                        setMargins(8, 8, 8, 8)
+                    }
+                    radius = 12f
+                    cardElevation = 4f
+                    setCardBackgroundColor(android.graphics.Color.parseColor("#274427"))
+                }
+                val frame = android.widget.FrameLayout(context).apply {
+                    layoutParams = android.view.ViewGroup.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                }
+                val icon = android.widget.TextView(context).apply {
+                    text = "T"
+                    setTextColor(android.graphics.Color.WHITE)
+                    textSize = 28f
+                    gravity = android.view.Gravity.CENTER
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                }
+                val name = android.widget.TextView(context).apply {
+                    text = entry.name
+                    setTextColor(android.graphics.Color.WHITE)
+                    textSize = 11f
+                    gravity = android.view.Gravity.CENTER
+                    maxLines = 2
+                    ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                    setPadding(8, 0, 8, 12)
+                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                        android.view.Gravity.BOTTOM
+                    )
+                }
+                frame.addView(icon)
+                frame.addView(name)
+                card.addView(frame)
+                card.setOnClickListener {
+                    TextFileViewerDialog.show(context, entry)
+                }
+                container.addView(card)
+            }
         }
     }
     
@@ -460,22 +530,27 @@ class MessageAdapter(
                 Log.d("MessageAdapter", "BIND_USER_MESSAGE: id=${message.id} content='${message.content}'")
             }
             binding.apply {
-                userMessageText.text = message.content
+                // <txtfile> ブロックはモデル向けの埋め込みなので吹き出しには出さない
+                userMessageText.text = message.content.stripTxtFileBlocks()
                 userMessageTime.text = MessageAdapter.formatTime(message.timestamp)
                 
                 // Media handling (統一ビュワー対応)
                 //   1) imageUri 先頭の nezumi://videoframes マーカーを剥がして
                 //      元動画 URI + 音声 URI + フレーム列 に展開する
                 //   2) 画像/動画/音声 のどれか一つでもあれば mediaContainer を表示
-                val (videoMeta, imageUris) = VideoAttachmentEncoding.split(message.imageUri)
+                val (videoMeta, imageUrisRaw) = VideoAttachmentEncoding.split(message.imageUri)
+                val textFiles = TextFileAttachmentEncoding.extract(message.imageUri)
+                // テキスト添付マーカーは画像サムネイルとしては描画しない
+                val imageUris = imageUrisRaw.filter { !TextFileAttachmentEncoding.isMarker(it) }
                 val videoUri = videoMeta?.originalVideoUri
                 // 動画マーカーに埋め込んだ音声 URI を優先し、なければレコードの audioUri を見る
                 val effectiveAudioUri = videoMeta?.audioUri ?: message.audioUri
                 val hasVideo = !videoUri.isNullOrBlank()
                 val hasAudio = !effectiveAudioUri.isNullOrEmpty()
                 val hasImages = imageUris.isNotEmpty()
+                val hasTextFiles = textFiles.isNotEmpty()
 
-                if (hasImages || hasAudio || hasVideo) {
+                if (hasImages || hasAudio || hasVideo || hasTextFiles) {
                     mediaContainer.visibility = View.VISIBLE
 
                     if (hasImages) {
@@ -490,7 +565,22 @@ class MessageAdapter(
                                 imageContainer,
                                 binding.root.context,
                                 videoUri = videoUri,
-                                audioUri = effectiveAudioUri
+                                audioUri = effectiveAudioUri,
+                                textFiles = textFiles
+                            )
+                        } else if (hasTextFiles) {
+                            // 単一画像 + テキスト添付: 画像とテキストカードを横スクロールに並べる
+                            imageScrollView.visibility = View.VISIBLE
+                            singleImageContainer.visibility = View.GONE
+                            userImagePreview.visibility = View.GONE
+                            audioPlaybackContainer.visibility = View.GONE
+                            setupMultipleImagePreview(
+                                imageUris,
+                                imageContainer,
+                                binding.root.context,
+                                videoUri = videoUri,
+                                audioUri = effectiveAudioUri,
+                                textFiles = textFiles
                             )
                         } else {
                             // 単一画像・音声なし・動画なし：従来通り表示
@@ -522,6 +612,28 @@ class MessageAdapter(
                         userImagePreview.visibility = View.GONE
                         audioPlaybackContainer.visibility = View.VISIBLE
                         setupAudioPlayback(effectiveAudioUri!!, userAudioPlayButton, userAudioDuration)
+                        // 音声プレイヤーの下にテキスト添付があれば横スクロールでも並べる
+                        if (hasTextFiles) {
+                            imageScrollView.visibility = View.VISIBLE
+                            setupMultipleImagePreview(
+                                emptyList(),
+                                imageContainer,
+                                binding.root.context,
+                                textFiles = textFiles
+                            )
+                        }
+                    } else if (hasTextFiles) {
+                        // テキスト添付のみ
+                        imageScrollView.visibility = View.VISIBLE
+                        singleImageContainer.visibility = View.GONE
+                        userImagePreview.visibility = View.GONE
+                        audioPlaybackContainer.visibility = View.GONE
+                        setupMultipleImagePreview(
+                            emptyList(),
+                            imageContainer,
+                            binding.root.context,
+                            textFiles = textFiles
+                        )
                     }
                 } else {
                     mediaContainer.visibility = View.GONE
@@ -860,14 +972,17 @@ class MessageAdapter(
                 aiMessageTime.text = MessageAdapter.formatTime(message.timestamp)
                 
                 // Media handling (統一ビュワー対応: User 側と同じロジック)
-                val (aiVideoMeta, aiImageUris) = VideoAttachmentEncoding.split(message.imageUri)
+                val (aiVideoMeta, aiImageUrisRaw) = VideoAttachmentEncoding.split(message.imageUri)
+                val aiTextFiles = TextFileAttachmentEncoding.extract(message.imageUri)
+                val aiImageUris = aiImageUrisRaw.filter { !TextFileAttachmentEncoding.isMarker(it) }
                 val aiVideoUri = aiVideoMeta?.originalVideoUri
                 val aiEffectiveAudioUri = aiVideoMeta?.audioUri ?: message.audioUri
                 val aiHasVideo = !aiVideoUri.isNullOrBlank()
                 val aiHasAudio = !aiEffectiveAudioUri.isNullOrEmpty()
                 val aiHasImages = aiImageUris.isNotEmpty()
+                val aiHasTextFiles = aiTextFiles.isNotEmpty()
 
-                if (aiHasImages || aiHasAudio || aiHasVideo) {
+                if (aiHasImages || aiHasAudio || aiHasVideo || aiHasTextFiles) {
                     mediaContainer.visibility = View.VISIBLE
 
                     if (aiHasImages) {
@@ -881,7 +996,21 @@ class MessageAdapter(
                                 imageContainer,
                                 binding.root.context,
                                 videoUri = aiVideoUri,
-                                audioUri = aiEffectiveAudioUri
+                                audioUri = aiEffectiveAudioUri,
+                                textFiles = aiTextFiles
+                            )
+                        } else if (aiHasTextFiles) {
+                            imageScrollView.visibility = View.VISIBLE
+                            singleImageContainer.visibility = View.GONE
+                            aiImagePreview.visibility = View.GONE
+                            audioPlaybackContainer.visibility = View.GONE
+                            setupMultipleImagePreview(
+                                aiImageUris,
+                                imageContainer,
+                                binding.root.context,
+                                videoUri = aiVideoUri,
+                                audioUri = aiEffectiveAudioUri,
+                                textFiles = aiTextFiles
                             )
                         } else {
                             imageScrollView.visibility = View.GONE
@@ -911,6 +1040,26 @@ class MessageAdapter(
                         aiImagePreview.visibility = View.GONE
                         audioPlaybackContainer.visibility = View.VISIBLE
                         setupAudioPlayback(aiEffectiveAudioUri!!, aiAudioPlayButton, aiAudioDuration)
+                        if (aiHasTextFiles) {
+                            imageScrollView.visibility = View.VISIBLE
+                            setupMultipleImagePreview(
+                                emptyList(),
+                                imageContainer,
+                                binding.root.context,
+                                textFiles = aiTextFiles
+                            )
+                        }
+                    } else if (aiHasTextFiles) {
+                        imageScrollView.visibility = View.VISIBLE
+                        singleImageContainer.visibility = View.GONE
+                        aiImagePreview.visibility = View.GONE
+                        audioPlaybackContainer.visibility = View.GONE
+                        setupMultipleImagePreview(
+                            emptyList(),
+                            imageContainer,
+                            binding.root.context,
+                            textFiles = aiTextFiles
+                        )
                     }
                 } else {
                     mediaContainer.visibility = View.GONE

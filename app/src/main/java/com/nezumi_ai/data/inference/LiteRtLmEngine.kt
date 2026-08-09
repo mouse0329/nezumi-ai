@@ -1123,8 +1123,14 @@ class LiteRtLmEngine(
             if (!hasMultimodalInput) return@run false
             val path = loadedModelPath ?: return@run false
             val lower = path.lowercase()
+            // インポート判定は「models/imported 配下か」で行う。
+            //   旧実装は「拡張子が .task/.litertlm かつ絶対パス」だけで判定していたため、
+            //   ビルトイン Gemma (filesDir/models/gemma-4-2b.litertlm 等) までインポート扱いになり、
+            //   capability スイッチ (既定 OFF) で画像/音声が捨てられてしまっていた。
             val isImportedLiteRt = (lower.endsWith(".task") || lower.endsWith(".litertlm")) &&
-                File(path).isAbsolute
+                File(path).isAbsolute &&
+                File(path).parentFile?.canonicalPath ==
+                    File(appContext.filesDir, "models/imported").canonicalPath
             if (!isImportedLiteRt) return@run false
             val caps = com.nezumi_ai.utils.ImportedModelCapabilityStore.get(appContext, path)
             val imageBlocked = images.isNotEmpty() && !caps.imageEnabled

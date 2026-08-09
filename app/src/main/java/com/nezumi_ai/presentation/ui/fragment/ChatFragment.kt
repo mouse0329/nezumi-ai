@@ -96,6 +96,7 @@ import com.nezumi_ai.databinding.FragmentChatBinding
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.stripGemmaTokens
+import com.nezumi_ai.data.inference.stripTxtFileBlocks
 import com.nezumi_ai.data.repository.ChatSessionRepository
 import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.MessageRepository
@@ -124,7 +125,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.ui.text.style.TextOverflow
-import com.nezumi_ai.presentation.viewmodel.ImageGenConfirmationRequest
 
 class ChatFragment : Fragment(R.layout.fragment_chat) {
 
@@ -134,6 +134,18 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         private const val MODEL_NAME_DISPLAY_CHARS = 16
         /** 画像のマルチセレクト上限。 LiteRtLmEngine.MAX_VISION_IMAGES と揃える。 */
         private const val MAX_SELECTABLE_IMAGES = 5
+
+        /**
+         * プレーンテキストとして扱えるファイル拡張子。
+         * md / js / ts / cs / log / txt / py をはじめ、ソースコード・設定・データ交換系を広く含む。
+         */
+        private val TEXT_FILE_EXTENSIONS = setOf(
+            "txt", "md", "markdown", "log", "py", "js", "mjs", "cjs", "ts", "tsx", "jsx",
+            "cs", "java", "kt", "kts", "c", "h", "cpp", "cc", "hpp", "go", "rs", "rb",
+            "php", "swift", "sh", "bash", "zsh", "bat", "ps1", "json", "yaml", "yml",
+            "xml", "html", "htm", "css", "scss", "less", "sql", "ini", "cfg", "conf",
+            "toml", "csv", "tsv", "gradle", "properties", "env", "gitignore", "lua", "r"
+        )
     }
 
     private fun modelDisplaySuffix(label: String): String =
@@ -263,6 +275,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var selectedVideoUri by mutableStateOf<String?>(null)
     private var selectedVideoDurationMs: Long = 0L
     private var selectedVideoFrameCount: Int = 0
+    /**
+     * テキストファイル添付の一覧。内容は送信時に `<txtfile>` ブロックとして
+     * プロンプトへ挿入され、UI にはファイル名の一覧だけを表示する
+     * (タップすると TextFileViewerDialog で中身を開ける)。
+     */
+    private var selectedTextFiles by mutableStateOf<List<com.nezumi_ai.data.media.TextFileAttachmentEncoding.TextFileEntry>>(emptyList())
     /** 動画選択後、フレーム/音声抽出が完了するまで true。抽出中は送信不可にする。 */
     private var isExtractingVideo by mutableStateOf(false)
     private var cameraImageUri: Uri? = null
@@ -540,7 +558,17 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                         if (idx >= 0) c.getString(idx)?.takeIf { it.isNotBlank() } else null
                     } else null
-                } ?: uri.lastPathSegment ?: fallback
+                } ?: run {
+                    // DISPLAY_NAME を返さないプロバイダ向けのフォールバック。
+                    //   lastPathSegment は URL エンコードされた "primary:Download/cat.md"
+                    //   のような形をしていることがあるので、デコードして basename を推定する。
+                    uri.lastPathSegment
+                        ?.let { runCatching { java.net.URLDecoder.decode(it, Charsets.UTF_8.name()) }.getOrNull() ?: it }
+                        ?.substringAfterLast('/')
+                        ?.substringAfterLast(':')
+                        ?.takeIf { it.isNotBlank() }
+                        ?: fallback
+                }
             } else {
                 uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: fallback
             }
@@ -551,7 +579,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private fun updateMediaPreview() {
         // Phase 11: 複数画像対応
-        if (selectedImageUrisList.isEmpty() && selectedAudioUri.isNullOrEmpty() && selectedVideoUri.isNullOrEmpty()) {
+        if (selectedImageUrisList.isEmpty() && selectedAudioUri.isNullOrEmpty() &&
+            selectedVideoUri.isNullOrEmpty() && selectedTextFiles.isEmpty()) {
             viewModel.clearPendingMediaPreview()
             return
         }
@@ -726,10 +755,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
         }
 
-        // 画像生成の確認ダイアログは ImageGenConfirmationDialog() (Compose) に一本化。
-        // 旧実装はプロンプト編集のみの MaterialAlertDialogBuilder + TextInputEditText だったが、
-        // モデル・ステップ数もその場で変更できるようにするため Compose カードへ置き換えた。
-        // 表示/非表示の監視自体は ImageGenConfirmationDialog() 内の collectAsState で行う。
 
         viewLifecycleOwner.lifecycleScope.launch {
             settingsRepository.getSettings().collect { settings ->
@@ -860,7 +885,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 // カードを差し込む目印として使われる。コピー・読み上げなどは
                 // 引き続きタグなしパス (stripGemmaTokens() default = false) を使う。
                 val filteredMessages = displayMessages.map { msg ->
-                    msg.copy(content = msg.content.stripGemmaTokens(preserveToolCallTags = true))
+                    msg.copy(
+                        content = msg.content
+                            .stripGemmaTokens(preserveToolCallTags = true)
+                            .stripTxtFileBlocks()
+                    )
                 }
                 val empty = filteredMessages.isEmpty()
                 messagesIsEmpty = empty
@@ -892,7 +921,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
             val message = binding.messageInput.text.toString().trim()
             val hasMediaToSend = (imageInputEnabled && selectedImageUrisList.isNotEmpty()) ||
-                (audioInputEnabled && !selectedAudioUri.isNullOrEmpty())
+                (audioInputEnabled && !selectedAudioUri.isNullOrEmpty()) ||
+                selectedTextFiles.isNotEmpty()
             // 従来はテキストが空だと送信ボタンが完全に無反応だった。
             // 画像や音声(動画から抽出した音声を含む)だけを送りたいケース
             // (「これ何？」すら打たずに音声/画像だけ送る) が弾かれてしまっていたため、
@@ -920,18 +950,41 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         requireContext().applicationContext, videoUriToSend
                     ) ?: videoUriToSend
                 } else null
+                // テキストファイル添付: 実体を message_media に永続化した上で、
+                // 内容を <txtfile>{name:"...",body:"..."}</txtfile> としてプロンプト先頭に挿入する。
+                // このタグはモデル向けの情報であり、UI の吹き出しには表示しない
+                // (stripTxtFileBlocks で除去する)。
+                val persistedTextFiles = selectedTextFiles.mapNotNull { entry ->
+                    val persisted = com.nezumi_ai.data.media.MessageMediaStore.persistTextFileIfNeeded(
+                        requireContext().applicationContext, entry.uri, entry.name
+                    )
+                    if (persisted != null) entry.copy(uri = persisted) else null
+                }
+                val messageWithTextFiles = if (persistedTextFiles.isNotEmpty()) {
+                    com.nezumi_ai.data.media.MessageMediaStore.buildTxtFilePromptBlocks(
+                        persistedTextFiles, requireContext().applicationContext
+                    ) + message
+                } else {
+                    message
+                }
                 val effectiveMessage = if (videoPersisted != null && imagesPersisted.isNotEmpty()) {
                     buildVideoAwarePrompt(
-                        userText = message,
+                        userText = messageWithTextFiles,
                         frameUris = imagesPersisted,
                         durationMs = selectedVideoDurationMs,
                         hasAudio = audioToSend != null
                     )
                 } else {
-                    message
+                    messageWithTextFiles
                 }
                 // 元動画 URI + 音声 URI + 長さ を "フレーム列の先頭にマーカーとして差し込む"
                 // ことで DB スキーマを変えずに後から MediaViewerDialog で展開できるようにする。
+                // テキスト添付は nezumi://txtfile マーカーとして imageUri 列に載せる。
+                //   DB スキーマを変えずに「このメッセージに添付されたテキストファイル一覧」を
+                //   復元できるようにするため (VideoAttachmentEncoding と同じ思想)。
+                val textFileMarkers = persistedTextFiles.map {
+                    com.nezumi_ai.data.media.TextFileAttachmentEncoding.encode(it)
+                }
                 val imagesFinal = if (videoPersisted != null && imagesPersisted.isNotEmpty()) {
                     listOf(
                         com.nezumi_ai.data.media.VideoAttachmentEncoding.encode(
@@ -941,9 +994,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                                 durationMs = selectedVideoDurationMs
                             )
                         )
-                    ) + imagesPersisted
+                    ) + imagesPersisted + textFileMarkers
                 } else {
-                    imagesPersisted
+                    imagesPersisted + textFileMarkers
                 }
                 userScrolledAwayDuringGeneration = false
                 autoFollowBottomLocked = true
@@ -955,6 +1008,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 selectedVideoUri = null
                 selectedVideoDurationMs = 0L
                 selectedVideoFrameCount = 0
+                selectedTextFiles = emptyList()
                 updateMediaPreview()
             }
         }
@@ -967,10 +1021,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         // + ボタン: 画像 / カメラ / ファイル (画像・動画・音声) を選ぶアクションシート
         binding.mediaMenuButton.setOnClickListener { view ->
-            if (!imageInputEnabled && !audioInputEnabled) {
-                Toast.makeText(requireContext(), "このモデルは画像・音声入力に対応していません", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
+            // テキストファイル添付はモデルのマルチモーダル対応に依らず常に利用可能なため、
+            // 画像/音声が非対応のモデルでもアクションシート自体は開ける。
+            // (個別タイル側でそれぞれ imageInputEnabled / audioInputEnabled を見てガードする)
             val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
             imm.hideSoftInputFromWindow(view.windowToken, 0)
             showAttachmentActionSheet()
@@ -1750,9 +1803,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         // 非対応メディアは選択状態を破棄し、送信対象から除外
         if (!imageInputEnabled) {
             selectedImageUrisList = emptyList()  // Phase 11: 複数画像対応
+            selectedTextFiles = emptyList()
             selectedVideoUri = null
             selectedVideoDurationMs = 0L
             selectedVideoFrameCount = 0
+            selectedTextFiles = emptyList()
         }
         if (!audioInputEnabled) {
             selectedAudioUri = null
@@ -1841,7 +1896,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         binding.contextMeterCompose.setContent {
             ContextMeterSection()
             ContextRawDialog()
-            ImageGenConfirmationDialog()
         }
 
         binding.scrollToBottomCompose.setViewCompositionStrategy(
@@ -1875,6 +1929,17 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     },
                     audioUri = selectedAudioUri,
                     onClearAudio = { selectedAudioUri = null },
+                    textFiles = selectedTextFiles,
+                    onRemoveTextFile = { index ->
+                        if (index in selectedTextFiles.indices) {
+                            selectedTextFiles = selectedTextFiles.filterIndexed { i, _ -> i != index }
+                        }
+                    },
+                    onOpenTextFile = { entry ->
+                        com.nezumi_ai.presentation.ui.component.TextFileViewerDialog.show(
+                            requireContext(), entry
+                        )
+                    },
                     videoUri = selectedVideoUri,
                     onClearVideo = {
                         // 動画を外すときは、動画由来のフレーム・音声も一緒にクリアするのが自然。
@@ -2402,267 +2467,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     @Composable
-    private fun ImageGenConfirmationDialog() {
-        val request by viewModel.confirmationRequest.collectAsState()
-        val req = request ?: return
-
-        // ダイアログを開くたびに編集状態をリセットする。request の identity (prompt文字列 +
-        // defaultModelName + defaultSteps の組) が変わったときだけ初期値を入れ直したいので、
-        // remember のキーに request 自体を渡す。
-        var editedPrompt by remember(req) { mutableStateOf(req.prompt) }
-        var selectedModel by remember(req) { mutableStateOf(req.defaultModelName) }
-        var steps by remember(req) { mutableStateOf(req.defaultSteps.coerceIn(req.minSteps, req.maxSteps)) }
-        var modelDropdownOpen by remember(req) { mutableStateOf(false) }
-
-        val bg = colorResource(id = R.color.image_gen_confirm_bg)
-        val titleColor = colorResource(id = R.color.image_gen_confirm_title_text)
-        val subtitleColor = colorResource(id = R.color.image_gen_confirm_subtitle_text)
-        val iconBg = colorResource(id = R.color.image_gen_confirm_icon_bg)
-        val iconTint = colorResource(id = R.color.image_gen_confirm_icon_tint)
-        val boxBg = colorResource(id = R.color.image_gen_confirm_box_bg)
-        val boxBorder = colorResource(id = R.color.image_gen_confirm_box_border)
-        val labelColor = colorResource(id = R.color.image_gen_confirm_label_text)
-        val rowBg = colorResource(id = R.color.image_gen_confirm_row_bg)
-        val rowBorder = colorResource(id = R.color.image_gen_confirm_row_border)
-        val stepperBtnBg = colorResource(id = R.color.image_gen_confirm_stepper_btn_bg)
-        val accent = colorResource(id = R.color.image_gen_confirm_accent)
-        val accentSoft = colorResource(id = R.color.image_gen_confirm_accent_soft)
-
-        AlertDialog(
-            onDismissRequest = { viewModel.onCancelGenerateImage() },
-            containerColor = bg,
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .background(iconBg, shape = RoundedCornerShape(10.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("◈", fontSize = 15.sp, color = iconTint, fontWeight = FontWeight.Bold)
-                    }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = stringResource(id = R.string.image_gen_confirm_title),
-                            color = titleColor,
-                            fontSize = 15.5.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = stringResource(id = R.string.image_gen_confirm_subtitle),
-                            color = subtitleColor,
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-            },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 480.dp)
-                        .verticalScroll(rememberScrollState())
-                ) {
-                    // --- プロンプト編集ボックス ---
-                    Text(
-                        text = stringResource(id = R.string.image_gen_confirm_prompt_label),
-                        color = labelColor,
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(boxBg, shape = RoundedCornerShape(12.dp))
-                    ) {
-                        androidx.compose.foundation.text.BasicTextField(
-                            value = editedPrompt,
-                            onValueChange = { editedPrompt = it },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 72.dp, max = 140.dp)
-                                .padding(12.dp),
-                            textStyle = androidx.compose.ui.text.TextStyle(
-                                color = titleColor,
-                                fontSize = 13.sp,
-                                lineHeight = 19.sp
-                            ),
-                            cursorBrush = androidx.compose.ui.graphics.SolidColor(accent)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Text(
-                        text = stringResource(id = R.string.image_gen_confirm_settings_label),
-                        color = labelColor,
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // --- モデル選択行 ---
-                    if (req.availableModels.isNotEmpty()) {
-                        Box {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(rowBg, shape = RoundedCornerShape(12.dp))
-                                    .padding(horizontal = 12.dp, vertical = 10.dp)
-                                    .clickable { modelDropdownOpen = !modelDropdownOpen },
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = stringResource(id = R.string.image_gen_confirm_model_label),
-                                    color = subtitleColor,
-                                    fontSize = 12.5.sp
-                                )
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = (selectedModel ?: req.defaultModelName ?: "—").let {
-                                            if (it.length > MODEL_NAME_DISPLAY_CHARS) it.take(MODEL_NAME_DISPLAY_CHARS) + "…" else it
-                                        },
-                                        color = titleColor,
-                                        fontSize = 12.5.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.widthIn(max = 160.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = if (modelDropdownOpen) "▴" else "▾",
-                                        color = labelColor,
-                                        fontSize = 11.sp
-                                    )
-                                }
-                            }
-                            if (modelDropdownOpen) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 46.dp)
-                                        .background(bg, shape = RoundedCornerShape(12.dp))
-                                        .padding(4.dp)
-                                ) {
-                                    req.availableModels.forEach { name ->
-                                        val isSelected = name == (selectedModel ?: req.defaultModelName)
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .background(
-                                                    if (isSelected) accentSoft else Color.Transparent,
-                                                    shape = RoundedCornerShape(8.dp)
-                                                )
-                                                .clickable {
-                                                    selectedModel = name
-                                                    modelDropdownOpen = false
-                                                }
-                                                .padding(horizontal = 10.dp, vertical = 9.dp)
-                                        ) {
-                                            Text(
-                                                text = name,
-                                                color = titleColor,
-                                                fontSize = 12.5.sp,
-                                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-
-                    // --- ステップ数行 ---
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(rowBg, shape = RoundedCornerShape(12.dp))
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = stringResource(id = R.string.image_gen_confirm_steps_label),
-                            color = subtitleColor,
-                            fontSize = 12.5.sp
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(26.dp)
-                                    .background(stepperBtnBg, shape = RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        steps = (steps - 1).coerceIn(req.minSteps, req.maxSteps)
-                                    },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("−", color = titleColor, fontSize = 15.sp)
-                            }
-                            Text(
-                                text = steps.toString(),
-                                color = titleColor,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .padding(horizontal = 10.dp)
-                                    .widthIn(min = 22.dp)
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .size(26.dp)
-                                    .background(stepperBtnBg, shape = RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        steps = (steps + 1).coerceIn(req.minSteps, req.maxSteps)
-                                    },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("+", color = titleColor, fontSize = 15.sp)
-                            }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = stepsQualityHint(steps),
-                                color = labelColor,
-                                fontSize = 10.sp
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    viewModel.onConfirmGenerateImage(
-                        editedPrompt.ifBlank { req.prompt },
-                        selectedModel,
-                        steps
-                    )
-                }) {
-                    Text(stringResource(id = R.string.image_gen_confirm_yes), color = accent, fontWeight = FontWeight.SemiBold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.onCancelGenerateImage() }) {
-                    Text(stringResource(id = R.string.image_gen_confirm_no), color = subtitleColor)
-                }
-            }
-        )
-    }
-
-    /** ステップ数に応じた品質の目安テキストを返す（案2モックの挙動に準拠）。 */
-    private fun stepsQualityHint(steps: Int): String = when {
-        steps <= 12 -> getString(R.string.image_gen_confirm_steps_low)
-        steps <= 22 -> getString(R.string.image_gen_confirm_steps_fast)
-        steps <= 34 -> getString(R.string.image_gen_confirm_steps_std)
-        steps <= 48 -> getString(R.string.image_gen_confirm_steps_high)
-        else -> getString(R.string.image_gen_confirm_steps_max)
-    }
-
-    @Composable
     private fun ScrollToBottomSection() {
         if (!scrollToBottomVisible) return
         val bottomPadding = if (responseTypingVisible) 44.dp else 6.dp
@@ -2776,10 +2580,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
      */
     private fun isGemmaVideoCapableModel(): Boolean {
         val key = currentModelKey
-        return key.equals("E2B", ignoreCase = true) ||
-            key.equals("E4B", ignoreCase = true) ||
-            key.equals("Gemma3n-2B", ignoreCase = true) ||
-            key.equals("Gemma3n-4B", ignoreCase = true)
+        return key.equals("Gemma4-2B", ignoreCase = true) ||
+            key.equals("Gemma4-4B", ignoreCase = true)
     }
 
     /**
@@ -2819,6 +2621,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             if (imageInputEnabled) mimes += "image/*"
             if (imageInputEnabled && isGemmaVideoCapableModel()) mimes += "video/*"
             if (audioInputEnabled) mimes += "audio/*"
+            // テキスト系ファイル (md / js / ts / cs / log / py / txt など)。
+            //   拡張子だけで MIME が application/octet-stream になるものは、後段の
+            //   handlePickedGenericFile() で拡張子フォールバック判定する。
+            mimes += listOf("text/*", "application/json", "application/octet-stream")
             if (mimes.isEmpty()) {
                 Toast.makeText(ctx, "このモデルではファイル添付は無効です", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
@@ -2852,6 +2658,18 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             fallbackExt in listOf("mp4", "mov", "m4v", "webm", "3gp", "mkv", "avi")
         val isAudio = mime.startsWith("audio/") ||
             fallbackExt in listOf("mp3", "m4a", "aac", "wav", "ogg", "flac", "opus", "amr")
+        // プレーンテキストとして読めるものをテキスト添付として受け付ける。
+        //   md / js / ts / cs / log / txt / py 以外にも、ソースコード・設定・データ交換系の
+        //   プレーンテキスト拡張子を広めに拾う (MIME が text/* のものも含む)。
+        // SAF の content:// URI では lastPathSegment に拡張子が無いことがあるため、
+        // 表示名 (DISPLAY_NAME) 側の拡張子でも判定する。
+        val displayNameExt = extractDisplayName(uri.toString(), fallback = "")
+            .substringAfterLast('.', "")
+            .lowercase()
+        val isText = mime.startsWith("text/") ||
+            mime == "application/json" ||
+            fallbackExt in TEXT_FILE_EXTENSIONS ||
+            displayNameExt in TEXT_FILE_EXTENSIONS
 
         when {
             isImage -> {
@@ -2898,6 +2716,24 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 selectedAudioUri = uri.toString()
                 updateMediaPreview()
                 Toast.makeText(requireContext(), "音声を追加しました", Toast.LENGTH_SHORT).show()
+            }
+            isText -> {
+                val displayName = extractDisplayName(uri.toString(), fallback = "text.txt")
+                val entry = com.nezumi_ai.data.media.TextFileAttachmentEncoding.TextFileEntry(
+                    name = displayName,
+                    uri = uri.toString()
+                )
+                if (selectedTextFiles.any { it.uri == entry.uri }) {
+                    Toast.makeText(requireContext(), "このファイルは既に追加されています", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                selectedTextFiles = selectedTextFiles + entry
+                updateMediaPreview()
+                Toast.makeText(
+                    requireContext(),
+                    getString(R.string.txtfile_added_toast, displayName),
+                    Toast.LENGTH_SHORT
+                ).show()
             }
             else -> {
                 Toast.makeText(

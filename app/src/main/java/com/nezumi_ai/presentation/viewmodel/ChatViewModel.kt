@@ -79,43 +79,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.CancellableContinuation
 import kotlin.coroutines.resume
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 
 class UserStopCancellationException : CancellationException("Stopped by user")
-
-/**
- * 画像生成前のユーザー確認ダイアログに渡すリクエスト情報。
- * プロンプトに加え、確認時点で選択可能なモデル一覧・デフォルト値をまとめて渡すことで、
- * ダイアログ側 (Compose) でモデル・ステップ数をその場で変更できるようにする。
- *
- * @param prompt 元のプロンプト (編集可能)
- * @param availableModels 選択可能な SD モデルのディレクトリ名 (表示名) 一覧。空なら現行モデル固定。
- * @param defaultModelName 現在選択されているモデルの表示名 (availableModels に含まれない場合もある)
- * @param defaultSteps ツール呼び出し時点で解決済みのステップ数 (未指定なら設定のデフォルト値)
- * @param minSteps / maxSteps ステップ数スライダーの範囲
- */
-data class ImageGenConfirmationRequest(
-    val prompt: String,
-    val availableModels: List<String> = emptyList(),
-    val defaultModelName: String? = null,
-    val defaultSteps: Int,
-    val minSteps: Int = 8,
-    val maxSteps: Int = 60
-)
-
-/**
- * ユーザーが確認ダイアログで「はい」を押した際に返す編集後の値。
- * modelName が null の場合はツール呼び出し時点で解決済みのモデルをそのまま使う。
- */
-data class ImageGenConfirmationResult(
-    val prompt: String,
-    val modelName: String? = null,
-    val steps: Int
-)
 
 class ChatViewModel(
     private val appContext: Context,
@@ -639,13 +608,16 @@ class ChatViewModel(
     private val _currentTps = MutableStateFlow<Float?>(null)
     val currentTps: StateFlow<Float?> = _currentTps.asStateFlow()
 
-    private val _confirmationRequest = MutableStateFlow<ImageGenConfirmationRequest?>(null)
-    val confirmationRequest: StateFlow<ImageGenConfirmationRequest?> = _confirmationRequest.asStateFlow()
-
-    private var imageGenConfirmCont: CancellableContinuation<ImageGenConfirmationResult?>? = null
-
     @Volatile
     private var streamingAssistantMessageIdForTools: Long? = null
+
+    /**
+     * ツール経由でキューイングした画像生成ジョブ。
+     * ユーザーが停止ボタンを押した (stopGeneration) タイミングでキャンセルするため保持する。
+     * 画像生成自体が「拒否されない限り即時開始」になったため、拒否の唯一の経路は
+     * このユーザー停止となる。
+     */
+    private var imageToolJob: Job? = null
 
     private val generateImageToolHandler = GenerateImageToolHandler { toolCall ->
         // ツール実行の完了を待機して結果を返すように変更
@@ -753,8 +725,10 @@ class ChatViewModel(
                             ?.split(",")
                             ?.map { it.trim() }
                             ?.filter { it.isNotEmpty() }
-                            // 先頭の nezumi://videoframes マーカーは Bitmap 化しない (フレーム列のみ Bitmap 化)
+                            // nezumi://videoframes / nezumi://txtfile マーカーは Bitmap 化しない
+                            // (フレーム列のみ Bitmap 化。テキスト添付はプロンプト本文に既に含まれる)
                             ?.filter { !com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(it) }
+                            ?.filter { !com.nezumi_ai.data.media.TextFileAttachmentEncoding.isMarker(it) }
                             ?.forEach { uriStr ->
                                 val uri = MessageMediaStore.toUri(uriStr) ?: return@forEach
                                 val bitmap = loadBitmapFromUri(uri) ?: return@forEach
@@ -1378,6 +1352,10 @@ class ChatViewModel(
             job
         }
 
+        // ツール経由でキュー済み/実行中の画像生成もまとめてキャンセルする。
+        //   LLM ターンの停止だけでは SD 側の生成が残り続けるため、ここで畳む。
+        cancelPendingImageToolGeneration()
+
         currentJob?.cancel(UserStopCancellationException())
 
         try {
@@ -1569,8 +1547,9 @@ class ChatViewModel(
                     ?.split(',')
                     ?.map { it.trim() }
                     ?.filter { it.isNotBlank() }
-                    // 先頭の nezumi://videoframes マーカーは Bitmap 化対象外
+                    // nezumi://videoframes / nezumi://txtfile マーカーは Bitmap 化対象外
                     ?.filter { !com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(it) }
+                    ?.filter { !com.nezumi_ai.data.media.TextFileAttachmentEncoding.isMarker(it) }
                     ?: emptyList()
                 for (uriStr in storedImageUris) {
                     val uri = MessageMediaStore.toUri(uriStr) ?: continue
@@ -1888,8 +1867,9 @@ class ChatViewModel(
                             ?.split(",")
                             ?.map { it.trim() }
                             ?.filter { it.isNotEmpty() }
-                            // 先頭の nezumi://videoframes マーカーは Bitmap 化対象外
+                            // nezumi://videoframes / nezumi://txtfile マーカーは Bitmap 化対象外
                             ?.filter { !com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(it) }
+                            ?.filter { !com.nezumi_ai.data.media.TextFileAttachmentEncoding.isMarker(it) }
                             ?.forEach { uriStr ->
                                 val uri = MessageMediaStore.toUri(uriStr) ?: return@forEach
                                 val bmp = loadBitmapFromUri(uri) ?: return@forEach
@@ -2145,7 +2125,6 @@ class ChatViewModel(
  "search"-> "検索中..."
  else -> "$toolName を実行中..."
                                                 }
-                                                _uiMessage.emit(executingMsg)
                                                 Log.d(TAG, "Tool execution started: $toolName")
                                             }
                                         }
@@ -2168,7 +2147,6 @@ class ChatViewModel(
  "error"-> "$toolName: 実行失敗"
  else -> "$toolName: $status"
                                                 }
-                                                _uiMessage.emit(resultMsg)
                                                 Log.d(TAG, "Tool execution completed: $toolName status=$status")
                                             }
                                         }
@@ -2205,8 +2183,6 @@ class ChatViewModel(
                                                 Log.d(TAG, "Executed tools list: $executedToolsList")
                                                 if (executedToolsList.isNotEmpty()) {
                                                     val toolsDisplay = executedToolsList.joinToString(", ")
- val toolListMsg = "実行ツール: $toolsDisplay"
-                                                    _uiMessage.emit(toolListMsg)
                                                 }
                                             } else if (seg.isNotEmpty()) {
                                                 if (_toolCallState.value is ToolCallState.Result) {
@@ -2915,92 +2891,6 @@ class ChatViewModel(
         return ToolResultCard.listToJsonArray(existingCards + stopCard)
     }
 
-    /**
-     * findAvailableSdModelPath / resolveSdModelPathByName と同じ 3 箇所 (sd_models / appDir /
-     * imported) を走査し、確認ダイアログのモデル選択に使う「ディレクトリ名 (表示名) のリスト」を返す。
-     * 実ファイルスキャンなので呼び出しはダイアログ表示前の 1 回のみに留める。
-     */
-    private fun listAvailableSdModelNames(): List<String> {
-        val names = mutableListOf<String>()
-        val sdModelsDir = File(appContext.filesDir, "sd_models")
-        sdModelsDir.listFiles()?.forEach { dir ->
-            if (!dir.isDirectory) return@forEach
-            val targetDir = resolveNestedSdModelDirForName(dir)
-            if (isProbableSdModelDir(targetDir)) names.add(targetDir.name)
-        }
-        val appDir = appContext.getExternalFilesDir(null)
-        appDir?.listFiles()?.forEach { file ->
-            if (isProbableSdModelDir(file)) names.add(file.name)
-        }
-        val importedDir = File(appContext.filesDir, "models/imported")
-        importedDir.listFiles()?.forEach { file ->
-            if (isProbableSdModelDir(file)) names.add(file.name)
-        }
-        return names.distinct()
-    }
-
-    private suspend fun awaitImageGenerationConfirmation(
-        initialPrompt: String,
-        defaultSteps: Int,
-        defaultModelName: String?
-    ): ImageGenConfirmationResult? =
-        coroutineScope {
-            withTimeoutOrNull(120_000L) {  // 120 秒タイムアウトに延長
-                suspendCancellableCoroutine { cont ->
-                    imageGenConfirmCont = cont
-                    _confirmationRequest.value = ImageGenConfirmationRequest(
-                        prompt = initialPrompt,
-                        availableModels = runCatching { listAvailableSdModelNames() }.getOrDefault(emptyList()),
-                        defaultModelName = defaultModelName,
-                        defaultSteps = defaultSteps
-                    )
-                    Log.d(TAG, "awaitImageGenerationConfirmation: Waiting for user confirmation. Prompt: ${initialPrompt.take(50)}...")
-                    cont.invokeOnCancellation {
-                        Log.d(TAG, "awaitImageGenerationConfirmation: Coroutine cancelled")
-                        imageGenConfirmCont = null
-                        _confirmationRequest.value = null
-                    }
-                }
-            }.also { result ->
-                // タイムアウトまたは戻り値に関わらず、状態をクリア
-                Log.d(TAG, "awaitImageGenerationConfirmation: Completed with result: ${if (result == null) "null/cancelled" else "success (prompt=${result.prompt.take(30)}..., model=${result.modelName}, steps=${result.steps})"}")
-                _confirmationRequest.value = null
-                imageGenConfirmCont = null
-            }
-        }
-
-    fun onConfirmGenerateImage(editedPrompt: String, modelName: String?, steps: Int) {
-        Log.d(TAG, "onConfirmGenerateImage: Called with prompt: ${editedPrompt.take(50)}..., model=$modelName, steps=$steps")
-        _confirmationRequest.value = null
-        val c = imageGenConfirmCont
-        imageGenConfirmCont = null
-        if (c != null) {
-            Log.d(TAG, "onConfirmGenerateImage: Resuming continuation")
-            c.resume(
-                ImageGenConfirmationResult(
-                    prompt = editedPrompt.trim(),
-                    modelName = modelName?.trim()?.takeIf { it.isNotBlank() },
-                    steps = steps
-                )
-            )
-        } else {
-            Log.w(TAG, "onConfirmGenerateImage: No continuation to resume (already cleared?)")
-        }
-    }
-
-    fun onCancelGenerateImage() {
-        Log.d(TAG, "onCancelGenerateImage: Called")
-        _confirmationRequest.value = null
-        val c = imageGenConfirmCont
-        imageGenConfirmCont = null
-        if (c != null) {
-            Log.d(TAG, "onCancelGenerateImage: Resuming continuation with null")
-            c.resume(null)
-        } else {
-            Log.w(TAG, "onCancelGenerateImage: No continuation to resume (already cleared?)")
-        }
-    }
-
     private suspend fun reloadChatModelAfterSd(manager: ModelManager) {
         val selectedModel = getActiveSelectedModel()
         try {
@@ -3142,7 +3032,6 @@ class ChatViewModel(
                     elapsedMs = 0
                 )
             }
- _uiMessage.emit("generate_image を実行中...")
             return ToolExecutionResult(
                 success = false,
                 payload = mapOf("success" to false, "error" to "missing_prompt")
@@ -3170,31 +3059,13 @@ class ChatViewModel(
         val seed = (toolCall.arguments["seed"] as? Number)?.toLong() ?: -1L
         val scheduler = SdScheduler.fromId(toolCall.arguments["scheduler"] as? String)
 
-        val confirmation = awaitImageGenerationConfirmation(
-            initialPrompt = prompt,
-            defaultSteps = steps,
-            defaultModelName = requestedModelName ?: File(findAvailableSdModelPath()).name.takeIf { it.isNotBlank() }
-        )
-        if (confirmation == null) {
-            // UI通知：キャンセル
-            _imageGenProgress.value = null
-            viewModelScope.launch {
-                _toolCallState.value = ToolCallState.Result(
-                    toolName = "generate_image",
-                    status = "cancelled",
-                    resultMessage = "キャンセルしました"
-                )
-            }
- _uiMessage.emit("generate_image: キャンセルしました")
-            return ToolExecutionResult(
-                success = true,
-                payload = mapOf("success" to true, "message" to "キャンセルしました")
-            )
-        }
-        val edited = confirmation.prompt
-        // ユーザーが確認ダイアログでモデル/ステップ数を変更していれば、それを優先する。
-        val finalSteps = confirmation.steps.coerceIn(1, 50)
-        val finalRequestedModelName = confirmation.modelName ?: requestedModelName
+        // ツール経由の画像生成は確認ダイアログを挟まず即時実行する。
+        //   キャンセルは、ユーザーが停止ボタン (stopGeneration ->
+        //   cancelPendingImageToolGeneration) を押したケースだけを想定する。
+        //   モデル/ステップ数を変えたいときはツール引数 (model / steps) で指定する。
+        val edited = prompt
+        val finalSteps = steps.coerceIn(1, 50)
+        val finalRequestedModelName = requestedModelName
 
         // 初期状態を早期にセットして、チャット画面へ進捗表示を開始する
         viewModelScope.launch {
@@ -3216,7 +3087,6 @@ class ChatViewModel(
                     resultMessage = "sd_model_path_missing"
                 )
             }
- _uiMessage.emit("generate_image: SDモデルパスが見つかりません")
             return ToolExecutionResult(
                 success = false,
                 payload = mapOf("success" to false, "error" to "sd_model_path_missing")
@@ -3239,7 +3109,6 @@ class ChatViewModel(
             sdPath = sdPath,
             requestedModelName = finalRequestedModelName
         )
- _uiMessage.emit("generate_image: 画像生成を開始します")
         return ToolExecutionResult(
             success = true,
             payload = mapOf(
@@ -3264,7 +3133,7 @@ class ChatViewModel(
         sdPath: String,
         requestedModelName: String? = null
     ) {
-        viewModelScope.launch(Dispatchers.IO) {
+        val job = viewModelScope.launch(Dispatchers.IO) {
             if (activeTurnJob != null) {
                 val turnFinished = withTimeoutOrNull(15_000L) {
                     activeTurnJob.join()
@@ -3278,9 +3147,13 @@ class ChatViewModel(
                         status = "error",
                         resultMessage = "LLM応答終了待ちタイムアウト"
                     )
- _uiMessage.emit("generate_image: LLM応答の終了待ちがタイムアウトしました")
                     return@launch
                 }
+            }
+            // ユーザーが停止ボタンでキャンセルした (ジョブが既に cancel 済み) ときは開始しない。
+            if (!isActive) {
+                Log.d(TAG, "queueGenerateImageFromTool: cancelled before start; skipping SD generation")
+                return@launch
             }
             performGenerateImageFromTool(
                 targetMessageId = targetMessageId,
@@ -3294,6 +3167,29 @@ class ChatViewModel(
                 scheduler = scheduler,
                 sdPath = sdPath,
                 requestedModelName = requestedModelName
+            )
+        }
+        imageToolJob = job
+        job.invokeOnCompletion {
+            if (imageToolJob === job) imageToolJob = null
+        }
+    }
+
+    /**
+     * キュー済み/実行中のツール画像生成をユーザー停止としてキャンセルする。
+     * コルーチンをキャンセルした上で、SD サーバ側の生成も HTTP 切断で止める。
+     */
+    private fun cancelPendingImageToolGeneration() {
+        val job = imageToolJob ?: return
+        imageToolJob = null
+        job.cancel(UserStopCancellationException())
+        EngineManager.cancelCurrentGeneration(viewModelScope)
+        _imageGenProgress.value = null
+        if ((_toolCallState.value as? ToolCallState.Executing)?.toolName == "generate_image") {
+            _toolCallState.value = ToolCallState.Result(
+                toolName = "generate_image",
+                status = "cancelled",
+                resultMessage = "キャンセルしました"
             )
         }
     }
@@ -3320,7 +3216,6 @@ class ChatViewModel(
                 status = "error",
                 resultMessage = "セーフティモデルDL失敗"
             )
- _uiMessage.emit("generate_image: セーフティモデルのダウンロードに失敗しました")
             return
         }
 
@@ -3345,7 +3240,6 @@ class ChatViewModel(
                 status = "error",
                 resultMessage = "LLMモデル解放失敗"
             )
- _uiMessage.emit("generate_image: LLMモデルを解放できませんでした")
             return
         }
 
@@ -3377,7 +3271,6 @@ class ChatViewModel(
                     elapsedMs = SystemClock.elapsedRealtime()
                 )
             }
- _uiMessage.emit("画像生成中...")
             val promptPreview = prompt.trim().replace("\n", " ").let { if (it.length <= 48) it else it.take(48) + "…" }
             ImageGenerationNotificationManager.showChatToolProgress(
                 appContext,
@@ -3434,7 +3327,6 @@ class ChatViewModel(
                     status = "error",
                     resultMessage = "生成失敗"
                 )
- _uiMessage.emit("generate_image: 画像生成失敗")
                 ImageGenerationNotificationManager.showError(
                     appContext,
                     ImageGenerationNotificationManager.chatToolNotificationId(),
@@ -3473,7 +3365,6 @@ class ChatViewModel(
                     status = "success",
                     resultMessage = "画像を生成しました"
                 )
- _uiMessage.emit("generate_image: 画像を生成しました")
                 ImageGenerationNotificationManager.showCompleted(
                     appContext,
                     ImageGenerationNotificationManager.chatToolNotificationId(),
@@ -3497,7 +3388,6 @@ class ChatViewModel(
                 status = "error",
                 resultMessage = e.message ?: "sd_error"
             )
- _uiMessage.emit("generate_image: エラー - ${e.message ?: "不明なエラー"}")
             ImageGenerationNotificationManager.showError(
                 appContext,
                 ImageGenerationNotificationManager.chatToolNotificationId(),
@@ -3731,10 +3621,18 @@ class ChatViewModel(
                 .replace(Regex("^(?i)(?:Assistant|アシスタント)\\s*[:：]\\s*"), "")
                 .trim()
         } else {
+            // nezumi://videoframes / nezumi://txtfile マーカーは「画像」ではないので
+            // 枚数に数えない。これを数えてしまうと GGUF では <__media__> トークンが
+            // 実際の Bitmap 数より多くなり mtmd 側で画像/音声の紐付けが壊れ、
+            // LiteRT でも偽の "(image xN)" フォールバックが挿入されてしまう。
             val imageCount = msg.imageUri
                 ?.split(",")
                 ?.map { it.trim() }
-                ?.count { it.isNotEmpty() }
+                ?.count {
+                    it.isNotEmpty() &&
+                        !com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(it) &&
+                        !com.nezumi_ai.data.media.TextFileAttachmentEncoding.isMarker(it)
+                }
                 ?: 0
             val imageTokens: String = when {
                 imageCount <= 0 -> ""
@@ -4956,8 +4854,12 @@ class ChatViewModel(
                 // Phase 11: 複数画像対応
                 //   先頭の nezumi://videoframes マーカーは persist 対象外 (そのまま保存) 。
                 //   フレーム URI だけ persistUriIfNeeded にかけて file:// 化する。
+                //   先頭の nezumi://videoframes マーカーと nezumi://txtfile マーカーは
+                //   persist 対象外 (そのまま保存)。テキスト添付の実体は送信側 (ChatFragment)
+                //   で persistTextFileIfNeeded 済みの content:// URI がマーカーに埋め込まれている。
                 val storedImages = imageUris.mapNotNull { imageUri ->
-                    if (com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(imageUri)) {
+                    if (com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(imageUri) ||
+                        com.nezumi_ai.data.media.TextFileAttachmentEncoding.isMarker(imageUri)) {
                         imageUri
                     } else {
                         withContext(Dispatchers.IO) {
@@ -4974,7 +4876,12 @@ class ChatViewModel(
                 // Phase 11: 複数画像をカンマ区切りで保存
                 // Phase 12: 画像説明を自動生成・保存
                 val userMessageId = withContext(Dispatchers.IO) {
-                    val imageDesc = if (storedImages.isNotEmpty()) {
+                    // 画像が1枚も無い (テキスト添付や動画マーカーのみ) ときは説明を生成しない
+                    val hasRealImages = storedImages.any {
+                        !com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(it) &&
+                            !com.nezumi_ai.data.media.TextFileAttachmentEncoding.isMarker(it)
+                    }
+                    val imageDesc = if (hasRealImages) {
                         // 初めての画像に対する簡潔な説明を生成
                         generateImageDescription(storedImages)
                     } else null
@@ -5007,7 +4914,11 @@ class ChatViewModel(
                 val audioClips = mutableListOf<ByteArray>()
 
                 // Phase 11: 複数画像の処理
+                //   nezumi://videoframes / nezumi://txtfile マーカーは画像ではないので
+                //   Bitmap 化せずスキップする (テキストはプロンプト本文に既に含まれる)。
                 for (uriStr in storedImages) {
+                    if (com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(uriStr) ||
+                        com.nezumi_ai.data.media.TextFileAttachmentEncoding.isMarker(uriStr)) continue
                     val uri = MessageMediaStore.toUri(uriStr) ?: continue
                     val bitmap = loadBitmapFromUri(uri)
                     if (bitmap != null) {
@@ -5368,9 +5279,6 @@ class ChatViewModel(
         Log.d(TAG, "ChatViewModel.onCleared() called - starting resource cleanup")
 
         GenerateImageToolBridge.handler = null
-        imageGenConfirmCont?.cancel(null)
-        imageGenConfirmCont = null
-        _confirmationRequest.value = null
 
         // 推論をキャンセル（新しいセッションへの汚染を防止）
         stopGeneration()

@@ -828,6 +828,10 @@ Enjoy chatting with your AI!</string>
     <!-- Image / Media viewer -->
     <string name="viewer_image_preview_title">Image preview</string>
     <string name="viewer_media_preview_title">Media preview</string>
+    <string name="txtfile_added_toast">Text file added: %1$s</string>
+    <string name="txtfile_viewer_loading">Loading…</string>
+    <string name="txtfile_viewer_load_failed">Could not load the file</string>
+    <string name="txtfile_viewer_truncated_suffix">…(truncated)</string>
     <string name="viewer_close">Close</string>
     <string name="viewer_share">Share</string>
     <string name="viewer_save_to_folder">Save to folder</string>
