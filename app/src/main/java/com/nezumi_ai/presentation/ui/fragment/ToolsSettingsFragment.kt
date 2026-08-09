@@ -222,6 +222,13 @@ class ToolsSettingsFragment : Fragment() {
                                 color = colorResource(id = R.color.text_secondary)
                             )
                         }
+                        if (tool == NezumiTool.CONVERT_DOCUMENT_TO_MD) {
+                            Text(
+                                text = "PDF/Word/Excel → Markdown 変換には端末上での Python 実行環境 (Chaquopy) が必要です。初回変換時に自動的に準備されます。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorResource(id = R.color.text_secondary)
+                            )
+                        }
                     }
             }
         }

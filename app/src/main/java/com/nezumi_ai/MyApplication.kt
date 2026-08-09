@@ -40,6 +40,15 @@ class MyApplication : Application() {
         super.onCreate()
         PreferencesHelper.applyThemeMode(this)
 
+        // Chaquopy (Python-on-Android) ランタイムを起動。
+        // PDF/Word/Excel → Markdown 変換 (MarkItDown) で使用する。
+        // start() は同一プロセス内で何度呼んでも安全 (isStarted チェック済み)。
+        if (!com.chaquo.python.Python.isStarted()) {
+            com.chaquo.python.Python.start(
+                com.chaquo.python.android.AndroidPlatform(this)
+            )
+        }
+
         // デバッグタブでの事後閲覧用に、自プロセスの logcat を常時バックグラウンド収集する。
         //   サイズローテーションで古いログから自動的に消えていくため、
         //   ディスクを圧迫し続けることはない（詳細は LogcatRecorder 参照）。

@@ -8,6 +8,11 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose") version "2.3.20"
     id("com.google.devtools.ksp") version "2.3.9"
     id("androidx.navigation.safeargs.kotlin") version "2.9.8"
+    // Chaquopy 17.0.0: AGP 9.0-9.2 に対応した最初のバージョン (#1096)。
+    // 16.1.0 は AGP 8.13 までしか対応しておらず、AGP 9.1 との組み合わせで
+    // 「Unable to load class 'org.gradle.util.VersionNumber'」エラー
+    // (Gradle 9.0 で当該クラスが削除されたことによる非互換) が発生するため必須の更新。
+    id("com.chaquo.python") version "17.0.0"
 }
 
 val localProperties = Properties()
@@ -98,6 +103,16 @@ android {
                 arguments.add("-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON")
             }
         }
+
+        // ─────────────────────────────────────────────
+        // Chaquopy (Python-on-Android) 用の ABI 設定は、
+        // 上の ndk { abiFilters.add("arm64-v8a") } がそのまま適用される
+        // （Chaquopy は独自の abiFilters を持たず、AGP の ndk.abiFilters を参照する）。
+        // Python 本体の設定 (buildPython / pip) はトップレベルの
+        // chaquopy { defaultConfig { ... } } ブロックで行う
+        // （Kotlin DSL では android.defaultConfig.python{} という旧 Groovy 専用 DSL は
+        // 使用できないため、必ずファイル末尾の独立した chaquopy{} ブロックを使うこと）。
+        // ─────────────────────────────────────────────
     }
 
     signingConfigs {
@@ -165,6 +180,48 @@ android {
     }
 }
 
+// ─────────────────────────────────────────────
+// Chaquopy (Python-on-Android) 設定
+// PDF/Word/Excel → Markdown 変換 (MarkItDown) を実行するために使用。
+//
+// 重要: Kotlin DSL (build.gradle.kts) では、android.defaultConfig.python{} という
+// 旧 Groovy 専用 DSL は使えない。必ずこのファイル末尾に独立して置く
+// トップレベルの chaquopy { defaultConfig { ... } } ブロック（新DSL）を使うこと。
+// ABI の絞り込みは android.defaultConfig.ndk.abiFilters 側（上の android ブロック）で
+// 行われており、Chaquopy はそれをそのまま参照するため、ここでの指定は不要。
+// ─────────────────────────────────────────────
+chaquopy {
+    defaultConfig {
+        // ランタイム Python バージョンを明示的に 3.13 に指定する。
+        //
+        // 理由:
+        //   1. buildPython の自動検出は「アプリのランタイム Python と同じ
+        //      メジャー.マイナーバージョン」のインタプリタしかビルドマシン上で
+        //      受け付けない。デフォルトのランタイムは 3.10 だが、多くの開発機
+        //      （特に最近セットアップした Windows 環境）には 3.10 系が無く、
+        //      py ランチャーには最新の 3.13 系のみが入っていることが多い。
+        //      version="3.13" にすることで、この不一致を解消する。
+        //   2. Android 15 の 16KB ページサイズ要件に対応する上でも、
+        //      Chaquopy 17.0.0 + Python 3.13 以降の組み合わせが推奨されている
+        //      （3.12 以前のビルド済み .so は 16KB ページ非対応のものが多いため）。
+        //
+        // ビルドマシン側に Python 3.13 系が無い場合は、この値を実際にインストール
+        // 済みのバージョン（例: "3.11", "3.12"）に合わせて変更するか、
+        // buildPython() で絶対パスを指定すること。
+        version = "3.13"
+
+        pip {
+            // MarkItDown 本体（PDF/Word/Excel/PowerPoint/HTML等 → Markdown 変換）。
+            // markitdown[pdf,docx,xlsx,pptx] は依存として pdfminer.six / python-docx /
+            // openpyxl / python-pptx 等を自動的に引き込む。初回ビルドは pip 解決に
+            // 数分かかることがある。
+            // Chaquopy 17.0 は pip --only-binary を使うため、Android 向け wheel が
+            // 存在しない純粋 Python 以外のパッケージは失敗し得る点に注意。
+            install("markitdown[pdf,docx,xlsx,pptx]")
+        }
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
@@ -219,6 +276,33 @@ dependencies {
 
     // VOICEVOX integration
     implementation(files("libs/voicevoxcore-android-0.16.4.aar"))
+
+    // ─────────────────────────────────────────────
+    // Markdown → Word(.docx) / Excel(.xlsx) 生成用 (Apache POI)
+    // Android では素の POI に加え poi-ooxml が必要。XML処理は Android 標準実装と
+    // 衝突しやすいため、Xerces/Xalan 系の重複クラスを excludeし、
+    // Android の内蔵 XML パーサ実装との競合を避ける。
+    //
+    // 注意: curvesapi は明示バージョン指定しない（POI 5.4.0 の POM が要求する
+    // 推移的バージョンにそのまま従わせる）。Maven Central 上の curvesapi は
+    // "1.06", "1.07", "1.08" のようにゼロ埋め表記のみが公開されており、
+    // "1.8" のような表記のバージョンは存在しないため、明示指定すると
+    // 解決エラーになる。
+    // ─────────────────────────────────────────────
+    implementation("org.apache.poi:poi:5.4.0")
+    implementation("org.apache.poi:poi-ooxml:5.4.0") {
+        exclude(group = "org.apache.xmlbeans", module = "xmlbeans")
+    }
+    implementation("org.apache.xmlbeans:xmlbeans:5.2.0")
+    // POI の一部クラスが依存する javax.xml.stream (StAX) 実装。Android には
+    // 標準搭載されていないため明示的に追加する。
+    implementation("org.codehaus.woodstox:stax2-api:4.2.2")
+    implementation("com.fasterxml.woodstox:woodstox-core:6.7.0")
+
+    // ─────────────────────────────────────────────
+    // Markdown → PDF 生成用 (Android移植版 PDFBox)
+    // ─────────────────────────────────────────────
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")

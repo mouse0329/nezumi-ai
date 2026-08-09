@@ -27,7 +27,10 @@ enum class NezumiTool(val displayName: String) {
     // CALENDAR_DISABLED: 復活時は下2行のコメントを外し、presetIdsForTool/isEnabled/setEnabled の対応箇所も戻す
     // ADD_CALENDAR_EVENT("カレンダー追加"),
     // LIST_CALENDAR_EVENTS("カレンダー一覧"),
-    WEB_SEARCH("ウェブ検索")
+    WEB_SEARCH("ウェブ検索"),
+    // Markdown → Word/PDF/Excel 生成、および PDF/Word/Excel → Markdown 変換
+    CONVERT_MD_TO_DOCUMENT("MD→Word/PDF/Excel変換"),
+    CONVERT_DOCUMENT_TO_MD("Word/PDF/Excel→MD変換")
 }
 
 class ToolPreferences(private val context: Context) {
@@ -81,6 +84,8 @@ class ToolPreferences(private val context: Context) {
             // NezumiTool.ADD_CALENDAR_EVENT,
             // NezumiTool.LIST_CALENDAR_EVENTS -> setOf(PresetConstants.TOOL_CALENDAR)
             NezumiTool.WEB_SEARCH -> setOf(PresetConstants.TOOL_WEB_SEARCH)
+            NezumiTool.CONVERT_MD_TO_DOCUMENT -> setOf(PresetConstants.TOOL_CONVERT_MD_TO_DOCUMENT)
+            NezumiTool.CONVERT_DOCUMENT_TO_MD -> setOf(PresetConstants.TOOL_CONVERT_DOCUMENT_TO_MD)
         }
     }
 

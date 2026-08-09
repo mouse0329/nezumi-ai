@@ -97,6 +97,16 @@ object GgufToolPromptBuilder {
             "web_search",
             "Searches the web for information.",
             """{"type":"object","properties":{"query":{"type":"string"},"count":{"type":"integer"}},"required":["query"]}"""
+        ),
+        ToolSchema(
+            "convert_md_to_document",
+            "Convert Markdown text into a Word (.docx), PDF (.pdf), or Excel (.xlsx) file. Supports headings, paragraphs, lists, tables, code blocks, quotes, bold/italic text. The generated file is saved and shown to the user in the chat.",
+            """{"type":"object","properties":{"markdown":{"type":"string","description":"The Markdown text to convert"},"format":{"type":"string","description":"Output format: 'docx', 'pdf', or 'xlsx'"},"fileName":{"type":"string","description":"Optional output file name without extension"}},"required":["markdown","format"]}"""
+        ),
+        ToolSchema(
+            "convert_document_to_md",
+            "Convert a PDF, Word (.docx), or Excel (.xlsx/.xls) file that the user has uploaded/attached into Markdown text. Use the file path or attachment reference from the current conversation.",
+            """{"type":"object","properties":{"filePath":{"type":"string","description":"Absolute file path or content URI of the source PDF/Word/Excel file"},"fileName":{"type":"string","description":"Optional output file name (without extension) for the resulting .md file"}},"required":["filePath"]}"""
         )
     )
 
@@ -116,7 +126,9 @@ object GgufToolPromptBuilder {
         // CALENDAR_DISABLED
         // NezumiTool.ADD_CALENDAR_EVENT to "add_calendar_event",
         // NezumiTool.LIST_CALENDAR_EVENTS to "list_calendar_events",
-        NezumiTool.WEB_SEARCH to "web_search"
+        NezumiTool.WEB_SEARCH to "web_search",
+        NezumiTool.CONVERT_MD_TO_DOCUMENT to "convert_md_to_document",
+        NezumiTool.CONVERT_DOCUMENT_TO_MD to "convert_document_to_md"
     )
 
     /**

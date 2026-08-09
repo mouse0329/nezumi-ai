@@ -309,6 +309,8 @@ private fun titleForToolCall(toolCall: ToolCall?, rawJson: String): String {
         "get_current_time", "getcurrenttime" -> "現在時刻を確認"
         "get_battery_level", "getbatterylevel" -> "バッテリー残量を確認"
         "generate_image", "generateimage" -> "画像を生成"
+        "convert_md_to_document", "convertmdtodocument" -> "ドキュメントに変換"
+        "convert_document_to_md", "convertdocumenttomd" -> "Markdownに変換"
         else -> name
     }
 }

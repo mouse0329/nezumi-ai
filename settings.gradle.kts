@@ -9,6 +9,8 @@ pluginManagement {
         }
         mavenCentral()
         gradlePluginPortal()
+        // Chaquopy (Python-on-Android) プラグイン配布元
+        maven { url = uri("https://chaquo.com/maven") }
     }
 }
 plugins {
@@ -19,6 +21,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Chaquopy (Python-on-Android) ランタイム/pipホイール配布元
+        maven { url = uri("https://chaquo.com/maven") }
         maven {
             url = uri(file("java_packages"))
         }

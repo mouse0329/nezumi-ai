@@ -37,6 +37,10 @@ import com.nezumi_ai.data.inference.EngineManager
 import com.nezumi_ai.data.inference.ImageGenerationNotificationManager
 import com.nezumi_ai.data.inference.GenerateImageToolBridge
 import com.nezumi_ai.data.inference.GenerateImageToolHandler
+import com.nezumi_ai.data.inference.DocumentToolBridge
+import com.nezumi_ai.data.inference.ConvertMdToDocumentToolHandler
+import com.nezumi_ai.data.inference.ConvertDocumentToMdToolHandler
+import com.nezumi_ai.data.document.DocumentConversionManager
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.TextTokenEstimator
 import com.nezumi_ai.data.inference.ToolCallState
@@ -624,6 +628,14 @@ class ChatViewModel(
         invokeGenerateImageFromTool(toolCall)
     }
 
+    private val convertMdToDocumentToolHandler = ConvertMdToDocumentToolHandler { toolCall ->
+        invokeConvertMdToDocumentFromTool(toolCall)
+    }
+
+    private val convertDocumentToMdToolHandler = ConvertDocumentToMdToolHandler { toolCall ->
+        invokeConvertDocumentToMdFromTool(toolCall)
+    }
+
     data class MemoryWarningInfo(
         val modelName: String,
         val predictedUsagePercent: Int,
@@ -875,6 +887,8 @@ class ChatViewModel(
         }
 
         GenerateImageToolBridge.handler = generateImageToolHandler
+        DocumentToolBridge.convertMdToDocumentHandler = convertMdToDocumentToolHandler
+        DocumentToolBridge.convertDocumentToMdHandler = convertDocumentToMdToolHandler
     }
 
     private suspend fun refreshContextWindowForSelectedModel() {
@@ -3019,6 +3033,164 @@ class ChatViewModel(
             else return current
         }
         return current
+    }
+
+    /**
+     * convert_md_to_document ツール本体。
+     * Markdown テキストを Word(.docx)/PDF(.pdf)/Excel(.xlsx) に変換し、
+     * 生成ファイルの FileProvider URI をチャットに残す。
+     */
+    private suspend fun invokeConvertMdToDocumentFromTool(toolCall: ToolCall): ToolExecutionResult {
+        val markdown = toolCall.arguments["markdown"]?.toString().orEmpty()
+        val formatArg = toolCall.arguments["format"]?.toString()?.trim()?.lowercase().orEmpty()
+        val fileNameArg = toolCall.arguments["fileName"]?.toString()?.trim()
+
+        if (markdown.isBlank()) {
+            return ToolExecutionResult(
+                success = false,
+                payload = mapOf("success" to false, "error" to "missing_markdown")
+            )
+        }
+
+        val format = when (formatArg) {
+            "docx", "word", "doc" -> DocumentConversionManager.TargetFormat.DOCX
+            "pdf" -> DocumentConversionManager.TargetFormat.PDF
+            "xlsx", "excel", "xls" -> DocumentConversionManager.TargetFormat.XLSX
+            else -> null
+        }
+        if (format == null) {
+            return ToolExecutionResult(
+                success = false,
+                payload = mapOf(
+                    "success" to false,
+                    "error" to "invalid_format",
+                    "message" to "format must be one of: docx, pdf, xlsx"
+                )
+            )
+        }
+
+        _toolCallState.value = ToolCallState.Executing(
+            toolName = "convert_md_to_document",
+            elapsedMs = 0
+        )
+
+        val result = try {
+            DocumentConversionManager.generateFromMarkdown(
+                context = appContext,
+                markdown = markdown,
+                format = format,
+                baseName = fileNameArg
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "invokeConvertMdToDocumentFromTool: generation failed", e)
+            null
+        }
+
+        if (result == null || !result.success) {
+            _toolCallState.value = ToolCallState.Result(
+                toolName = "convert_md_to_document",
+                status = "error",
+                resultMessage = result?.errorMessage ?: "変換に失敗しました"
+            )
+            return ToolExecutionResult(
+                success = false,
+                payload = mapOf(
+                    "success" to false,
+                    "error" to (result?.errorCode ?: "generation_failed"),
+                    "message" to (result?.errorMessage ?: "unknown error")
+                )
+            )
+        }
+
+        _toolCallState.value = ToolCallState.Result(
+            toolName = "convert_md_to_document",
+            status = "success",
+            resultMessage = "${result.fileName} を生成しました"
+        )
+
+        return ToolExecutionResult(
+            success = true,
+            payload = buildMap {
+                put("success", true)
+                put("format", format.extension)
+                put("fileName", result.fileName)
+                put("filePath", result.filePath)
+                put("fileUri", result.fileUri)
+                put("fileSizeBytes", result.fileSizeBytes)
+                if (result.warning != null) put("warning", result.warning)
+            }
+        )
+    }
+
+    /**
+     * convert_document_to_md ツール本体。
+     * PDF/Word/Excel ファイルを Markdown に変換する (Chaquopy 経由の MarkItDown)。
+     */
+    private suspend fun invokeConvertDocumentToMdFromTool(toolCall: ToolCall): ToolExecutionResult {
+        val filePathArg = toolCall.arguments["filePath"]?.toString()?.trim().orEmpty()
+        val fileNameArg = toolCall.arguments["fileName"]?.toString()?.trim()
+
+        if (filePathArg.isBlank()) {
+            return ToolExecutionResult(
+                success = false,
+                payload = mapOf("success" to false, "error" to "missing_file_path")
+            )
+        }
+
+        _toolCallState.value = ToolCallState.Executing(
+            toolName = "convert_document_to_md",
+            elapsedMs = 0
+        )
+
+        val result = try {
+            DocumentConversionManager.convertFileToMarkdown(
+                context = appContext,
+                sourceFilePath = filePathArg,
+                baseName = fileNameArg
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "invokeConvertDocumentToMdFromTool: conversion failed", e)
+            null
+        }
+
+        if (result == null || !result.success) {
+            _toolCallState.value = ToolCallState.Result(
+                toolName = "convert_document_to_md",
+                status = "error",
+                resultMessage = result?.errorMessage ?: "変換に失敗しました"
+            )
+            return ToolExecutionResult(
+                success = false,
+                payload = mapOf(
+                    "success" to false,
+                    "error" to (result?.errorCode ?: "conversion_failed"),
+                    "message" to (result?.errorMessage ?: "unknown error")
+                )
+            )
+        }
+
+        _toolCallState.value = ToolCallState.Result(
+            toolName = "convert_document_to_md",
+            status = "success",
+            resultMessage = "Markdownに変換しました (${result.charCount}文字)"
+        )
+
+        // markdown 本文はモデルへの応答としてそのまま渡す（長文の場合は先頭のみに制限し、
+        // 全文はファイルとして保存済みなので fileUri から辿れるようにする）。
+        val markdownForModel = result.markdown.orEmpty().let {
+            if (it.length > 8000) it.take(8000) + "\n\n…（以下省略。全文は生成されたMarkdownファイルを参照）" else it
+        }
+
+        return ToolExecutionResult(
+            success = true,
+            payload = buildMap {
+                put("success", true)
+                put("markdown", markdownForModel)
+                put("charCount", result.charCount)
+                put("markdownFilePath", result.markdownFilePath)
+                put("markdownFileUri", result.markdownFileUri)
+            }
+        )
     }
 
     private suspend fun invokeGenerateImageFromTool(toolCall: ToolCall): ToolExecutionResult {
@@ -5279,6 +5451,8 @@ class ChatViewModel(
         Log.d(TAG, "ChatViewModel.onCleared() called - starting resource cleanup")
 
         GenerateImageToolBridge.handler = null
+        DocumentToolBridge.convertMdToDocumentHandler = null
+        DocumentToolBridge.convertDocumentToMdHandler = null
 
         // 推論をキャンセル（新しいセッションへの汚染を防止）
         stopGeneration()
