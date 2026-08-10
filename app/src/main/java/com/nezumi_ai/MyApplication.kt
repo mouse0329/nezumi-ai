@@ -226,6 +226,20 @@ class MyApplication : Application() {
      *
      * UI 側はこの API だけ呼べばよい（旧 setSelectedStyleId + 手動 initialize 両方を呼ぶ必要なし）。
      */
+    /**
+     * このスタイルに切り替えた場合に、新規ダウンロード（.vvm または辞書）が発生するかどうかを判定する。
+     * 副作用なし。UI 側でダウンロード前ライセンス確認ダイアログを出すべきか判断するために使う。
+     */
+    fun willDownloadForVoicevoxStyle(styleId: Int): Boolean {
+        if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) return false
+        val hostEntry = VoicevoxManager.catalogEntryForStyle(styleId) ?: return false
+        val previousModel = voicevoxManager.getSelectedModelFileName()
+        val sameModel = hostEntry.fileName == previousModel
+        val needsDictionary = !voicevoxManager.isDictionaryReady()
+        val needsModel = !voicevoxManager.isModelFileReady() || !sameModel
+        return needsModel || needsDictionary
+    }
+
     fun selectVoicevoxStyle(styleId: Int) {
         if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) return
         val hostEntry = VoicevoxManager.catalogEntryForStyle(styleId)

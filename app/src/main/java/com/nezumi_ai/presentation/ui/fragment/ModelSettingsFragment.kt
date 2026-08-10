@@ -221,6 +221,14 @@ open class ModelSettingsFragment : Fragment() {
     private var voicevoxDownloadState by mutableStateOf<VoicevoxDownloadUiState?>(null)
     private var voicevoxStyleMenuExpanded by mutableStateOf(false)
 
+    // --- ダウンロード前ライセンス確認ダイアログ ---
+    // 画像モデル: ダウンロードボタン押下時に対象モデルを保持し、ライセンス取得中/取得結果を表示する。
+    private var imageLicensePendingModel by mutableStateOf<com.nezumi_ai.data.inference.ImageModel?>(null)
+    private var imageLicenseLoading by mutableStateOf(false)
+    private var imageLicenseInfo by mutableStateOf<com.nezumi_ai.data.inference.ImageModelLicenseInfo?>(null)
+    // VOICEVOX: スタイル選択時に確認を挟むための保留状態。
+    private var voicevoxLicensePendingStyleId by mutableStateOf<Int?>(null)
+
     // SD (画像生成) モデル zip ピッカー。
     // zip 内に unet.mnn / clip*.mnn / vae_decoder*.mnn と、
     // tokenizer.json または pos_emb.bin+token_emb.bin が含まれていればインポート可能。
@@ -412,6 +420,12 @@ open class ModelSettingsFragment : Fragment() {
         }
         modelSettingsDialogModel?.let { model ->
             ImportedModelSettingsDialog(model)
+        }
+        if (imageLicensePendingModel != null) {
+            ImageModelLicenseConfirmDialog()
+        }
+        voicevoxLicensePendingStyleId?.let {
+            VoicevoxLicenseConfirmDialog()
         }
         if (hfSearchResultsDialogVisible) {
             HfSearchResultsContent()
@@ -1352,10 +1366,16 @@ open class ModelSettingsFragment : Fragment() {
                                 DropdownMenuItem(
                                     text = { Text(style.detailName) },
                                     onClick = {
-                                        (requireContext().applicationContext as MyApplication)
-                                            .selectVoicevoxStyle(style.styleId)
                                         voicevoxStyleMenuExpanded = false
-                                        refreshVoicevoxState()
+                                        val app = requireContext().applicationContext as MyApplication
+                                        if (app.willDownloadForVoicevoxStyle(style.styleId)) {
+                                            // 新規ダウンロードが発生する場合のみ、ライセンス確認を挟む。
+                                            voicevoxLicensePendingStyleId = style.styleId
+                                        } else {
+                                            // ダウンロード不要（既に取得済みの声への切替）はそのまま実行。
+                                            app.selectVoicevoxStyle(style.styleId)
+                                            refreshVoicevoxState()
+                                        }
                                     }
                                 )
                             }
@@ -1786,9 +1806,14 @@ open class ModelSettingsFragment : Fragment() {
                 imageModelsError?.let {
                     Text(
                         text = it,
-                        color = colorResource(id = R.color.text_primary),
+                        color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall
                     )
+                    if (!hfLinked || it.contains("認証")) {
+                        TextButton(onClick = { startOAuthLogin() }) {
+                            Text("HuggingFaceに再ログイン")
+                        }
+                    }
                 }
             }
         }
@@ -2190,7 +2215,7 @@ open class ModelSettingsFragment : Fragment() {
 
                 }
                 Button(
-                    onClick = { downloadImageModel(model) },
+                    onClick = { requestImageModelDownload(model) },
                     enabled = !isDownloading,
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -2198,6 +2223,176 @@ open class ModelSettingsFragment : Fragment() {
                 }
             }
         }
+    }
+
+    /** ダウンロードボタン押下時のエントリポイント。即ダウンロードせず、まずライセンス確認ダイアログを開く。 */
+    private fun requestImageModelDownload(model: com.nezumi_ai.data.inference.ImageModel) {
+        imageLicensePendingModel = model
+        imageLicenseInfo = null
+        imageLicenseLoading = true
+        viewLifecycleOwner.lifecycleScope.launch {
+            val info = withContext(Dispatchers.IO) {
+                com.nezumi_ai.data.inference.ImageModelBrowser.fetchLicenseInfo(requireContext(), model.repo)
+            }
+            // ダイアログを閉じた後に結果が返ってきた場合は無視する（別モデルに切り替わっている可能性があるため）
+            if (imageLicensePendingModel?.id == model.id) {
+                imageLicenseInfo = info
+                imageLicenseLoading = false
+            }
+        }
+    }
+
+    /** ライセンス確認ダイアログで「同意してダウンロード」が押された時。 */
+    private fun confirmImageModelDownload() {
+        val model = imageLicensePendingModel ?: return
+        imageLicensePendingModel = null
+        imageLicenseInfo = null
+        imageLicenseLoading = false
+        downloadImageModel(model)
+    }
+
+    /** ライセンス確認ダイアログで「キャンセル」が押された時、または閉じた時。 */
+    private fun dismissImageLicenseDialog() {
+        imageLicensePendingModel = null
+        imageLicenseInfo = null
+        imageLicenseLoading = false
+    }
+
+    @Composable
+    private fun ImageModelLicenseConfirmDialog() {
+        val model = imageLicensePendingModel ?: return
+        val info = imageLicenseInfo
+        val uriHandler = LocalUriHandler.current
+
+        AlertDialog(
+            onDismissRequest = { dismissImageLicenseDialog() },
+            title = { Text("画像生成モデルのライセンス確認") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "「${model.displayName}」をダウンロードします。このモデルは元モデルの配布ライセンス（例: CreativeML Open RAIL-M 等）に従い、商用利用の可否や生成物の用途制限（未成年者の性的搾取、偽情報生成、嫌がらせ、差別的表現などの禁止を含む場合があります）が定められています。内容を確認してから同意してください。",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    when {
+                        imageLicenseLoading -> {
+                            Text("ライセンス情報を取得しています...", style = MaterialTheme.typography.bodySmall)
+                        }
+                        info == null -> {
+                            Text("ライセンス情報を取得できませんでした。", style = MaterialTheme.typography.bodySmall)
+                        }
+                        !info.found -> {
+                            Text(
+                                text = "このモデルのライセンスファイル（LICENSE.md / README.md）を自動取得できませんでした。" +
+                                    "ダウンロード前に必ずHuggingFaceのモデルページで利用条件をご確認ください。",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            TextButton(onClick = { uriHandler.openUri(info.repoUrl) }) {
+                                Text("HuggingFaceでモデルページを開く")
+                            }
+                        }
+                        else -> {
+                            info.licenseId?.let { lic ->
+                                Text("ライセンス種別: $lic", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                            }
+                            val sourceLabel = when (info.source) {
+                                com.nezumi_ai.data.inference.ImageModelLicenseSource.LICENSE_FILE -> "LICENSE.md より取得"
+                                com.nezumi_ai.data.inference.ImageModelLicenseSource.README -> "README.md より取得"
+                                else -> null
+                            }
+                            sourceLabel?.let {
+                                Text(it, color = colorResource(id = R.color.text_secondary), style = MaterialTheme.typography.labelSmall)
+                            }
+                            info.bodyText?.let { body ->
+                                Text(
+                                    text = body,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier
+                                        .heightIn(max = 240.dp)
+                                        .verticalScroll(rememberScrollState())
+                                )
+                            }
+                            TextButton(onClick = { uriHandler.openUri(info.repoUrl) }) {
+                                Text("HuggingFaceで全文を開く")
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { confirmImageModelDownload() },
+                    enabled = !imageLicenseLoading
+                ) {
+                    Text("同意してダウンロード")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { dismissImageLicenseDialog() }) {
+                    Text("キャンセル")
+                }
+            }
+        )
+    }
+
+    @Composable
+    private fun VoicevoxLicenseConfirmDialog() {
+        val styleId = voicevoxLicensePendingStyleId ?: return
+        val style = com.nezumi_ai.voicevox.VoicevoxManager.allStyles.firstOrNull { it.styleId == styleId }
+        val uriHandler = LocalUriHandler.current
+
+        fun dismiss() { voicevoxLicensePendingStyleId = null }
+
+        AlertDialog(
+            onDismissRequest = { dismiss() },
+            title = { Text("音声ライブラリのライセンス確認") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "「${style?.detailName ?: "選択した声"}」の音声モデルをダウンロードします。" +
+                            "生成音声を利用する際は VOICEVOX 本体および話者ごとのクレジット表記・利用規約の遵守が必要です。",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    val license = style?.license
+                    if (license == null) {
+                        Text(
+                            text = "この話者のライセンス情報を確認できませんでした。ダウンロード前に VOICEVOX 公式サイトで規約をご確認ください。",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        TextButton(onClick = { uriHandler.openUri(com.nezumi_ai.voicevox.VoicevoxLicense.VOICEVOX_TERMS_URL) }) {
+                            Text("VOICEVOX利用規約を開く")
+                        }
+                    } else {
+                        Text("クレジット表記: ${license.credit}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                        Text("商用利用: ${license.commercialLabel}", style = MaterialTheme.typography.bodySmall)
+                        license.note?.let { note ->
+                            Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        }
+                        if (license.termsUrl.isNotBlank()) {
+                            TextButton(onClick = { uriHandler.openUri(license.termsUrl) }) {
+                                Text("この話者の利用規約を開く")
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val app = requireContext().applicationContext as MyApplication
+                    app.selectVoicevoxStyle(styleId)
+                    refreshVoicevoxState()
+                    dismiss()
+                }) {
+                    Text("同意してダウンロード")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { dismiss() }) {
+                    Text("キャンセル")
+                }
+            }
+        )
     }
 
     @Composable
@@ -3356,8 +3551,15 @@ open class ModelSettingsFragment : Fragment() {
                 com.nezumi_ai.data.inference.ImageModelBrowser.fetchAvailableModels(requireContext())
             }
             result.onSuccess { models ->
-                availableImageModels = models
-                imageModelsDialogVisible = true
+                if (models.isEmpty() && com.nezumi_ai.data.inference.ImageModelBrowser.hasAuthError()) {
+                    // トークンが失効/無効な場合、リポジトリ取得が全滅して 0 件になり得る。
+                    // 「0件のモデル」という紛らわしい表示ではなく、再ログインを促す。
+                    imageModelsError = "HuggingFaceの認証が切れているため、モデル一覧を取得できませんでした。設定からHuggingFaceに再ログインしてください。"
+                    renderHfTokenState()
+                } else {
+                    availableImageModels = models
+                    imageModelsDialogVisible = true
+                }
             }.onFailure { e ->
                 imageModelsError = "取得失敗: ${e.message}"
             }

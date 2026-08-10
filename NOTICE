@@ -197,6 +197,56 @@ NATIVE COMPONENTS
   Note: Native runtime used by the on-device image-generation path.
 
 ================================================================================
+TEXT-TO-SPEECH (VOICEVOX)
+================================================================================
+
+* VOICEVOX ONNX Runtime
+  License: See voicevox_onnxruntime_TERMS.txt (bundled)
+  https://github.com/VOICEVOX/voicevox_onnxruntime
+  Includes:
+    - libvoicevox_onnxruntime.so (arm64-v8a, x86_64)
+  Bundled third-party notices:
+    - app/src/main/assets/voicevox/licenses/voicevox_onnxruntime_TERMS.txt
+    - app/src/main/assets/voicevox/licenses/voicevox_onnxruntime_third-party-notices.html
+
+* VOICEVOX Voice Libraries (downloaded on demand, not bundled in the APK)
+  License: See each voice library's own terms
+  https://voicevox.hiroshiba.jp/term/
+  Note:
+    This app can download individual VOICEVOX voice model files (.vvm) selected
+    by the user. Each voice library has its own credit-attribution requirement
+    and, for some speakers, additional commercial-use conditions. The app shows
+    a confirmation with a link to the applicable terms before each such download.
+    A full per-speaker license reference is maintained at docs/VOICEVOX_TERMS.md
+    and in-app at Settings > License.
+
+================================================================================
+ON-DEVICE IMAGE GENERATION MODELS (downloaded on demand, not bundled in the APK)
+================================================================================
+
+* Stable Diffusion / SDXL-derived checkpoints, converted to MNN format
+  License: See each upstream model's own license (e.g. CreativeML Open RAIL-M)
+  Sources (Hugging Face):
+    - Mouserat/Illustrious-XL-v2.0-diffusers-mnn
+    - Mouserat/majicMIX_realistic_v6-mnn
+    - Mouserat/Realistic_Vision_V6.0_B1-mnn
+    - Mouserat/CuteYukiMix-mnn
+    - Mouserat/Anything-V5-mnn
+    - Mouserat/dreamshaper-8-mnn
+    - Mouserat/CyberRealistic-mnn
+    - Mouserat/ReV_Animated-mnn
+  Note:
+    These image-generation models are not bundled in the app. Users select and
+    download a model from within the app; the app fetches and shows that
+    repository's LICENSE.md or README.md license terms before the download
+    proceeds. These checkpoints are conversions (format + quantization only,
+    no retraining) of upstream weights and inherit the upstream license's
+    use-based restrictions in full, including any prohibitions on generating
+    unlawful content or content exploiting minors. The conversion tooling
+    itself (mnn-sd-engine/conversion/) is nezumi-ai project code (see
+    "PROJECT LICENSE" below), separate from the license of the model weights.
+
+================================================================================
 ADDITIONAL INFORMATION
 ================================================================================
 
@@ -210,3 +260,19 @@ For project-level licensing, redistribution terms, and upstream references, see:
 This product contains code, libraries, runtimes, and model-related assets that are
 subject to their own upstream licenses or terms. Review the referenced upstream
 terms before redistribution.
+
+================================================================================
+PROJECT LICENSE (nezumi-ai itself — not a third-party notice)
+================================================================================
+
+The nezumi-ai application code itself (this repository, excluding the
+third-party components listed above and excluding downloaded/imported models)
+is dual-licensed by its author, mouse0329:
+
+  1. GNU Lesser General Public License v3.0 (LGPL v3) — see LGPL_LICENSE, or
+  2. A separate commercial license that does not require source disclosure
+     — contact mouse0329 (https://github.com/mouse0329/nezumi-ai) to obtain it.
+
+This is the license of nezumi-ai's own source code and is unrelated to the
+licenses of the third-party libraries, runtimes, and downloaded models listed
+elsewhere in this NOTICE. See LICENSE.md for the authoritative statement.
