@@ -7,7 +7,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
 /**
- * クラウド推論プロバイダ (Claude / Gemini / OpenAI / Ollama Local / Ollama Remote /
+ * クラウド推論プロバイダ (Claude / Gemini / OpenAI / Ollama Local / Ollama Cloud /
  * LM Studio) の API キー・Base URL を Android Keystore 経由で暗号化保存する。
  *
  * HfAuthManager が使う平文 SharedPreferences (`hf_auth`) とは別ファイル
@@ -15,9 +15,9 @@ import androidx.security.crypto.MasterKey
  * `AES256_GCM` スキームで生成し、値/キー共に AES-256 で暗号化する。
  *
  * ## 保存キー
- * - `key.<providerId>` : API キー本体（Claude / Gemini / OpenAI）
- *                        Ollama / LM Studio は任意（未設定 = 認証なし）
- * - `url.<providerId>` : Base URL（Ollama Remote / LM Studio / (任意で) Ollama Local）
+ * - `key.<providerId>` : API キー本体（Claude / Gemini / OpenAI / Ollama Cloud）
+ *                        Ollama Local / LM Studio は任意（未設定 = 認証なし）
+ * - `url.<providerId>` : Base URL（Ollama Cloud / LM Studio / (任意で) Ollama Local）
  *
  * ## スレッド安全性
  * EncryptedSharedPreferences 自体が内部で `synchronized` ブロックを持つため、
@@ -37,7 +37,10 @@ object CloudApiKeyStore {
         GEMINI("gemini", requiresApiKey = true, defaultBaseUrl = "https://generativelanguage.googleapis.com"),
         OPENAI("openai", requiresApiKey = true, defaultBaseUrl = "https://api.openai.com"),
         OLLAMA_LOCAL("ollama-local", requiresApiKey = false, defaultBaseUrl = "http://127.0.0.1:11434"),
-        OLLAMA_REMOTE("ollama-remote", requiresApiKey = false, defaultBaseUrl = null),
+        // Ollama Cloud (ollama.com のホスト側 API)。実態はリモート接続ではなくクラウドサービスで、
+        // 認証は ollama.com/settings/keys で発行した API キー (Bearer) が必須。
+        // プロバイダ ID は既存データとの互換のため旧称 "ollama-remote" を維持する。
+        OLLAMA_REMOTE("ollama-remote", requiresApiKey = true, defaultBaseUrl = "https://ollama.com"),
         LM_STUDIO("lmstudio", requiresApiKey = false, defaultBaseUrl = "http://127.0.0.1:1234");
 
         companion object {
@@ -131,7 +134,7 @@ object CloudApiKeyStore {
     /**
      * Base URL を取得する。ユーザーが明示的に設定していれば保存済みの値、
      * そうでなければ [Provider.defaultBaseUrl] を返す。
-     * Ollama Remote のようにデフォルトが無いプロバイダで未設定の場合は空文字を返す。
+     * デフォルトが無いプロバイダで未設定の場合は空文字を返す。
      */
     fun getBaseUrl(context: Context, provider: Provider): String {
         val store = prefs(context)
@@ -147,8 +150,8 @@ object CloudApiKeyStore {
 
     /**
      * プロバイダが「利用可能に構成済み」であるかを判定する。
-     * - API キー必須プロバイダ: API キーが設定されていること
-     * - Ollama / LM Studio: Base URL が有効な http(s) URL であること
+     * - API キー必須プロバイダ: Base URL に加えて API キーが設定されていること
+     * - Ollama Local / LM Studio: Base URL が有効な http(s) URL であること
      */
     fun isConfigured(context: Context, provider: Provider): Boolean {
         val baseUrl = getBaseUrl(context, provider)

@@ -24,8 +24,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 /**
  * Ollama (`{baseUrl}/api/chat`) ネイティブ API 向けストリーミングエンジン。
  *
- * Ollama Local / Remote は接続先 URL とキー管理単位が異なるだけで
+ * Ollama Local / Cloud は接続先 URL とキー管理単位が異なるだけで
  * ワイヤフォーマットは同一なので、[provider] だけ差し替えて共通ロジックで扱う。
+ * Ollama Cloud (ollama.com) は Bearer 認証が必須 (https://docs.ollama.com/cloud)。
  *
  * ## リクエスト
  * ```json
@@ -61,7 +62,7 @@ class OllamaInferenceEngine(
     init {
         require(
             provider == CloudApiKeyStore.Provider.OLLAMA_LOCAL ||
-                provider == CloudApiKeyStore.Provider.OLLAMA_REMOTE
+                provider == CloudApiKeyStore.Provider.OLLAMA_REMOTE // 旧称。実態は Ollama Cloud
         ) { "OllamaInferenceEngine requires OLLAMA_LOCAL or OLLAMA_REMOTE provider" }
     }
 
@@ -77,7 +78,7 @@ class OllamaInferenceEngine(
         onDelta: (String) -> Unit
     ) {
         val baseUrl = resolveBaseUrl()
-        // Remote は Bearer トークンによる認証を要求するホスティングがある。
+        // Cloud (ollama.com) は Bearer トークンによる認証が必須。
         // Local は原則不要だが、リバースプロキシ越しに置いているケースもあるので
         // 「保存されていれば付ける」動作にする。
         val apiKey = resolveApiKey()

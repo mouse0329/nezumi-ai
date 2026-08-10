@@ -850,6 +850,18 @@ class MainActivity : AppCompatActivity() {
         return (nextDay.timeInMillis - now.timeInMillis).coerceAtLeast(1_000L)
     }
 
+    /**
+     * ドロワーの履歴リストで「現在開いているセッション」のハイライトだけを更新する。
+     * 履歴の内容 (並び・件数) は変わらず current_session_id だけが変わった場合に使う。
+     * (セッション切り替え最適化で ChatFragment.switchSession が呼ばれるルートは
+     *  getAllSessions() の Flow に変化が出ないため、ここで明示的に追随させる。)
+     */
+    fun refreshDrawerSessionHighlight() {
+        if (::drawerHistoryAdapter.isInitialized) {
+            drawerHistoryAdapter.setCurrentSessionId(getCurrentSessionId())
+        }
+    }
+
     private fun renderDrawerHistory(sessions: List<ChatSessionEntity>) {
         if (!::drawerHistoryAdapter.isInitialized) {
             Log.w(TAG, "renderDrawerHistory called before drawerHistoryAdapter initialization")

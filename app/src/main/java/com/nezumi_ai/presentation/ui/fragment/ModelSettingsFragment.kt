@@ -1840,7 +1840,8 @@ open class ModelSettingsFragment : Fragment() {
      * - プロバイダーはドロップダウンで選択。選んだプロバイダーに応じて入力項目を出し分ける。
      * - ローカル系 (LM Studio / Ollama ローカル) はモデル選択と URL のみ (API キー不要)。
      *   モデル名は `/v1/models` から取得した一覧をドロップダウンで選ぶ。
-     * - クラウド系はモデル名を自由入力。API キーとアクセスポイントを設定できる。
+     * - クラウド系 (Ollama クラウドを含む) はモデル名を自由入力。API キーとアクセスポイントを設定できる。
+     *   Ollama クラウドはモデル一覧を `/api/tags` から API キー付きで取得できる。
      */
     @Composable
     private fun CloudModelDialog(
@@ -1848,9 +1849,10 @@ open class ModelSettingsFragment : Fragment() {
         onDismiss: () -> Unit,
         onSave: (CloudDialogState) -> Unit
     ) {
+        // Ollama クラウド (旧称リモート) はリモートサーバーではなく ollama.com の
+        // クラウドサービスなので、他のクラウドプロバイダと同じく API キー必須として扱う。
         val isLocalProvider = state.provider == CloudApiKeyStore.Provider.LM_STUDIO ||
-            state.provider == CloudApiKeyStore.Provider.OLLAMA_LOCAL ||
-            state.provider == CloudApiKeyStore.Provider.OLLAMA_REMOTE
+            state.provider == CloudApiKeyStore.Provider.OLLAMA_LOCAL
         val requiresApiKey = state.provider.requiresApiKey
 
         AlertDialog(
@@ -1980,7 +1982,7 @@ open class ModelSettingsFragment : Fragment() {
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colorResource(id = R.color.text_secondary)
                             )
-                            if (isLocalProvider) {
+                            if (isLocalProvider || state.provider == CloudApiKeyStore.Provider.OLLAMA_REMOTE) {
                                 TextButton(
                                     onClick = {
                                         cloudDialogState = state.copy(fetchingModels = true)
@@ -2015,7 +2017,8 @@ open class ModelSettingsFragment : Fragment() {
                         }
                         Spacer(modifier = Modifier.height(4.dp))
 
-                        if (isLocalProvider && state.fetchedModels.isNotEmpty()) {
+                        val canPickFromFetched = isLocalProvider || state.provider == CloudApiKeyStore.Provider.OLLAMA_REMOTE
+                        if (canPickFromFetched && state.fetchedModels.isNotEmpty()) {
                             // 取得できた一覧をドロップダウンで選ぶ
                             ExposedDropdownMenuBox(
                                 expanded = state.modelDropdownExpanded,
@@ -2091,7 +2094,7 @@ open class ModelSettingsFragment : Fragment() {
                             return@Button
                         }
                         val resolvedUrl = state.baseUrl.ifBlank { state.provider.defaultBaseUrl.orEmpty() }
-                        if (isLocalProvider && !(resolvedUrl.startsWith("http://") || resolvedUrl.startsWith("https://"))) {
+                        if ((isLocalProvider || state.provider.defaultBaseUrl == null) && !(resolvedUrl.startsWith("http://") || resolvedUrl.startsWith("https://"))) {
                             cloudDialogState = state.copy(
                                 errorMessage = getString(R.string.cloud_models_base_url_required_hint)
                             )

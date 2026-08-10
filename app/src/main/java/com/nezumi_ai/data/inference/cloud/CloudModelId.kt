@@ -12,7 +12,7 @@ import com.nezumi_ai.data.preset.PresetConstants
  * - `cloud:gemini:gemini-2.5-flash`
  * - `cloud:openai:gpt-4o-mini`
  * - `cloud:ollama-local:llama3.2:3b`   ← modelName に ':' が含まれても可
- * - `cloud:ollama-remote:qwen2.5:14b`
+ * - `cloud:ollama-remote:qwen3:235b`   ← プロバイダ ID は旧称 "ollama-remote" のまま (Ollama Cloud を指す)
  * - `cloud:lmstudio:local-model`
  *
  * ## 後方互換
@@ -91,7 +91,7 @@ object CloudModelId {
             CloudApiKeyStore.Provider.GEMINI -> "Gemini"
             CloudApiKeyStore.Provider.OPENAI -> "OpenAI"
             CloudApiKeyStore.Provider.OLLAMA_LOCAL -> "Ollama (Local)"
-            CloudApiKeyStore.Provider.OLLAMA_REMOTE -> "Ollama (Remote)"
+            CloudApiKeyStore.Provider.OLLAMA_REMOTE -> "Ollama (Cloud)"
             CloudApiKeyStore.Provider.LM_STUDIO -> "LM Studio"
         }
         return "$providerLabel · ${parsed.modelName}"

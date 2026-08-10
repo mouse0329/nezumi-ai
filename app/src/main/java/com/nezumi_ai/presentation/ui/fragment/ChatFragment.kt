@@ -190,6 +190,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 withContext(Dispatchers.Main) {
                     pendingInitialScrollToBottom = true
                     userScrolledAwayDuringGeneration = false
+                    // ドロワーの履歴リストは「セッション更新」をきっかけにしか
+                    // ハイライトを再評価しない。switchSession 経由の切り替えでは
+                    // 履歴の並びが変わらないため通知が来ず、前のセッションの
+                    // ハイライトが残り続けるバグがあったので、ここで明示的に
+                    // ハイライトだけ最新のセッションへ追随させる。
+                    (activity as? com.nezumi_ai.MainActivity)?.refreshDrawerSessionHighlight()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "switchSession failed", e)

@@ -658,7 +658,7 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="setup_step_model">Model</string>
     <string name="setup_welcome_title">Welcome to Nezumi AI</string>
     <string name="setup_welcome_desc">Configure just 4 steps first and you can start chatting immediately.</string>
-    <string name="setup_welcome_steps">1. Welcome\n2. Choose runtime backend\n3. Download required models\n4. Select the model you want\nDownloads can be done later.</string>
+    <string name="setup_welcome_steps">1. Welcome\n2. Download required models\n3. Select the model you want\nDownloads can be done later.</string>
     <string name="setup_welcome_ok_later">Model downloads can be completed later.</string>
     <string name="setup_welcome_history_info">Chat history is saved up to 30 items and old messages are removed automatically. You can change this in settings.</string>
     <string name="setup_welcome_change_in_settings">Change it in settings</string>
@@ -997,13 +997,13 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="cloud_models_provider_gemini">Gemini (Google)</string>
     <string name="cloud_models_provider_openai">ChatGPT (OpenAI)</string>
     <string name="cloud_models_provider_ollama_local">Ollama (Local)</string>
-    <string name="cloud_models_provider_ollama_remote">Ollama (Remote)</string>
+    <string name="cloud_models_provider_ollama_remote">Ollama (Cloud)</string>
     <string name="cloud_models_provider_lmstudio">LM Studio</string>
     <string name="cloud_models_api_key_label">API key</string>
     <string name="cloud_models_api_key_placeholder">API key issued from the provider console</string>
     <string name="cloud_models_base_url_label">Endpoint (Base URL)</string>
     <string name="cloud_models_base_url_default_hint">Leave empty to use the default: %1$s</string>
-    <string name="cloud_models_base_url_required_hint">Enter the remote URL (e.g. https://ollama.example.com)</string>
+    <string name="cloud_models_base_url_required_hint">Enter the endpoint URL (e.g. https://ollama.com)</string>
     <string name="cloud_models_add_button">Add</string>
     <string name="cloud_models_save_button">Save</string>
     <string name="cloud_models_remove_button">Remove</string>

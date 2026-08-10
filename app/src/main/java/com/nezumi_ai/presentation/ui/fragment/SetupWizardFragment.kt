@@ -79,7 +79,6 @@ class SetupWizardFragment : Fragment() {
     private lateinit var sessionRepository: ChatSessionRepository
 
     private var currentStep by mutableStateOf(0)
-    private var selectedBackend by mutableStateOf("CPU")
     private var selectedModel by mutableStateOf<String?>(null)
     private var embeddingDownloaded by mutableStateOf(false)
     private var embeddingDownloading by mutableStateOf(false)
@@ -144,7 +143,6 @@ class SetupWizardFragment : Fragment() {
         embeddingDownloaded = MemoryTextEmbedder.hasEmbeddingFiles(requireContext())
 
         viewLifecycleOwner.lifecycleScope.launch {
-            selectedBackend = settingsRepository.getBackendForModel(settingsRepository.getSelectedModel())
             selectedModel = normalizeModelSelection(settingsRepository.getSelectedModel())
             preloadMemoryWarningThresholdPercent = settingsRepository.getPreloadMemoryWarningThresholdPercent()
         }
@@ -197,8 +195,7 @@ class SetupWizardFragment : Fragment() {
                         ) {
                             when (currentStep) {
                                 0 -> WelcomeStep(textPrimary, textSecondary)
-                                1 -> BackendStep(accent, textPrimary, textSecondary)
-                                2 -> EmbeddingStep(accent, textPrimary, textSecondary)
+                                1 -> EmbeddingStep(accent, textPrimary, textSecondary)
                                 else -> ModelStep(accent, textPrimary, textSecondary)
                             }
                         }
@@ -414,7 +411,6 @@ class SetupWizardFragment : Fragment() {
     ) {
         val labels = listOf(
             stringResource(id = R.string.setup_step_welcome),
-            stringResource(id = R.string.setup_step_backend),
             stringResource(id = R.string.setup_step_memory),
             stringResource(id = R.string.setup_step_model)
         )
@@ -517,46 +513,6 @@ class SetupWizardFragment : Fragment() {
         ) {
             Button(onClick = { currentStep = 1 }) {
                 Text(stringResource(id = R.string.setup_start_button))
-            }
-        }
-    }
-
-    @Composable
-    private fun BackendStep(
-        accent: androidx.compose.ui.graphics.Color,
-        textPrimary: androidx.compose.ui.graphics.Color,
-        textSecondary: androidx.compose.ui.graphics.Color
-    ) {
-        Text(
-            text = stringResource(id = R.string.setup_backend_title),
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            color = textPrimary
-        )
-        Text(
-            text = stringResource(id = R.string.setup_backend_desc),
-            color = textSecondary
-        )
-
-        backendOptions().forEach { option ->
-            SelectableCard(
-                title = option.label,
-                subtitle = option.description,
-                selected = selectedBackend == option.value,
-                accent = accent,
-                onClick = { selectedBackend = option.value }
-            )
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            TextButton(onClick = { currentStep = 0 }) {
-                Text(stringResource(id = R.string.setup_back_button))
-            }
-            Button(onClick = { currentStep = 2 }) {
-                Text(stringResource(id = R.string.setup_next_button))
             }
         }
     }
@@ -696,7 +652,7 @@ class SetupWizardFragment : Fragment() {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TextButton(onClick = { currentStep = 2 }, enabled = !isCompleting) {
+            TextButton(onClick = { currentStep = 1 }, enabled = !isCompleting) {
                 Text(stringResource(id = R.string.setup_back_button))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -796,57 +752,14 @@ class SetupWizardFragment : Fragment() {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TextButton(onClick = { currentStep = 1 }, enabled = !isCompleting) {
+            TextButton(onClick = { currentStep = 0 }, enabled = !isCompleting) {
                 Text(stringResource(id = R.string.setup_back_button))
             }
             Button(
-                onClick = { currentStep = 3 },
+                onClick = { currentStep = 2 },
                 enabled = embeddingDownloaded && !isCompleting
             ) {
                 Text(stringResource(id = R.string.setup_next_button))
-            }
-        }
-    }
-
-    @Composable
-    private fun SelectableCard(
-        title: String,
-        subtitle: String,
-        selected: Boolean,
-        accent: androidx.compose.ui.graphics.Color,
-        onClick: () -> Unit
-    ) {
-        val textPrimary = colorResource(id = R.color.text_primary)
-        val textSecondary = colorResource(id = R.color.text_secondary)
-        val selectedTextColor = colorResource(id = R.color.nezumi_on_primary)
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(
-                    width = if (selected) 2.dp else 1.dp,
-                    color = if (selected) accent else textSecondary.copy(alpha = 0.25f),
-                    shape = RoundedCornerShape(18.dp)
-                )
-                .clickable(onClick = onClick),
-            colors = CardDefaults.cardColors(
-                containerColor = if (selected) accent else colorResource(id = R.color.surface_card)
-            ),
-            shape = RoundedCornerShape(18.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Text(
-                    text = title,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (selected) selectedTextColor else textPrimary
-                )
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (selected) selectedTextColor.copy(alpha = 0.92f) else textSecondary
-                )
             }
         }
     }
@@ -1029,7 +942,8 @@ class SetupWizardFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    settingsRepository.updateBackend(selectedBackend)
+                    // バックエンドは既存設定 (既定: CPU) をそのまま使う。
+                    // 切り替えはモデル設定画面で行う。
                     val modelToApply = if (skipModelSelection) {
                         selectedModel?.takeIf { model ->
                             builtinModelOptions().firstOrNull { it.settingValue == model }?.let { option ->
@@ -1100,14 +1014,6 @@ class SetupWizardFragment : Fragment() {
         return builtinModelOptions().firstOrNull { it.settingValue.equals(model, ignoreCase = true) }?.settingValue
     }
 
-    private fun backendOptions(): List<BackendOption> {
-        return listOf(
-            BackendOption("NPU", "NPU", getString(R.string.setup_backend_desc_npu)),
-            BackendOption("GPU", "GPU", getString(R.string.setup_backend_desc_gpu)),
-            BackendOption("CPU", "CPU", getString(R.string.setup_backend_desc_cpu))
-        )
-    }
-
     private fun builtinModelOptions(): List<ModelOption> {
         return listOf(
             ModelOption(
@@ -1134,12 +1040,6 @@ class SetupWizardFragment : Fragment() {
         if (!isAdded) return
         Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
     }
-
-    private data class BackendOption(
-        val value: String,
-        val label: String,
-        val description: String
-    )
 
     private data class ModelOption(
         val model: ModelFileManager.LocalModel,

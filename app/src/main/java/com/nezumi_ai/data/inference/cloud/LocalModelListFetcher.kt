@@ -8,7 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * ローカルサーバー系プロバイダ (LM Studio / Ollama) のモデル一覧を
+ * ローカルサーバー系プロバイダ (LM Studio / Ollama) と Ollama Cloud のモデル一覧を
  * `/v1/models` (LM Studio / OpenAI 互換) や `/api/tags` (Ollama) から取得するユーティリティ。
  *
  * 追加モーダルで「モデル選択ドロップダウン」を実現するために使う。
@@ -22,8 +22,9 @@ object LocalModelListFetcher {
     /**
      * [provider] のモデル名一覧を返す。接続失敗・非対応プロバイダの場合は空リスト。
      *
-     * - LM Studio / Ollama Remote (OpenAI 互換): `GET {baseUrl}/v1/models`
-     * - Ollama (native): `GET {baseUrl}/api/tags` (`models[].name`)
+     * - LM Studio (OpenAI 互換): `GET {baseUrl}/v1/models`
+     * - Ollama Local / Ollama Cloud (native): `GET {baseUrl}/api/tags` (`models[].name`)
+     *   ※ Ollama Cloud は Bearer 認証が必須なので apiKey を付けて呼ぶこと。
      */
     suspend fun fetch(
         provider: CloudApiKeyStore.Provider,

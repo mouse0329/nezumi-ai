@@ -501,7 +501,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="setup_step_model">モデル</string>
     <string name="setup_welcome_title">Nezumi AI へようこそ</string>
     <string name="setup_welcome_desc">最初に 4 ステップだけ設定すると、すぐチャットを始められます。</string>
-    <string name="setup_welcome_steps">1.ようこそ\n2. 実行バックエンドを選ぶ\n3. 必須モデルのダウンロード\n4. 使いたいモデルを選ぶ\nダウンロードはあとからでも可能です。</string>
+    <string name="setup_welcome_steps">1.ようこそ\n2. 必須モデルのダウンロード\n3. 使いたいモデルを選ぶ\nダウンロードはあとからでも可能です。</string>
     <string name="setup_welcome_ok_later">モデルのダウンロードはあとからでも大丈夫です。</string>
     <string name="setup_welcome_history_info">チャット履歴は最大30件まで保存されます。古いものから自動的に削除されます。設定から変更できます。</string>
     <string name="setup_welcome_change_in_settings">設定から変更できます</string>
@@ -847,13 +847,13 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="cloud_models_provider_gemini">Gemini (Google)</string>
     <string name="cloud_models_provider_openai">ChatGPT (OpenAI)</string>
     <string name="cloud_models_provider_ollama_local">Ollama (ローカル)</string>
-    <string name="cloud_models_provider_ollama_remote">Ollama (リモート)</string>
+    <string name="cloud_models_provider_ollama_remote">Ollama (クラウド)</string>
     <string name="cloud_models_provider_lmstudio">LM Studio</string>
     <string name="cloud_models_api_key_label">API キー</string>
     <string name="cloud_models_api_key_placeholder">プロバイダのコンソールで発行した API キー</string>
     <string name="cloud_models_base_url_label">アクセスポイント (Base URL)</string>
     <string name="cloud_models_base_url_default_hint">未入力の場合は既定値 %1$s を使用します</string>
-    <string name="cloud_models_base_url_required_hint">リモート先の URL を必ず入力してください (例: https://ollama.example.com)</string>
+    <string name="cloud_models_base_url_required_hint">接続先の URL を必ず入力してください (例: https://ollama.com)</string>
     <string name="cloud_models_add_button">追加</string>
     <string name="cloud_models_save_button">保存</string>
     <string name="cloud_models_remove_button">削除</string>
