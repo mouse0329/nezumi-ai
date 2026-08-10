@@ -154,6 +154,21 @@ class PresetSettingsFragment : Fragment() {
         var currentPresetId by remember {
             mutableStateOf(PreferencesHelper.getCurrentPresetId(requireContext()))
         }
+        // ★ パフォーマンス修正: modelLabel(preset.modelId) は内部で
+        //   PresetModelCatalog.downloadedModels(context) を呼んでおり、これは
+        //   ダウンロード済みモデルのファイル存在チェック・imported モデル用
+        //   ディレクトリの listFiles()+バリデーション・クラウドモデル設定の読み出しを
+        //   毎回まとめて行う重い処理。以前はこれを PresetRow 側で行ごとに（つまり
+        //   プリセット件数分×再コンポジションのたびに）呼んでいたため、
+        //   プリセット画面を開くだけでメインスレッドが長時間ブロックされていた。
+        //   ここで presets が変わったときだけ 1 回計算してキャッシュし、
+        //   各行へは解決済みの文字列を渡す。
+        val downloadedModelOptions = remember(presets) {
+            com.nezumi_ai.data.preset.PresetModelCatalog.downloadedModels(requireContext())
+        }
+        val modelLabelById = remember(presets, downloadedModelOptions) {
+            presets.associate { it.id to modelLabel(it.modelId, downloadedModelOptions) }
+        }
         var editingPreset by remember { mutableStateOf<PresetEntity?>(null) }
         var showCreateDialog by remember { mutableStateOf(false) }
         var presetSearchQuery by remember { mutableStateOf("") }
@@ -333,6 +348,7 @@ class PresetSettingsFragment : Fragment() {
                 val isDragging = index == dragIndex
                 PresetRow(
                     preset = preset,
+                    modelLabelText = modelLabelById[preset.id] ?: preset.modelId,
                     selected = preset.id == currentPresetId,
                     canMoveUp = index > 0,
                     canMoveDown = index < visibleList.lastIndex,
@@ -495,6 +511,7 @@ class PresetSettingsFragment : Fragment() {
     @Composable
     private fun PresetRow(
         preset: PresetEntity,
+        modelLabelText: String,
         selected: Boolean,
         canMoveUp: Boolean,
         canMoveDown: Boolean,
@@ -590,13 +607,16 @@ class PresetSettingsFragment : Fragment() {
                         }
                     }
                 }
+                // ★ パフォーマンス修正: formatToolLabels は preset.enabledTools (JSON文字列) の
+                //   パース + toolOptions とのフィルタ/結合を行うため、preset が変わらない限り
+                //   再計算不要。remember でキャッシュして再コンポジションのたびの再計算を避ける。
+                val toolLabels = remember(preset.enabledTools) { formatToolLabels(preset.enabledTools) }
                 Text(
                     text = buildString {
-                        append(modelLabel(preset.modelId))
+                        append(modelLabelText)
                         append(" / ")
                         append(stringResource(id = R.string.preset_status_memory, if (preset.memoryEnabled) stringResource(id = R.string.status_on) else stringResource(id = R.string.status_off)))
                         if (preset.toolCallingEnabled) {
-                            val toolLabels = formatToolLabels(preset.enabledTools)
                             append(" / ")
                             if (toolLabels.isNotEmpty()) {
                                 append(stringResource(id = R.string.preset_status_tool_calling_with_list, toolLabels))
@@ -962,7 +982,13 @@ class PresetSettingsFragment : Fragment() {
     }
 
     private fun modelLabel(modelId: String): String =
-        PresetModelCatalog.downloadedModels(requireContext()).firstOrNull { it.id == modelId }?.label
+        modelLabel(modelId, PresetModelCatalog.downloadedModels(requireContext()))
+
+    // ★ パフォーマンス修正: downloadedModels() の呼び出しを呼び出し元でキャッシュできるよう、
+    //   解決済みリストを受け取るオーバーロードを追加。PresetRow 描画ループのような
+    //   ホットパスからは必ずこちらを使い、都度ディスク I/O が走らないようにする。
+    private fun modelLabel(modelId: String, downloadedOptions: List<com.nezumi_ai.data.preset.PresetModelOption>): String =
+        downloadedOptions.firstOrNull { it.id == modelId }?.label
             ?: when {
                 modelId == PresetConstants.MODEL_GEMMA4_LITERT -> "Gemma 4 2B"
                 com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(modelId) ->
