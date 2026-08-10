@@ -1047,6 +1047,8 @@ class PresetSettingsFragment : Fragment() {
         ToolOption(PresetConstants.TOOL_MEMORY, "メモリ検索"),
         ToolOption(PresetConstants.TOOL_MEMORY_SAVE, "メモリ保存"),
         ToolOption(PresetConstants.TOOL_WEB_SEARCH, "ウェブ検索"),
+        // web_search で見つけた URL の本文を Markdown で取得する
+        ToolOption(PresetConstants.TOOL_WEB_FETCH, "ページ取得"),
         // ドキュメント変換: Markdown → Word/PDF/Excel 生成。
         // (Word/PDF/Excel の読み取りは添付時に自動で Markdown 変換されるため
         //  ツールとしては存在しない)

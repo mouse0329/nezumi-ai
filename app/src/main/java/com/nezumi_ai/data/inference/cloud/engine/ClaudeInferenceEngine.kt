@@ -72,8 +72,8 @@ class ClaudeInferenceEngine(
         config: InferenceConfig,
         onDelta: (String) -> Unit
     ) {
-        val apiKey = CloudApiKeyStore.getApiKey(appContext, provider)
-        val baseUrl = CloudApiKeyStore.getBaseUrl(appContext, provider)
+        val apiKey = resolveApiKey()
+        val baseUrl = resolveBaseUrl()
         val endpoint = "$baseUrl/v1/messages"
 
         val (systemPart, userPart) = CloudPromptSplitter.splitOptionalSystem(prompt)

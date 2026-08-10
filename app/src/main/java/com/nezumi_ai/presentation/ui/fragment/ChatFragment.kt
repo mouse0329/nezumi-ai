@@ -828,6 +828,24 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             memoryRepository
         )
         viewModel = ViewModelProvider(requireActivity(), factory).get(ChatViewModel::class.java)
+
+        // デフォルトプリセット「ネズミAI」が指すモデル (Gemma4-2B) が未ダウンロードの
+        // ときだけ、モデル選択モーダルを出す。利用可能なモデルが 1 つも無い場合は
+        // 「モデル管理画面でダウンロードまたはクラウドモデルを追加してください」と案内する。
+        viewLifecycleOwner.lifecycleScope.launch {
+            val available = withContext(Dispatchers.IO) {
+                presetRepository.isDefaultPresetModelAvailable()
+            }
+            if (!available) {
+                val first = withContext(Dispatchers.IO) {
+                    com.nezumi_ai.data.preset.PresetModelCatalog
+                        .downloadedModels(appContext)
+                        .firstOrNull()
+                }
+                showDefaultModelMissingDialog(first?.label)
+            }
+        }
+
         binding.chatTitle.setOnClickListener {
             findNavController().navigate(R.id.presetSettingsFragment)
         }
@@ -2213,6 +2231,96 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 )
             }
         }
+    }
+
+    /**
+     * デフォルトプリセットのモデルが未ダウンロードのときに出すモーダル。
+     * - [firstAvailableLabel] が非 null: 「<label> を使う」でデフォルトプリセットの
+     *   モデルを付け替える。
+     * - null: 利用可能モデルが無い旨を表示し、モデル管理画面への導線だけ出す。
+     */
+    private fun showDefaultModelMissingDialog(firstAvailableLabel: String?) {
+        val dialog = android.app.Dialog(requireContext())
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setCancelable(true)
+
+        val composeView = androidx.compose.ui.platform.ComposeView(requireContext()).apply {
+            setViewTreeLifecycleOwner(viewLifecycleOwner)
+            setViewTreeViewModelStoreOwner(this@ChatFragment)
+            setViewTreeSavedStateRegistryOwner(this@ChatFragment)
+            setContent {
+                NezumiComposeTheme {
+                    DefaultModelMissingDialog(
+                        firstAvailableLabel = firstAvailableLabel,
+                        onUseFirst = {
+                            dialog.dismiss()
+                            viewLifecycleOwner.lifecycleScope.launch {
+                                withContext(Dispatchers.IO) {
+                                    presetRepository.reassignDefaultPresetToFirstAvailableModel()
+                                }
+                            }
+                        },
+                        onOpenSettings = {
+                            dialog.dismiss()
+                            runCatching {
+                                findNavController().navigate(R.id.modelSettingsFragment)
+                            }
+                        },
+                        onLater = { dialog.dismiss() }
+                    )
+                }
+            }
+        }
+
+        dialog.setContentView(composeView)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.show()
+    }
+
+    @Composable
+    private fun DefaultModelMissingDialog(
+        firstAvailableLabel: String?,
+        onUseFirst: () -> Unit,
+        onOpenSettings: () -> Unit,
+        onLater: () -> Unit
+    ) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = onLater,
+            title = { Text(stringResource(id = R.string.default_model_missing_title)) },
+            text = {
+                Column {
+                    Text(
+                        stringResource(
+                            id = if (firstAvailableLabel != null) R.string.default_model_missing_message
+                            else R.string.default_model_missing_no_models
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                if (firstAvailableLabel != null) {
+                    TextButton(onClick = onUseFirst) {
+                        Text(stringResource(id = R.string.default_model_missing_use_first, firstAvailableLabel))
+                    }
+                } else {
+                    TextButton(onClick = onOpenSettings) {
+                        Text(stringResource(id = R.string.default_model_missing_open_settings))
+                    }
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (firstAvailableLabel != null) {
+                        TextButton(onClick = onOpenSettings) {
+                            Text(stringResource(id = R.string.default_model_missing_open_settings))
+                        }
+                    }
+                    TextButton(onClick = onLater) {
+                        Text(stringResource(id = R.string.default_model_missing_later))
+                    }
+                }
+            }
+        )
     }
 
     private fun showMemoryErrorDialog(error: ChatViewModel.MemoryErrorInfo) {

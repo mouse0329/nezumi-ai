@@ -37,6 +37,8 @@ fun SessionListScreen(
     currentSessionId: Long?
 ) {
     val groupedSessions by viewModel.groupedSessions.collectAsState(emptyList())
+    // 初回読み込みが完了するまではスピナーを出す (空リストと読み込み中を区別する)。
+    val isLoading by viewModel.isLoading.collectAsState()
 
     // ④ セッション名変更ダイアログの状態
     var renamingSessionId by remember { mutableStateOf<Long?>(null) }
@@ -92,7 +94,8 @@ fun SessionListScreen(
                 renameText = session?.name ?: ""
                 renamingSessionId = sessionId
             },
-            currentSessionId = currentSessionId
+            currentSessionId = currentSessionId,
+            isLoading = isLoading
         )
     }
 }
@@ -108,7 +111,8 @@ private fun SessionListContent(
     onDeleteSession: (Long) -> Unit,
     onTogglePin: (Long) -> Unit,
     onRenameSession: (Long) -> Unit,
-    currentSessionId: Long?
+    currentSessionId: Long?,
+    isLoading: Boolean = false
 ) {
     val listState = rememberLazyListState()
     val totalSessions = groupedSessions.sumOf { it.sessions.size }
@@ -131,7 +135,17 @@ private fun SessionListContent(
             onCreateIncognitoSession = onCreateIncognitoSession
         )
 
-        if (totalSessions == 0) {
+        if (isLoading) {
+            // 履歴読み込み中のスピナー。読み込み完了までは空状態を出さない。
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(
+                    color = colorResource(id = R.color.primary)
+                )
+            }
+        } else if (totalSessions == 0) {
             EmptySessionState(
                 modifier = Modifier.fillMaxSize(),
                 onCreateSession = onCreateSession

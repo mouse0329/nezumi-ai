@@ -74,8 +74,8 @@ class GeminiInferenceEngine(
         config: InferenceConfig,
         onDelta: (String) -> Unit
     ) {
-        val apiKey = CloudApiKeyStore.getApiKey(appContext, provider)
-        val baseUrl = CloudApiKeyStore.getBaseUrl(appContext, provider)
+        val apiKey = resolveApiKey()
+        val baseUrl = resolveBaseUrl()
 
         // model 名は URL パス埋め込みなので、":streamGenerateContent" 手前に安全に置く。
         // Ollama と違って ':' を含む Gemini モデル名は無いので、そのまま連結してよい。

@@ -124,6 +124,25 @@ class ModelManager(
         return parsed.modelName
     }
 
+    /**
+     * エンジンへのモデルロード。クラウド系エンジンには modelId (`cloud:...`) も
+     * 一緒に渡して、個別設定 (API キー / Base URL のモデル単位オーバーライド) を
+     * 解決できるようにする。
+     */
+    private suspend fun loadModelOnEngine(
+        engine: AIInferenceEngine,
+        modelName: String,
+        config: InferenceConfig
+    ): Result<Unit> {
+        val engineModel = engineModelName(modelName)
+        val cloudEngine = engine as? com.nezumi_ai.data.inference.cloud.engine.AbstractCloudInferenceEngine
+        return if (cloudEngine != null && CloudModelId.isCloud(modelName)) {
+            cloudEngine.loadModelWithId(modelName, engineModel, config)
+        } else {
+            engine.loadModel(engineModel, config)
+        }
+    }
+
     private fun currentEngineLabel(engine: AIInferenceEngine): String {
         return when {
             engine is GgufInferenceEngine -> "GGUF"
@@ -193,8 +212,8 @@ class ModelManager(
                 .onFailure { Log.w(TAG, "Engine unload during recovery failed", it) }
         }
 
-        // クラウドモデルは `cloud:...` プレフィックスを剥いてエンジンに渡す。
-        val reloaded = engine.loadModel(engineModelName(modelName), normalized)
+        // クラウドモデルは `cloud:...` プレフィックスを剥いでエンジンに渡す。
+        val reloaded = loadModelOnEngine(engine, modelName, normalized)
         if (reloaded.isSuccess) {
             activeEngine = engine
             currentConfig = normalized
@@ -353,10 +372,10 @@ class ModelManager(
                 }
                 
                 // 新しいモデルをロード
-                // クラウドの場合は `cloud:...` プレフィックスを剥いてエンジンに渡す。
+                // クラウドの場合は `cloud:...` プレフィックスを剥いでエンジンに渡す。
                 val engineModel = engineModelName(modelName)
                 Log.d(TAG, "Loading model: $modelName (engineArg=$engineModel) with backend: ${normalizedConfig.backendType} engine=${currentEngineLabel(targetEngine)}")
-                val result = targetEngine.loadModel(engineModel, normalizedConfig)
+                val result = loadModelOnEngine(targetEngine, modelName, normalizedConfig)
                 
                 if (result.isSuccess) {
                     activeEngine = targetEngine

@@ -188,6 +188,10 @@ class PresetRepository(
 
     suspend fun ensurePlainPresetsForDownloadedModels() {
         PresetModelCatalog.downloadedModels(context).forEach { model ->
+            // クラウドモデル (`cloud:...`) はロック済み plain プリセットを自動生成しない。
+            // (API キー等の設定が後から変わりうるものを「素の状態」で固定するのは
+            //  ユーザーの意図とズレやすいため。通常のプリセット編集から選んで使う)
+            if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(model.id)) return@forEach
             ensurePlainPreset(model.id, model.label)
         }
     }
@@ -226,6 +230,31 @@ class PresetRepository(
         if (preset != null) {
             applyPresetTools(preset)
         }
+    }
+
+    /**
+     * デフォルトプリセット「ネズミAI」が指すモデルが利用可能かを返す。
+     * Gemma4-2B 未ダウンロード等で利用不能な場合は false。
+     * ChatFragment はこれを見て、利用不能なときだけモデル選択モーダルを出す。
+     */
+    suspend fun isDefaultPresetModelAvailable(): Boolean {
+        val preset = dao.getById(DEFAULT_NEZUMI_AI_ID) ?: return true
+        return PresetModelCatalog.isDownloaded(context, preset.modelId)
+    }
+
+    /**
+     * デフォルトプリセットのモデルを、利用可能なモデルの先頭に付け替える。
+     * ChatFragment のモデル選択モーダルで「自動で選ぶ」を押したときの動作。
+     * @return 付け替えに成功したか (利用可能モデルが 1 つも無ければ false)。
+     */
+    suspend fun reassignDefaultPresetToFirstAvailableModel(): Boolean {
+        val preset = dao.getById(DEFAULT_NEZUMI_AI_ID) ?: return false
+        val first = PresetModelCatalog.downloadedModels(context).firstOrNull() ?: return false
+        dao.update(preset.copy(modelId = first.id, updatedAt = System.currentTimeMillis()))
+        if (PreferencesHelper.getCurrentPresetId(context) == DEFAULT_NEZUMI_AI_ID) {
+            dao.getById(DEFAULT_NEZUMI_AI_ID)?.let { applyPresetTools(it) }
+        }
+        return true
     }
 
     private suspend fun ensureNezumiAiDefaultExists() {

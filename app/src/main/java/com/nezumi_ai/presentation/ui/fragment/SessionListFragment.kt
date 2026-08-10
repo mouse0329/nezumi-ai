@@ -69,7 +69,15 @@ class SessionListFragment : Fragment() {
         return ComposeView(requireContext()).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
-                val currentSessionId = currentSessionIdState.longValue.takeIf { it != -1L }
+                // SharedPreferences を毎回読み直すことで、onResume 以外のタイミングで
+                // current_session_id が書き換わった場合でもハイライトが最新の
+                // セッションに追随する (ハイライトが一番新しいセッションに
+                // 残り続けるバグの修正)。
+                val prefs = requireContext().getSharedPreferences(
+                    "nezumi_ai_prefs", android.content.Context.MODE_PRIVATE
+                )
+                val currentSessionId = prefs.getLong("current_session_id", -1L)
+                    .takeIf { it != -1L }
                 var showSearch by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
 
                 SessionListScreen(

@@ -8,6 +8,7 @@ import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
 import com.nezumi_ai.data.inference.cloud.CloudHttpClient
+import com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.ProducerScope
@@ -55,6 +56,48 @@ abstract class AbstractCloudInferenceEngine(
     @Volatile
     protected var currentModelName: String? = null
 
+    /**
+     * 現在バインドしているモデルに紐づく個別設定があるかの元となるモデル ID
+     * (`cloud:{provider}:{model}` または レガシー `gemini_api` など)。
+     * loadModel には生の modelName が渡ってくるため、ModelManager 側が
+     * modelId も一緒に伝えてくる (下記 [loadModelWithId])。
+     */
+    @Volatile
+    protected var currentModelId: String? = null
+
+    /**
+     * モデル個別設定を優先した API キー解決。個別設定が無ければプロバイダ共通値。
+     */
+    protected fun resolveApiKey(): String {
+        val id = currentModelId
+        return if (id != null) {
+            CloudUserModelRegistry.resolveApiKey(appContext, id, provider)
+        } else {
+            CloudApiKeyStore.getApiKey(appContext, provider)
+        }
+    }
+
+    /**
+     * モデル個別設定を優先した Base URL 解決。個別設定が無ければプロバイダ共通値。
+     */
+    protected fun resolveBaseUrl(): String {
+        val id = currentModelId
+        return if (id != null) {
+            CloudUserModelRegistry.resolveBaseUrl(appContext, id, provider)
+        } else {
+            CloudApiKeyStore.getBaseUrl(appContext, provider)
+        }
+    }
+
+    /**
+     * モデル ID つきの loadModel。ModelManager から呼ばれる。
+     * modelId を保持しておくことで、後続の inference で個別設定を解決できる。
+     */
+    open suspend fun loadModelWithId(modelId: String, modelName: String, config: InferenceConfig): Result<Unit> {
+        currentModelId = modelId
+        return loadModel(modelName, config)
+    }
+
     /** 現在進行中の [Call]。cancelInference / awaitClose から中断する。 */
     private val inflight = AtomicReference<Call?>(null)
 
@@ -65,7 +108,7 @@ abstract class AbstractCloudInferenceEngine(
             val cleaned = modelName.trim()
             if (cleaned.isBlank()) {
                 Result.failure(IllegalArgumentException("model name is blank"))
-            } else if (!CloudApiKeyStore.isConfigured(appContext, provider)) {
+            } else if (!isConfiguredForCurrentModel()) {
                 Result.failure(
                     IllegalStateException(
                         "Cloud provider '${provider.id}' is not configured. " +
@@ -74,15 +117,29 @@ abstract class AbstractCloudInferenceEngine(
                 )
             } else {
                 currentModelName = cleaned
-                Log.d(TAG, "loadModel bound modelName=$cleaned")
+                Log.d(TAG, "loadModel bound modelName=$cleaned (modelId=$currentModelId)")
                 Result.success(Unit)
             }
+        }
+    }
+
+    /**
+     * 「現在バインドしようとしているモデル」が利用可能に構成済みかを返す。
+     * モデル個別設定を持っていればそれを優先し、なければプロバイダ共通設定を見る。
+     */
+    private fun isConfiguredForCurrentModel(): Boolean {
+        val id = currentModelId
+        return if (id != null && CloudUserModelRegistry.hasOverride(appContext, id)) {
+            CloudUserModelRegistry.isConfigured(appContext, id)
+        } else {
+            CloudApiKeyStore.isConfigured(appContext, provider)
         }
     }
 
     override suspend fun unloadModel(): Result<Unit> {
         return loadMutex.withLock {
             currentModelName = null
+            currentModelId = null
             cancelInflight()
             Result.success(Unit)
         }
@@ -93,7 +150,7 @@ abstract class AbstractCloudInferenceEngine(
     }
 
     override suspend fun isAvailable(): Boolean {
-        return currentModelName != null && CloudApiKeyStore.isConfigured(appContext, provider)
+        return currentModelName != null && isConfiguredForCurrentModel()
     }
 
     override suspend fun inference(
@@ -116,12 +173,12 @@ abstract class AbstractCloudInferenceEngine(
             close(IllegalStateException("Model not loaded. Call loadModel() first."))
             return@callbackFlow
         }
-        if (!CloudApiKeyStore.isConfigured(appContext, provider)) {
+        if (!isConfiguredForCurrentModel()) {
             inferenceMutex.unlock()
             close(
                 IllegalStateException(
                     "Cloud provider '${provider.id}' is not configured. " +
-                        "Please open Settings → Cloud models and set the API key / base URL."
+                        "Please open the model settings and set the API key / base URL."
                 )
             )
             return@callbackFlow

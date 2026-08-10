@@ -28,6 +28,19 @@ class ChatSessionListViewModel(
     val groupedSessions: Flow<List<GroupedChatSessions>> = repository.getAllSessions()
         .map { sessions -> groupSessionsByDate(sessions) }
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Lazily, emptyList())
+
+    // 読み込み中フラグ。初期は true にしておき、初回のセッション一覧が流れてきたら false にする。
+    // (空リストが「まだ読み込み中」なのか「本当に 0 件」なのかを UI 側で区別できるようにする)
+    private val _isLoading = MutableStateFlow(true)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            groupedSessions.collect {
+                _isLoading.value = false
+            }
+        }
+    }
     
     fun createNewSession(name: String, onCreated: ((Long) -> Unit)? = null) {
         viewModelScope.launch {

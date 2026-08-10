@@ -48,8 +48,8 @@ class OpenAiInferenceEngine(
         config: InferenceConfig,
         onDelta: (String) -> Unit
     ) {
-        val apiKey = CloudApiKeyStore.getApiKey(appContext, provider)
-        val baseUrl = CloudApiKeyStore.getBaseUrl(appContext, provider)
+        val apiKey = resolveApiKey()
+        val baseUrl = resolveBaseUrl()
         val endpoint = "$baseUrl/v1/chat/completions"
 
         val bodyJson = OpenAiCompatSupport.buildRequestBody(

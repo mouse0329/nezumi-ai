@@ -76,11 +76,11 @@ class OllamaInferenceEngine(
         config: InferenceConfig,
         onDelta: (String) -> Unit
     ) {
-        val baseUrl = CloudApiKeyStore.getBaseUrl(appContext, provider)
+        val baseUrl = resolveBaseUrl()
         // Remote は Bearer トークンによる認証を要求するホスティングがある。
         // Local は原則不要だが、リバースプロキシ越しに置いているケースもあるので
         // 「保存されていれば付ける」動作にする。
-        val apiKey = CloudApiKeyStore.getApiKey(appContext, provider)
+        val apiKey = resolveApiKey()
         val endpoint = "$baseUrl/api/chat"
 
         val (systemPart, userPart) = CloudPromptSplitter.splitOptionalSystem(prompt)

@@ -40,8 +40,8 @@ class LmStudioInferenceEngine(
         config: InferenceConfig,
         onDelta: (String) -> Unit
     ) {
-        val baseUrl = CloudApiKeyStore.getBaseUrl(appContext, provider)
-        val apiKey = CloudApiKeyStore.getApiKey(appContext, provider) // 任意
+        val baseUrl = resolveBaseUrl()
+        val apiKey = resolveApiKey() // 任意
         val endpoint = "$baseUrl/v1/chat/completions"
 
         // 1st attempt: data URI 形式

@@ -131,6 +131,11 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
 import com.nezumi_ai.sd.SdModelLayout
+import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
+import com.nezumi_ai.data.inference.cloud.CloudModelId
+import com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry
+import com.nezumi_ai.data.inference.cloud.LocalModelListFetcher
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 
 enum class ModelType {
     LLM, IMAGE_GENERATION, TEXT_TO_SPEECH, DOWNLOAD_QUEUE
@@ -472,10 +477,6 @@ open class ModelSettingsFragment : Fragment() {
 
             when (selectedTab) {
                 ModelType.LLM -> {
-                    // クラウドモデル (Claude / Gemini / ChatGPT / Ollama / LM Studio)
-                    // の設定画面へのエントリーボタン。既存の HuggingFace カードの上に置いて、
-                    // 「ローカル・クラウド・カスタム」の 3 系統を並べて見えるようにする。
-                    item { CloudModelsEntryCard() }
                     item { HfCard() }
                     item { HfModelSearchCard() }
                     item {
@@ -582,6 +583,7 @@ open class ModelSettingsFragment : Fragment() {
                             )
                         }
                     }
+                    item { CloudModelsSection() }
                     item { MmprojFilesCard() }
                     item { LocalModelAddCard() }
                 }
@@ -1679,23 +1681,40 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
+    // ─── クラウドモデル管理 (追加/編集/削除をモーダルで行う) ────────────────
+
+    /** 追加/編集モーダルの状態。null のときは非表示。 */
+    private var cloudDialogState by mutableStateOf<CloudDialogState?>(null)
+
+    private data class CloudDialogState(
+        /** 編集対象の modelId。null のときは新規追加。 */
+        val editingModelId: String? = null,
+        val provider: CloudApiKeyStore.Provider = CloudApiKeyStore.Provider.LM_STUDIO,
+        val modelName: String = "",
+        val apiKey: String = "",
+        val baseUrl: String = "",
+        /** ローカル系: サーバーから取得したモデル一覧。 */
+        val fetchedModels: List<String> = emptyList(),
+        val fetchingModels: Boolean = false,
+        val providerDropdownExpanded: Boolean = false,
+        val modelDropdownExpanded: Boolean = false,
+        val errorMessage: String? = null
+    )
+
+    /** 登録済みクラウドモデルの一覧。再読み込みは revision をインクリメントして行う。 */
+    private var cloudModelsRevision by mutableStateOf(0)
+    private val registeredCloudModels: List<String>
+        get() = CloudUserModelRegistry.list(requireContext())
+
     /**
-     * クラウド推論プロバイダ (Claude / Gemini / ChatGPT / Ollama / LM Studio) の設定画面へ
-     * 遷移させるエントリーカード。API キーは Android Keystore で暗号化保存され、
-     * 登録したクラウドモデルはプリセット選択肢に自然に並ぶ。
-     *
-     * プロバイダ毎の設定一式とモデル名登録 UI は
-     * [CloudModelSettingsFragment] 側に集約している。
+     * クラウドモデルセクション。カスタムモデルと同じ列に並べる。
+     * 追加ボタンと、登録済みモデルの一覧 (タップで編集モーダル) を表示する。
      */
     @Composable
-    private fun CloudModelsEntryCard() {
+    private fun CloudModelsSection() {
         val context = requireContext()
-        // 何プロバイダが現在設定済みかをカードに表示する。
-        val configuredCount = remember {
-            com.nezumi_ai.data.inference.cloud.CloudApiKeyStore.Provider.values()
-                .count { com.nezumi_ai.data.inference.cloud.CloudApiKeyStore.isConfigured(context, it) }
-        }
-        val totalCount = com.nezumi_ai.data.inference.cloud.CloudApiKeyStore.Provider.values().size
+        // revision を読むことで CloudUserModelRegistry の変更を Compose に反映する。
+        val models = remember(cloudModelsRevision) { registeredCloudModels }
 
         Text(
             text = stringResource(id = R.string.cloud_models_screen_title),
@@ -1705,13 +1724,7 @@ open class ModelSettingsFragment : Fragment() {
             modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
         )
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable {
-                    findNavController().navigate(
-                        R.id.action_modelSettingsFragment_to_cloudModelSettingsFragment
-                    )
-                },
+            modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
                 containerColor = colorResource(id = R.color.primary_light)
             )
@@ -1720,42 +1733,405 @@ open class ModelSettingsFragment : Fragment() {
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.padding(end = 8.dp)) {
-                        Text(
-                            text = stringResource(id = R.string.cloud_models_entry_button),
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            color = colorResource(id = R.color.text_primary)
-                        )
-                        Text(
-                            text = "$configuredCount / $totalCount",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colorResource(id = R.color.text_secondary)
-                        )
-                    }
-                    Button(
-                        onClick = {
-                            findNavController().navigate(
-                                R.id.action_modelSettingsFragment_to_cloudModelSettingsFragment
-                            )
-                        },
-                        modifier = Modifier.height(36.dp)
-                    ) {
-                        Text("開く", fontSize = 12.sp)
-                    }
-                }
                 Text(
                     text = stringResource(id = R.string.cloud_models_screen_description),
                     style = MaterialTheme.typography.bodySmall,
                     color = colorResource(id = R.color.text_secondary)
                 )
+                Button(
+                    onClick = { cloudDialogState = CloudDialogState() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(36.dp)
+                ) {
+                    Text(stringResource(id = R.string.cloud_models_entry_button), fontSize = 12.sp)
+                }
+
+                if (models.isEmpty()) {
+                    Text(
+                        text = stringResource(id = R.string.cloud_models_empty),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+                } else {
+                    models.forEach { modelId ->
+                        val parsed = CloudModelId.parse(modelId)
+                        val configured = CloudUserModelRegistry.isConfigured(context, modelId)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    val overrideKey = CloudUserModelRegistry.getOverrideApiKey(context, modelId)
+                                    val overrideUrl = CloudUserModelRegistry.getOverrideBaseUrl(context, modelId)
+                                    cloudDialogState = CloudDialogState(
+                                        editingModelId = modelId,
+                                        provider = parsed?.provider ?: CloudApiKeyStore.Provider.LM_STUDIO,
+                                        modelName = parsed?.modelName ?: "",
+                                        apiKey = overrideKey,
+                                        baseUrl = overrideUrl
+                                    )
+                                },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = CloudModelId.displayLabel(modelId),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = colorResource(id = R.color.text_primary)
+                                )
+                                Text(
+                                    text = stringResource(
+                                        id = if (configured) R.string.cloud_models_status_configured
+                                        else R.string.cloud_models_status_missing
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colorResource(
+                                        id = if (configured) R.color.primary else R.color.text_secondary
+                                    )
+                                )
+                            }
+                            TextButton(
+                                onClick = {
+                                    CloudUserModelRegistry.remove(context, modelId)
+                                    cloudModelsRevision++
+                                }
+                            ) {
+                                Text(
+                                    stringResource(id = R.string.cloud_models_remove_button),
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                        Divider()
+                    }
+                }
             }
         }
+
+        // 追加/編集モーダル
+        cloudDialogState?.let { dialogState ->
+            CloudModelDialog(
+                state = dialogState,
+                onDismiss = { cloudDialogState = null },
+                onSave = { saved ->
+                    val isNew = saved.editingModelId == null
+                    val modelId = saved.editingModelId
+                        ?: CloudModelId.build(saved.provider, saved.modelName)
+
+                    // 編集でプロバイダ/モデル名が変わった場合は古い登録を消して新しい ID で登録する。
+                    if (!isNew && saved.editingModelId != modelId) {
+                        CloudUserModelRegistry.remove(context, saved.editingModelId)
+                    }
+                    CloudUserModelRegistry.add(context, modelId)
+                    CloudUserModelRegistry.saveOverride(context, modelId, saved.apiKey, saved.baseUrl)
+
+                    toast(getString(R.string.cloud_models_credentials_saved))
+                    cloudModelsRevision++
+                    cloudDialogState = null
+                }
+            )
+        }
+    }
+
+    /**
+     * クラウドモデルの追加/編集モーダル。
+     *
+     * - プロバイダーはドロップダウンで選択。選んだプロバイダーに応じて入力項目を出し分ける。
+     * - ローカル系 (LM Studio / Ollama ローカル) はモデル選択と URL のみ (API キー不要)。
+     *   モデル名は `/v1/models` から取得した一覧をドロップダウンで選ぶ。
+     * - クラウド系はモデル名を自由入力。API キーとアクセスポイントを設定できる。
+     */
+    @Composable
+    private fun CloudModelDialog(
+        state: CloudDialogState,
+        onDismiss: () -> Unit,
+        onSave: (CloudDialogState) -> Unit
+    ) {
+        val isLocalProvider = state.provider == CloudApiKeyStore.Provider.LM_STUDIO ||
+            state.provider == CloudApiKeyStore.Provider.OLLAMA_LOCAL ||
+            state.provider == CloudApiKeyStore.Provider.OLLAMA_REMOTE
+        val requiresApiKey = state.provider.requiresApiKey
+
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = {
+                Text(
+                    text = stringResource(
+                        id = if (state.editingModelId == null) R.string.cloud_models_add_dialog_title_add
+                        else R.string.cloud_models_add_dialog_title_edit
+                    )
+                )
+            },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.verticalScroll(rememberScrollState())
+                ) {
+                    // プロバイダー選択
+                    Column {
+                        Text(
+                            text = stringResource(id = R.string.cloud_models_provider_label),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colorResource(id = R.color.text_secondary)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        ExposedDropdownMenuBox(
+                            expanded = state.providerDropdownExpanded,
+                            onExpandedChange = {
+                                cloudDialogState = state.copy(providerDropdownExpanded = it)
+                            }
+                        ) {
+                            OutlinedTextField(
+                                value = providerLabel(state.provider),
+                                onValueChange = {},
+                                readOnly = true,
+                                trailingIcon = {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = state.providerDropdownExpanded)
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .menuAnchor()
+                            )
+                            ExposedDropdownMenu(
+                                expanded = state.providerDropdownExpanded,
+                                onDismissRequest = {
+                                    cloudDialogState = state.copy(providerDropdownExpanded = false)
+                                }
+                            ) {
+                                CloudApiKeyStore.Provider.values().forEach { provider ->
+                                    DropdownMenuItem(
+                                        text = { Text(providerLabel(provider)) },
+                                        onClick = {
+                                            cloudDialogState = state.copy(
+                                                provider = provider,
+                                                providerDropdownExpanded = false,
+                                                fetchedModels = emptyList(),
+                                                modelName = ""
+                                            )
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Base URL (ローカル系は URL のみ。クラウド系もアクセスポイント変更可)
+                    Column {
+                        Text(
+                            text = stringResource(id = R.string.cloud_models_base_url_label),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colorResource(id = R.color.text_secondary)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = state.baseUrl,
+                            onValueChange = { cloudDialogState = state.copy(baseUrl = it) },
+                            placeholder = {
+                                Text(
+                                    text = state.provider.defaultBaseUrl
+                                        ?: stringResource(id = R.string.cloud_models_base_url_required_hint)
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (state.provider.defaultBaseUrl != null) {
+                            Text(
+                                text = stringResource(
+                                    id = R.string.cloud_models_base_url_default_hint,
+                                    state.provider.defaultBaseUrl
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorResource(id = R.color.text_secondary)
+                            )
+                        }
+                    }
+
+                    // API キー (クラウド系のみ必須。ローカル系は任意)
+                    if (requiresApiKey || !isLocalProvider) {
+                        Column {
+                            Text(
+                                text = stringResource(id = R.string.cloud_models_api_key_label),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorResource(id = R.color.text_secondary)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OutlinedTextField(
+                                value = state.apiKey,
+                                onValueChange = { cloudDialogState = state.copy(apiKey = it) },
+                                placeholder = {
+                                    Text(stringResource(id = R.string.cloud_models_api_key_placeholder))
+                                },
+                                visualTransformation = PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+
+                    // モデル名
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = stringResource(id = R.string.cloud_models_model_name_label),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorResource(id = R.color.text_secondary)
+                            )
+                            if (isLocalProvider) {
+                                TextButton(
+                                    onClick = {
+                                        cloudDialogState = state.copy(fetchingModels = true)
+                                        viewLifecycleOwner.lifecycleScope.launch {
+                                            val baseUrl = state.baseUrl.ifBlank {
+                                                state.provider.defaultBaseUrl.orEmpty()
+                                            }
+                                            val models = LocalModelListFetcher.fetch(
+                                                provider = state.provider,
+                                                baseUrl = baseUrl,
+                                                apiKey = state.apiKey
+                                            )
+                                            cloudDialogState = cloudDialogState?.copy(
+                                                fetchedModels = models,
+                                                fetchingModels = false,
+                                                errorMessage = if (models.isEmpty()) {
+                                                    getString(R.string.cloud_models_fetch_models_empty)
+                                                } else null
+                                            )
+                                        }
+                                    }
+                                ) {
+                                    Text(
+                                        text = stringResource(
+                                            id = if (state.fetchingModels) R.string.cloud_models_fetch_models_loading
+                                            else R.string.cloud_models_fetch_models
+                                        ),
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        if (isLocalProvider && state.fetchedModels.isNotEmpty()) {
+                            // 取得できた一覧をドロップダウンで選ぶ
+                            ExposedDropdownMenuBox(
+                                expanded = state.modelDropdownExpanded,
+                                onExpandedChange = {
+                                    cloudDialogState = state.copy(modelDropdownExpanded = it)
+                                }
+                            ) {
+                                OutlinedTextField(
+                                    value = state.modelName,
+                                    onValueChange = { cloudDialogState = state.copy(modelName = it) },
+                                    trailingIcon = {
+                                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = state.modelDropdownExpanded)
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .menuAnchor()
+                                )
+                                ExposedDropdownMenu(
+                                    expanded = state.modelDropdownExpanded,
+                                    onDismissRequest = {
+                                        cloudDialogState = state.copy(modelDropdownExpanded = false)
+                                    }
+                                ) {
+                                    state.fetchedModels.forEach { modelName ->
+                                        DropdownMenuItem(
+                                            text = { Text(modelName) },
+                                            onClick = {
+                                                cloudDialogState = state.copy(
+                                                    modelName = modelName,
+                                                    modelDropdownExpanded = false
+                                                )
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            OutlinedTextField(
+                                value = state.modelName,
+                                onValueChange = { cloudDialogState = state.copy(modelName = it) },
+                                placeholder = {
+                                    Text(modelNameHint(state.provider))
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+
+                    // エラーメッセージ
+                    state.errorMessage?.let { message ->
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorResource(id = R.color.error)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val modelName = state.modelName.trim()
+                        if (modelName.isEmpty()) {
+                            cloudDialogState = state.copy(
+                                errorMessage = getString(R.string.cloud_models_add_failed_blank)
+                            )
+                            return@Button
+                        }
+                        if (requiresApiKey && state.apiKey.isBlank()) {
+                            cloudDialogState = state.copy(
+                                errorMessage = getString(R.string.cloud_models_add_failed_not_configured)
+                            )
+                            return@Button
+                        }
+                        val resolvedUrl = state.baseUrl.ifBlank { state.provider.defaultBaseUrl.orEmpty() }
+                        if (isLocalProvider && !(resolvedUrl.startsWith("http://") || resolvedUrl.startsWith("https://"))) {
+                            cloudDialogState = state.copy(
+                                errorMessage = getString(R.string.cloud_models_base_url_required_hint)
+                            )
+                            return@Button
+                        }
+                        onSave(state.copy(modelName = modelName, baseUrl = resolvedUrl))
+                    }
+                ) {
+                    Text(
+                        stringResource(
+                            id = if (state.editingModelId == null) R.string.cloud_models_add_button
+                            else R.string.cloud_models_save_button
+                        )
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(id = android.R.string.cancel))
+                }
+            }
+        )
+    }
+
+    private fun providerLabel(provider: CloudApiKeyStore.Provider): String = when (provider) {
+        CloudApiKeyStore.Provider.CLAUDE -> getString(R.string.cloud_models_provider_claude)
+        CloudApiKeyStore.Provider.GEMINI -> getString(R.string.cloud_models_provider_gemini)
+        CloudApiKeyStore.Provider.OPENAI -> getString(R.string.cloud_models_provider_openai)
+        CloudApiKeyStore.Provider.OLLAMA_LOCAL -> getString(R.string.cloud_models_provider_ollama_local)
+        CloudApiKeyStore.Provider.OLLAMA_REMOTE -> getString(R.string.cloud_models_provider_ollama_remote)
+        CloudApiKeyStore.Provider.LM_STUDIO -> getString(R.string.cloud_models_provider_lmstudio)
+    }
+
+    private fun modelNameHint(provider: CloudApiKeyStore.Provider): String = when (provider) {
+        CloudApiKeyStore.Provider.CLAUDE -> getString(R.string.cloud_models_model_name_hint_claude)
+        CloudApiKeyStore.Provider.GEMINI -> getString(R.string.cloud_models_model_name_hint_gemini)
+        CloudApiKeyStore.Provider.OPENAI -> getString(R.string.cloud_models_model_name_hint_openai)
+        CloudApiKeyStore.Provider.OLLAMA_LOCAL,
+        CloudApiKeyStore.Provider.OLLAMA_REMOTE -> getString(R.string.cloud_models_model_name_hint_ollama)
+        CloudApiKeyStore.Provider.LM_STUDIO -> getString(R.string.cloud_models_model_name_hint_lmstudio)
     }
 
     @Composable
