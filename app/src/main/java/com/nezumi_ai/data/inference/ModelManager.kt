@@ -3,6 +3,8 @@ package com.nezumi_ai.data.inference
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
+import com.nezumi_ai.data.inference.cloud.CloudEngineFactory
+import com.nezumi_ai.data.inference.cloud.CloudModelId
 import com.nezumi_ai.data.inference.rnllama.RnLlamaNative
 import com.nezumi_ai.data.repository.SettingsRepository
 import kotlinx.coroutines.CancellationException
@@ -95,6 +97,14 @@ class ModelManager(
     }
 
     private fun engineForModel(modelName: String): AIInferenceEngine {
+        // クラウド推論エンジンは既存の GGUF/LiteRT 判定の手前で分岐する。
+        // modelName が `cloud:{provider}:{model}` 形式、またはレガシーの
+        // `gemini_api` / `claude_api` の場合は CloudEngineFactory がプロバイダ別の
+        // AIInferenceEngine 実装 (ClaudeInferenceEngine / GeminiInferenceEngine / ...) を返す。
+        if (CloudModelId.isCloud(modelName)) {
+            CloudEngineFactory.get(context, modelName)?.let { return it }
+            // 未知の cloud id は LiteRT にフォールバック (もともと存在しないモデルだと loadModel が失敗する)
+        }
         return if (shouldUseGgufEngine(modelName)) {
             getOrCreateGgufEngine()
                 ?: throw IllegalStateException("GGUF engine unavailable: native library could not be loaded")
@@ -103,8 +113,23 @@ class ModelManager(
         }
     }
 
+    /**
+     * `modelName` がクラウド形式の場合は、プロバイダを剪いだ「生のモデル名」に変換して
+     * エンジンに渡す。例: `cloud:gemini:gemini-2.5-flash` → `gemini-2.5-flash`.
+     * 非クラウドモデルはそのまま。
+     */
+    private fun engineModelName(modelName: String): String {
+        if (!CloudModelId.isCloud(modelName)) return modelName
+        val parsed = CloudModelId.parse(modelName) ?: return modelName
+        return parsed.modelName
+    }
+
     private fun currentEngineLabel(engine: AIInferenceEngine): String {
-        return if (engine is GgufInferenceEngine) "GGUF" else "LiteRtLm"
+        return when {
+            engine is GgufInferenceEngine -> "GGUF"
+            engine === liteRtEngine -> "LiteRtLm"
+            else -> "Cloud(${engine.javaClass.simpleName})"
+        }
     }
 
     /**
@@ -168,7 +193,8 @@ class ModelManager(
                 .onFailure { Log.w(TAG, "Engine unload during recovery failed", it) }
         }
 
-        val reloaded = engine.loadModel(modelName, normalized)
+        // クラウドモデルは `cloud:...` プレフィックスを剥いてエンジンに渡す。
+        val reloaded = engine.loadModel(engineModelName(modelName), normalized)
         if (reloaded.isSuccess) {
             activeEngine = engine
             currentConfig = normalized
@@ -327,8 +353,10 @@ class ModelManager(
                 }
                 
                 // 新しいモデルをロード
-                Log.d(TAG, "Loading model: $modelName with backend: ${normalizedConfig.backendType} engine=${currentEngineLabel(targetEngine)}")
-                val result = targetEngine.loadModel(modelName, normalizedConfig)
+                // クラウドの場合は `cloud:...` プレフィックスを剥いてエンジンに渡す。
+                val engineModel = engineModelName(modelName)
+                Log.d(TAG, "Loading model: $modelName (engineArg=$engineModel) with backend: ${normalizedConfig.backendType} engine=${currentEngineLabel(targetEngine)}")
+                val result = targetEngine.loadModel(engineModel, normalizedConfig)
                 
                 if (result.isSuccess) {
                     activeEngine = targetEngine

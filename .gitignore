@@ -41,3 +41,4 @@ app/src/main/assets/voicevox/**
 !.env.example
 models/
 mnn-sd-engine\build/
+.patch*

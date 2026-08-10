@@ -727,6 +727,14 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
     fun isModelAvailable(context: Context, modelName: String): Boolean {
         val trimmed = modelName.trim()
         val lowered = trimmed.lowercase()
+        // クラウドモデル: `cloud:{provider}:{model}` またはレガシーの `gemini_api`/`claude_api`。
+        // ここでは「ローカルファイルの存在」の代わりに「プロバイダが構成済みか」を見る。
+        if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(modelName)) {
+            val parsed = com.nezumi_ai.data.inference.cloud.CloudModelId.parse(modelName)
+                ?: return false
+            return com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
+                .isConfigured(context, parsed.provider)
+        }
         if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && File(trimmed).isAbsolute) {
             return validateImportedTaskFile(File(trimmed)).isSuccess
         }

@@ -472,6 +472,10 @@ open class ModelSettingsFragment : Fragment() {
 
             when (selectedTab) {
                 ModelType.LLM -> {
+                    // クラウドモデル (Claude / Gemini / ChatGPT / Ollama / LM Studio)
+                    // の設定画面へのエントリーボタン。既存の HuggingFace カードの上に置いて、
+                    // 「ローカル・クラウド・カスタム」の 3 系統を並べて見えるようにする。
+                    item { CloudModelsEntryCard() }
                     item { HfCard() }
                     item { HfModelSearchCard() }
                     item {
@@ -1670,6 +1674,85 @@ open class ModelSettingsFragment : Fragment() {
                     style = MaterialTheme.typography.bodyMedium,
                     color = colorResource(id = R.color.text_secondary),
                     modifier = Modifier.padding(16.dp)
+                )
+            }
+        }
+    }
+
+    /**
+     * クラウド推論プロバイダ (Claude / Gemini / ChatGPT / Ollama / LM Studio) の設定画面へ
+     * 遷移させるエントリーカード。API キーは Android Keystore で暗号化保存され、
+     * 登録したクラウドモデルはプリセット選択肢に自然に並ぶ。
+     *
+     * プロバイダ毎の設定一式とモデル名登録 UI は
+     * [CloudModelSettingsFragment] 側に集約している。
+     */
+    @Composable
+    private fun CloudModelsEntryCard() {
+        val context = requireContext()
+        // 何プロバイダが現在設定済みかをカードに表示する。
+        val configuredCount = remember {
+            com.nezumi_ai.data.inference.cloud.CloudApiKeyStore.Provider.values()
+                .count { com.nezumi_ai.data.inference.cloud.CloudApiKeyStore.isConfigured(context, it) }
+        }
+        val totalCount = com.nezumi_ai.data.inference.cloud.CloudApiKeyStore.Provider.values().size
+
+        Text(
+            text = stringResource(id = R.string.cloud_models_screen_title),
+            style = MaterialTheme.typography.labelSmall,
+            color = colorResource(id = R.color.text_secondary),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+        )
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    findNavController().navigate(
+                        R.id.action_modelSettingsFragment_to_cloudModelSettingsFragment
+                    )
+                },
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.padding(end = 8.dp)) {
+                        Text(
+                            text = stringResource(id = R.string.cloud_models_entry_button),
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colorResource(id = R.color.text_primary)
+                        )
+                        Text(
+                            text = "$configuredCount / $totalCount",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorResource(id = R.color.text_secondary)
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            findNavController().navigate(
+                                R.id.action_modelSettingsFragment_to_cloudModelSettingsFragment
+                            )
+                        },
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Text("開く", fontSize = 12.sp)
+                    }
+                }
+                Text(
+                    text = stringResource(id = R.string.cloud_models_screen_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_secondary)
                 )
             }
         }

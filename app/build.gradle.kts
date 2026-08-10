@@ -273,6 +273,15 @@ dependencies {
 
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
+    // クラウド推論エンジン (Claude / Gemini / OpenAI / LM Studio) の
+    // SSE ストリームを行単位で解析するために okhttp-sse を追加。
+    // Ollama は NDJSON ストリームなので通常の Response.body().source() で処理する。
+    implementation("com.squareup.okhttp3:okhttp-sse:5.4.0")
+
+    // クラウドプロバイダ用 API キー / Base URL を暗号化して保存するために使用。
+    // Android Keystore の AES-256 マスターキーで EncryptedSharedPreferences を
+    // 生成する。HfAuthManager が使う平文 SharedPreferences とは別ファイルに分離する。
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // ─────────────────────────────────────────────
     // ページ取得ツール (URL → HTML 取得 + Markdown 変換)

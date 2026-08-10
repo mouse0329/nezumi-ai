@@ -202,6 +202,11 @@ class ChatViewModel(
     }
 
     private fun mapPresetModelIdToSettingsModel(modelId: String): String? {
+        // クラウドモデル ID (`cloud:...` / レガシー `gemini_api` / `claude_api`) は
+        // ModelManager がそのまま受け取れるので、変換せずにパススルーさせる。
+        if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(modelId)) {
+            return modelId
+        }
         return when (modelId) {
             PresetConstants.MODEL_GEMMA4_LITERT -> "Gemma4-2B"
             PresetConstants.MODEL_QWEN3_GGUF -> null

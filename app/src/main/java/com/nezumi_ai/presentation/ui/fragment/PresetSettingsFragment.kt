@@ -963,8 +963,10 @@ class PresetSettingsFragment : Fragment() {
 
     private fun modelLabel(modelId: String): String =
         PresetModelCatalog.downloadedModels(requireContext()).firstOrNull { it.id == modelId }?.label
-            ?: when (modelId) {
-                PresetConstants.MODEL_GEMMA4_LITERT -> "Gemma 4 2B"
+            ?: when {
+                modelId == PresetConstants.MODEL_GEMMA4_LITERT -> "Gemma 4 2B"
+                com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(modelId) ->
+                    com.nezumi_ai.data.inference.cloud.CloudModelId.displayLabel(modelId)
                 else -> modelId
             }
 

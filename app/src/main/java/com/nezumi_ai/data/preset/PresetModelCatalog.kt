@@ -2,6 +2,9 @@ package com.nezumi_ai.data.preset
 
 import android.content.Context
 import com.nezumi_ai.data.inference.ModelFileManager
+import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
+import com.nezumi_ai.data.inference.cloud.CloudModelId
+import com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry
 
 data class PresetModelOption(
     val id: String,
@@ -29,6 +32,15 @@ object PresetModelCatalog {
             )
             options += PresetModelOption(imported.path, label)
         }
+        // ユーザーが追加したクラウドモデルのうち、対応プロバイダの API キー / Base URL が
+        // 設定済みのものだけをプリセット選択肢に出す。
+        // (未設定のプロバイダのモデルを見せても選択した瞬間に失敗するだけなので、面倒でも
+        //  設定ページを先に確認させる方針)
+        CloudUserModelRegistry.list(context).forEach { modelId ->
+            val parsed = CloudModelId.parse(modelId) ?: return@forEach
+            if (!CloudApiKeyStore.isConfigured(context, parsed.provider)) return@forEach
+            options += PresetModelOption(modelId, CloudModelId.displayLabel(modelId))
+        }
         return options
     }
 
@@ -36,5 +48,6 @@ object PresetModelCatalog {
         downloadedModels(context).any { it.id == modelId }
 
     fun labelFor(context: Context, modelId: String): String =
-        downloadedModels(context).firstOrNull { it.id == modelId }?.label ?: modelId
+        downloadedModels(context).firstOrNull { it.id == modelId }?.label
+            ?: if (CloudModelId.isCloud(modelId)) CloudModelId.displayLabel(modelId) else modelId
 }

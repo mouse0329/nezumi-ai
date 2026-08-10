@@ -33,7 +33,14 @@
     <fragment android:id="@+id/modelSettingsFragment" android:name="com.nezumi_ai.presentation.ui.fragment.ModelSettingsFragment" android:label="@string/model_settings" tools:layout="@layout/fragment_settings">
         <action android:id="@+id/action_modelSettingsFragment_to_licenseFragment" app:destination="@id/licenseFragment" />
         <action android:id="@+id/action_modelSettingsFragment_to_modelManagementFragment" app:destination="@id/modelManagementFragment" />
+        <action android:id="@+id/action_modelSettingsFragment_to_cloudModelSettingsFragment" app:destination="@id/cloudModelSettingsFragment" />
     </fragment>
+
+    <fragment
+        android:id="@+id/cloudModelSettingsFragment"
+        android:name="com.nezumi_ai.presentation.ui.fragment.CloudModelSettingsFragment"
+        android:label="@string/cloud_models_screen_title"
+        tools:layout="@layout/fragment_settings" />
 
     <fragment android:id="@+id/modelManagementFragment" android:name="com.nezumi_ai.presentation.ui.fragment.ModelManagementFragment" android:label="モデル管理" tools:layout="@layout/fragment_settings" />
 
