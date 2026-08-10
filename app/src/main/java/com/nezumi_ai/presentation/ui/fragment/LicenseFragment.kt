@@ -246,6 +246,17 @@ class LicenseFragment : Fragment() {
                 R.string.license_markitdown_deps_title,
                 R.string.license_markitdown_deps_desc,
                 R.string.license_markitdown_deps_url
+            ),
+            // ページ取得ツール (URL → HTML 取得 + Markdown 変換) で追加した依存群。
+            LicenseItem(
+                R.string.license_jsoup_title,
+                R.string.license_jsoup_desc,
+                R.string.license_jsoup_url
+            ),
+            LicenseItem(
+                R.string.license_flexmark_title,
+                R.string.license_flexmark_desc,
+                R.string.license_flexmark_url
             )
         )
 

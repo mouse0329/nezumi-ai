@@ -368,6 +368,18 @@ PDF / Word / Excel / PowerPoint ファイルを Markdown に変換するため�
 
 MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ライブラリ群です。Chaquopy の pip により同梱されます。</string>
 
+    <string name="license_jsoup_title">jsoup</string>
+    <string name="license_jsoup_url">https://jsoup.org/</string>
+    <string name="license_jsoup_desc">MIT License
+
+ページ取得ツールで HTML の取得・解析に使用しています。利用バージョン: 1.17.2。</string>
+
+    <string name="license_flexmark_title">flexmark-java (flexmark-html2md)</string>
+    <string name="license_flexmark_url">https://github.com/vsch/flexmark-java</string>
+    <string name="license_flexmark_desc">BSD 2-Clause License
+
+ページ取得ツールで取得した HTML を Markdown に変換するために使用しています。利用バージョン: 0.64.8。</string>
+
     <string name="license_open_url">詳細を見る</string>
 
     <!--

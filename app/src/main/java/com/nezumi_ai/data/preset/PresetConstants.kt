@@ -21,6 +21,8 @@ object PresetConstants {
     // MEMORY_ONLY モードではこのツールの呼び出しが唇一の保存経路になる。
     const val TOOL_MEMORY_SAVE = "memory_save"
     const val TOOL_WEB_SEARCH = "web_search"
+    // web_search で見つけた URL の本文取得 (URL → Markdown)
+    const val TOOL_WEB_FETCH = "web_fetch"
     // Markdown → Word/PDF/Excel 生成
     const val TOOL_CONVERT_MD_TO_DOCUMENT = "convert_md_to_document"
 
@@ -38,6 +40,7 @@ object PresetConstants {
         TOOL_MEMORY,
         TOOL_MEMORY_SAVE,
         TOOL_WEB_SEARCH,
+        TOOL_WEB_FETCH,
         TOOL_CONVERT_MD_TO_DOCUMENT
     )
 

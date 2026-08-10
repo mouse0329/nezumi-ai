@@ -274,6 +274,18 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
 
+    // ─────────────────────────────────────────────
+    // ページ取得ツール (URL → HTML 取得 + Markdown 変換)
+    // jsoup: HTML の取得・解析 / flexmark-html2md-converter: HTML → Markdown 変換
+    // web_search (Brave Search API) で見つけたページ本文を読むために使用。
+    // 注意: flexmark-java 0.64.8 の HTML → Markdown 変換の実体は
+    // flexmark-html2md-converter (com.vladsch.flexmark.html2md.converter.FlexmarkHtmlConverter)。
+    // "flexmark-html2md" というアーティファクトには jar が存在しないため、
+    // 変換器モジュールを直接指定する。
+    // ─────────────────────────────────────────────
+    implementation("org.jsoup:jsoup:1.17.2")
+    implementation("com.vladsch.flexmark:flexmark-html2md-converter:0.64.8")
+
     // VOICEVOX integration
     implementation(files("libs/voicevoxcore-android-0.16.4.aar"))
 

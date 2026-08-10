@@ -95,6 +95,10 @@ private val TOOL_NAME_MAP = mapOf(
     "web_search"           to "websearch",
     "webSearch"            to "websearch",
     "websearch"            to "websearch",
+    // web_fetch
+    "web_fetch"            to "webfetch",
+    "webFetch"             to "webfetch",
+    "webfetch"             to "webfetch",
     // MCP generic dispatcher
     "mcp_call"             to "mcpcall",
     "mcpCall"              to "mcpcall",
@@ -155,6 +159,10 @@ internal fun buildEnabledToolProviders(context: Context, alarmDao: AlarmDao): Li
         if (NezumiTool.WEB_SEARCH in enabled) {
             Log.d(TOOL_TAG, "Adding WebSearchSchema to tool providers")
             add(tool(WebSearchSchema()))
+        }
+        if (NezumiTool.WEB_FETCH in enabled) {
+            Log.d(TOOL_TAG, "Adding WebFetchSchema to tool providers")
+            add(tool(WebFetchSchema()))
         }
         if (NezumiTool.CONVERT_MD_TO_DOCUMENT in enabled) {
             Log.d(TOOL_TAG, "Adding ConvertMdToDocumentSchema to tool providers")
@@ -340,6 +348,18 @@ private class WebSearchSchema : ToolSet {
     ): Map<String, Any?> = emptyMap()
 }
 
+private class WebFetchSchema : ToolSet {
+    @Tool(
+        description = "Fetch a web page and return its content as Markdown text. " +
+            "Use this to read the body of a URL found by web_search. " +
+            "JavaScript-rendered pages are not supported."
+    )
+    fun webFetch(
+        @ToolParam(description = "http(s) URL of the page to fetch") url: String,
+        @ToolParam(description = "Maximum characters of Markdown to return (default 4000, max 12000)") maxChars: Int?
+    ): Map<String, Any?> = emptyMap()
+}
+
 private class ConvertMdToDocumentSchema : ToolSet {
     @Tool(
         description = "Convert Markdown text into a Word (.docx), PDF (.pdf), or Excel (.xlsx) file. " +
@@ -402,6 +422,7 @@ internal class NezumiLiteRtToolExecutor(
             // "addcalendarevent" -> executeAddCalendarEvent(toolCall)
             // "listcalendarevents" -> executeListCalendarEvents(toolCall)
             "websearch"       -> executeWebSearch(toolCall)
+            "webfetch"        -> executeWebFetch(toolCall)
             "convertmdtodocument"  -> executeConvertMdToDocument(toolCall)
             "mcpcall"         -> executeMcpCall(toolCall)
             "mcplisttools"    -> executeMcpListTools()
@@ -438,6 +459,7 @@ internal class NezumiLiteRtToolExecutor(
             // "addcalendarevent" -> NezumiTool.ADD_CALENDAR_EVENT
             // "listcalendarevents" -> NezumiTool.LIST_CALENDAR_EVENTS
             "websearch" -> NezumiTool.WEB_SEARCH
+            "webfetch" -> NezumiTool.WEB_FETCH
             "convertmdtodocument" -> NezumiTool.CONVERT_MD_TO_DOCUMENT
             // mcpcall / mcplisttools はプリセット側の MCP サーバー ID で制御されるため、
             // NezumiTool にはマッピングしない
@@ -1021,6 +1043,32 @@ internal class NezumiLiteRtToolExecutor(
             ToolExecutionResult(
                 success = false,
                 payload = mapOf("success" to false, "error" to "search_failed:${e.message}")
+            )
+        }
+    }
+
+    private suspend fun executeWebFetch(toolCall: ToolCall): ToolExecutionResult {
+        val url = toolCall.arguments["url"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_url"))
+        val maxChars = toolCall.arguments.readInt("maxChars")
+            ?: toolCall.arguments.readInt("max_chars")
+            ?: 4000
+
+        return try {
+            val result = withContext(Dispatchers.IO) {
+                performWebFetch(url = url, maxChars = maxChars)
+            }
+            ToolExecutionResult(
+                success = result["success"] as? Boolean ?: false,
+                payload = result
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TOOL_TAG, "Web fetch failed", e)
+            ToolExecutionResult(
+                success = false,
+                payload = mapOf("success" to false, "error" to "fetch_failed:${e.message}")
             )
         }
     }

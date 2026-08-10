@@ -105,6 +105,24 @@ KOTLIN & APPLICATION RUNTIME
     - net.openid:appauth
 
 ================================================================================
+WEB CONTENT FETCHING
+================================================================================
+
+* jsoup
+  License: MIT License
+  https://jsoup.org/
+  Includes:
+    - org.jsoup:jsoup
+  Note: Used by the web page fetch tool to download and parse HTML.
+
+* flexmark-java (flexmark-html2md-converter)
+  License: BSD 2-Clause License
+  https://github.com/vsch/flexmark-java
+  Includes:
+    - com.vladsch.flexmark:flexmark-html2md-converter
+  Note: Used by the web page fetch tool to convert fetched HTML into Markdown.
+
+================================================================================
 AI / ML RUNTIME
 ================================================================================
 

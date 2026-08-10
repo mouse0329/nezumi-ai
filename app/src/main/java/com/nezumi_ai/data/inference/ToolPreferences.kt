@@ -28,6 +28,8 @@ enum class NezumiTool(val displayName: String) {
     // ADD_CALENDAR_EVENT("カレンダー追加"),
     // LIST_CALENDAR_EVENTS("カレンダー一覧"),
     WEB_SEARCH("ウェブ検索"),
+    // web_search で見つけた URL の本文を Markdown で取得する
+    WEB_FETCH("ページ取得"),
     // Markdown → Word/PDF/Excel 生成
     CONVERT_MD_TO_DOCUMENT("MD→Word/PDF/Excel変換")
 }
@@ -83,6 +85,7 @@ class ToolPreferences(private val context: Context) {
             // NezumiTool.ADD_CALENDAR_EVENT,
             // NezumiTool.LIST_CALENDAR_EVENTS -> setOf(PresetConstants.TOOL_CALENDAR)
             NezumiTool.WEB_SEARCH -> setOf(PresetConstants.TOOL_WEB_SEARCH)
+            NezumiTool.WEB_FETCH -> setOf(PresetConstants.TOOL_WEB_FETCH)
             NezumiTool.CONVERT_MD_TO_DOCUMENT -> setOf(PresetConstants.TOOL_CONVERT_MD_TO_DOCUMENT)
         }
     }
@@ -116,6 +119,9 @@ class ToolPreferences(private val context: Context) {
                 // }
                 if (!prefs.contains(keyFor(NezumiTool.WEB_SEARCH))) {
                     editor.putBoolean(keyFor(NezumiTool.WEB_SEARCH), false)
+                }
+                if (!prefs.contains(keyFor(NezumiTool.WEB_FETCH))) {
+                    editor.putBoolean(keyFor(NezumiTool.WEB_FETCH), false)
                 }
                 editor.apply()
             }

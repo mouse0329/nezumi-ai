@@ -99,6 +99,11 @@ object GgufToolPromptBuilder {
             """{"type":"object","properties":{"query":{"type":"string"},"count":{"type":"integer"}},"required":["query"]}"""
         ),
         ToolSchema(
+            "web_fetch",
+            "Fetches a web page and returns its content as Markdown text. Use this to read the body of a URL found by web_search.",
+            """{"type":"object","properties":{"url":{"type":"string"},"max_chars":{"type":"integer"}},"required":["url"]}"""
+        ),
+        ToolSchema(
             "convert_md_to_document",
             "Prepare a Word (.docx), PDF (.pdf), or Excel (.xlsx) document from Markdown text. Supports headings, paragraphs, lists, tables, code blocks, quotes, bold/italic text. The content is placed on a card in the chat; the file is converted and saved when the user taps Save.",
             """{"type":"object","properties":{"markdown":{"type":"string","description":"The Markdown text to convert"},"format":{"type":"string","description":"Output format: 'docx', 'pdf', or 'xlsx'"},"fileName":{"type":"string","description":"Optional output file name without extension"}},"required":["markdown","format"]}"""
@@ -122,6 +127,7 @@ object GgufToolPromptBuilder {
         // NezumiTool.ADD_CALENDAR_EVENT to "add_calendar_event",
         // NezumiTool.LIST_CALENDAR_EVENTS to "list_calendar_events",
         NezumiTool.WEB_SEARCH to "web_search",
+        NezumiTool.WEB_FETCH to "web_fetch",
         NezumiTool.CONVERT_MD_TO_DOCUMENT to "convert_md_to_document"
     )
 

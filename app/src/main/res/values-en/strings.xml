@@ -372,6 +372,18 @@ Converts PDF / Word / Excel / PowerPoint files into Markdown, executed in Python
 
 Python libraries used by MarkItDown to read each Office / PDF format. Bundled via Chaquopy pip.</string>
 
+    <string name="license_jsoup_title">jsoup</string>
+    <string name="license_jsoup_url">https://jsoup.org/</string>
+    <string name="license_jsoup_desc">MIT License
+
+Used by the web page fetch tool to download and parse HTML. Version used: 1.17.2.</string>
+
+    <string name="license_flexmark_title">flexmark-java (flexmark-html2md)</string>
+    <string name="license_flexmark_url">https://github.com/vsch/flexmark-java</string>
+    <string name="license_flexmark_desc">BSD 2-Clause License
+
+Used by the web page fetch tool to convert fetched HTML into Markdown. Version used: 0.64.8.</string>
+
     <string name="license_open_url">View details</string>
 
     <!-- Fragments for navigation -->
