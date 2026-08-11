@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1140 1464" font-family="'Noto Sans CJK JP','Noto Sans JP',sans-serif">
+  <defs>
+    <marker id="arrowW" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e8eaed"/>
+    </marker>
+  </defs>
+  <rect width="1140" height="1464" fill="#191c1f"/>
+
+  <!-- ===== UI Layer ===== -->
+  <rect x="60" y="24" width="960" height="132" rx="16" fill="#e3ddf7" stroke="#a99bd8" stroke-width="1.5"/>
+  <text x="86" y="56" font-size="19" font-weight="bold" fill="#6d5bb0">UI Layer (Jetpack Compose / Fragment)</text>
+  <g font-size="15" fill="#2a2d31" text-anchor="middle">
+    <rect x="95" y="76" width="200" height="56" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#a99bd8"/>
+    <text x="195" y="110">ChatFragment</text>
+    <rect x="325" y="76" width="200" height="56" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#a99bd8"/>
+    <text x="425" y="110">ImageGen Screen</text>
+    <rect x="555" y="76" width="200" height="56" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#a99bd8"/>
+    <text x="655" y="110">Preset Settings</text>
+    <rect x="785" y="76" width="200" height="56" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#a99bd8"/>
+    <text x="885" y="110">Model Settings</text>
+  </g>
+  <line x1="540" y1="156" x2="540" y2="184" stroke="#e8eaed" stroke-width="2" marker-end="url(#arrowW)"/>
+
+  <!-- ===== Logic Layer ===== -->
+  <rect x="60" y="188" width="960" height="132" rx="16" fill="#ded8f5" stroke="#a495d4" stroke-width="1.5"/>
+  <text x="86" y="220" font-size="19" font-weight="bold" fill="#6d5bb0">Logic Layer (ViewModel / Repository)</text>
+  <g font-size="14" fill="#2a2d31" text-anchor="middle">
+    <rect x="80" y="240" width="168" height="56" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#a495d4"/>
+    <text x="164" y="274">Chat ViewModel</text>
+    <rect x="268" y="240" width="168" height="56" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#a495d4"/>
+    <text x="352" y="266" font-size="13">ImageGen</text><text x="352" y="284" font-size="13">ViewModel</text>
+    <rect x="456" y="240" width="168" height="56" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#a495d4"/>
+    <text x="540" y="266" font-size="13">Settings</text><text x="540" y="284" font-size="13">ViewModel</text>
+    <rect x="644" y="240" width="168" height="56" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#a495d4"/>
+    <text x="728" y="266" font-size="13">Preset / Settings</text><text x="728" y="284" font-size="13">Repository</text>
+    <rect x="832" y="240" width="168" height="56" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#a495d4"/>
+    <text x="916" y="274">Model Manager</text>
+  </g>
+  <line x1="160" y1="320" x2="160" y2="492" stroke="#e8eaed" stroke-width="2" marker-end="url(#arrowW)"/>
+  <line x1="540" y1="320" x2="540" y2="348" stroke="#e8eaed" stroke-width="2" marker-end="url(#arrowW)"/>
+
+  <!-- ===== Persistence Layer ===== -->
+  <rect x="280" y="352" width="520" height="108" rx="16" fill="#f3eedd" stroke="#cfc49e" stroke-width="1.5"/>
+  <text x="304" y="382" font-size="17" font-weight="bold" fill="#7a6c3f">Persistence Layer</text>
+  <g font-size="14" fill="#2a2d31" text-anchor="middle">
+    <rect x="305" y="398" width="210" height="48" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#cfc49e"/>
+    <text x="410" y="428">Room Database</text>
+    <rect x="565" y="398" width="210" height="48" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#cfc49e"/>
+    <text x="670" y="428">SharedPreferences</text>
+  </g>
+
+  <!-- SharedPreferences → MnnSdModule (SD設定読込: getSdModelPath/getSdSteps/getSdCfg 等) -->
+  <path d="M670,398 L670,336 L876,336 L876,560" fill="none" stroke="#e8eaed" stroke-width="1.6" stroke-dasharray="7 5" marker-end="url(#arrowW)"/>
+  <text x="700" y="330" font-size="11.5" fill="#9aa0a6">SD設定読込（PreferencesHelper）</text>
+
+  <!-- ===== Inference Layer ===== -->
+  <rect x="60" y="496" width="960" height="216" rx="16" fill="#ddf3ea" stroke="#93cdb4" stroke-width="1.5"/>
+  <text x="86" y="528" font-size="19" font-weight="bold" fill="#2e7d5b">Inference Layer</text>
+  <text x="86" y="550" font-size="13" fill="#3f6b58">EngineManager / ModelManager が選択・フォールバックを統括（AIInferenceEngine 経由）</text>
+  <g text-anchor="middle">
+    <rect x="102" y="564" width="204" height="64" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#93cdb4"/>
+    <text x="204" y="592" font-size="14.5" fill="#2a2d31">GgufInferenceEngine</text>
+    <text x="204" y="612" font-size="12" fill="#5a5e64">llama.cpp (GGUF)</text>
+    <rect x="326" y="564" width="204" height="64" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#93cdb4"/>
+    <text x="428" y="592" font-size="15" fill="#2a2d31">LiteRtLmEngine</text>
+    <text x="428" y="612" font-size="12" fill="#5a5e64">TFLite / NPU</text>
+    <rect x="550" y="564" width="204" height="64" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#93cdb4"/>
+    <text x="652" y="592" font-size="14" fill="#2a2d31">CloudEngineFactory</text>
+    <text x="652" y="612" font-size="12" fill="#5a5e64">Claude / Gemini 等</text>
+    <rect x="774" y="564" width="204" height="64" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#93cdb4"/>
+    <text x="876" y="592" font-size="15" fill="#2a2d31">MnnSdModule</text>
+    <text x="876" y="612" font-size="12" fill="#5a5e64">Nezumi Kiln (画像生成)</text>
+  </g>
+  <line x1="652" y1="628" x2="652" y2="648" stroke="#e8eaed" stroke-width="2" marker-end="url(#arrowW)"/>
+  <rect x="482" y="652" width="340" height="48" rx="12" fill="#d9e6fb" stroke="#93b4e4" stroke-width="1.5"/>
+  <text x="652" y="673" font-size="13" font-weight="bold" fill="#3b6cb4" text-anchor="middle">Cloud APIs (HTTPS / OkHttp)</text>
+  <text x="652" y="691" font-size="11.5" fill="#43608f" text-anchor="middle">Claude / Gemini / OpenAI互換 / LM Studio / Ollama</text>
+  <line x1="540" y1="712" x2="540" y2="740" stroke="#e8eaed" stroke-width="2" marker-end="url(#arrowW)"/>
+  <line x1="876" y1="744" x2="876" y2="714" stroke="#e8eaed" stroke-width="2" marker-end="url(#arrowW)"/>
+  <text x="890" y="732" font-size="11.5" fill="#9aa0a6">image_generation ツール</text>
+
+  <!-- ===== Tool System ===== -->
+  <rect x="60" y="744" width="960" height="132" rx="16" fill="#fde9de" stroke="#e5b199" stroke-width="1.5"/>
+  <text x="86" y="776" font-size="19" font-weight="bold" fill="#c25e2e">Tool System</text>
+  <text x="86" y="796" font-size="12.5" fill="#8f5a3e">ToolSystemController が各ツールを呼び出す（推論エンジンからのツールコール）</text>
+  <g font-size="13.5" fill="#2a2d31" text-anchor="middle">
+    <rect x="80" y="806" width="168" height="52" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#e5b199"/>
+    <text x="164" y="838">Web検索 / 取得</text>
+    <rect x="268" y="806" width="168" height="52" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#e5b199"/>
+    <text x="352" y="830" font-size="13">ドキュメント変換</text>
+    <text x="352" y="848" font-size="10" fill="#5a5e64">MD⇄docx/pdf/xlsx (Chaquopy)</text>
+    <rect x="456" y="806" width="168" height="52" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#e5b199"/>
+    <text x="540" y="838">メモリ検索 / 保存</text>
+    <rect x="644" y="806" width="168" height="52" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#e5b199"/>
+    <text x="728" y="838">MCP</text>
+    <rect x="832" y="806" width="168" height="52" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#e5b199"/>
+    <text x="916" y="838">端末系</text>
+  </g>
+
+  <!-- ===== Native & Hardware ===== -->
+  <rect x="60" y="908" width="960" height="224" rx="16" fill="#ddf3ea" stroke="#93cdb4" stroke-width="1.5"/>
+  <text x="86" y="940" font-size="19" font-weight="bold" fill="#2e7d5b">Native &amp; Hardware (JNI)</text>
+  <g text-anchor="middle">
+    <rect x="102" y="958" width="204" height="64" rx="12" fill="#ffffff" fill-opacity="0.4" stroke="#7fb9a0"/>
+    <text x="204" y="986" font-size="13.5" fill="#2a2d31">nezumi_rnllama_jni</text>
+    <text x="204" y="1006" font-size="12" fill="#5a5e64">.so (llama.cpp)</text>
+    <rect x="326" y="958" width="204" height="64" rx="12" fill="#ffffff" fill-opacity="0.4" stroke="#7fb9a0"/>
+    <text x="428" y="986" font-size="13.5" fill="#2a2d31">litert-lm .so (JNI)</text>
+    <text x="428" y="1006" font-size="12" fill="#5a5e64">LiteRT-LM</text>
+    <rect x="550" y="958" width="204" height="64" rx="12" fill="#ffffff" fill-opacity="0.4" stroke="#7fb9a0"/>
+    <text x="652" y="986" font-size="13.5" fill="#2a2d31">voicevox</text>
+    <text x="652" y="1006" font-size="12" fill="#5a5e64">onnxruntime (TTS)</text>
+    <rect x="774" y="958" width="204" height="64" rx="12" fill="#ffffff" fill-opacity="0.4" stroke="#7fb9a0"/>
+    <text x="876" y="986" font-size="13.5" fill="#2a2d31">mnn_sd_jni .so</text>
+    <text x="876" y="1006" font-size="12" fill="#5a5e64">→ mnn_sd_engine.so</text>
+  </g>
+  <!-- wiring -->
+  <g stroke="#aeb4ba" stroke-width="1.5" fill="none">
+    <line x1="204" y1="1022" x2="204" y2="1060"/>
+    <line x1="428" y1="1022" x2="330" y2="1060"/>
+    <line x1="428" y1="1022" x2="560" y2="1060"/>
+    <line x1="428" y1="1022" x2="740" y2="1060"/>
+    <line x1="652" y1="1022" x2="240" y2="1060"/>
+    <line x1="876" y1="1022" x2="460" y2="1060"/>
+    <line x1="876" y1="1022" x2="270" y2="1060" stroke-dasharray="6 5"/>
+  </g>
+  <g text-anchor="middle">
+    <rect x="102" y="1064" width="204" height="48" rx="10" fill="#2a2e33" fill-opacity="0.12" stroke="#8a9097" stroke-opacity="0.6"/>
+    <text x="204" y="1094" font-size="14" fill="#2f5d4b">CPU (ARM64)</text>
+    <rect x="326" y="1064" width="204" height="48" rx="10" fill="#2a2e33" fill-opacity="0.12" stroke="#8a9097" stroke-opacity="0.6"/>
+    <text x="428" y="1094" font-size="14" fill="#2f5d4b">GPU (OpenCL / Vulkan)</text>
+    <rect x="550" y="1064" width="428" height="48" rx="10" fill="#2a2e33" fill-opacity="0.12" stroke="#8a9097" stroke-opacity="0.6"/>
+    <text x="764" y="1084" font-size="13.5" fill="#2f5d4b">NPU (Snapdragon QNN)</text>
+    <text x="764" y="1102" font-size="11.5" fill="#5a5e64">破線 = OpenCL 失敗時の CPU フォールバック</text>
+  </g>
+  <!-- MnnSdModule → Safety 層（生成前 PromptFilter / 生成後 ImageSafetyChecker をエンジン内部から呼出） -->
+  <path d="M978,596 L1040,596 L1040,1180 L1024,1180" fill="none" stroke="#e8eaed" stroke-width="2" marker-end="url(#arrowW)"/>
+  <text x="1052" y="900" font-size="11.5" fill="#9aa0a6" transform="rotate(90 1052 900)">生成前/生成後のセーフティ判定・画像保存</text>
+
+  <!-- ===== Safety & Media Layer ===== -->
+  <rect x="60" y="1164" width="960" height="132" rx="16" fill="#fde7ee" stroke="#e2a7ba" stroke-width="1.5"/>
+  <text x="86" y="1196" font-size="19" font-weight="bold" fill="#b04a6e">Safety &amp; Media Layer</text>
+  <g text-anchor="middle">
+    <rect x="102" y="1216" width="204" height="64" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#e2a7ba"/>
+    <text x="204" y="1242" font-size="14" fill="#2a2d31">Prompt Filter</text>
+    <text x="204" y="1262" font-size="11.5" fill="#5a5e64">不適切プロンプト遮断</text>
+    <rect x="326" y="1216" width="204" height="64" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#e2a7ba"/>
+    <text x="428" y="1242" font-size="13.5" fill="#2a2d31">Image Safety Checker</text>
+    <text x="428" y="1262" font-size="11.5" fill="#5a5e64">NSFW判定・ぼかし</text>
+    <rect x="550" y="1216" width="204" height="64" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#e2a7ba"/>
+    <text x="652" y="1242" font-size="13.5" fill="#2a2d31">Message Media Store</text>
+    <text x="652" y="1262" font-size="11.5" fill="#5a5e64">FileProvider経由で保存</text>
+    <rect x="774" y="1216" width="204" height="64" rx="12" fill="#ffffff" fill-opacity="0.55" stroke="#e2a7ba"/>
+    <text x="876" y="1242" font-size="14" fill="#2a2d31">IP検証</text>
+    <text x="876" y="1262" font-size="11.5" fill="#5a5e64">MCP / Web取得</text>
+  </g>
+
+  <!-- ===== Note ===== -->
+  <rect x="560" y="1332" width="460" height="108" rx="14" fill="#f3eedd" stroke="#cfc49e" stroke-width="1.5"/>
+  <text x="588" y="1364" font-size="14.5" font-weight="bold" fill="#7a6c3f">画像生成バックエンド（Nezumi Kiln）</text>
+  <text x="588" y="1388" font-size="12.5" fill="#5c5232">OpenCL (GPU) → 失敗時は CPU に自動フォールバック</text>
+  <text x="588" y="1410" font-size="12.5" fill="#5c5232">セーフティ判定はエンジン内部で実施（PromptFilter / ImageSafetyChecker）</text>
+</svg>

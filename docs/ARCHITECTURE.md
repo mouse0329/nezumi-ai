@@ -203,7 +203,36 @@ CPU → フォールバック
 
 モデルが `image_generation` ツールを呼び出すと、確認ダイアログ（Compose実装、モデル・ステップ数を変更可能）でユーザーの承認を得たうえで生成が開始されます。進捗はカードUIでリアルタイム表示されます。
 
+### 画像生成の呼び出し経路とセーフティ（実装詳細）
+
+画像生成は、必ず `EngineManager.acquireLocalDream()` 経由で `LocalDreamModule` を取得し、その内部の `MnnSdModule`（Nezumi Kiln 実体）が `libmnn_sd_jni.so` / `libmnn_sd_engine.so` を呼び出します。**EngineManager を介さない直接生成はありません。**
+
+- **呼び出し元**: `ImageGenFragment` / `ImageGenScreen`（`ImageGenViewModel`）および、ツール経由の場合は `ChatViewModel` の `GenerateImageToolHandler`（`GenerateImageToolBridge.handler`）→ `EngineManager.acquireLocalDream()`。
+- **ChatFragment → ImageGenViewModel の直接接続はありません。** `ImageGenViewModel` は `ImageGenFragment` / `ImageGenScreen` からのみ生成されます（`ViewModelFactory`）。
+- **セーフティ判定はエンジン内部で実行**されます（`MnnSdModule` / `LocalDreamModule`）。`PromptFilter`（プロンプト遮断）と `ImageSafetyChecker`（生成画像のNSFW判定）は**互いに直接接続していません**。`PromptFilter` は生成前にプロンプトを検査し、`ImageSafetyChecker` は生成後のビットマップを判定します。
+- **設定の読み込み**: 画像生成は `PreferencesHelper`（SharedPreferences）から `getSdModelPath` / `getSdSteps` / `getSdCfg` / `getSdScheduler` / `getSdBackend` などを読みます。
+- **セーフティ判定後の画像保存**: 生成された画像は `MessageMediaStore` 経由で `FileProvider` に保存され、チャット/画像生成画面に表示されます。
+
 ---
+
+## ドキュメント変換（DocumentConversionManager）
+
+ドキュメント変換は **推論エンジン（EngineManager / 各AIInferenceEngine）とは独立**しており、EngineManager には接続しません。以下の2系統の変換があります。
+
+### 1. ドキュメント → Markdown（Chaquopy / Python）
+
+- `ChatFragment` が添付ファイル受領時に `DocumentConversionManager.extractMarkdownText()` を呼び出します。
+- 内部で `DocToMdPythonBridge` が **Chaquopy** 経由で Python ランタイムを起動し、`app/src/main/python/doc_to_md.py`（MarkItDown）を実行して docx / pdf / xlsx 等を Markdown に変換します。
+- 変換結果の Markdown は LLM への入力コンテキストとして利用されます。
+
+### 2. Markdown → ドキュメント（docx / pdf / xlsx）
+
+- モデルが `convert_md_to_document` ツールを呼び出すと、ツール実行段階では Markdown 本文とフォーマット情報をツールカードのペイロードに積んで返すだけです（`pendingConversion: true`）。
+- 実際の変換（`MarkdownToDocxWriter` / `MarkdownToPdfWriter` / `MarkdownToXlsxWriter`）と保存は、カードの「保存」ボタン押下時に **ChatFragment** が `DocumentConversionManager.generateFromMarkdown()` を呼んで行います。
+
+### 端末系ツールの呼び出し経路
+
+`time` / `battery` / `alarm` / `timer` / `flashlight` などの端末系ツールは、推論エンジン側のツール呼び出しブリッジ（例: `NezumiLiteRtTools`）から `ToolSystemController` の各メソッドを呼び出して実行されます。
 
 ## ツールシステム
 
