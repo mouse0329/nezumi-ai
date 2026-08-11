@@ -1,24 +1,27 @@
 # nezumi-ai
 
 **ローカルAIチャットアプリ** — Android上で完全にオフラインで動作するAIチャットアプリケーション  
-オンデバイス推論に特化しています。
+オンデバイス推論を軸に、必要に応じてクラウド推論エンジンも選べるハイブリッド構成です。
+
+**現在のバージョン**: v2.3.0（[リリースノート](docs/release-notes/v2.3.0.md)）
 
 ---
 
 ## 概要
 
-nezumi-aiは、インターネット接続なしで動作するプライベート性の高いAIアシスタントです。以下の特徴があります：
+nezumi-aiは、インターネット接続なしでも動作するプライベート性の高いAIアシスタントです。以下の特徴があります：
 
-- **完全オフライン動作**: ローカル推論で、サーバーへのデータ送信なし
-- **マルチモデル対応**: Gemma 4 2B (軽量) / 4B (高性能) + Gemma 3n の選択可能
+- **オフライン優先**: オンデバイス推論ではサーバーへのデータ送信なし
+- **マルチモデル対応**: Gemma 4 2B (軽量) / 4B (高性能) + Gemma 3n (レガシー) の選択が可能
+- **クラウド推論エンジン**: Claude / Gemini / OpenAI互換API / LM Studio / Ollama をモデルとして追加し、オンデバイス推論と切り替えて利用可能
 - **GPU/CPU/NPU(対応機種のみ)切り替え**: 端末のハードウェア最適化による高速化
-- **画像入力対応**: カメラ・ギャラリーから画像を取り込んでAIに解析させられる
-- **画像生成機能**: MNN 画像生成エンジンによる高速画像生成
-
+- **マルチモーダル入力**: カメラ・ギャラリーからの画像、動画、音声、テキストファイルをAIに読み込ませられる
+- **画像生成機能**: 独自開発の画像生成エンジン「Nezumi Kiln」による高速画像生成（SD1.5, img2img対応。SDXLも試験的に動作）
+- **ドキュメント変換**: Markdown ⇔ Word (.docx) / Excel (.xlsx) / PDF の相互変換
 - **チャット履歴管理**: Room DBで会話履歴を永続化
-- **高度なツールコール**: AIが画像生成、アラーム設定、Web検索などのツールを自律的に呼び出し
+- **高度なツールコール**: AIが画像生成、アラーム設定、Web検索、ページ取得、メモリ保存などのツールを自律的に呼び出し
 - **MCP クライアント対応**: Streamable HTTP / SSE の Model Context Protocol サーバーを登録し、プリセットごとに紐付けて外部ツールを呼び出せる
-
+- **多言語UI**: 日本語 / 英語のUI切り替えに対応
 - **VOICEVOX 音声読み上げ**: 端末内で日本語音声を合成。標準話者は「ずんだもん / ノーマル」。音声モデルはモデルダウンロード機構で進捗表示付きに取得できます（[利用規約とクレジット表記](docs/VOICEVOX_TERMS.md)）
 
 ---
@@ -30,12 +33,20 @@ nezumi-aiは、インターネット接続なしで動作するプライベー�
 | **Android Version** | 12 (API 30) | 14+ (API 34+) |
 | **RAM** | 6GB | 8GB以上 |
 | **ストレージ** | 4GB | 8GB以上 |
-| **GPU/NPU** | 任意 | Snapdragon / Mali / Adreno推奨 |
+| **GPU/NPU** | 任意 | Adreno / Mali 推奨、NPUはSnapdragon搭載機で追加対応 |
 
+クラウド推論エンジン（Claude / Gemini / OpenAI互換API / LM Studio / Ollama）を使う場合は、上記に加えてインターネット接続とAPIキー（またはローカルサーバーのURL）が必要です。
 
 ---
 
 ## インストール
+
+### ビルド環境
+
+- **JDK**: 21
+- **Android SDK** / **NDK**: 30.0.14904198（`app/build.gradle.kts`の`ndkVersion`参照）
+- **Gradle**: 9.3.1（Gradle Wrapper同梱、手動インストール不要）
+- **Kotlin**: 2.3.20（Gradleプラグイン経由で自動解決）
 
 ### ビルド手順
 
@@ -74,29 +85,39 @@ KEY_PASSWORD=your_key_password
 
 ### 1. チャット機能
 - リアルタイムストリーミング表示
-- テキストと画像の複合入力
+- テキスト・画像・動画・音声・テキストファイルの複合入力
 - セッション分岐対応
+- インラインツールコールカード表示（ツール呼び出しの経過・結果を吹き出し内に表示）
 
 ### 2. モデル設定
 - **Gemma 4 2B**: 軽量・高速（低スペック端末推奨）
 - **Gemma 4 4B**: 高精度・高性能（ハイエンド端末推奨）
-- **Gemma 3n E2B / E4B**: レガシーモデル（互換性維持）※廃止
+- **Gemma 3n E2B / E4B**: レガシーモデル（互換性維持）※廃止予定
+- **クラウドモデル**: Claude / Gemini / OpenAI互換API / LM Studio / Ollama を登録・切り替え可能
 
 ### 3. 画像生成機能
-- **MNN 画像生成エンジン**: MNNバックエンドによる高速画像生成
-- **自動バックエンド選択**: GPU→CPU の自動フォールバック（MNN OpenCL / CPU を利用）
-
-- **AI自動生成**: Gemmaがツールとして画像生成を呼び出し（ユーザー承認制）
+- **Nezumi Kiln**: MNNバックエンドによる自社開発の高速画像生成エンジン（SD1.5, img2img対応。SDXLも試験的に動作）
+- **自動バックエンド選択**: GPU→CPU の自動フォールバック（OpenCL / CPU を利用）
+- **AI自動生成**: AIがツールとして画像生成を呼び出し（ユーザー承認制、生成前にモデル・ステップ数の確認ダイアログを表示）
 
 ### 4. 推論バックエンド切り替え（LLM）
 - **NPU**: Snapdragon QNNによる超高速・低消費電力推論（LiteRT-LM）
 - **GPU**: 高速推論（互換性は端末依存）
 - **CPU**: 互換性重視（速度は低い）
+- **クラウド**: Claude / Gemini / OpenAI互換API / LM Studio / Ollama への切り替え
 - 自動フォールバック: NPU/GPU失敗時にCPUに自動切り替え
 
-### 5. チャット履歴
+### 5. ツールコール
+- 現在時刻・バッテリー・アラーム・タイマー・フラッシュライト
+- 画像生成、メモリ検索・保存
+- ウェブ検索、ページ取得（HTML→Markdown変換）
+- ドキュメント変換（Markdown ⇔ Word/Excel/PDF）
+- MCPサーバー経由の外部ツール呼び出し
+
+### 6. チャット履歴
 - 会話履歴の永続化（Room DB）
 - セッション削除・編集機能
+- セッション削除時のアタッチメント自動クリーンアップ
 
 ---
 
@@ -111,7 +132,7 @@ KEY_PASSWORD=your_key_password
 
 ### 主要な推論エンジン
 
-本アプリは、モデルの特性に合わせて以下のエンジンを使い分けるハイブリッド構成となっています。
+本アプリは、モデルの特性や利用環境に合わせて以下のエンジンを使い分けるハイブリッド構成となっています。
 
 1.  **GGUFエンジン (llama.cpp)**
     - **用途**: 汎用的なGGUF形式モデル（Gemma 4 2B/4Bなど）の実行。
@@ -119,8 +140,12 @@ KEY_PASSWORD=your_key_password
 2.  **LiteRT-LMエンジン (Google LiteRT)**
     - **用途**: Gemma 3nなどのTFLite形式モデルの実行。
     - **特徴**: Googleの`litertlm`ライブラリを活用。特にSnapdragon搭載端末において、QualcommのAIスタックを通じた**NPUアクセラレーション**をサポートし、低消費電力かつ高速なレスポンスを実現します。
-3.  **MNN 画像生成エンジン**
-    - **用途**: 画像生成（Stable Diffusion 1.5）。
+3.  **クラウド推論エンジン**
+    - **用途**: Claude / Gemini / OpenAI互換API / LM Studio / Ollama への接続。
+    - **特徴**: オンデバイスでは扱いきれない大規模モデルや、既存のセルフホスト環境をそのまま利用できます。
+4.  **Nezumi Kiln（画像生成エンジン）**
+    - **用途**: 画像生成（Stable Diffusion 1.5, img2img。SDXLも試験的に対応）。
+    - **詳細**: [`mnn-sd-engine/README.md`](mnn-sd-engine/README.md) / [`docs/MNN_SD_ENGINE_PLAN.md`](docs/MNN_SD_ENGINE_PLAN.md)
 
 
 ### セーフティ & メディア管理
@@ -130,6 +155,7 @@ KEY_PASSWORD=your_key_password
 -   **コンテンツフィルタリング**: `PromptFilter`による不適切なプロンプトの遮断。
 -   **画像セーフティチェック**: `ImageSafetyChecker`による生成画像のNSFW判定。不適切な場合は自動的にブロックまたはぼかし処理（Blur）を適用します。
 -   **セキュアなメディア保存**: `MessageMediaStore`と`FileProvider`を組み合わせ、生成されたメディアをアプリ専用領域に安全に永続化します。
+-   **プライベートIPバリデーション**: MCP・Web取得など外部への HTTP リクエスト時に、意図しない内部ネットワークへのアクセスを防止します。
 
 ### 設定の永続化と管理
 
@@ -143,7 +169,7 @@ KEY_PASSWORD=your_key_password
 
 -   **ネイティブライブラリの最適化**: Android 15 以降を見据え、すべてのネイティブライブラリを最新の実行環境に合わせて最適化。VOICEVOX ランタイムを含め、全モジュールが最新の Android 端末で動作します。
 -   **NPUの真価を引き出す**: モバイルGPUだけでなく、NPU（Neural Processing Unit）を積極的に活用することで、スマートフォンの発熱を抑えつつ、デスクトップ級のAI体験を提供することを目指しています。
--   **プライバシー・ファースト**: すべての推論、フィルタリング、保存プロセスをローカルで完結させることで、ユーザーのデータがデバイスの外に出ることは一切ありません。
+-   **プライバシー・ファースト**: オンデバイス推論を選ぶ限り、すべての推論、フィルタリング、保存プロセスをローカルで完結させることで、ユーザーのデータがデバイスの外に出ることは一切ありません。クラウド推論エンジンを使う場合のみ、選択したプロバイダーにデータが送信されます。
 
 ---
 
@@ -155,13 +181,13 @@ KEY_PASSWORD=your_key_password
 
 ## 開発状況
 
-- **現在のバージョン**: v1.0.0
+- **現在のバージョン**: v2.3.0（[リリースノート一覧](docs/release-notes/)）
 - **主要コンポーネント**:
   - UI/UX: Jetpack Compose
   - データベース: Room
-    - 推論エンジン: llama.cpp (GGUF), LiteRT-LM (TFLite), MNN (画像生成)
-  - LLMモデル: Gemma 4 (2B/4B), Gemma 3n (E2B/E4B)
-    - 画像生成: Stable Diffusion 1.5 (MNN)
+  - 推論エンジン: llama.cpp (GGUF), LiteRT-LM (TFLite), クラウド (Claude / Gemini / OpenAI互換 / LM Studio / Ollama), Nezumi Kiln (画像生成, MNN)
+  - LLMモデル: Gemma 4 (2B/4B), Gemma 3n (E2B/E4B) + 各種クラウドモデル
+  - 画像生成: Stable Diffusion 1.5 (Nezumi Kiln)、SDXLは試験対応
 
 
 ### VOICEVOX音声読み上げについて
@@ -193,8 +219,11 @@ VOICEVOX 音声読み上げは **有効** です。ランタイムの互換性�
 - **MediaPipe Tasks**: オンデバイスML実行
 - **TensorFlow Lite / LiteRT**: 軽量推論エンジン
 - **llama.cpp** (via JNI): LLM推論コア
--- **MNN 画像生成エンジン**: 画像生成モジュール
+- **Nezumi Kiln** (MNNベース): 画像生成モジュール
 
+### ドキュメント処理
+- **Apache POI**: Word/Excel生成
+- **PdfBox-Android**: PDF生成
 
 ### UI Components
 - **Halilibo Compose Richtext**: Markdown表示
@@ -213,23 +242,26 @@ VOICEVOX 音声読み上げは **有効** です。ランタイムの互換性�
 
 ### 初回起動
 1. アプリを起動
-2. モデルを選択（Gemma 4 2B / 4B 推奨）
-3. バックエンド選択（NPU / GPU / CPU）
-4. モデルダウンロード開始
+2. モデルを選択（オンデバイス: Gemma 4 2B / 4B 推奨、クラウド: 任意のプロバイダーとAPIキーを設定）
+3. オンデバイスモデルの場合はバックエンド選択（NPU / GPU / CPU）
+4. モデルダウンロード開始（クラウドモデルの場合は不要）
 
 ### チャット開始
 1. テキストを入力 → 送信
-2. （オプション）画像を添付 → 送信
+2. （オプション）画像・動画・音声・ファイルを添付 → 送信
 3. AIの返答をストリーミング表示で確認
 
 ### 設定変更
 - **Settings** → **Model Config**
-- バックエンド、モデルサイズを変更
+- バックエンド、モデルサイズ、クラウドプロバイダーを変更
 - 自動フォールバック設定の有効化/無効化
+- **Settings** → **Language**: UI言語（日本語 / 英語）を切り替え
 
 ---
 
 ## パフォーマンス目標
+
+オンデバイス推論（Gemma 4）を対象とした目標値です。クラウド推論エンジン使用時は、選択したプロバイダーおよびネットワーク環境に依存します。
 
 | 指標 | 目標値 |
 |-----|--------|
@@ -261,6 +293,7 @@ VOICEVOX 音声読み上げは **有効** です。ランタイムの互換性�
 | Kotlin / Coroutines | Apache 2.0 |
 | MediaPipe Tasks (GenAI) | Apache 2.0 |
 | TensorFlow Lite / LiteRT | Apache 2.0 |
+| Apache POI | Apache 2.0 |
 | Halilibo Compose Richtext | Apache 2.0 |
 | Coil (Image Loading) | Apache 2.0 |
 | AppAuth for Android | Apache 2.0 |
@@ -270,11 +303,13 @@ VOICEVOX 音声読み上げは **有効** です。ランタイムの互換性�
 ## 関連ドキュメント
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - アーキテクチャ詳細
-- [`docs/BUILD_ERROR_FIX.md`](docs/BUILD_ERROR_FIX.md) - ビルドエラー修正記録
 - [`docs/GGUF_ENGINE_STATUS.md`](docs/GGUF_ENGINE_STATUS.md) - GGUF エンジン状況
 - [`docs/LLAMA_OPTIMIZATION.md`](docs/LLAMA_OPTIMIZATION.md) - Llama 最適化ドキュメント
 - [`docs/OPTIMIZATION_COMPLETION_REPORT.md`](docs/OPTIMIZATION_COMPLETION_REPORT.md) - 最適化完了報告
 - [`docs/VOICEVOX_RESTORE.md`](docs/VOICEVOX_RESTORE.md) - VOICEVOX 復旧手順
+- [`docs/MCP_CLIENT.md`](docs/MCP_CLIENT.md) - MCP クライアント仕様
+- [`mnn-sd-engine/README.md`](mnn-sd-engine/README.md) - Nezumi Kiln（画像生成エンジン）
+- [`docs/release-notes/`](docs/release-notes/) - リリースノート一覧
 
 ---
 
