@@ -1,70 +1,58 @@
 # mnn-sd-engine
 
-MNN ベースの SD1.5 txt2img エンジン。Phase 0 の土台と、Android から読み込める JNI 統合までを実装した引き継ぎ用ドキュメントです。  
+コードネーム: **Nezumi Kiln**（以下、本エンジンを Nezumi Kiln と呼びます）
+
+MNN ベースの画像生成エンジン。SD1.5 の txt2img / img2img を実装済みで、SDXL は試験対応です。  
 計画書: [docs/MNN_SD_ENGINE_PLAN.md](../docs/MNN_SD_ENGINE_PLAN.md)
 
 ## 目的
 
-このモジュールは、既存の LocalDream 依存を段階的に置き換えるための、自前の SD1.5 実行基盤です。現在は「ロードできる」「モデル情報を確認できる」段階で、実際の UNet 推論はまだ未実装です。
+このモジュールは、旧 LocalDream 依存を置き換えた、自前の画像生成実行基盤です。既存の LocalDreamModule + `libstable_diffusion_core.so` から、MnnSdModule + `libmnn_sd_jni.so` への移行を完了しています。
 
 ## 現在の実装状況
 
 ### 実装済み
 
-- C API の骨格
-  - create / destroy
-  - load / unload
-  - generate / cancel
-  - get_capabilities
-  - probe_model
-- モデル設定の自動読み込み
-  - model.json からファイル名を解釈
-  - clip.mnn / clip_v2.mnn の切り替え
-- Android JNI からのロード・プローブ・エラー取得
+- C API 全体（`mnn_sd_create` / `load` / `unload` / `generate` / `cancel` / `get_capabilities` / `probe_model` / `free_image`）
+- MNN セッション生成と UNet / CLIP / VAE の実推論パイプライン（`mnn_sd_run_pipeline` 経由、`src/mnn_session.cpp`）
+- SD1.5 txt2img / img2img（VAE encoder があれば `supports_img2img=1` になり有効化）
+- SDXL 試験対応（`model_config` の `base` フィールドで `sd1.5` / `sdxl` を切り替え、CLIP-L/CLIP-G 等の SDXL 専用フィールドに対応）
+- モデル設定の自動読み込み（`model.json` からファイル名を解釈、`clip.mnn` / `clip_v2.mnn` の切り替え）
+- Android JNI からのロード・生成・プローブ・エラー取得（`libmnn_sd_jni.so` → `libmnn_sd_engine.so`）
+- OpenCL バックエンドと安全閾値（`opencl_safe_max_side`）、失敗時の CPU 自動フォールバック
 - ホスト向け probe CLI
-- OpenCL 安全閾値の設定項目
+- I/O マップの実機確定（[tools/io_map.md](tools/io_map.md)）
+- モデルライセンス確認フロー（ダウンロード前に `ImageModelBrowser.fetchLicenseInfo()` がライセンスを取得しユーザーに提示。テンプレートは [tools/MODEL_LICENSE.md](tools/MODEL_LICENSE.md)）
+- HuggingFace 形式モデルの変換スクリプト（SD1.5 / SDXL 両対応、[conversion/](conversion/)）
 
-### まだ未実装
+### 今後の課題
 
-- MNN セッションの実体生成
-- UNet / CLIP / VAE の実推論パイプライン
-- 画像生成の実データ返却
-- 実機でのモデル I/O 名固定作業
-- モデルライセンスの正式転記
-
-> いまの実装では、generate() は Phase 1 へ進むためのスタブで、実際には内部エラーを返します。
+- サンプラー選択の完全対応（Euler / DDIM / DPM++ 2M / LCM 等、現在は既定サンプラー固定。`src/mnn_session.cpp` の TODO 参照）
+- SDXL の実機検証範囲の拡大（現状は試験対応）
 
 ## 構成
 
 ```text
 include/mnn_sd/     C API ヘッダ
-src/                コア実装
+src/                コア実装（mnn_session.cpp が推論パイプライン本体）
 android/jni/        JNI 実装
+conversion/          HuggingFace → MNN 変換スクリプト (SD1.5 / SDXL)
 optional/http_server/  Local Dream L1 互換の観測用スケルトン
-tools/              プローブ CLI・変換メモ
+tools/              プローブ CLI・I/O マップ・ライセンステンプレート
 ```
 
 ## 主要ファイル
 
 - [include/mnn_sd/engine.h](include/mnn_sd/engine.h)
 - [include/mnn_sd/types.h](include/mnn_sd/types.h)
+- [include/mnn_sd/model_config.h](include/mnn_sd/model_config.h)
 - [src/c_api.cpp](src/c_api.cpp)
 - [src/model_config.cpp](src/model_config.cpp)
-- [src/mnn_session.cpp](src/mnn_session.cpp)
+- [src/mnn_session.cpp](src/mnn_session.cpp) — 推論パイプライン本体
 - [android/jni/mnn_sd_jni.cpp](android/jni/mnn_sd_jni.cpp)
 - [tools/mnn_sd_probe.cpp](tools/mnn_sd_probe.cpp)
-
-## 引き継ぎ用チェックリスト
-
-- [x] C API ヘッダ草案 (`engine.h`, `types.h`)
-- [x] HTTP 観測仕様 (`optional/http_server/protocol.md`)
-- [x] CMake + JNI スタブ
-- [x] Android arm64 ビルド用の共有ライブラリ骨格
-- [x] App 側の MnnSdNative / MnnSdModule 連携入口
-- [x] MNN 依存がない環境でもビルドできるようにしたこと
-- [ ] `unet.mnn` / `clip.mnn` / `vae_decoder.mnn` の I/O 名を `tools/io_map.md` に固定
-- [ ] CuteYuki 元ライセンスを `tools/MODEL_LICENSE.md` に転記
-- [ ] MNN セッション生成と実推論を実装する
+- [conversion/convert_hf_to_mnn_sd.py](conversion/convert_hf_to_mnn_sd.py) — SD1.5 変換
+- [conversion/convert_hf_to_mnn_sdxl.py](conversion/convert_hf_to_mnn_sdxl.py) — SDXL 変換
 
 ## ビルド（Windows / Android NDK）
 
@@ -85,6 +73,8 @@ $ndk   = "$env:LOCALAPPDATA\Android\Sdk\ndk\30.0.14904198"
 # → build/mnn-sd-android/libmnn_sd_engine.so, libmnn_sd_jni.so
 ```
 
+ビルド成果物（`libmnn_sd_engine.so` / `libmnn_sd_jni.so`）は `app/src/main/jniLibs/arm64-v8a/` に配置されます。
+
 ホスト向けの probe CLI は Windows では Visual Studio または WSL が必要です。
 
 ## ビルド（ホスト・プローブ）
@@ -102,28 +92,38 @@ cmake --build build/mnn-sd -j
 
 MNN 未指定でも CMake は通りますが、実際の MNN 依存がない場合は probe がスタブメッセージで止まります。
 
-## モデルディレクトリ（MVP）
+## モデルディレクトリ
+
+### SD1.5
 
 ```text
 modelDir/
   clip.mnn
   unet.mnn
   vae_decoder.mnn
+  vae_encoder.mnn     # img2img を使う場合のみ必須
   tokenizer.json
   model.json
   NOTICE
 ```
 
-## 次の着手ポイント
+### SDXL（試験対応）
 
-1. [src/mnn_session.cpp](src/mnn_session.cpp) で MNN セッション生成を実装する
-2. [tools/io_map.md](tools/io_map.md) に実機プローブ結果を反映する
-3. C API の generate() を実際の推論ループへ接続する
-4. Android 側から画像生成結果を受け取れるようにする
+`model.json` の `base` を `"sdxl"` に設定し、CLIP-L / CLIP-G 等の SDXL 専用フィールドを指定します。詳細は [include/mnn_sd/model_config.h](include/mnn_sd/model_config.h) を参照してください。
 
-## CuteYukiMix モデルでのテスト手順
+## モデル変換
 
-公開モデルのファイル名に合わせて、次のようなディレクトリ構成で配置すると読み込み準備ができます。
+HuggingFace 形式のモデルを MNN 形式に変換するスクリプトを同梱しています。
+
+```bash
+# SD1.5
+python conversion/convert_hf_to_mnn_sd.py --input <hf_model_dir> --output <mnn_output_dir>
+
+# SDXL（試験対応）
+python conversion/convert_hf_to_mnn_sdxl.py --input <hf_model_dir> --output <mnn_output_dir>
+```
+
+CuteYukiMix 等、公開モデルのファイル名に合わせて配置する場合の例:
 
 ```text
 models/CuteYukiMix/
@@ -133,25 +133,17 @@ models/CuteYukiMix/
   tokenizer.json
 ```
 
-ダウンロード例:
-
-```powershell
-& 'C:\Users\mouse\AppData\Local\Programs\Python\Python313\python.exe' .\download_cute_yuki.py
-```
-
-その後、モデルディレクトリを引数にしてロードテストを実行します。
-
 ## ライセンス
 
 - エンジンコード: MIT を想定
 - MNN: Apache-2.0
-- 配布時は NOTICE / THIRD_PARTY_NOTICES へ整理する
+- モデルのライセンスは配布元ごとに異なります。アプリはダウンロード前に `ImageModelBrowser.fetchLicenseInfo()` で取得したライセンス情報をユーザーに提示し、同意なしにダウンロードしません。新しい変換モデルを公開する場合は [tools/MODEL_LICENSE.md](tools/MODEL_LICENSE.md) のテンプレートを使用してください。
 
-## 既存 nezumiai との関係
+## 既存 nezumi-ai との関係
 
-| 現行 | 将来 |
+| 旧 | 現行 |
 |------|------|
-| LocalDreamModule + libstable_diffusion_core.so | MnnSdModule + libmnn_sd_jni.so |
-| HTTP :18081 | JNI 直接（HTTP は optional） |
+| LocalDreamModule + `libstable_diffusion_core.so` | MnnSdModule + `libmnn_sd_jni.so` → `libmnn_sd_engine.so` |
+| HTTP :18081 | JNI 直接（HTTP は `optional/http_server/` に観測用スケルトンとして残存） |
 
-OpenCL 安全閾値 448px は [include/mnn_sd/types.h](include/mnn_sd/types.h) の `opencl_safe_max_side` へ移設済みです。
+OpenCL 安全閾値 448px は [include/mnn_sd/types.h](include/mnn_sd/types.h) の `opencl_safe_max_side` にあります。OpenCL での生成が失敗した場合は CPU バックエンドへ自動フォールバックします。
