@@ -1,0 +1,237 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1620 960" font-family="'Noto Sans CJK JP','Noto Sans JP',sans-serif">
+  <defs>
+    <marker id="arB" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#4a4a4a"/>
+    </marker>
+    <marker id="arG" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8a8a8a"/>
+    </marker>
+    <style>
+      .grp{fill:#fffdf0;stroke:#c9c9a0;stroke-width:1.2}
+      .glbl{font-size:13px;font-weight:bold;fill:#8a854a}
+      .node{fill:#e8e0f4;stroke:#7a5fa0;stroke-width:1.2}
+      .ntxt{font-size:12.5px;fill:#3a2d52;text-anchor:middle}
+      .nsub{font-size:10.5px;fill:#6a5f80;text-anchor:middle}
+      .cloud{fill:#dbe7fb;stroke:#7a9bd4;stroke-width:1.2}
+      .db{fill:#e0d4f0;stroke:#7a5fa0;stroke-width:1.2}
+      .e{stroke:#4a4a4a;stroke-width:1.3;fill:none}
+      .ed{stroke:#8a8a8a;stroke-width:1.3;fill:none;stroke-dasharray:6 4}
+    </style>
+  </defs>
+  <rect width="1620" height="960" fill="#ffffff"/>
+
+  <!-- ===== Groups ===== -->
+  <rect class="grp" x="510" y="16" width="600" height="120" rx="10"/>
+  <text class="glbl" x="524" y="38">UI Layer (Jetpack Compose / Fragment)</text>
+
+  <rect class="grp" x="380" y="170" width="560" height="220" rx="10"/>
+  <text class="glbl" x="394" y="192">Logic Layer (ViewModel / Repository)</text>
+
+  <rect class="grp" x="40" y="170" width="300" height="260" rx="10"/>
+  <text class="glbl" x="54" y="192">Configuration Layer</text>
+
+  <rect class="grp" x="970" y="170" width="620" height="400" rx="10"/>
+  <text class="glbl" x="984" y="192">Inference Layer</text>
+
+  <rect class="grp" x="40" y="470" width="560" height="300" rx="10"/>
+  <text class="glbl" x="54" y="492">Tool &amp; Extension Layer</text>
+
+  <rect class="grp" x="640" y="470" width="300" height="400" rx="10"/>
+  <text class="glbl" x="654" y="492">Safety &amp; Media Layer</text>
+
+  <rect class="grp" x="970" y="610" width="620" height="330" rx="10"/>
+  <text class="glbl" x="984" y="632">Native &amp; Hardware (JNI)</text>
+
+  <!-- ===== Edges ===== -->
+  <!-- UI -> Logic -->
+  <path class="e" d="M620,100 L620,150 L500,150 L500,210" marker-end="url(#arB)"/>
+  <path class="e" d="M800,100 L800,130 L680,130 L680,210" marker-end="url(#arB)"/>
+  <path class="e" d="M990,100 L990,155 L855,155 L855,210" marker-end="url(#arB)"/>
+  <!-- Logic internal -->
+  <path class="e" d="M500,258 L500,300" marker-end="url(#arB)"/>
+  <path class="e" d="M680,258 L680,300" marker-end="url(#arB)"/>
+  <path class="e" d="M420,324 L400,324 L400,244 L260,244" marker-end="url(#arB)"/>
+  <path class="e" d="M175,268 L175,310" marker-end="url(#arB)"/>
+  <!-- PreferencesHelper → 画像生成系のSD設定読込 (getSdModelPath/getSdSteps/getSdCfg 等) -->
+  <path class="ed" d="M260,232 L360,232 L360,180 L855,180 L855,208" marker-end="url(#arG)"/>
+  <path class="ed" d="M260,240 L350,240 L350,172 L680,172 L680,208" marker-end="url(#arG)"/>
+  <text x="700" y="168" font-size="10.5" fill="#666">SD設定読込 (PreferencesHelper)</text>
+  <path class="e" d="M680,348 L680,403" marker-end="url(#arB)"/>
+  <!-- ViewModel -> EngineManager -->
+  <path class="e" d="M760,234 L940,234 L940,200 L1090,200 L1090,205" marker-end="url(#arB)"/>
+  <path class="e" d="M930,234 L945,234 L945,264 L1120,264 L1120,251" marker-end="url(#arB)"/>
+  <path class="e" d="M1080,228 L1088,228" marker-end="url(#arB)"/>
+  <!-- EngineManager -> engines -->
+  <path class="e" d="M1120,251 L1062,288" marker-end="url(#arB)"/>
+  <path class="e" d="M1190,251 L1213,288" marker-end="url(#arB)"/>
+  <path class="e" d="M1260,251 L1368,288" marker-end="url(#arB)"/>
+  <path class="e" d="M1290,222 L1515,222 L1515,288" marker-end="url(#arB)"/>
+  <!-- Cloud -->
+  <path class="e" d="M1370,346 L1370,378" marker-end="url(#arB)"/>
+  <!-- Engines -> Native -->
+  <path class="e" d="M1000,346 L965,346 L965,655 L990,655" marker-end="url(#arB)"/>
+  <path class="e" d="M1215,346 L1215,368 L1430,368 L1430,655 L1370,655" marker-end="url(#arB)"/>
+  <path class="e" d="M1515,346 L1585,346 L1585,590 L1445,590 L1445,743" marker-end="url(#arB)"/>
+  <!-- Native -> Hardware -->
+  <path class="e" d="M1000,707 L983,707 L983,855 L988,855" marker-end="url(#arB)"/>
+  <path class="e" d="M1210,707 L1210,760 L1065,760 L1065,853" marker-end="url(#arB)"/>
+  <path class="e" d="M1240,707 L1240,853" marker-end="url(#arB)"/>
+  <path class="e" d="M1280,707 L1280,830 L1375,830 L1375,878 L1390,878" marker-end="url(#arB)"/>
+  <path class="e" d="M1340,797 L1340,853" marker-end="url(#arB)"/>
+  <path class="ed" d="M1320,797 L1320,838 L1065,838 L1065,853" marker-end="url(#arG)"/>
+  <path class="e" d="M1075,797 L1075,853" marker-end="url(#arB)"/>
+  <!-- EngineManager -> ToolSystemController -->
+  <path class="e" d="M1090,228 L950,228 L950,566 L260,566 L260,578" marker-end="url(#arB)"/>
+  <!-- ToolSystemController -> tools -->
+  <path class="e" d="M260,584 L285,584 L285,516 L308,516" marker-end="url(#arB)"/>
+  <path class="e" d="M260,592 L285,592 L285,568 L308,568" marker-end="url(#arB)"/>
+  <!-- ドキュメント変換 → Doc→MD Pythonブリッジ -->
+  <path class="e" d="M310,568 L295,568 L295,724 L310,724" marker-end="url(#arB)"/>
+  <!-- ChatFragment → ドキュメント変換（添付Doc→MD / カード保存でMD→docx等） -->
+  <path class="e" d="M770,100 L770,486 L250,486 L250,560 L308,560" marker-end="url(#arB)"/>
+  <text x="290" y="478" font-size="10.5" fill="#666">ChatFragment: 添付Doc→MD / 保存時MD→docx,pdf,xlsx</text>
+  <path class="e" d="M260,600 L285,600 L285,620 L308,620" marker-end="url(#arB)"/>
+  <path class="e" d="M260,608 L285,608 L285,672 L308,672" marker-end="url(#arB)"/>
+  <path class="e" d="M260,616 L278,616 L278,700 L530,700 L530,695" marker-end="url(#arB)"/>
+  <!-- Memory -> Room DB -->
+  <path class="e" d="M510,620 L590,620 L590,437 L603,437" marker-end="url(#arB)"/>
+  <!-- MCP -> IP validation -->
+  <path class="ed" d="M590,672 L620,672 L620,842 L678,842" marker-end="url(#arG)"/>
+  <!-- Safety: MnnSdModule 内部から個別に呼出（生成前=PromptFilter / 生成後=ImageSafetyChecker） -->
+  <path class="e" d="M1480,290 L1480,270 L960,270 L960,466 L775,466 L775,498" marker-end="url(#arB)"/>
+  <text x="1000" y="460" font-size="10.5" fill="#666">生成前にプロンプト検査</text>
+  <path class="e" d="M1490,346 L1490,556 L880,556 L880,578" marker-end="url(#arB)"/>
+  <text x="1498" y="552" font-size="10.5" fill="#666">生成後に画像判定</text>
+  <path class="e" d="M780,624 L780,658" marker-end="url(#arB)"/>
+  <path class="e" d="M775,704 L775,738" marker-end="url(#arB)"/>
+
+  <!-- ===== Nodes : UI ===== -->
+  <rect class="node" x="540" y="52" width="160" height="48" rx="8"/>
+  <text class="ntxt" x="620" y="81">Preset / Model Settings</text>
+  <rect class="node" x="720" y="52" width="160" height="48" rx="8"/>
+  <text class="ntxt" x="800" y="81">ChatFragment</text>
+  <rect class="node" x="900" y="52" width="180" height="48" rx="8"/>
+  <text class="ntxt" x="990" y="81">ImageGen Screen</text>
+
+  <!-- ===== Nodes : Logic ===== -->
+  <rect class="node" x="420" y="210" width="160" height="48" rx="8"/>
+  <text class="ntxt" x="500" y="239">Settings ViewModel</text>
+  <rect class="node" x="600" y="210" width="160" height="48" rx="8"/>
+  <text class="ntxt" x="680" y="239">Chat ViewModel</text>
+  <rect class="node" x="780" y="210" width="150" height="48" rx="8"/>
+  <text class="ntxt" x="855" y="239">ImageGen ViewModel</text>
+  <rect class="node" x="420" y="300" width="160" height="48" rx="8"/>
+  <text class="ntxt" x="500" y="329">Settings Repository</text>
+  <rect class="node" x="600" y="300" width="160" height="48" rx="8"/>
+  <text class="ntxt" x="680" y="329">Chat Repository</text>
+
+  <!-- ===== Nodes : Configuration ===== -->
+  <rect class="node" x="90" y="220" width="170" height="48" rx="8"/>
+  <text class="ntxt" x="175" y="249">Preferences Helper</text>
+  <path class="db" d="M100,322 a75,11 0 0 1 150,0 l0,54 a75,11 0 0 1 -150,0 z"/>
+  <text class="ntxt" x="175" y="356">SharedPreferences</text>
+
+  <!-- ===== Room DB ===== -->
+  <path class="db" d="M605,416 a75,11 0 0 1 150,0 l0,53 a75,11 0 0 1 -150,0 z"/>
+  <text class="ntxt" x="680" y="450">Room Database</text>
+
+  <!-- ===== Nodes : Inference ===== -->
+  <rect class="node" x="985" y="205" width="95" height="46" rx="8"/>
+  <text class="ntxt" x="1032" y="225" font-size="11">Model</text>
+  <text class="ntxt" x="1032" y="240" font-size="11">Manager</text>
+  <rect class="node" x="1090" y="205" width="200" height="46" rx="8"/>
+  <text class="ntxt" x="1190" y="234">Engine Manager</text>
+
+  <rect class="node" x="990" y="290" width="140" height="56" rx="8"/>
+  <text class="ntxt" x="1060" y="314">GgufEngine</text>
+  <text class="nsub" x="1060" y="332">llama.cpp (GGUF)</text>
+
+  <rect class="node" x="1140" y="290" width="150" height="56" rx="8"/>
+  <text class="ntxt" x="1215" y="314">LiteRtLmEngine</text>
+  <text class="nsub" x="1215" y="332">TFLite / NPU</text>
+
+  <rect class="node" x="1300" y="290" width="140" height="56" rx="8"/>
+  <text class="ntxt" x="1370" y="314" font-size="11.5">CloudEngine</text>
+  <text class="ntxt" x="1370" y="332" font-size="11.5">Factory</text>
+
+  <rect class="node" x="1450" y="290" width="130" height="56" rx="8"/>
+  <text class="ntxt" x="1515" y="314">MnnSdModule</text>
+  <text class="nsub" x="1515" y="332">Nezumi Kiln 画像生成</text>
+
+  <rect class="cloud" x="990" y="380" width="430" height="70" rx="10"/>
+  <text x="1205" y="408" font-size="12.5" font-weight="bold" fill="#3b6cb4" text-anchor="middle">Cloud APIs (HTTPS / OkHttp)</text>
+  <text x="1205" y="430" font-size="11" fill="#43608f" text-anchor="middle">Claude / Gemini / OpenAI互換 / LM Studio / Ollama</text>
+
+  <!-- ===== Nodes : Tool ===== -->
+  <rect class="node" x="70" y="570" width="190" height="56" rx="8"/>
+  <text class="ntxt" x="165" y="595">ToolSystemController</text>
+  <text class="nsub" x="165" y="613">各推論エンジンから呼出</text>
+
+  <rect class="node" x="310" y="495" width="200" height="42" rx="8"/>
+  <text class="ntxt" x="410" y="521">Web検索 / 取得</text>
+  <rect class="node" x="310" y="547" width="200" height="42" rx="8"/>
+  <text class="ntxt" x="410" y="568">ドキュメント変換</text>
+  <text class="nsub" x="410" y="584">MD→docx/pdf/xlsx</text>
+  <rect class="node" x="310" y="599" width="200" height="42" rx="8"/>
+  <text class="ntxt" x="410" y="625">メモリ検索 / 保存</text>
+  <rect class="node" x="310" y="651" width="140" height="42" rx="8"/>
+  <text class="ntxt" x="380" y="677">端末系 (Alarm等)</text>
+  <rect class="node" x="470" y="651" width="120" height="42" rx="8"/>
+  <text class="ntxt" x="530" y="677">MCP</text>
+  <rect class="node" x="310" y="703" width="200" height="42" rx="8"/>
+  <text class="ntxt" x="410" y="721">DocToMdPythonBridge</text>
+  <text class="nsub" x="410" y="737">Chaquopy / MarkItDown</text>
+
+  <!-- ===== Nodes : Safety ===== -->
+  <rect class="node" x="680" y="500" width="190" height="44" rx="8"/>
+  <text class="ntxt" x="775" y="520">Prompt Filter</text>
+  <text class="nsub" x="775" y="536">生成前のプロンプト検査</text>
+
+  <rect class="node" x="680" y="580" width="200" height="44" rx="8"/>
+  <text class="ntxt" x="780" y="600">Image Safety Checker</text>
+  <text class="nsub" x="780" y="616">生成後の画像NSFW判定</text>
+
+  <rect class="node" x="680" y="660" width="200" height="44" rx="8"/>
+  <text class="ntxt" x="780" y="680">Message Media Store</text>
+  <text class="nsub" x="780" y="696">画像の保存管理</text>
+
+  <rect class="node" x="690" y="740" width="170" height="44" rx="8"/>
+  <text class="ntxt" x="775" y="767">FileProvider</text>
+
+  <rect class="node" x="680" y="820" width="190" height="44" rx="8"/>
+  <text class="ntxt" x="775" y="840">IP検証</text>
+  <text class="nsub" x="775" y="856">PrivateIpValidator</text>
+
+  <!-- ===== Nodes : Native ===== -->
+  <rect class="node" x="990" y="655" width="180" height="52" rx="8"/>
+  <text class="ntxt" x="1080" y="678">nezumi_rnllama_jni</text>
+  <text class="nsub" x="1080" y="696">.so (llama.cpp)</text>
+
+  <rect class="node" x="1200" y="655" width="170" height="52" rx="8"/>
+  <text class="ntxt" x="1285" y="678">litert-lm .so</text>
+  <text class="nsub" x="1285" y="696">JNI</text>
+
+  <rect class="node" x="990" y="745" width="170" height="52" rx="8"/>
+  <text class="ntxt" x="1075" y="768">voicevox</text>
+  <text class="nsub" x="1075" y="786">onnxruntime (TTS)</text>
+
+  <rect class="node" x="1300" y="745" width="270" height="52" rx="8"/>
+  <text class="ntxt" x="1435" y="768">mnn_sd_jni .so</text>
+  <text class="nsub" x="1435" y="786">→ mnn_sd_engine.so (OpenCL / CPU)</text>
+
+  <rect class="node" x="990" y="855" width="150" height="46" rx="8"/>
+  <text class="ntxt" x="1065" y="884">CPU (ARM64)</text>
+
+  <rect class="node" x="1170" y="855" width="190" height="46" rx="8"/>
+  <text class="ntxt" x="1265" y="884">GPU (OpenCL / Vulkan)</text>
+
+  <rect class="node" x="1390" y="855" width="180" height="46" rx="8"/>
+  <text class="ntxt" x="1480" y="884" font-size="11.5">NPU (Snapdragon QNN)</text>
+
+  <!-- ===== Legend ===== -->
+  <rect x="40" y="900" width="560" height="46" rx="8" fill="#f7f7f2" stroke="#c9c9a0"/>
+  <line x1="60" y1="923" x2="110" y2="923" stroke="#4a4a4a" stroke-width="1.5" marker-end="url(#arB)"/>
+  <text x="120" y="927" font-size="11.5" fill="#444">依存 / 呼び出し</text>
+  <line x1="230" y1="923" x2="280" y2="923" stroke="#8a8a8a" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arG)"/>
+  <text x="290" y="927" font-size="11.5" fill="#666">フォールバック / 検証</text>
+</svg>

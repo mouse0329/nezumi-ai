@@ -127,7 +127,9 @@ KEY_PASSWORD=your_key_password
 
 ### アーキテクチャ概要
 
-<img width="3120" height="880" alt="image" src="https://github.com/user-attachments/assets/15b70f56-f39c-4310-acab-c1c183be97cb" />
+<img alt="nezumi-ai アーキテクチャ図" src="docs/assets/architecture.svg" />
+
+v2.3.0時点の構成（クラウド推論エンジン、Nezumi Kiln、MCPクライアント、Safety & Media Layerを含む）。
 
 
 ### 主要な推論エンジン
