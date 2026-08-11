@@ -112,6 +112,16 @@ object ModelFileManager {
     // キャッシュ: ファイルパス -> 検証結果
     private val validationCache = ConcurrentHashMap<String, Result<File>>()
 
+    // listImportedTaskModels の結果キャッシュ。listFiles + 各ファイルのヘッダ検証は
+    // プリセット/チャット画面を開くたびに呼ばれるため、プロセス内で再利用する。
+    // インポート・削除時に invalidateImportedListCache() で破棄する。
+    @Volatile
+    private var importedTaskModelsCache: List<ImportedTaskModel>? = null
+
+    fun invalidateImportedListCache() {
+        importedTaskModelsCache = null
+    }
+
     private fun sanitizeImportedLeafFileName(leaf: String): String {
         val cleaned = UNSAFE_FILENAME_CHARS.replace(leaf.trim(), "_").trim()
         return cleaned.ifBlank { "custom_model.task" }
@@ -323,9 +333,13 @@ object ModelFileManager {
     }
 
     fun listImportedTaskModels(context: Context): List<ImportedTaskModel> {
+        importedTaskModelsCache?.let { return it }
         val dir = File(context.filesDir, "models/imported")
-        if (!dir.exists()) return emptyList()
-        return dir.listFiles()
+        if (!dir.exists()) {
+            importedTaskModelsCache = emptyList()
+            return emptyList()
+        }
+        val result = dir.listFiles()
             ?.asSequence()
             ?.filter {
                 it.isFile && (
@@ -340,6 +354,8 @@ object ModelFileManager {
             ?.map { ImportedTaskModel.fromImportedFile(it) }
             ?.toList()
             ?: emptyList()
+        importedTaskModelsCache = result
+        return result
     }
 
     fun listImportedMmprojModels(context: Context): List<ImportedTaskModel> {
@@ -643,6 +659,10 @@ object ModelFileManager {
             outFile.delete()
             throw IllegalArgumentException("この .task は読み込みできません: ${reason.message}")
         }
+
+        // 一覧キャッシュを破棄（プリセット/チャットのモデル選択肢がすぐ反映されるように）
+        invalidateImportedListCache()
+        com.nezumi_ai.data.preset.PresetModelCatalog.invalidateCache()
         
         outFile
     }
@@ -675,6 +695,8 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         runCatching { metadataFile(target).delete() }
         // 検証キャッシュを無効化
         validationCache.remove(target.absolutePath)
+        invalidateImportedListCache()
+        com.nezumi_ai.data.preset.PresetModelCatalog.invalidateCache()
     }
 
     /**
@@ -721,19 +743,22 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         // 旧パスのキャッシュをクリアしてから検証（検証成功時に新しいキャッシュが作られる）
         validationCache.remove(oldFile.absolutePath)
         validateImportedTaskFile(dest).getOrThrow()
+        invalidateImportedListCache()
+        com.nezumi_ai.data.preset.PresetModelCatalog.invalidateCache()
         dest
     }
 
     fun isModelAvailable(context: Context, modelName: String): Boolean {
         val trimmed = modelName.trim()
         val lowered = trimmed.lowercase()
-        // クラウドモデル: `cloud:{provider}:{model}` またはレガシーの `gemini_api`/`claude_api`。
-        // ここでは「ローカルファイルの存在」の代わりに「プロバイダが構成済みか」を見る。
+        // クラウドモデル: ローカルファイルの有無ではなく、API キー / Base URL が
+        // 「モデル単位 or プロバイダ単位で利用可能に構成済み」かを見る。
+        // CloudApiKeyStore.isConfigured(provider) だけだと、モデル個別オーバーライドの
+        // API キーしか設定していない場合に false になり、
+        // 「未ダウンロードです。設定画面でダウンロードしてください」と誤表示されていた。
         if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(modelName)) {
-            val parsed = com.nezumi_ai.data.inference.cloud.CloudModelId.parse(modelName)
-                ?: return false
-            return com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
-                .isConfigured(context, parsed.provider)
+            return com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry
+                .isConfigured(context, trimmed)
         }
         if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && File(trimmed).isAbsolute) {
             return validateImportedTaskFile(File(trimmed)).isSuccess
@@ -1075,6 +1100,10 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
             val deletedLegacyTmp = legacyLiteRtLmTmp == null || !legacyLiteRtLmTmp.exists() || legacyLiteRtLmTmp.delete()
             val deletedLegacyMeta = legacyLiteRtLmMeta == null || !legacyLiteRtLmMeta.exists() || legacyLiteRtLmMeta.delete()
             deletedMain && deletedTmp && deletedMeta && deletedLegacyMain && deletedLegacyTmp && deletedLegacyMeta
+        }.also { success ->
+            if (success == true) {
+                com.nezumi_ai.data.preset.PresetModelCatalog.invalidateCache()
+            }
         } ?: false
     }
 
@@ -1156,6 +1185,7 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
                 }
 
                 Log.d(TAG, "Model download completed: ${file.absolutePath} (${file.length()} bytes)")
+                com.nezumi_ai.data.preset.PresetModelCatalog.invalidateCache()
                 Result.success(file)
             } catch (e: Exception) {
                 Log.e(TAG, "Download failed", e)

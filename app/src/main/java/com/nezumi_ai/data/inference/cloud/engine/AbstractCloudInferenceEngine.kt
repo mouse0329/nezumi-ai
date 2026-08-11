@@ -3,12 +3,21 @@ package com.nezumi_ai.data.inference.cloud.engine
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
+import com.google.ai.edge.litertlm.ToolCall
+import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.AIInferenceEngine
+import com.nezumi_ai.data.inference.Gemma4ThinkingParser
+import com.nezumi_ai.data.inference.GgufToolCallParser
 import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
+import com.nezumi_ai.data.inference.NezumiLiteRtToolExecutor
+import com.nezumi_ai.data.inference.ToolExecutionResult
+import com.nezumi_ai.data.inference.ToolResultCard
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
 import com.nezumi_ai.data.inference.cloud.CloudHttpClient
 import com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry
+import com.nezumi_ai.data.memory.MemoryTextEmbedder
+import com.nezumi_ai.data.repository.MemoryRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.ProducerScope
@@ -18,6 +27,11 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import java.util.concurrent.atomic.AtomicReference
@@ -51,6 +65,17 @@ abstract class AbstractCloudInferenceEngine(
 
     private val loadMutex = Mutex()
     private val inferenceMutex = Mutex()
+
+    /** GGUF / LiteRT と同じツール実行器。クラウドでもプロンプトベース tool_call を実行する。 */
+    private val toolExecutor by lazy {
+        val db = NezumiAiDatabase.getInstance(appContext)
+        NezumiLiteRtToolExecutor(
+            appContext,
+            db.alarmDao(),
+            MemoryRepository(db.memoryDao()),
+            MemoryTextEmbedder
+        )
+    }
 
     /** 現在バインドしているモデル名 (`gemini-2.5-flash` などの生の modelName)。 */
     @Volatile
@@ -184,28 +209,127 @@ abstract class AbstractCloudInferenceEngine(
             return@callbackFlow
         }
 
+        val normalized = config.normalized()
+        val toolCallingEnabled = normalized.enableToolCalling
+        val maxToolRounds = if (toolCallingEnabled) 5 else 1
         val fullAnswer = StringBuilder()
+        val toolResultCards = mutableListOf<ToolResultCard>()
         var closed = false
         try {
             Log.d(
                 TAG,
-                "inference start session=$sessionId model=$model promptLen=${prompt.length} images=${images.size}"
+                "inference start session=$sessionId model=$model promptLen=${prompt.length} " +
+                    "images=${images.size} toolCalling=$toolCallingEnabled"
             )
-            runStreamingInference(
-                session = this,
-                sessionId = sessionId,
-                model = model,
-                prompt = prompt,
-                images = images,
-                config = config.normalized(),
-                onDelta = { delta ->
-                    if (delta.isNotEmpty()) {
-                        fullAnswer.append(delta)
-                        trySend(delta)
+            var currentPrompt = prompt
+            var toolRound = 0
+            while (toolRound < maxToolRounds) {
+                toolRound++
+                val roundText = StringBuilder()
+                // 2 ラウンド目以降はツール結果を含む続きなので画像は付けない
+                val roundImages = if (toolRound == 1) images else emptyList()
+                runStreamingInference(
+                    session = this,
+                    sessionId = sessionId,
+                    model = model,
+                    prompt = currentPrompt,
+                    images = roundImages,
+                    config = normalized,
+                    onDelta = { delta ->
+                        if (delta.isNotEmpty()) {
+                            roundText.append(delta)
+                            fullAnswer.append(delta)
+                            trySend(delta)
+                        }
                     }
+                )
+
+                if (!toolCallingEnabled) break
+
+                val parsed = GgufToolCallParser.parse(roundText.toString())
+                if (parsed.toolCalls.isEmpty()) {
+                    Log.d(TAG, "No tool calls in round=$toolRound session=$sessionId")
+                    break
                 }
+                if (toolRound >= maxToolRounds) {
+                    Log.w(TAG, "Tool call loop hit max rounds session=$sessionId")
+                    break
+                }
+
+                Log.d(
+                    TAG,
+                    "Tool calls detected round=$toolRound count=${parsed.toolCalls.size} " +
+                        "names=${parsed.toolCalls.map { it.name }}"
+                )
+                trySend(
+                    InferenceStreamProtocol.encodeToolCallChunk(parsed.toolCalls.map { it.name })
+                )
+
+                val toolResults = mutableListOf<Pair<ToolCall, ToolExecutionResult>>()
+                for (toolCall in parsed.toolCalls) {
+                    val result = toolExecutor.execute(toolCall)
+                    toolResults.add(toolCall to result)
+                    val status = if (result.success) "success" else "error"
+                    trySend(InferenceStreamProtocol.encodeToolResultChunk(toolCall.name, status))
+                    toolResultCards.add(
+                        ToolResultCard(
+                            toolName = toolCall.name.lowercase(),
+                            success = result.success,
+                            payload = anyToJsonElementMap(result.payload)
+                        )
+                    )
+                }
+
+                val toolResponseBlock = GgufToolCallParser.formatToolResults(toolResults)
+                if (toolResponseBlock.isNotEmpty()) {
+                    fullAnswer.append(toolResponseBlock)
+                    // UI にツール結果テキストも流す
+                    trySend(toolResponseBlock)
+                }
+                if (toolResultCards.isNotEmpty()) {
+                    trySend(
+                        InferenceStreamProtocol.encodeToolResults(
+                            ToolResultCard.listToJsonArray(toolResultCards)
+                        )
+                    )
+                    trySend(
+                        InferenceStreamProtocol.encodeExecutedToolsList(
+                            toolResultCards.map { it.toolName }.distinct()
+                        )
+                    )
+                }
+
+                // 次ラウンド: 元プロンプト + モデル出力 (thinking 除去) + ツール結果
+                currentPrompt = buildString {
+                    append(prompt)
+                    append(
+                        Gemma4ThinkingParser.stripThinkingForModelPrompt(roundText.toString())
+                    )
+                    append(toolResponseBlock)
+                }
+            }
+
+            if (toolResultCards.isNotEmpty()) {
+                trySend(
+                    InferenceStreamProtocol.encodeToolResults(
+                        ToolResultCard.listToJsonArray(toolResultCards)
+                    )
+                )
+                trySend(
+                    InferenceStreamProtocol.encodeExecutedToolsList(
+                        toolResultCards.map { it.toolName }.distinct()
+                    )
+                )
+            }
+
+            trySend(
+                InferenceStreamProtocol.encodeFinal(
+                    Gemma4ThinkingParser.sanitizeVisibleText(
+                        fullAnswer.toString(),
+                        preserveToolCallTags = toolCallingEnabled
+                    )
+                )
             )
-            trySend(InferenceStreamProtocol.encodeFinal(fullAnswer.toString()))
             close()
             closed = true
         } catch (c: CancellationException) {
@@ -275,6 +399,34 @@ abstract class AbstractCloudInferenceEngine(
         inflight.getAndSet(null)?.let { call ->
             runCatching { call.cancel() }
                 .onFailure { Log.w(TAG, "cancel call failed", it) }
+        }
+    }
+
+    private fun anyToJsonElementMap(values: Map<String, Any?>): Map<String, JsonElement> {
+        return values.entries.associate { (key, value) ->
+            key to anyToJsonElement(value)
+        }
+    }
+
+    private fun anyToJsonElement(value: Any?): JsonElement {
+        return when (value) {
+            null -> JsonNull
+            is JsonElement -> value
+            is Boolean -> JsonPrimitive(value)
+            is Number -> JsonPrimitive(value)
+            is String -> JsonPrimitive(value)
+            is Map<*, *> -> {
+                val obj = value.entries.mapNotNull { (k, v) ->
+                    val key = k?.toString() ?: return@mapNotNull null
+                    key to anyToJsonElement(v)
+                }.toMap()
+                JsonObject(obj)
+            }
+            is List<*> -> {
+                val elements = value.map { anyToJsonElement(it) }
+                JsonArray(elements)
+            }
+            else -> JsonPrimitive(value.toString())
         }
     }
 }

@@ -188,10 +188,9 @@ class PresetRepository(
 
     suspend fun ensurePlainPresetsForDownloadedModels() {
         PresetModelCatalog.downloadedModels(context).forEach { model ->
-            // クラウドモデル (`cloud:...`) はロック済み plain プリセットを自動生成しない。
-            // (API キー等の設定が後から変わりうるものを「素の状態」で固定するのは
-            //  ユーザーの意図とズレやすいため。通常のプリセット編集から選んで使う)
-            if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(model.id)) return@forEach
+            // ローカル・インポート・クラウドいずれも「システムプロンプトなし・ツールなし」の
+            // ロック済み plain プリセットを用意する。
+            // クラウドは isConfigured が false になると shouldShowPreset で一覧から消える。
             ensurePlainPreset(model.id, model.label)
         }
     }

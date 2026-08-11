@@ -46,6 +46,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -129,7 +130,8 @@ class PresetSettingsFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        viewLifecycleOwner.lifecycleScope.launch {
+        // listFiles / 検証を含むため IO へ。メインスレッドで走らせるとプリセット画面復帰が重い。
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             presetRepository.ensurePlainPresetsForDownloadedModels()
         }
     }
@@ -154,17 +156,18 @@ class PresetSettingsFragment : Fragment() {
         var currentPresetId by remember {
             mutableStateOf(PreferencesHelper.getCurrentPresetId(requireContext()))
         }
-        // ★ パフォーマンス修正: modelLabel(preset.modelId) は内部で
-        //   PresetModelCatalog.downloadedModels(context) を呼んでおり、これは
-        //   ダウンロード済みモデルのファイル存在チェック・imported モデル用
-        //   ディレクトリの listFiles()+バリデーション・クラウドモデル設定の読み出しを
-        //   毎回まとめて行う重い処理。以前はこれを PresetRow 側で行ごとに（つまり
-        //   プリセット件数分×再コンポジションのたびに）呼んでいたため、
-        //   プリセット画面を開くだけでメインスレッドが長時間ブロックされていた。
-        //   ここで presets が変わったときだけ 1 回計算してキャッシュし、
-        //   各行へは解決済みの文字列を渡す。
-        val downloadedModelOptions = remember(presets) {
-            com.nezumi_ai.data.preset.PresetModelCatalog.downloadedModels(requireContext())
+        // ★ パフォーマンス修正: downloadedModels() は listFiles・ヘッダ検証・クラウド設定読取を含む。
+        //   以前はメインスレッドの composition 中に同期実行していたため画面遷移がカクつくことがあった。
+        //   produceState + Dispatchers.IO でバックグラウンド計算し、結果が来るまで空リストで描画する。
+        //   PresetModelCatalog 側にもプロセス内キャッシュがあるため 2 回目以降はほぼ即時。
+        val appCtx = requireContext().applicationContext
+        val downloadedModelOptions by produceState(
+            initialValue = emptyList<com.nezumi_ai.data.preset.PresetModelOption>(),
+            presets
+        ) {
+            value = withContext(Dispatchers.IO) {
+                com.nezumi_ai.data.preset.PresetModelCatalog.downloadedModels(appCtx)
+            }
         }
         val modelLabelById = remember(presets, downloadedModelOptions) {
             presets.associate { it.id to modelLabel(it.modelId, downloadedModelOptions) }
@@ -654,13 +657,28 @@ class PresetSettingsFragment : Fragment() {
  var icon by remember { mutableStateOf(initialPreset?.icon ?: "") }
         var description by remember { mutableStateOf(initialPreset?.description ?: "") }
         var systemPrompt by remember { mutableStateOf(initialPreset?.systemPrompt ?: "") }
-        val availableModels = remember { PresetModelCatalog.downloadedModels(requireContext()) }
+        val appCtx = requireContext().applicationContext
+        val availableModels by produceState(
+            initialValue = emptyList<com.nezumi_ai.data.preset.PresetModelOption>()
+        ) {
+            value = withContext(Dispatchers.IO) {
+                PresetModelCatalog.downloadedModels(appCtx)
+            }
+        }
         var modelId by remember {
-            mutableStateOf(
-                initialPreset?.modelId?.takeIf { id -> availableModels.any { it.id == id } }
+            mutableStateOf(initialPreset?.modelId.orEmpty())
+        }
+        // availableModels は IO で非同期取得するため、初回 composition 時点では空。
+        // ロード完了後に、未設定 or 選択肢に無い modelId を利用可能モデルへ補正する。
+        LaunchedEffect(availableModels) {
+            if (availableModels.isEmpty()) return@LaunchedEffect
+            val current = modelId
+            val valid = current.isNotBlank() && availableModels.any { it.id == current }
+            if (!valid) {
+                modelId = initialPreset?.modelId?.takeIf { id -> availableModels.any { it.id == id } }
                     ?: availableModels.firstOrNull()?.id
                     ?: ""
-            )
+            }
         }
         var memoryEnabled by remember { mutableStateOf(initialPreset?.memoryEnabled ?: true) }
         var toolCallingEnabled by remember {

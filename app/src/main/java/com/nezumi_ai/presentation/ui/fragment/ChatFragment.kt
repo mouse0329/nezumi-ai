@@ -1659,43 +1659,48 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         super.onResume()
         disableKeyboardLearning(viewModel.isIncognitoMode.value)
 
+        // SharedPreferences 初回読取・listFiles・プリセット取得はすべて IO へ逃がす。
+        // 以前は onResume のメインスレッド上で PreferencesHelper / getCurrentPreset を
+        // 呼んでいたため、チャット画面復帰時に一瞬固まることがあった。
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             val options = buildDownloadedModelOptions()
+            val newContextMeterVisible = PreferencesHelper.isShowContextMeter(requireContext())
+            val newShowTps = PreferencesHelper.isShowTps(requireContext())
+            val newShowTtft = PreferencesHelper.isShowTtft(requireContext())
+            val currentPresetId = PreferencesHelper.getCurrentPresetId(requireContext())
+            val preset = presetRepository.getCurrentPreset()
+
             withContext(Dispatchers.Main) {
+                if (!isAdded || _binding == null) return@withContext
                 modelOptions = options
                 updateModelNameText(viewModel.selectedModel.value)
                 refreshCurrentBackendType()
                 updateMediaAvailability(currentModelKey)
                 updateThinkingToggleVisibility()
+
+                if (newContextMeterVisible != contextMeterVisible) {
+                    contextMeterVisible = newContextMeterVisible
+                    adapter.notifyDataSetChanged()
+                }
+                if (newShowTps != showTpsIndicator || newShowTtft != showTtftIndicator) {
+                    showTpsIndicator = newShowTps
+                    showTtftIndicator = newShowTtft
+                    adapter.refreshPerfIndicatorVisibility(newShowTps, newShowTtft)
+                }
+
+                binding.chatTitle.text = if (preset != null) {
+                    "${preset.icon} ${preset.name} ▼"
+                } else {
+                    getString(R.string.chat_title)
+                }
+
+                if (lastObservedPresetId != null && currentPresetId != lastObservedPresetId) {
+                    lastObservedPresetId = currentPresetId
+                    viewModel.preloadActivePresetModel()
+                } else {
+                    lastObservedPresetId = currentPresetId
+                }
             }
-        }
-
-        // コンテキストメーター表示設定が変わった場合のみ再描画
-        val newContextMeterVisible = PreferencesHelper.isShowContextMeter(requireContext())
-        if (newContextMeterVisible != contextMeterVisible) {
-            contextMeterVisible = newContextMeterVisible
-            adapter.notifyDataSetChanged()
-        }
-
-        // Bug fix(#43): t/s と TTFT のトグル変更も onResume で拾い、MessageAdapter 側のキャッシュを
-        //   同期させて強制リバインドさせる。値が変わっていなければ no-op なのでコストは軸い。
-        val newShowTps = PreferencesHelper.isShowTps(requireContext())
-        val newShowTtft = PreferencesHelper.isShowTtft(requireContext())
-        if (newShowTps != showTpsIndicator || newShowTtft != showTtftIndicator) {
-            showTpsIndicator = newShowTps
-            showTtftIndicator = newShowTtft
-            adapter.refreshPerfIndicatorVisibility(newShowTps, newShowTtft)
-        }
-
-        viewLifecycleOwner.lifecycleScope.launch {
-            refreshPresetHeader()
-        }
-        val currentPresetId = PreferencesHelper.getCurrentPresetId(requireContext())
-        if (lastObservedPresetId != null && currentPresetId != lastObservedPresetId) {
-            lastObservedPresetId = currentPresetId
-            viewModel.preloadActivePresetModel()
-        } else {
-            lastObservedPresetId = currentPresetId
         }
     }
 
@@ -1992,7 +1997,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private fun updateModelNameText(modelKey: String) {
         val selected = modelOptions.firstOrNull { it.key == modelKey }
         val label = selected?.label
-            ?: modelKey.takeIf { it.isNotBlank() }
+            ?: if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(modelKey)) {
+                com.nezumi_ai.data.inference.cloud.CloudModelId.displayLabel(modelKey)
+            } else {
+                modelKey.takeIf { it.isNotBlank() }
+            }
             ?: getString(R.string.model_not_downloaded)
         binding.modelName.text = modelDisplaySuffix(label)
     }
@@ -2020,6 +2029,16 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 requireContext(), imported.path, imported.shortDisplayName
             )
             options += ModelOption(imported.path, label)
+        }
+        // 構成済みクラウドモデルもチャットのモデル表示・選択肢に含める
+        com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry.list(requireContext()).forEach { modelId ->
+            if (!com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry.isConfigured(requireContext(), modelId)) {
+                return@forEach
+            }
+            options += ModelOption(
+                modelId,
+                com.nezumi_ai.data.inference.cloud.CloudModelId.displayLabel(modelId)
+            )
         }
         return options
     }

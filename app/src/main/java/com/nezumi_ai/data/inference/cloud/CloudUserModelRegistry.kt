@@ -47,6 +47,7 @@ object CloudUserModelRegistry {
         if (current.contains(trimmed)) return
         current += trimmed
         save(context, current)
+        com.nezumi_ai.data.preset.PresetModelCatalog.invalidateCache()
     }
 
     /**
@@ -58,6 +59,7 @@ object CloudUserModelRegistry {
         if (!current.remove(trimmed)) return
         save(context, current)
         clearOverride(context, trimmed)
+        com.nezumi_ai.data.preset.PresetModelCatalog.invalidateCache()
     }
 
     // ─── モデル個別設定 ────────────────────────────────────────────
@@ -118,6 +120,8 @@ object CloudUserModelRegistry {
                 .remove(KEY_PREFIX_OVERRIDE + modelId)
                 .apply()
         }
+        // isConfigured 結果が変わるため一覧キャッシュを破棄
+        com.nezumi_ai.data.preset.PresetModelCatalog.invalidateCache()
     }
 
     /**

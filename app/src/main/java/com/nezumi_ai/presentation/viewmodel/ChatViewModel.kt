@@ -1081,14 +1081,16 @@ class ChatViewModel(
  // 修正: ファイル読み込みエラーを先に検出（PATH NOT FOUND など）
                 // これをメモリエラーより先にチェックすることで、ファイルロード失敗が正規のエラーモーダルで表示される
                 val errorMsg = error?.message ?: ""
-                if (shouldDeleteLocalModelFileOnLoadError(errorMsg)) {
+                if (shouldDeleteLocalModelFileOnLoadError(errorMsg) &&
+                    !com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(normalizedModel)
+                ) {
                     Log.w(TAG, "モデルファイルの読み込みエラー: $normalizedModel")
                     _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
                         title = "モデルロードエラー",
                         message = "モデルファイルが読み込めません。モデル管理画面で再ダウンロードしてください。",
                         details = errorMsg
                     )
-                    // ファイルを削除してリセット
+                    // ファイルを削除してリセット（ローカルモデルのみ）
                     try {
                         val modelEnum = when (normalizedModel.uppercase()) {
                             "GEMMA4-4B" -> ModelFileManager.LocalModel.GEMMA4_4B
@@ -1135,7 +1137,12 @@ class ChatViewModel(
             _selectedModel.value = selectedModel
             val engineModelName = toEngineModelName(selectedModel)
             if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
-                _uiMessage.emit("プリセットのモデル($selectedModel)が未ダウンロードです")
+                val msg = if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(selectedModel)) {
+                    "プリセットのクラウドモデル($selectedModel)の API キーまたは接続先が未設定です"
+                } else {
+                    "プリセットのモデル($selectedModel)が未ダウンロードです"
+                }
+                _uiMessage.emit(msg)
                 return@launch
             }
             val config = chatInferenceConfigForModel(selectedModel)
@@ -1686,10 +1693,15 @@ class ChatViewModel(
             val hasMediaInput = images.isNotEmpty() || audioClips.isNotEmpty()
             currentHasMediaInput = hasMediaInput
             if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
+                val unavailableMsg = if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(selectedModel)) {
+                    "クラウドモデル($selectedModel)の API キーまたは接続先が未設定です。設定画面で構成してください。"
+                } else {
+                    "選択モデル($selectedModel)が未ダウンロードです。設定画面でダウンロードしてください。"
+                }
                 messageRepository.addMessage(
                     sessionId = sessionId,
                     role = "assistant",
-                    content = "選択モデル($selectedModel)が未ダウンロードです。設定画面でダウンロードしてください。"
+                    content = unavailableMsg
                 )
                 return
             }
@@ -3539,6 +3551,12 @@ class ChatViewModel(
     private fun normalizeModel(model: String): String {
         val trimmed = model.trim()
         val lowered = trimmed.lowercase()
+        // クラウドモデル ID (`cloud:...` / レガシー gemini_api / claude_api) はそのまま通す。
+        // 以前は else 分岐で "Gemma4-2B" に潰されてしまい、プリセットでクラウドを選んでも
+        // ローカル Gemma4-2B が動くバグの原因だった。
+        if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(trimmed)) {
+            return trimmed
+        }
         val isLocalTaskPath =
             (lowered.endsWith(".task") || lowered.endsWith(".litertlm") || lowered.endsWith(".gguf")) &&
                 File(trimmed).isAbsolute
@@ -3557,6 +3575,11 @@ class ChatViewModel(
 
     private fun toEngineModelName(model: String): String {
         val normalized = normalizeModel(model)
+        // ModelManager は `cloud:...` のフル ID を受け取り、内部でプロバイダ分岐する。
+        // ここで剥がしたり Gemma4 に置換してはいけない。
+        if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(normalized)) {
+            return normalized
+        }
         return when {
             normalized.equals("Gemma4-4B", ignoreCase = true) -> "gemma4-4b"
             normalized.equals("Gemma4-2B", ignoreCase = true) -> "gemma4-2b"
