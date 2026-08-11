@@ -160,7 +160,8 @@ nezumi-ai ${appversion}
 
 ### 8.2. 更新履歴
 
-アプリ内の「設定」→「バージョン情報」などで詳細な更新履歴を確認できます。
+GitHub の Releases ページで公開しています。
+https://github.com/mouse0329/nezumi-ai/releases
 
 ## 9. 今後追加予定の機能
 

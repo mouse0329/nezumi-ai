@@ -98,7 +98,7 @@ class PresetSettingsFragment : Fragment() {
         if (!granted) {
             Toast.makeText(
                 requireContext(),
-                "フラッシュライトを使うにはカメラ権限が必要です",
+                getString(R.string.preset_flashlight_permission_required),
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -286,7 +286,7 @@ class PresetSettingsFragment : Fragment() {
                         IconButton(onClick = { findNavController().navigateUp() }) {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_back),
-                                contentDescription = "戻る",
+                                contentDescription = stringResource(id = R.string.back),
                                 tint = MaterialTheme.colorScheme.onBackground
                             )
                         }
@@ -721,7 +721,7 @@ class PresetSettingsFragment : Fragment() {
 
         AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text(if (initialPreset == null) "新しいプリセット" else "プリセット編集") },
+            title = { Text(if (initialPreset == null) stringResource(id = R.string.preset_screen_new_title) else stringResource(id = R.string.preset_screen_edit_title)) },
             text = {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     item {
@@ -729,14 +729,14 @@ class PresetSettingsFragment : Fragment() {
                             OutlinedTextField(
                                 value = icon,
                                 onValueChange = { icon = it.take(4) },
-                                label = { Text("アイコン") },
+                                label = { Text(stringResource(id = R.string.preset_field_icon)) },
                                 modifier = Modifier.weight(0.35f),
                                 singleLine = true
                             )
                             OutlinedTextField(
                                 value = name,
                                 onValueChange = { name = it },
-                                label = { Text("名前") },
+                                label = { Text(stringResource(id = R.string.preset_field_name)) },
                                 modifier = Modifier.weight(1f),
                                 singleLine = true
                             )
@@ -746,7 +746,7 @@ class PresetSettingsFragment : Fragment() {
                         OutlinedTextField(
                             value = description,
                             onValueChange = { description = it },
-                            label = { Text("説明") },
+                            label = { Text(stringResource(id = R.string.preset_field_description)) },
                             modifier = Modifier.fillMaxWidth(),
                             minLines = 2
                         )
@@ -755,7 +755,7 @@ class PresetSettingsFragment : Fragment() {
                         OutlinedTextField(
                             value = systemPrompt,
                             onValueChange = { systemPrompt = it },
-                            label = { Text("システムプロンプト") },
+                            label = { Text(stringResource(id = R.string.preset_field_system_prompt)) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(min = 120.dp),
@@ -767,7 +767,7 @@ class PresetSettingsFragment : Fragment() {
                             Text(stringResource(id = R.string.preset_edit_model_label), fontWeight = FontWeight.Bold)
                             if (availableModels.isEmpty()) {
                                 Text(
-                                    text = "ダウンロード済みモデルがありません",
+                                    text = stringResource(id = R.string.preset_edit_no_downloaded_models),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.bodySmall
                                 )
@@ -791,7 +791,7 @@ class PresetSettingsFragment : Fragment() {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("メモリ機能", fontWeight = FontWeight.Bold)
+                            Text(stringResource(id = R.string.preset_edit_memory_label), fontWeight = FontWeight.Bold)
                             Switch(
                                 checked = memoryEnabled,
                                 onCheckedChange = { memoryEnabled = it }
@@ -829,7 +829,7 @@ class PresetSettingsFragment : Fragment() {
                     if (toolCallingEnabled) {
                         item {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("ツール", fontWeight = FontWeight.Bold)
+                                Text(stringResource(id = R.string.preset_edit_tools_label), fontWeight = FontWeight.Bold)
                                 toolOptions.forEach { option ->
                                     // フラッシュライトを有効化するときはカメラ権限を先に確保する。
                                     val handleToggle: () -> Unit = {
@@ -1081,24 +1081,26 @@ class PresetSettingsFragment : Fragment() {
         )
     }
 
-    private val toolOptions = listOf(
-        ToolOption(PresetConstants.TOOL_TIME, "現在時刻"),
-        ToolOption(PresetConstants.TOOL_BATTERY, "バッテリー"),
-        ToolOption(PresetConstants.TOOL_ALARM, "アラーム"),
-        ToolOption(PresetConstants.TOOL_TIMER, "タイマー"),
-        ToolOption(PresetConstants.TOOL_FLASHLIGHT, "フラッシュライト"),
-        ToolOption(PresetConstants.TOOL_IMAGE_GENERATION, "画像生成"),
-        ToolOption(PresetConstants.TOOL_MEMORY, "メモリ検索"),
-        ToolOption(PresetConstants.TOOL_MEMORY_SAVE, "メモリ保存"),
-        ToolOption(PresetConstants.TOOL_WEB_SEARCH, "ウェブ検索"),
-        // web_search で見つけた URL の本文を Markdown で取得する
-        ToolOption(PresetConstants.TOOL_WEB_FETCH, "ページ取得"),
-        // ドキュメント変換: Markdown → Word/PDF/Excel 生成。
-        // (Word/PDF/Excel の読み取りは添付時に自動で Markdown 変換されるため
-        //  ツールとしては存在しない)
-        ToolOption(PresetConstants.TOOL_CONVERT_MD_TO_DOCUMENT, "Word/PDF/Excel作成"),
-        // CALENDAR_DISABLED: ToolOption(PresetConstants.TOOL_CALENDAR, "カレンダー")
-    )
+    private val toolOptions by lazy {
+        listOf(
+            ToolOption(PresetConstants.TOOL_TIME, getString(R.string.preset_tool_name_time)),
+            ToolOption(PresetConstants.TOOL_BATTERY, getString(R.string.preset_tool_name_battery)),
+            ToolOption(PresetConstants.TOOL_ALARM, getString(R.string.preset_tool_name_alarm)),
+            ToolOption(PresetConstants.TOOL_TIMER, getString(R.string.preset_tool_name_timer)),
+            ToolOption(PresetConstants.TOOL_FLASHLIGHT, getString(R.string.preset_tool_name_flashlight)),
+            ToolOption(PresetConstants.TOOL_IMAGE_GENERATION, getString(R.string.preset_tool_name_image_generation)),
+            ToolOption(PresetConstants.TOOL_MEMORY, getString(R.string.preset_tool_name_memory)),
+            ToolOption(PresetConstants.TOOL_MEMORY_SAVE, getString(R.string.preset_tool_name_memory_save)),
+            ToolOption(PresetConstants.TOOL_WEB_SEARCH, getString(R.string.preset_tool_name_web_search)),
+            // web_search で見つけた URL の本文を Markdown で取得する
+            ToolOption(PresetConstants.TOOL_WEB_FETCH, getString(R.string.preset_tool_name_web_fetch)),
+            // ドキュメント変換: Markdown → Word/PDF/Excel 生成。
+            // (Word/PDF/Excel の読み取りは添付時に自動で Markdown 変換されるため
+            //  ツールとしては存在しない)
+            ToolOption(PresetConstants.TOOL_CONVERT_MD_TO_DOCUMENT, getString(R.string.preset_tool_name_convert_md_to_document)),
+            // CALENDAR_DISABLED: ToolOption(PresetConstants.TOOL_CALENDAR, getString(R.string.preset_tool_name_calendar))
+        )
+    }
 
     private data class ToolOption(val id: String, val label: String)
 }

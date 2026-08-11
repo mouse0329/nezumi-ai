@@ -19,7 +19,7 @@
         android:paddingStart="4dp"
         android:paddingEnd="4dp"
         android:paddingBottom="10dp"
-        android:text="添付する項目を選んでください"
+        android:text="@string/attachment_options_title"
         android:textColor="@color/text_secondary"
         android:textSize="13sp" />
 
@@ -55,7 +55,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="画像"
+                android:text="@string/attachment_options_image"
                 android:textColor="@color/text_primary"
                 android:textSize="12.5sp" />
         </LinearLayout>
@@ -87,7 +87,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="カメラ"
+                android:text="@string/attachment_options_camera"
                 android:textColor="@color/text_primary"
                 android:textSize="12.5sp" />
         </LinearLayout>
@@ -118,7 +118,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="ファイル"
+                android:text="@string/attachment_options_file"
                 android:textColor="@color/text_primary"
                 android:textSize="12.5sp" />
         </LinearLayout>
@@ -135,7 +135,7 @@
         android:gravity="center"
         android:paddingTop="14dp"
         android:paddingBottom="14dp"
-        android:text="キャンセル"
+        android:text="@string/attachment_options_cancel"
         android:textColor="@color/text_secondary"
         android:textSize="14.5sp"
         android:textStyle="bold" />

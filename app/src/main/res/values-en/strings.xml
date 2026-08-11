@@ -946,7 +946,14 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="preset_edit_mcp_server_label">MCP server</string>
     <string name="preset_edit_mcp_servers_unregistered">Not registered</string>
     <string name="preset_edit_mcp_servers_enabled_format">%1$d / %2$d enabled</string>
-    <string name="preset_edit_mcp_add">Add MCP</string>
+    <string name="preset_edit_mcp_add">Add/Edit MCP</string>
+    <string name="preset_screen_new_title">New Preset</string>
+    <string name="preset_screen_edit_title">Edit Preset</string>
+    <string name="preset_field_icon">Icon</string>
+    <string name="preset_field_name">Name</string>
+    <string name="preset_field_description">Description</string>
+    <string name="preset_field_system_prompt">System Prompt</string>
+    <string name="preset_flashlight_permission_required">Camera permission is required to use the flashlight</string>
     <string name="preset_save">Save</string>
     <string name="preset_cancel">Cancel</string>
     <string name="preset_toast_created">Preset created</string>
@@ -967,6 +974,9 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="preset_tool_name_image_generation">Image generation</string>
     <string name="preset_tool_name_memory">Memory search</string>
     <string name="preset_tool_name_web_search">Web search</string>
+    <string name="preset_tool_name_web_fetch">Fetch page</string>
+    <string name="preset_tool_name_memory_save">Save memory</string>
+    <string name="preset_tool_name_convert_md_to_document">Create Word/PDF/Excel</string>
     <string name="status_on">ON</string>
     <string name="status_off">OFF</string>
 
@@ -1063,8 +1073,6 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="model_settings_tool_calling_support_litertlm">Supports tool calling for LiteRT-LM</string>
     <string name="model_settings_tool_calling_support_gguf">Supports tool calling for GGUF / llama.rn</string>
     <string name="model_settings_chat_template_label">Chat template</string>
-    <string name="model_settings_close">Close</string>
-    <string name="model_settings_settings_title">Settings</string>
     <string name="common_yes">Yes</string>
 
     <!-- Secret mode PIN -->
@@ -1161,4 +1169,17 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="raw_context_copy">Copy</string>
     <string name="raw_context_close">Close</string>
     <string name="raw_context_copied">Copied</string>
+
+    <!-- Attachment options sheet -->
+    <string name="attachment_options_title">Choose what to attach</string>
+    <string name="attachment_options_image">Image</string>
+    <string name="attachment_options_camera">Camera</string>
+    <string name="attachment_options_file">File</string>
+    <string name="attachment_options_cancel">Cancel</string>
+
+    <!-- Main screen drawer -->
+    <string name="drawer_preset_button">Presets</string>
+    <string name="drawer_incognito_button">Secret</string>
+    <string name="drawer_history_label">Chat History</string>
+    <string name="drawer_history_empty">No history yet</string>
 </resources>

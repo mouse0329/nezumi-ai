@@ -160,7 +160,8 @@ Nezumi AI ${appversion}
 
 ### 8.2. Changelog
 
-Detailed changelog is available inside the app under "Settings" → "About".
+Published on the GitHub Releases page.
+https://github.com/mouse0329/nezumi-ai/releases
 
 ## 9. Planned Features
 

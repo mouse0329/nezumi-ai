@@ -54,3 +54,24 @@
 # VOICEVOX Coreなどが参照している missing class の警告を無視
 -dontwarn jakarta.annotation.**
 -dontwarn javax.annotation.**
+
+# ============================================================================
+# Apache POI (Word/Excel生成) および付随ライブラリが参照する
+# デスクトップ限定・オプション機能への参照。Android上では到達しない
+# コードパスのため、クラス欠落を許容してR8を通す。
+# ============================================================================
+# java.awt.* : POIのセル幅計算やグラフィック描画で参照されるが、
+# Android の帳票/変換用途では実際には呼ばれない。
+-dontwarn java.awt.**
+# OSGi (log4jのバンドル検出、実行時は使用されない)
+-dontwarn org.osgi.framework.**
+# bnd / findbugs のビルド時アノテーション (実行時には不要)
+-dontwarn aQute.bnd.annotation.**
+-dontwarn edu.umd.cs.findbugs.annotations.**
+# Saxon (xmlbeansのオプションXPathエンジン。同梱していないため未使用)
+-dontwarn net.sf.saxon.**
+# StAX (javax.xml.stream) 実装。標準APIだがAndroidのブートクラスパスには
+# 含まれないため、xmlbeans経由の参照を許容する。
+-dontwarn javax.xml.stream.**
+# JPEG2000 (JP2) コーデック。pdfbox の JPXFilter がオプション参照するのみ。
+-dontwarn com.gemalto.jp2.**

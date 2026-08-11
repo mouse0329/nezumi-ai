@@ -796,7 +796,14 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="preset_edit_mcp_server_label">MCP サーバー</string>
     <string name="preset_edit_mcp_servers_unregistered">未登録</string>
     <string name="preset_edit_mcp_servers_enabled_format">%1$d / %2$d 個を有効化</string>
-    <string name="preset_edit_mcp_add">MCPを追加</string>
+    <string name="preset_edit_mcp_add">新規/編集MCP</string>
+    <string name="preset_screen_new_title">新しいプリセット</string>
+    <string name="preset_screen_edit_title">プリセット編集</string>
+    <string name="preset_field_icon">アイコン</string>
+    <string name="preset_field_name">名前</string>
+    <string name="preset_field_description">説明</string>
+    <string name="preset_field_system_prompt">システムプロンプト</string>
+    <string name="preset_flashlight_permission_required">フラッシュライトを使うにはカメラ権限が必要です</string>
     <string name="preset_save">保存</string>
     <string name="preset_cancel">キャンセル</string>
     <string name="preset_toast_created">プリセットを作成しました</string>
@@ -817,6 +824,9 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="preset_tool_name_image_generation">画像生成</string>
     <string name="preset_tool_name_memory">メモリ検索</string>
     <string name="preset_tool_name_web_search">ウェブ検索</string>
+    <string name="preset_tool_name_web_fetch">ページ取得</string>
+    <string name="preset_tool_name_memory_save">メモリ保存</string>
+    <string name="preset_tool_name_convert_md_to_document">Word/PDF/Excel作成</string>
     <string name="status_on">ON</string>
     <string name="status_off">OFF</string>
 
@@ -1223,4 +1233,17 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="model_settings_image_generation_help">上記の「画像生成モデル (MNN)」カードからダウンロードするか、下のボタンから zip をインポートできます</string>
     <string name="model_settings_imported_models_section">インポートされたモデル</string>
     <string name="model_settings_mmproj_file_management">mmproj ファイル</string>
+
+    <!-- 添付オプションシート -->
+    <string name="attachment_options_title">添付する項目を選んでください</string>
+    <string name="attachment_options_image">画像</string>
+    <string name="attachment_options_camera">カメラ</string>
+    <string name="attachment_options_file">ファイル</string>
+    <string name="attachment_options_cancel">キャンセル</string>
+
+    <!-- メイン画面ドロワー -->
+    <string name="drawer_preset_button">プリセット</string>
+    <string name="drawer_incognito_button">シークレット</string>
+    <string name="drawer_history_label">チャット履歴</string>
+    <string name="drawer_history_empty">履歴はまだありません</string>
 </resources>
