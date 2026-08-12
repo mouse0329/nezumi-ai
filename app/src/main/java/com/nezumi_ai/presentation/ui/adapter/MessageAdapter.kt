@@ -662,12 +662,24 @@ class MessageAdapter(
                 // Bug fix: 生成中に取り消しボタンが見えてしまう不具合への対処。
                 // bind のたびにジェネレート状態を参照して可視性を制御する。
                 val generating = isGeneratingProvider()
-                revokePromptButton.visibility = if (generating) View.GONE else View.VISIBLE
                 revokePromptButton.isEnabled = !generating
                 revokePromptButton.setOnClickListener {
                     if (isGeneratingProvider()) return@setOnClickListener
                     onUserPromptRevoke(message)
                 }
+
+                // Bug fix(#Action-Row-Declutter): copy/revoke は既定で非表示にし、
+                //   吹き出しタップで開閉する。生成中は取り消し操作自体が無効なので
+                //   アクション行ごと畳んだままにする。
+                messageActionsRow.visibility = View.GONE
+                userMessageText.setOnClickListener {
+                    if (isGeneratingProvider()) return@setOnClickListener
+                    messageActionsRow.visibility =
+                        if (messageActionsRow.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                }
+                // 取り消し操作は生成中に無効化されるため、アクション行を開いていても
+                // ボタン自体は個別に隠す（アイコンの押し間違いを防ぐ）。
+                revokePromptButton.visibility = if (generating) View.GONE else View.VISIBLE
             }
         }
         
@@ -1105,6 +1117,21 @@ class MessageAdapter(
                     onAiMessageSpeak(message, speakText)
                 }
 
+                // Bug fix(#Action-Row-Declutter): copy/speak/regenerate 等の操作アイコンは
+                //   既定で非表示にし、吹き出し本体タップで開閉する。ストリーミング中は
+                //   操作対象がまだ確定していないため常に畳んだ状態にしておく。
+                messageActionsRow.visibility = View.GONE
+                val actionsToggleTarget = if (aiMessageMarkdownCompose.visibility == View.VISIBLE) {
+                    aiMessageMarkdownCompose
+                } else {
+                    aiMessageText
+                }
+                actionsToggleTarget.setOnClickListener {
+                    if (message.isStreaming) return@setOnClickListener
+                    messageActionsRow.visibility =
+                        if (messageActionsRow.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                }
+
  // t/s と TTFT は全般タブの設定で非表示にできる。既定は両方とも非表示。
                 // Bug fix(#43): Adapter のキャッシュ値を優先し、未初期化のときだけ SharedPreferences を直接参照する。
                 // これにより、設定フラグメントから戻ってきた直後に refreshPerfIndicatorVisibility() で
@@ -1127,11 +1154,21 @@ class MessageAdapter(
                         ttftMs?.takeIf { it > 0L }?.let { parts += formatTtft(it) }
                     }
                 }
+                // Bug fix(#Meta-Row-Hierarchy): tv_tps はタイムスタンプと同格の常時表示ではなく、
+                //   雷アイコン付きの「詳細」トグル経由でのみ開く。トグル自体は表示すべき情報が
+                //   あるときだけ出し、既定では折り畳んでおく。
                 if (parts.isNotEmpty()) {
-                    tvTps.visibility = View.VISIBLE
                     tvTps.text = parts.joinToString("  ·  ")
-                } else {
+                    perfMetaToggle.visibility = View.VISIBLE
                     tvTps.visibility = View.GONE
+                    perfMetaToggle.setOnClickListener {
+                        tvTps.visibility =
+                            if (tvTps.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                    }
+                } else {
+                    perfMetaToggle.visibility = View.GONE
+                    tvTps.visibility = View.GONE
+                    perfMetaToggle.setOnClickListener(null)
                 }
             }
         }

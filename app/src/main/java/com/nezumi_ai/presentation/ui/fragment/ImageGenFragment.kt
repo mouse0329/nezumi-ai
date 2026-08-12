@@ -25,7 +25,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
@@ -81,6 +83,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.viewinterop.AndroidView
 import android.widget.EditText
 import android.view.inputmethod.EditorInfo
@@ -250,7 +253,8 @@ private fun LegacyImageGenScreen(
     val neg by vm.negativePrompt.collectAsState()
     val steps by vm.steps.collectAsState()
     val cfg by vm.cfg.collectAsState()
-    val size by vm.sizePx.collectAsState()
+    val width by vm.widthPx.collectAsState()
+    val height by vm.heightPx.collectAsState()
     val seedValue by vm.seed.collectAsState()
     val bitmap by vm.resultBitmap.collectAsState()
     val loading by vm.loading.collectAsState()
@@ -296,6 +300,7 @@ private fun LegacyImageGenScreen(
     }
     
     var selectedTab by remember { mutableStateOf(0) }
+    var batchCount by remember { mutableStateOf(1) }
     val library = remember { mutableStateListOf<LibraryItem>() }
     var viewerImage by remember { mutableStateOf<LibraryItem?>(null) }
     
@@ -444,7 +449,8 @@ private fun LegacyImageGenScreen(
         
         // タブコンテンツ
         if (selectedTab == 0) {
-            // 生成タブ
+            // 生成タブ — スクロール本体 + 固定フッター（モックアップ準拠）
+            Column(Modifier.weight(1f, fill = true)) {
             Column(
                 Modifier
                     .weight(1f, fill = true)
@@ -489,133 +495,163 @@ private fun LegacyImageGenScreen(
                     }
                 }
                 
-                // UI 整理: シード値設定も設定画面に集約し、ここでは折りたたみで
-                //   コンパクトに行う。デフォルトは閉じておき、
-                //   現在のシード状態と前回使用シードだけを見せる。入力が必要なときだけ
-                //   展開して 1 行の入力フィールドを見せる。
-                var seedExpanded by remember { mutableStateOf(false) }
+                // 詳細設定アコーディオン（モックアップ準拠）: バックエンド / シード / Step·CFG·Scheduler を1つにまとめる
+                var advExpanded by remember { mutableStateOf(false) }
+                val advSummaryText = "Step $steps · CFG ${String.format("%.1f", cfg)} · ${scheduler.displayName}"
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().clickable { seedExpanded = !seedExpanded },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surface)
+                            .clickable { advExpanded = !advExpanded }
+                            .padding(horizontal = 14.dp, vertical = 13.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "詳細設定",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
-                                stringResource(R.string.image_gen_seed_label),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.labelSmall
+                                advSummaryText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                if (seedValue == -1L) stringResource(R.string.image_gen_seed_random) else seedValue.toString(),
-                                color = MaterialTheme.colorScheme.onSurface,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold
+                                if (advExpanded) "▲" else "▼",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelMedium
                             )
                         }
-                        Text(
-                            if (seedExpanded) "–" else "⊕",
-                            color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.titleMedium
-                        )
                     }
-                    if (seedExpanded) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                    if (advExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                                .padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
-                            OutlinedTextField(
-                                value = if (seedValue == -1L) "" else seedValue.toString(),
-                                onValueChange = {
-                                    val s = it.toLongOrNull() ?: -1L
-                                    vm.setSeed(s)
-                                },
-                                label = { Text(stringResource(R.string.image_gen_seed_placeholder)) },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
-                                ),
-                                colors = fieldColors
-                            )
-                            TextButton(
-                                onClick = { vm.setSeed(-1L) },
-                                enabled = seedValue != -1L
+                            // バックエンド
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    stringResource(R.string.image_gen_backend_label),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    listOf(
+                                        "mnn" to stringResource(R.string.image_gen_backend_cpu_mnn),
+                                        "opencl" to stringResource(R.string.image_gen_backend_gpu_opencl)
+                                    ).forEach { (value, label) ->
+                                        val selected = selectedBackend == value
+                                        androidx.compose.material3.FilterChip(
+                                            selected = selected,
+                                            onClick = { vm.setSelectedBackend(value) },
+                                            label = { Text(label) },
+                                            colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                                            )
+                                        )
+                                    }
+                                }
+                                if (backendInfo.isNotEmpty()) {
+                                    Text(
+                                        backendInfo,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            // シード
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    stringResource(R.string.image_gen_seed_label),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = if (seedValue == -1L) "" else seedValue.toString(),
+                                        onValueChange = {
+                                            val s = it.toLongOrNull() ?: -1L
+                                            vm.setSeed(s)
+                                        },
+                                        placeholder = { Text(stringResource(R.string.image_gen_seed_random)) },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true,
+                                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                                        ),
+                                        colors = fieldColors
+                                    )
+                                    TextButton(
+                                        onClick = { vm.setSeed(-1L) },
+                                        enabled = seedValue != -1L
+                                    ) {
+                                        Text(stringResource(R.string.image_gen_seed_reset))
+                                    }
+                                }
+                                lastUsedSeed?.let { used ->
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            stringResource(R.string.image_gen_seed_previous_format, used),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        TextButton(onClick = { vm.setSeed(used) }) {
+                                            Text(stringResource(R.string.image_gen_seed_reuse))
+                                        }
+                                    }
+                                }
+                            }
+                            // Step / CFG / Scheduler（タップで設定画面へ）
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surface)
+                                    .clickable { onNavigateToSettings() }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(stringResource(R.string.image_gen_seed_reset))
+                                @Composable
+                                fun MetricCell(label: String, value: String) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                                        Text(value, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                                MetricCell(stringResource(R.string.image_gen_step_label), steps.toString())
+                                MetricCell(stringResource(R.string.image_gen_cfg_label), String.format("%.1f", cfg))
+                                MetricCell(stringResource(R.string.image_gen_scheduler_label), scheduler.displayName)
+                                Text(
+                                    stringResource(R.string.image_gen_settings_link),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.labelMedium
+                                )
                             }
                         }
-                        Text(
-                            stringResource(R.string.image_gen_denoise_hint),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
-                    }
-                }
-                // Bug fix (シード表示):
-                //   以前は seed=-1 (ランダム) のとき何も出ず「シード値が出ない」
-                //   と見えていた。実際に使われた seed を導入した lastUsedSeed から
-                //   一行で見せ、タップして再利用できるようにする。
-                lastUsedSeed?.let { used ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            stringResource(R.string.image_gen_seed_previous_format, used),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(onClick = { vm.setSeed(used) }) {
-                            Text(stringResource(R.string.image_gen_seed_reuse))
-                        }
                     }
                 }
 
-                // バックエンド選択
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        stringResource(R.string.image_gen_backend_label),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    // CPU (MNN) と GPU (OpenCL) の 2 つを提供
-                    listOf("mnn" to stringResource(R.string.image_gen_backend_cpu_mnn), "opencl" to stringResource(R.string.image_gen_backend_gpu_opencl)).forEach { (value, label) ->
-                        val selected = selectedBackend == value
-                        androidx.compose.material3.FilterChip(
-                            selected = selected,
-                            onClick = { vm.setSelectedBackend(value) },
-                            label = { Text(label) },
-                            colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                            )
-                        )
-                    }
-                }
-
-                if (backendInfo.isNotEmpty()) {
-                    Text(
- "$backendInfo",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 4.dp)
-                    )
-                }
                 if (isStopKeyboardLearning) {
                     val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
                     val hintColor = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
@@ -713,11 +749,16 @@ private fun LegacyImageGenScreen(
                             )
                         }
                 }
-                // SDXL モデルをロードしているときは 512…1024 のクラスに上限を拡張する。
+                // サイズ: 縦横独立のシークバー（デフォルト 256）
+                // SD1.5 は元の刻み(〜512)、SDXL は最大1024
                 val isSdxl by vm.isSdxl.collectAsState()
                 val sizeOptions = if (isSdxl) listOf(512, 640, 768, 832, 896, 960, 1024)
                                   else listOf(128, 192, 256, 320, 384, 448, 512)
-                val selectedSizeIndex = sizeOptions.indexOf(size).coerceAtLeast(0)
+                // SDXL でも 128〜 を選べるように下限は共通、上限のみモデルで制限
+                val widthIndex = sizeOptions.indexOf(width).takeIf { it >= 0 }
+                    ?: sizeOptions.indexOf(sizeOptions.minBy { kotlin.math.abs(it - width) })
+                val heightIndex = sizeOptions.indexOf(height).takeIf { it >= 0 }
+                    ?: sizeOptions.indexOf(sizeOptions.minBy { kotlin.math.abs(it - height) })
                 Column(Modifier.fillMaxWidth()) {
                     Row(
                         Modifier.fillMaxWidth(),
@@ -725,71 +766,61 @@ private fun LegacyImageGenScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(stringResource(R.string.image_gen_size_label), color = MaterialTheme.colorScheme.onSurface)
-                        Text(stringResource(R.string.image_gen_size_value_format, size, size), color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            stringResource(R.string.image_gen_size_value_format, width, height),
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
-                    Slider(
-                        value = selectedSizeIndex.toFloat(),
-                        onValueChange = { index ->
-                            val snapped = sizeOptions.getOrElse(index.toInt()) { sizeOptions.last() }
-                            vm.setSize(snapped)
-                        },
-                        valueRange = 0f..(sizeOptions.size - 1).toFloat(),
-                        steps = sizeOptions.size - 2,
-                        enabled = !loading,
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                    )
+                    // 幅
                     Row(
-                        Modifier.fillMaxWidth().padding(top = 4.dp),
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("幅", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(28.dp))
+                        Slider(
+                            value = widthIndex.toFloat(),
+                            onValueChange = { index ->
+                                val snapped = sizeOptions.getOrElse(index.toInt().coerceIn(0, sizeOptions.lastIndex)) { sizeOptions.last() }
+                                vm.setWidth(snapped)
+                            },
+                            valueRange = 0f..(sizeOptions.size - 1).toFloat(),
+                            steps = (sizeOptions.size - 2).coerceAtLeast(0),
+                            enabled = !loading,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text("$width", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.width(36.dp))
+                    }
+                    // 高さ
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("高さ", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(28.dp))
+                        Slider(
+                            value = heightIndex.toFloat(),
+                            onValueChange = { index ->
+                                val snapped = sizeOptions.getOrElse(index.toInt().coerceIn(0, sizeOptions.lastIndex)) { sizeOptions.last() }
+                                vm.setHeight(snapped)
+                            },
+                            valueRange = 0f..(sizeOptions.size - 1).toFloat(),
+                            steps = (sizeOptions.size - 2).coerceAtLeast(0),
+                            enabled = !loading,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text("$height", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.width(36.dp))
+                    }
+                    // 目盛りラベル（間引き表示）
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 36.dp, end = 36.dp),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        sizeOptions.forEach { s ->
-                            Text(s.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        val tickLabels = if (sizeOptions.size <= 5) sizeOptions else listOf(sizeOptions.first(), sizeOptions[sizeOptions.size / 2], sizeOptions.last())
+                        tickLabels.forEach { s ->
+                            Text(s.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
                         }
                     }
-                }
-
-                // UI 整理: スケジューラ / ステップ数 / CFG の現在値を一括で小さく見せ、
-                //   タップで設定画面へ飛ぶ導線にする。ユーザーが「どこでステップ数や
-                //   CFG を変えるのか分からない」のを防ぐ。スケジューラも同じバッジに入れ、
-                //   設定を変更して戻ってきたときは onResume の refreshPreferencesBackedFields で
-                //   StateFlow が更新されるのでここの表示も自動で切り替わる。
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 12.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(MaterialTheme.colorScheme.surface)
-                        .clickable { onNavigateToSettings() }
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    @Composable
-                    fun MetricCell(label: String, value: String) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                label,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                            Text(
-                                value,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    MetricCell(stringResource(R.string.image_gen_step_label), steps.toString())
-                    MetricCell(stringResource(R.string.image_gen_cfg_label), String.format("%.1f", cfg))
-                    MetricCell(stringResource(R.string.image_gen_scheduler_label), scheduler.displayName)
-                    Text(
-                        stringResource(R.string.image_gen_settings_link),
-                        color = MaterialTheme.colorScheme.primary,
-                        style = MaterialTheme.typography.labelMedium
-                    )
                 }
 
                 // ============ img2img UI (capability 驅動) ============
@@ -880,104 +911,7 @@ private fun LegacyImageGenScreen(
                 }
                 // ============ /img2img UI ============
 
-                var batchCount by remember { mutableStateOf(1) }
-                Column(Modifier.padding(top = 12.dp)) {
-                    Text(
-                        stringResource(R.string.image_gen_batch_count_format, batchCount),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Slider(
-                        value = batchCount.toFloat(),
-                        onValueChange = { batchCount = it.toInt().coerceIn(1, 10) },
-                        valueRange = 1f..10f,
-                        steps = 8,
-                        enabled = !loading,
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                    )
-                }
-
-                val modelFileOk = availableModels.isNotEmpty() && selectedModelIndex in availableModels.indices && File(availableModels[selectedModelIndex]).isDirectory
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(
-                        onClick = {
-                            if (vm.createGenerationQueue(batchCount)) {
-                                vm.startQueueGeneration()
-                            }
-                        },
-                        enabled = !loading && !safetyDownloading && modelFileOk && prompt.isNotBlank()
-                    ) {
-                        Text(stringResource(R.string.image_gen_generate))
-                    }
-                    if (safetyDownloading) {
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                SvgSpinner(
-                                    Modifier.size(20.dp)
-                                )
-                                Text(
-                                    stringResource(R.string.image_gen_safety_preparing),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            // ダウンロードプログレス表示
-                            if (safetyProgress >= 0f) {
-                                val pct = (safetyProgress * 100).toInt()
-                                LinearProgressIndicator(
-                                    progress = { safetyProgress },
-                                    modifier = Modifier.fillMaxWidth().height(4.dp),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    trackColor = MaterialTheme.colorScheme.outlineVariant
-                                )
-                                Text(
-                                    "$pct%",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    } else if (loading) {
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                SvgSpinner(Modifier.size(24.dp))
-                                Text(
-                                    stringResource(R.string.image_gen_generating_format, currentStep, steps),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            LinearProgressIndicator(
-                                progress = { if (steps > 0) currentStep.toFloat() / steps else 0f },
-                                modifier = Modifier.fillMaxWidth().height(4.dp),
-                                color = MaterialTheme.colorScheme.primary,
-                                trackColor = MaterialTheme.colorScheme.outlineVariant
-                            )
-                        }
-                        Button(
-                            onClick = { vm.cancel() },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.error
-                            ),
-                            modifier = Modifier.height(40.dp)
-                        ) {
-                            Text(stringResource(R.string.image_gen_cancel))
-                        }
-                    }
-                }
+                // 生成ボタン・枚数は固定フッターへ移動（モックアップ準拠）
 
                 if (generationQueue.items.isNotEmpty()) {
                     Text(
@@ -1085,7 +1019,124 @@ private fun LegacyImageGenScreen(
                         }
                     }
                 }
+            } // end scrollable form
+
+            // ========== Fixed footer（モックアップ準拠）: ±枚数 + 生成/キャンセル ==========
+            val modelFileOk = availableModels.isNotEmpty() && selectedModelIndex in availableModels.indices && File(availableModels[selectedModelIndex]).isDirectory
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                if (safetyDownloading) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SvgSpinner(Modifier.size(20.dp))
+                            Text(
+                                stringResource(R.string.image_gen_safety_preparing),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (safetyProgress >= 0f) {
+                            val pct = (safetyProgress * 100).toInt()
+                            LinearProgressIndicator(
+                                progress = { safetyProgress },
+                                modifier = Modifier.fillMaxWidth().height(4.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.outlineVariant
+                            )
+                            Text("$pct%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                } else if (loading) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SvgSpinner(Modifier.size(22.dp))
+                            Text(
+                                stringResource(R.string.image_gen_generating_format, currentStep, steps),
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        LinearProgressIndicator(
+                            progress = { if (steps > 0) currentStep.toFloat() / steps else 0f },
+                            modifier = Modifier.fillMaxWidth().height(4.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.outlineVariant
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        IconButton(
+                            onClick = { if (batchCount < 10) batchCount++ },
+                            enabled = !loading && batchCount < 10,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Text("+", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                        }
+                        Text(
+                            batchCount.toString(),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        IconButton(
+                            onClick = { if (batchCount > 1) batchCount-- },
+                            enabled = !loading && batchCount > 1,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Text("−", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+
+                    if (loading) {
+                        Button(
+                            onClick = { vm.cancel() },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            modifier = Modifier.weight(1f).height(52.dp),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text(stringResource(R.string.image_gen_cancel), style = MaterialTheme.typography.titleMedium)
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                if (vm.createGenerationQueue(batchCount)) {
+                                    vm.startQueueGeneration()
+                                }
+                            },
+                            enabled = !loading && !safetyDownloading && modelFileOk && prompt.isNotBlank(),
+                            modifier = Modifier.weight(1f).height(52.dp),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text(stringResource(R.string.image_gen_generate), style = MaterialTheme.typography.titleMedium)
+                        }
+                    }
+                }
             }
+            } // end outer generate Column (form + footer)
         } else {
             // ライブラリタブ
             var deleteTarget by remember { mutableStateOf<LibraryItem?>(null) }
@@ -1227,7 +1278,12 @@ private fun LegacyImageGenScreen(
     }
 
     // ビューワーダイアログ
+    // Bug fix: 極端な縦長 (例: 192×256) / 横長 (例: 512×192) で UI が壊れる問題。
+    //   画像は最大高さ制限 + ContentScale.Fit で枠内に収め、
+    //   メタデータはスクロール、ボタンは常に下部に固定。
     viewerImage?.let { item ->
+        val config = LocalConfiguration.current
+        val maxImageHeight = (config.screenHeightDp * 0.45f).dp
         androidx.compose.ui.window.Dialog(
             onDismissRequest = { viewerImage = null },
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
@@ -1237,27 +1293,43 @@ private fun LegacyImageGenScreen(
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.9f))
                     .clickable { viewerImage = null }
-                    .padding(20.dp),
+                    .padding(16.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(0.95f)
                         .clickable(enabled = false) {}
                         .clip(RoundedCornerShape(16.dp))
                         .background(MaterialTheme.colorScheme.surface)
                         .padding(16.dp)
                 ) {
-                    Image(
-                        bitmap = item.bitmap.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)),
-                        contentScale = ContentScale.FillWidth
-                    )
+                    // 画像: 縦長・横長どちらでも枠内に Fit。
+                    //   高さ上限で縦長のはみ出しを防ぎ、横長は幅いっぱい・高さは自然に縮む。
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 120.dp, max = maxImageHeight)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            bitmap = item.bitmap.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+
+                    // メタデータ: 残り領域をスクロール可能に
                     Column(
                         modifier = Modifier
-                            .padding(vertical = 16.dp)
+                            .weight(1f, fill = true)
                             .fillMaxWidth()
+                            .padding(vertical = 12.dp)
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -1271,7 +1343,7 @@ private fun LegacyImageGenScreen(
                             color = MaterialTheme.colorScheme.onSurface,
                             style = MaterialTheme.typography.bodyMedium
                         )
-                        
+
                         if (!item.negativePrompt.isNullOrEmpty()) {
                             Text(
                                 stringResource(R.string.image_gen_viewer_negative_label),
@@ -1284,11 +1356,7 @@ private fun LegacyImageGenScreen(
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
-                        
-                        // Feature: 指示書にある「表示必須メタデータ一覧」を青写して見せる。
-                        //   「プロンプト / ネガティブプロンプト / モデル名 /
-                        //    画像サイズ / CFGスケール / スケジューラの種類 / シード値」。
-                        //   値がない（旧ファイル）行は飛ばし、存在する値だけ並べる。
+
                         val metaRows: List<Pair<String, String>> = buildList {
                             if (!item.modelName.isNullOrEmpty()) add(stringResource(R.string.image_gen_viewer_model_label) to item.modelName)
                             if (item.width != null && item.height != null) {
@@ -1321,42 +1389,11 @@ private fun LegacyImageGenScreen(
                                 )
                             }
                         }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            if (item.steps != null) {
-                                Column {
-                                    Text(
-                                        stringResource(R.string.image_gen_viewer_steps_label) + ":",
-                                        color = MaterialTheme.colorScheme.primary,
-                                        style = MaterialTheme.typography.labelLarge
-                                    )
-                                    Text(
-                                        item.steps.toString(),
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
-                                }
-                            }
-                            if (item.seed != null) {
-                                Column {
-                                    Text(
-                                        stringResource(R.string.image_gen_viewer_seed_label) + ":",
-                                        color = MaterialTheme.colorScheme.primary,
-                                        style = MaterialTheme.typography.labelLarge
-                                    )
-                                    Text(
-                                        item.seed.toString(),
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
-                                }
-                            }
-                        }
                     }
+
+                    // ボタン行: 常に下部に固定（画面外に出ない）
                     Row(
-                        Modifier.fillMaxWidth(0.8f),
+                        Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Button(
@@ -1376,7 +1413,7 @@ private fun LegacyImageGenScreen(
                     }
                     TextButton(
                         onClick = { viewerImage = null },
-                        modifier = Modifier.padding(top = 12.dp)
+                        modifier = Modifier.padding(top = 8.dp)
                     ) {
                         Text(stringResource(R.string.viewer_close), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -1385,6 +1422,8 @@ private fun LegacyImageGenScreen(
         }
     }
 }
+
+
 
 // ライブラリの永続化関数
 // Feature: モデル名 / 画像サイズ / CFG / スケジューラをライブラリに導入。
@@ -1536,19 +1575,29 @@ private fun deleteImageFromLibrary(context: android.content.Context, timestamp: 
 
 @Composable
 private fun ImageResultItem(itemBmp: Bitmap) {
+    // 縦長・横長どちらでも全体が見えるよう Fit。
+    // 極端な縦長は高さ上限、極端な横長は幅100%で高さが自然に縮む。
+    val aspect = if (itemBmp.height > 0) itemBmp.width.toFloat() / itemBmp.height.toFloat() else 1f
+    val boxModifier = when {
+        // 極端な縦長 (例: 192×512 相当)
+        aspect < 0.55f -> Modifier.fillMaxWidth().heightIn(max = 360.dp)
+        // 極端な横長 (例: 512×192 相当)
+        aspect > 1.8f -> Modifier.fillMaxWidth().heightIn(max = 220.dp)
+        // 通常範囲は実アスペクトで表示
+        else -> Modifier.fillMaxWidth().aspectRatio(aspect.coerceIn(0.55f, 1.8f))
+    }
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(1f)
+        modifier = boxModifier
             .clip(RoundedCornerShape(8.dp))
             .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surface)
+            .background(MaterialTheme.colorScheme.surface),
+        contentAlignment = Alignment.Center
     ) {
         Image(
             bitmap = itemBmp.asImageBitmap(),
             contentDescription = null,
             modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop
+            contentScale = ContentScale.Fit
         )
     }
 }

@@ -69,6 +69,8 @@
     <string name="add_media_menu">メディアメニュー</string>
     <string name="revoke_prompt_done">プロンプトを取り消しました</string>
     <string name="revoke_prompt_none">取り消せるプロンプトがありません</string>
+    <!-- Bug fix(#Meta-Row-Hierarchy): 生成速度/TTFTなどの性能メタ情報を開閉するトリガーのラベル -->
+    <string name="perf_detail_label">詳細</string>
     <string name="send_icon"></string>
     <string name="stop_icon">■</string>
     <string name="inference_title">推論パラメータ</string>

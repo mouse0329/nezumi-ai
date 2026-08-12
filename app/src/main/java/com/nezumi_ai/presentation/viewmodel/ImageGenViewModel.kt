@@ -270,8 +270,14 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     private val _cfg = MutableStateFlow(PreferencesHelper.getSdCfg(application))
     val cfg: StateFlow<Float> = _cfg.asStateFlow()
 
-    private val _sizePx = MutableStateFlow(512)
-    val sizePx: StateFlow<Int> = _sizePx.asStateFlow()
+    // デフォルト画質は 256×256。縦横は独立して指定可能。
+    private val _widthPx = MutableStateFlow(256)
+    val widthPx: StateFlow<Int> = _widthPx.asStateFlow()
+    private val _heightPx = MutableStateFlow(256)
+    val heightPx: StateFlow<Int> = _heightPx.asStateFlow()
+
+    /** 互換用: 従来の sizePx は width を返す（正方形前提の呼び出し元向け） */
+    val sizePx: StateFlow<Int> = _widthPx.asStateFlow()
 
     /** モデルロード後に呼ばれる。SDXL フラグを反映し、不適切なサイズをクランプする。 */
     fun setModelIsSdxl(sdxl: Boolean) {
@@ -280,15 +286,13 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         if (flow.value == sdxl) return
         flow.value = sdxl
         val allowed = supportedSizes(sdxl)
-        val current = _sizePx.value
-        if (current !in allowed) {
-            // SDXL への切り替え時はデフォルト 1024、SD1.5 に戻したときは 512 に丸める。
-            _sizePx.value = if (sdxl) 1024 else 512
-        }
+        fun clamp(v: Int) = if (v in allowed) v else (if (sdxl) 512 else 256)
+        _widthPx.value = clamp(_widthPx.value)
+        _heightPx.value = clamp(_heightPx.value)
     }
 
-    /** SD1.5 / SDXL ごとのサイズ候補。UIスライダーと setSize() の coerce で共通で使う。
-     *  仕様: 1024 は SDXL のみに表示。SD1.5 は 512 まで。 */
+    /** SD1.5 / SDXL ごとのサイズ候補。UIスライダーと setWidth/setHeight の coerce で共通で使う。
+     *  仕様: 1024 は SDXL のみ。SD1.5 は 512 まで。 */
     fun supportedSizes(sdxl: Boolean = _isSdxl?.value ?: false): List<Int> =
         if (sdxl) listOf(512, 640, 768, 832, 896, 960, 1024)
         else listOf(128, 192, 256, 320, 384, 448, 512)
@@ -560,8 +564,21 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun setSize(s: Int) {
+        // 互換: 両辺を同じ値に設定（正方形）
         val allowed = supportedSizes()
-        _sizePx.value = allowed.minByOrNull { kotlin.math.abs(it - s) } ?: allowed.last()
+        val snapped = allowed.minByOrNull { kotlin.math.abs(it - s) } ?: allowed.last()
+        _widthPx.value = snapped
+        _heightPx.value = snapped
+    }
+
+    fun setWidth(w: Int) {
+        val allowed = supportedSizes()
+        _widthPx.value = allowed.minByOrNull { kotlin.math.abs(it - w) } ?: allowed.last()
+    }
+
+    fun setHeight(h: Int) {
+        val allowed = supportedSizes()
+        _heightPx.value = allowed.minByOrNull { kotlin.math.abs(it - h) } ?: allowed.last()
     }
 
     fun setSeed(s: Long) {
@@ -793,7 +810,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         isCancelling = false
         val manager = ModelManager.getInstance(app)
         val threads = settingsRepository.getLlamaCppThreads().coerceAtLeast(1)
-        val sz = _sizePx.value
+        val width = _widthPx.value
+        val height = _heightPx.value
         val totalSteps = _steps.value
         val promptPreview = notificationPromptPreview(pr)
         ImageGenerationNotificationManager.showSingleProgress(
@@ -803,7 +821,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             promptPreview = promptPreview,
             indeterminate = false
         )
-        Log.d(TAG, "[ImageGen] requested size=$sz x $sz")
+        Log.d(TAG, "[ImageGen] requested size=$width x $height")
         var wasCancelled = false
         try {
             // Perf fix: EngineManager.acquireLocalDream() 内部で markSdActive 相当の処理が
@@ -824,7 +842,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             //   毎回まっさらな状態からロードする。
             runCatching { EngineManager.releaseSdKeepNone() }
 
-            buildLowMemoryAbortMessage(app, path, sz, sz)?.let { abortMessage ->
+            buildLowMemoryAbortMessage(app, path, width, height)?.let { abortMessage ->
                 Log.e(TAG, "[ImageGen] aborting before generation due to low memory: $abortMessage")
                 showImageGenError(abortMessage)
                 ImageGenerationNotificationManager.showError(
@@ -857,20 +875,20 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             // img2img: capability とトグルと実際の Bitmap が全部揃ったときだけ init を使う。
             val useI2i = _img2imgEnabled.value && ld.supportsImg2img && _initImageBitmap.value != null
             val initRgb: ByteArray? = if (useI2i) {
-                runCatching { bitmapToRgbBytes(_initImageBitmap.value!!, sz, sz) }
+                runCatching { bitmapToRgbBytes(_initImageBitmap.value!!, width, height) }
                     .onFailure { Log.w(TAG, "[ImageGen] init image encode failed", it) }
                     .getOrNull()
             } else null
             val denoiseArg = if (initRgb != null) _denoiseStrength.value else 0f
             if (useI2i && initRgb != null) {
-                Log.i(TAG, "[ImageGen] img2img mode: denoise=$denoiseArg size=${sz}x${sz}")
+                Log.i(TAG, "[ImageGen] img2img mode: denoise=$denoiseArg size=${width}x${height}")
             }
 
             val result = ld.generateImageWithMetadata(
                 prompt = pr,
                 negativePrompt = _negativePrompt.value,
-                width = sz,
-                height = sz,
+                width = width,
+                height = height,
                 steps = totalSteps,
                 cfg = _cfg.value,
                 seed = requestedSeed,
@@ -1408,8 +1426,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             //   LLM 側はすでにリリースされる。キューの 2 枚目以降は同じ backend/model であれば
             //   サーバーを使い回し、余分なロードを避ける。
             val queueBackend = _selectedBackend.value
-            val width = _sizePx.value
-            val height = _sizePx.value
+            val width = _widthPx.value
+            val height = _heightPx.value
 
             // Bug fix (SIGABRT during VAE createFromFile after UNet ran):
             //   キューで 2 枚目以降を回すとき、前回の MNN Interpreter が残っていると

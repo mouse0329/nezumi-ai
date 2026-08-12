@@ -25,11 +25,16 @@
 
         <TextView android:id="@+id/user_message_time" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="14:25" android:textSize="11sp" android:textColor="@color/text_secondary" android:layout_marginTop="3dp" android:layout_marginEnd="4dp" />
 
-        <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:orientation="horizontal">
+        <!-- Bug fix(#Action-Row-Declutter): 常時表示だったコピー/取り消しボタンを
+               吹き出しタップ時のみ表示するトグル方式に変更。既定は非表示 (GONE) とし、
+               アダプター側で bubble のクリックリスナーから可視性を切り替える。
+               revoke ボタンは copy と同じアイコンボタン形式に統一し、枠線付き
+               MaterialButton の見た目の不一致を解消した。 -->
+        <LinearLayout android:id="@+id/message_actions_row" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:orientation="horizontal" android:visibility="gone">
 
-            <ImageView android:id="@+id/copy_message_button" android:layout_width="32dp" android:layout_height="32dp" android:src="@drawable/content_copy_24" android:scaleType="centerInside" android:padding="4dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/copy_all" android:clickable="true" android:focusable="true" app:tint="@color/text_primary" />
+            <ImageView android:id="@+id/copy_message_button" android:layout_width="32dp" android:layout_height="32dp" android:src="@drawable/content_copy_24" android:scaleType="centerInside" android:padding="4dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/copy_all" android:clickable="true" android:focusable="true" app:tint="@color/text_secondary" />
 
-            <com.google.android.material.button.MaterialButton android:id="@+id/revoke_prompt_button" style="@style/Widget.Nezumiai.Button.Outlined" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="@string/revoke_prompt" android:textSize="11sp" android:minHeight="0dp" android:insetTop="0dp" android:insetBottom="0dp" app:cornerRadius="12dp" />
+            <ImageView android:id="@+id/revoke_prompt_button" android:layout_width="32dp" android:layout_height="32dp" android:src="@drawable/ic_close" android:scaleType="centerInside" android:padding="6dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/revoke_prompt" android:clickable="true" android:focusable="true" app:tint="@color/text_secondary" />
         </LinearLayout>
     </LinearLayout>
 </LinearLayout>

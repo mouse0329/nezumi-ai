@@ -74,6 +74,8 @@ Enjoy chatting with your AI!</string>
     <string name="add_media_menu">Media menu</string>
     <string name="revoke_prompt_done">Prompt undone</string>
     <string name="revoke_prompt_none">Nothing to undo</string>
+    <!-- Bug fix(#Meta-Row-Hierarchy): trigger label for expanding perf metrics (tps/TTFT) -->
+    <string name="perf_detail_label">Details</string>
     <string name="send_icon"></string>
     <string name="stop_icon">■</string>
     <string name="inference_title">Inference parameters</string>
