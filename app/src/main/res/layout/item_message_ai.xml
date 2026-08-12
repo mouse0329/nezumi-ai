@@ -59,18 +59,16 @@
 
         <LinearLayout android:id="@+id/tool_results_container" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp" android:visibility="gone" />
 
-        <!-- Bug fix(#Meta-Row-Hierarchy): タイムスタンプと性能メタ情報(tv_tps)が同列の
-               薄いグレー文字で並び、意味の異なる情報の重要度が視覚的に区別できなかった。
-               tv_tps は独立した行に切り出し、雷アイコン付きの折りたたみトリガーとして
-               扱う (ChatFragment/MessageAdapter 側で開閉制御)。 -->
+        <!-- タイムスタンプと性能メタ情報(tv_tps)の開閉トリガーを同列に配置。
+               tv_tps は「詳細」タップで開閉するトグル方式を維持する。 -->
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="3dp" android:layout_marginStart="4dp">
             <TextView android:id="@+id/ai_message_time" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="14:26" android:textSize="11sp" android:textColor="@color/text_secondary" />
 
             <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
 
-            <!-- Bug fix(#Meta-Row-Hierarchy): tv_tps は常時表示ではなく、このトグルの
-                   タップで開閉する。electric_bolt アイコンは性能情報であることを一目で
-                   伝えるための機能的アイコンで、装飾用の絵文字ではない。 -->
+            <!-- tv_tps は常時表示ではなく、このトグルのタップで開閉する。
+                   electric_bolt アイコンは性能情報であることを一目で伝えるための
+                   機能的アイコンで、装飾用の絵文字ではない。 -->
             <LinearLayout android:id="@+id/perf_meta_toggle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="6dp" android:paddingEnd="6dp" android:paddingTop="2dp" android:paddingBottom="2dp" android:background="?attr/selectableItemBackgroundBorderless" android:clickable="true" android:focusable="true" android:visibility="gone">
                 <ImageView android:layout_width="13dp" android:layout_height="13dp" android:src="@drawable/electric_bolt_24" app:tint="@color/text_secondary" android:contentDescription="@null" />
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="3dp" android:text="@string/perf_detail_label" android:textSize="11sp" android:textColor="@color/text_secondary" />
@@ -79,9 +77,10 @@
 
         <TextView android:id="@+id/tv_tps" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:layout_marginStart="4dp" android:paddingStart="8dp" android:paddingEnd="8dp" android:paddingTop="4dp" android:paddingBottom="4dp" android:background="@drawable/bg_perf_meta_chip" android:textSize="11sp" android:textColor="@color/text_secondary" android:visibility="gone" />
 
-        <!-- Bug fix(#Action-Row-Declutter): copy/speak/regenerate を常時表示から
-               吹き出しタップ時のみ表示するトグル方式へ変更。既定は GONE。 -->
-        <LinearLayout android:id="@+id/message_actions_row" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="4dp" android:visibility="gone">
+        <!-- Bug fix(#Actions-Always-Visible): copy/speak/regenerate/variant-nav は
+               すべて常時表示に戻す（吹き出しタップでの開閉トグルは廃止）。
+               速度情報(tv_tps)のみ上の「詳細」トグルによる開閉を維持する。 -->
+        <LinearLayout android:id="@+id/message_actions_row" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="4dp">
             <ImageView android:id="@+id/copy_message_button" android:layout_width="32dp" android:layout_height="32dp" android:src="@drawable/content_copy_24" android:scaleType="centerInside" android:padding="4dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/copy_all" android:clickable="true" android:focusable="true" app:tint="@color/text_secondary" />
             <ImageView android:id="@+id/speak_message_button" android:layout_width="32dp" android:layout_height="32dp" android:layout_marginStart="2dp" android:src="@drawable/ic_select_to_speak_24" android:scaleType="centerInside" android:padding="6dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="読み上げ" android:clickable="true" android:focusable="true" app:tint="@color/text_secondary" />
             <!-- 応答バリアントナビゲーション (◀ n/m ▶)。応答が複数あるときのみ表示。 -->
@@ -95,3 +94,4 @@
         </LinearLayout>
     </LinearLayout>
 </LinearLayout>
+

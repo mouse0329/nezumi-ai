@@ -66,7 +66,7 @@ import java.util.Date
 import java.util.Locale
 
 class MessageAdapter(
-    private val onUserPromptRevoke: (MessageEntity) -> Unit = {},
+    private val onUserPromptEdit: (MessageEntity) -> Unit = {},
     private val onAiMessageLayoutChanged: () -> Unit = {},
     private val onAiMessageSpeak: (MessageEntity, String) -> Unit = { _, _ -> },
     private val onAiMessageRegenerate: (MessageEntity) -> Unit = {},
@@ -476,7 +476,7 @@ class MessageAdapter(
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
         return if (viewType == VIEW_TYPE_USER) {
             val binding = ItemMessageUserBinding.inflate(LayoutInflater.from(parent.context), parent, false)
-            UserMessageViewHolder(binding, onUserPromptRevoke) { isGenerating }
+            UserMessageViewHolder(binding, onUserPromptEdit) { isGenerating }
         } else {
             val binding = ItemMessageAiBinding.inflate(LayoutInflater.from(parent.context), parent, false)
             AiMessageViewHolder(binding, onAiMessageLayoutChanged, lifecycleOwner, viewModelStoreOwner)
@@ -534,7 +534,7 @@ class MessageAdapter(
     
     class UserMessageViewHolder(
         private val binding: ItemMessageUserBinding,
-        private val onUserPromptRevoke: (MessageEntity) -> Unit,
+        private val onUserPromptEdit: (MessageEntity) -> Unit,
         private val isGeneratingProvider: () -> Boolean = { false }
     ) :
         RecyclerView.ViewHolder(binding.root) {
@@ -659,26 +659,21 @@ class MessageAdapter(
                 copyMessageButton.setOnClickListener {
                     copyAllToClipboard(binding.root.context, message.content)
                 }
-                // Bug fix: 生成中に取り消しボタンが見えてしまう不具合への対処。
-                // bind のたびにジェネレート状態を参照して可視性を制御する。
+                // Bug fix(#Edit-Instead-Of-Revoke): 元は取り消し(取消)専用ボタンだったが、
+                //   ペンアイコンに差し替えて「編集」専用にした。編集開始 (再入力欄に
+                //   戻す) は ChatFragment 側の onUserPromptEdit で行う。生成中は
+                //   対象メッセージがまだ確定していない可能性があるため無効化する。
                 val generating = isGeneratingProvider()
                 revokePromptButton.isEnabled = !generating
                 revokePromptButton.setOnClickListener {
                     if (isGeneratingProvider()) return@setOnClickListener
-                    onUserPromptRevoke(message)
+                    onUserPromptEdit(message)
                 }
 
-                // Bug fix(#Action-Row-Declutter): copy/revoke は既定で非表示にし、
-                //   吹き出しタップで開閉する。生成中は取り消し操作自体が無効なので
-                //   アクション行ごと畳んだままにする。
-                messageActionsRow.visibility = View.GONE
-                userMessageText.setOnClickListener {
-                    if (isGeneratingProvider()) return@setOnClickListener
-                    messageActionsRow.visibility =
-                        if (messageActionsRow.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-                }
-                // 取り消し操作は生成中に無効化されるため、アクション行を開いていても
-                // ボタン自体は個別に隠す（アイコンの押し間違いを防ぐ）。
+                // Bug fix(#Actions-Always-Visible): コピー・編集は常時表示に戻す
+                //   （吹き出しタップでの開閉トグルは廃止）。編集は生成中のみ
+                //   個別に隠し、誤操作を防ぐ。
+                messageActionsRow.visibility = View.VISIBLE
                 revokePromptButton.visibility = if (generating) View.GONE else View.VISIBLE
             }
         }
@@ -1117,20 +1112,11 @@ class MessageAdapter(
                     onAiMessageSpeak(message, speakText)
                 }
 
-                // Bug fix(#Action-Row-Declutter): copy/speak/regenerate 等の操作アイコンは
-                //   既定で非表示にし、吹き出し本体タップで開閉する。ストリーミング中は
-                //   操作対象がまだ確定していないため常に畳んだ状態にしておく。
-                messageActionsRow.visibility = View.GONE
-                val actionsToggleTarget = if (aiMessageMarkdownCompose.visibility == View.VISIBLE) {
-                    aiMessageMarkdownCompose
-                } else {
-                    aiMessageText
-                }
-                actionsToggleTarget.setOnClickListener {
-                    if (message.isStreaming) return@setOnClickListener
-                    messageActionsRow.visibility =
-                        if (messageActionsRow.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-                }
+                // Bug fix(#Actions-Always-Visible): copy/speak/regenerate 等の操作アイコンは
+                //   常時表示に戻す（吹き出しタップでの開閉トグルは廃止）。ストリーミング中は
+                //   操作対象がまだ確定していないため個別のボタン側で無効化する
+                //   （speak は上の canSpeak チェックで既に GONE 制御済み）。
+                messageActionsRow.visibility = View.VISIBLE
 
  // t/s と TTFT は全般タブの設定で非表示にできる。既定は両方とも非表示。
                 // Bug fix(#43): Adapter のキャッシュ値を優先し、未初期化のときだけ SharedPreferences を直接参照する。

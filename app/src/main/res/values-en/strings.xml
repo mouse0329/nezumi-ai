@@ -66,6 +66,10 @@ Enjoy chatting with your AI!</string>
     <string name="scroll_to_bottom">Scroll to bottom</string>
     <string name="scroll_to_bottom_icon"></string>
     <string name="revoke_prompt">Undo</string>
+    <!-- Bug fix(#Edit-Instead-Of-Revoke): contentDescription / toast text for the
+         revoke button repurposed as an edit button. -->
+    <string name="edit_prompt">Edit</string>
+    <string name="edit_prompt_no_target">Nothing to edit</string>
     <string name="copy_all">Copy</string>
     <string name="copied_to_clipboard">Copied</string>
     <string name="message_image">Message image</string>

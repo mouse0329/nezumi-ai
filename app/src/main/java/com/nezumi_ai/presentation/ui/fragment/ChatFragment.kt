@@ -98,6 +98,8 @@ import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.stripGemmaTokens
 import com.nezumi_ai.data.inference.stripTxtFileBlocks
 import com.nezumi_ai.data.inference.stripVideoBlocks
+import com.nezumi_ai.data.media.VideoAttachmentEncoding
+import com.nezumi_ai.data.media.TextFileAttachmentEncoding
 import com.nezumi_ai.data.repository.ChatSessionRepository
 import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.MessageRepository
@@ -862,8 +864,42 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         // RecyclerView設定（adapterの初期化をStateFlowのcollect前に移動）
         adapter = MessageAdapter(
-            onUserPromptRevoke = { message ->
-                viewModel.revokePromptFromMessage(message.id)
+            // Bug fix(#Edit-Instead-Of-Revoke): 元は「取り消し」(対象メッセージ以降を
+            //   削除するだけ)だったが、ペンアイコンに変更したのに合わせて「編集」に
+            //   した。編集の中身は次の3ステップ:
+            //     1) メッセージのテキスト本文 (内部タグ除去済み) を入力欄に戻す
+            //     2) 画像/動画/音声/テキストファイル添付も、送信前と同じプレビュー
+            //        state (selectedImageUrisList など) に復元する
+            //     3) 対象メッセージ以降を DB から削除する (revokePromptFromMessage を流用)
+            //   ステップの順序が重要: 削除は非同期 (IO スレッド) なので、UI 側の
+            //   state 復元を先に同期的に済ませてから削除を投げる。
+            onUserPromptEdit = { message ->
+                val (videoMeta, imageUrisRaw) = VideoAttachmentEncoding.split(message.imageUri)
+                val textFiles = TextFileAttachmentEncoding.extract(message.imageUri)
+                val imageUris = imageUrisRaw.filter { !TextFileAttachmentEncoding.isMarker(it) }
+
+                binding.messageInput.setText(
+                    message.content.stripTxtFileBlocks().stripVideoBlocks()
+                )
+                binding.messageInput.setSelection(binding.messageInput.text?.length ?: 0)
+
+                selectedImageUrisList = imageUris
+                selectedTextFiles = textFiles
+                selectedVideoUri = videoMeta?.originalVideoUri
+                selectedVideoDurationMs = videoMeta?.durationMs ?: 0L
+                // フレーム数は動画メタに保持していないため、復元した imageUris の件数を
+                // そのまま使う（動画由来でなければ 0 のまま）。
+                selectedVideoFrameCount = if (videoMeta != null) imageUris.size else 0
+                selectedAudioUri = videoMeta?.audioUri ?: message.audioUri
+
+                binding.messageInput.requestFocus()
+                context?.let { ctx ->
+                    val imm = ctx.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                        as? android.view.inputmethod.InputMethodManager
+                    imm?.showSoftInput(binding.messageInput, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                }
+
+                viewModel.revokePromptFromMessage(message.id, isEditing = true)
             },
             onAiMessageLayoutChanged = {
                 if (shouldAutoFollowBottom()) {

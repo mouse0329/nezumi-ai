@@ -25,16 +25,16 @@
 
         <TextView android:id="@+id/user_message_time" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="14:25" android:textSize="11sp" android:textColor="@color/text_secondary" android:layout_marginTop="3dp" android:layout_marginEnd="4dp" />
 
-        <!-- Bug fix(#Action-Row-Declutter): 常時表示だったコピー/取り消しボタンを
-               吹き出しタップ時のみ表示するトグル方式に変更。既定は非表示 (GONE) とし、
-               アダプター側で bubble のクリックリスナーから可視性を切り替える。
-               revoke ボタンは copy と同じアイコンボタン形式に統一し、枠線付き
-               MaterialButton の見た目の不一致を解消した。 -->
-        <LinearLayout android:id="@+id/message_actions_row" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:orientation="horizontal" android:visibility="gone">
+        <!-- Bug fix(#Actions-Always-Visible): コピー・編集はどちらも操作頻度が高い
+               ため、開閉トグルをやめて常時表示にする。
+               Bug fix(#Edit-Instead-Of-Revoke): 取り消し(✕)をメッセージ編集(ペン)に
+               変更。ID (revoke_prompt_button) は Kotlin 側の参照を維持するため
+               そのままとし、見た目と挙動 (編集開始) だけを変更する。 -->
+        <LinearLayout android:id="@+id/message_actions_row" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:orientation="horizontal">
 
             <ImageView android:id="@+id/copy_message_button" android:layout_width="32dp" android:layout_height="32dp" android:src="@drawable/content_copy_24" android:scaleType="centerInside" android:padding="4dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/copy_all" android:clickable="true" android:focusable="true" app:tint="@color/text_secondary" />
 
-            <ImageView android:id="@+id/revoke_prompt_button" android:layout_width="32dp" android:layout_height="32dp" android:src="@drawable/ic_close" android:scaleType="centerInside" android:padding="6dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/revoke_prompt" android:clickable="true" android:focusable="true" app:tint="@color/text_secondary" />
+            <ImageView android:id="@+id/revoke_prompt_button" android:layout_width="32dp" android:layout_height="32dp" android:src="@drawable/ic_edit" android:scaleType="centerInside" android:padding="6dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/edit_prompt" android:clickable="true" android:focusable="true" app:tint="@color/text_secondary" />
         </LinearLayout>
     </LinearLayout>
 </LinearLayout>

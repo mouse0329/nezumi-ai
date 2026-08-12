@@ -883,7 +883,7 @@ private fun LegacyImageGenScreen(
                             }
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                stringResource(R.string.image_gen_denoise_strength_format, String.format("%.2f", denoiseStrength)),
+                                stringResource(R.string.image_gen_denoise_strength_format, denoiseStrength),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface
                             )

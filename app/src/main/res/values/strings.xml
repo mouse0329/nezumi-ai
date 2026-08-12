@@ -61,6 +61,10 @@
     <string name="scroll_to_bottom">一番下へ</string>
     <string name="scroll_to_bottom_icon"></string>
     <string name="revoke_prompt">取り消し</string>
+    <!-- Bug fix(#Edit-Instead-Of-Revoke): 取り消しボタンを編集ボタンに変更した際の
+         contentDescription / トースト文言。 -->
+    <string name="edit_prompt">編集</string>
+    <string name="edit_prompt_no_target">編集できるメッセージがありません</string>
     <string name="copy_all">コピー</string>
     <string name="copied_to_clipboard">コピーしました</string>
     <string name="message_image">メッセージの画像</string>

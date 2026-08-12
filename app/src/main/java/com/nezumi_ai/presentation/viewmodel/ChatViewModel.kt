@@ -1417,10 +1417,17 @@ class ChatViewModel(
         }
     }
 
-    fun revokePromptFromMessage(promptMessageId: Long) {
+    /**
+     * @param isEditing true のとき「編集」経路からの呼び出し。UI 側は削除前に
+     *   添付ファイルのプレビュー state (selectedImageUrisList 等) を復元済みのため、
+     *   ここでメディア実体を消してしまうと復元したプレビューが参照切れになる。
+     *   そのため isEditing=true のときは DB レコードのみ削除し、
+     *   MessageMediaStore.deleteStoredFileIfOwned によるファイル実体の削除はスキップする。
+     */
+    fun revokePromptFromMessage(promptMessageId: Long, isEditing: Boolean = false) {
         val sessionId = _currentSessionId.value ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            revokePromptFromMessageInternal(sessionId, promptMessageId)
+            revokePromptFromMessageInternal(sessionId, promptMessageId, deleteMediaFiles = !isEditing)
         }
     }
 
@@ -1624,7 +1631,11 @@ class ChatViewModel(
     private data class AssistantVariantSpec(val parentUserMessageId: Long, val variantIndex: Int)
     private var _pendingAssistantVariantSpec: AssistantVariantSpec? = null
 
-    private suspend fun revokePromptFromMessageInternal(sessionId: Long, promptMessageId: Long) {
+    private suspend fun revokePromptFromMessageInternal(
+        sessionId: Long,
+        promptMessageId: Long,
+        deleteMediaFiles: Boolean = true
+    ) {
  // Bug fix: 非同期 stopGeneration() だと、取り消し処理が message delete より先に終わる保証がなく、
         //   停止中のストリームが削除済みメッセージへ後から書き戻してしまうレースがあった。
         //   ここでは suspend 版を直接呼び、停止完了後に削除する。
@@ -1632,21 +1643,28 @@ class ChatViewModel(
         val messages = messageRepository.getMessagesForSessionOnce(sessionId)
         val targetIndex = messages.indexOfFirst { it.id == promptMessageId && it.role == "user" }
         if (targetIndex < 0) {
-            _uiMessage.emit("取り消せるプロンプトがありません")
+            _uiMessage.emit(if (deleteMediaFiles) "取り消せるプロンプトがありません" else "編集できるメッセージがありません")
             return
         }
 
         val toDelete = messages.subList(targetIndex, messages.size)
         toDelete.forEach { msg ->
-            MessageMediaStore.deleteStoredFileIfOwned(appContext, msg.imageUri)
-            MessageMediaStore.deleteStoredFileIfOwned(appContext, msg.audioUri)
+            // Bug fix(#Edit-Instead-Of-Revoke): 編集経路 (deleteMediaFiles=false) では
+            //   UI 側が既に画像/音声/動画/テキストファイルのプレビュー state を
+            //   復元済みのため、ここでファイル実体を消すと復元したプレビューが
+            //   参照切れになる。DB レコードのみ削除し、ファイルは編集後の再送信時に
+            //   同じ URI のまま再利用する。
+            if (deleteMediaFiles) {
+                MessageMediaStore.deleteStoredFileIfOwned(appContext, msg.imageUri)
+                MessageMediaStore.deleteStoredFileIfOwned(appContext, msg.audioUri)
+            }
             messageRepository.deleteMessageById(msg.id)
         }
         compressedContextCache.remove(sessionId)
         runCatching { requireModelManager().clearKvCache() }
             .onFailure { Log.w(TAG, "clearKvCache after revoke failed", it) }
         sessionRepository.updateSessionLastUpdated(sessionId)
-        _uiMessage.emit("プロンプトを取り消しました")
+        _uiMessage.emit(if (deleteMediaFiles) "プロンプトを取り消しました" else "メッセージを編集します")
     }
 
     private suspend fun generateAIResponse(

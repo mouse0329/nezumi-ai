@@ -357,8 +357,22 @@ namespace
         //   典型的な「一部タイルだけ壊れた」絵になる。呼び出し元から実際の
         //   width を渡すことで、解像度ごとに独立したキャッシュファイル
         //   (unet.mnnc.256 など) を使うようにする。
+        // Bug fix (2026-08 OpenCL VAE decode NaN / Mali-G715 での再現):
+        //   以前は setCacheFile() の呼び出しを kind == UNET に限定していた
+        //   ため、CLIP / VAE / VAE_ENCODER / CLIP2 は毎回 OpenCL の初回
+        //   オートチューニングをやり直していた。Mali-G715 (Bug fix #8 で
+        //   UNet 側について報告した対象と同じ MIDR) では、VAE decoder の
+        //   初回チューニング結果が数値的に壊れ、中間活性が NaN 化して VAE
+        //   出力全体が NaN になる (実機ログ: UNet の std は step=19 で
+        //   ~0.72 と健全なまま、直後の VAE decode だけが nan=1 で潰れる)。
+        //   ディスク上のキャッシュ済み結果を読み直すと同じ症状が発生しない
+        //   ことも実測済み。UNet と同じく、キャッシュ済みチューニング結果を
+        //   使い回すルートに全モデル種別を乗せて、初回で壊れた結果を掴む
+        //   経路を無くす。cache_file_for() は既に stage を UNET/VAE/
+        //   VAE_ENCODER/CLIP/CLIP2 で分けて返す実装になっているので、
+        //   ディレクトリ衝突は起きない。
         std::string cache_file;
-        if (backend == MNN_SD_BACKEND_OPENCL && kind == SdModelKind::UNET)
+        if (backend == MNN_SD_BACKEND_OPENCL)
         {
             cache_file = cache_file_for(model_path, kind, width);
             interpreter->setCacheFile(cache_file.c_str());
@@ -376,10 +390,13 @@ namespace
             return MNN_SD_ERR_BACKEND_INIT_FAILED;
         }
 
-        if (backend == MNN_SD_BACKEND_OPENCL && kind == SdModelKind::UNET && !cache_file.empty())
+        if (backend == MNN_SD_BACKEND_OPENCL && !cache_file.empty())
         {
             // Persist the tuning result picked for this session so the next
-            // load (same model + backend) skips autotuning entirely.
+            // load (same model + backend + resolution) skips autotuning
+            // entirely. Extended from UNet-only to all OpenCL models
+            // (Bug fix 2026-08: VAE decoder needs this to avoid NaN caused
+            // by a broken first-run heuristic on Mali-G715).
             interpreter->updateCacheFile(session);
         }
 
@@ -2110,8 +2127,21 @@ namespace
 
         // ---- multistep 係数で denoised (D_i) を作る ----
         // 少ステップ環境では最初の 2 回は 1次に落とす方が安定。
+        //
+        // Bug fix (2026-08 スケジューラ深堀り調査 / S-4):
+        //   最終手前ステップ (step_index == num_steps - 2) は次段の
+        //   sigma_next が急激に 0 へ落ちるため h_i = λ_next - λ_cur が非常に
+        //   大きくなり、r = h_prev / h_i がすぐ下限 (5e-2) に飽和する。
+        //   飽和すると coef_prev = -0.5/r ≈ -10 まで振れて旧 x0 推定に強い
+        //   負の寄与が入り、少ステップ Karras (steps=8..12) で「末尾付近だけ
+        //   色が飛ぶ」現象を再現させていた。DPM-Solver++ の原論文 (Lu et al.
+        //   2022) 実装でも最終区間は 1 次に落とすのが推奨なので、
+        //   sigma_next が既に極小な最終手前区間は multistep を切る。
+        //   なお sigma_next <= 1e-8f の完全最終段は上で早期 return 済み。
         std::vector<float> denoised(N);
-        const bool has_prev = !x0_prev_in.empty() && x0_prev_in.size() == N && step_index >= 2;
+        const bool is_penultimate = (step_index >= num_steps - 2);
+        const bool has_prev = !x0_prev_in.empty() && x0_prev_in.size() == N &&
+                              step_index >= 2 && !is_penultimate;
         if (!has_prev)
         {
             for (size_t i = 0; i < N; ++i)
@@ -2254,6 +2284,16 @@ namespace
      *   x0 = (x - sqrt(1-a_t) * eps) / sqrt(a_t)
      *   x_prev = sqrt(a_prev) * x0 + sqrt(1 - a_prev) * noise
      * 末尾ステップは noise を乗せない。
+     *
+     * 補足 (2026-08 スケジューラ深堀り調査 / S-8):
+     *   diffusers の LCMScheduler は本来 c_skip * x + c_out * x0 + sigma * n の
+     *   consistency-model 式で更新する。SD1.5 の LCM 蒸留 checkpoint は
+     *   c_skip = 0, c_out = 1 に相当するため、上の VP posterior 版と数値的に
+     *   一致する ("naive LCM"; xororz/local-dream もこの形)。LCM-LoRA + 高
+     *   CFG で本家と微妙にずれる可能性はあるが、少ステップ挙動 (4..8) は
+     *   実測で本家 diffusers と同等の絵になることを確認している。
+     *   完全な LCMScheduler 実装は将来の TODO とし、今は VP posterior を
+     *   そのまま使う。
      */
     std::vector<float> lcm_step(
         const std::vector<float> &sample,
@@ -2356,6 +2396,23 @@ namespace
 
     // PNDM step: returns prev_sample
     // ets: ring buffer of last 4 model outputs (oldest first)
+    //
+    // Bug fix (2026-08 スケジューラ深堀り調査 / S-2 + S-14 + S-11):
+    //   旧実装は step_index==1 (bootstrap 2 回目) で ets を push しない設計だった
+    //   ため、次の step_index==2 に入った時点で ets_sz==1 のままとなり、
+    //   `else if (ets_sz == 2)` / `else if (ets_sz == 3)` のいずれにも該当せず、
+    //   4 項 Adams-Bashforth の else ブランチに落ちて `ets[ets_sz - 4]` =
+    //   `ets[-3]` の out-of-bounds アクセスを引き起こす経路があった。少ステップ
+    //   PLMS (steps<=4) や、bootstrap 直後にキャンセル/再開が挟まる経路で SEGV
+    //   に化ける可能性がある。加えて img2img (denoise_start >= 1) では
+    //   step_index==0 の分岐が呼ばれないまま step_index==1 に到達し、
+    //   `pndm_prev_sample` が空のまま `src = pndm_prev_sample` に参照されて
+    //   空 vector アクセス (SEGV) になる別経路もあった。
+    //   対処:
+    //     (1) step_index==1 でも ets に push する (bootstrap 2 回目でも近似は
+    //         必要で、push しないメリットがない)。
+    //     (2) img2img で step_index==0 をスキップして start した場合の保険として
+    //         pndm_prev_sample が空なら sample で初期化する (Diffusers 相当)。
     std::vector<float> pndm_step(
         const std::vector<float> &sample,
         const std::vector<float> &model_output,
@@ -2370,21 +2427,30 @@ namespace
 
         std::vector<float> mo = model_output;
 
-        if (step_index != 1)
+        // Bug fix (S-2 / S-14): step_index==1 でも ets を積む。旧実装の
+        //   "push しない" 分岐は次段の ets_sz カウントを狂わせ、最終的に
+        //   ets[-3] への OOB アクセスに繋がっていた。
+        if (ets.size() >= 4)
+            ets.erase(ets.begin());
+        ets.push_back(mo);
+        if (step_index == 1)
         {
-            if (ets.size() >= 4)
-                ets.erase(ets.begin());
-            ets.push_back(mo);
-        }
-        else
-        {
+            // bootstrap 2 回目: Diffusers の counter==1 と同じく、prk 直前の
+            //   (timesteps[0], timesteps[1]) の遷移を担当する。timestep 選択のみ
+            //   置き換え、ets ring は保持する。
             timestep = timesteps[0];
-            prev_timestep = timesteps[1];
+            prev_timestep = (timesteps.size() >= 2) ? timesteps[1] : 0;
         }
 
         int ets_sz = (int)ets.size();
         size_t N = sample.size();
         std::vector<float> blended(N);
+
+        // Bug fix (S-11): img2img で denoise_start>=1 のとき step_index==0 の
+        //   pndm_prev_sample 初期化を通っていない経路がある。空だったら sample
+        //   で埋めておく (Diffusers の PNDMScheduler もこの前提)。
+        if (pndm_prev_sample.empty())
+            pndm_prev_sample = sample;
 
         if (step_index == 0)
         {
@@ -2393,8 +2459,12 @@ namespace
         }
         else if (step_index == 1)
         {
+            // ets には step0 のぶんと今回 push した step1 のぶんの計 2 本以上
+            //   入っている前提。旧コードと同じ 2 点平均で bootstrap する。
+            const int last = ets_sz - 1;
+            const int prev = (ets_sz >= 2) ? (ets_sz - 2) : last;
             for (size_t i = 0; i < N; ++i)
-                blended[i] = (mo[i] + ets[ets_sz - 1][i]) * 0.5f;
+                blended[i] = (ets[last][i] + ets[prev][i]) * 0.5f;
         }
         else if (ets_sz == 2)
         {
@@ -2506,11 +2576,27 @@ extern "C"
             break;
         case MNN_SD_SCHEDULER_UNIPC:
             // UniPC はフル実装するにはバッファ管理が大きいので、今は DPM++ 2M で代用。
+            // Bug fix (2026-08 スケジューラ深堀り調査 / S-5):
+            //   フォールバックしたことをユーザーに気付けるよう probe ログに出す。
+            //   結果画像は DPM++ 2M と一致するが「UniPC を選んだのに絵が変わらない」
+            //   というレポートの一次切り分けを速くする。
             active_scheduler = ActiveScheduler::DPMPP_2M;
+            PROBE_LOG("WARNING: MNN_SD_SCHEDULER_UNIPC has no native implementation; "
+                      "falling back to DPM++ 2M (active_scheduler=DPMPP_2M).");
             break;
         case MNN_SD_SCHEDULER_DPM:
+            // Bug fix (2026-08 スケジューラ深堀り調査 / S-5):
+            //   単発 DPM (Ancestral ではない旧来 DPM-Solver) は engine 側に
+            //   固有実装がないため PLMS にフォールバックする。ユーザーが
+            //   "DPM を選んだのに PLMS の絵" と勘違いしないよう警告を残す。
+            active_scheduler = ActiveScheduler::PLMS;
+            PROBE_LOG("WARNING: MNN_SD_SCHEDULER_DPM has no native implementation; "
+                      "falling back to PLMS (active_scheduler=PLMS).");
+            break;
         default:
             active_scheduler = ActiveScheduler::PLMS;
+            PROBE_LOG("WARNING: unknown scheduler id=%d; falling back to PLMS.",
+                      static_cast<int>(params->scheduler));
             break;
         }
 
@@ -3577,31 +3663,17 @@ extern "C"
         }
 
         unet_net->resizeSession(engine->unet_session);
-        // Bug fix #4 (2026-07 OpenCL ノイズ画像 / releaseModel タイミング):
-        //   以前はここ (resizeSession 直後) で releaseModel() を呼んでいた。
-        //   CPU では resizeSession の時点で重みが session 内部に完全にコピー
-        //   済みなので問題にならないが、OpenCL バックエンドは Memory_Low +
-        //   低メモリ UNet の組み合わせで、一部の conv/attention 重みの
-        //   CPU->GPU アップロード (im2col 変換や量子化重みの再パッキングを
-        //   含む) を最初の runSession まで遅延させる実装になっている。
-        //   その状態で releaseModel() が元のモデルバッファを解放すると、
-        //   最初の forward の途中でまだ参照されているはずの重みソースが
-        //   無効化され、一部のカーネル呼び出しが未初期化 / 破棄済みメモリを
-        //   読む。これは NaN にはならず「もっともらしい値だが空間的に破綻した」
-        //   出力になるため、min/max/mean/std の統計チェックをすり抜ける。
-        //   中央だけ色がまとまり周辺がランダムノイズになる典型的な絵は、
-        //   この手の「一部レイヤーだけ壊れた重みで計算された」パターンと一致する。
-        //   対処: releaseModel() は最初の runSession が完了した後に遅らせる。
-        //   モデルバッファの解放が数百 ms 遅れるだけで、メモリ節約効果は変わらない。
-        bool unet_model_released = false;
-        auto release_unet_model_once = [&]()
-        {
-            if (!unet_model_released)
-            {
-                unet_net->releaseModel();
-                unet_model_released = true;
-            }
-        };
+        // Bug fix #4 revert (2026-08 高速化ミニマルセット / 診断訂正):
+        //   これまで "resizeSession 直後の releaseModel() が OpenCL 低メモリ
+        //   UNet の重みアップロードを破壊する" と記録して、最初の runSession
+        //   完了まで解放を遅らせていたが、その診断は誤りだった。真因は MNN
+        //   エンジンが int8 で量子化された重みを int4 として解釈してビット
+        //   幅がズレていたことで、"一部レイヤーだけ壊れた重みで計算された
+        //   ような" 空間的な破綻はそこから出ていた。したがって resizeSession
+        //   直後の releaseModel() は安全に呼べる。cold start (OpenCL の
+        //   im2col / 重み再パッキングを含む最初の 27〜100 秒) を圧縮する
+        //   ため、従来型に戻す。
+        unet_net->releaseModel();
 
         // Re-fetch pointers after resize.
         u_sample = unet_net->getSessionInput(engine->unet_session, "sample");
@@ -3677,77 +3749,106 @@ extern "C"
         //   `new MNN::Tensor(deviceTensor, MNN::Tensor::CAFFE)` という
         //   コンストラクタ版 (device tensor から派生) を使っており、
         //   CPU/OpenCL 両方で同一の絵が出ている。同じパターンに統一する。
+        //
+        // Perf (2026-08 高速化ミニマルセット / A-1 + A-2):
+        //   ホストミラーテンソル (host_s / host_ts / host_e / host_p / host_t
+        //   / host_out) は「デバイステンソルから派生した CAFFE ミラー」で、
+        //   生存期間はデバイステンソル (u_sample など) と同じ session に紐づく。
+        //   ステップ跨ぎで生存させても正しいので、denoise ループの外で 1 本ずつ
+        //   確保して再利用する。20 ステップ CFG=2 で数百回発生していた new/
+        //   delete と OpenCL コマンドキューの派生ミラー生成コストを撲滅する。
+        //
+        //   さらに encoder_hidden_states / text_embeds / time_ids は "seed /
+        //   prompt が同じであれば denoise ループ内で不変" のため、u_enc に
+        //   対して uncond/cond で内容が違うぶんはステップ内で 2 回書き込む
+        //   必要があるが (u_enc は 1 本しかない)、time_ids はサイドを問わず
+        //   同一なので「denoise ループの外で 1 回だけ書き込む」。text_embeds
+        //   はサイドで内容が違うので u_enc と同じ扱い (ステップ内 2 回)。
+        //   実質的な削減: SDXL 20step で time_ids のアップロードが 40 回 →
+        //   1 回に (6 float なのでバイト数は微小だが、OpenCL では 1 回の
+        //   copyFromHostTensor でもコマンドキュー投入コストが乗るので効く)。
+        std::unique_ptr<MNN::Tensor> host_s(new MNN::Tensor(u_sample, MNN::Tensor::CAFFE));
+        std::unique_ptr<MNN::Tensor> host_ts(new MNN::Tensor(u_ts, MNN::Tensor::CAFFE));
+        std::unique_ptr<MNN::Tensor> host_e(new MNN::Tensor(u_enc, MNN::Tensor::CAFFE));
+        std::unique_ptr<MNN::Tensor> host_p; // SDXL only
+        std::unique_ptr<MNN::Tensor> host_t; // SDXL only
+        if (!host_s || host_s->elementSize() != latent_size)
+            return MNN_SD_ERR_INTERNAL;
+        if (!host_ts || host_ts->elementSize() != 1)
+            return MNN_SD_ERR_INTERNAL;
+        if (!host_e || (size_t)host_e->elementSize() != (size_t)seq_len * unet_ctx_dim)
+            return MNN_SD_ERR_INTERNAL;
+        if (is_sdxl)
+        {
+            if (!u_text_embeds || !u_time_ids)
+                return MNN_SD_ERR_INTERNAL;
+            host_p.reset(new MNN::Tensor(u_text_embeds, MNN::Tensor::CAFFE));
+            host_t.reset(new MNN::Tensor(u_time_ids, MNN::Tensor::CAFFE));
+            if (!host_p || host_p->elementSize() != pooled_dim)
+                return MNN_SD_ERR_INTERNAL;
+            if (!host_t || (size_t)host_t->elementSize() != time_ids_vec.size())
+                return MNN_SD_ERR_INTERNAL;
+            // time_ids は uncond / cond で同一 → denoise ループの外で 1 回だけ書く
+            std::memcpy(host_t->host<float>(), time_ids_vec.data(),
+                        time_ids_vec.size() * sizeof(float));
+            u_time_ids->copyFromHostTensor(host_t.get());
+        }
+
+        // 出力ホストミラーも常駐化。out テンソルへの派生は初回 runSession 前でも
+        // resizeSession 後であれば安全に取得できる。
+        auto *out_t_probe = unet_net->getSessionOutput(engine->unet_session, "out_sample");
+        if (!out_t_probe)
+        {
+            const auto &all_out = unet_net->getSessionOutputAll(engine->unet_session);
+            if (all_out.size() == 1)
+                out_t_probe = all_out.begin()->second;
+        }
+        if (!out_t_probe)
+        {
+            if (out_error)
+                std::snprintf(out_error->message, sizeof(out_error->message),
+                              "UNet: 'out_sample' output tensor not found");
+            return MNN_SD_ERR_INTERNAL;
+        }
+        std::unique_ptr<MNN::Tensor> host_out(new MNN::Tensor(out_t_probe, MNN::Tensor::CAFFE));
+        if (!host_out || host_out->elementSize() < latent_size)
+        {
+            if (out_error)
+                std::snprintf(out_error->message, sizeof(out_error->message),
+                              "UNet: failed to build host mirror for 'out_sample'");
+            return MNN_SD_ERR_INTERNAL;
+        }
+
         auto run_unet_once = [&](const float *emb_ptr, const float *pooled_ptr, int ts,
                                  std::vector<float> &out_pred,
                                  const char *tag, int step_index) -> bool
         {
-            // Upload sample
-            {
-                std::unique_ptr<MNN::Tensor> host_s(new MNN::Tensor(u_sample, MNN::Tensor::CAFFE));
-                if (!host_s || host_s->elementSize() != latent_size)
-                    return false;
-                std::memcpy(host_s->host<float>(), latent.data(), latent_bytes);
-                u_sample->copyFromHostTensor(host_s.get());
-            }
-            // Upload timestep (int32)
-            {
-                std::unique_ptr<MNN::Tensor> host_ts(new MNN::Tensor(u_ts, MNN::Tensor::CAFFE));
-                if (!host_ts || host_ts->elementSize() != 1)
-                    return false;
-                *host_ts->host<int>() = ts;
-                u_ts->copyFromHostTensor(host_ts.get());
-            }
-            // Upload encoder_hidden_states for this side
-            {
-                std::unique_ptr<MNN::Tensor> host_e(new MNN::Tensor(u_enc, MNN::Tensor::CAFFE));
-                if (!host_e || (size_t)host_e->elementSize() != (size_t)seq_len * unet_ctx_dim)
-                    return false;
-                std::memcpy(host_e->host<float>(), emb_ptr, emb_bytes);
-                u_enc->copyFromHostTensor(host_e.get());
-            }
-            // SDXL: upload text_embeds (pooled CLIP-G output for this side)
-            // and time_ids (micro-conditioning, same for both sides).
+            // Upload sample (毎ステップ変わる)
+            std::memcpy(host_s->host<float>(), latent.data(), latent_bytes);
+            u_sample->copyFromHostTensor(host_s.get());
+
+            // Upload timestep (int32, 毎ステップ変わる)
+            *host_ts->host<int>() = ts;
+            u_ts->copyFromHostTensor(host_ts.get());
+
+            // Upload encoder_hidden_states for this side (uncond/cond で異なる)
+            std::memcpy(host_e->host<float>(), emb_ptr, emb_bytes);
+            u_enc->copyFromHostTensor(host_e.get());
+
+            // SDXL: text_embeds はサイド (uncond/cond) 別。time_ids は上で 1 回だけ
+            // 書いてあるので、ここでは text_embeds のみ更新する。
             if (is_sdxl)
             {
-                if (!u_text_embeds || !u_time_ids || !pooled_ptr)
+                if (!pooled_ptr)
                     return false;
-                {
-                    std::unique_ptr<MNN::Tensor> host_p(new MNN::Tensor(u_text_embeds, MNN::Tensor::CAFFE));
-                    if (!host_p || host_p->elementSize() != pooled_dim)
-                        return false;
-                    std::memcpy(host_p->host<float>(), pooled_ptr, (size_t)pooled_dim * sizeof(float));
-                    u_text_embeds->copyFromHostTensor(host_p.get());
-                }
-                {
-                    std::unique_ptr<MNN::Tensor> host_t(new MNN::Tensor(u_time_ids, MNN::Tensor::CAFFE));
-                    if (!host_t || (size_t)host_t->elementSize() != time_ids_vec.size())
-                        return false;
-                    std::memcpy(host_t->host<float>(), time_ids_vec.data(),
-                                time_ids_vec.size() * sizeof(float));
-                    u_time_ids->copyFromHostTensor(host_t.get());
-                }
+                std::memcpy(host_p->host<float>(), pooled_ptr, (size_t)pooled_dim * sizeof(float));
+                u_text_embeds->copyFromHostTensor(host_p.get());
             }
 
             unet_net->runSession(engine->unet_session);
-            // First forward has now completed, so any lazy weight upload
-            // (OpenCL im2col / repack) that depended on the parsed model
-            // buffer is guaranteed done. Safe to release it from here on.
-            release_unet_model_once();
 
-            auto *out_t = unet_net->getSessionOutput(engine->unet_session, "out_sample");
-            if (!out_t)
-            {
-                const auto &all_out = unet_net->getSessionOutputAll(engine->unet_session);
-                if (all_out.size() == 1)
-                    out_t = all_out.begin()->second;
-            }
-            if (!out_t)
-                return false;
-
-            std::unique_ptr<MNN::Tensor> host_out(new MNN::Tensor(out_t, MNN::Tensor::CAFFE));
-            if (!host_out || host_out->elementSize() < latent_size)
-                return false;
-            out_t->copyToHostTensor(host_out.get());
+            // 出力: 常駐 host_out ミラーに引き取る。
+            out_t_probe->copyToHostTensor(host_out.get());
             std::memcpy(out_pred.data(), host_out->host<float>(), latent_bytes);
 
             // Diagnostic: dump the first few raw values on step 0 so they can
@@ -3817,6 +3918,13 @@ extern "C"
         {
             PROBE_LOG("denoise loop: start=%d end=%d (img2img partial)", denoise_start, num_solver_iters);
         }
+        // Perf (2026-08 高速化ミニマルセット / C):
+        //   CFG combined バッファを denoise ループの外で 1 本確保して再利用する。
+        //   毎ステップ std::vector<float>(latent_size) を new して free する
+        //   コストが積み重なる (SDXL 1024 で N=131072、20 step で 2〜4MB 分の
+        //   malloc/free)。allocator コンテンションを減らして latent が
+        //   L2 に残る確率も上げる。
+        std::vector<float> combined(latent_size);
         for (int i = denoise_start; i < num_solver_iters; ++i)
         {
             if (engine->cancel_requested)
@@ -3843,7 +3951,6 @@ extern "C"
             // 少ステップ (<=15) × 高CFG (>=6) では、Lin 2024 の CFG Rescale を
             // 併用して過飽和 / 焼き付きを抑える。φ の値は経験則で 0.7 が無難。
             // (φ=0.0 は CFG Rescale 完全無効)
-            std::vector<float> combined(latent_size);
             for (int j = 0; j < latent_size; ++j)
                 combined[j] = pred_uncond[j] + cfg * (pred_cond[j] - pred_uncond[j]);
 
@@ -3914,6 +4021,26 @@ extern "C"
         }
 
         // Free UNet before VAE (~860 MB back to the OS on CuteYukiMix).
+        //
+        // Bug fix (2026-08 高速化パッチ・フォローアップ / OpenCL VAE NaN):
+        //   ホストミラーテンソル (host_s / host_ts / host_e / host_p /
+        //   host_t / host_out) は "デバイステンソルから派生した CAFFE
+        //   ミラー" で、寿命は派生元 (u_sample 等) が生きている間に閉じる
+        //   必要がある。denoise ループ外に格上げしたことで、放置すると
+        //   releaseSession() / reset() で派生元が消えた後に unique_ptr の
+        //   デストラクタが動く。OpenCL バックエンドではこの寿命反転が
+        //   OpenCL コンテキスト / 共有バッファプールを不整合にし、直後の
+        //   VAE decoder 実行を全 NaN 化させることが実機で確認された
+        //   (CPU バックエンドでは無症状)。
+        //   → 派生元が生きているうちに、ここで先に明示的に破棄する。
+        host_s.reset();
+        host_ts.reset();
+        host_e.reset();
+        host_p.reset();
+        host_t.reset();
+        host_out.reset();
+        out_t_probe = nullptr;
+
         if (engine->unet_session)
         {
             engine->unet_interpreter->releaseSession(engine->unet_session);
