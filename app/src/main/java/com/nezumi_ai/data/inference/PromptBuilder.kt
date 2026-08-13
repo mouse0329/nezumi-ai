@@ -240,8 +240,47 @@ object PromptBuilder {
             style == ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL
     }
 
-    /** モデル名から Gemma4 系かどうかを判定する公開ヘルパー（パーサ / ストップシーケンス側で参照）。 */
-    fun isGemma4Model(modelPath: String): Boolean = isGemma4ModelName(modelPath.lowercase())
+    /**
+     * モデル名から Gemma4 系かどうかを判定する公開ヘルパー（パーサ / ストップシーケンス / ツール形式側で参照）。
+     *
+     * クラウドモデル ID (`cloud:provider:modelName`) の場合は、プロバイダ接頭辞を剥がした
+     * 実モデル名だけを見て判定する。Ollama / LM Studio 等で llama・qwen などを使うときに
+     * Gemma 公式の `<|tool_call>call:NAME{...}<tool_call|>` 形式を誤って注入しないため。
+     */
+    fun isGemma4Model(modelPath: String): Boolean {
+        val raw = modelPath.trim()
+        if (raw.isEmpty()) return false
+        // クラウド ID なら実モデル名だけを抽出して判定する
+        val nameForCheck = resolveModelNameForGemmaCheck(raw)
+        return isGemma4ModelName(nameForCheck.lowercase())
+    }
+
+    /**
+     * ツールコール形式の選択用に、判定対象のモデル名を正規化する。
+     * - `cloud:provider:modelName` → modelName
+     * - レガシー gemini_api / claude_api → そのまま（Gemma ではない）
+     * - ローカルパス / 識別子 → ファイル名部分（パスの場合）
+     */
+    fun resolveModelNameForGemmaCheck(modelIdOrPath: String): String {
+        val trimmed = modelIdOrPath.trim()
+        // クラウド ID をパース（依存を避けるため CloudModelId を直接呼ばず同等ロジック）
+        if (trimmed.startsWith("cloud:", ignoreCase = true)) {
+            val body = trimmed.substringAfter(":")
+            val parts = body.split(":", limit = 2)
+            // cloud:provider:model... → model 部分（':' を含みうる）
+            if (parts.size >= 2) {
+                val modelName = parts[1]
+                if (modelName.isNotBlank()) return modelName
+            }
+            return trimmed
+        }
+        // ローカルファイルパスならファイル名だけ見る（親ディレクトリに gemma があっても誤判定しない）
+        val slash = maxOf(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+        if (slash >= 0 && slash < trimmed.lastIndex) {
+            return trimmed.substring(slash + 1)
+        }
+        return trimmed
+    }
 
     fun buildForLiteRt(
         messages: List<MessageEntity>,

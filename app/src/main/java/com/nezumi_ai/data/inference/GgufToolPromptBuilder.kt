@@ -181,9 +181,9 @@ object GgufToolPromptBuilder {
             return systemPrompt
         }
 
-        // Gemma 4 系は Google 公式仕様 (<|tool_call>call:NAME{...}<tool_call|>) を使う。
-        // それ以外のモデル (Qwen 等) は従来通りの <tool_call>{"name":..,"arguments":..}</tool_call> 形式。
-        val toolBlock = if (isGemma4) buildGemma4ToolBlock(toolsJson) else buildGenericToolBlock(toolsJson)
+        // プロンプトは常に汎用 <tool_call>{json}</tool_call> のみ。
+        // Gemma 公式説明文はモデル混乱・空応答の原因のためアプリ全体で禁止。判定はパーサ側。
+        val toolBlock = buildGenericToolBlock(toolsJson)
 
         return if (systemPrompt.isBlank()) toolBlock.trim() else systemPrompt + toolBlock
     }
@@ -210,8 +210,8 @@ object GgufToolPromptBuilder {
             Log.d(TAG, "appendForLiteRt: no builtin schema and no MCP tool - skipping")
             return systemPrompt
         }
-        val toolBlock = if (isGemma4) buildGemma4ToolBlock(toolsJson) else buildGenericToolBlock(toolsJson)
-        Log.i(TAG, "appendForLiteRt: injected <tools> block into LiteRT-LM system prompt (gemma4=$isGemma4)")
+        val toolBlock = buildGenericToolBlock(toolsJson)
+        Log.i(TAG, "appendForLiteRt: injected generic <tools> block (Gemma tool-call prose banned)")
         return if (systemPrompt.isBlank()) toolBlock.trim() else systemPrompt + toolBlock
     }
 
@@ -234,26 +234,11 @@ object GgufToolPromptBuilder {
     }
 
     /**
-     * Gemma 4 (Google 公式仕様) の `<|tool_call>call:NAME{...}<tool_call|>` 形式を教える指示ブロック。
-     *
-     * 参考:
-     *   - `<|tool_call>` / `<tool_call|>` は Gemma 4 tokenizer 上の専用トークンで、
-     *     Google AI 公式の function calling サンプルはこの形で応答することを前提にしている。
-     *   - 閉じタグ `<tool_call|>` を吐き忘れる既知のクセに備え、パーサ側 (salvageGemma4Payload)
-     *     で救済しているが、まずはプロンプトで正しい形を強く指示しておく。
+     * [禁止] 旧 Gemma 公式ツール形式の説明文。プロンプト注入はアプリ全体で禁止。
+     * 形式判定・パースは GgufToolCallParser がアプリ側で行う。
      */
-    private fun buildGemma4ToolBlock(toolsJson: String): String = buildString {
-        appendLine()
-        appendLine()
-        appendLine("You can call tools to help the user.")
-        appendLine("Available tools are listed in <tools></tools>.")
-        appendLine("When calling a tool, respond ONLY with the following Gemma tool-call format")
-        appendLine("(do NOT use JSON `name`/`arguments` wrappers, do NOT use <tool_call> tags):")
-        appendLine("<|tool_call>call:<tool-name>{\"arg\":value, ...}<tool_call|>")
-        appendLine("Always close the call with <tool_call|>. Emit multiple calls back-to-back if needed.")
-        appendLine("<tools>")
-        append(toolsJson)
-        appendLine()
-        append("</tools>")
+    private fun buildGemma4ToolBlock(toolsJson: String): String {
+        // 禁止: Gemma tool-call format 説明文は注入しない。汎用にフォールバック。
+        return buildGenericToolBlock(toolsJson)
     }
 }

@@ -11,6 +11,7 @@ import android.view.ViewGroup
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -40,6 +41,8 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -84,7 +87,11 @@ class LogsFragment : Fragment() {
         return ComposeView(requireContext()).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
-                MaterialTheme {
+                // ダークモード対応: システム設定に追従する colorScheme を使う
+                val darkTheme = isSystemInDarkTheme()
+                MaterialTheme(
+                    colorScheme = if (darkTheme) darkColorScheme() else lightColorScheme()
+                ) {
                     LogsScreen(onBack = { runCatching { findNavController().popBackStack() } })
                 }
             }
@@ -212,8 +219,14 @@ private fun LogcatTab(context: Context) {
         Text(stringResource(R.string.settings_logcat_desc), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(stringResource(R.string.settings_logcat_size, sizeLabel), fontSize = 12.sp)
         Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { refresh() }) { Text("Refresh") }
+        // 横スクロール可能にして狭い画面でもボタンが押せるようにする（反応しない問題の修正）
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+        ) {
+            Button(onClick = { refresh() }) { Text(stringResource(R.string.settings_debug_reload_button)) }
             Button(onClick = { autoRefresh = !autoRefresh }) {
                 Text(if (autoRefresh) stringResource(R.string.settings_logcat_auto_on) else stringResource(R.string.settings_logcat_auto_off))
             }
@@ -221,7 +234,7 @@ private fun LogcatTab(context: Context) {
                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 cm.setPrimaryClip(ClipData.newPlainText("logcat", logText))
                 Toast.makeText(context, context.getString(R.string.settings_logcat_copied), Toast.LENGTH_SHORT).show()
-            }) { Text("Copy") }
+            }) { Text(stringResource(R.string.settings_debug_copy_button)) }
             Button(onClick = {
                 runCatching {
                     val share = Intent(Intent.ACTION_SEND).apply {
@@ -230,9 +243,9 @@ private fun LogcatTab(context: Context) {
                     }
                     context.startActivity(Intent.createChooser(share, context.getString(R.string.settings_logcat_export_title)))
                 }
-            }) { Text("Export") }
+            }) { Text(stringResource(R.string.settings_debug_export_button)) }
             Button(onClick = { LogcatRecorder.clearAll(context); refresh() }) {
-                Text(stringResource(R.string.settings_debug_clear_log))
+                Text(stringResource(R.string.settings_debug_clear_log_button))
             }
         }
         Spacer(Modifier.height(8.dp))

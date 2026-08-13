@@ -59,16 +59,17 @@
 
         <LinearLayout android:id="@+id/tool_results_container" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp" android:visibility="gone" />
 
-        <!-- タイムスタンプ。詳細トグルは廃止。有効な性能指標はアクション行の横に表示。 -->
+        <!-- タイムスタンプ + t/s・TTFT（生成時刻と同じ列）。アクション行にはボタンのみ。 -->
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="3dp" android:layout_marginStart="4dp">
             <TextView android:id="@+id/ai_message_time" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="14:26" android:textSize="11sp" android:textColor="@color/text_secondary" />
+            <TextView android:id="@+id/tv_tps" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:paddingStart="6dp" android:paddingEnd="6dp" android:paddingTop="2dp" android:paddingBottom="2dp" android:background="@drawable/bg_perf_meta_chip" android:textSize="11sp" android:textColor="@color/text_secondary" android:visibility="gone" />
             <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
             <LinearLayout android:id="@+id/perf_meta_toggle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:visibility="gone" />
         </LinearLayout>
 
         <!-- Bug fix(#Actions-Always-Visible): copy/speak/regenerate/variant-nav は
                すべて常時表示に戻す（吹き出しタップでの開閉トグルは廃止）。
-               速度情報(tv_tps)のみ上の「詳細」トグルによる開閉を維持する。 -->
+               性能指標はタイムスタンプ行に表示。 -->
         <LinearLayout android:id="@+id/message_actions_row" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="4dp">
             <ImageView android:id="@+id/copy_message_button" android:layout_width="32dp" android:layout_height="32dp" android:src="@drawable/content_copy_24" android:scaleType="centerInside" android:padding="4dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/copy_all" android:clickable="true" android:focusable="true" app:tint="@color/text_secondary" />
             <ImageView android:id="@+id/speak_message_button" android:layout_width="32dp" android:layout_height="32dp" android:layout_marginStart="2dp" android:src="@drawable/ic_select_to_speak_24" android:scaleType="centerInside" android:padding="6dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="読み上げ" android:clickable="true" android:focusable="true" app:tint="@color/text_secondary" />
@@ -80,7 +81,7 @@
             </LinearLayout>
             <ImageView android:id="@+id/regenerate_message_button" android:layout_width="32dp" android:layout_height="32dp" android:layout_marginStart="2dp" android:src="@drawable/ic_refresh_24" android:scaleType="centerInside" android:padding="4dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="再生成" android:clickable="true" android:focusable="true" android:visibility="gone" app:tint="@color/text_secondary" />
             <ProgressBar android:id="@+id/speak_message_progress" android:layout_width="28dp" android:layout_height="28dp" android:layout_marginStart="4dp" android:indeterminate="true" android:visibility="gone" />
-            <TextView android:id="@+id/tv_tps" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:paddingStart="8dp" android:paddingEnd="8dp" android:paddingTop="4dp" android:paddingBottom="4dp" android:background="@drawable/bg_perf_meta_chip" android:textSize="11sp" android:textColor="@color/text_secondary" android:visibility="gone" />
+
         </LinearLayout>
     </LinearLayout>
 </LinearLayout>

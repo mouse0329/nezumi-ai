@@ -223,11 +223,9 @@ abstract class AbstractCloudInferenceEngine(
                     "images=${images.size} toolCalling=$toolCallingEnabled"
             )
             var currentPrompt = prompt
-            var toolRound = 0
-            // Gemma 4 判定: クラウドモデル名で Gemma 4 を名乗るエンドポイントに備え、
-            // ツールコールタグ形式を切り替える。実際のクラウドモデルは汎用 <tool_call> 形式が多いので
-            // 通常は false のままになるが、パスを揃えておくことで将来の一貫性を保つ。
-            val isGemma4 = PromptBuilder.isGemma4Model(model)
+            var toolRound = 0            // クラウドもモデル名で判定。Gemma4 以外（Ollama の llama/qwen 等）は汎用形式。
+            val isGemma4 = false // generic <tool_call> parse (prompt never uses Gemma prose)
+            Log.d(TAG, "TOOL_FORMAT cloud model=$model isGemma4=$isGemma4")
             while (toolRound < maxToolRounds) {
                 toolRound++
                 val roundText = StringBuilder()

@@ -4488,10 +4488,17 @@ class ChatViewModel(
             systemPrompt = "ユーザー名：$userName\n\n$systemPrompt"
         }
         systemPrompt = appendMemoryBlockToSystemPrompt(systemPrompt, memoryBlock)
-        // Gemma 4 判定: モデル名から 1 回だけ判定し、ツール指示ブロックのフォーマット
-        // (<|tool_call>call:NAME{...}<tool_call|> vs <tool_call>{...}</tool_call>) を切り替える。
+        // ツール形式はモデル名でソフトが判定する。
+        // - Gemma 4 系のみ Google 公式 `<|tool_call>call:NAME{...}<tool_call|>`
+        // - それ以外（Ollama の llama/qwen、LM Studio、OpenAI 互換など）は汎用 `<tool_call>{...}</tool_call>`
+        // クラウド ID は isGemma4Model 内で実モデル名に正規化してから判定する。
         val isGemma4Model = PromptBuilder.isGemma4Model(engineModelName)
         if (enableToolCalling) {
+            Log.d(
+                TAG,
+                "TOOL_FORMAT: engine=$engineModelName isGemma4=$isGemma4Model " +
+                    "resolved=${PromptBuilder.resolveModelNameForGemmaCheck(engineModelName)}"
+            )
             // ツール一覧を組み立てる直前にキャッシュを確認する。
             // TTL 内かつサーバー構成が同じなら即 return するため、通常は追加コストゼロ。
             runCatching { McpToolRegistry.get(appContext).ensureFresh() }
@@ -4499,15 +4506,9 @@ class ChatViewModel(
             systemPrompt = if (isGgufEngine) {
                 GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt, isGemma4 = isGemma4Model)
             } else {
-                // Bug fix (v2.1+): LiteRT-LM 経路ではビルトインツールの定義がシステムプロンプトに
-                // 一切注入されていなかった。ネイティブ ToolProvider として createConversation(tools=...)
-                // に渡してはいたが、automaticToolCalling=false のためモデル自身が「呼び出せるツールが
-                // ある」ことに気付かず、ツールを有効化しても LLM から一切見えない状態だった。
-                //
-                // GgufToolPromptBuilder.appendForLiteRt は GGUF と同じ <tools> ブロックを組み立てて
-                // ビルトイン + MCP をまとめてシステムプロンプトに追加する。二重注入を避けるため、
-                // 従来の McpToolPromptBuilder.appendForLiteRt はここでは呼ばない。
-                // LiteRT-LM 経路もモデルが Gemma 4 なら公式仕様の tool-call 形式を教える。
+                // LiteRT-LM / クラウド共通:
+                // appendForLiteRt は GGUF と同じ <tools> ブロックを組み立てる。
+                // isGemma4=false（llama/qwen 等）なら汎用 tool_call 形式のみを注入する。
                 GgufToolPromptBuilder.appendForLiteRt(appContext, systemPrompt, isGemma4 = isGemma4Model)
             }
         }
@@ -4587,25 +4588,20 @@ class ChatViewModel(
 
         val filteredMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
         var systemPrompt = appendMemoryBlockToSystemPrompt(getActiveSystemPrompt(), memoryBlock)
-        // Gemma 4 判定: モデル名から 1 回だけ判定し、ツール指示ブロックの形式を切り替える。
+        // ツール形式はモデル名でソフトが判定（Gemma4 のみ公式形式、他は汎用 tool_call）。
         val isGemma4Model = PromptBuilder.isGemma4Model(engineModelName)
         if (enableToolCalling) {
-            // ツール一覧を組み立てる直前にキャッシュを確認する。
-            // TTL 内かつサーバー構成が同じなら即 return するため、通常は追加コストゼロ。
+            Log.d(
+                TAG,
+                "TOOL_FORMAT: engine=$engineModelName isGemma4=$isGemma4Model " +
+                    "resolved=${PromptBuilder.resolveModelNameForGemmaCheck(engineModelName)}"
+            )
             runCatching { McpToolRegistry.get(appContext).ensureFresh() }
                 .onFailure { Log.w(TAG, "MCP tool registry refresh failed", it) }
             systemPrompt = if (isGgufEngine) {
                 GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt, isGemma4 = isGemma4Model)
             } else {
-                // Bug fix (v2.1+): LiteRT-LM 経路ではビルトインツールの定義がシステムプロンプトに
-                // 一切注入されていなかった。ネイティブ ToolProvider として createConversation(tools=...)
-                // に渡してはいたが、automaticToolCalling=false のためモデル自身が「呼び出せるツールが
-                // ある」ことに気付かず、ツールを有効化しても LLM から一切見えない状態だった。
-                //
-                // GgufToolPromptBuilder.appendForLiteRt は GGUF と同じ <tools> ブロックを組み立てて
-                // ビルトイン + MCP をまとめてシステムプロンプトに追加する。二重注入を避けるため、
-                // 従来の McpToolPromptBuilder.appendForLiteRt はここでは呼ばない。
-                // LiteRT-LM 経路もモデルが Gemma 4 なら公式仕様の tool-call 形式を教える。
+                // クラウド (Ollama/LM Studio 等) もここに来る。isGemma4=false なら汎用形式のみ。
                 GgufToolPromptBuilder.appendForLiteRt(appContext, systemPrompt, isGemma4 = isGemma4Model)
             }
         }

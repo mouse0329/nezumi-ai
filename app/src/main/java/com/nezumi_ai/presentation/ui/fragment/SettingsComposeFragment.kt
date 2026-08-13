@@ -18,6 +18,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -181,8 +182,8 @@ class SettingsComposeFragment : Fragment() {
         //   sectionTitles = [全般, 推論, 画像, メモリ, チャット, デバッグ] なので
         //   「画像」 = index 2。
         val startSection = arguments?.getInt("startSection", -1) ?: -1
- // デバッグタブは BuildConfig.DEBUG 時のみ存在するので、リリースビルドでは上限を 4 に制限する。
-        val maxAllowedSection = if (BuildConfig.DEBUG) 5 else 4
+ // ログタブは常時 index 5。デバッグは DEBUG 時のみ index 6。
+        val maxAllowedSection = if (BuildConfig.DEBUG) 6 else 5
         if (startSection in 0..maxAllowedSection) {
             selectedSection = startSection
  // スマホで引数指定セクションの詳細を直接表示する
@@ -388,12 +389,14 @@ class SettingsComposeFragment : Fragment() {
         //   スマホはカテゴリリスト→詳細ページ遷移。
         val isTablet = LocalConfiguration.current.screenWidthDp >= 600
         // i18n: セクションタイトルも stringResource にしてロケールごとに切り替わるようにする。
+        // [全般, 推論, 画像, メモリ, チャット, ログ] + (DEBUG時のみデバッグ)
         val sectionTitles = listOf(
             stringResource(id = R.string.settings_section_general),
             stringResource(id = R.string.settings_section_inference),
             stringResource(id = R.string.settings_section_image),
             stringResource(id = R.string.settings_section_memory),
-            stringResource(id = R.string.settings_section_chat)
+            stringResource(id = R.string.settings_section_chat),
+            stringResource(id = R.string.settings_section_logs)
         ) + if (BuildConfig.DEBUG) listOf(stringResource(id = R.string.settings_section_debug)) else emptyList()
         Column(
             modifier = Modifier
@@ -979,10 +982,12 @@ class SettingsComposeFragment : Fragment() {
                     4 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         ChatHistoryCard()
                     }
- // デバッグタブは BuildConfig.DEBUG 時のみ表示されるため、index 5 はデバッグビルドでのみ存在する。
-                    //   リリースビルドで sectionTitles に含まれていないので selectedSection == 5 にならないが、
-                    //   防御的に BuildConfig.DEBUG ガードも入れる。
-                    5 -> if (BuildConfig.DEBUG) {
+                    // ログタブ（常時）: ツール呼出履歴 + logcat
+                    5 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        LogsSettingsCard()
+                    }
+                    // デバッグタブは BuildConfig.DEBUG 時のみ index 6
+                    6 -> if (BuildConfig.DEBUG) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             DebugSettingsCard()
                         }
@@ -2245,6 +2250,122 @@ class SettingsComposeFragment : Fragment() {
         )
     }
 
+
+    /**
+     * 設定 > ログ タブ
+     * ツールコール呼出履歴（時刻・セッション・ツール・クエリ）と logcat を表示する。
+     */
+    @Composable
+    private fun LogsSettingsCard() {
+        val localContext = LocalContext.current
+        val db = remember { NezumiAiDatabase.getInstance(localContext) }
+        val toolHistoryRepo = remember {
+            com.nezumi_ai.data.repository.ToolCallHistoryRepository(
+                db.toolCallHistoryDao(),
+                db.chatSessionDao()
+            )
+        }
+        val history by toolHistoryRepo.observeRecent(300).collectAsState(initial = emptyList())
+        var query by remember { mutableStateOf("") }
+        var filtered by remember { mutableStateOf<List<com.nezumi_ai.data.database.entity.ToolCallHistoryEntity>?>(null) }
+        val scope = rememberCoroutineScope()
+        val timeFmt = remember { java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()) }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = stringResource(id = R.string.logs_tab_tool_history),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = MaterialTheme.typography.titleMedium.fontSize
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        label = { Text(stringResource(id = R.string.logs_tool_history_query)) }
+                    )
+                    Button(onClick = {
+                        val q = query.trim().lowercase()
+                        filtered = if (q.isEmpty()) null else history.filter {
+                            it.toolName.lowercase().contains(q) ||
+                                (it.query?.lowercase()?.contains(q) == true) ||
+                                (it.sessionName?.lowercase()?.contains(q) == true)
+                        }
+                    }) { Text(stringResource(id = android.R.string.search_go)) }
+                    Button(onClick = {
+                        scope.launch {
+                            toolHistoryRepo.clearAll()
+                            filtered = null
+                            query = ""
+                        }
+                    }) { Text(stringResource(id = R.string.logs_clear_tool_history)) }
+                }
+                val display = filtered ?: history
+                if (display.isEmpty()) {
+                    Text(
+                        text = stringResource(id = R.string.logs_tool_history_empty),
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        display.take(100).forEach { row ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                )
+                            ) {
+                                Column(Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = timeFmt.format(java.util.Date(row.timestamp)),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = colorResource(id = R.color.text_secondary)
+                                    )
+                                    Text(
+                                        text = "${stringResource(id = R.string.logs_tool_history_tool)}: ${row.toolName}",
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "${stringResource(id = R.string.logs_tool_history_session)}: " +
+                                            (row.sessionName?.takeIf { it.isNotBlank() } ?: "#${row.sessionId}"),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    if (!row.query.isNullOrBlank()) {
+                                        Text(
+                                            text = "${stringResource(id = R.string.logs_tool_history_query)}: ${row.query}",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                    Text(
+                                        text = if (row.success) "OK" else "FAIL",
+                                        color = if (row.success) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Divider(modifier = Modifier.padding(vertical = 4.dp))
+                LogcatViewerSection()
+            }
+        }
+    }
+
     @Composable
     private fun DebugSettingsCard() {
         Card(
@@ -2466,11 +2587,10 @@ class SettingsComposeFragment : Fragment() {
                     Text(stringResource(id = R.string.settings_debug_model_error_button))
                 }
 
-                // ---- logcat ビューア（常時バックグラウンド収集分を閲覧） ----
+                // logcat / ツール履歴は「ログ」タブへ移動
                 Divider(modifier = Modifier.padding(vertical = 4.dp))
-                // logcat はログ専用ページへ移動。デバッグタブからは削除。
                 Text(
-                    text = stringResource(id = R.string.drawer_logs_button) + " →",
+                    text = stringResource(id = R.string.settings_section_logs) + " →",
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2529,7 +2649,10 @@ class SettingsComposeFragment : Fragment() {
 
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
         ) {
             Button(onClick = { refreshLogcatViewer() }) {
                 Text(stringResource(id = R.string.settings_debug_reload_button))
@@ -2540,7 +2663,10 @@ class SettingsComposeFragment : Fragment() {
         }
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
         ) {
             Button(onClick = {
                 // 表示中の全文をクリップボードへコピーする。

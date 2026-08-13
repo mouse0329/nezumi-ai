@@ -238,12 +238,8 @@ class MainActivity : AppCompatActivity() {
                 navController.navigate(R.id.imageGenFragment)
             }
         }
-        binding.drawerLogsButton.setOnClickListener {
-            closeDrawer()
-            if (navController.currentDestination?.id != R.id.logsFragment) {
-                navController.navigate(R.id.logsFragment)
-            }
-        }
+        // ログ画面は設定の「ログ」タブへ移動。ドロワーからは設定のログセクションを開く
+        // drawer_logs_button removed
         binding.drawerSearchButton.setOnClickListener {
             closeDrawer()
             showHistorySearchModal()
