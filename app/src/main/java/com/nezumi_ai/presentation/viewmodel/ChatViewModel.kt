@@ -20,6 +20,8 @@ import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.MessageRepository
 import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.data.repository.SettingsRepository
+import com.nezumi_ai.data.repository.ToolCallHistoryRepository
+import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.media.ImageLibraryStore
 import com.nezumi_ai.data.inference.CpuCompatibility
@@ -2617,6 +2619,21 @@ class ChatViewModel(
                         generationTimeMs = generationTimeMs,
                         ttftMs = ttftMs
                     )
+                    if (!finalToolResultsJson.isNullOrBlank() && finalToolResultsJson != "[]") {
+                        runCatching {
+                            val db = NezumiAiDatabase.getInstance(appContext)
+                            ToolCallHistoryRepository(
+                                db.toolCallHistoryDao(),
+                                db.chatSessionDao()
+                            ).recordFromToolResultsJson(
+                                sessionId = sessionId,
+                                messageId = activeStreamingMessageId,
+                                toolResultsJson = finalToolResultsJson
+                            )
+                        }.onFailure { e ->
+                            Log.w(TAG, "Failed to record tool call history", e)
+                        }
+                    }
                     Log.d(TAG, "Message content update complete")
                     if (contentToSave.isNotEmpty() && !stoppedWithoutPayload) {
                         Log.d(TAG, "Generating session title")

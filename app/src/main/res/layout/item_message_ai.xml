@@ -59,23 +59,12 @@
 
         <LinearLayout android:id="@+id/tool_results_container" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp" android:visibility="gone" />
 
-        <!-- タイムスタンプと性能メタ情報(tv_tps)の開閉トリガーを同列に配置。
-               tv_tps は「詳細」タップで開閉するトグル方式を維持する。 -->
+        <!-- タイムスタンプ。詳細トグルは廃止。有効な性能指標はアクション行の横に表示。 -->
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="3dp" android:layout_marginStart="4dp">
             <TextView android:id="@+id/ai_message_time" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="14:26" android:textSize="11sp" android:textColor="@color/text_secondary" />
-
             <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
-
-            <!-- tv_tps は常時表示ではなく、このトグルのタップで開閉する。
-                   electric_bolt アイコンは性能情報であることを一目で伝えるための
-                   機能的アイコンで、装飾用の絵文字ではない。 -->
-            <LinearLayout android:id="@+id/perf_meta_toggle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="6dp" android:paddingEnd="6dp" android:paddingTop="2dp" android:paddingBottom="2dp" android:background="?attr/selectableItemBackgroundBorderless" android:clickable="true" android:focusable="true" android:visibility="gone">
-                <ImageView android:layout_width="13dp" android:layout_height="13dp" android:src="@drawable/electric_bolt_24" app:tint="@color/text_secondary" android:contentDescription="@null" />
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="3dp" android:text="@string/perf_detail_label" android:textSize="11sp" android:textColor="@color/text_secondary" />
-            </LinearLayout>
+            <LinearLayout android:id="@+id/perf_meta_toggle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:visibility="gone" />
         </LinearLayout>
-
-        <TextView android:id="@+id/tv_tps" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:layout_marginStart="4dp" android:paddingStart="8dp" android:paddingEnd="8dp" android:paddingTop="4dp" android:paddingBottom="4dp" android:background="@drawable/bg_perf_meta_chip" android:textSize="11sp" android:textColor="@color/text_secondary" android:visibility="gone" />
 
         <!-- Bug fix(#Actions-Always-Visible): copy/speak/regenerate/variant-nav は
                すべて常時表示に戻す（吹き出しタップでの開閉トグルは廃止）。
@@ -91,6 +80,7 @@
             </LinearLayout>
             <ImageView android:id="@+id/regenerate_message_button" android:layout_width="32dp" android:layout_height="32dp" android:layout_marginStart="2dp" android:src="@drawable/ic_refresh_24" android:scaleType="centerInside" android:padding="4dp" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="再生成" android:clickable="true" android:focusable="true" android:visibility="gone" app:tint="@color/text_secondary" />
             <ProgressBar android:id="@+id/speak_message_progress" android:layout_width="28dp" android:layout_height="28dp" android:layout_marginStart="4dp" android:indeterminate="true" android:visibility="gone" />
+            <TextView android:id="@+id/tv_tps" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:paddingStart="8dp" android:paddingEnd="8dp" android:paddingTop="4dp" android:paddingBottom="4dp" android:background="@drawable/bg_perf_meta_chip" android:textSize="11sp" android:textColor="@color/text_secondary" android:visibility="gone" />
         </LinearLayout>
     </LinearLayout>
 </LinearLayout>

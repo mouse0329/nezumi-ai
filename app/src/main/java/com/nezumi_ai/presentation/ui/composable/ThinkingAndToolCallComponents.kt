@@ -85,7 +85,7 @@ fun ExpandableThinkingBlock(
             ) {
                 if (isLoading) {
                     Text(
-                        text = "思考プロセス生成中...",
+                        text = stringResource(R.string.thinking_process_generating),
                         fontWeight = FontWeight.Medium,
                         style = MaterialTheme.typography.labelSmall,
                         fontSize = 11.sp,
@@ -93,7 +93,7 @@ fun ExpandableThinkingBlock(
                     )
                 } else {
                     Text(
-                        text = "思考プロセス",
+                        text = stringResource(R.string.thinking_process_title),
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.labelSmall,
                         fontSize = 11.sp

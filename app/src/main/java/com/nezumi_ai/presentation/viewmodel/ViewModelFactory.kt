@@ -13,12 +13,13 @@ import com.nezumi_ai.data.repository.SettingsRepository
 
 class ChatSessionListViewModelFactory(
     private val repository: ChatSessionRepository,
-    private val chatChunkRepository: ChatChunkRepository? = null
+    private val chatChunkRepository: ChatChunkRepository? = null,
+    private val appContext: Context? = null
 ) :
     ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return ChatSessionListViewModel(repository, chatChunkRepository) as T
+        return ChatSessionListViewModel(repository, chatChunkRepository, appContext) as T
     }
 }
 

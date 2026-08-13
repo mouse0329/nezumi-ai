@@ -1,5 +1,7 @@
 package com.nezumi_ai.data.model
 
+import android.content.Context
+import com.nezumi_ai.R
 import com.nezumi_ai.data.database.entity.ChatSessionEntity
 import java.util.Calendar
 
@@ -8,32 +10,24 @@ data class GroupedChatSessions(
     val sessions: List<ChatSessionEntity>
 )
 
-fun groupSessionsByDate(sessions: List<ChatSessionEntity>): List<GroupedChatSessions> {
+fun groupSessionsByDate(
+    sessions: List<ChatSessionEntity>,
+    context: Context
+): List<GroupedChatSessions> {
     android.util.Log.d("GroupedChatSessions", "groupSessionsByDate: total sessions=${sessions.size}")
-    sessions.forEach { session ->
-        android.util.Log.d("GroupedChatSessions", "  session: id=${session.id} name=${session.name} isPinned=${session.isPinned}")
-    }
-    
     val result = mutableListOf<GroupedChatSessions>()
     val calendar = Calendar.getInstance()
     val today = calendar.apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0) }
     val todayTime = today.timeInMillis
 
-    // ピン留めセッションと通常セッションを分離
     val pinnedSessions = sessions.filter { it.isPinned }
     val unpinnedSessions = sessions.filter { !it.isPinned }
-    
-    android.util.Log.d("GroupedChatSessions", "pinnedSessions=${pinnedSessions.size} unpinnedSessions=${unpinnedSessions.size}")
 
-    // ピン留めセッションを最初に追加（日付ラベルなし）
     if (pinnedSessions.isNotEmpty()) {
-        result.add(GroupedChatSessions("ピン留め", pinnedSessions))
-        android.util.Log.d("GroupedChatSessions", "Added pinned group with ${pinnedSessions.size} sessions")
+        result.add(GroupedChatSessions(context.getString(R.string.session_group_pinned), pinnedSessions))
     }
 
-    // 通常セッションを日付でグループ化
     val grouped = mutableMapOf<String, MutableList<ChatSessionEntity>>()
-
     for (session in unpinnedSessions) {
         val sessionCal = Calendar.getInstance().apply { timeInMillis = session.lastUpdated }
         sessionCal.set(Calendar.HOUR_OF_DAY, 0)
@@ -41,58 +35,75 @@ fun groupSessionsByDate(sessions: List<ChatSessionEntity>): List<GroupedChatSess
         sessionCal.set(Calendar.SECOND, 0)
         val sessionTime = sessionCal.timeInMillis
         val daysDiff = ((todayTime - sessionTime) / (1000 * 60 * 60 * 24)).toInt()
-
-        val label = when {
-            daysDiff == 0 -> "今日"
-            daysDiff == 1 -> "昨日"
-            daysDiff == 2 -> "一昨日"
-            daysDiff in 3..6 -> {
-                val dayOfWeek = sessionCal.get(Calendar.DAY_OF_WEEK)
-                val dayName = when (dayOfWeek) {
-                    Calendar.MONDAY -> "月"
-                    Calendar.TUESDAY -> "火"
-                    Calendar.WEDNESDAY -> "水"
-                    Calendar.THURSDAY -> "木"
-                    Calendar.FRIDAY -> "金"
-                    Calendar.SATURDAY -> "土"
-                    Calendar.SUNDAY -> "日"
-                    else -> ""
-                }
-                if (dayOfWeek in Calendar.MONDAY..Calendar.FRIDAY) "今週 ($dayName)" else "今週"
-            }
-            daysDiff in 7..13 -> {
-                val dayOfWeek = sessionCal.get(Calendar.DAY_OF_WEEK)
-                val dayName = when (dayOfWeek) {
-                    Calendar.MONDAY -> "月"
-                    Calendar.TUESDAY -> "火"
-                    Calendar.WEDNESDAY -> "水"
-                    Calendar.THURSDAY -> "木"
-                    Calendar.FRIDAY -> "金"
-                    Calendar.SATURDAY -> "土"
-                    Calendar.SUNDAY -> "日"
-                    else -> ""
-                }
-                if (dayOfWeek in Calendar.MONDAY..Calendar.FRIDAY) "先週 ($dayName)" else "先週"
-            }
-            else -> {
-                val monthsDiff = daysDiff / 30
-                if (monthsDiff == 1) "1ヶ月前"
-                else "${monthsDiff}ヶ月前"
-            }
-        }
-
+        val label = sessionDateLabel(context, daysDiff, sessionCal)
         grouped.getOrPut(label) { mutableListOf() }.add(session)
     }
 
-    // 順序を定義
-    val labelOrder = listOf("今日", "昨日", "一昨日", "今週 (月)", "今週 (火)", "今週 (水)", "今週 (木)", "今週 (金)", "今週", "先週 (月)", "先週 (火)", "先週 (水)", "先週 (木)", "先週 (金)", "先週")
+    val mon = context.getString(R.string.day_mon_short)
+    val tue = context.getString(R.string.day_tue_short)
+    val wed = context.getString(R.string.day_wed_short)
+    val thu = context.getString(R.string.day_thu_short)
+    val fri = context.getString(R.string.day_fri_short)
+    val labelOrder = listOf(
+        context.getString(R.string.session_group_today),
+        context.getString(R.string.session_group_yesterday),
+        context.getString(R.string.session_group_day_before_yesterday),
+        context.getString(R.string.session_group_this_week_day, mon),
+        context.getString(R.string.session_group_this_week_day, tue),
+        context.getString(R.string.session_group_this_week_day, wed),
+        context.getString(R.string.session_group_this_week_day, thu),
+        context.getString(R.string.session_group_this_week_day, fri),
+        context.getString(R.string.session_group_this_week),
+        context.getString(R.string.session_group_last_week_day, mon),
+        context.getString(R.string.session_group_last_week_day, tue),
+        context.getString(R.string.session_group_last_week_day, wed),
+        context.getString(R.string.session_group_last_week_day, thu),
+        context.getString(R.string.session_group_last_week_day, fri),
+        context.getString(R.string.session_group_last_week)
+    )
     val otherLabels = grouped.keys.filter { !labelOrder.contains(it) }.sorted().reversed()
-
     for (label in labelOrder + otherLabels) {
-        grouped[label]?.let { sessionList ->
-            result.add(GroupedChatSessions(label, sessionList))
+        grouped[label]?.let { result.add(GroupedChatSessions(label, it)) }
+    }
+    return result
+}
+
+fun sessionDateLabel(context: Context, daysDiff: Int, sessionCal: Calendar): String {
+    return when {
+        daysDiff == 0 -> context.getString(R.string.session_group_today)
+        daysDiff == 1 -> context.getString(R.string.session_group_yesterday)
+        daysDiff == 2 -> context.getString(R.string.session_group_day_before_yesterday)
+        daysDiff in 3..6 -> {
+            val dayOfWeek = sessionCal.get(Calendar.DAY_OF_WEEK)
+            val dayName = dayNameShort(context, dayOfWeek)
+            if (dayOfWeek in Calendar.MONDAY..Calendar.FRIDAY)
+                context.getString(R.string.session_group_this_week_day, dayName)
+            else context.getString(R.string.session_group_this_week)
+        }
+        daysDiff in 7..13 -> {
+            val dayOfWeek = sessionCal.get(Calendar.DAY_OF_WEEK)
+            val dayName = dayNameShort(context, dayOfWeek)
+            if (dayOfWeek in Calendar.MONDAY..Calendar.FRIDAY)
+                context.getString(R.string.session_group_last_week_day, dayName)
+            else context.getString(R.string.session_group_last_week)
+        }
+        else -> {
+            val monthsDiff = daysDiff / 30
+            if (monthsDiff <= 1) context.getString(R.string.session_group_months_ago_one)
+            else context.getString(R.string.session_group_months_ago, monthsDiff)
         }
     }
+}
 
-    return result
+fun dayNameShort(context: Context, dayOfWeek: Int): String {
+    return when (dayOfWeek) {
+        Calendar.MONDAY -> context.getString(R.string.day_mon_short)
+        Calendar.TUESDAY -> context.getString(R.string.day_tue_short)
+        Calendar.WEDNESDAY -> context.getString(R.string.day_wed_short)
+        Calendar.THURSDAY -> context.getString(R.string.day_thu_short)
+        Calendar.FRIDAY -> context.getString(R.string.day_fri_short)
+        Calendar.SATURDAY -> context.getString(R.string.day_sat_short)
+        Calendar.SUNDAY -> context.getString(R.string.day_sun_short)
+        else -> ""
+    }
 }

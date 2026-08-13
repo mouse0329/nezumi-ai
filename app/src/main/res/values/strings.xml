@@ -1252,4 +1252,40 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="drawer_incognito_button">シークレット</string>
     <string name="drawer_history_label">チャット履歴</string>
     <string name="drawer_history_empty">履歴はまだありません</string>
+
+    <!-- Thinking / date groups / perf meta / logs page -->
+    <string name="thinking_process_generating">思考プロセス生成中…</string>
+    <string name="thinking_process_title">思考プロセス</string>
+    <string name="perf_generation_time_short">生成 %.1fs</string>
+    <string name="perf_generation_time_long">生成 %1$d:%2$02d</string>
+    <string name="session_group_pinned">ピン留め</string>
+    <string name="session_group_today">今日</string>
+    <string name="session_group_yesterday">昨日</string>
+    <string name="session_group_day_before_yesterday">一昨日</string>
+    <string name="session_group_this_week">今週</string>
+    <string name="session_group_this_week_day">今週 (%1$s)</string>
+    <string name="session_group_last_week">先週</string>
+    <string name="session_group_last_week_day">先週 (%1$s)</string>
+    <string name="session_group_months_ago_one">1ヶ月前</string>
+    <string name="session_group_months_ago">%1$dヶ月前</string>
+    <string name="day_mon_short">月</string>
+    <string name="day_tue_short">火</string>
+    <string name="day_wed_short">水</string>
+    <string name="day_thu_short">木</string>
+    <string name="day_fri_short">金</string>
+    <string name="day_sat_short">土</string>
+    <string name="day_sun_short">日</string>
+    <string name="settings_section_logs">ログ</string>
+    <string name="logs_page_title">ログ</string>
+    <string name="logs_tab_tool_history">ツール呼出履歴</string>
+    <string name="logs_tab_logcat">logcat</string>
+    <string name="logs_tool_history_empty">ツール呼出履歴はまだありません。</string>
+    <string name="logs_tool_history_time">時刻</string>
+    <string name="logs_tool_history_session">セッション</string>
+    <string name="logs_tool_history_tool">ツール</string>
+    <string name="logs_tool_history_query">クエリ</string>
+    <string name="drawer_logs_button">ログ</string>
+    <string name="logs_clear_tool_history">ツール履歴を消去</string>
+    <string name="logs_tool_history_cleared">ツール履歴を消去しました</string>
+
 </resources>

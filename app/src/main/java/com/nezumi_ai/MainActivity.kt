@@ -36,6 +36,8 @@ import com.nezumi_ai.databinding.ActivityMainBinding
 import com.nezumi_ai.presentation.ui.adapter.DrawerHistoryAdapter
 import com.nezumi_ai.presentation.ui.adapter.DrawerHistoryItem
 import com.nezumi_ai.utils.LocaleHelper
+import com.nezumi_ai.data.model.sessionDateLabel
+import com.nezumi_ai.R
 import com.nezumi_ai.utils.PreferencesHelper
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
@@ -145,7 +147,7 @@ class MainActivity : AppCompatActivity() {
         val database = NezumiAiDatabase.getInstance(applicationContext)
         val repository = ChatSessionRepository(database.chatSessionDao())
         val chunkRepository = ChatChunkRepository(database.chatChunkDao(), this)
-        val factory = ChatSessionListViewModelFactory(repository, chunkRepository)
+        val factory = ChatSessionListViewModelFactory(repository, chunkRepository, applicationContext)
         val viewModel = androidx.lifecycle.ViewModelProvider(this, factory)[ChatSessionListViewModel::class.java]
 
         val composeView = ComposeView(this).apply {
@@ -234,6 +236,12 @@ class MainActivity : AppCompatActivity() {
             closeDrawer()
             if (navController.currentDestination?.id != R.id.imageGenFragment) {
                 navController.navigate(R.id.imageGenFragment)
+            }
+        }
+        binding.drawerLogsButton.setOnClickListener {
+            closeDrawer()
+            if (navController.currentDestination?.id != R.id.logsFragment) {
+                navController.navigate(R.id.logsFragment)
             }
         }
         binding.drawerSearchButton.setOnClickListener {
@@ -897,20 +905,17 @@ class MainActivity : AppCompatActivity() {
         }
         val todayTime = today.timeInMillis
 
-        // ピン留めセッションと通常セッションを分離
         val pinnedSessions = sessions.filter { it.isPinned }
         val unpinnedSessions = sessions.filter { !it.isPinned }
 
-        // ピン留めセッションを最初に追加
         if (pinnedSessions.isNotEmpty()) {
-            result.add(DrawerHistoryItem.Label("ピン留め"))
+            result.add(DrawerHistoryItem.Label(getString(R.string.session_group_pinned)))
             pinnedSessions.forEach { session ->
                 result.add(DrawerHistoryItem.Session(session))
             }
         }
 
         val grouped = mutableMapOf<String, MutableList<ChatSessionEntity>>()
-
         for (session in unpinnedSessions) {
             val sessionCal = Calendar.getInstance().apply { timeInMillis = session.lastUpdated }
             sessionCal.set(Calendar.HOUR_OF_DAY, 0)
@@ -919,53 +924,33 @@ class MainActivity : AppCompatActivity() {
             sessionCal.set(Calendar.MILLISECOND, 0)
             val sessionTime = sessionCal.timeInMillis
             val daysDiff = ((todayTime - sessionTime) / (1000 * 60 * 60 * 24)).toInt()
-
-            val label = when {
-                daysDiff == 0 -> "今日"
-                daysDiff == 1 -> "昨日"
-                daysDiff == 2 -> "一昨日"
-                daysDiff in 3..6 -> {
-                    val dayOfWeek = sessionCal.get(Calendar.DAY_OF_WEEK)
-                    val dayName = when (dayOfWeek) {
-                        Calendar.MONDAY -> "月"
-                        Calendar.TUESDAY -> "火"
-                        Calendar.WEDNESDAY -> "水"
-                        Calendar.THURSDAY -> "木"
-                        Calendar.FRIDAY -> "金"
-                        Calendar.SATURDAY -> "土"
-                        Calendar.SUNDAY -> "日"
-                        else -> ""
-                    }
-                    if (dayOfWeek in Calendar.MONDAY..Calendar.FRIDAY) "今週 ($dayName)" else "今週"
-                }
-                daysDiff in 7..13 -> {
-                    val dayOfWeek = sessionCal.get(Calendar.DAY_OF_WEEK)
-                    val dayName = when (dayOfWeek) {
-                        Calendar.MONDAY -> "月"
-                        Calendar.TUESDAY -> "火"
-                        Calendar.WEDNESDAY -> "水"
-                        Calendar.THURSDAY -> "木"
-                        Calendar.FRIDAY -> "金"
-                        Calendar.SATURDAY -> "土"
-                        Calendar.SUNDAY -> "日"
-                        else -> ""
-                    }
-                    if (dayOfWeek in Calendar.MONDAY..Calendar.FRIDAY) "先週 ($dayName)" else "先週"
-                }
-                else -> {
-                    val monthsDiff = daysDiff / 30
-                    if (monthsDiff == 1) "1ヶ月前"
-                    else "${monthsDiff}ヶ月前"
-                }
-            }
-
+            val label = sessionDateLabel(this, daysDiff, sessionCal)
             grouped.getOrPut(label) { mutableListOf() }.add(session)
         }
 
-        // 順序を定義
-        val labelOrder = listOf("今日", "昨日", "一昨日", "今週 (月)", "今週 (火)", "今週 (水)", "今週 (木)", "今週 (金)", "今週", "先週 (月)", "先週 (火)", "先週 (水)", "先週 (木)", "先週 (金)", "先週")
+        val mon = getString(R.string.day_mon_short)
+        val tue = getString(R.string.day_tue_short)
+        val wed = getString(R.string.day_wed_short)
+        val thu = getString(R.string.day_thu_short)
+        val fri = getString(R.string.day_fri_short)
+        val labelOrder = listOf(
+            getString(R.string.session_group_today),
+            getString(R.string.session_group_yesterday),
+            getString(R.string.session_group_day_before_yesterday),
+            getString(R.string.session_group_this_week_day, mon),
+            getString(R.string.session_group_this_week_day, tue),
+            getString(R.string.session_group_this_week_day, wed),
+            getString(R.string.session_group_this_week_day, thu),
+            getString(R.string.session_group_this_week_day, fri),
+            getString(R.string.session_group_this_week),
+            getString(R.string.session_group_last_week_day, mon),
+            getString(R.string.session_group_last_week_day, tue),
+            getString(R.string.session_group_last_week_day, wed),
+            getString(R.string.session_group_last_week_day, thu),
+            getString(R.string.session_group_last_week_day, fri),
+            getString(R.string.session_group_last_week)
+        )
         val otherLabels = grouped.keys.filter { !labelOrder.contains(it) }.sorted().reversed()
-
         for (label in labelOrder + otherLabels) {
             grouped[label]?.let { sessionList ->
                 result.add(DrawerHistoryItem.Label(label))
@@ -974,9 +959,9 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-
         return result
     }
+
 
     private fun createAndOpenSession() {
         lifecycleScope.launch {

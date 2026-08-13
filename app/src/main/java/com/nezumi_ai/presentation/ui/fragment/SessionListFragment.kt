@@ -47,7 +47,7 @@ class SessionListFragment : Fragment() {
             val chatChunkRepository = com.nezumi_ai.data.repository.ChatChunkRepository(
                 database.chatChunkDao(), requireContext()
             )
-            val factory = ChatSessionListViewModelFactory(repository, chatChunkRepository)
+            val factory = ChatSessionListViewModelFactory(repository, chatChunkRepository, requireContext().applicationContext)
             viewModel = ViewModelProvider(this, factory).get(ChatSessionListViewModel::class.java)
         } catch (t: Throwable) {
             Log.e(TAG, "Failed to initialize session list screen", t)

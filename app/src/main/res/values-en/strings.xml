@@ -1188,4 +1188,40 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="drawer_incognito_button">Secret</string>
     <string name="drawer_history_label">Chat History</string>
     <string name="drawer_history_empty">No history yet</string>
+
+    <!-- Thinking / date groups / perf meta / logs page -->
+    <string name="thinking_process_generating">Generating thinking process…</string>
+    <string name="thinking_process_title">Thinking process</string>
+    <string name="perf_generation_time_short">Gen %.1fs</string>
+    <string name="perf_generation_time_long">Gen %1$d:%2$02d</string>
+    <string name="session_group_pinned">Pinned</string>
+    <string name="session_group_today">Today</string>
+    <string name="session_group_yesterday">Yesterday</string>
+    <string name="session_group_day_before_yesterday">2 days ago</string>
+    <string name="session_group_this_week">This week</string>
+    <string name="session_group_this_week_day">This week (%1$s)</string>
+    <string name="session_group_last_week">Last week</string>
+    <string name="session_group_last_week_day">Last week (%1$s)</string>
+    <string name="session_group_months_ago_one">1 month ago</string>
+    <string name="session_group_months_ago">%1$d months ago</string>
+    <string name="day_mon_short">Mon</string>
+    <string name="day_tue_short">Tue</string>
+    <string name="day_wed_short">Wed</string>
+    <string name="day_thu_short">Thu</string>
+    <string name="day_fri_short">Fri</string>
+    <string name="day_sat_short">Sat</string>
+    <string name="day_sun_short">Sun</string>
+    <string name="settings_section_logs">Logs</string>
+    <string name="logs_page_title">Logs</string>
+    <string name="logs_tab_tool_history">Tool call history</string>
+    <string name="logs_tab_logcat">logcat</string>
+    <string name="logs_tool_history_empty">No tool call history yet.</string>
+    <string name="logs_tool_history_time">Time</string>
+    <string name="logs_tool_history_session">Session</string>
+    <string name="logs_tool_history_tool">Tool</string>
+    <string name="logs_tool_history_query">Query</string>
+    <string name="drawer_logs_button">Logs</string>
+    <string name="logs_clear_tool_history">Clear tool history</string>
+    <string name="logs_tool_history_cleared">Tool history cleared</string>
+
 </resources>

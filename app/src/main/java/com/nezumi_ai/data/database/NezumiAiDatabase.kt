@@ -12,6 +12,7 @@ import com.nezumi_ai.data.database.dao.MemorySessionDao
 import com.nezumi_ai.data.database.dao.MessageDao
 import com.nezumi_ai.data.database.dao.PresetDao
 import com.nezumi_ai.data.database.dao.SettingsDao
+import com.nezumi_ai.data.database.dao.ToolCallHistoryDao
 import com.nezumi_ai.data.database.entity.AlarmEntity
 import com.nezumi_ai.data.database.entity.ChatChunkEntity
 import com.nezumi_ai.data.database.entity.ChatSessionEntity
@@ -20,6 +21,7 @@ import com.nezumi_ai.data.database.entity.MemorySessionEntity
 import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.database.entity.PresetEntity
 import com.nezumi_ai.data.database.entity.SettingsEntity
+import com.nezumi_ai.data.database.entity.ToolCallHistoryEntity
 
 @Database(
     entities = [
@@ -30,9 +32,10 @@ import com.nezumi_ai.data.database.entity.SettingsEntity
         AlarmEntity::class,
         PresetEntity::class,
         MemoryEntity::class,
-        MemorySessionEntity::class
+        MemorySessionEntity::class,
+        ToolCallHistoryEntity::class
     ],
-    version = 30,
+    version = 31,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
@@ -45,6 +48,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
     abstract fun presetDao(): PresetDao
     abstract fun memoryDao(): MemoryDao
     abstract fun memorySessionDao(): MemorySessionDao
+    abstract fun toolCallHistoryDao(): ToolCallHistoryDao
     
     companion object {
         @Volatile
@@ -57,7 +61,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                     NezumiAiDatabase::class.java,
                     "nezumi_ai.db"
                 )
-                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30)
+                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31)
                     // 開発中: スキーマ不一致時は再作成して起動クラッシュを回避
                     .fallbackToDestructiveMigration()
                     .build()
@@ -263,6 +267,28 @@ abstract class NezumiAiDatabase : RoomDatabase() {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 // no-op migration: schema は変わらず、バージョンバンプのみ。
                 // (新規導入カラムはこの先予定しているためのプレースホルダー)
+            }
+        }
+
+        private val MIGRATION_30_31 = object : androidx.room.migration.Migration(30, 31) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS tool_call_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        sessionId INTEGER NOT NULL,
+                        sessionName TEXT,
+                        toolName TEXT NOT NULL,
+                        query TEXT,
+                        success INTEGER NOT NULL DEFAULT 1,
+                        resultSummary TEXT,
+                        messageId INTEGER
+                    )
+                """.trimIndent())
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_tool_call_history_timestamp ON tool_call_history(timestamp)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_tool_call_history_sessionId ON tool_call_history(sessionId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_tool_call_history_toolName ON tool_call_history(toolName)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_tool_call_history_query ON tool_call_history(query)")
             }
         }
     }

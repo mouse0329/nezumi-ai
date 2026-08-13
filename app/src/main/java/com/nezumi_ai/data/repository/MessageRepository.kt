@@ -165,6 +165,12 @@ class MessageRepository(private val dao: MessageDao) {
                 thinkingContent.isNullOrBlank() -> current.thinkingContent
                 else -> thinkingContent
             }
+            // 生成終了時は回答完了時刻に timestamp を更新する
+            val resolvedTimestamp = if (current.isStreaming && !isStreaming && current.role == "assistant") {
+                System.currentTimeMillis()
+            } else {
+                current.timestamp
+            }
             dao.update(
                 current.copy(
                     content = content,
@@ -173,7 +179,8 @@ class MessageRepository(private val dao: MessageDao) {
                     toolResultsJson = toolResultsJson ?: current.toolResultsJson,
                     generationTps = generationTps ?: current.generationTps,
                     generationTimeMs = generationTimeMs ?: current.generationTimeMs,
-                    ttftMs = ttftMs ?: current.ttftMs
+                    ttftMs = ttftMs ?: current.ttftMs,
+                    timestamp = resolvedTimestamp
                 )
             )
             android.util.Log.d("MessageRepository", "updateMessageContent: complete messageId=$messageId")

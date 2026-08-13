@@ -2468,7 +2468,14 @@ class SettingsComposeFragment : Fragment() {
 
                 // ---- logcat ビューア（常時バックグラウンド収集分を閲覧） ----
                 Divider(modifier = Modifier.padding(vertical = 4.dp))
-                LogcatViewerSection()
+                // logcat はログ専用ページへ移動。デバッグタブからは削除。
+                Text(
+                    text = stringResource(id = R.string.drawer_logs_button) + " →",
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                )
             }
         }
     }

@@ -1,5 +1,6 @@
 package com.nezumi_ai.presentation.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nezumi_ai.data.repository.ChatChunkRepository
@@ -19,14 +20,18 @@ import kotlinx.coroutines.launch
 
 class ChatSessionListViewModel(
     private val repository: ChatSessionRepository,
-    private val chatChunkRepository: ChatChunkRepository? = null
+    private val chatChunkRepository: ChatChunkRepository? = null,
+    private val appContext: Context? = null
 ) : ViewModel() {
     
     val sessions: Flow<List<ChatSessionEntity>> = repository.getAllSessions()
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Lazily, emptyList())
     
     val groupedSessions: Flow<List<GroupedChatSessions>> = repository.getAllSessions()
-        .map { sessions -> groupSessionsByDate(sessions) }
+        .map { sessions ->
+            val ctx = appContext
+            if (ctx != null) groupSessionsByDate(sessions, ctx) else emptyList()
+        }
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Lazily, emptyList())
 
     // 読み込み中フラグ。初期は true にしておき、初回のセッション一覧が流れてきたら false にする。

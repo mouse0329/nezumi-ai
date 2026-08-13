@@ -1140,21 +1140,14 @@ class MessageAdapter(
                         ttftMs?.takeIf { it > 0L }?.let { parts += formatTtft(it) }
                     }
                 }
-                // Bug fix(#Meta-Row-Hierarchy): tv_tps はタイムスタンプと同格の常時表示ではなく、
-                //   雷アイコン付きの「詳細」トグル経由でのみ開く。トグル自体は表示すべき情報が
-                //   あるときだけ出し、既定では折り畳んでおく。
+                // 詳細トグルは廃止。設定で有効な指標のみを常時表示する。
+                perfMetaToggle.visibility = View.GONE
+                perfMetaToggle.setOnClickListener(null)
                 if (parts.isNotEmpty()) {
                     tvTps.text = parts.joinToString("  ·  ")
-                    perfMetaToggle.visibility = View.VISIBLE
-                    tvTps.visibility = View.GONE
-                    perfMetaToggle.setOnClickListener {
-                        tvTps.visibility =
-                            if (tvTps.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-                    }
+                    tvTps.visibility = View.VISIBLE
                 } else {
-                    perfMetaToggle.visibility = View.GONE
                     tvTps.visibility = View.GONE
-                    perfMetaToggle.setOnClickListener(null)
                 }
             }
         }
@@ -1180,13 +1173,14 @@ class MessageAdapter(
         }
 
         private fun formatGenerationTime(ms: Long): String {
+            val ctx = binding.root.context
             return if (ms < 60_000L) {
-                String.format("生成 %.1fs", ms / 1000f)
+                ctx.getString(R.string.perf_generation_time_short, ms / 1000f)
             } else {
                 val totalSeconds = ms / 1000
                 val minutes = totalSeconds / 60
                 val seconds = totalSeconds % 60
-                String.format("生成 %d:%02d", minutes, seconds)
+                ctx.getString(R.string.perf_generation_time_long, minutes.toInt(), seconds.toInt())
             }
         }
 

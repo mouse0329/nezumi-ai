@@ -51,4 +51,11 @@
         android:label="@string/nav_image_gen"
         tools:layout="@layout/fragment_settings" />
 
+
+    <fragment
+        android:id="@+id/logsFragment"
+        android:name="com.nezumi_ai.presentation.ui.fragment.LogsFragment"
+        android:label="@string/logs_page_title"
+        tools:layout="@layout/fragment_settings" />
+
 </navigation>
