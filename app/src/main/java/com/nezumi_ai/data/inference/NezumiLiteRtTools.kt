@@ -1054,9 +1054,16 @@ internal class NezumiLiteRtToolExecutor(
             ?: toolCall.arguments.readInt("max_chars")
             ?: 4000
 
+        val jsRenderEnabled = ToolPreferences(context.applicationContext).isWebFetchJsRenderEnabled()
+
         return try {
-            val result = withContext(Dispatchers.IO) {
-                performWebFetch(url = url, maxChars = maxChars)
+            val result = if (jsRenderEnabled) {
+                // WebViewはメインスレッドでのみ操作可能なため、内部でDispatchers.Mainに切り替わる
+                performWebFetchWithJs(context = context.applicationContext, url = url, maxChars = maxChars)
+            } else {
+                withContext(Dispatchers.IO) {
+                    performWebFetch(url = url, maxChars = maxChars)
+                }
             }
             ToolExecutionResult(
                 success = result["success"] as? Boolean ?: false,

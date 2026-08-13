@@ -41,6 +41,9 @@ class ToolPreferences(private val context: Context) {
         private const val KEY_INITIALIZED = "tools_initialized_v2"
         private const val KEY_ACTIVE_PRESET_TOOL_IDS = "active_preset_tool_ids"
         private const val KEY_ACTIVE_MCP_SERVER_IDS = "active_mcp_server_ids"
+        // ページ取得（WEB_FETCH）で JavaScript を実行してから本文を取得するかどうか。
+        // WEB_FETCH ツール自体の ON/OFF とは独立した、取得方式の切り替え設定。
+        private const val KEY_WEB_FETCH_JS_RENDER = "web_fetch_js_render_enabled"
 
         /**
          * プロセス内で共有する revision カウンタ。
@@ -154,6 +157,19 @@ class ToolPreferences(private val context: Context) {
 
     fun getEnabledTools(): Set<NezumiTool> {
         return NezumiTool.entries.filterTo(linkedSetOf()) { isEnabled(it) }
+    }
+
+    /**
+     * ページ取得（WEB_FETCH）で JavaScript を実行してから本文を取得するかどうか。
+     * デフォルトは OFF（従来どおり jsoup による静的取得のみ）。
+     */
+    fun isWebFetchJsRenderEnabled(): Boolean =
+        prefs.getBoolean(KEY_WEB_FETCH_JS_RENDER, false)
+
+    fun setWebFetchJsRenderEnabled(enabled: Boolean) {
+        val before = prefs.getBoolean(KEY_WEB_FETCH_JS_RENDER, false)
+        prefs.edit().putBoolean(KEY_WEB_FETCH_JS_RENDER, enabled).apply()
+        if (before != enabled) bumpRevision()
     }
 
     fun setActivePresetToolIds(toolIdsJson: String) {

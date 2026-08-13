@@ -620,6 +620,8 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="tools_no_alarms">登録されたアラームはありません</string>
     <string name="tools_alarm_enable_requirement">「アラームセット」が有効な場合のみ使用できます</string>
     <string name="tools_web_search_api_key_hint">設定から Brave Search API キーを設定すると有効になります</string>
+    <string name="tools_web_fetch_js_render">JavaScript を実行してから取得</string>
+    <string name="tools_web_fetch_js_render_hint">動的なページ（SPA等）にも対応しますが、取得に時間がかかる場合があります</string>
     <string name="tools_flashlight_permission_required">ライト機能にはカメラ権限が必要です</string>
     <string name="tools_exact_alarm_permission_required">正確なアラームの許可を有効にしてください</string>
     <string name="tools_alarm_set_enable_first">「アラームセット」を有効化してください</string>
@@ -803,6 +805,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="preset_edit_mcp_servers_unregistered">未登録</string>
     <string name="preset_edit_mcp_servers_enabled_format">%1$d / %2$d 個を有効化</string>
     <string name="preset_edit_mcp_add">新規/編集MCP</string>
+    <string name="mcp_server_manager_count_format">%1$d 個のサーバーを登録済み</string>
     <string name="preset_screen_new_title">新しいプリセット</string>
     <string name="preset_screen_edit_title">プリセット編集</string>
     <string name="preset_field_icon">アイコン</string>

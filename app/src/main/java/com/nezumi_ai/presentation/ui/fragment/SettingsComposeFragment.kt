@@ -182,8 +182,8 @@ class SettingsComposeFragment : Fragment() {
         //   sectionTitles = [全般, 推論, 画像, メモリ, チャット, デバッグ] なので
         //   「画像」 = index 2。
         val startSection = arguments?.getInt("startSection", -1) ?: -1
- // ログタブは常時 index 5。デバッグは DEBUG 時のみ index 6。
-        val maxAllowedSection = if (BuildConfig.DEBUG) 6 else 5
+ // ログタブは常時 index 5。ツールタブは常時 index 6。デバッグは DEBUG 時のみ index 7。
+        val maxAllowedSection = if (BuildConfig.DEBUG) 7 else 6
         if (startSection in 0..maxAllowedSection) {
             selectedSection = startSection
  // スマホで引数指定セクションの詳細を直接表示する
@@ -389,14 +389,15 @@ class SettingsComposeFragment : Fragment() {
         //   スマホはカテゴリリスト→詳細ページ遷移。
         val isTablet = LocalConfiguration.current.screenWidthDp >= 600
         // i18n: セクションタイトルも stringResource にしてロケールごとに切り替わるようにする。
-        // [全般, 推論, 画像, メモリ, チャット, ログ] + (DEBUG時のみデバッグ)
+        // [全般, 推論, 画像, メモリ, チャット, ログ, ツール] + (DEBUG時のみデバッグ)
         val sectionTitles = listOf(
             stringResource(id = R.string.settings_section_general),
             stringResource(id = R.string.settings_section_inference),
             stringResource(id = R.string.settings_section_image),
             stringResource(id = R.string.settings_section_memory),
             stringResource(id = R.string.settings_section_chat),
-            stringResource(id = R.string.settings_section_logs)
+            stringResource(id = R.string.settings_section_logs),
+            stringResource(id = R.string.tools_settings)
         ) + if (BuildConfig.DEBUG) listOf(stringResource(id = R.string.settings_section_debug)) else emptyList()
         Column(
             modifier = Modifier
@@ -986,8 +987,12 @@ class SettingsComposeFragment : Fragment() {
                     5 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         LogsSettingsCard()
                     }
-                    // デバッグタブは BuildConfig.DEBUG 時のみ index 6
-                    6 -> if (BuildConfig.DEBUG) {
+                    // ツールタブ（常時 index 6）: ページ取得のJS実行モード + MCPサーバー管理
+                    6 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        ToolsSettingsCard()
+                    }
+                    // デバッグタブは BuildConfig.DEBUG 時のみ index 7
+                    7 -> if (BuildConfig.DEBUG) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             DebugSettingsCard()
                         }
@@ -2250,6 +2255,121 @@ class SettingsComposeFragment : Fragment() {
         )
     }
 
+
+    /**
+     * 設定 > ツール タブ
+     * ページ取得のJS実行モードON/OFFと、MCPサーバーの登録・編集・削除を扱う。
+     * 各ツール（アラーム・タイマー・画像生成等）自体の有効化は
+     * プリセット編集画面（PresetSettingsFragment）側で行う。
+     */
+    @Composable
+    private fun ToolsSettingsCard() {
+        val localContext = LocalContext.current
+        val toolPreferences = remember { com.nezumi_ai.data.inference.ToolPreferences(localContext) }
+        var webFetchJsRenderEnabled by remember {
+            mutableStateOf(toolPreferences.isWebFetchJsRenderEnabled())
+        }
+        val mcpPrefs = remember { com.nezumi_ai.data.mcp.McpPreferences.get(localContext) }
+        val mcpServers by mcpPrefs.servers.collectAsState()
+        var showMcpManager by remember { mutableStateOf(false) }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = stringResource(id = R.string.preset_tool_name_web_fetch),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = MaterialTheme.typography.titleMedium.fontSize
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(id = R.string.tools_web_fetch_js_render),
+                            color = colorResource(id = R.color.text_primary)
+                        )
+                        Text(
+                            text = stringResource(id = R.string.tools_web_fetch_js_render_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorResource(id = R.color.text_secondary)
+                        )
+                    }
+                    Switch(
+                        checked = webFetchJsRenderEnabled,
+                        onCheckedChange = { checked ->
+                            toolPreferences.setWebFetchJsRenderEnabled(checked)
+                            webFetchJsRenderEnabled = checked
+                        }
+                    )
+                }
+            }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(id = R.string.preset_edit_mcp_server_label),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = MaterialTheme.typography.titleMedium.fontSize
+                        )
+                        val subLabel = if (mcpServers.isEmpty()) {
+                            stringResource(id = R.string.preset_edit_mcp_servers_unregistered)
+                        } else {
+                            stringResource(id = R.string.mcp_server_manager_count_format, mcpServers.size)
+                        }
+                        Text(
+                            text = subLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorResource(id = R.color.text_secondary)
+                        )
+                    }
+                    TextButton(onClick = { showMcpManager = true }) {
+                        Text(stringResource(id = R.string.preset_edit_mcp_add))
+                    }
+                }
+                if (mcpServers.isNotEmpty()) {
+                    mcpServers.forEach { server ->
+                        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                            Text(server.name, color = colorResource(id = R.color.text_primary))
+                            Text(
+                                text = "${server.transport.label} • ${server.url}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorResource(id = R.color.text_secondary)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (showMcpManager) {
+            // このダイアログは本来プリセットへの有効化選択も兼ねるが、ここでは
+            // サーバーの登録・編集・削除のみを目的として開くため、選択状態は
+            // 空集合のまま扱い、プリセット側の紐付けには影響させない。
+            com.nezumi_ai.presentation.ui.component.McpServerManagerDialog(
+                servers = mcpServers,
+                selectedIds = emptySet(),
+                onSelectionChange = {},
+                onUpsert = { mcpPrefs.upsert(it) },
+                onDelete = { mcpPrefs.remove(it) },
+                onDismiss = { showMcpManager = false }
+            )
+        }
+    }
 
     /**
      * 設定 > ログ タブ

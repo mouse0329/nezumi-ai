@@ -181,9 +181,10 @@ object GgufToolPromptBuilder {
             return systemPrompt
         }
 
-        // プロンプトは常に汎用 <tool_call>{json}</tool_call> のみ。
-        // Gemma 公式説明文はモデル混乱・空応答の原因のためアプリ全体で禁止。判定はパーサ側。
-        val toolBlock = buildGenericToolBlock(toolsJson)
+        // isGemma4 のときは Gemma 4 公式形式 (<|tool_call>call:NAME{...}<tool_call|>) を、
+        // それ以外は汎用 <tool_call>{json}</tool_call> 形式を注入する。
+        // GgufToolCallParser.parse(text, isGemma4) 側の期待形式と一致させる必要がある。
+        val toolBlock = if (isGemma4) buildGemma4ToolBlock(toolsJson) else buildGenericToolBlock(toolsJson)
 
         return if (systemPrompt.isBlank()) toolBlock.trim() else systemPrompt + toolBlock
     }
@@ -210,8 +211,13 @@ object GgufToolPromptBuilder {
             Log.d(TAG, "appendForLiteRt: no builtin schema and no MCP tool - skipping")
             return systemPrompt
         }
-        val toolBlock = buildGenericToolBlock(toolsJson)
-        Log.i(TAG, "appendForLiteRt: injected generic <tools> block (Gemma tool-call prose banned)")
+        val toolBlock = if (isGemma4) {
+            Log.i(TAG, "appendForLiteRt: injected Gemma4 <|tool_call> block")
+            buildGemma4ToolBlock(toolsJson)
+        } else {
+            Log.i(TAG, "appendForLiteRt: injected generic <tool_call> block")
+            buildGenericToolBlock(toolsJson)
+        }
         return if (systemPrompt.isBlank()) toolBlock.trim() else systemPrompt + toolBlock
     }
 
@@ -234,11 +240,26 @@ object GgufToolPromptBuilder {
     }
 
     /**
-     * [禁止] 旧 Gemma 公式ツール形式の説明文。プロンプト注入はアプリ全体で禁止。
-     * 形式判定・パースは GgufToolCallParser がアプリ側で行う。
+     * Gemma 4 公式ツールコール形式 (`<|tool_call>call:NAME{...}<tool_call|>`) を教える指示ブロック。
+     * GgufToolCallParser.parseGemma4() が期待する形式と厳密に一致させる必要がある:
+     *   - 開きタグ: <|tool_call>
+     *   - 中身: call:ツール名 に続けて JSON 引数
+     *   - 閉じタグ: <tool_call|>
+     * ツール実行結果は <tool_response>{"name":...,"content":...}</tool_response> で返る
+     * (formatToolResults() 参照)。
      */
-    private fun buildGemma4ToolBlock(toolsJson: String): String {
-        // 禁止: Gemma tool-call format 説明文は注入しない。汎用にフォールバック。
-        return buildGenericToolBlock(toolsJson)
+    private fun buildGemma4ToolBlock(toolsJson: String): String = buildString {
+        appendLine()
+        appendLine()
+        appendLine("You can call tools to help the user.")
+        appendLine("Available tools are listed in <tools></tools>.")
+        appendLine("When calling a tool, respond ONLY with:")
+        appendLine("<|tool_call>call:<tool-name>{\"arg\":...}<tool_call|>")
+        appendLine("Do not use any other tool-call format.")
+        appendLine("Tool results will be returned to you wrapped in <tool_response></tool_response>.")
+        appendLine("<tools>")
+        append(toolsJson)
+        appendLine()
+        append("</tools>")
     }
 }

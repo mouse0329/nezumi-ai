@@ -1,9 +1,18 @@
 package com.nezumi_ai.data.inference
 
+import android.annotation.SuppressLint
+import android.content.Context
 import android.util.Log
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import com.vladsch.flexmark.html2md.converter.FlexmarkHtmlConverter
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import kotlin.coroutines.resume
 
 private const val WEB_FETCH_TAG = "WebFetchTool"
 
@@ -105,4 +114,122 @@ internal fun performWebFetch(url: String, maxChars: Int): Map<String, Any?> {
         "length" to body.length,
         "truncated" to truncated
     )
+}
+
+// ─────────────────────────────────────────────
+// ページ取得 (URL → JS実行 → Markdown) 実装
+// ─────────────────────────────────────────────
+//
+// 設定で「JavaScript を実行してから取得」がONの場合に使う版。
+// AndroidのWebView（メインスレッド専用）でページを描画してからDOMを取り出し、
+// 以降は上のperformWebFetchと同じjsoup + flexmarkパイプラインでMarkdown化する。
+// SPA等の動的ページにも対応できるが、WebView起動分だけ取得に時間がかかる。
+
+private const val JS_RENDER_TIMEOUT_MS = 15_000L
+// ページ側スクリプトによる遅延描画を少し待つための追加時間
+private const val SETTLE_DELAY_MS = 800L
+
+internal suspend fun performWebFetchWithJs(
+    context: Context,
+    url: String,
+    maxChars: Int
+): Map<String, Any?> {
+    val sanitizedUrl = url.trim()
+    if (!sanitizedUrl.startsWith("http://") && !sanitizedUrl.startsWith("https://")) {
+        return mapOf("success" to false, "error" to "invalid_url", "url" to sanitizedUrl)
+    }
+
+    val rawHtml = try {
+        withTimeoutOrNull(JS_RENDER_TIMEOUT_MS) {
+            renderPageHtml(context, sanitizedUrl)
+        }
+    } catch (e: Exception) {
+        Log.e(WEB_FETCH_TAG, "JS render failed: $sanitizedUrl", e)
+        null
+    }
+
+    if (rawHtml.isNullOrBlank()) {
+        return mapOf("success" to false, "error" to "js_render_timeout_or_failed", "url" to sanitizedUrl)
+    }
+
+    val document = Jsoup.parse(rawHtml, sanitizedUrl)
+    val title = document.title().orEmpty()
+    document.select("script, style, noscript, nav, header, footer, aside, form, iframe").remove()
+    val bodyHtml = document.body()?.html() ?: document.html()
+
+    val markdown = runCatching {
+        FlexmarkHtmlConverter.builder().build().convert(bodyHtml)
+    }.getOrElse {
+        Log.e(WEB_FETCH_TAG, "Markdown conversion failed: $sanitizedUrl", it)
+        return mapOf("success" to false, "error" to "convert_failed:${it.message}", "url" to sanitizedUrl)
+    }
+
+    val normalized = markdown.replace(Regex("\n{3,}"), "\n\n").trim()
+    if (normalized.isEmpty()) {
+        return mapOf("success" to false, "error" to "empty_content", "url" to sanitizedUrl)
+    }
+
+    val limit = maxChars.coerceIn(500, MAX_MARKDOWN_CHARS)
+    val truncated = normalized.length > limit
+    val body = if (truncated) normalized.substring(0, limit) else normalized
+
+    return mapOf(
+        "success" to true,
+        "url" to sanitizedUrl,
+        "title" to title,
+        "markdown" to body,
+        "length" to body.length,
+        "truncated" to truncated,
+        "jsRendered" to true
+    )
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+private suspend fun renderPageHtml(context: Context, url: String): String =
+    withContext(Dispatchers.Main) {
+        suspendCancellableCoroutine { cont ->
+            val webView = WebView(context)
+            webView.settings.javaScriptEnabled = true
+            webView.settings.domStorageEnabled = true
+
+            webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView, finishedUrl: String) {
+                    // SPAの遅延レンダリングを考慮し、少し待ってからDOMを取り出す
+                    view.postDelayed({
+                        view.evaluateJavascript("document.documentElement.outerHTML") { rawResult ->
+                            val html = unescapeJsStringResult(rawResult)
+                            if (cont.isActive) cont.resume(html)
+                            view.destroy()
+                        }
+                    }, SETTLE_DELAY_MS)
+                }
+
+                override fun onReceivedError(
+                    view: WebView,
+                    errorCode: Int,
+                    description: String?,
+                    failingUrl: String?
+                ) {
+                    if (cont.isActive) cont.cancel()
+                    view.destroy()
+                }
+            }
+
+            cont.invokeOnCancellation {
+                webView.post { webView.destroy() }
+            }
+            webView.loadUrl(url)
+        }
+    }
+
+// evaluateJavascriptはJSON文字列（ダブルクォート＋エスケープ）で返ってくるためデコードする
+private fun unescapeJsStringResult(raw: String?): String {
+    if (raw == null || raw == "null") return ""
+    val trimmed = raw.trim().removeSurrounding("\"")
+    return trimmed
+        .replace("\\u003C", "<")
+        .replace("\\u003E", ">")
+        .replace("\\\"", "\"")
+        .replace("\\n", "\n")
+        .replace("\\\\", "\\")
 }
