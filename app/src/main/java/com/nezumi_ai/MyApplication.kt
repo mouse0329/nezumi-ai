@@ -1,10 +1,12 @@
 package com.nezumi_ai
 
+import android.app.Activity
 import android.app.Application
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Bundle
 import android.util.Log
 import androidx.work.Configuration
 import androidx.work.WorkManager
@@ -39,6 +41,30 @@ class MyApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         PreferencesHelper.applyThemeMode(this)
+
+        // web_fetch (JS描画版) が WebView をオフスクリーンで安全にアタッチできるよう、
+        // 現在フォアグラウンドにある Activity への弱参照を追跡しておく。
+        // WebView は真にウィンドウの View 階層にアタッチされていないと、
+        // evaluateJavascript のコールバックがコンポジタのフレーム生成待ちで
+        // 永遠に返らないことがあるため (Chromium の既知の制約)、
+        // applicationContext だけで WebView を生成する方式は使えない。
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityStarted(activity: Activity) {
+                CurrentActivityHolder.set(activity)
+            }
+            override fun onActivityResumed(activity: Activity) {
+                CurrentActivityHolder.set(activity)
+            }
+            override fun onActivityPaused(activity: Activity) {}
+            override fun onActivityStopped(activity: Activity) {
+                CurrentActivityHolder.clearIfCurrent(activity)
+            }
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+            override fun onActivityDestroyed(activity: Activity) {
+                CurrentActivityHolder.clearIfCurrent(activity)
+            }
+        })
 
         // Chaquopy (Python-on-Android) ランタイムを起動。
         // PDF/Word/Excel → Markdown 変換 (MarkItDown) で使用する。

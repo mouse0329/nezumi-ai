@@ -156,6 +156,10 @@ class OllamaInferenceEngine(
                     null
                 } ?: break
                 if (line.isEmpty()) continue
+                // デバッグ: message.content が常に空になる不具合の原因切り分け用。
+                // Ollama がネイティブ tool_calls フィールドで応答している可能性があるため、
+                // 生の NDJSON 行をそのまま出力して確認する。
+                Log.d(TAG, "raw NDJSON line: $line")
                 val (delta, done) = parseChunk(line)
                 if (!delta.isNullOrEmpty()) onDelta(delta)
                 if (done) break
@@ -167,7 +171,16 @@ class OllamaInferenceEngine(
         Log.d(TAG, "Ollama stream finished session=$sessionId")
     }
 
-    /** NDJSON 1 行を解析して (delta, done) を返す。 */
+    /** NDJSON 1 行を解析して (delta, done) を返す。
+     *
+     * Ollama はモデルがツール対応と認識された場合、テキストの `message.content` ではなく
+     * 構造化された `message.tool_calls` フィールドでツール呼び出しを返すことがある
+     * （OpenAI 互換のネイティブツールコール機能）。このアプリのプロンプト設計は
+     * システムプロンプト内で Gemma4 の `<|tool_call>` テキスト形式を指示しているため、
+     * `message.content` しか見ないと `tool_calls` フィールドの内容を取りこぼし、
+     * 応答が完全に空になってしまう。ここで `tool_calls` を検出したら Gemma4 形式の
+     * テキストに合成し、通常の content デルタと同様に流す。
+     */
     private fun parseChunk(line: String): Pair<String?, Boolean> {
         val root = runCatching { json.parseToJsonElement(line) }.getOrNull() as? JsonObject
             ?: return null to false
@@ -175,10 +188,40 @@ class OllamaInferenceEngine(
             root["done"]?.jsonPrimitive?.content?.equals("true", ignoreCase = true)
         }.getOrNull() ?: false
         val message = root["message"] as? JsonObject
-        val delta = message?.let {
+        val contentDelta = message?.let {
             runCatching { it["content"]?.jsonPrimitive?.content }.getOrNull()
         }
+        val toolCallsDelta = message?.get("tool_calls")?.let { synthesizeGemma4ToolCallText(it) }
+        val delta = when {
+            !toolCallsDelta.isNullOrEmpty() -> (contentDelta.orEmpty()) + toolCallsDelta
+            else -> contentDelta
+        }
         return delta to done
+    }
+
+    /**
+     * Ollama ネイティブの `tool_calls` 配列 (`[{"function":{"name":..,"arguments":{...}}}]`) を
+     * このアプリの Gemma4 パーサーが解釈できる `<|tool_call>call:NAME{...}<tool_call|>` テキストに変換する。
+     * 配列でない/空/形式不明な場合は null を返す。
+     */
+    private fun synthesizeGemma4ToolCallText(toolCallsElement: kotlinx.serialization.json.JsonElement): String? {
+        val array = toolCallsElement as? kotlinx.serialization.json.JsonArray ?: return null
+        if (array.isEmpty()) return null
+        val builder = StringBuilder()
+        for (entry in array) {
+            val obj = entry as? JsonObject ?: continue
+            val function = obj["function"] as? JsonObject ?: continue
+            val name = runCatching { function["name"]?.jsonPrimitive?.content }.getOrNull() ?: continue
+            val argumentsElement = function["arguments"]
+            val argumentsJson = when (argumentsElement) {
+                is kotlinx.serialization.json.JsonObject -> argumentsElement.toString()
+                is kotlinx.serialization.json.JsonPrimitive -> argumentsElement.content
+                null -> "{}"
+                else -> argumentsElement.toString()
+            }
+            builder.append("<|tool_call>call:").append(name).append(argumentsJson).append("<tool_call|>")
+        }
+        return if (builder.isEmpty()) null else builder.toString()
     }
 
     companion object {

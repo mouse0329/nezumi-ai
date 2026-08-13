@@ -223,8 +223,15 @@ abstract class AbstractCloudInferenceEngine(
                     "images=${images.size} toolCalling=$toolCallingEnabled"
             )
             var currentPrompt = prompt
-            var toolRound = 0            // クラウドもモデル名で判定。Gemma4 以外（Ollama の llama/qwen 等）は汎用形式。
-            val isGemma4 = false // generic <tool_call> parse (prompt never uses Gemma prose)
+            var toolRound = 0
+            // プロンプト構築側（ChatViewModel/GgufToolPromptBuilder）は PromptBuilder.isGemma4Model
+            // でモデル名を判定し、true なら Gemma4 専用の <|tool_call> 形式をシステムプロンプトに
+            // 注入している。パース側がここで isGemma4=false 固定だと、Gemma4 系クラウドモデル
+            // （例: cloud:ollama-remote:gemma4:31b）が Gemma4 形式でツール呼び出しを返しても
+            // 汎用 <tool_call> 形式として解析され、常にマッチせず「ツール呼び出しなし」
+            // 扱いになってしまう（= web_fetch 等のツールが一切発火しない不具合の原因）。
+            // プロンプト構築側と同じ判定関数を使い、注入した形式とパース形式を一致させる。
+            val isGemma4 = PromptBuilder.isGemma4Model(model)
             Log.d(TAG, "TOOL_FORMAT cloud model=$model isGemma4=$isGemma4")
             while (toolRound < maxToolRounds) {
                 toolRound++
@@ -251,7 +258,16 @@ abstract class AbstractCloudInferenceEngine(
 
                 val parsed = GgufToolCallParser.parse(roundText.toString(), isGemma4 = isGemma4)
                 if (parsed.toolCalls.isEmpty()) {
-                    Log.d(TAG, "No tool calls in round=$toolRound session=$sessionId")
+                    // ツール呼び出しが検出できなかった原因を切り分けるため、モデルの生応答を
+                    // 出力する（長文は先頭のみ）。ここが空/短文なら「モデルが何も生成していない」、
+                    // それらしいテキストがあるのにツールとして拾えていないなら「フォーマット不一致」
+                    // と判断できる。
+                    val preview = roundText.toString().take(500)
+                    Log.d(
+                        TAG,
+                        "No tool calls in round=$toolRound session=$sessionId " +
+                            "rawLen=${roundText.length} rawPreview=\"$preview\""
+                    )
                     break
                 }
                 if (toolRound >= maxToolRounds) {

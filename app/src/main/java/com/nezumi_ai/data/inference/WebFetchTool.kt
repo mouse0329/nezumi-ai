@@ -3,8 +3,13 @@ package com.nezumi_ai.data.inference
 import android.annotation.SuppressLint
 import android.content.Context
 import android.util.Log
+import android.view.ViewGroup
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import com.nezumi_ai.CurrentActivityHolder
 import com.vladsch.flexmark.html2md.converter.FlexmarkHtmlConverter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -187,37 +192,111 @@ internal suspend fun performWebFetchWithJs(
 @SuppressLint("SetJavaScriptEnabled")
 private suspend fun renderPageHtml(context: Context, url: String): String =
     withContext(Dispatchers.Main) {
+        // context (呼び出し元では applicationContext) は WebView の生成には使わない。
+        // WebView は Activity Context (かつ実際の View 階層にアタッチされた状態) が必要なため、
+        // 下記で CurrentActivityHolder から取得した Activity を使う。
+        // WebView は真にウィンドウの View 階層にアタッチされていないと、
+        // evaluateJavascript のコールバックがコンポジタのフレーム生成待ちで
+        // 永遠に返らないことがある (Chromium の既知の制約)。
+        // measure/layout を手動で呼ぶだけでは実際の Surface 合成は起きないため、
+        // ここでは CurrentActivityHolder 経由でフォアグラウンドの Activity を取得し、
+        // その DecorView に 1x1px で実際に addView した上でロードする。
+        // Activity が取得できない (バックグラウンド実行/画面遷移中など) 場合は、
+        // 表示できたとしてもレンダリングが進まない可能性が高いためすぐに失敗として返す。
+        val activity = CurrentActivityHolder.get()
+        if (activity == null) {
+            Log.w(WEB_FETCH_TAG, "No foreground Activity available; cannot attach WebView for JS rendering")
+            return@withContext ""
+        }
+        val decorView = activity.window?.decorView as? ViewGroup
+        if (decorView == null) {
+            Log.w(WEB_FETCH_TAG, "Activity has no decorView; cannot attach WebView for JS rendering")
+            return@withContext ""
+        }
+
         suspendCancellableCoroutine { cont ->
-            val webView = WebView(context)
+            val webView = WebView(activity)
             webView.settings.javaScriptEnabled = true
             webView.settings.domStorageEnabled = true
+            // 1x1px かつ透過で画面には見えない状態にしつつ、実際の View 階層に
+            // アタッチすることで Chromium のレンダリングパイプラインを正しく駆動させる。
+            webView.alpha = 0f
+
+            val layoutParams = FrameLayout.LayoutParams(1, 1)
+
+            var handled = false
+            var attached = false
+
+            fun detachAndDestroy() {
+                if (attached) {
+                    runCatching { decorView.removeView(webView) }
+                    attached = false
+                }
+                webView.destroy()
+            }
 
             webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, finishedUrl: String) {
+                    Log.d(WEB_FETCH_TAG, "onPageFinished: $finishedUrl (target=$url, handled=$handled)")
+                    if (handled) return
+                    // メインフレームの完了だけを最終確定として扱う。
+                    // リダイレクトを考慮し、末尾スラッシュの有無程度の差は許容する。
+                    val normalizedFinished = finishedUrl.trimEnd('/')
+                    val normalizedTarget = url.trimEnd('/')
+                    if (normalizedFinished != normalizedTarget && !normalizedFinished.startsWith(normalizedTarget)) {
+                        // サブフレーム、または別ドメインへのリダイレクト途中の可能性が高いので待つ。
+                        return
+                    }
+                    handled = true
                     // SPAの遅延レンダリングを考慮し、少し待ってからDOMを取り出す
                     view.postDelayed({
                         view.evaluateJavascript("document.documentElement.outerHTML") { rawResult ->
                             val html = unescapeJsStringResult(rawResult)
+                            Log.d(WEB_FETCH_TAG, "evaluateJavascript result length=${html.length}")
                             if (cont.isActive) cont.resume(html)
-                            view.destroy()
+                            detachAndDestroy()
                         }
                     }, SETTLE_DELAY_MS)
                 }
 
+                // 新しい (WebResourceRequest 版) onReceivedError。
+                // 広告/トラッキングスクリプトなどサブリソースの読み込み失敗でも
+                // 呼ばれるため、isForMainFrame でメインフレームの失敗だけを
+                // 致命的エラーとして扱う。判定しないと、ニュースサイト等で
+                // 広告タグの1つが失敗しただけでページ全体が失敗扱いになり、
+                // web_fetch (JS描画版) が実質常にタイムアウトしてしまう不具合になる。
                 override fun onReceivedError(
                     view: WebView,
-                    errorCode: Int,
-                    description: String?,
-                    failingUrl: String?
+                    request: WebResourceRequest,
+                    error: WebResourceError
                 ) {
+                    if (!request.isForMainFrame) {
+                        // サブリソース (広告/トラッカー/iframe 等) の失敗は無視して継続する。
+                        Log.d(
+                            WEB_FETCH_TAG,
+                            "Ignoring sub-resource load error: ${request.url} " +
+                                "code=${error.errorCode} desc=${error.description}"
+                        )
+                        return
+                    }
+                    if (handled) return
+                    handled = true
+                    Log.e(
+                        WEB_FETCH_TAG,
+                        "Main frame load error: ${request.url} " +
+                            "code=${error.errorCode} desc=${error.description}"
+                    )
                     if (cont.isActive) cont.cancel()
-                    view.destroy()
+                    detachAndDestroy()
                 }
             }
 
             cont.invokeOnCancellation {
-                webView.post { webView.destroy() }
+                webView.post { detachAndDestroy() }
             }
+
+            decorView.addView(webView, layoutParams)
+            attached = true
             webView.loadUrl(url)
         }
     }
