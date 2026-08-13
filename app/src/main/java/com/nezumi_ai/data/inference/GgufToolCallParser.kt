@@ -78,6 +78,9 @@ object GgufToolCallParser {
      *   閉じタグ補完 (`</tool_call>` vs `<tool_call|>`) の判断に使う。
      * @param truncatedToolName トークン切れ時に、名前だけでも読み取れたら埋める (無理なら null)。
      *   モデルに返す `<tool_response>` の name として使う。
+     * @param fellBackToAlternateFormat モデル判定と逆のツールコール形式を救済パースで採用したか。
+     *   true のとき、[truncatedTagIsGemma4] は「実際に本文中に出現した形式」を指す
+     *   (閉じタグ補完 [closingTagFor] が正しいタグを選べるようにするため)。
      */
     data class ParseResult(
         val toolCalls: List<ToolCall>,
@@ -85,7 +88,8 @@ object GgufToolCallParser {
         val textAfterTools: String,
         val hadTruncatedToolCall: Boolean = false,
         val truncatedTagIsGemma4: Boolean = false,
-        val truncatedToolName: String? = null
+        val truncatedToolName: String? = null,
+        val fellBackToAlternateFormat: Boolean = false
     )
 
     /**
@@ -224,12 +228,28 @@ object GgufToolCallParser {
      * 出力からツール呼び出しを抽出する (推論エンジンからの呼び出し用)。
      *
      * @param isGemma4 モデルが Gemma 4 系かどうか。Gemma 4 のときは Google 公式仕様
-     *   (`<|tool_call>call:NAME{...}<tool_call|>`) を優先し、汎用形式へは fallback しない。
-     *   Gemma 4 以外のときは従来通り `<tool_call>` タグ + 裸 JSON を見に行く。
+     *   (`<|tool_call>call:NAME{...}<tool_call|>`) を優先する。
+     *
+     * クロスフォーマット救済:
+     *   モデルは学習データの影響で、指定された形式と逆のツールコール形式を出すことがある
+     *   (Gemma 4 が汎用 `<tool_call>` を出す / Qwen 等が `<|tool_call>` を出す)。
+     *   優先形式で 1 件も確定できなかった場合に限り、もう一方の形式にも fallback して
+     *   「形式違いでツールが一切実行されない」事態を防ぐ。優先形式で何らかの結果
+     *   (確定ツール or トークン切れ検知) が得られた場合は従来通り fallback しない。
      */
     fun parse(text: String, isGemma4: Boolean = false): ParseResult {
-        if (isGemma4) return parseGemma4(text)
-        return parseGeneric(text)
+        val primary = if (isGemma4) parseGemma4(text) else parseGeneric(text)
+        if (primary.toolCalls.isNotEmpty() || primary.hadTruncatedToolCall) {
+            return primary
+        }
+        // 優先形式で何も拾えなかったときだけ、反対側の形式を試す。
+        // 反対側でも何もなければ優先側の結果 (全文を textBeforeTools に入れたもの) を返し、
+        // 呼び出し元の「ツールなし = 通常回答」分岐を変えない。
+        val alternate = if (isGemma4) parseGeneric(text) else parseGemma4(text)
+        if (alternate.toolCalls.isEmpty() && !alternate.hadTruncatedToolCall) {
+            return primary
+        }
+        return alternate.copy(fellBackToAlternateFormat = true)
     }
 
     /**
@@ -354,7 +374,9 @@ object GgufToolCallParser {
             bareToolCallJsonPattern.containsMatchIn(text) ||
             openToolCallTag.containsMatchIn(text)
         if (generic) return true
-        return isGemma4 && openGemma4ToolCallTag.containsMatchIn(text)
+        // モデルが判定と逆の形式を出すケース (クロスフォーマット) でも検知できるよう、
+        // Gemma 4 開きタグはモデル種別に関係なく判定対象に含める。
+        return openGemma4ToolCallTag.containsMatchIn(text)
     }
 
     fun stripToolResponseBlocks(text: String): String {

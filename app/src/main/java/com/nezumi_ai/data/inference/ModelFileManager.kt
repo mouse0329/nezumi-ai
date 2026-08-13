@@ -27,6 +27,14 @@ import kotlin.coroutines.coroutineContext
 
 object ModelFileManager {
 
+    /**
+     * ダウンロード中断 (一時停止) を表す例外。
+     * 部分ファイル (.download) が残っている途中キャンセル時に、
+     * 「失敗」ではなく「中断」として扱うために使う。
+     * 部分ファイルは削除せず残すため、次回ダウンロード時に Range リクエストで続きから再開できる。
+     */
+    class PauseRequestedException(message: String) : Exception(message)
+
     data class ResourceCheckResult(
         val isMemoryLow: Boolean,
         val isStorageLow: Boolean,
@@ -559,7 +567,8 @@ object ModelFileManager {
             runCatching {
                 downloadFileWithRetry(context, url, outFile, onProgress)
             }.onFailure {
-                runCatching { File("${outFile.absolutePath}.download").delete() }
+                // 部分ファイル (.download) は削除しない:
+                //   ネットワーク断・手動中断からの再開時に続きから取得できるように保持する。
                 runCatching { outFile.delete() }
                 runCatching { metadataFile(outFile).delete() }
                 throw it
@@ -1228,6 +1237,7 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         var restartFromZeroCount = 0
         var reachedFullDownloadOnce = false
         var reachedNearCompletionOnce = false
+        val tmpFile = File("${outFile.absolutePath}.download")
         
         repeat(MAX_RETRIES) { attempt ->
             try {
@@ -1254,6 +1264,15 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
                     )
                 }
                 return // 成功時はリターン
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // 中断 (一時停止) 時に部分ファイルが残っている場合は「失敗」ではなく「中断」として通知し、
+                // 部分ファイルを保持して次回のレジュームに備える。
+                if (tmpFile.exists() && tmpFile.length() > 0L) {
+                    throw PauseRequestedException(
+                        "ダウンロードを中断しました (${tmpFile.length() / (1024 * 1024)}MB 保存済み)。再開時は続きから取得します。"
+                    )
+                }
+                throw e
             } catch (e: Exception) {
                 lastException = e
                 Log.w(TAG, "Attempt ${attempt + 1} failed: ${e.message}")
@@ -1287,6 +1306,25 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
 
         var resumeFrom = if (tmpFile.exists()) tmpFile.length().coerceAtLeast(0L) else 0L
         var restartedFromZero = false
+
+        // 破損した部分ファイルの検証:
+        //   リモートの全体サイズが HEAD で分かる場合、部分ファイルがそれより大きい (= 重複書き込み等で
+        //   壊れている) なら Range 再開しても確定時のサイズ不一致で必ず失敗するため、ここで削除して
+        //   最初から取り直す。これにより「壊れたまま何度もリトライして全て失敗する」ループを防ぐ。
+        if (resumeFrom > 0L) {
+            val expectedTotal = runCatching { getRemoteMetadata(urlString, HfAuthManager.getToken(context)) }
+                .getOrNull()?.contentLength ?: -1L
+            if (expectedTotal > 0L && resumeFrom > expectedTotal) {
+                Log.w(
+                    TAG,
+                    "Partial file is larger than remote total ($resumeFrom > $expectedTotal). " +
+                        "Discarding corrupted partial file: ${tmpFile.absolutePath}"
+                )
+                tmpFile.delete()
+                resumeFrom = 0L
+                restartedFromZero = true
+            }
+        }
 
         fun openDownloadConnection(rangeStart: Long): HttpURLConnection {
             // 毎回SharedPreferencesからトークンを読み込む（メモリキャッシュしない）
@@ -1399,6 +1437,10 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
 
             // ファイル整合性確認
             if (tmpFile.length() != totalBytes) {
+                // サイズ不一致の部分ファイルは破損しており、残しておくと次回 Range 再開時に
+                // さらにずれた位置から追記して壊れたまま再失敗する。ここで削除して次回は 0 から取り直させる。
+                Log.w(TAG, "File size mismatch: ${tmpFile.length()} vs $totalBytes. Deleting corrupted partial file and restarting from zero.")
+                tmpFile.delete()
                 throw IllegalStateException(
                     "File size mismatch: ${tmpFile.length()} vs $totalBytes"
                 )

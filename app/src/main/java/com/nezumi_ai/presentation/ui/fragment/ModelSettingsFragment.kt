@@ -169,6 +169,13 @@ open class ModelSettingsFragment : Fragment() {
     private var hfQueuedDownloads by mutableStateOf<List<HfQueuedDownloadUiState>>(emptyList())
     private val hfSucceededWorkIds = mutableSetOf<java.util.UUID>()
     private val imageModelSucceededWorkIds = mutableSetOf<java.util.UUID>()
+    // ダウンロードカードの「未完なのに消える」対策:
+    //   WorkInfo からは progress/outputData しか読めず、ENQUEUED 状態やプロセス再起動直後など
+    //   setProgress がまだ走っていないタイミングでは modelId/filePath が取れずにカードが消えていた。
+    //   一度表示したカードはキーごとにキャッシュし、WorkInfo から読めない期間は最後の既知状態を保持する。
+    //   SUCCEEDED/FAILED/CANCELLED になったら削除。
+    private val hfDownloadCardCache = mutableMapOf<String, HfQueuedDownloadUiState>()
+    private val imageModelDownloadCardCache = mutableMapOf<String, ImageModelDownloadUiState>()
     private var importedTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
     private var importedMmprojTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
 
@@ -508,7 +515,7 @@ open class ModelSettingsFragment : Fragment() {
                                 status = state.status,
                                 isExpanded = isExpanded,
                                 onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
-                                onDownload = { requestNotificationPermissionForDownload(model) },
+                                onDownload = { onBuiltinDownloadButtonClicked(model) },
                                 onDelete = {
                                     val ok = ModelFileManager.deleteModel(requireContext(), model)
                                     toast(if (ok) getString(R.string.common_deleted) else getString(R.string.common_delete_failed))
@@ -522,7 +529,12 @@ open class ModelSettingsFragment : Fragment() {
                                 isMemoryLow = state.memoryWarning != null,
                                 isStorageLow = resourceCheck.isStorageLow,
                                 fileSizeLabel = formatBytes(sizeBytes),
-                                speedInfo = activeDownloadSpeeds[model.name]
+                                speedInfo = activeDownloadSpeeds[model.name],
+                                isPaused = state.isPaused,
+                                onPause = {
+                                    ModelDownloadWorker.pause(requireContext(), model)
+                                    toast("一時停止しました。再開時は続きからダウンロードします")
+                                }
                             )
                         }
                     }
@@ -1618,6 +1630,14 @@ open class ModelSettingsFragment : Fragment() {
                             if (item.isActive) {
                                 Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                                     TextButton(onClick = {
+                                        ModelDownloadWorker.pauseCustomHf(
+                                            requireContext(),
+                                            item.modelId,
+                                            item.filePath
+                                        )
+                                        toast("一時停止しました。再開時は続きからダウンロードします")
+                                    }) { Text("一時停止") }
+                                    TextButton(onClick = {
                                         ModelDownloadWorker.cancelCustomHf(
                                             requireContext(),
                                             item.modelId,
@@ -1642,9 +1662,16 @@ open class ModelSettingsFragment : Fragment() {
             )
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 imageModelDownloadStates.forEach { item ->
-                    ModelDownloadProgressCard(item) {
-                        ModelDownloadWorker.cancelImageModel(requireContext(), item.modelId)
-                    }
+                    ModelDownloadProgressCard(
+                        item,
+                        onPause = {
+                            ModelDownloadWorker.pauseImageModel(requireContext(), item.modelId)
+                            toast("一時停止しました。再開時は続きからダウンロードします")
+                        },
+                        onCancel = {
+                            ModelDownloadWorker.cancelImageModel(requireContext(), item.modelId)
+                        }
+                    )
                 }
             }
         }
@@ -2309,7 +2336,7 @@ open class ModelSettingsFragment : Fragment() {
                     status = state.status,
                     isExpanded = isExpanded,
                     onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
-                    onDownload = { requestNotificationPermissionForDownload(model) },
+                    onDownload = { onBuiltinDownloadButtonClicked(model) },
                     onDelete = {
                         val ok = ModelFileManager.deleteModel(requireContext(), model)
                         toast(if (ok) "削除しました" else "削除に失敗しました")
@@ -2323,7 +2350,12 @@ open class ModelSettingsFragment : Fragment() {
                     isMemoryLow = state.memoryWarning != null,
                     isStorageLow = resourceCheck.isStorageLow,
                     fileSizeLabel = formatBytes(sizeBytes),
-                    speedInfo = activeDownloadSpeeds[model.name]
+                    speedInfo = activeDownloadSpeeds[model.name],
+                    isPaused = state.isPaused,
+                    onPause = {
+                        ModelDownloadWorker.pause(requireContext(), model)
+                        toast("一時停止しました。再開時は続きからダウンロードします")
+                    }
                 )
             }
         }
@@ -3211,6 +3243,14 @@ open class ModelSettingsFragment : Fragment() {
                                     if (item.isActive) {
                                         Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                                             TextButton(onClick = {
+                                                ModelDownloadWorker.pauseCustomHf(
+                                                    requireContext(),
+                                                    item.modelId,
+                                                    item.filePath
+                                                )
+                                                toast("一時停止しました。再開時は続きからダウンロードします")
+                                            }) { Text("一時停止") }
+                                            TextButton(onClick = {
                                                 ModelDownloadWorker.cancelCustomHf(
                                                     requireContext(),
                                                     item.modelId,
@@ -3235,9 +3275,16 @@ open class ModelSettingsFragment : Fragment() {
                     )
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.heightIn(max = 300.dp)) {
                         items(imageModelDownloadStates, key = { it.modelId }) { item ->
-                            ModelDownloadProgressCard(item) {
-                                ModelDownloadWorker.cancelImageModel(requireContext(), item.modelId)
-                            }
+                            ModelDownloadProgressCard(
+                                item,
+                                onPause = {
+                                    ModelDownloadWorker.pauseImageModel(requireContext(), item.modelId)
+                                    toast("一時停止しました。再開時は続きからダウンロードします")
+                                },
+                                onCancel = {
+                                    ModelDownloadWorker.cancelImageModel(requireContext(), item.modelId)
+                                }
+                            )
                         }
                     }
                 }
@@ -3273,7 +3320,7 @@ open class ModelSettingsFragment : Fragment() {
                             status = state.status,
                             isExpanded = isExpanded,
                             onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
-                            onDownload = { requestNotificationPermissionForDownload(model) },
+                            onDownload = { onBuiltinDownloadButtonClicked(model) },
                             onDelete = {
                                 val ok = ModelFileManager.deleteModel(requireContext(), model)
                                 toast(if (ok) "削除しました" else "削除に失敗しました")
@@ -3285,7 +3332,12 @@ open class ModelSettingsFragment : Fragment() {
                             progress = state.progress,
                             progressText = state.progressText,
                             fileSizeLabel = formatBytes(sizeBytes),
-                            speedInfo = activeDownloadSpeeds[model.name]
+                            speedInfo = activeDownloadSpeeds[model.name],
+                            isPaused = state.isPaused,
+                            onPause = {
+                                ModelDownloadWorker.pause(requireContext(), model)
+                                toast("一時停止しました。再開時は続きからダウンロードします")
+                            }
                         )
                     }
                 }
@@ -3442,7 +3494,9 @@ open class ModelSettingsFragment : Fragment() {
         isMemoryLow: Boolean = false,
         isStorageLow: Boolean = false,
         fileSizeLabel: String? = null,
-        speedInfo: DownloadSpeedInfo? = null
+        speedInfo: DownloadSpeedInfo? = null,
+        isPaused: Boolean = false,
+        onPause: (() -> Unit)? = null
     ) {
         Card(
             modifier = Modifier
@@ -3585,7 +3639,12 @@ open class ModelSettingsFragment : Fragment() {
                                 modifier = Modifier.weight(1f),
                                 enabled = !isStorageLow
                             ) {
-                                Text(if (isStorageLow) "容量不足" else if (isDownloading) "キャンセル" else "ダウンロード")
+                                Text(
+                                    if (isStorageLow) "容量不足"
+                                    else if (isDownloading) "一時停止"
+                                    else if (isPaused) "再開 (続きから)"
+                                    else "ダウンロード"
+                                )
                             }
                         }
                         TextButton(
@@ -4477,61 +4536,65 @@ open class ModelSettingsFragment : Fragment() {
                         toast(ctx.getString(R.string.model_sd_hf_toast_downloaded, File(outPath).name))
                     }
                 }
-                val mapped = infos.mapNotNull { info ->
+                // 終端状態に入ったカードはキャッシュから削除
+                val terminalKeys = infos.filter {
+                    it.state == WorkInfo.State.SUCCEEDED ||
+                        it.state == WorkInfo.State.FAILED ||
+                        it.state == WorkInfo.State.CANCELLED
+                }.mapNotNull { info ->
+                    val mid = info.progress.getString(ModelDownloadWorker.KEY_HF_MODEL_ID)
+                        ?: info.outputData.getString(ModelDownloadWorker.KEY_HF_MODEL_ID)
+                    val fp = info.progress.getString(ModelDownloadWorker.KEY_HF_FILE_PATH)
+                        ?: info.outputData.getString(ModelDownloadWorker.KEY_HF_FILE_PATH)
+                    if (mid != null && fp != null) "$mid|$fp" else null
+                }.toSet()
+                terminalKeys.forEach { hfDownloadCardCache.remove(it) }
+
+                // WorkInfo から読めた情報でキャッシュを更新 (読めない期間は既存カードを温存)
+                infos.forEach { info ->
+                    if (info.state == WorkInfo.State.SUCCEEDED ||
+                        info.state == WorkInfo.State.FAILED ||
+                        info.state == WorkInfo.State.CANCELLED
+                    ) return@forEach
                     val kind = info.progress.getString(ModelDownloadWorker.KEY_DOWNLOAD_KIND)
                         ?: info.outputData.getString(ModelDownloadWorker.KEY_DOWNLOAD_KIND)
                         ?: ModelDownloadWorker.DOWNLOAD_KIND_HF_CUSTOM
-                    if (kind != ModelDownloadWorker.DOWNLOAD_KIND_HF_CUSTOM) return@mapNotNull null
-
-                    val modelId =
-                        info.progress.getString(ModelDownloadWorker.KEY_HF_MODEL_ID)
-                            ?: info.outputData.getString(ModelDownloadWorker.KEY_HF_MODEL_ID)
-                            ?: return@mapNotNull null
-                    val filePath =
-                        info.progress.getString(ModelDownloadWorker.KEY_HF_FILE_PATH)
-                            ?: info.outputData.getString(ModelDownloadWorker.KEY_HF_FILE_PATH)
-                            ?: return@mapNotNull null
-                    val downloaded =
-                        info.progress.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
-                            .takeIf { it > 0L }
-                            ?: info.outputData.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
-                    val total =
-                        info.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L)
-                            .takeIf { it > 0L }
-                            ?: info.outputData.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L)
+                    if (kind != ModelDownloadWorker.DOWNLOAD_KIND_HF_CUSTOM) return@forEach
+                    val modelId = info.progress.getString(ModelDownloadWorker.KEY_HF_MODEL_ID)
+                        ?: info.outputData.getString(ModelDownloadWorker.KEY_HF_MODEL_ID)
+                    val filePath = info.progress.getString(ModelDownloadWorker.KEY_HF_FILE_PATH)
+                        ?: info.outputData.getString(ModelDownloadWorker.KEY_HF_FILE_PATH)
+                    if (modelId == null || filePath == null) return@forEach
+                    val key = "$modelId|$filePath"
+                    val downloaded = info.progress.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
+                        .takeIf { it > 0L }
+                        ?: info.outputData.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
+                        .takeIf { it > 0L }
+                        ?: hfDownloadCardCache[key]?.downloadedBytes ?: 0L
+                    val total = info.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L)
+                        .takeIf { it > 0L }
+                        ?: info.outputData.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L)
+                        .takeIf { it > 0L }
+                        ?: hfDownloadCardCache[key]?.totalBytes ?: 0L
                     val status = when (info.state) {
                         WorkInfo.State.ENQUEUED -> "待機中"
                         WorkInfo.State.RUNNING -> if (total > 0L) {
                             val percent = ((downloaded * 100L) / total).toInt().coerceIn(0, 100)
                             "ダウンロード中 $percent% (${formatBytes(downloaded)} / ${formatBytes(total)})"
-                        } else {
-                            "ダウンロード中"
-                        }
+                        } else "ダウンロード中"
                         WorkInfo.State.BLOCKED -> "待機中"
-                        WorkInfo.State.SUCCEEDED -> "完了"
-                        WorkInfo.State.CANCELLED -> "キャンセル"
-                        WorkInfo.State.FAILED -> {
-                            val error = info.outputData.getString(ModelDownloadWorker.KEY_ERROR_MESSAGE)
-                            if (error.isNullOrBlank()) "失敗" else "失敗: $error"
-                        }
+                        else -> hfDownloadCardCache[key]?.statusText ?: "待機中"
                     }
-                    // 完了またはキャンセルされたダウンロードは追加しない
-                    if (info.state == WorkInfo.State.SUCCEEDED || info.state == WorkInfo.State.FAILED || info.state == WorkInfo.State.CANCELLED) {
-                        return@mapNotNull null
-                    }
-                    HfQueuedDownloadUiState(
-                        modelId = modelId,
-                        filePath = filePath,
-                        downloadedBytes = downloaded,
-                        totalBytes = total,
+                    hfDownloadCardCache[key] = HfQueuedDownloadUiState(
+                        modelId = modelId, filePath = filePath,
+                        downloadedBytes = downloaded, totalBytes = total,
                         statusText = status,
                         isActive = info.state == WorkInfo.State.ENQUEUED ||
-                            info.state == WorkInfo.State.RUNNING ||
-                            info.state == WorkInfo.State.BLOCKED
+                            info.state == WorkInfo.State.RUNNING || info.state == WorkInfo.State.BLOCKED
                     )
                 }
 
-                hfQueuedDownloads = mapped
+                hfQueuedDownloads = hfDownloadCardCache.values
                     .sortedWith(compareBy<HfQueuedDownloadUiState> { it.modelId }.thenBy { it.filePath })
 
                 if (infos.any { it.state == WorkInfo.State.SUCCEEDED }) {
@@ -4569,44 +4632,51 @@ open class ModelSettingsFragment : Fragment() {
                 Log.d("ModelSettings", "observeImageModelDownloadWork: activeIds=$activeIds")
                 downloadingImageModelIds = activeIds
                 
-                // Build download states list
-                val downloadStates = infos.mapNotNull { info ->
+                // Build download states list (キャッシュ方式: WorkInfo から読めない期間は既存カードを温存)
+                // 終端状態に入ったカードはキャッシュから削除
+                val terminalImageKeys = infos.filter {
+                    it.state == WorkInfo.State.SUCCEEDED ||
+                        it.state == WorkInfo.State.FAILED ||
+                        it.state == WorkInfo.State.CANCELLED
+                }.mapNotNull { info ->
+                    info.progress.getString(ModelDownloadWorker.KEY_IMAGE_MODEL_ID)
+                        ?: info.outputData.getString(ModelDownloadWorker.KEY_IMAGE_MODEL_ID)
+                }.toSet()
+                terminalImageKeys.forEach { imageModelDownloadCardCache.remove(it) }
+
+                infos.forEach { info ->
+                    if (info.state == WorkInfo.State.SUCCEEDED ||
+                        info.state == WorkInfo.State.FAILED ||
+                        info.state == WorkInfo.State.CANCELLED
+                    ) return@forEach
                     val modelId = info.progress.getString(ModelDownloadWorker.KEY_IMAGE_MODEL_ID)
                         ?: info.outputData.getString(ModelDownloadWorker.KEY_IMAGE_MODEL_ID)
-                        ?: return@mapNotNull null
+                        ?: return@forEach
                     val modelName = info.progress.getString(ModelDownloadWorker.KEY_IMAGE_MODEL_NAME)
                         ?: info.outputData.getString(ModelDownloadWorker.KEY_IMAGE_MODEL_NAME)
                         ?: modelId
                     val downloaded = info.progress.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
                         .takeIf { it > 0L }
                         ?: info.outputData.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
+                        .takeIf { it > 0L }
+                        ?: imageModelDownloadCardCache[modelId]?.downloadedBytes ?: 0L
                     val total = info.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L)
                         .takeIf { it > 0L }
                         ?: info.outputData.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L)
-                    
+                        .takeIf { it > 0L }
+                        ?: imageModelDownloadCardCache[modelId]?.totalBytes ?: 0L
+
                     val status = when (info.state) {
                         WorkInfo.State.ENQUEUED -> "待機中"
                         WorkInfo.State.RUNNING -> if (total > 0L) {
                             val percent = ((downloaded * 100L) / total).toInt().coerceIn(0, 100)
                             "ダウンロード中 $percent% (${formatBytes(downloaded)} / ${formatBytes(total)})"
-                        } else {
-                            "ダウンロード中"
-                        }
+                        } else "ダウンロード中"
                         WorkInfo.State.BLOCKED -> "待機中"
-                        WorkInfo.State.SUCCEEDED -> "完了"
-                        WorkInfo.State.CANCELLED -> "キャンセル"
-                        WorkInfo.State.FAILED -> {
-                            val error = info.outputData.getString(ModelDownloadWorker.KEY_ERROR_MESSAGE)
-                            if (error.isNullOrBlank()) "失敗" else "失敗: $error"
-                        }
+                        else -> imageModelDownloadCardCache[modelId]?.statusText ?: "待機中"
                     }
-                    
-                    // 完了またはキャンセルされたダウンロードは追加しない
-                    if (info.state == WorkInfo.State.SUCCEEDED || info.state == WorkInfo.State.FAILED || info.state == WorkInfo.State.CANCELLED) {
-                        return@mapNotNull null
-                    }
-                    
-                    ImageModelDownloadUiState(
+
+                    imageModelDownloadCardCache[modelId] = ImageModelDownloadUiState(
                         modelId = modelId,
                         modelName = modelName,
                         downloadedBytes = downloaded,
@@ -4617,8 +4687,8 @@ open class ModelSettingsFragment : Fragment() {
                             info.state == WorkInfo.State.BLOCKED
                     )
                 }
-                
-                imageModelDownloadStates = downloadStates
+
+                imageModelDownloadStates = imageModelDownloadCardCache.values.sortedBy { it.modelId }
             }
     }
 
@@ -4972,13 +5042,44 @@ open class ModelSettingsFragment : Fragment() {
         if (!enqueued) toast("すでにダウンロード中です")
     }
 
+    /**
+     * 組み込みモデルカードの DL ボタンの状態遷移:
+     *   未ダウンロード → [ダウンロード] → ダウンロード中 → [一時停止] → 一時停止中 → [再開]
+     */
+    private fun onBuiltinDownloadButtonClicked(model: ModelFileManager.LocalModel) {
+        val state = modelStates[model]
+        when {
+            state?.isDownloading == true -> {
+                ModelDownloadWorker.pause(requireContext(), model)
+                toast("一時停止しました。再開時は続きからダウンロードします")
+            }
+            else -> requestNotificationPermissionForDownload(model)
+        }
+    }
+
+    private fun updatePausedState(model: ModelFileManager.LocalModel) {
+        val state = modelStates[model] ?: return
+        if (state.isDownloading || state.isDownloaded) {
+            state.isPaused = false
+            return
+        }
+        val partial = java.io.File("${ModelFileManager.modelFile(requireContext(), model).absolutePath}.download")
+        state.isPaused = partial.exists() && partial.length() > 0L
+    }
+
     private fun refreshModelStatus(model: ModelFileManager.LocalModel? = null) {
         val targets = model?.let { listOf(it) } ?: ModelFileManager.LocalModel.entries
         targets.forEach {
             val downloaded = ModelFileManager.isDownloaded(requireContext(), it)
             val state = modelStates[it] ?: return@forEach
             state.isDownloaded = downloaded
-            state.status = if (downloaded) "ダウンロード済み" else "未ダウンロード"
+            val tmpFile = java.io.File("${ModelFileManager.modelFile(requireContext(), it).absolutePath}.download")
+            state.isPaused = !downloaded && !state.isDownloading && tmpFile.exists() && tmpFile.length() > 0L
+            state.status = when {
+                downloaded -> "ダウンロード済み"
+                state.isPaused -> "一時停止中 (${formatBytes(tmpFile.length())} 保存済み)"
+                else -> "未ダウンロード"
+            }
             if (!state.isDownloading) {
                 state.progressText = ""
                 state.progress = 0f
@@ -5028,6 +5129,7 @@ open class ModelSettingsFragment : Fragment() {
         when (workInfo.state) {
             WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
                 state.isDownloading = true
+                state.isPaused = false
                 val downloaded = workInfo.progress.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
                 val total = workInfo.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L)
                 if (total > 0L) {
@@ -5071,7 +5173,12 @@ open class ModelSettingsFragment : Fragment() {
                 state.isDownloading = false
                 state.progressText = ""
                 val error = workInfo.outputData.getString(ModelDownloadWorker.KEY_ERROR_MESSAGE) ?: "ダウンロード失敗"
-                state.status = "失敗: $error"
+                if (error.contains("中断") || error.contains("paused", ignoreCase = true)) {
+                    state.status = "一時停止中"
+                    state.isPaused = true
+                } else {
+                    state.status = "失敗: $error"
+                }
                 state.showAccessButton = error.contains("HTTP 403", ignoreCase = true)
                 state.memoryWarning = null
             }
@@ -5080,6 +5187,10 @@ open class ModelSettingsFragment : Fragment() {
                 state.progressText = ""
                 state.memoryWarning = null
                 refreshModelStatus(model)
+                updatePausedState(model)
+                if (state.isPaused) {
+                    state.status = "一時停止中 (続きから再開できます)"
+                }
             }
         }
     }
@@ -5218,6 +5329,8 @@ open class ModelSettingsFragment : Fragment() {
         var showAccessButton by mutableStateOf(false)
         var isDownloaded by mutableStateOf(false)
         var memoryWarning by mutableStateOf<String?>(null)
+        /** 一時停止中 (部分ファイルが残っていて続きから再開可能) */
+        var isPaused by mutableStateOf(false)
     }
 
     private data class HfQueuedDownloadUiState(
@@ -5239,6 +5352,7 @@ open class ModelSettingsFragment : Fragment() {
     @Composable
     private fun ModelDownloadProgressCard(
         item: ImageModelDownloadUiState,
+        onPause: (() -> Unit)? = null,
         onCancel: (() -> Unit)? = null
     ) {
         // 画像モデルの速度キーは modelName または modelId で登録される可能性があるため内包フォールバックする。
@@ -5298,9 +5412,14 @@ open class ModelSettingsFragment : Fragment() {
                         }
                     }
                 }
-                if (item.isActive && onCancel != null) {
+                if (item.isActive && (onPause != null || onCancel != null)) {
                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                        TextButton(onClick = onCancel) { Text("キャンセル") }
+                        onPause?.let { pauseAction ->
+                            TextButton(onClick = pauseAction) { Text("一時停止") }
+                        }
+                        onCancel?.let { cancelAction ->
+                            TextButton(onClick = cancelAction) { Text("キャンセル") }
+                        }
                     }
                 }
             }

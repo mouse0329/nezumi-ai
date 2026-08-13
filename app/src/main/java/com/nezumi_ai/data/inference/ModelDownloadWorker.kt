@@ -218,9 +218,25 @@ class ModelDownloadWorker(
                 }
             )
         } catch (e: CancellationException) {
-            // cancellation marker が立っている場合は temp を掃除して終了
+            // ネットワーク制約切れ (Wi-Fi ⇔ モバイル切替など) や「一時停止」で中断された場合、
+            // 部分ファイルが残っていれば削除せず保持する (再開時に Range で続きから取得するため)。
+            // 以前はここで無条件に temp を削除していたため、ネットワーク変更のたびに
+            // ダウンロードが最初からやり直しになっていた。
+            val hasPartial = runCatching {
+                val f = ModelFileManager.modelFile(applicationContext, model)
+                File("${f.absolutePath}.download").let { it.exists() && it.length() > 0L }
+            }.getOrDefault(false)
+            if (hasPartial) {
+                return Result.failure(
+                    workDataOf(KEY_ERROR_MESSAGE to "ダウンロードを中断しました。再開時は続きから取得します。")
+                )
+            }
+            // 完全キャンセル (部分ファイルなし) の場合は temp を掃除して終了
             ModelFileManager.deleteTempDownload(applicationContext, model)
             throw e
+        } catch (e: ModelFileManager.PauseRequestedException) {
+            // 部分ファイルを残したまま終了 (次回 enqueue で続きから再開される)
+            Result.failure(workDataOf(KEY_ERROR_MESSAGE to (e.message ?: "paused")))
         } catch (e: Exception) {
             if (shouldRetry(e, startedAt)) {
                 Result.retry()
@@ -371,10 +387,16 @@ class ModelDownloadWorker(
                     )
                 },
                 onFailure = { e ->
-                    if (!reachedNearCompletion && shouldRetry(e, startedAt)) {
-                        Result.retry()
-                    } else {
-                        handleCustomFailure(modelId, filePath, e)
+                    when {
+                        e is ModelFileManager.PauseRequestedException ->
+                            Result.failure(workDataOf(
+                                KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_HF_CUSTOM,
+                                KEY_HF_MODEL_ID to modelId,
+                                KEY_HF_FILE_PATH to filePath,
+                                KEY_ERROR_MESSAGE to (e.message ?: "paused")
+                            ))
+                        !reachedNearCompletion && shouldRetry(e, startedAt) -> Result.retry()
+                        else -> handleCustomFailure(modelId, filePath, e)
                     }
                 }
             )
@@ -609,8 +631,25 @@ class ModelDownloadWorker(
 
         fun cancelCustomHf(context: Context, modelId: String, filePath: String) {
             WorkManager.getInstance(context).cancelUniqueWork(customWorkName(modelId, filePath))
-            val outFile = ModelFileManager.huggingFaceImportedFile(context, modelId, filePath)
-            runCatching { File("${outFile.absolutePath}.download").delete() }
+            // 部分ファイル (.download) は削除しない。ユーザーが再開したい場合に続きから取得できるようにする。
+        }
+
+        /**
+         * 一時停止: ダウンロードを中断するが部分ファイル (.download) は残す。
+         * 次回 [enqueue] 時に Range リクエストで続きから再開できる。
+         */
+        fun pause(context: Context, model: ModelFileManager.LocalModel) {
+            ModelFileManager.markCancelRequested(context, model, true)
+            WorkManager.getInstance(context).cancelUniqueWork(modelWorkName(model))
+            // cancel() と違い、部分ファイルは残す
+        }
+
+        fun pauseCustomHf(context: Context, modelId: String, filePath: String) {
+            WorkManager.getInstance(context).cancelUniqueWork(customWorkName(modelId, filePath))
+        }
+
+        fun pauseImageModel(context: Context, modelId: String) {
+            WorkManager.getInstance(context).cancelUniqueWork(imageModelWorkName(modelId))
         }
 
         fun imageModelWorkName(modelId: String): String = "image_model_download_$modelId"
@@ -841,8 +880,7 @@ class ModelDownloadWorker(
 
     private fun handleFailure(model: ModelFileManager.LocalModel, error: Throwable): Result {
         val message = error.message ?: "download failed"
-        // 失敗時は一時ファイルを掃除し、ユーザーへ通知する
-        ModelFileManager.deleteTempDownload(applicationContext, model)
+        // 部分ファイルは残し、次回 enqueue 時のレジュームに備える
         showDownloadFailedNotification(model, message)
         return Result.failure(workDataOf(KEY_ERROR_MESSAGE to message))
     }
@@ -850,7 +888,7 @@ class ModelDownloadWorker(
     private fun handleCustomFailure(modelId: String, filePath: String, error: Throwable): Result {
         val message = error.message ?: "download failed"
         val outFile = ModelFileManager.huggingFaceImportedFile(applicationContext, modelId, filePath)
-        runCatching { File("${outFile.absolutePath}.download").delete() }
+        // 部分ファイル (.download) は削除せず残す。次回再開時に続きから取得できるようにする。
         runCatching { outFile.delete() }
         runCatching { File("${outFile.absolutePath}.meta").delete() }
         showCustomDownloadFailedNotification(modelId, filePath, message)
