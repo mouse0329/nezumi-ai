@@ -167,7 +167,11 @@ object GgufToolPromptBuilder {
         return toolsJson
     }
 
-    fun appendToolDefinitions(context: Context, systemPrompt: String): String {
+    fun appendToolDefinitions(
+        context: Context,
+        systemPrompt: String,
+        isGemma4: Boolean = false
+    ): String {
         val toolsJson = collectEnabledToolsJson(context)
         // Bug fix: 組み込みツールが 1 つも有効でなくても、MCP サーバーが接続されていれば
         // MCP ツールだけを列挙する。以前はここで早期 return していたため、
@@ -177,20 +181,9 @@ object GgufToolPromptBuilder {
             return systemPrompt
         }
 
-        val toolBlock = buildString {
-            appendLine()
-            appendLine()
-            appendLine("You can call tools to help the user.")
-            appendLine("Available tools are listed in <tools></tools>.")
-            appendLine("When calling a tool, respond ONLY with:")
-            appendLine("<tool_call>")
-            appendLine("""{"name":"<tool-name>","arguments":{...}}""")
-            appendLine("</tool_call>")
-            appendLine("<tools>")
-            append(toolsJson)
-            appendLine()
-            append("</tools>")
-        }
+        // Gemma 4 系は Google 公式仕様 (<|tool_call>call:NAME{...}<tool_call|>) を使う。
+        // それ以外のモデル (Qwen 等) は従来通りの <tool_call>{"name":..,"arguments":..}</tool_call> 形式。
+        val toolBlock = if (isGemma4) buildGemma4ToolBlock(toolsJson) else buildGenericToolBlock(toolsJson)
 
         return if (systemPrompt.isBlank()) toolBlock.trim() else systemPrompt + toolBlock
     }
@@ -207,27 +200,60 @@ object GgufToolPromptBuilder {
      * MCP ツールもこの <tools> にマージされるため、`McpToolPromptBuilder.appendForLiteRt`
      * を追加で呼ぶ必要はない (二重注入回避)。
      */
-    fun appendForLiteRt(context: Context, systemPrompt: String): String {
+    fun appendForLiteRt(
+        context: Context,
+        systemPrompt: String,
+        isGemma4: Boolean = false
+    ): String {
         val toolsJson = collectEnabledToolsJson(context)
         if (toolsJson.isBlank()) {
             Log.d(TAG, "appendForLiteRt: no builtin schema and no MCP tool - skipping")
             return systemPrompt
         }
-        val toolBlock = buildString {
-            appendLine()
-            appendLine()
-            appendLine("You can call tools to help the user.")
-            appendLine("Available tools are listed in <tools></tools>.")
-            appendLine("When calling a tool, respond ONLY with:")
-            appendLine("<tool_call>")
-            appendLine("""{"name":"<tool-name>","arguments":{...}}""")
-            appendLine("</tool_call>")
-            appendLine("<tools>")
-            append(toolsJson)
-            appendLine()
-            append("</tools>")
-        }
-        Log.i(TAG, "appendForLiteRt: injected <tools> block into LiteRT-LM system prompt")
+        val toolBlock = if (isGemma4) buildGemma4ToolBlock(toolsJson) else buildGenericToolBlock(toolsJson)
+        Log.i(TAG, "appendForLiteRt: injected <tools> block into LiteRT-LM system prompt (gemma4=$isGemma4)")
         return if (systemPrompt.isBlank()) toolBlock.trim() else systemPrompt + toolBlock
+    }
+
+    /**
+     * 汎用 (Qwen 等) の `<tool_call>...</tool_call>` + JSON 形式を教える指示ブロック。
+     */
+    private fun buildGenericToolBlock(toolsJson: String): String = buildString {
+        appendLine()
+        appendLine()
+        appendLine("You can call tools to help the user.")
+        appendLine("Available tools are listed in <tools></tools>.")
+        appendLine("When calling a tool, respond ONLY with:")
+        appendLine("<tool_call>")
+        appendLine("""{"name":"<tool-name>","arguments":{...}}""")
+        appendLine("</tool_call>")
+        appendLine("<tools>")
+        append(toolsJson)
+        appendLine()
+        append("</tools>")
+    }
+
+    /**
+     * Gemma 4 (Google 公式仕様) の `<|tool_call>call:NAME{...}<tool_call|>` 形式を教える指示ブロック。
+     *
+     * 参考:
+     *   - `<|tool_call>` / `<tool_call|>` は Gemma 4 tokenizer 上の専用トークンで、
+     *     Google AI 公式の function calling サンプルはこの形で応答することを前提にしている。
+     *   - 閉じタグ `<tool_call|>` を吐き忘れる既知のクセに備え、パーサ側 (salvageGemma4Payload)
+     *     で救済しているが、まずはプロンプトで正しい形を強く指示しておく。
+     */
+    private fun buildGemma4ToolBlock(toolsJson: String): String = buildString {
+        appendLine()
+        appendLine()
+        appendLine("You can call tools to help the user.")
+        appendLine("Available tools are listed in <tools></tools>.")
+        appendLine("When calling a tool, respond ONLY with the following Gemma tool-call format")
+        appendLine("(do NOT use JSON `name`/`arguments` wrappers, do NOT use <tool_call> tags):")
+        appendLine("<|tool_call>call:<tool-name>{\"arg\":value, ...}<tool_call|>")
+        appendLine("Always close the call with <tool_call|>. Emit multiple calls back-to-back if needed.")
+        appendLine("<tools>")
+        append(toolsJson)
+        appendLine()
+        append("</tools>")
     }
 }

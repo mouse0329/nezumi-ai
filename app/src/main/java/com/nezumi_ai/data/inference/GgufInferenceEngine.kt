@@ -564,6 +564,10 @@ class GgufInferenceEngine(
             val maxToolRounds = if (toolCallingEnabled) 5 else 1
             var toolRound = 0
             var isFirstGenerationRound = true
+            // Gemma 4 判定: モデルパスから 1 回だけ決定してツールループ内で使い回す。
+            // GgufToolCallParser.parse / formatToolResults を Gemma 4 形式
+            // (<|tool_call>call:NAME{...}<tool_call|>) に切り替えるためのフラグ。
+            val isGemma4 = PromptBuilder.isGemma4Model(ctx.modelPath)
 
             val toolResultCards = mutableListOf<ToolResultCard>()
             while (isActive && toolRound < maxToolRounds) {
@@ -580,20 +584,58 @@ class GgufInferenceEngine(
                 )
                 isFirstGenerationRound = false
 
+                if (!toolCallingEnabled) {
+                    // インライン表示対応: <tool_call> タグは本文に保持したまま sanitize する。
+                    // ツール無効時はパースを走らず、そのまま本文を積むだけ。
+                    fullAnswer.append(
+                        Gemma4ThinkingParser.sanitizeVisibleText(
+                            roundText,
+                            preserveToolCallTags = false
+                        )
+                    )
+                    break
+                }
+
+                val parsed = GgufToolCallParser.parse(roundText, isGemma4 = isGemma4)
+
+                // トークン切れ検知:
+                //   モデルが <tool_call> を開いたのに JSON 引数の途中でトークン予算切れ/停止シーケンス
+                //   にかかってしまったケース。以前はここで黙って break していたため、UI の
+                //   インラインカードが Running のまま永久に残り、モデルも次ターンでも何が起きたのか
+                //   分からない状態になっていた。強制的に </tool_call> (または Gemma 4 なら <tool_call|>) で
+                //   タグを閉じ、失敗ステータスの ToolResultCard + <tool_response> を合成して
+                //   モデルに戻すことで、モデルが「今の呼び出しは失敗した」と認識して自然に
+                //   立て直せるようにする。
+                val truncationDetected = parsed.hadTruncatedToolCall
+                val closingTag = GgufToolCallParser.closingTagFor(parsed.truncatedTagIsGemma4)
+                val normalizedRoundText = if (truncationDetected) {
+                    // 本文末尾に閉じタグを補完して、DB / 履歴プロンプトのタグ整合を保つ。
+                    // 行末の閉じタグの前後に改行を入れて、后続の <tool_response> と行境を分ける。
+                    buildString {
+                        append(roundText)
+                        if (!roundText.endsWith("\n")) append("\n")
+                        append(closingTag)
+                        append("\n")
+                    }
+                } else {
+                    roundText
+                }
+
                 // インライン表示対応: <tool_call> タグは本文に保持したまま
                 // sanitize する。UI 側で GgufToolCallParser.parseSegments() を使って
                 // セグメント化し、タグの位置でカードをインライン描画するため。
                 fullAnswer.append(
                     Gemma4ThinkingParser.sanitizeVisibleText(
-                        roundText,
-                        preserveToolCallTags = toolCallingEnabled
+                        normalizedRoundText,
+                        preserveToolCallTags = true
                     )
                 )
 
-                if (!toolCallingEnabled) break
-
-                val parsed = GgufToolCallParser.parse(roundText)
-                if (parsed.toolCalls.isEmpty() || cancelFlag.get()) {
+                // 実行対象のツールもなく、トークン切れもなければ通常の回答としてループを抜ける。
+                if (parsed.toolCalls.isEmpty() && !truncationDetected) {
+                    break
+                }
+                if (cancelFlag.get()) {
                     break
                 }
                 if (toolRound >= maxToolRounds) {
@@ -601,9 +643,11 @@ class GgufInferenceEngine(
                     break
                 }
 
-                trySend(
-                    InferenceStreamProtocol.encodeToolCallChunk(parsed.toolCalls.map { it.name })
-                )
+                if (parsed.toolCalls.isNotEmpty()) {
+                    trySend(
+                        InferenceStreamProtocol.encodeToolCallChunk(parsed.toolCalls.map { it.name })
+                    )
+                }
                 val toolResults = mutableListOf<Pair<ToolCall, ToolExecutionResult>>()
                 for (toolCall in parsed.toolCalls) {
                     val result = toolExecutor.execute(toolCall)
@@ -621,6 +665,24 @@ class GgufInferenceEngine(
                     }
                 }
 
+                // トークン切れの失敗カードを合成して UI / モデル双方に通知する。
+                //   UI: toolResultCards に success=false カードを追加
+                //   モデル: <tool_response> として currentPrompt / fullAnswer に埋め込み、
+                //     「前回のツール呼び出しはトークン予算不足で中断した」ことを伝える。
+                val truncatedResponseBlock = if (truncationDetected) {
+                    val card = GgufToolCallParser.buildTruncatedFailureCard(parsed.truncatedToolName)
+                    synchronized(toolResultCards) { toolResultCards.add(card) }
+                    trySend(InferenceStreamProtocol.encodeToolResultChunk(card.toolName, "error"))
+                    Log.w(
+                        TAG,
+                        "Tool call truncated (token budget exhausted): name=${parsed.truncatedToolName} " +
+                            "gemma4=${parsed.truncatedTagIsGemma4} session=$sessionId round=$toolRound"
+                    )
+                    GgufToolCallParser.formatTruncatedFailureResponse(parsed.truncatedToolName)
+                } else {
+                    ""
+                }
+
                 // バグ修正 (tool_response が履歴コンテキストに入らない):
                 //   本文には `<tool_call>...</tool_call>` だけが残っており、対応する `<tool_response>`
                 //   タグはモデルへの次ラウンド入力 (currentPrompt) にしか入らないため、DB に保存される
@@ -628,7 +690,10 @@ class GgufInferenceEngine(
                 //   何が返ったか」の対応関係が完全に失われる。同じ formatToolResults を fullAnswer にも埋め込むことで、
                 //   タグごと保存され・UI の InlineToolCallCard は依然として展開時に `card.payload` を見て
                 //   result を描画できるので見た目は変わらない。
-                val toolResponseBlock = GgufToolCallParser.formatToolResults(toolResults)
+                val toolResponseBlock = buildString {
+                    append(GgufToolCallParser.formatToolResults(toolResults, isGemma4 = isGemma4))
+                    append(truncatedResponseBlock)
+                }
                 if (toolResponseBlock.isNotEmpty()) {
                     fullAnswer.append(toolResponseBlock)
                 }
@@ -645,7 +710,7 @@ class GgufInferenceEngine(
 
                 currentPrompt = buildString {
                     append(prompt)
-                    append(Gemma4ThinkingParser.stripThinkingForModelPrompt(roundText))
+                    append(Gemma4ThinkingParser.stripThinkingForModelPrompt(normalizedRoundText))
                     append(toolResponseBlock)
                 }
                 withContext(Dispatchers.IO) {

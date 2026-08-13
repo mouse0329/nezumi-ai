@@ -4471,13 +4471,16 @@ class ChatViewModel(
             systemPrompt = "ユーザー名：$userName\n\n$systemPrompt"
         }
         systemPrompt = appendMemoryBlockToSystemPrompt(systemPrompt, memoryBlock)
+        // Gemma 4 判定: モデル名から 1 回だけ判定し、ツール指示ブロックのフォーマット
+        // (<|tool_call>call:NAME{...}<tool_call|> vs <tool_call>{...}</tool_call>) を切り替える。
+        val isGemma4Model = PromptBuilder.isGemma4Model(engineModelName)
         if (enableToolCalling) {
             // ツール一覧を組み立てる直前にキャッシュを確認する。
             // TTL 内かつサーバー構成が同じなら即 return するため、通常は追加コストゼロ。
             runCatching { McpToolRegistry.get(appContext).ensureFresh() }
                 .onFailure { Log.w(TAG, "MCP tool registry refresh failed", it) }
             systemPrompt = if (isGgufEngine) {
-                GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt)
+                GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt, isGemma4 = isGemma4Model)
             } else {
                 // Bug fix (v2.1+): LiteRT-LM 経路ではビルトインツールの定義がシステムプロンプトに
                 // 一切注入されていなかった。ネイティブ ToolProvider として createConversation(tools=...)
@@ -4487,7 +4490,8 @@ class ChatViewModel(
                 // GgufToolPromptBuilder.appendForLiteRt は GGUF と同じ <tools> ブロックを組み立てて
                 // ビルトイン + MCP をまとめてシステムプロンプトに追加する。二重注入を避けるため、
                 // 従来の McpToolPromptBuilder.appendForLiteRt はここでは呼ばない。
-                GgufToolPromptBuilder.appendForLiteRt(appContext, systemPrompt)
+                // LiteRT-LM 経路もモデルが Gemma 4 なら公式仕様の tool-call 形式を教える。
+                GgufToolPromptBuilder.appendForLiteRt(appContext, systemPrompt, isGemma4 = isGemma4Model)
             }
         }
         // Tool calling can coexist with thinking directives; do not suppress thinking when tool calling is enabled.
@@ -4566,13 +4570,15 @@ class ChatViewModel(
 
         val filteredMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
         var systemPrompt = appendMemoryBlockToSystemPrompt(getActiveSystemPrompt(), memoryBlock)
+        // Gemma 4 判定: モデル名から 1 回だけ判定し、ツール指示ブロックの形式を切り替える。
+        val isGemma4Model = PromptBuilder.isGemma4Model(engineModelName)
         if (enableToolCalling) {
             // ツール一覧を組み立てる直前にキャッシュを確認する。
             // TTL 内かつサーバー構成が同じなら即 return するため、通常は追加コストゼロ。
             runCatching { McpToolRegistry.get(appContext).ensureFresh() }
                 .onFailure { Log.w(TAG, "MCP tool registry refresh failed", it) }
             systemPrompt = if (isGgufEngine) {
-                GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt)
+                GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt, isGemma4 = isGemma4Model)
             } else {
                 // Bug fix (v2.1+): LiteRT-LM 経路ではビルトインツールの定義がシステムプロンプトに
                 // 一切注入されていなかった。ネイティブ ToolProvider として createConversation(tools=...)
@@ -4582,7 +4588,8 @@ class ChatViewModel(
                 // GgufToolPromptBuilder.appendForLiteRt は GGUF と同じ <tools> ブロックを組み立てて
                 // ビルトイン + MCP をまとめてシステムプロンプトに追加する。二重注入を避けるため、
                 // 従来の McpToolPromptBuilder.appendForLiteRt はここでは呼ばない。
-                GgufToolPromptBuilder.appendForLiteRt(appContext, systemPrompt)
+                // LiteRT-LM 経路もモデルが Gemma 4 なら公式仕様の tool-call 形式を教える。
+                GgufToolPromptBuilder.appendForLiteRt(appContext, systemPrompt, isGemma4 = isGemma4Model)
             }
         }
 

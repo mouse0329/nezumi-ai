@@ -33,6 +33,9 @@ object Gemma4ThinkingParser {
         "</think>",
         "<tool_call>",
         "</tool_call>",
+        // Gemma 4 Google 公式仕様の tool-call タグ。汎用 <tool_call> と非対称 (`<|tool_call>` / `<tool_call|>`)。
+        "<|tool_call>",
+        "<tool_call|>",
         "<tool_result>",
         "</tool_result>",
         "<tools>",
@@ -44,10 +47,13 @@ object Gemma4ThinkingParser {
     /**
      * インライン tool-call カード表示用に、tool-call/tool-response タグは保持したい経路がある。
      * その場合に限り STRIP_TOKEN_SEQUENCES / removeToolTagSegments から除外するタグの集合。
+     * Gemma 4 の `<|tool_call>` / `<tool_call|>` もここに含め、`preserveToolCallTags=true` のときは保持する。
      */
     private val TOOL_CALL_TAG_TOKENS = setOf(
         "<tool_call>",
         "</tool_call>",
+        "<|tool_call>",
+        "<tool_call|>",
         "<tool_response>",
         "</tool_response>"
     )
@@ -214,6 +220,9 @@ object Gemma4ThinkingParser {
             "}",
             "<tool_call>",
             "</tool_call>",
+            // Gemma 4 系の非対称タグでも thinking を確実に切る。
+            "<|tool_call>",
+            "<tool_call|>",
             "<tool_result>",
             "</tool_result>",
             "<tools>",
@@ -372,6 +381,9 @@ object Gemma4ThinkingParser {
             if (!preserveToolCallTags) {
                 t = Regex("(?is)^<tool_call>\\s*").replace(t, "")
                 t = Regex("(?is)^</tool_call>\\s*").replace(t, "")
+                // Gemma 4 系の非対称タグも同様に先頭のみ除去する。
+                t = Regex("(?is)^<\\|tool_call>\\s*").replace(t, "")
+                t = Regex("(?is)^<tool_call\\|>\\s*").replace(t, "")
             }
             t = Regex("(?is)^<think>\\s*</think>\\s*").replace(t, "")
             t = Regex("(?is)^<think>.*?</think>\\s*").replace(t, "")
@@ -395,6 +407,16 @@ object Gemma4ThinkingParser {
                 t = t.removeRange(start, t.length).trimEnd()
             }
         }
+        // Gemma 4 の非対称タグ `<|tool_call>` に対応する未閉じ末尾 (`<tool_call|>` が未到達) を掃除する。
+        // preserveToolCallTags=true のときはインライン tool-call カード描画のため触らない。
+        if (!preserveToolCallTags) {
+            val open = "<|tool_call>"
+            val close = "<tool_call|>"
+            val start = t.lastIndexOf(open)
+            if (start >= 0 && !t.substring(start).contains(close)) {
+                t = t.removeRange(start, t.length).trimEnd()
+            }
+        }
         return t
     }
 
@@ -404,6 +426,8 @@ object Gemma4ThinkingParser {
         if (!preserveToolCallTags) {
             patterns += Regex("(?is)<tool_call>.*?</tool_call>")
             patterns += Regex("(?is)<tool_response>.*?</tool_response>")
+            // Gemma 4 (Google 公式) の非対称 tool-call タグ `<|tool_call>...<tool_call|>` も掃除対象に含める。
+            patterns += Regex("(?is)<\\|tool_call>.*?<tool_call\\|>")
         }
         patterns += Regex("(?is)<tool_result>.*?</tool_result>")
         patterns += Regex("(?is)<tools>.*?</tools>")

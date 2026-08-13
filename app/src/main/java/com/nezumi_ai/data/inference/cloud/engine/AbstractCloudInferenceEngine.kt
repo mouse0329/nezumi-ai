@@ -11,6 +11,7 @@ import com.nezumi_ai.data.inference.GgufToolCallParser
 import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.NezumiLiteRtToolExecutor
+import com.nezumi_ai.data.inference.PromptBuilder
 import com.nezumi_ai.data.inference.ToolExecutionResult
 import com.nezumi_ai.data.inference.ToolResultCard
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
@@ -223,6 +224,10 @@ abstract class AbstractCloudInferenceEngine(
             )
             var currentPrompt = prompt
             var toolRound = 0
+            // Gemma 4 判定: クラウドモデル名で Gemma 4 を名乗るエンドポイントに備え、
+            // ツールコールタグ形式を切り替える。実際のクラウドモデルは汎用 <tool_call> 形式が多いので
+            // 通常は false のままになるが、パスを揃えておくことで将来の一貫性を保つ。
+            val isGemma4 = PromptBuilder.isGemma4Model(model)
             while (toolRound < maxToolRounds) {
                 toolRound++
                 val roundText = StringBuilder()
@@ -246,7 +251,7 @@ abstract class AbstractCloudInferenceEngine(
 
                 if (!toolCallingEnabled) break
 
-                val parsed = GgufToolCallParser.parse(roundText.toString())
+                val parsed = GgufToolCallParser.parse(roundText.toString(), isGemma4 = isGemma4)
                 if (parsed.toolCalls.isEmpty()) {
                     Log.d(TAG, "No tool calls in round=$toolRound session=$sessionId")
                     break
@@ -280,7 +285,7 @@ abstract class AbstractCloudInferenceEngine(
                     )
                 }
 
-                val toolResponseBlock = GgufToolCallParser.formatToolResults(toolResults)
+                val toolResponseBlock = GgufToolCallParser.formatToolResults(toolResults, isGemma4 = isGemma4)
                 if (toolResponseBlock.isNotEmpty()) {
                     fullAnswer.append(toolResponseBlock)
                     // UI にツール結果テキストも流す
