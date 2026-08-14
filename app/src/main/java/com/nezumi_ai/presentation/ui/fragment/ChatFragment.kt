@@ -28,7 +28,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
+// pointerInput: ロードオーバーレイのタップ消費用
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -2768,7 +2771,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(colorResource(id = R.color.loading_overlay)),
+                .background(colorResource(id = R.color.loading_overlay))
+                // オーバーレイの空白部分をタップしたときに、下のボタンやメッセージ一覧へ
+                // タッチが透過しないよう、ここでタップを消費する。
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = {})
+                },
             contentAlignment = Alignment.Center
         ) {
             Column(

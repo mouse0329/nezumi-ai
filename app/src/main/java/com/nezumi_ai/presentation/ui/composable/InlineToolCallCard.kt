@@ -1,6 +1,8 @@
 package com.nezumi_ai.presentation.ui.composable
 
+import android.view.MotionEvent
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +25,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,6 +33,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -287,6 +292,8 @@ private fun InlineToolCallDetails(
     val detailsBg = colorResource(id = R.color.tool_card_details_bg)
     val labelColor = colorResource(id = R.color.tool_card_details_label)
     val textColor = colorResource(id = R.color.tool_card_details_text)
+    val argumentsScrollState = rememberScrollState()
+    val resultScrollState = rememberScrollState()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -310,7 +317,8 @@ private fun InlineToolCallDetails(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightInMax(160.dp)
-                    .verticalScroll(rememberScrollState())
+                    .preferInnerScrollOverParentList(argumentsScrollState)
+                    .verticalScroll(argumentsScrollState)
             )
         }
         Spacer(modifier = Modifier.height(6.dp))
@@ -331,7 +339,8 @@ private fun InlineToolCallDetails(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightInMax(200.dp)
-                    .verticalScroll(rememberScrollState())
+                    .preferInnerScrollOverParentList(resultScrollState)
+                    .verticalScroll(resultScrollState)
             )
         }
     }
@@ -340,6 +349,31 @@ private fun InlineToolCallDetails(
 /** Compose の Modifier.heightIn(max=...) の別名 (可読性のため)。 */
 private fun Modifier.heightInMax(max: androidx.compose.ui.unit.Dp): Modifier =
     this.heightIn(max = max)
+
+/**
+ * セッション一覧 (RecyclerView) 内に置かれたカード内スクロール用の修飾子。
+ * カード内のコンテンツがまだスクロールできる間は、親 (セッション一覧側) による
+ * タッチの横取り (intercept) を禁止し、カード内を優先してスクロールできるようにする。
+ * コンテンツが短くスクロールできない場合は親にそのまま渡すため、
+ * カードが短いときのセッション一覧側のスクロールは従来通り動く。
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun Modifier.preferInnerScrollOverParentList(scrollState: ScrollState): Modifier {
+    val view = LocalView.current
+    return this.pointerInteropFilter { event ->
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                val canScrollFurther = scrollState.maxValue > 0 &&
+                    (scrollState.value > 0 || scrollState.value < scrollState.maxValue)
+                view.parent?.requestDisallowInterceptTouchEvent(canScrollFurther)
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                view.parent?.requestDisallowInterceptTouchEvent(false)
+        }
+        false
+    }
+}
 
 private data class ToolCardVisuals(
     val bg: Color,

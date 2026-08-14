@@ -17,7 +17,8 @@
 
     </androidx.coordinatorlayout.widget.CoordinatorLayout>
 
-    <LinearLayout android:id="@+id/drawer_panel" android:layout_width="280dp" android:layout_height="match_parent" android:layout_gravity="start" android:background="@color/bg_session_list" android:fitsSystemWindows="true" android:orientation="vertical" android:padding="16dp">
+    <!-- clickable/focusable: パネルの空白部分をタップしたときに背面のボタンへタッチが透過しないようにする -->
+    <LinearLayout android:id="@+id/drawer_panel" android:layout_width="280dp" android:layout_height="match_parent" android:layout_gravity="start" android:background="@color/bg_session_list" android:clickable="true" android:focusable="true" android:fitsSystemWindows="true" android:orientation="vertical" android:padding="16dp">
 
         <!-- ロゴセクション -->
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal" android:paddingBottom="24dp">

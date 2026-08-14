@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -95,7 +97,14 @@ fun ErrorModalDialogContent(
                 }
                 .padding(horizontal = 32.dp, vertical = 40.dp)
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            // エラーコード等の詳細が長すぎる場合でも下部のボタン (コピー/閉じる) が
+            // 画面外に押し出されないよう、本文エリアに最大高を設けて内部スクロールにする。
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
                 Text(
                     text = title,
                     fontSize = 22.sp,
