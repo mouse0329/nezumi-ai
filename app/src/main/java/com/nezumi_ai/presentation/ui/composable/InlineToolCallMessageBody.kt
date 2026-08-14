@@ -84,22 +84,33 @@ fun InlineToolCallMessageBody(
                 is GgufToolCallParser.Segment.ToolCallSegment -> {
                     val card = toolResults.getOrNull(seg.index)
                         ?: inlineToolResponseCards.getOrNull(seg.index)
-                    // バグ修正 (最後のツールコールだけ「結果を待機中」で止まる問題):
-                    //   従来は `card == null && isStreaming` のとき Running のまま
-                    //   表示していたが、ツール実行は既に完了しモデルへ結果を返した後で
-                    //   あっても、最終 `toolResultsJson` チャンクが `close()` 直前に一括で
-                    //   送出される仕組みのため、モデルが最終テキストを吐き終わるまで UI 上
-                    //   最後のカードだけ回転インジケータのまま見えていた。
-                    //
-                    //   ユーザー要件どおり「ツールコールを呼び出してモデルに渡った時点で
-                    //   完了状態にする」ため、`</tool_call>` まで到達したタグは結果カードが
-                    //   まだ届いていなくても Success として描画する。実際の結果が届いた
-                    //   時点で success/error に応じて再描画される (Compose の状態更新に任せる)。
+                    // 完了の判定基準: 「ツールが実際に応答を返したか」(card != null) を一次基準とする。
+                    //   - 閉じタグを観測した (status == COMPLETE) だけでは、ツールの実行自体は
+                    //     まだ終わっていない可能性がある (実行はモデルの出力が閉じタグまで届いた後、
+                    //     非同期に行われるため)。閉じタグ観測はあくまで「呼び出し内容が確定した」
+                    //     ことを意味するだけで、「応答が返ってきた」ことの証明にはならない。
+                    //   - よってチェックマーク (Success/Error) は card が実際に届いた時点でのみ出す。
+                    //     card がまだ null の間は、status に関わらず Running (実行中) として表示する。
+                    //   - status が PENDING/TRUNCATED の場合はそもそも実行対象にならないため、
+                    //     card が届くことはない (GgufInferenceEngine は閉じタグ観測後の
+                    //     GgufToolCallParser.parse() 結果のみ実行する) — これらは引き続き
+                    //     Running / Error (トークン切れ) のまま表示する。
+                    // 注: GgufToolCallParser.parseSegments はストリーミング表示用であり、
+                    // 生成が続いている間は TRUNCATED を返さない (常に PENDING) ように変更した。
+                    // 真のトークン切れ判定は GgufInferenceEngine 側が最終テキストに対して行い、
+                    // その結果は UI には別経路 (toolResultCards への失敗カード追加) で届く。
+                    // このブランチは現状 parseSegments からは到達しないが、念のため残す。
                     val status = when {
-                        !seg.isComplete -> InlineToolCallStatus.Running
-                        card == null -> InlineToolCallStatus.Success(null)
-                        card.success -> InlineToolCallStatus.Success(card)
-                        else -> InlineToolCallStatus.Error(card)
+                        card != null && card.success -> InlineToolCallStatus.Success(card)
+                        card != null && !card.success -> InlineToolCallStatus.Error(card)
+                        seg.status == GgufToolCallParser.Segment.CompletionStatus.TRUNCATED ->
+                            InlineToolCallStatus.Error(
+                                card = GgufToolCallParser.buildTruncatedFailureCard(seg.toolCall?.name),
+                                message = "ツール呼び出しが途中で切れました（トークン上限）。実行されていません。"
+                            )
+                        // status が PENDING でも COMPLETE でも、応答 (card) がまだ無いなら Running。
+                        // 「呼び出しが確定した」と「応答が完了した」を区別する。
+                        else -> InlineToolCallStatus.Running
                     }
                     InlineToolCallCard(
                         toolCall = seg.toolCall,

@@ -247,19 +247,55 @@ object GgufToolPromptBuilder {
      *   - 閉じタグ: <tool_call|>
      * ツール実行結果は <tool_response>{"name":...,"content":...}</tool_response> で返る
      * (formatToolResults() 参照)。
+     *
+     * 重要: Gemma 4 の公式プロンプトフォーマットでは、ツール宣言・呼び出し例の両方で
+     * 文字列リテラルを通常の `"` ではなく専用トークン `<|"|>` で囲む
+     * (例: `{location:<|"|>London<|"|>}`)。この関数はツール宣言 JSON (`toolsJson`, 通常の
+     * ダブルクォート形式で構築済み) を `<|"|>` 形式に変換してから注入し、モデルへの出力例
+     * (`<|tool_call>call:...`) も同じ表記で示す。これにより、モデルが実際に学習された通りの
+     * 表記でツール宣言を受け取り、呼び出しも同じ表記で返せるようにする。
+     * GgufToolCallParser 側は `<|"|>` と通常の `"` の両方を受理できるようにしてある
+     * (後方互換: 汎用モデル用の JSON 生成ロジックを変えずに済む)。
      */
     private fun buildGemma4ToolBlock(toolsJson: String): String = buildString {
+        val gemma4ToolsJson = toGemma4QuoteStyle(toolsJson)
         appendLine()
         appendLine()
         appendLine("You can call tools to help the user.")
         appendLine("Available tools are listed in <tools></tools>.")
         appendLine("When calling a tool, respond ONLY with:")
-        appendLine("<|tool_call>call:<tool-name>{\"arg\":...}<tool_call|>")
+        appendLine("<|tool_call>call:<tool-name>{arg:<|\"|>value<|\"|>}<tool_call|>")
         appendLine("Do not use any other tool-call format.")
         appendLine("Tool results will be returned to you wrapped in <tool_response></tool_response>.")
         appendLine("<tools>")
-        append(toolsJson)
+        append(gemma4ToolsJson)
         appendLine()
         append("</tools>")
+    }
+
+    /**
+     * 通常の JSON 文字列 (`"key":"value"`) を Gemma 4 公式表記
+     * (`key:<|"|>value<|"|>`) に変換する。
+     *
+     * 変換ルール:
+     *   1. オブジェクトキーのクォートを外す: `"key":` → `key:`
+     *   2. 文字列値のクォートを `<|"|>` トークンに置換: `"value"` → `<|"|>value<|"|>`
+     * 数値・真偽値・配列・入れ子オブジェクトの構造自体はそのまま JSON ライクな
+     * `{}` / `[]` / `,` / `:` を維持する (公式仕様どおり)。
+     *
+     * 文字列値内にエスケープされたダブルクォート (`\"`) が含まれるケースは、
+     * このアプリのツールスキーマには存在しないため未対応 (簡易変換で十分)。
+     */
+    private fun toGemma4QuoteStyle(json: String): String {
+        // 1. "key": -> key:  (キー名のクォート除去)
+        val keysUnquoted = Regex("\"([A-Za-z_][A-Za-z0-9_]*)\"\\s*:").replace(json) { m ->
+            "${m.groupValues[1]}:"
+        }
+        // 2. 残った文字列値の "..." -> <|"|>...<|"|>
+        //    (キーを外した後に残るダブルクォートは全て値側なので単純対応で良い)
+        val valuesConverted = Regex("\"((?:[^\"\\\\]|\\\\.)*)\"").replace(keysUnquoted) { m ->
+            "<|\"|>${m.groupValues[1]}<|\"|>"
+        }
+        return valuesConverted
     }
 }

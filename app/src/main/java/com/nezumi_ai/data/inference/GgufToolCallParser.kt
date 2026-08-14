@@ -66,6 +66,33 @@ object GgufToolCallParser {
     )
 
     /**
+     * Gemma 4 公式の文字列トークン `<|"|>...<|"|>` を検出するための正規表現。
+     * キー名にはクォートが付かない (`key:value` 形式) ため、値側のこのトークンのみを
+     * 通常の JSON ダブルクォートに変換すれば `kotlinx.serialization` でパースできる。
+     */
+    private val gemma4StringTokenPattern = Regex("<\\|\"\\|>((?:(?!<\\|\"\\|>)[\\s\\S])*)<\\|\"\\|>")
+
+    /**
+     * Gemma 4 公式表記の JSON 風引数 (`{location:<|"|>London<|"|>}`) を、
+     * 通常の JSON (`{"location":"London"}`) に正規化する。
+     *
+     * 変換ルール:
+     *   1. 文字列トークン `<|"|>...<|"|>` → `"..."` (中身に含まれる `"` はエスケープ)
+     *   2. 裸のキー名 `key:` → `"key":` (英数・アンダースコアのみ、値側の `:` は対象外)
+     *
+     * 既に通常の JSON (`"key":"value"`) で来た場合はこの変換で実質変化しないため、
+     * モデル側の出力揺れ (公式トークン形式 / 素の JSON 形式のどちらでも) を吸収できる。
+     */
+    private fun normalizeGemma4Json(raw: String): String {
+        val quotesRestored = gemma4StringTokenPattern.replace(raw) { m ->
+            "\"${m.groupValues[1].replace("\"", "\\\"")}\""
+        }
+        return Regex("""([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)""").replace(quotesRestored) { m ->
+            "${m.groupValues[1]}\"${m.groupValues[2]}\"${m.groupValues[3]}"
+        }
+    }
+
+    /**
      * `parse()` の返却値。
      *
      * @param toolCalls 実行対象として確定したツール呼び出し (正常完了 + 閉じタグ忘れ救済分)。
@@ -101,27 +128,55 @@ object GgufToolCallParser {
         data class TextSegment(val text: String) : Segment()
 
         /**
+         * ツールコールセグメントの完了状態。
+         *
+         * UI 表示のチェックマーク (完了) は [COMPLETE] のときのみ付けてよい。
+         *
+         * [PENDING] は「開きタグは来たが閉じタグをまだ観測していない」ストリーミング中の
+         * 状態全般 (JSON がまだバランスしていない書きかけの引数も含む)。モデルが追加の
+         * 引数やテキストをまだ書いている可能性があるため、実行対象にも確定完了表示にも
+         * せず、UI は Running (実行中/生成中) として表示する。ここでツール名や部分的な
+         * 引数を rawJson から拾えれば参考表示に使ってよいが、判定の主目的ではない。
+         *
+         * [TRUNCATED] は [parseSegments] (ストリーミング表示用、まだ生成が続いている
+         * 可能性がある文字列に対して都度呼ばれる) では使用しない。真のトークン切れ判定は
+         * ストリームそのものが終了した後でなければ行えないため、[GgufInferenceEngine] が
+         * [parse] の `ParseResult.hadTruncatedToolCall` を見て最終確定させる責務を持つ。
+         */
+        enum class CompletionStatus { COMPLETE, PENDING, TRUNCATED }
+
+        /**
          * `<tool_call>...</tool_call>` (汎用) または `<|tool_call>...<tool_call|>` (Gemma 4) の
          * 位置に対応するセグメント。
          * @param index 本文中での 0 律基づきの出現順。ツール実行結果の順と揃えて使う。
-         * @param toolCall パース完了の ToolCall (未完なら null)
+         * @param toolCall パース完了の ToolCall (未完/壊れている場合は null)
          * @param rawJson タグの中身の生テキスト。UI アコーディオン展開時のフォールバック表示に使う。
-         * @param isComplete 閉じタグまで届いているかどうか。ストリーミング中の未完タグでは false となり、
-         *   カードは Running 表示となる。
+         * @param status この呼び出しセグメントの完了状態 ([CompletionStatus] 参照)。
+         * @param isComplete 後方互換用プロパティ。`status == COMPLETE` の場合のみ true。
+         *   新規コードは [status] を直接見ること。
          */
         data class ToolCallSegment(
             val index: Int,
             val toolCall: ToolCall?,
             val rawJson: String,
-            val isComplete: Boolean
-        ) : Segment()
+            val status: CompletionStatus
+        ) : Segment() {
+            val isComplete: Boolean get() = status == CompletionStatus.COMPLETE
+        }
     }
 
     /**
      * 本文を `<tool_call>...</tool_call>` / `<|tool_call>...<tool_call|>` の位置でセグメント化する。
      * - 汎用形式・Gemma4 形式の両方を同時に走査し、本文中で最初に来た開きタグを優先する。
-     * - 閉じタグがまだ来ていないストリーミング中の未完タグは、末尾の Running カードとして 1 件分割する。
-     * - タグ中身のパースに失敗しても `ToolCallSegment(toolCall=null, isComplete=true)` として保持する。
+     * - 閉じタグを実際に観測できたセグメントのみ [Segment.CompletionStatus.COMPLETE] として
+     *   確定表示 (チェックマーク) にする。web_search / web_fetch のように末尾の文字列引数
+     *   (query, url) が長く、閉じタグの前に JSON だけがバランスしてしまう瞬間があるため、
+     *   「JSON バランス OK」を完了の判定基準にしてはならない。
+     * - 閉じタグ無しで JSON バランスが OK な場合は [Segment.CompletionStatus.PENDING]
+     *   (保留中・実行前) として表示する。モデルがまだ書き続けている可能性があるため、
+     *   実行もチェックマーク表示もしない。閉じタグが来て初めて COMPLETE に確定する。
+     * - JSON バランスが崩れている (トークン切れ) 場合は [Segment.CompletionStatus.TRUNCATED]
+     *   として、壊れたことが分かる形で保持する。
      * - `<tool_response>...</tool_response>` は履歴コンテキストには残すが、UI では非表示にするため
      *   TextSegment 生成前に除去する。
      */
@@ -152,23 +207,38 @@ object GgufToolCallParser {
                 closeToolCallTag.find(text, payloadStart)
             }
             if (close == null) {
+                // 閉じタグ未観測。この時点ではまだモデルが書き続けている最中であり、
+                // 「JSON がまだ波括弧レベルでバランスしていない」のはストリーミング中は
+                // ごく普通の状態 (例: `<tool_call>\n{"name":"web_search",` の時点でここを通る)。
+                //
+                // 以前はここで「バランス未達 = TRUNCATED (トークン切れ)」として扱っていたが、
+                // これは「まだ書いている途中」と「本当に生成が途切れて二度と続かない」を
+                // 混同していた。トークン切れの真の判定はストリームそのものが終了した後で
+                // なければ行えず、逐次呼ばれる parseSegments (表示用、まだ生成が続いている
+                // 可能性がある文字列に対して都度呼ばれる) の中では判定できない。
+                // 実際のトークン切れ検出・失敗マーカー化は GgufInferenceEngine 側で
+                // GgufToolCallParser.parse() の hadTruncatedToolCall を見て行う (そちらは
+                // ストリームが実際に終わった後の最終テキストに対して呼ばれるので正しく判定できる)。
+                //
+                // よって parseSegments は閉じタグが来るまでは常に PENDING (=Running 表示) とし、
+                // ツールを開いた瞬間から閉じタグが来るまでの間、UI に何も進行感が出ない/
+                // 唐突にエラー表示になる問題を解消する。
                 val rawJson = text.substring(payloadStart)
-                val (salvagedCall, isCompleteSalvage) = if (useGemma4) {
+                val (salvagedCall, _) = if (useGemma4) {
                     salvageGemma4Payload(rawJson)
                 } else {
                     salvageGenericPayload(rawJson)
                 }
                 segments += Segment.ToolCallSegment(
                     index = toolIndex,
+                    // salvagedCall は JSON がバランスしていれば参考表示用に埋まる。
+                    // バランスしていなければ null (rawJson だけで「実行中…」表示させる)。
                     toolCall = salvagedCall,
                     rawJson = rawJson.trim(),
-                    // 名前 + JSON が揃っていれば「閉じタグ忘れ」でも確定扱い (isComplete=true)。
-                    // JSON が途中で切れた「トークン切れ」ケースはストリーミング中 Running のまま
-                    // (isComplete=false) にして、UI 上は「実行中/失敗待ち」表示にする。
-                    // 実際の失敗マーカー化は GgufInferenceEngine 側で行う。
-                    isComplete = isCompleteSalvage
+                    status = Segment.CompletionStatus.PENDING
                 )
-                if (isCompleteSalvage) toolIndex++
+                // PENDING はまだ確定していないため toolIndex は進めない。
+                // 閉じタグが来て COMPLETE になったときに初めて次のインデックスへ進む。
                 cursor = text.length
                 break
             }
@@ -182,7 +252,7 @@ object GgufToolCallParser {
                 index = toolIndex,
                 toolCall = parsedCall,
                 rawJson = rawJson,
-                isComplete = true
+                status = Segment.CompletionStatus.COMPLETE
             )
             toolIndex++
             cursor = close.range.last + 1
@@ -458,7 +528,11 @@ object GgufToolCallParser {
 
     private fun resultPayloadJson(result: ToolExecutionResult): String {
         return runCatching {
-            val entries = result.payload.entries.joinToString(",") { (k, v) ->
+            // モデルへ送り返すのは payload ではなく payloadForModel。
+            // convert_md_to_document のように UI カードにはフル本文が必要でも、
+            // モデルにはその全文を再送する必要がないツールは、ここで軽量な
+            // 要約ペイロードに差し替わる (payloadForModel の doc コメント参照)。
+            val entries = result.payloadForModel.entries.joinToString(",") { (k, v) ->
                 """"$k":${valueToJson(v)}"""
             }
             "{$entries}"
@@ -509,7 +583,7 @@ object GgufToolCallParser {
             gemma4CallBodyPattern.find(payload) ?: return null
         }
         val name = match.groupValues[1]
-        val jsonPart = match.groupValues[2]
+        val jsonPart = normalizeGemma4Json(match.groupValues[2])
         if (name.isBlank()) return null
         val args = runCatching {
             json.parseToJsonElement(jsonPart).jsonObject.entries.associate { (k, v) ->
@@ -548,10 +622,12 @@ object GgufToolCallParser {
         if (trimmed.isEmpty()) return null to false
         val match = gemma4CallBodyPattern.find(trimmed) ?: return null to false
         val name = match.groupValues[1]
-        val jsonPart = match.groupValues[2]
+        // ブレースのバランス判定は <|"|> 変換前の生テキストで行う (トークンは { } を含まないため
+        // 判定結果は変わらないが、変換処理そのものが正規表現ベースで文字列境界を前提にしており、
+        // 波括弧が閉じていない = 文字列トークンも閉じていない可能性があるため生テキストが安全)。
+        if (!bracesBalanced(match.groupValues[2])) return null to false
+        val jsonPart = normalizeGemma4Json(match.groupValues[2])
         if (name.isBlank()) return null to false
-        // ブレースがバランスしていれば「JSON が完結している」と見なす。
-        if (!bracesBalanced(jsonPart)) return null to false
         val args = runCatching {
             json.parseToJsonElement(jsonPart).jsonObject.entries.associate { (k, v) ->
                 k to parseJsonValue(v)

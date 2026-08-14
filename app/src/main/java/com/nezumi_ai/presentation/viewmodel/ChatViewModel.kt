@@ -3145,15 +3145,33 @@ class ChatViewModel(
         // カード payload に積んで返すだけ。カード側 (InlineToolCallCard) が
         // これを読んで「保存」ボタンを表示し、押下時に ChatFragment が
         // Markdown → docx/pdf/xlsx の変換と保存を行う。
+        //
+        // コンテキスト浪費対策:
+        //   markdown 本文はモデル自身がこの直前のターンで生成したテキストそのものであり、
+        //   ツール実行結果として <tool_response> 経由でモデルに送り返すと、次ラウンド以降
+        //   毎回このプロンプトに全文が再度乗ることになる。これは意味のある新情報を運ばない
+        //   単なる自己引用の重複であり、長い文書ほどコンテキストを無駄に消費し続ける。
+        //   UI カード ("保存" ボタン付きの InlineToolCallCard) は markdown 全文を必要とする
+        //   ため payload には残すが、モデルに返す modelPayload では markdown を除いて
+        //   文字数だけを伝える (「ちゃんと受け取れた」ことをモデルが確認できれば十分)。
+        val fullPayload = buildMap {
+            put("success", true)
+            put("format", format.extension)
+            put("fileName", displayName)
+            put("markdown", markdown)
+            put("pendingConversion", true)
+        }
+        val modelPayload = buildMap {
+            put("success", true)
+            put("format", format.extension)
+            put("fileName", displayName)
+            put("markdownLength", markdown.length)
+            put("note", "Markdown was received and is queued for conversion. The full text is not echoed back to save context.")
+        }
         return ToolExecutionResult(
             success = true,
-            payload = buildMap {
-                put("success", true)
-                put("format", format.extension)
-                put("fileName", displayName)
-                put("markdown", markdown)
-                put("pendingConversion", true)
-            }
+            payload = fullPayload,
+            modelPayload = modelPayload
         )
     }
 

@@ -377,10 +377,22 @@ private class ConvertMdToDocumentSchema : ToolSet {
 // 実行エンジン（単一責任・全ロジックここに集約）
 // ─────────────────────────────────────────────
 
+/**
+ * @param payload UI カード描画用のフルペイロード (InlineToolCallCard / ToolResultCard が参照する)。
+ * @param modelPayload モデルへの `<tool_response>` に埋め込むペイロード。省略時は [payload] と同一。
+ *   ドキュメント生成ツールのように、UI 表示には元テキスト全文が必要だがモデルには
+ *   その全文を再送する必要がない (むしろコンテキストの無駄になる) ケースで、
+ *   UI 向けとモデル向けのペイロードを分離するために使う。
+ *   [GgufToolCallParser.formatToolResults] はこちらを使ってモデル向けレスポンスを組み立てる。
+ */
 data class ToolExecutionResult(
     val success: Boolean,
-    val payload: Map<String, Any?>
-)
+    val payload: Map<String, Any?>,
+    val modelPayload: Map<String, Any?>? = null
+) {
+    /** モデルに実際に送るペイロード。[modelPayload] が未指定なら [payload] を使う (後方互換)。 */
+    val payloadForModel: Map<String, Any?> get() = modelPayload ?: payload
+}
 
 internal class NezumiLiteRtToolExecutor(
     private val context: Context,
