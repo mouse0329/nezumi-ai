@@ -55,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
@@ -82,6 +83,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 
 class PresetSettingsFragment : Fragment() {
     private lateinit var presetRepository: PresetRepository
@@ -1074,10 +1077,28 @@ class PresetSettingsFragment : Fragment() {
             )
         }
 
+        val assetContext = LocalContext.current
+
+        val notoFamily = remember(assetContext.assets) {
+
+            createNotoSansJpFontFamily(assetContext.assets)
+
+        }
+
+        val notoTypography = remember(notoFamily) {
+
+            createNotoSansJpTypography(notoFamily)
+
+        }
+
         MaterialTheme(
+
             colorScheme = colorScheme,
-            typography = MaterialTheme.typography,
+
+            typography = notoTypography,
+
             content = content
+
         )
     }
 

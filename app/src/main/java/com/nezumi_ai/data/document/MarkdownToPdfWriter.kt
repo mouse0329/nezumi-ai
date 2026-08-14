@@ -21,11 +21,10 @@ private const val TAG = "MarkdownToPdfWriter"
  * 日本語対応について:
  *   PDFBox の標準14フォントは Latin のみのため、CJK を含む Markdown を
  *   正しく描画するには TrueType/OpenType フォントの埋め込みが必須。
- *   本実装は端末にプリインストールされている日本語フォント
- *   (/system/fonts/NotoSansCJK*.ttc, DroidSansJapanese.ttf 等) を探索し、
- *   見つかればそれを embed する。見つからない場合は Latin 標準フォントに
- *   フォールバックし、日本語部分は "?" に置換される旨を呼び出し元に伝える
- *   (WriteResult.usedFallbackFont)。
+ *   本実装はアプリ同梱の Noto Sans JP を assets/fonts/static/ から読み込み
+ *   embed する。読み込みに失敗した場合のみ端末のシステム日本語フォントを
+ *   試し、それでも無ければ Latin 標準フォントにフォールバックする
+ *   （日本語は "?" に置換され WriteResult.usedFallbackFont=true を返す）。
  */
 object MarkdownToPdfWriter {
 
@@ -39,7 +38,11 @@ object MarkdownToPdfWriter {
     private val PAGE_HEIGHT = PDRectangle.A4.height
     private val CONTENT_WIDTH = PAGE_WIDTH - 2 * PAGE_MARGIN
 
-    // 端末上でよく見つかる日本語対応フォントの候補パス（優先順）
+    // assets 同梱フォント（UI / PDF 共通）。static 配下の個別 weight を優先する。
+    private const val ASSET_FONT_REGULAR = "fonts/static/NotoSansJP-Regular.ttf"
+    private const val ASSET_FONT_BOLD = "fonts/static/NotoSansJP-Bold.ttf"
+
+    // assets が読めない場合の端末システム日本語フォント候補（優先順）
     private val CANDIDATE_SYSTEM_FONT_PATHS = listOf(
         "/system/fonts/NotoSansCJK-Regular.ttc",
         "/system/fonts/NotoSansCJK-Regular.otf",
@@ -83,7 +86,7 @@ object MarkdownToPdfWriter {
         val document = PDDocument()
 
         try {
-            val fonts = resolveFonts(document)
+            val fonts = resolveFonts(document, context)
 
             val firstPage = PDPage(PDRectangle.A4)
             document.addPage(firstPage)
@@ -208,24 +211,48 @@ object MarkdownToPdfWriter {
     )
 
     /**
-     * 端末上の日本語対応フォントを探して embed する。見つからなければ
-     * PDFBox 標準の Helvetica にフォールバックする（日本語は "?" に置換される）。
+     * アプリ assets の Noto Sans JP を優先して embed する。
+     * 失敗時は端末システム日本語フォント、最後に Helvetica へフォールバックする。
      */
-    private fun resolveFonts(document: PDDocument): Fonts {
+    private fun resolveFonts(document: PDDocument, context: Context): Fonts {
+        // 1) assets/fonts/static/NotoSansJP-*.ttf （UI と同一ソース）
+        try {
+            val regular = context.assets.open(ASSET_FONT_REGULAR).use { stream ->
+                PDType0Font.load(document, stream)
+            }
+            val bold = try {
+                context.assets.open(ASSET_FONT_BOLD).use { stream ->
+                    PDType0Font.load(document, stream)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Bold asset font missing, reusing regular", e)
+                regular
+            }
+            Log.i(TAG, "Loaded asset fonts for PDF: $ASSET_FONT_REGULAR / $ASSET_FONT_BOLD")
+            return Fonts(
+                regular = regular,
+                bold = bold,
+                source = "assets/$ASSET_FONT_REGULAR",
+                isFallback = false
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load asset Noto Sans JP fonts", e)
+        }
+
+        // 2) 端末システムフォント
         for (path in CANDIDATE_SYSTEM_FONT_PATHS) {
             val file = File(path)
             if (!file.exists() || !file.canRead()) continue
             try {
                 val font = PDType0Font.load(document, file)
                 Log.i(TAG, "Loaded system font for PDF: $path")
-                // 日本語フォントは通常 bold ファイルが別途無いことが多いため、
-                // 同一フォントを regular/bold 両方に使う（太字表現は擬似的にサイズ差で代用）。
                 return Fonts(regular = font, bold = font, source = path, isFallback = false)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to load candidate font: $path", e)
             }
         }
-        Log.w(TAG, "No system Japanese font found. Falling back to standard Helvetica (CJK will render as '?').")
+
+        Log.w(TAG, "No Japanese font found. Falling back to standard Helvetica (CJK will render as '?').")
         return Fonts(
             regular = PDType1Font.HELVETICA,
             bold = PDType1Font.HELVETICA_BOLD,

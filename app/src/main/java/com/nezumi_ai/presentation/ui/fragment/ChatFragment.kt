@@ -61,6 +61,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import com.nezumi_ai.presentation.ui.composable.ErrorModalDialog
@@ -128,6 +129,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.ui.text.style.TextOverflow
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 
 class ChatFragment : Fragment(R.layout.fragment_chat) {
 
@@ -2698,7 +2701,18 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 surfaceVariant = surface, onSurfaceVariant = onSurfaceVariant
             )
         }
-        MaterialTheme(colorScheme = colorScheme, content = content)
+        val assetContext = LocalContext.current
+        val notoFamily = remember(assetContext.assets) {
+            createNotoSansJpFontFamily(assetContext.assets)
+        }
+        val notoTypography = remember(notoFamily) {
+            createNotoSansJpTypography(notoFamily)
+        }
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = notoTypography,
+            content = content
+        )
     }
 
     @Composable

@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
@@ -36,6 +37,8 @@ import com.nezumi_ai.utils.PreferencesHelper
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.util.Locale
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 
 class ToolsSettingsFragment : Fragment() {
     private lateinit var alarmDao: AlarmDao
@@ -395,9 +398,16 @@ class ToolsSettingsFragment : Fragment() {
                 onSurfaceVariant = onSurfaceVariant
             )
         }
+        val assetContext = LocalContext.current
+        val notoFamily = remember(assetContext.assets) {
+            createNotoSansJpFontFamily(assetContext.assets)
+        }
+        val notoTypography = remember(notoFamily) {
+            createNotoSansJpTypography(notoFamily)
+        }
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = MaterialTheme.typography,
+            typography = notoTypography,
             content = content
         )
     }

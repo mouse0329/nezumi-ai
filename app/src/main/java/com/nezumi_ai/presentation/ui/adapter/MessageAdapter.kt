@@ -25,6 +25,8 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
@@ -64,6 +66,8 @@ import com.nezumi_ai.presentation.ui.composable.InlineToolCallMessageBody
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 
 class MessageAdapter(
     private val onUserPromptEdit: (MessageEntity) -> Unit = {},
@@ -1364,17 +1368,26 @@ class MessageAdapter(
     
     @Composable
     private fun NezumiComposeTheme(content: @Composable () -> Unit) {
+        val assetContext = LocalContext.current
+        val notoFamily = remember(assetContext.assets) {
+            createNotoSansJpFontFamily(assetContext.assets)
+        }
+        val notoTypography = remember(notoFamily) {
+            createNotoSansJpTypography(notoFamily)
+        }
         ProvideTextStyle(
             value = TextStyle(
+                fontFamily = notoFamily,
                 fontSize = 14.sp,
                 lineHeight = 21.sp,
                 color = colorResource(id = R.color.text_primary),
                 letterSpacing = 0.2.sp
             )
         ) {
-            MaterialTheme {
-                content()
-            }
+            MaterialTheme(
+                typography = notoTypography,
+                content = content
+            )
         }
     }
 

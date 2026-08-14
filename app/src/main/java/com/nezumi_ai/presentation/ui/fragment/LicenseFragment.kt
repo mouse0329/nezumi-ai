@@ -22,9 +22,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
@@ -34,6 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.fragment.app.Fragment
 import androidx.navigation.fragment.findNavController
 import com.nezumi_ai.R
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 
 class LicenseFragment : Fragment() {
 
@@ -396,10 +400,28 @@ class LicenseFragment : Fragment() {
             )
         }
 
+        val assetContext = LocalContext.current
+
+        val notoFamily = remember(assetContext.assets) {
+
+            createNotoSansJpFontFamily(assetContext.assets)
+
+        }
+
+        val notoTypography = remember(notoFamily) {
+
+            createNotoSansJpTypography(notoFamily)
+
+        }
+
         MaterialTheme(
+
             colorScheme = colorScheme,
-            typography = MaterialTheme.typography,
+
+            typography = notoTypography,
+
             content = content
+
         )
     }
 }

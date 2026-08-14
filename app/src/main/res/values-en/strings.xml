@@ -772,7 +772,7 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="tools_no_alarms">No alarms are registered</string>
     <string name="tools_alarm_enable_requirement">Only available when “Alarm set” is enabled</string>
     <string name="tools_web_search_api_key_hint">Set a Brave Search API key in settings to enable this.</string>
-    <string name="tools_web_fetch_js_render">Run JavaScript before fetching</string>
+    <string name="tools_web_fetch_js_render">Run JavaScript before fetching (Beta)</string>
     <string name="tools_web_fetch_js_render_hint">Supports dynamic pages (SPAs), but fetching may take longer</string>
     <string name="tools_flashlight_permission_required">Flashlight requires camera permission</string>
     <string name="tools_exact_alarm_permission_required">Enable exact alarm permission</string>

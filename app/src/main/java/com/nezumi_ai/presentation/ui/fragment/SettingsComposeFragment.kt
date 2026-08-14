@@ -89,6 +89,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 
 class SettingsComposeFragment : Fragment() {
     private lateinit var settingsRepository: SettingsRepository
@@ -3343,10 +3345,28 @@ class SettingsComposeFragment : Fragment() {
             )
         }
 
+        val assetContext = LocalContext.current
+
+        val notoFamily = remember(assetContext.assets) {
+
+            createNotoSansJpFontFamily(assetContext.assets)
+
+        }
+
+        val notoTypography = remember(notoFamily) {
+
+            createNotoSansJpTypography(notoFamily)
+
+        }
+
         MaterialTheme(
+
             colorScheme = colorScheme,
-            typography = MaterialTheme.typography,
+
+            typography = notoTypography,
+
             content = content
+
         )
     }
 

@@ -55,6 +55,8 @@ import com.halilibo.richtext.ui.string.RichTextStringStyle
 import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.R
 import kotlinx.coroutines.launch
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 
 class HelpFragment : Fragment() {
 
@@ -270,9 +272,17 @@ class HelpFragment : Fragment() {
             )
         }
 
+        val assetContext = LocalContext.current
+        val notoFamily = remember(assetContext.assets) {
+            createNotoSansJpFontFamily(assetContext.assets)
+        }
+        val notoTypography = remember(notoFamily) {
+            createNotoSansJpTypography(notoFamily)
+        }
+
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = MaterialTheme.typography,
+            typography = notoTypography,
             content = content
         )
     }

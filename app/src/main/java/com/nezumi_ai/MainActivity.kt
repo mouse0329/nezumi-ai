@@ -153,7 +153,7 @@ class MainActivity : AppCompatActivity() {
         val composeView = ComposeView(this).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
             setContent {
-                androidx.compose.material3.MaterialTheme {
+                com.nezumi_ai.presentation.ui.theme.NezumiComposeTheme {
                     HistorySearchModal(
                         viewModel = viewModel,
                         onResultClick = { sessionId, messageId ->

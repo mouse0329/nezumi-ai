@@ -13,7 +13,11 @@
         <item name="colorSurface">@color/surface_card</item>
         <item name="colorOnSurface">@color/text_primary</item>
         <item name="materialButtonStyle">@style/Widget.Nezumiai.Button</item>
-        <!-- Use the system sans-serif stack to avoid font-provider crashes on startup. -->
+        <!--
+          View 系は system sans-serif を維持（font-provider 起動クラッシュ回避）。
+          Compose UI および PDF 書き出しは assets/fonts/static/NotoSansJP-*.ttf を使用する
+          （presentation/ui/theme/NezumiTheme.kt / MarkdownToPdfWriter）。
+        -->
         <item name="android:fontFamily">sans-serif</item>
         <item name="fontFamily">sans-serif</item>
     </style>

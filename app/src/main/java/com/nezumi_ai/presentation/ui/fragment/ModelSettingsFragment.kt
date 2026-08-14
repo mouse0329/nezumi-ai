@@ -136,6 +136,8 @@ import com.nezumi_ai.data.inference.cloud.CloudModelId
 import com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry
 import com.nezumi_ai.data.inference.cloud.LocalModelListFetcher
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
+import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 
 enum class ModelType {
     LLM, IMAGE_GENERATION, TEXT_TO_SPEECH, DOWNLOAD_QUEUE
@@ -5598,10 +5600,28 @@ open class ModelSettingsFragment : Fragment() {
             )
         }
 
+        val assetContext = LocalContext.current
+
+        val notoFamily = remember(assetContext.assets) {
+
+            createNotoSansJpFontFamily(assetContext.assets)
+
+        }
+
+        val notoTypography = remember(notoFamily) {
+
+            createNotoSansJpTypography(notoFamily)
+
+        }
+
         MaterialTheme(
+
             colorScheme = colorScheme,
-            typography = MaterialTheme.typography,
+
+            typography = notoTypography,
+
             content = content
+
         )
     }
 
