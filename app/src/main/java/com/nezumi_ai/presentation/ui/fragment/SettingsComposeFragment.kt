@@ -188,7 +188,7 @@ class SettingsComposeFragment : Fragment() {
         //   sectionTitles = [全般, 推論, 画像, メモリ, チャット, デバッグ] なので
         //   「画像」 = index 2。
         val startSection = arguments?.getInt("startSection", -1) ?: -1
- // ログタブは常時 index 5。ツールタブは常時 index 6。デバッグは DEBUG 時のみ index 7。
+ // ログタブは常時 index 5（リリースでも表示）。ツールタブは常時 index 6。デバッグは DEBUG 時のみ index 7。
         val maxAllowedSection = if (BuildConfig.DEBUG) 7 else 6
         if (startSection in 0..maxAllowedSection) {
             selectedSection = startSection
@@ -1021,7 +1021,7 @@ class SettingsComposeFragment : Fragment() {
                     4 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         ChatHistoryCard()
                     }
-                    // ログタブ（常時）: ツール呼出履歴 + logcat
+                    // ログタブ（常時・リリースビルドでも表示）: ツール呼出履歴 / logcat をサブタブで表示
                     5 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         LogsSettingsCard()
                     }
@@ -2411,10 +2411,52 @@ class SettingsComposeFragment : Fragment() {
 
     /**
      * 設定 > ログ タブ
-     * ツールコール呼出履歴（時刻・セッション・ツール・クエリ）と logcat を表示する。
+     * ツールコール呼出履歴と logcat をサブタブで分けて表示する。
+     * リリースビルドでも利用可能。
      */
     @Composable
     private fun LogsSettingsCard() {
+        var selectedLogSubTab by remember { mutableIntStateOf(0) }
+        val logSubTabs = listOf(
+            stringResource(id = R.string.logs_tab_tool_history),
+            stringResource(id = R.string.logs_tab_logcat)
+        )
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                ScrollableTabRow(
+                    selectedTabIndex = selectedLogSubTab,
+                    edgePadding = 0.dp,
+                    containerColor = colorResource(id = R.color.primary_light)
+                ) {
+                    logSubTabs.forEachIndexed { index, title ->
+                        Tab(
+                            selected = selectedLogSubTab == index,
+                            onClick = { selectedLogSubTab = index },
+                            text = { Text(title) }
+                        )
+                    }
+                }
+
+                when (selectedLogSubTab) {
+                    0 -> ToolHistorySection()
+                    else -> LogcatViewerSection()
+                }
+            }
+        }
+    }
+
+    /**
+     * ツールコール呼出履歴（時刻・セッション・ツール・クエリ）を表示する。
+     */
+    @Composable
+    private fun ToolHistorySection() {
         val localContext = LocalContext.current
         val db = remember { NezumiAiDatabase.getInstance(localContext) }
         val toolHistoryRepo = remember {
@@ -2429,97 +2471,81 @@ class SettingsComposeFragment : Fragment() {
         val scope = rememberCoroutineScope()
         val timeFmt = remember { java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()) }
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.primary_light))
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = stringResource(id = R.string.logs_tab_tool_history),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = MaterialTheme.typography.titleMedium.fontSize
+                androidx.compose.material3.OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    label = { Text(stringResource(id = R.string.logs_tool_history_query)) }
                 )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    androidx.compose.material3.OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        label = { Text(stringResource(id = R.string.logs_tool_history_query)) }
-                    )
-                    Button(onClick = {
-                        val q = query.trim().lowercase()
-                        filtered = if (q.isEmpty()) null else history.filter {
-                            it.toolName.lowercase().contains(q) ||
-                                (it.query?.lowercase()?.contains(q) == true) ||
-                                (it.sessionName?.lowercase()?.contains(q) == true)
-                        }
-                    }) { Text(stringResource(id = android.R.string.search_go)) }
-                    Button(onClick = {
-                        scope.launch {
-                            toolHistoryRepo.clearAll()
-                            filtered = null
-                            query = ""
-                        }
-                    }) { Text(stringResource(id = R.string.logs_clear_tool_history)) }
-                }
-                val display = filtered ?: history
-                if (display.isEmpty()) {
-                    Text(
-                        text = stringResource(id = R.string.logs_tool_history_empty),
-                        color = colorResource(id = R.color.text_secondary),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        display.take(100).forEach { row ->
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                Button(onClick = {
+                    val q = query.trim().lowercase()
+                    filtered = if (q.isEmpty()) null else history.filter {
+                        it.toolName.lowercase().contains(q) ||
+                            (it.query?.lowercase()?.contains(q) == true) ||
+                            (it.sessionName?.lowercase()?.contains(q) == true)
+                    }
+                }) { Text(stringResource(id = android.R.string.search_go)) }
+                Button(onClick = {
+                    scope.launch {
+                        toolHistoryRepo.clearAll()
+                        filtered = null
+                        query = ""
+                    }
+                }) { Text(stringResource(id = R.string.logs_clear_tool_history)) }
+            }
+            val display = filtered ?: history
+            if (display.isEmpty()) {
+                Text(
+                    text = stringResource(id = R.string.logs_tool_history_empty),
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    display.take(100).forEach { row ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text(
+                                    text = timeFmt.format(java.util.Date(row.timestamp)),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = colorResource(id = R.color.text_secondary)
                                 )
-                            ) {
-                                Column(Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "${stringResource(id = R.string.logs_tool_history_tool)}: ${row.toolName}",
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "${stringResource(id = R.string.logs_tool_history_session)}: " +
+                                        (row.sessionName?.takeIf { it.isNotBlank() } ?: "#${row.sessionId}"),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                if (!row.query.isNullOrBlank()) {
                                     Text(
-                                        text = timeFmt.format(java.util.Date(row.timestamp)),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = colorResource(id = R.color.text_secondary)
-                                    )
-                                    Text(
-                                        text = "${stringResource(id = R.string.logs_tool_history_tool)}: ${row.toolName}",
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = "${stringResource(id = R.string.logs_tool_history_session)}: " +
-                                            (row.sessionName?.takeIf { it.isNotBlank() } ?: "#${row.sessionId}"),
+                                        text = "${stringResource(id = R.string.logs_tool_history_query)}: ${row.query}",
                                         style = MaterialTheme.typography.bodySmall
                                     )
-                                    if (!row.query.isNullOrBlank()) {
-                                        Text(
-                                            text = "${stringResource(id = R.string.logs_tool_history_query)}: ${row.query}",
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                    }
-                                    Text(
-                                        text = if (row.success) "OK" else "FAIL",
-                                        color = if (row.success) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.error,
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
                                 }
+                                Text(
+                                    text = if (row.success) "OK" else "FAIL",
+                                    color = if (row.success) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
                             }
                         }
                     }
                 }
-
-                Divider(modifier = Modifier.padding(vertical = 4.dp))
-                LogcatViewerSection()
             }
         }
     }
