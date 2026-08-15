@@ -85,7 +85,6 @@ class ImageSafetyChecker(private val context: Context) {
         ?: return null
 
         result.close()
-        outputTensor?.close()
         tensor.close()
 
         return probs

@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
 import com.nezumi_ai.sd.safety.ImageSafetyChecker
+import com.nezumi_ai.sd.safety.ImageSafetyClassifierXs
+import com.nezumi_ai.sd.safety.SafetyPolicy
 import com.nezumi_ai.sd.safety.PromptFilter
 import com.nezumi_ai.sd.safety.SafetyResult
 import com.nezumi_ai.utils.PreferencesHelper
@@ -70,6 +72,7 @@ class MnnSdModule(private val context: Context) {
         private set
 
     private var _safetyChecker: ImageSafetyChecker? = null
+    private var _classifierXs: ImageSafetyClassifierXs? = null
     private var _lastSafetyVerdict: SafetyResult.Verdict? = null
 
     fun getLastSafetyVerdict(): SafetyResult.Verdict? = _lastSafetyVerdict
@@ -77,6 +80,10 @@ class MnnSdModule(private val context: Context) {
 
     private fun safetyChecker(): ImageSafetyChecker {
         return _safetyChecker ?: ImageSafetyChecker(context).also { _safetyChecker = it }
+    }
+
+    private fun classifierXs(): ImageSafetyClassifierXs {
+        return _classifierXs ?: ImageSafetyClassifierXs(context).also { _classifierXs = it }
     }
 
     fun isNativeAvailable(): Boolean = MnnSdNative.isAvailable()
@@ -380,19 +387,29 @@ class MnnSdModule(private val context: Context) {
         if (!com.nezumi_ai.BuildConfig.SAFETY_IMAGE_GUARD_ENABLED) {
             return@withContext bitmap
         }
-        val nsfwScore = safetyChecker().check(bitmap)
-        if (nsfwScore == null) {
+
+        // 1) Open NSFW: 性的表現の判定に実績あり
+        val rawScores = safetyChecker().check(bitmap)
+        if (rawScores == null) {
             _lastSafetyVerdict = SafetyResult.Verdict.BLOCK
             bitmap.recycle()
             return@withContext null
         }
-        val nsfwProb = nsfwScore.getOrNull(1) ?: 0f
-        if (nsfwProb >= 0.8f) {
-            _lastSafetyVerdict = SafetyResult.Verdict.BLOCK
+        val nsfwVerdict = SafetyPolicy.fromRawOutput(rawScores).verdict
+
+        // 2) image-safety-classifier-xs: NSFL(暴力・グロ)検出を補完
+        val classifierResult = classifierXs().check(bitmap)
+        val classifierVerdict = classifierResult?.verdict ?: SafetyResult.Verdict.BLOCK
+
+        // どちらか一方でも BLOCK/BLUR ならその結果を採用する(OR結合)
+        val finalVerdict = SafetyPolicy.combine(nsfwVerdict, classifierVerdict)
+
+        _lastSafetyVerdict = finalVerdict
+        if (finalVerdict == SafetyResult.Verdict.BLOCK) {
             bitmap.recycle()
             null
         } else {
-            _lastSafetyVerdict = SafetyResult.Verdict.ALLOW
+            // BLUR は現時点ではブロックと同様に扱う(ぼかし表示UIは別途実装予定)
             bitmap
         }
     }

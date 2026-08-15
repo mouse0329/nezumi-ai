@@ -159,6 +159,10 @@ class SettingsComposeFragment : Fragment() {
     private var nsfwDebugSafeProb by mutableStateOf<Float?>(null)
     private var nsfwDebugNsfwProb by mutableStateOf<Float?>(null)
     private var nsfwDebugRunning by mutableStateOf(false)
+    // image-safety-classifier-xs (NSFL/NSFW/SFW) の並列判定結果
+    private var nsfwDebugXsNsflProb by mutableStateOf<Float?>(null)
+    private var nsfwDebugXsNsfwProb by mutableStateOf<Float?>(null)
+    private var nsfwDebugXsSfwProb by mutableStateOf<Float?>(null)
     private lateinit var nsfwDebugPickLauncher: ActivityResultLauncher<String>
 
     // logcat 常時収集ビューア用の状態。
@@ -211,23 +215,46 @@ class SettingsComposeFragment : Fragment() {
         nsfwDebugStatus = "画像を読み込み中…"
         nsfwDebugSafeProb = null
         nsfwDebugNsfwProb = null
+        nsfwDebugXsNsflProb = null
+        nsfwDebugXsNsfwProb = null
+        nsfwDebugXsSfwProb = null
         viewLifecycleOwner.lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val bmp = requireContext().contentResolver.openInputStream(uri)?.use { input ->
                         BitmapFactory.decodeStream(input)
                     } ?: error("画像のデコードに失敗しました")
+
                     val checker = ImageSafetyChecker(requireContext())
                     val probs = checker.check(bmp)
                         ?: error("NSFW チェッカーの推論に失敗しました (open_nsfw.onnx 未展開?)")
-                    Triple(bmp, probs.getOrNull(0) ?: 0f, probs.getOrNull(1) ?: 0f)
+
+                    val classifierXs = com.nezumi_ai.sd.safety.ImageSafetyClassifierXs(requireContext())
+                    val xsResult = classifierXs.check(bmp)
+                    classifierXs.close()
+
+                    DebugSafetyCheckOutput(
+                        bitmap = bmp,
+                        safe = probs.getOrNull(0) ?: 0f,
+                        nsfw = probs.getOrNull(1) ?: 0f,
+                        xsNsfl = xsResult?.nsflScore,
+                        xsNsfw = xsResult?.nsfwScore,
+                        xsSfw = xsResult?.sfwScore
+                    )
                 }
             }
-            result.onSuccess { (bmp, safe, nsfw) ->
-                nsfwDebugBitmap = bmp
-                nsfwDebugSafeProb = safe
-                nsfwDebugNsfwProb = nsfw
-                nsfwDebugStatus = null
+            result.onSuccess { output ->
+                nsfwDebugBitmap = output.bitmap
+                nsfwDebugSafeProb = output.safe
+                nsfwDebugNsfwProb = output.nsfw
+                nsfwDebugXsNsflProb = output.xsNsfl
+                nsfwDebugXsNsfwProb = output.xsNsfw
+                nsfwDebugXsSfwProb = output.xsSfw
+                nsfwDebugStatus = if (output.xsNsfl == null) {
+                    "警告: image-safety-classifier-xs の推論に失敗しました (モデル未配置?)"
+                } else {
+                    null
+                }
             }.onFailure { e ->
                 nsfwDebugBitmap = null
                 nsfwDebugStatus = "失敗: ${e.message}"
@@ -235,6 +262,15 @@ class SettingsComposeFragment : Fragment() {
             nsfwDebugRunning = false
         }
     }
+
+    private data class DebugSafetyCheckOutput(
+        val bitmap: Bitmap,
+        val safe: Float,
+        val nsfw: Float,
+        val xsNsfl: Float?,
+        val xsNsfw: Float?,
+        val xsSfw: Float?
+    )
 
     // この Fragment がバックグラウンドに行く際にも未保存の値を確実に flush する。
     // 自動保存のデバウンス・window 中にバックグラウンド化したときのデータロスを防ぐ。
@@ -2651,6 +2687,9 @@ class SettingsComposeFragment : Fragment() {
                         nsfwDebugStatus = null
                         nsfwDebugSafeProb = null
                         nsfwDebugNsfwProb = null
+                        nsfwDebugXsNsflProb = null
+                        nsfwDebugXsNsfwProb = null
+                        nsfwDebugXsSfwProb = null
                     }, enabled = !nsfwDebugRunning) {
                         Text(stringResource(id = R.string.common_clear))
                     }
@@ -2675,25 +2714,53 @@ class SettingsComposeFragment : Fragment() {
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             val safe = nsfwDebugSafeProb
                             val nsfw = nsfwDebugNsfwProb
+                            val xsNsfl = nsfwDebugXsNsflProb
+                            val xsNsfw = nsfwDebugXsNsfwProb
+                            val xsSfw = nsfwDebugXsSfwProb
+
                             if (safe != null && nsfw != null) {
-                                val verdict = if (nsfw >= 0.8f) stringResource(id = R.string.settings_debug_nsfw_verdict_block) else stringResource(id = R.string.settings_debug_nsfw_verdict_allow)
-                                val verdictColor = if (nsfw >= 0.8f)
-                                    MaterialTheme.colorScheme.error else colorResource(id = R.color.primary)
+                                // SafetyPolicy 経由で統合判定(Open NSFW + xs のOR結合)を算出。
+                                // ハードコードした独自閾値ではなく、実運用と同じロジックを使う。
+                                val nsfwResult = com.nezumi_ai.sd.safety.SafetyPolicy.fromRawOutput(
+                                    floatArrayOf(safe, nsfw)
+                                )
+                                val nsfwVerdict = nsfwResult.verdict
+                                val xsVerdict = if (xsNsfl != null && xsNsfw != null && xsSfw != null) {
+                                    com.nezumi_ai.sd.safety.SafetyPolicy.evaluateClassifierXs(
+                                        com.nezumi_ai.sd.safety.ImageSafetyClassifierResult(xsNsfl, xsNsfw, xsSfw)
+                                    )
+                                } else null
+                                val finalVerdict = if (xsVerdict != null) {
+                                    com.nezumi_ai.sd.safety.SafetyPolicy.combine(nsfwVerdict, xsVerdict)
+                                } else nsfwVerdict
+
+                                val verdictLabel = when (finalVerdict) {
+                                    com.nezumi_ai.sd.safety.SafetyResult.Verdict.BLOCK -> stringResource(id = R.string.settings_debug_nsfw_verdict_block)
+                                    com.nezumi_ai.sd.safety.SafetyResult.Verdict.BLUR -> "BLUR"
+                                    com.nezumi_ai.sd.safety.SafetyResult.Verdict.ALLOW -> stringResource(id = R.string.settings_debug_nsfw_verdict_allow)
+                                }
+                                val verdictColor = when (finalVerdict) {
+                                    com.nezumi_ai.sd.safety.SafetyResult.Verdict.BLOCK -> MaterialTheme.colorScheme.error
+                                    com.nezumi_ai.sd.safety.SafetyResult.Verdict.BLUR -> colorResource(id = R.color.text_secondary)
+                                    com.nezumi_ai.sd.safety.SafetyResult.Verdict.ALLOW -> colorResource(id = R.color.primary)
+                                }
                                 Text(
-                                    text = stringResource(id = R.string.settings_debug_verdict_format, verdict),
+                                    text = stringResource(id = R.string.settings_debug_verdict_format, verdictLabel),
                                     color = verdictColor,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = stringResource(id = R.string.settings_debug_prob_safe_format, String.format(Locale.US, "%.4f", safe)),
+                                    text = "[Open NSFW] safe=${String.format(Locale.US, "%.4f", safe)} nsfw=${String.format(Locale.US, "%.4f", nsfw)}",
                                     style = MaterialTheme.typography.bodySmall
                                 )
+                                if (xsNsfl != null && xsNsfw != null && xsSfw != null) {
+                                    Text(
+                                        text = "[xs] NSFL=${String.format(Locale.US, "%.4f", xsNsfl)} NSFW=${String.format(Locale.US, "%.4f", xsNsfw)} SFW=${String.format(Locale.US, "%.4f", xsSfw)}",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
                                 Text(
-                                    text = stringResource(id = R.string.settings_debug_prob_nsfw_format, String.format(Locale.US, "%.4f", nsfw)),
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                Text(
-                                    text = stringResource(id = R.string.settings_debug_nsfw_threshold),
+                                    text = "閾値: NSFW block=0.85/blur=0.55, NSFL block=0.75/blur=0.45 (2モデルOR結合)",
                                     color = colorResource(id = R.color.text_secondary),
                                     style = MaterialTheme.typography.labelSmall
                                 )
