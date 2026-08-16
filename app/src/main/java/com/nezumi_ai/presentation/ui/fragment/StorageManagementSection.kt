@@ -43,6 +43,7 @@ fun StorageManagementSection(onOpenSession: (Long) -> Unit) {
     var models by remember { mutableStateOf<List<ManagedFile>>(emptyList()) }
     var caches by remember { mutableStateOf<List<ManagedFile>>(emptyList()) }
     var freeBytes by remember { mutableStateOf(0L) }
+    var appBinaryBytes by remember { mutableStateOf(0L) }
     var imageBytes by remember { mutableStateOf(0L) }
     var imageCount by remember { mutableStateOf(0) }
     var sessionImages by remember { mutableStateOf<List<SessionImages>>(emptyList()) }
@@ -50,7 +51,6 @@ fun StorageManagementSection(onOpenSession: (Long) -> Unit) {
     var leaks by remember { mutableStateOf<List<ManagedFile>>(emptyList()) }
     var clearLeaks by remember { mutableStateOf(false) }
     var pending by remember { mutableStateOf<ManagedFile?>(null) }
-    var clearCaches by remember { mutableStateOf(false) }
     var refresh by remember { mutableStateOf(0) }
 
     LaunchedEffect(refresh) {
@@ -72,6 +72,7 @@ fun StorageManagementSection(onOpenSession: (Long) -> Unit) {
             .sortedByDescending(::treeSize)
             .map { ManagedFile(it, it.name.ifBlank { "cache" }) }
         freeBytes = StatFs(Environment.getDataDirectory().path).availableBytes
+        appBinaryBytes = File(context.applicationInfo.sourceDir).length()
         val messageGroups = repository.getAllMessages().groupBy { it.sessionId }
         val sessionsById = NezumiAiDatabase.getInstance(context).chatSessionDao().getAllSessions().associateBy { it.id }
         sessionImages = messageGroups.mapNotNull { (sessionId, messages) ->
@@ -90,13 +91,14 @@ fun StorageManagementSection(onOpenSession: (Long) -> Unit) {
     val modelBytes = models.sumOf { treeSize(it.file) + it.dependencies.sumOf(::treeSize) }
     val cacheBytes = caches.sumOf { treeSize(it.file) }
     val leakBytes = leaks.sumOf { treeSize(it.file) }
-    val used = modelBytes + cacheBytes + imageBytes + leakBytes
+    val used = appBinaryBytes + modelBytes + cacheBytes + imageBytes + leakBytes
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         StorageCard(stringResource(R.string.storage_overview)) {
             StorageRow(stringResource(R.string.storage_app_data), formatStorageBytes(used))
+            StorageRow(stringResource(R.string.storage_app_binary), formatStorageBytes(appBinaryBytes))
             StorageRow(stringResource(R.string.storage_free_space), formatStorageBytes(freeBytes))
             StorageBreakdownBar(
-                models = models, images = imageBytes, cache = cacheBytes, leaks = leakBytes
+                appBinary = appBinaryBytes, models = models, images = imageBytes, cache = cacheBytes, leaks = leakBytes
             )
         }
         StorageCard(stringResource(R.string.storage_models, models.size)) {
@@ -113,8 +115,7 @@ fun StorageManagementSection(onOpenSession: (Long) -> Unit) {
         }
         StorageCard(stringResource(R.string.storage_cache, caches.size)) {
             if (caches.isEmpty()) Text(stringResource(R.string.storage_no_cache))
-            caches.forEach { entry -> StorageRow(entry.label, formatStorageBytes(treeSize(entry.file)), delete = { pending = entry }) }
-            if (caches.isNotEmpty()) TextButton(onClick = { clearCaches = true }) { Text(stringResource(R.string.storage_clear_cache)) }
+            caches.forEach { entry -> StorageRow(entry.label, formatStorageBytes(treeSize(entry.file))) }
         }
         StorageCard(stringResource(R.string.storage_leaks, leaks.size)) {
             if (leaks.isEmpty()) Text(stringResource(R.string.storage_no_leaks))
@@ -122,9 +123,9 @@ fun StorageManagementSection(onOpenSession: (Long) -> Unit) {
             if (leaks.isNotEmpty()) TextButton(onClick = { clearLeaks = true }) { Text(stringResource(R.string.storage_clear_detected)) }
         }
     }
-    if (pending != null || pendingImageSession != null || clearCaches || clearLeaks) AlertDialog(
-        onDismissRequest = { pending = null; pendingImageSession = null; clearCaches = false; clearLeaks = false }, title = { Text("Confirm deletion") },
-        text = { Text(when { clearCaches -> "All cache files will be deleted."; pendingImageSession != null -> "Image files for ${pendingImageSession!!.name}" + if (pendingImageSession!!.pinned) " (pinned session)" else "" + " will be deleted."; clearLeaks -> "All detected temporary files will be deleted."; else -> "${pending!!.label} and its linked dependencies will be deleted." }) },
+    if (pending != null || pendingImageSession != null || clearLeaks) AlertDialog(
+        onDismissRequest = { pending = null; pendingImageSession = null; clearLeaks = false }, title = { Text("Confirm deletion") },
+        text = { Text(when { pendingImageSession != null -> "Image files for ${pendingImageSession!!.name}" + if (pendingImageSession!!.pinned) " (pinned session)" else "" + " will be deleted."; clearLeaks -> "All detected temporary files will be deleted."; else -> "${pending!!.label} and its linked dependencies will be deleted." }) },
         confirmButton = { Button(onClick = {
             if (pendingImageSession != null) {
                 scope.launch {
@@ -134,13 +135,12 @@ fun StorageManagementSection(onOpenSession: (Long) -> Unit) {
                 }
                 return@Button
             }
-            val ok = if (clearCaches) context.cacheDir.listFiles().orEmpty().all { it.deleteRecursively() }
-                else if (clearLeaks) leaks.all { it.file.deleteRecursively() }
+            val ok = if (clearLeaks) leaks.all { it.file.deleteRecursively() }
                 else deleteManagedModel(context, pending!!, models)
             Toast.makeText(context, if (ok) "Deleted" else "Could not delete", Toast.LENGTH_SHORT).show()
-            pending = null; pendingImageSession = null; clearCaches = false; clearLeaks = false; refresh++
+            pending = null; pendingImageSession = null; clearLeaks = false; refresh++
         }) { Text("Delete") } },
-        dismissButton = { TextButton(onClick = { pending = null; pendingImageSession = null; clearCaches = false; clearLeaks = false }) { Text("Cancel") } }
+        dismissButton = { TextButton(onClick = { pending = null; pendingImageSession = null; clearLeaks = false }) { Text("Cancel") } }
     )
 }
 
@@ -165,17 +165,19 @@ fun StorageManagementSection(onOpenSession: (Long) -> Unit) {
 private fun treeSize(file: File): Long = if (file.isFile) file.length() else file.walkTopDown().filter { it.isFile }.sumOf { it.length() }
 private fun formatStorageBytes(bytes: Long) = when { bytes >= 1L shl 30 -> String.format(Locale.US, "%.1f GB", bytes / (1L shl 30).toDouble()); bytes >= 1L shl 20 -> String.format(Locale.US, "%.1f MB", bytes / (1L shl 20).toDouble()); else -> String.format(Locale.US, "%.1f KB", bytes / 1024.0) }
 
-@Composable private fun StorageBreakdownBar(models: List<ManagedFile>, images: Long, cache: Long, leaks: Long) {
+@Composable private fun StorageBreakdownBar(appBinary: Long, models: List<ManagedFile>, images: Long, cache: Long, leaks: Long) {
     val modelSizes = models.map { treeSize(it.file) + it.dependencies.sumOf(::treeSize) }
-    val total = (modelSizes.sum() + images + cache + leaks).coerceAtLeast(1L)
+    val total = (appBinary + modelSizes.sum() + images + cache + leaks).coerceAtLeast(1L)
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(Modifier.fillMaxWidth().height(10.dp)) {
+            if (appBinary > 0) Spacer(Modifier.weight(appBinary.toFloat() / total).fillMaxHeight().background(colorResource(R.color.primary_light), RoundedCornerShape(topStart = 5.dp, bottomStart = 5.dp)))
             modelSizes.forEachIndexed { index, size -> if (size > 0) Spacer(Modifier.weight(size.toFloat() / total).fillMaxHeight().background(modelColor(index))) }
             if (images > 0) Spacer(Modifier.weight(images.toFloat() / total).fillMaxHeight().background(colorResource(R.color.success)))
             if (cache > 0) Spacer(Modifier.weight(cache.toFloat() / total).fillMaxHeight().background(colorResource(R.color.text_secondary), RoundedCornerShape(topEnd = 5.dp, bottomEnd = 5.dp)))
             if (leaks > 0) Spacer(Modifier.weight(leaks.toFloat() / total).fillMaxHeight().background(colorResource(R.color.error)))
         }
         // Model labels use one row each, so long file names never squeeze the legend off-screen.
+        if (appBinary > 0) StorageLegendLabel(colorResource(R.color.primary_light), stringResource(R.string.storage_app_binary))
         models.forEachIndexed { index, model -> StorageLegendLabel(modelColor(index), model.label) }
         if (images > 0) StorageLegendLabel(colorResource(R.color.success), stringResource(R.string.storage_legend_images))
         if (cache > 0) StorageLegendLabel(colorResource(R.color.text_secondary), stringResource(R.string.storage_legend_cache))

@@ -1228,6 +1228,7 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="logs_tool_history_cleared">Tool history cleared</string>
     <string name="storage_overview">Storage overview</string>
     <string name="storage_app_data">App-managed data</string>
+    <string name="storage_app_binary">App binary</string>
     <string name="storage_free_space">Free device storage</string>
     <string name="storage_models">Models (%1$d)</string>
     <string name="storage_no_models">No downloaded models.</string>

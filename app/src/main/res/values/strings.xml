@@ -424,6 +424,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="storage_legend_temporary">一時ファイル</string>
     <string name="storage_overview">ストレージの概要</string>
     <string name="storage_app_data">アプリ管理データ</string>
+    <string name="storage_app_binary">アプリ本体</string>
     <string name="storage_free_space">端末の空き容量</string>
     <string name="storage_models">モデル (%1$d)</string>
     <string name="storage_no_models">ダウンロード済みのモデルはありません。</string>
