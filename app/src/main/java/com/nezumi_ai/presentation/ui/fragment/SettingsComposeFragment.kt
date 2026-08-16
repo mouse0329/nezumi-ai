@@ -189,7 +189,7 @@ class SettingsComposeFragment : Fragment() {
         //   「画像」 = index 2。
         val startSection = arguments?.getInt("startSection", -1) ?: -1
  // ログタブは常時 index 5（リリースでも表示）。ツールタブは常時 index 6。デバッグは DEBUG 時のみ index 7。
-        val maxAllowedSection = if (BuildConfig.DEBUG) 7 else 6
+        val maxAllowedSection = if (BuildConfig.DEBUG) 8 else 7
         if (startSection in 0..maxAllowedSection) {
             selectedSection = startSection
  // スマホで引数指定セクションの詳細を直接表示する
@@ -435,7 +435,8 @@ class SettingsComposeFragment : Fragment() {
             stringResource(id = R.string.settings_section_memory),
             stringResource(id = R.string.settings_section_chat),
             stringResource(id = R.string.settings_section_logs),
-            stringResource(id = R.string.tools_settings)
+            stringResource(id = R.string.tools_settings),
+            stringResource(id = R.string.settings_section_storage)
         ) + if (BuildConfig.DEBUG) listOf(stringResource(id = R.string.settings_section_debug)) else emptyList()
         Column(
             modifier = Modifier
@@ -1029,8 +1030,11 @@ class SettingsComposeFragment : Fragment() {
                     6 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         ToolsSettingsCard()
                     }
-                    // デバッグタブは BuildConfig.DEBUG 時のみ index 7
-                    7 -> if (BuildConfig.DEBUG) {
+                    7 -> StorageManagementSection(onOpenSession = { sessionId ->
+                        findNavController().navigate(R.id.chatFragment, Bundle().apply { putLong("sessionId", sessionId) })
+                    })
+                    // デバッグタブは BuildConfig.DEBUG 時のみ index 8
+                    8 -> if (BuildConfig.DEBUG) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             DebugSettingsCard()
                         }

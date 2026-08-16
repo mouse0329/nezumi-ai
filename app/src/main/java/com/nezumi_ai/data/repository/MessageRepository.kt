@@ -5,6 +5,7 @@ import com.nezumi_ai.data.database.entity.MessageEntity
 import kotlinx.coroutines.flow.Flow
 
 class MessageRepository(private val dao: MessageDao) {
+    suspend fun getAllMessages(): List<MessageEntity> = dao.getAllMessages()
     
     fun getMessagesForSession(sessionId: Long): Flow<List<MessageEntity>> =
         dao.getMessagesForSessionFlow(sessionId)

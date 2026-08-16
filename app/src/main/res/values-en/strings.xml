@@ -1226,5 +1226,27 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="drawer_logs_button">Logs</string>
     <string name="logs_clear_tool_history">Clear tool history</string>
     <string name="logs_tool_history_cleared">Tool history cleared</string>
+    <string name="storage_overview">Storage overview</string>
+    <string name="storage_app_data">App-managed data</string>
+    <string name="storage_free_space">Free device storage</string>
+    <string name="storage_models">Models (%1$d)</string>
+    <string name="storage_no_models">No downloaded models.</string>
+    <string name="storage_mmproj"> (includes mmproj)</string>
+    <string name="storage_chat_images">Chat images (%1$d files)</string>
+    <string name="storage_session_images">%1$s%2$s · %3$d files</string>
+    <string name="storage_pinned"> (pinned)</string>
+    <string name="storage_images_note">Delete removes only this session\'s image attachments and descriptions.</string>
+    <string name="storage_cache">Cache (%1$d)</string>
+    <string name="storage_clear_cache">Clear all cache</string>
+    <string name="storage_leaks">Temporary files and extraction leftovers (%1$d)</string>
+    <string name="storage_open_session">Open session</string>
+    <string name="storage_delete">Delete</string>
+    <string name="storage_no_cache">No removable cache.</string>
+    <string name="storage_no_leaks">No storage leaks detected.</string>
+    <string name="storage_clear_detected">Clear detected files</string>
+    <string name="settings_section_storage">Storage</string>
+    <string name="storage_legend_images">Images</string>
+    <string name="storage_legend_cache">Cache</string>
+    <string name="storage_legend_temporary">Temporary files</string>
 
 </resources>

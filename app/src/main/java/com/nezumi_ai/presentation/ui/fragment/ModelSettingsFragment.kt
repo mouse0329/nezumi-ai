@@ -5304,7 +5304,7 @@ open class ModelSettingsFragment : Fragment() {
         // フォールバック: 未ダウンロード時の概算値
         return when (model) {
             ModelFileManager.LocalModel.GEMMA4_2B -> 2_400_000_000L  // 約 2.4GB
-            ModelFileManager.LocalModel.GEMMA4_4B -> 8_000_000_000L  // 約 8GB (12GB端末推奨)
+            ModelFileManager.LocalModel.GEMMA4_4B -> 3_410_000_000L  // 配布ファイルは約 3.41GB
             ModelFileManager.LocalModel.GEMMA3N_2B -> 2_000_000_000L  // 約 2GB
             ModelFileManager.LocalModel.GEMMA3N_4B -> 4_000_000_000L  // 約 4GB
         }
