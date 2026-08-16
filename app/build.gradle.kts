@@ -45,8 +45,8 @@ android {
         applicationId = "com.nezumi_ai"
         minSdk = 30
         targetSdk = 37
-        versionCode = 18
-        versionName = "2.3.0"
+        versionCode = 19
+        versionName = "2.3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
