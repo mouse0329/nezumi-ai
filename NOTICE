@@ -144,6 +144,38 @@ AI / ML RUNTIME
     - com.microsoft.onnxruntime:onnxruntime-android
   Note: Used by image safety and embedding-related runtime features.
 
+================================================================================
+BUNDLED IMAGE SAFETY MODELS
+================================================================================
+
+* Yahoo Open NSFW
+  License: BSD 2-Clause License
+  Copyright: Copyright 2016, Yahoo Inc.
+  Source: https://github.com/yahoo/open_nsfw
+  Bundled file: app/src/main/assets/open_nsfw.onnx
+  Note: The bundled ONNX file is a format conversion of Yahoo's Open NSFW
+    model. It is used for preliminary detection of pornographic images.
+  License notice:
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the copyright notice, this list
+    of conditions, and the disclaimer are retained. The software is provided
+    "AS IS" without warranties; Yahoo and contributors are not liable for
+    damages arising from its use. See the upstream LICENSE.md for the complete
+    BSD 2-Clause License text.
+
+* OwenElliott/image-safety-classifier-xs
+  License: MIT License
+  Copyright: OwenElliott
+  Source: https://huggingface.co/OwenElliott/image-safety-classifier-xs
+  Bundled file: app/src/main/assets/image-safety-classifier-xs.onnx
+  Note: A lightweight SwiftFormer-based classifier for NSFL, NSFW, and SFW
+    image classification. Its ONNX graph includes preprocessing and softmax.
+  License notice:
+    Permission is hereby granted, free of charge, to use, copy, modify, merge,
+    publish, distribute, sublicense, and/or sell copies of the software,
+    subject to inclusion of the copyright and permission notices. The software
+    is provided "AS IS", without warranty of any kind.
+
 * Downloaded or Imported Models
   License: See each upstream model provider's terms
   Sources may include Hugging Face Hub and user-provided local files.

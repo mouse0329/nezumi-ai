@@ -21,13 +21,15 @@ object SafetyPolicy {
     }
 
     // --- image-safety-classifier-xs (NSFL/NSFW/SFW) ---
-    // 2026-08-15 検証時の実測値を踏まえて設定:
-    //   ・境界的なイラスト(水着/際どい衣装等)で NSFW スコアが 50〜60% 台に出るケースがあり、
-    //     0.5 を閾値にすると過検知になりやすいため、BLOCKは高めの 0.85 に設定。
+    // 2026-08-16 実データ81枚(生成画像)での検証結果を踏まえて再設定:
+    //   ・NSFWスコア分布は平均0.875と高く偏っており、閾値0.55だと
+    //     境界ケース(NSFW=0.34〜0.38, argmax上はSFW側)を見逃すことが判明。
+    //   ・0.30を下回るのは明確に安全な画像(NSFW=0.04, 0.22)のみだったため、
+    //     BLUR閾値を0.55→0.30に引き下げ、argmaxではなくスコア自体で判定する。
     //   ・NSFL は学習データが少なくモデルカード自身が精度向上の余地を認めているため、
     //     NSFWよりやや保守的な閾値(低め)にして見逃しを防ぐ。
     private const val NSFW_BLOCK_THRESHOLD = 0.85f
-    private const val NSFW_BLUR_THRESHOLD  = 0.55f
+    private const val NSFW_BLUR_THRESHOLD  = 0.30f
     private const val NSFL_BLOCK_THRESHOLD = 0.75f
     private const val NSFL_BLUR_THRESHOLD  = 0.45f
 

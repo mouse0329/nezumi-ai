@@ -223,6 +223,22 @@ LiteRT-LM の依存グラフ経由で参照される TensorFlow Lite 系ラン�
 
 画像セーフティや埋め込み関連機能で使用する推論ランタイムです。利用バージョン: 1.27.0。</string>
 
+    <string name="license_open_nsfw_title">Yahoo Open NSFW</string>
+    <string name="license_open_nsfw_url">https://github.com/yahoo/open_nsfw</string>
+    <string name="license_open_nsfw_desc">BSD 2-Clause License
+
+Copyright 2016, Yahoo Inc.
+
+バンドル済みの open_nsfw.onnx は Yahoo Open NSFW モデルを ONNX 形式へ変換したものです。画像セーフティ判定に使用しています。</string>
+
+    <string name="license_image_safety_xs_title">OwenElliott/image-safety-classifier-xs</string>
+    <string name="license_image_safety_xs_url">https://huggingface.co/OwenElliott/image-safety-classifier-xs</string>
+    <string name="license_image_safety_xs_desc">MIT License
+
+Copyright OwenElliott.
+
+バンドル済みの image-safety-classifier-xs.onnx は、NSFL / NSFW / SFW の画像セーフティ判定に使用しています。</string>
+
     <string name="license_appauth_title">AppAuth for Android</string>
     <string name="license_appauth_url">https://github.com/openid/AppAuth-Android</string>
     <string name="license_appauth_desc">Apache License 2.0

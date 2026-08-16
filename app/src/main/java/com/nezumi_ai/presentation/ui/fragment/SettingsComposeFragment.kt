@@ -2786,7 +2786,7 @@ class SettingsComposeFragment : Fragment() {
                                     )
                                 }
                                 Text(
-                                    text = "閾値: NSFW block=0.85/blur=0.55, NSFL block=0.75/blur=0.45 (2モデルOR結合)",
+                                    text = "閾値: NSFW block=0.85/blur=0.30, NSFL block=0.75/blur=0.45 (2モデルOR結合)",
                                     color = colorResource(id = R.color.text_secondary),
                                     style = MaterialTheme.typography.labelSmall
                                 )

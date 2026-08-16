@@ -1009,6 +1009,16 @@ private fun LegacyImageGenScreen(
                     }
                 }
 
+                if (safetyVerdict == SafetyResult.Verdict.BLUR && displayImages.isNotEmpty()) {
+                    Text(
+                        stringResource(R.string.image_gen_safety_blurred),
+                        modifier = Modifier.padding(top = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+
                 if (bitmap != null && !loading) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 12.dp)) {
                         Button(onClick = { vm.saveToGallery(ctx) }) {
@@ -1662,4 +1672,3 @@ private fun ImagePreviewSection(vm: ImageGenViewModel) {
         }
     }
 }
-

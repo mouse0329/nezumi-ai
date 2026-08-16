@@ -138,6 +138,16 @@ class LicenseFragment : Fragment() {
                 R.string.license_onnxruntime_url
             ),
             LicenseItem(
+                R.string.license_open_nsfw_title,
+                R.string.license_open_nsfw_desc,
+                R.string.license_open_nsfw_url
+            ),
+            LicenseItem(
+                R.string.license_image_safety_xs_title,
+                R.string.license_image_safety_xs_desc,
+                R.string.license_image_safety_xs_url
+            ),
+            LicenseItem(
                 R.string.license_appauth_title,
                 R.string.license_appauth_desc,
                 R.string.license_appauth_url

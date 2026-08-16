@@ -723,6 +723,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             Log.w(TAG, "[ImageGen] cancel() already in progress, ignoring")
             return
         }
+        val hasActiveGeneration = _loading.value || _isQueueRunning.value ||
+            generateJob?.isActive == true || queueRunJob?.isActive == true
+        if (!hasActiveGeneration) {
+            Log.d(TAG, "[ImageGen] cancel() ignored: no generation is active")
+            return
+        }
         isCancelling = true
         Log.i(TAG, "[ImageGen] cancel() called")
         
@@ -915,6 +921,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             )
             val bmp = result?.first
             val metadata = result?.second
+            val lastSafetyVerdict = ld.getLastSafetyVerdict()
+            if (lastSafetyVerdict == SafetyResult.Verdict.BLUR) {
+                _safetyVerdict.value = SafetyResult.Verdict.BLUR
+                _snackbar.value = "セーフティフィルターにより画像をぼかして表示しています"
+            }
             
             _currentStep.value = totalSteps
             _progressData.value = ProgressData(totalSteps, totalSteps, _progressData.value?.time ?: 0.0f)
@@ -931,7 +942,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     )
                 }
                 bmp == null -> {
-                    val lastVerdict = ld.getLastSafetyVerdict()
+                    val lastVerdict = lastSafetyVerdict
                     if (lastVerdict == SafetyResult.Verdict.BLOCK) {
                         _safetyVerdict.value = SafetyResult.Verdict.BLOCK
                         showImageGenError("不適切なコンテンツが検出されたため表示を制限しました")
@@ -976,24 +987,30 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             }
         } catch (e: CancellationException) {
             Log.i(TAG, "[ImageGen] generate() job was cancelled")
-            wasCancelled = true
-            _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
-            ImageGenerationNotificationManager.showError(
-                app,
-                ImageGenerationNotificationManager.singleNotificationId(),
-                "画像生成を停止しました",
-                "単体画像の生成をキャンセルしました"
-            )
+            wasCancelled = isCancelling
+            if (isCancelling) {
+                _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
+                ImageGenerationNotificationManager.showError(
+                    app,
+                    ImageGenerationNotificationManager.singleNotificationId(),
+                    "画像生成を停止しました",
+                    "単体画像の生成をキャンセルしました"
+                )
+            }
         } catch (e: java.net.SocketException) {
             Log.e(TAG, "[ImageGen] Socket closed during generation (likely due to cancellation)", e)
-            wasCancelled = true
-            _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
-            ImageGenerationNotificationManager.showError(
-                app,
-                ImageGenerationNotificationManager.singleNotificationId(),
-                "画像生成を停止しました",
-                "単体画像の生成をキャンセルしました"
-            )
+            wasCancelled = isCancelling
+            if (isCancelling) {
+                _snackbar.value = app.getString(com.nezumi_ai.R.string.image_gen_snackbar_cancelled)
+                ImageGenerationNotificationManager.showError(
+                    app,
+                    ImageGenerationNotificationManager.singleNotificationId(),
+                    "画像生成を停止しました",
+                    "単体画像の生成をキャンセルしました"
+                )
+            } else {
+                showImageGenError(e.message ?: "画像生成中に接続が切断されました")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "ImageGen failed", e)
             showImageGenError(e.message ?: "画像生成に失敗しました")
@@ -1610,6 +1627,10 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
      * キュー実行をキャンセル
      */
     fun cancelQueueExecution() {
+        if (!_isQueueRunning.value && queueRunJob?.isActive != true) {
+            Log.d(TAG, "[Queue] cancel ignored: no queue is active")
+            return
+        }
         queueRunJob?.cancel()
         _isQueueRunning.value = false
         ImageGenerationNotificationManager.showError(

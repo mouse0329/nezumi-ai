@@ -6,7 +6,9 @@ import android.os.Build
 import android.util.Base64
 import android.util.Log
 import com.nezumi_ai.sd.safety.ImageSafetyChecker
+import com.nezumi_ai.sd.safety.ImageSafetyClassifierXs
 import com.nezumi_ai.sd.safety.PromptFilter
+import com.nezumi_ai.sd.safety.SafetyPolicy
 import com.nezumi_ai.sd.safety.SafetyResult
 import com.nezumi_ai.sd.safety.toBlurred
 import com.nezumi_ai.utils.PreferencesHelper
@@ -31,6 +33,7 @@ class LocalDreamModule(private val context: Context) {
 
     // lazy ではなく毎回生成時に取得 — ファイル差し替え後も確実に反映される
     private var _safetyChecker: ImageSafetyChecker? = null
+    private var _classifierXs: ImageSafetyClassifierXs? = null
     private var _lastSafetyVerdict: SafetyResult.Verdict? = null
 
     fun getLastSafetyVerdict(): SafetyResult.Verdict? = _lastSafetyVerdict
@@ -38,6 +41,10 @@ class LocalDreamModule(private val context: Context) {
 
     private fun safetyChecker(): ImageSafetyChecker {
         return _safetyChecker ?: ImageSafetyChecker(context).also { _safetyChecker = it }
+    }
+
+    private fun classifierXs(): ImageSafetyClassifierXs {
+        return _classifierXs ?: ImageSafetyClassifierXs(context).also { _classifierXs = it }
     }
 
     companion object {
@@ -775,30 +782,45 @@ class LocalDreamModule(private val context: Context) {
             Log.i(TAG, "Safety: image guard disabled by BuildConfig")
             return@withContext bitmap
         }
-        val nsfwScore = safetyChecker().check(bitmap)
-        if (nsfwScore == null) {
-            Log.w(TAG, "Safety: check failed or model unavailable — BLOCK (fail-safe)")
+        // Open NSFW と XS をともに実行し、どちらかが危険と判定した場合は採用する。
+        // どちらかのモデルが利用できない場合も fail-safe でブロックする。
+        val openNsfwScores = safetyChecker().check(bitmap)
+        if (openNsfwScores == null) {
+            Log.w(TAG, "Safety: Open NSFW check failed or model unavailable — BLOCK (fail-safe)")
             _lastSafetyVerdict = SafetyResult.Verdict.BLOCK
             bitmap.recycle()
             return@withContext null
         }
 
-        // Yahoo Open NSFW labels: [0: Safe, 1: NSFW]
-        val safeProb = nsfwScore.getOrNull(0) ?: 1f
-        val nsfwProb = nsfwScore.getOrNull(1) ?: 0f
-
-        // 判定基準: NSFWの確率が0.8以上の場合にBLOCK
-        val isUnsafe = nsfwProb >= 0.8f
-
-        if (isUnsafe) {
-            Log.w(TAG, "Safety: BLOCK (safe=$safeProb, nsfw=$nsfwProb)")
+        val xsResult = classifierXs().check(bitmap)
+        if (xsResult == null) {
+            Log.w(TAG, "Safety: XS classifier check failed or model unavailable — BLOCK (fail-safe)")
             _lastSafetyVerdict = SafetyResult.Verdict.BLOCK
             bitmap.recycle()
-            null
-        } else {
-            Log.d(TAG, "Safety: ALLOW (safe=$safeProb, nsfw=$nsfwProb)")
-            _lastSafetyVerdict = SafetyResult.Verdict.ALLOW
-            bitmap
+            return@withContext null
+        }
+
+        val openNsfwVerdict = SafetyPolicy.fromRawOutput(openNsfwScores).verdict
+        val xsVerdict = xsResult.verdict
+        val finalVerdict = SafetyPolicy.combine(openNsfwVerdict, xsVerdict)
+        _lastSafetyVerdict = finalVerdict
+
+        return@withContext when (finalVerdict) {
+            SafetyResult.Verdict.BLOCK -> {
+                Log.w(TAG, "Safety: BLOCK (openNsfw=$openNsfwVerdict, xs=$xsVerdict)")
+                bitmap.recycle()
+                null
+            }
+            SafetyResult.Verdict.BLUR -> {
+                Log.i(TAG, "Safety: BLUR (openNsfw=$openNsfwVerdict, xs=$xsVerdict)")
+                val blurred = bitmap.toBlurred(radius = 6)
+                bitmap.recycle()
+                blurred
+            }
+            SafetyResult.Verdict.ALLOW -> {
+                Log.d(TAG, "Safety: ALLOW")
+                bitmap
+            }
         }
     }
 

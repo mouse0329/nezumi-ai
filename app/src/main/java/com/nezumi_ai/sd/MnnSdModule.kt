@@ -8,6 +8,7 @@ import com.nezumi_ai.sd.safety.ImageSafetyClassifierXs
 import com.nezumi_ai.sd.safety.SafetyPolicy
 import com.nezumi_ai.sd.safety.PromptFilter
 import com.nezumi_ai.sd.safety.SafetyResult
+import com.nezumi_ai.sd.safety.toBlurred
 import com.nezumi_ai.utils.PreferencesHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -405,12 +406,18 @@ class MnnSdModule(private val context: Context) {
         val finalVerdict = SafetyPolicy.combine(nsfwVerdict, classifierVerdict)
 
         _lastSafetyVerdict = finalVerdict
-        if (finalVerdict == SafetyResult.Verdict.BLOCK) {
-            bitmap.recycle()
-            null
-        } else {
-            // BLUR は現時点ではブロックと同様に扱う(ぼかし表示UIは別途実装予定)
-            bitmap
+        when (finalVerdict) {
+            SafetyResult.Verdict.BLOCK -> {
+                bitmap.recycle()
+                null
+            }
+            SafetyResult.Verdict.BLUR -> {
+                // UI の警告表示と一致するよう、元画像ではなくぼかし済み画像を返す。
+                val blurred = bitmap.toBlurred(radius = 6)
+                bitmap.recycle()
+                blurred
+            }
+            SafetyResult.Verdict.ALLOW -> bitmap
         }
     }
 
