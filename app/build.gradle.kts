@@ -3,7 +3,7 @@ import java.io.FileInputStream
 import java.io.File
 
 plugins {
-    id("com.android.application") version "9.1.0"
+    alias(libs.plugins.android.application)
     id("org.jetbrains.kotlin.plugin.serialization") version "2.3.20"
     id("org.jetbrains.kotlin.plugin.compose") version "2.3.20"
     id("com.google.devtools.ksp") version "2.3.9"
@@ -229,6 +229,10 @@ kotlin {
 }
 
 dependencies {
+    // KMP 共有モジュール。プロンプト構築・パーサ系の純粋 Kotlin ロジックを
+    // commonMain に移設した受け皿 (iOS 化の土台)。
+    implementation(project(":shared"))
+
     implementation("androidx.core:core-ktx:1.19.0")
 
     implementation("androidx.appcompat:appcompat:1.7.1")

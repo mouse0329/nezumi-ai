@@ -27,6 +27,7 @@ nezumi-aiをKotlin Multiplatform (KMP) 化し、Android/iOSでコード共有を
 
 | 領域 | 難易度 | 状態 |
 |---|---|---|
+| KMP土台 (sharedモジュール) | 低 | **完了**（iOS化の第一歩・2026-08-17） |
 | クラウド推論エンジン(Claude/Gemini/OpenAI互換等) | 低 | 未着手（最優先候補） |
 | ChatViewModelの責務分割 | 中 | **進行中**（詳細は下記） |
 | Repository/DB (Room→SQLDelight) | 中 | 未着手 |
@@ -34,6 +35,21 @@ nezumi-aiをKotlin Multiplatform (KMP) 化し、Android/iOSでコード共有を
 | 画像生成 (Nezumi Kiln / MNN) | 低〜中(訂正) | 未着手（当初「独自ラッパーが未実装」としていたが誤り。CMakeに汎用フォールバックが既存、コア実装のAndroid依存は最小限） |
 | VOICEVOX (TTS) | 中(訂正) | 未着手（当初「対象外」としていたが誤り。公式iOS xcframework配布あり、Kotlin側は高レベルAPIのみ使用。ただしSwift公式SDKが未整備で自前ブリッジが必要） |
 | UI (Compose Multiplatform化) | 高 | 調査済み（詳細は下記） |
+
+### KMP土台構築（sharedモジュール新設・2026-08-17 完了）
+
+iOS 化の最初の成果物として、AGP 9 + Kotlin 2.3.20 の新構成に対応した `:shared` モジュール（Kotlin Multiplatform ライブラリ）を新設し、Android / iOS で共有可能な「純粋 Kotlin ロジック（プロンプト構築・パーサ系）」を commonMain へ移設した。
+
+- プラグイン: `org.jetbrains.kotlin.multiplatform` + `com.android.kotlin.multiplatform.library`（AGP 9.0 から従来の `com.android.library` 併用は非互換のため新プラグインを使用）
+- ターゲット: `androidLibrary`（compileSdk 37 / minSdk 30）+ `iosArm64` + `iosSimulatorArm64`
+- iOS 側は `binaries.framework { baseName = "shared" }` で Xcode 組み込み用 framework を生成可能
+- commonMain へ移設したファイル（いずれも Android / JVM 依存ゼロに正規化済み）:
+  - `InferenceStreamProtocol`（ストリーム制御マーカーの encode/decode + chunk 分割）
+  - `ThinkingLeakSalvage`（Thinking 途中停止時の content 復旧ヘルパー）
+  - `Gemma4ThinkingParser`（Gemma 4 シンキング出力の分解・表示テキスト正規化。`BuildConfig.DEBUG` 依存と `android.util.Log` 依存を除去して純粋化）
+  - `StringExtensions`（`stripGemmaTokens` / `stripTxtFileBlocks` / `stripVideoBlocks`）
+- app モジュールは `implementation(project(":shared"))` で共有モジュールに依存し、元ソースは削除（重複定義なし）
+- `TextTokenEstimator` は `java.lang.Character.UnicodeBlock`（JVM 限定 API）を使用するため**今回の移設対象から見送り**（iOS では利用不可。別途 Unicode 判定の expect/actual 化が必要）
 
 ---
 
@@ -98,7 +114,8 @@ nezumi-aiをKotlin Multiplatform (KMP) 化し、Android/iOSでコード共有を
 |---|---|---|
 | 🟢 低 | ImageGen, SessionList, Settings系(4画面), SetupWizard, Help, Logs, License (10画面) | Fragmentの皮を剥いでComposable呼び出しに差し替えるだけ |
 | 🟡 中〜高 | ChatFragment + MessageAdapter | RecyclerView→LazyColumn化が必要（最大の作業量） |
-| 🟡 中〜高 | Benchmark, ModelManagement, ModelErrorDialog (3画面) | 元々純XML実装、新規Compose化が必要 |
+| 🟡 中〜高 | Benchmark | 純XML実装（ただし廃止・作り直し予定のため移行対象外） |
+| 🟢 低 | ModelManagement, ModelErrorDialog | 訂正: 「純XML」判定は誤り。ModelManagement は7行で ModelSettingsFragment を継承するだけのエイリアス（既に Compose 化済み・実質作業不要）、ModelErrorDialog は XML 未使用の素の Dialog API（Compose 版 AlertDialog への置き換えのみ・小規模） |
 
 ### 推奨する進め方（5ステップ、未着手）
 
@@ -129,6 +146,7 @@ nezumi-aiをKotlin Multiplatform (KMP) 化し、Android/iOSでコード共有を
 
 ## 5. 未着手・今後の論点
 
+- KMP土台（sharedモジュール）は完成。プロンプト構築・パーサ系の純粋ロジック4本を commonMain へ移設済み
 - クラウド推論エンジン層のKMP化（OkHttp→Ktor移行）— 投資対効果が最も高いが未着手
 - Room→SQLDelight移行の具体設計
 - UI面のFragment撤去（設計は完了、実装は未着手）
@@ -137,7 +155,9 @@ nezumi-aiをKotlin Multiplatform (KMP) 化し、Android/iOSでコード共有を
 
 ### 次の一手候補
 
-1. クラスタGの`touchSession`未配線の扱い確定 + Windowsビルド確認
-2. クラスタE/F(モデル管理・画像生成ツール)の続きに着手
-3. 評価が好転したGGUF/MNN/LiteRT-LMについて、実際にiOS向けブリッジのプロトタイプ着手を検討
-4. UI面(Fragment撤去)に着手
+1. **新設した`:shared`モジュールのビルド確認**（`./gradlew :shared:compileKotlinIosArm64` など）と app 側の回帰確認（`./gradlew assembleDebug`）
+2. `TextTokenEstimator` の Unicode 判定を expect/actual 化して commonMain へ移設（残った純粋ロジックの仕上げ）
+3. クラスタGの`touchSession`未配線の扱い確定 + Windowsビルド確認
+4. クラスタE/F(モデル管理・画像生成ツール)の続きに着手
+5. 評価が好転したGGUF/MNN/LiteRT-LMについて、実際にiOS向けブリッジのプロトタイプ着手を検討
+6. UI面(Fragment撤去)に着手

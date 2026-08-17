@@ -1,7 +1,5 @@
 package com.nezumi_ai.data.inference
 
-import com.nezumi_ai.BuildConfig
-
 /**
  * Gemma 4 のシンキング出力を分解する。
  * vLLM / transformers 系のオフライン実装（[gemma4_utils](https://github.com/vllm-project/vllm/blob/main/vllm/reasoning/gemma4_utils.py)）と同じ区切りを想定。
@@ -333,7 +331,6 @@ object Gemma4ThinkingParser {
         t = removeRedactedThinkingBlocks(t)
         t = stripLeadingControlPrefix(t, preserveToolCallTags)
         t = removeTrailingIncompleteTags(t, preserveToolCallTags)
-        val original = t
         val stripSequences = if (preserveToolCallTags) {
             STRIP_TOKEN_SEQUENCES.filter { it !in TOOL_CALL_TAG_TOKENS }
         } else {
@@ -349,19 +346,7 @@ object Gemma4ThinkingParser {
             t = t.replace(Regex("[ \t]+(?=\\n)|(?<=\\n)[ \t]+"), "")
             if (t == before) break
         }
-        val final = t.replace(Regex("\n{3,}"), "\n\n").trim()
-        if (BuildConfig.DEBUG && original.length != final.length) {
-            logDebug("Gemma4ThinkingParser", "SANITIZE: ${original.length} -> ${final.length} chars removed")
-        }
-        return final
-    }
-
-    private fun logDebug(tag: String, message: String) {
-        try {
-            android.util.Log.d(tag, message)
-        } catch (_: Throwable) {
-            // Android unit tests use a JVM environment where android.util.Log may not be mocked.
-        }
+        return t.replace(Regex("\n{3,}"), "\n\n").trim()
     }
 
     private fun removeRedactedThinkingBlocks(text: String): String {

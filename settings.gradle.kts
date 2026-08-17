@@ -37,3 +37,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "nezumi-ai"
 include(":app")
+include(":shared")
