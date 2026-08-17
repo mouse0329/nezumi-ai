@@ -50,6 +50,21 @@ import com.nezumi_ai.data.inference.ToolResultCard
 import com.nezumi_ai.data.inference.PromptBuilder
 import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import com.nezumi_ai.data.preset.PresetConstants
+import com.nezumi_ai.presentation.viewmodel.platform.PlatformKeyValueStore
+import com.nezumi_ai.presentation.viewmodel.platform.PlatformMediaLoader
+import com.nezumi_ai.presentation.viewmodel.platform.PlatformSdModelPathResolver
+import com.nezumi_ai.presentation.viewmodel.platform.PlatformTtsPlayer
+import com.nezumi_ai.presentation.viewmodel.platform.PlatformWakeLock
+import com.nezumi_ai.presentation.viewmodel.platform.android.AndroidPlatformKeyValueStore
+import com.nezumi_ai.presentation.viewmodel.platform.android.AndroidPlatformMediaLoader
+import com.nezumi_ai.presentation.viewmodel.platform.android.AndroidPlatformSdModelPathResolver
+import com.nezumi_ai.presentation.viewmodel.platform.android.AndroidPlatformTtsPlayer
+import com.nezumi_ai.presentation.viewmodel.platform.android.AndroidPlatformWakeLock
+import com.nezumi_ai.presentation.viewmodel.usecase.ChatSessionCoordinator
+import com.nezumi_ai.presentation.viewmodel.usecase.ContextCompressionUseCase
+import com.nezumi_ai.presentation.viewmodel.usecase.ImageToolInvoker
+import com.nezumi_ai.presentation.viewmodel.usecase.ModelSessionCoordinator
+import com.nezumi_ai.presentation.viewmodel.usecase.PromptBuildingUseCase
 import com.google.ai.edge.litertlm.ToolCall
 import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.sd.SdScheduler
@@ -108,6 +123,25 @@ class ChatViewModel(
         VoicevoxStreamingTts(voicevoxManager)
     }
 
+    // ── ChatViewModel 分割: プラットフォーム抽象と UseCase (Compose Multiplatform 前提) ──
+    // Android 固有 I/O はすべてこれらのインターフェース越しに集約し、
+    // ViewModel 本体は状態管理とユースケース呼び出しの調整に専念させる。
+    private val platformMediaLoader: PlatformMediaLoader by lazy { AndroidPlatformMediaLoader(appContext) }
+    private val platformWakeLock: PlatformWakeLock by lazy { AndroidPlatformWakeLock(appContext) }
+    private val platformTtsPlayer: PlatformTtsPlayer by lazy {
+        AndroidPlatformTtsPlayer(appContext, voicevoxStreamingTts)
+    }
+    private val variantPrefsStore: PlatformKeyValueStore by lazy {
+        AndroidPlatformKeyValueStore(appContext, "variant_prefs")
+    }
+    private val sdModelPathResolver: PlatformSdModelPathResolver by lazy {
+        AndroidPlatformSdModelPathResolver(appContext)
+    }
+    private val promptBuilding = PromptBuildingUseCase()
+    private val contextCompressionUseCase = ContextCompressionUseCase(promptBuilding)
+    private val chatSessionCoordinator by lazy { ChatSessionCoordinator(sessionRepository) }
+    private val imageToolInvoker by lazy { ImageToolInvoker(sdModelPathResolver) }
+
     companion object {
         private const val TAG = "ChatViewModel"
         private const val RESPONSE_TIMEOUT_MS = 120_000L
@@ -141,13 +175,8 @@ class ChatViewModel(
          * ローカル .litertlm を「破損・欠落」とみなして削除してよいときだけ true。
          * [TF_LITE_AUX not found] など TFLite/NPU ランタイムのエラーはファイル破損ではない。
          */
-        private fun shouldDeleteLocalModelFileOnLoadError(errorMessage: String): Boolean {
-            if (errorMessage.contains("TF_LITE", ignoreCase = true)) return false
-            return errorMessage.contains("Cannot read", ignoreCase = true) ||
-                errorMessage.contains("not found", ignoreCase = true) ||
-                errorMessage.contains("corrupt", ignoreCase = true) ||
-                errorMessage.contains("invalid", ignoreCase = true)
-        }
+        private fun shouldDeleteLocalModelFileOnLoadError(errorMessage: String): Boolean =
+            ModelSessionCoordinator.shouldDeleteLocalModelFileOnLoadError(errorMessage)
 
         private fun Throwable?.isMemoryLoadFailure(): Boolean {
             if (this == null) return false
@@ -2891,17 +2920,8 @@ class ChatViewModel(
      * 代わりに、UI / Markdown レンダラーにとって未閉鎖のままだと
      * 表示が壊れる「途中のコードフェンス」を軽く閉じるだけに留める。
      */
-    private fun closePartialAssistantContent(content: String): String {
-        if (content.isBlank()) return content
-        var result = content
-        // コードフェンスが奇数個 = 未閉鎖 → 閉じる。
-        val codeFenceCount = Regex("```").findAll(result).count()
-        if (codeFenceCount % 2 == 1) {
-            if (!result.endsWith("\n")) result += "\n"
-            result += "```"
-        }
-        return result
-    }
+    private fun closePartialAssistantContent(content: String): String =
+        promptBuilding.closePartialAssistantContent(content)
 
     /**
  * 途中で折れた thinking ブロックの終端補完。
@@ -2911,23 +2931,8 @@ class ChatViewModel(
      * なり、本文と thinking が交ざって見えるケースがある。そのため
      * 未閉じのタグを検出したら末尾に閉じタグを付ける。
      */
-    private fun closePartialThinking(thinking: String?): String? {
-        if (thinking.isNullOrBlank()) return thinking
-        var result = thinking
-        // <think> / </think>
-        val openCount = Regex("(?i)<think>").findAll(result).count()
-        val closeCount = Regex("(?i)</think>").findAll(result).count()
-        if (openCount > closeCount) {
-            result += "</think>"
-        }
-        // <|think|> / <|/think|>
-        val openCount2 = Regex("<\\|think\\|>").findAll(result).count()
-        val closeCount2 = Regex("<\\|/think\\|>").findAll(result).count()
-        if (openCount2 > closeCount2) {
-            result += "<|/think|>"
-        }
-        return result
-    }
+    private fun closePartialThinking(thinking: String?): String? =
+        promptBuilding.closePartialThinking(thinking)
 
 
 
@@ -2994,43 +2999,7 @@ class ChatViewModel(
         }
     }
 
-    private fun findAvailableSdModelPath(): String {
-        // First try the saved preference path
-        val savedPath = PreferencesHelper.getSdModelPath(appContext).trim()
-        if (savedPath.isNotEmpty() && File(savedPath).isDirectory && isProbableSdModelDir(File(savedPath))) {
-            return savedPath
-        }
-
-        // Search in standard directories (same logic as ImageGenViewModel.loadAvailableModels)
-        val models = mutableListOf<String>()
-        
-        // sd_models directory
-        val sdModelsDir = File(appContext.filesDir, "sd_models")
-        sdModelsDir.listFiles()?.forEach { file ->
-            if (isProbableSdModelDir(file)) {
-                models.add(file.absolutePath)
-            }
-        }
-        
-        // App external files directory
-        val appDir = appContext.getExternalFilesDir(null)
-        appDir?.listFiles()?.forEach { file ->
-            if (isProbableSdModelDir(file)) {
-                models.add(file.absolutePath)
-            }
-        }
-        
-        // Imported models directory
-        val importedDir = File(appContext.filesDir, "models/imported")
-        importedDir.listFiles()?.forEach { file ->
-            if (isProbableSdModelDir(file)) {
-                models.add(file.absolutePath)
-            }
-        }
-        
-        // Return first found model, or empty string if none
-        return models.firstOrNull() ?: ""
-    }
+    private fun findAvailableSdModelPath(): String = imageToolInvoker.defaultSdModelPath()
 
     private fun isProbableSdModelDir(file: File): Boolean {
         return SdModelLayout.isUsableModelDir(file) || SdModelLayout.isLegacyQnnDir(file)
@@ -3040,37 +3009,8 @@ class ChatViewModel(
      * モデル名（ディレクトリ名）から SD モデルパスを解決する。
      * list_sd_models ツールが返す "name" フィールドと一致するディレクトリを探す。
      */
-    private fun resolveSdModelPathByName(modelName: String): String? {
-        val name = modelName.trim()
-
-        // sd_models directory
-        val sdModelsDir = File(appContext.filesDir, "sd_models")
-        sdModelsDir.listFiles()?.forEach { dir ->
-            if (!dir.isDirectory) return@forEach
-            val targetDir = resolveNestedSdModelDirForName(dir)
-            if (targetDir.name == name && isProbableSdModelDir(targetDir)) {
-                return targetDir.absolutePath
-            }
-        }
-
-        // App external files directory
-        val appDir = appContext.getExternalFilesDir(null)
-        appDir?.listFiles()?.forEach { file ->
-            if (file.name == name && isProbableSdModelDir(file)) {
-                return file.absolutePath
-            }
-        }
-
-        // Imported models directory
-        val importedDir = File(appContext.filesDir, "models/imported")
-        importedDir.listFiles()?.forEach { file ->
-            if (file.name == name && isProbableSdModelDir(file)) {
-                return file.absolutePath
-            }
-        }
-
-        return null
-    }
+    private fun resolveSdModelPathByName(modelName: String): String? =
+        imageToolInvoker.resolveSdModelPathByName(modelName)
 
     private fun resolveNestedSdModelDirForName(dir: File): File {
         var current = dir
@@ -3645,9 +3585,8 @@ class ChatViewModel(
         }
     }
 
-    private fun isGgufEngineModel(engineModelName: String): Boolean {
-        return engineModelName.lowercase().endsWith(".gguf")
-    }
+    private fun isGgufEngineModel(engineModelName: String): Boolean =
+        ModelSessionCoordinator.isGgufEngineModel(engineModelName)
 
     private fun getEngineModelSizeBytes(engineModelName: String): Long? {
         val lowerName = engineModelName.lowercase()
@@ -3702,70 +3641,19 @@ class ChatViewModel(
     }
 
 
-    private fun stripSyntheticRoleLoopTail(text: String): String {
-        val normalized = text.trim()
-        if (normalized.isEmpty()) return ""
-
-        val markers = roleTurnMarkerRegex.findAll(normalized).take(16).toList()
-        if (markers.size < 2) return normalized
-
-        val first = markers.first()
-        val cutIndex = if (first.range.first <= 2) {
-            markers.getOrNull(1)?.range?.first ?: return normalized
-        } else {
-            first.range.first
-        }
-        if (cutIndex <= 0) return normalized
-
-        val tail = normalized.substring(cutIndex)
-        val hasUserTurn = userTurnMarkerRegex.containsMatchIn(tail)
-        val hasAssistantTurn = assistantTurnMarkerRegex.containsMatchIn(tail)
-        if (!hasUserTurn && !hasAssistantTurn) return normalized
-
-        val clipped = normalized.substring(0, cutIndex).trimEnd().trimEnd(':', '：')
-        if (clipped.isEmpty()) return normalized
-
-        if (BuildConfig.DEBUG) {
-            Log.w(
-                TAG,
-                "SELF_DIALOGUE_TRUNCATED: original=${normalized.length} clipped=${clipped.length}"
-            )
-        }
-        return clipped
-    }
+    private fun stripSyntheticRoleLoopTail(text: String): String =
+        promptBuilding.stripSyntheticRoleLoopTail(text)
 
     /**
      * 可視本文用に <think>...</think> ブロックだけを取り除く。
      * </think> がまだ来ていない途中のストリームでは <think> 以降を一時的に非表示にし、
      * Thinking 本体は別 UI ブロックで表示する。
      */
-    private fun stripThinkSectionsForDisplay(raw: String): String {
-        if (raw.isEmpty()) return raw
-        var text = raw
-        while (true) {
-            val start = text.indexOf("<think>")
-            if (start < 0) break
-            val end = text.indexOf("</think>", start)
-            text = if (end >= 0) {
-                text.removeRange(start, end + "</think>".length)
-            } else {
-                // ストリーム途中: <think> 以降をすべてトリムして可視部分だけ返す。
-                text.substring(0, start)
-            }
-        }
-        return text.trim()
-    }
+    private fun stripThinkSectionsForDisplay(raw: String): String =
+        promptBuilding.stripThinkSectionsForDisplay(raw)
 
-    private fun sanitizeAssistantOutputForModel(engineModelName: String, text: String): String {
-        val normalized = text.trim()
-        if (normalized.isEmpty()) return ""
-        if (!engineModelName.lowercase().endsWith(".gguf")) return normalized
-        val noLoop = stripSyntheticRoleLoopTail(normalized)
-        return noLoop.replace(
-            Regex("^(?i)(?:Assistant|アシスタント)\\s*[:：]\\s*"),
-            ""
-        ).trim()
-    }
+    private fun sanitizeAssistantOutputForModel(engineModelName: String, text: String): String =
+        promptBuilding.sanitizeAssistantOutputForModel(engineModelName, text)
 
     /**
      * @param isCurrentTurn when true (= current-turn user message), GGUF embeds <image> token in prompt.
@@ -3776,53 +3664,7 @@ class ChatViewModel(
         msg: MessageEntity,
         isGgufEngine: Boolean = false,
         isCurrentTurn: Boolean = false
-    ): String {
-        val normalized = msg.content.trim()
-        if (msg.role == "assistant") {
-            if (normalized.isEmpty()) return ""
-            val visibleOnly = Gemma4ThinkingParser.answerOnlyForModelContext(normalized)
-            if (visibleOnly.isEmpty()) return ""
-            return stripSyntheticRoleLoopTail(visibleOnly)
-                .replace(Regex("^(?i)(?:Assistant|アシスタント)\\s*[:：]\\s*"), "")
-                .trim()
-        } else {
-            // nezumi://videoframes / nezumi://txtfile マーカーは「画像」ではないので
-            // 枚数に数えない。これを数えてしまうと GGUF では <__media__> トークンが
-            // 実際の Bitmap 数より多くなり mtmd 側で画像/音声の紐付けが壊れ、
-            // LiteRT でも偽の "(image xN)" フォールバックが挿入されてしまう。
-            val imageCount = msg.imageUri
-                ?.split(",")
-                ?.map { it.trim() }
-                ?.count {
-                    it.isNotEmpty() &&
-                        !com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(it) &&
-                        !com.nezumi_ai.data.media.TextFileAttachmentEncoding.isMarker(it)
-                }
-                ?: 0
-            val imageTokens: String = when {
-                imageCount <= 0 -> ""
-                // GGUF + current turn: embed mtmd default media marker so that
-                // native processMedia() finds it inside the user turn instead of
-                // appending one at the very end (which would land after the
-                // "<|im_start|>assistant\n" prefix and immediately trigger EOS).
-                // The marker MUST be "<__media__>" — see mtmd_default_marker()
-                // in tools/mtmd/mtmd.cpp. The previous "<image>" string was just
-                // plain text from the model's point of view and was silently
-                // ignored by mtmd_tokenize().
-                isGgufEngine && isCurrentTurn ->
-                    List(imageCount) { "<__media__>" }.joinToString(separator = "\n")
-                // GGUF past turns or all LiteRt turns: use imageDescription as fallback
-                else ->
-                    msg.imageDescription?.takeIf { it.isNotBlank() }
-                        ?: "(image x$imageCount)"
-            }
-            return when {
-                imageTokens.isNotEmpty() && normalized.isNotEmpty() -> "$imageTokens\n$normalized"
-                imageTokens.isNotEmpty() -> imageTokens
-                else -> normalized
-            }
-        }
-    }
+    ): String = promptBuilding.sanitizeMessageContentForPrompt(msg, isGgufEngine, isCurrentTurn)
 
     /** Lambda adapter for sanitizeMessageContentForPrompt (engine type + current-turn pinned version) */
     private fun makeSanitizer(
@@ -3836,67 +3678,11 @@ class ChatViewModel(
         )
     }
 
-    private fun mergeStreamingChunk(current: String, chunk: String): String {
-        if (chunk.isEmpty()) return current
-        if (current.isEmpty()) return chunk
-        if (chunk == current) return current
+    private fun mergeStreamingChunk(current: String, chunk: String): String =
+        promptBuilding.mergeStreamingChunk(current, chunk)
 
-        // 累積全文が届くケース
-        if (chunk.startsWith(current)) return chunk
-        // 既に反映済みの重複delta。短い chunk は通常単語にも出るので捨てない。
-        if (chunk.length >= 8 && current.endsWith(chunk)) return current
-        // 巻き戻った累積全文らしきケースは現状維持。短い prefix chunk は本文中に再登場するので捨てない。
-        if (chunk.length >= 32 && chunk.length >= current.length / 2 && current.startsWith(chunk)) {
-            return current
-        }
-
-        // 保守的な重複検出: 大きすぎる重複は検出しない
-        // これにより、substring操作での文字削除バグを防止
-        val overlap = suffixPrefixOverlapConservative(current, chunk)
-        if (overlap > 0) {
-            val merged = current + chunk.substring(overlap)
-            // 結果が元のテキストより短くならないことを確認
-            if (merged.length >= current.length) {
-                if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "MERGE_WITH_OVERLAP: overlap=$overlap chars, merged len=${merged.length}")
-                }
-                return merged
-            }
-        }
-
-        // deltaとして連結（最終的にはFINALで確定全文に置換される）
-        if (BuildConfig.DEBUG && overlap == 0) {
-            Log.d(TAG, "MERGE_NO_OVERLAP: concatenating chunk as delta")
-        }
-        return current + chunk
-    }
-
-    private fun suffixPrefixOverlapConservative(left: String, right: String): Int {
-        // Short overlaps are often just ordinary word/token boundaries
-        // ("test" + "time", "し" + "した" etc.). Only trim clear repeated tails.
-        val maxCheckSize = minOf(left.length, right.length, 50)
-        val minCheckSize = 8
-        if (maxCheckSize < minCheckSize) return 0
-
-        for (size in maxCheckSize downTo minCheckSize) {
-            if (left.regionMatches(left.length - size, right, 0, size, ignoreCase = false)) {
-                if (BuildConfig.DEBUG && size > 5) {
-                    Log.d(TAG, "OVERLAP_FOUND: size=$size left_suffix='${left.takeLast(size)}' right_prefix='${right.take(size)}'")
-                }
-                return size
-            }
-        }
-        return 0
-    }
-
-    private fun isLikelyMarkdownTable(content: String): Boolean {
-        if (!content.contains('|')) return false
-        val lines = content.lines()
-        if (lines.size < 2) return false
-        return lines.zipWithNext().any { (a, b) ->
-            a.contains('|') && (b.contains("|---") || b.contains("| :") || b.contains("|-"))
-        }
-    }
+    private fun isLikelyMarkdownTable(content: String): Boolean =
+        promptBuilding.isLikelyMarkdownTable(content)
 
     private suspend fun buildPromptWithSessionContext(
         sessionId: Long,
@@ -4242,34 +4028,11 @@ class ChatViewModel(
         }
     }
 
-    private fun appendMemoryBlockToSystemPrompt(systemPrompt: String, memoryBlock: String?): String {
-        if (memoryBlock.isNullOrBlank()) {
-            Log.d(TAG, "appendMemoryBlockToSystemPrompt: memoryBlock is null/blank")
-            return systemPrompt
-        }
-        Log.d(TAG, "appendMemoryBlockToSystemPrompt: appending ${memoryBlock.length} chars of memory to system prompt")
-        return buildString {
-            if (systemPrompt.isNotBlank()) {
-                append(systemPrompt.trim())
-                append("\n\n")
-            }
-            append(memoryBlock)
-        }
-    }
+    private fun appendMemoryBlockToSystemPrompt(systemPrompt: String, memoryBlock: String?): String =
+        promptBuilding.appendMemoryBlockToSystemPrompt(systemPrompt, memoryBlock)
 
-    private fun buildMemorySearchQuery(messages: List<MessageEntity>): String {
-        return messages.takeLast(4)
-            .mapNotNull { msg ->
-                val text = msg.content.trim().takeIf { it.isNotBlank() }
-                when {
-                    text.isNullOrBlank() -> null
-                    msg.role == "assistant" -> "AI: $text"
-                    msg.role == "user" -> "ユーザー: $text"
-                    else -> null
-                }
-            }
-            .joinToString(separator = "\n")
-    }
+    private fun buildMemorySearchQuery(messages: List<MessageEntity>): String =
+        promptBuilding.buildMemorySearchQuery(messages)
 
     private suspend fun requestCompressedContextSummary(
         sessionId: Long,
@@ -4363,53 +4126,16 @@ class ChatViewModel(
      * Phase 14: コンテキストウィンドウ（トークン数）から取得すべき最近メッセージ数を計算
      * contextWindow はトークン数で表現される（例：4096 tokens）
      */
-    private fun recentMessageCountForWindow(contextWindow: Int): Int {
-        return when {
-            contextWindow <= 2048 -> 4    // トークン2048以下：最近4メッセージ取得
-            contextWindow <= 4096 -> 6    // トークン4096以下：最近6メッセージ取得
-            else -> 8                      // トークン4096以上：最近8メッセージ取得
-        }
-    }
+    private fun recentMessageCountForWindow(contextWindow: Int): Int =
+        promptBuilding.recentMessageCountForWindow(contextWindow)
 
-    private fun compactCompressionSummary(summary: String, maxChars: Int): String {
-        val compact = summary
-            .replace(Regex("[\\r\\n]+"), "\n")
-            .lines()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .joinToString(" / ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-        if (compact.length <= maxChars) return compact
-        return compact.take(maxChars).trimEnd() + "..."
-    }
+    private fun compactCompressionSummary(summary: String, maxChars: Int): String =
+        promptBuilding.compactCompressionSummary(summary, maxChars)
 
-    private fun parseCompressionJson(raw: String): Pair<String, List<String>>? {
-        val jsonText = extractJsonObject(raw) ?: return null
-        return runCatching {
-            val obj = JSONObject(jsonText)
-            val summary = obj.optString("summary").trim()
-            if (summary.isBlank()) return null
-            val keywords = mutableListOf<String>()
-            val arr = obj.optJSONArray("keywords")
-            if (arr != null) {
-                for (i in 0 until arr.length()) {
-                    val kw = arr.optString(i).trim()
-                    if (kw.isNotBlank()) keywords += kw
-                }
-            }
-            val normalized = keywords.distinct().take(8)
-            Pair(summary, if (normalized.isNotEmpty()) normalized else listOf("要点"))
-        }.getOrNull()
-    }
+    private fun parseCompressionJson(raw: String): Pair<String, List<String>>? =
+        promptBuilding.parseCompressionJson(raw)
 
-    private fun extractJsonObject(text: String): String? {
-        val start = text.indexOf('{')
-        if (start < 0) return null
-        val end = text.lastIndexOf('}')
-        if (end <= start) return null
-        return text.substring(start, end + 1)
-    }
+    private fun extractJsonObject(text: String): String? = promptBuilding.extractJsonObject(text)
 
     private suspend fun estimateContextUsageChars(messages: List<MessageEntity>): Int {
  // バグ修正: メーター計算を実際の推論ロジック（buildPromptWithSessionContext）と統一
@@ -4559,27 +4285,11 @@ class ChatViewModel(
         }
     }
 
-    private fun isAssistantErrorLikeMessage(content: String): Boolean {
-        val t = content.trim()
-        if (t.isEmpty()) return false
-        if (t.startsWith("エラー:", ignoreCase = true)) return true
-        return t.contains("Status Code:", ignoreCase = true) ||
-            t.contains("Failed to invoke the compiled model", ignoreCase = true) ||
-            t.contains("モデルがロードされていません", ignoreCase = true) ||
-            t.contains("応答開始がタイムアウト", ignoreCase = true) ||
-            t.contains("生成を停止しました", ignoreCase = true) ||
-            t.contains("応答を生成できませんでした", ignoreCase = true) ||
-            t.contains("マルチモーダル推論を行うには「mmproj」", ignoreCase = true) ||
-            t.contains("指定した mmproj がこのベース GGUF", ignoreCase = true) ||
-            t.contains("本文が得られませんでした", ignoreCase = true) ||
-            t.contains("ビジョンを初期化", ignoreCase = true)
-    }
+    private fun isAssistantErrorLikeMessage(content: String): Boolean =
+        promptBuilding.isAssistantErrorLikeMessage(content)
 
-    private fun shouldExcludeFromModelContext(msg: MessageEntity): Boolean {
-        if (msg.role != "assistant") return false
-        if (msg.isStreaming) return true
-        return isAssistantErrorLikeMessage(msg.content)
-    }
+    private fun shouldExcludeFromModelContext(msg: MessageEntity): Boolean =
+        promptBuilding.shouldExcludeFromModelContext(msg)
 
     private suspend fun buildPromptFromMessages(
         messages: List<MessageEntity>,
@@ -4651,43 +4361,18 @@ class ChatViewModel(
         }
     }
 
-    private fun buildCompressedSummaryFallback(messages: List<MessageEntity>): String {
-        if (messages.isEmpty()) return "（圧縮対象なし）"
-        // Phase 12: 圧縮時も content のみを使用。thinkingContent は含めない
-        return messages.takeLast(24).mapNotNull { msg ->
-            val role = if (msg.role == "assistant") "A" else "U"
-            val text = sanitizeMessageContentForPrompt(msg)
-                .replace("\n", " ")
-                .replace(Regex("\\s+"), " ")
-                .let { if (it.length > 80) it.take(80).trimEnd() + "..." else it }
-            if (text.isBlank()) return@mapNotNull null
-            "[$role] $text"
-        }.joinToString(separator = "\n")
-    }
+    private fun buildCompressedSummaryFallback(messages: List<MessageEntity>): String =
+        promptBuilding.buildCompressedSummaryFallback(messages)
 
-    private fun trimPromptToWindow(prompt: String, contextWindowTokens: Int): String {
-        // Phase 14: トークン数を文字数に変換して制限
-        // contextWindow はモデルのコンテキストウィンドウ（トークン数）
-        // 実際のプロンプト長制限は文字数で行う（1トークン ≈ 4文字）
-        val maxChars = contextWindowTokens * TOKEN_TO_CHAR_RATIO
-        if (prompt.length <= maxChars) return prompt
-        val trimmed = prompt.takeLast(maxChars)
-        Log.d(TAG, "TRIM_PROMPT: contextWindow=$contextWindowTokens tokens (~${maxChars} chars) | original=${prompt.length} -> trimmed=${trimmed.length} chars")
-        return trimmed
-    }
+    private fun trimPromptToWindow(prompt: String, contextWindowTokens: Int): String =
+        promptBuilding.trimPromptToWindow(prompt, contextWindowTokens)
 
     /**
      * 画像の説明を簡潔に生成
      * モデルが参照するための軽量な説明を作成
      */
-    private fun generateImageDescription(imageUris: List<String>): String {
-        val count = imageUris.size
-        val fileNames = imageUris.take(3)  // 最初の3ファイルまで
-            .mapNotNull { it.substringAfterLast("/").takeIf { name -> name.isNotEmpty() } }
-            .joinToString(", ")
-
-        return "Image: $fileNames (total $count image(s) shared)"
-    }
+    private fun generateImageDescription(imageUris: List<String>): String =
+        promptBuilding.generateImageDescription(imageUris)
 
     /**
      * セッション内の過去の画像説明を取得
@@ -4722,67 +4407,20 @@ class ChatViewModel(
     /**
      * Bitmapを1024x1024以下にダウンスケール
      */
-    private fun scaleBitmapTo1024(bitmap: Bitmap): Bitmap {
-        val maxSize = 1024
-        if (bitmap.width <= maxSize && bitmap.height <= maxSize) {
-            return bitmap
-        }
-        val scale = minOf(
-            maxSize.toFloat() / bitmap.width,
-            maxSize.toFloat() / bitmap.height
-        )
-        val newWidth = (bitmap.width * scale).toInt()
-        val newHeight = (bitmap.height * scale).toInt()
-        return Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
-    }
+    private fun scaleBitmapTo1024(bitmap: Bitmap): Bitmap =
+        platformMediaLoader.scaleBitmapTo1024(bitmap)
 
     /**
      * URIからBitmapをロード
      */
-    private suspend fun loadBitmapFromUri(uri: Uri): Bitmap? {
-        return try {
-            withContext(Dispatchers.IO) {
-                // Phase 14: file:// URI と content:// URI の両方に対応
-                if (uri.scheme == "file") {
-                    // file:// スキーム：直接ファイルを開く
-                    val path = uri.path ?: return@withContext null
-                    val file = File(path)
-                    if (!file.exists()) {
-                        Log.w(TAG, "Image file not found: $path")
-                        return@withContext null
-                    }
-                    file.inputStream().use { stream ->
-                        BitmapFactory.decodeStream(stream)
-                    }
-                } else {
-                    // content:// スキーム：contentResolver を使う
-                    appContext.contentResolver.openInputStream(uri)?.use { stream ->
-                        BitmapFactory.decodeStream(stream)
-                    } ?: run {
-                        Log.w(TAG, "Failed to open stream for URI: $uri")
-                        null
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error loading bitmap from URI: $uri", e)
-            null
-        }
-    }
+    private suspend fun loadBitmapFromUri(uri: Uri): Bitmap? =
+        platformMediaLoader.loadBitmapFromUri(uri)
 
     /**
      * URIから音声ByteArrayをロード
      */
-    private suspend fun loadAudioBytesFromUri(uri: Uri): ByteArray? {
-        return try {
-            withContext(Dispatchers.IO) {
-                appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error loading audio from URI: $uri", e)
-            null
-        }
-    }
+    private suspend fun loadAudioBytesFromUri(uri: Uri): ByteArray? =
+        platformMediaLoader.loadAudioBytesFromUri(uri)
 
     private suspend fun requireModelManager(): ModelManager {
         val current = modelManager
@@ -5304,39 +4942,12 @@ class ChatViewModel(
     /**
      * Acquire WakeLock to prevent screen sleep during generation
      */
-    private fun acquireScreenWakeLock() {
-        try {
-            val pm = powerManager
-            if (pm == null) {
-                Log.w(TAG, "PowerManager unavailable for WakeLock")
-                return
-            }
-            if (screenWakeLock == null || !screenWakeLock!!.isHeld) {
-                screenWakeLock = pm.newWakeLock(
-                    PowerManager.PARTIAL_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
-                    "nezumiai:generation"
-                )
-                screenWakeLock?.acquire(60 * 60 * 1000) // 60分のタイムアウト
-                Log.d(TAG, "WakeLock acquired for generation")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to acquire WakeLock", e)
-        }
-    }
+    private fun acquireScreenWakeLock() = platformWakeLock.acquire()
 
     /**
      * Release WakeLock when generation completes
      */
-    private fun releaseScreenWakeLock() {
-        try {
-            if (screenWakeLock != null && screenWakeLock!!.isHeld) {
-                screenWakeLock!!.release()
-                Log.d(TAG, "WakeLock released after generation")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to release WakeLock", e)
-        }
-    }
+    private fun releaseScreenWakeLock() = platformWakeLock.release()
 
     fun synthesizeText(messageId: Long, text: String) {
         if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) {
@@ -5512,44 +5123,6 @@ class ChatViewModel(
     }
 
     private fun saveBitmapToGallery(bmp: Bitmap) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val name = "nezumi_chat_sd_${System.currentTimeMillis()}.png"
-            try {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                    val values = android.content.ContentValues().apply {
-                        put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name)
-                        put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")
-                        put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/NezumiAI")
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                            put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
-                        }
-                    }
-                    val resolver = appContext.contentResolver
-                    val uri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                    if (uri != null) {
-                        resolver.openOutputStream(uri)?.use { out ->
-                            bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
-                        }
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                            values.clear()
-                            values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
-                            resolver.update(uri, values, null, null)
-                        }
-                        Log.d(TAG, "Saved to gallery: $uri")
-                    }
-                } else {
-                    @Suppress("DEPRECATION")
-                    val uriStr = android.provider.MediaStore.Images.Media.insertImage(
-                        appContext.contentResolver,
-                        bmp,
-                        name,
-                        "nezumi-ai SD"
-                    )
-                    Log.d(TAG, "Saved to gallery (legacy): $uriStr")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to save to gallery", e)
-            }
-        }
+        viewModelScope.launch { platformMediaLoader.saveBitmapToGallery(bmp) }
     }
 }
