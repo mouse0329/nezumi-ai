@@ -82,34 +82,43 @@ fun InlineToolCallMessageBody(
                     }
                 }
                 is GgufToolCallParser.Segment.ToolCallSegment -> {
-                    val card = toolResults.getOrNull(seg.index)
+                    // 通常は実行結果カードを優先する。まだ結果が届いていない場合でも、
+                    // ツール呼び出し自体が COMPLETE になった瞬間には arguments が確定している。
+                    // convert_md_to_document は保存ボタンの入力が呼び出し arguments だけで揃うため、
+                    // ここで暫定 ToolResultCard を作り、保存ボタンをツール結果待ちにしない。
+                    val actualCard = toolResults.getOrNull(seg.index)
                         ?: inlineToolResponseCards.getOrNull(seg.index)
-                    // 完了の判定基準: 「ツールが実際に応答を返したか」(card != null) を一次基準とする。
-                    //   - 閉じタグを観測した (status == COMPLETE) だけでは、ツールの実行自体は
-                    //     まだ終わっていない可能性がある (実行はモデルの出力が閉じタグまで届いた後、
-                    //     非同期に行われるため)。閉じタグ観測はあくまで「呼び出し内容が確定した」
-                    //     ことを意味するだけで、「応答が返ってきた」ことの証明にはならない。
-                    //   - よってチェックマーク (Success/Error) は card が実際に届いた時点でのみ出す。
-                    //     card がまだ null の間は、status に関わらず Running (実行中) として表示する。
-                    //   - status が PENDING/TRUNCATED の場合はそもそも実行対象にならないため、
-                    //     card が届くことはない (GgufInferenceEngine は閉じタグ観測後の
-                    //     GgufToolCallParser.parse() 結果のみ実行する) — これらは引き続き
-                    //     Running / Error (トークン切れ) のまま表示する。
-                    // 注: GgufToolCallParser.parseSegments はストリーミング表示用であり、
-                    // 生成が続いている間は TRUNCATED を返さない (常に PENDING) ように変更した。
-                    // 真のトークン切れ判定は GgufInferenceEngine 側が最終テキストに対して行い、
-                    // その結果は UI には別経路 (toolResultCards への失敗カード追加) で届く。
-                    // このブランチは現状 parseSegments からは到達しないが、念のため残す。
+                    val completedCallCard = if (
+                        actualCard == null &&
+                        seg.status == GgufToolCallParser.Segment.CompletionStatus.COMPLETE &&
+                        seg.toolCall != null
+                    ) {
+                        ToolResultCard(
+                            toolName = seg.toolCall.name,
+                            success = true,
+                            payload = seg.toolCall.arguments
+                        )
+                    } else {
+                        null
+                    }
+                    val card = actualCard ?: completedCallCard
+
+                    // 完了の判定基準:
+                    //   - 実行結果カードが届いていれば、その結果をそのまま表示する。
+                    //   - 結果カードがまだ無くても、tool_call の閉じタグまで到達していて
+                    //     ToolCall が確定していれば、UI 上は呼び出し完了として暫定カードを使う。
+                    //     これにより convert_md_to_document の「保存」ボタンを、ツール実行結果を
+                    //     待たずに呼び出し完了直後から表示できる。
+                    //   - 未完タグは Running、トークン切れは Error のまま。
                     val status = when {
-                        card != null && card.success -> InlineToolCallStatus.Success(card)
-                        card != null && !card.success -> InlineToolCallStatus.Error(card)
+                        actualCard != null && actualCard.success -> InlineToolCallStatus.Success(actualCard)
+                        actualCard != null && !actualCard.success -> InlineToolCallStatus.Error(actualCard)
+                        completedCallCard != null -> InlineToolCallStatus.Success(completedCallCard)
                         seg.status == GgufToolCallParser.Segment.CompletionStatus.TRUNCATED ->
                             InlineToolCallStatus.Error(
                                 card = GgufToolCallParser.buildTruncatedFailureCard(seg.toolCall?.name),
                                 message = "ツール呼び出しが途中で切れました（トークン上限）。実行されていません。"
                             )
-                        // status が PENDING でも COMPLETE でも、応答 (card) がまだ無いなら Running。
-                        // 「呼び出しが確定した」と「応答が完了した」を区別する。
                         else -> InlineToolCallStatus.Running
                     }
                     InlineToolCallCard(
