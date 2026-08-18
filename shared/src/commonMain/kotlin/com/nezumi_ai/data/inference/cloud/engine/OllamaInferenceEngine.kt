@@ -65,14 +65,18 @@ class OllamaInferenceEngine(
         val baseUrl = resolveBaseUrl()
         val apiKey = resolveApiKey()
         val endpoint = "$baseUrl/api/chat"
-        val (systemPart, userPart) = CloudPromptSplitter.splitOptionalSystem(prompt)
+        val split = CloudPromptSplitter.splitOptionalSystem(prompt)
+        val systemPart = split.first
+        val userPart = split.second
         val messages = buildMessages(systemPart, userPart, images)
 
+        val roles = messages.map { message ->
+            message["role"]?.jsonPrimitive?.content
+        }
+        val hasToolTurn = roles.any { role -> role == "tool" }
         CloudLog.d(
             TAG,
-            "Ollama request messages=${messages.size} " +
-                "roles=${messages.map { it[\"role\"]?.jsonPrimitive?.content }} " +
-                "hasToolTurn=${messages.any { it[\"role\"]?.jsonPrimitive?.content == \"tool\" }}"
+            "Ollama request messages=${messages.size} roles=$roles hasToolTurn=$hasToolTurn"
         )
 
         val bodyJson = buildJsonObject {
@@ -88,7 +92,7 @@ class OllamaInferenceEngine(
                 put("num_ctx", config.contextWindow)
                 if (config.customStopTokens.isNotEmpty()) {
                     putJsonArray("stop") {
-                        config.customStopTokens.forEach { add(it) }
+                        config.customStopTokens.forEach { stopToken -> add(stopToken) }
                     }
                 }
             }
@@ -97,7 +101,9 @@ class OllamaInferenceEngine(
         http.preparePost(endpoint) {
             header(HttpHeaders.Accept, "application/x-ndjson")
             contentType(ContentType.Application.Json)
-            if (apiKey.isNotBlank()) header(HttpHeaders.Authorization, "Bearer $apiKey")
+            if (apiKey.isNotBlank()) {
+                header(HttpHeaders.Authorization, "Bearer $apiKey")
+            }
             setBody(bodyJson.toString())
         }.execute { response ->
             registerResponse(response)
@@ -118,8 +124,12 @@ class OllamaInferenceEngine(
                         "Ollama raw chunk session=$sessionId len=${line.length} preview=${line.take(300)}"
                     )
 
-                    val (delta, done) = parseChunk(line)
-                    if (!delta.isNullOrEmpty()) onDelta(delta)
+                    val parsed = parseChunk(line)
+                    val delta = parsed.first
+                    val done = parsed.second
+                    if (!delta.isNullOrEmpty()) {
+                        onDelta(delta)
+                    }
                     if (done) break
                 }
             }
@@ -129,10 +139,8 @@ class OllamaInferenceEngine(
     }
 
     /**
-     * Preserve the original prompt/tool definitions and add the tool result as chat turns.
-     * The shared cloud loop appends the model's tool call and <tool_response> to the
-     * prompt for round 2. We must not rebuild only from the text after the split point,
-     * otherwise the Gemma4 tool-definition block can be lost.
+     * Preserve the original tool-definition prompt and add executed tool results
+     * as chat turns for the next Ollama round.
      */
     private fun buildMessages(
         systemPart: String?,
@@ -144,35 +152,37 @@ class OllamaInferenceEngine(
         val responseOpen = "<tool_response>"
         val responseClose = "</tool_response>"
 
-        val callInUser = userPart.lastIndexOf(callOpen)
-        val responseInUser = userPart.lastIndexOf(responseOpen)
-        val hasToolTurnInUser = callInUser >= 0 && responseInUser > callInUser
+        val callStart = userPart.lastIndexOf(callOpen)
+        val responseStart = userPart.lastIndexOf(responseOpen)
+        val hasToolTurn = callStart >= 0 && responseStart > callStart
 
-        if (!hasToolTurnInUser) {
+        if (!hasToolTurn) {
             return buildSimpleMessages(systemPart, userPart, images)
         }
 
-        val callEndMarker = userPart.indexOf(callClose, callInUser + callOpen.length)
-        if (callEndMarker < 0 || callEndMarker >= responseInUser) {
+        val callEndMarker = userPart.indexOf(callClose, callStart + callOpen.length)
+        if (callEndMarker < 0 || callEndMarker >= responseStart) {
             return buildSimpleMessages(systemPart, userPart, images)
         }
 
         val callEnd = callEndMarker + callClose.length
-        val originalUser = userPart.substring(0, callInUser).trimEnd()
-        val assistantCall = userPart.substring(callInUser, callEnd).trim()
+        val originalUser = userPart.substring(0, callStart).trimEnd()
+        val assistantCall = userPart.substring(callStart, callEnd).trim()
 
         val toolResults = mutableListOf<String>()
-        var cursor = responseInUser
+        var cursor = responseStart
         while (cursor < userPart.length) {
             val open = userPart.indexOf(responseOpen, cursor)
             if (open < 0) break
+
             val contentStart = open + responseOpen.length
             val close = userPart.indexOf(responseClose, contentStart)
             if (close < 0) {
-                toolResults += userPart.substring(contentStart).trim()
+                toolResults.add(userPart.substring(contentStart).trim())
                 break
             }
-            toolResults += userPart.substring(contentStart, close).trim()
+
+            toolResults.add(userPart.substring(contentStart, close).trim())
             cursor = close + responseClose.length
         }
 
@@ -180,18 +190,16 @@ class OllamaInferenceEngine(
             return buildSimpleMessages(systemPart, userPart, images)
         }
 
+        val systemLength = systemPart?.length ?: 0
         CloudLog.d(
             TAG,
-            "Ollama tool round reconstructed: " +
-                "systemLen=${systemPart?.length ?: 0} " +
+            "Ollama tool round reconstructed systemLen=$systemLength " +
                 "userLen=${originalUser.length} " +
                 "assistantToolLen=${assistantCall.length} " +
                 "toolResults=${toolResults.size}"
         )
 
         return buildList {
-            // Keep the original system prompt untouched. This is where the Gemma4
-            // tool-definition block may live.
             if (!systemPart.isNullOrBlank()) {
                 add(buildJsonObject {
                     put("role", "system")
@@ -204,7 +212,9 @@ class OllamaInferenceEngine(
                 put("content", originalUser)
                 if (images.isNotEmpty()) {
                     putJsonArray("images") {
-                        images.forEach { jpeg -> add(ImageEncoding.encodeJpegBase64(jpeg)) }
+                        images.forEach { jpeg ->
+                            add(ImageEncoding.encodeJpegBase64(jpeg))
+                        }
                     }
                 }
             })
@@ -240,25 +250,39 @@ class OllamaInferenceEngine(
             put("content", userPart)
             if (images.isNotEmpty()) {
                 putJsonArray("images") {
-                    images.forEach { jpeg -> add(ImageEncoding.encodeJpegBase64(jpeg)) }
+                    images.forEach { jpeg ->
+                        add(ImageEncoding.encodeJpegBase64(jpeg))
+                    }
                 }
             }
         })
     }
 
     private fun parseChunk(line: String): Pair<String?, Boolean> {
-        val root = runCatching { json.parseToJsonElement(line) }.getOrNull() as? JsonObject
-            ?: return null to false
+        val root = runCatching {
+            json.parseToJsonElement(line)
+        }.getOrNull() as? JsonObject ?: return null to false
 
-        val done = runCatching { root["done"]?.jsonPrimitive?.booleanOrNull }.getOrNull() ?: false
+        val done = runCatching {
+            root["done"]?.jsonPrimitive?.booleanOrNull
+        }.getOrNull() ?: false
+
         val message = root["message"] as? JsonObject
-        val contentDelta = message?.let {
-            runCatching { it["content"]?.jsonPrimitive?.content }.getOrNull()
+        val contentDelta = message?.let { messageObject ->
+            runCatching {
+                messageObject["content"]?.jsonPrimitive?.content
+            }.getOrNull()
         }
-        val toolCallsDelta = message?.get("tool_calls")?.let { synthesizeGemma4ToolCallText(it) }
+
+        val toolCallsDelta = message?.get("tool_calls")?.let { toolCalls ->
+            synthesizeGemma4ToolCallText(toolCalls)
+        }
 
         if (!toolCallsDelta.isNullOrEmpty()) {
-            CloudLog.d(TAG, "Ollama tool_calls detected chunk; synthesizedLen=${toolCallsDelta.length}")
+            CloudLog.d(
+                TAG,
+                "Ollama tool_calls detected chunk synthesizedLen=${toolCallsDelta.length}"
+            )
         }
 
         val delta = if (!toolCallsDelta.isNullOrEmpty()) {
@@ -278,7 +302,9 @@ class OllamaInferenceEngine(
         for (entry in array) {
             val objectEntry = entry as? JsonObject ?: continue
             val function = objectEntry["function"] as? JsonObject ?: continue
-            val name = runCatching { function["name"]?.jsonPrimitive?.content }.getOrNull() ?: continue
+            val name = runCatching {
+                function["name"]?.jsonPrimitive?.content
+            }.getOrNull() ?: continue
 
             val argumentsJson = when (val arguments = function["arguments"]) {
                 is JsonObject -> arguments.toString()
