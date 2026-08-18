@@ -35,8 +35,25 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            // 移設してきた 4 ファイルは純粋 Kotlin のみで依存ゼロ。
-            // 今後の KMP 化で必要になる依存はここに追加していく。
+            // クラウド推論エンジン層の KMP 化 (フェーズ1) で使う共通依存。
+            // OkHttp 直叩きから Ktor Client へ置き換えるためのコア。
+            implementation(libs.ktor.client.core)
+            // SSE / NDJSON ストリームやリクエスト JSON の組み立てに使用。
+            // バージョンは app 側 (app/build.gradle.kts) と揃える。
+            implementation(libs.kotlinx.serialization.json)
+            implementation(libs.kotlinx.coroutines.core)
+        }
+        androidMain.dependencies {
+            // Android 側の Ktor エンジン。既存 OkHttp と同じ挙動 (タイムアウト等) を
+            // 再現しやすい OkHttp エンジンを採用する。
+            implementation(libs.ktor.client.okhttp)
+            // PlatformSecureStore の Android 実装 (EncryptedSharedPreferences) 用。
+            // バージョンは app 側 (app/build.gradle.kts) と揃える。
+            implementation(libs.androidx.security.crypto)
+        }
+        iosMain.dependencies {
+            // iOS 側の Ktor エンジン。実装は後日 (フェーズ1 ではインターフェースのみ)。
+            implementation(libs.ktor.client.darwin)
         }
     }
 }

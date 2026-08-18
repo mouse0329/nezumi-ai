@@ -135,7 +135,7 @@ class ModelManager(
         config: InferenceConfig
     ): Result<Unit> {
         val engineModel = engineModelName(modelName)
-        val cloudEngine = engine as? com.nezumi_ai.data.inference.cloud.engine.AbstractCloudInferenceEngine
+        val cloudEngine = engine as? com.nezumi_ai.data.inference.cloud.AndroidCloudEngineAdapter
         return if (cloudEngine != null && CloudModelId.isCloud(modelName)) {
             cloudEngine.loadModelWithId(modelName, engineModel, config)
         } else {

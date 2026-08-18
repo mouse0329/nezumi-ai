@@ -42,6 +42,13 @@ class MyApplication : Application() {
         super.onCreate()
         PreferencesHelper.applyThemeMode(this)
 
+        // クラウドモデル一覧の変更時に PresetModelCatalog のキャッシュを無効化する。
+        // shared モジュールは app 側クラスを直接参照できない (逆方向依存) ため、
+        // commonMain 側のコールバックに実体を登録する形で橋渡しする。
+        com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry.onModelListChanged = {
+            com.nezumi_ai.data.preset.PresetModelCatalog.invalidateCache()
+        }
+
         // web_fetch (JS描画版) が WebView をオフスクリーンで安全にアタッチできるよう、
         // 現在フォアグラウンドにある Activity への弱参照を追跡しておく。
         // WebView は真にウィンドウの View 階層にアタッチされていないと、

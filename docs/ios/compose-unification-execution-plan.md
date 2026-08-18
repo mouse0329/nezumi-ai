@@ -1,5 +1,7 @@
 # Compose統一化 実行計画（Fragment撤去 第1段階）
 
+最終更新: 2026-08-18
+
 対象: `presentation/ui/fragment/*`, `presentation/ui/adapter/*`, `app/src/main/res/navigation/nav_graph.xml`, `MainActivity.kt`
 
 前回の`ui-compose-migration-plan.md`（画面別の難易度調査）を土台に、実装エージェントに渡せる具体的なタスク単位まで落とし込む。
@@ -46,6 +48,31 @@ presetSettingsFragment / sessionListFragment / settingsFragment / setupWizardFra
 | **`ModelErrorDialogFragment`** | `AlertDialog.Builder`（素のAndroid Dialog API）。XMLレイアウトファイルも使っていない | **訂正**: XMLベースではなく、そもそもComposeもXMLも使わない最小限のDialog実装。`AlertDialog`（Compose版）への置き換えは想定通り必要だが、実装量はごく小さい |
 
 **結論**: 当初「新規Compose化が必要な純XML画面」としていた2画面のうち、実際に新規実装が必要なのは`ModelErrorDialogFragment`（それも小規模）のみ。`ModelManagementFragment`は独立タスクとして扱う必要がなくなった。
+
+### 再検証（2026-08-18）: 全13ファイルの機械的走査で裏付け確認
+
+`presentation/ui/fragment/*.kt` 全13ファイルを対象に、`ComposeView`/`setContent`/`inflate(R.layout`/`RecyclerView`の出現回数を機械的に走査し、上記の分類を裏付けた。新たな訂正事項はなし、既存記述の確認のみ。
+
+| ファイル | 行数 | ComposeView | setContent | inflate(R.layout | 実態 |
+|---|---:|---:|---:|---:|---|
+| ChatFragment.kt | 3,618 | 6 | 17 | 2 | ComposeView主体＋一部XML（`fragment_chat.xml`の外枠、添付メニューのbottom sheet） |
+| BenchmarkFragment.kt | 325 | 0 | 0 | 5 | **純XML実装**（対象外・確認済み） |
+| ModelSettingsFragment.kt | 5,801 | 2 | 1 | 0 | ComposeViewラッパー |
+| SettingsComposeFragment.kt | 3,638 | 2 | 1 | 0 | ComposeViewラッパー |
+| ImageGenFragment.kt | 1,674 | 2 | 1 | 0 | ComposeViewラッパー |
+| PresetSettingsFragment.kt | 1,127 | 2 | 1 | 0 | ComposeViewラッパー |
+| SetupWizardFragment.kt | 1,059 | 2 | 1 | 0 | ComposeViewラッパー |
+| ToolsSettingsFragment.kt | 414 | 2 | 1 | 0 | ComposeViewラッパー（対象外・確認済み） |
+| LicenseFragment.kt | 437 | 2 | 1 | 0 | ComposeViewラッパー |
+| HelpFragment.kt | 289 | 2 | 1 | 0 | ComposeViewラッパー |
+| LogsFragment.kt | 262 | 2 | 1 | 0 | ComposeViewラッパー |
+| SessionListFragment.kt | 172 | 2 | 1 | 0 | ComposeViewラッパー |
+| ModelErrorDialogFragment.kt | 97 | 0 | 0 | 0 | 素のDialog API（前述の通り） |
+| ModelManagementFragment.kt | 7 | 0 | 0 | 0 | 継承のみのエイリアス（前述の通り） |
+
+`ChatFragment.kt`のXML箇所2件の内訳: `class ChatFragment : Fragment(R.layout.fragment_chat)`（外枠レイアウト）と、添付メニュー用の`sheet_attachment_options`のinflate（bottom sheet）。RecyclerView本体（`messagesRecyclerView`、`MessageAdapter`）はタスク11-bで`LazyColumn`に置き換える対象。
+
+**結論の再確認**: Fragmentという名前が付いた13ファイルのうち、UIロジックの新規実装が必要なのは実質`ModelErrorDialogFragment`（小規模）と`ChatFragment`のRecyclerView部分（タスク11、最大の作業量）のみ。それ以外10画面は「Fragmentという入れ物を剥がしてComposable呼び出しに繋ぎ替えるだけ」の配線作業であることが機械的走査でも裏付けられた。
 
 ---
 
