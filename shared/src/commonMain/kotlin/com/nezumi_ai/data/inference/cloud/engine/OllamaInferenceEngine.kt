@@ -69,11 +69,6 @@ class OllamaInferenceEngine(
         val systemPart = split.first
         val userPart = split.second
 
-        // Gemma 4 tool calling is intentionally manual in this cloud path.
-        // The shared inference loop already appends tool_call + <tool_response> to
-        // the original prompt for subsequent rounds. Do not reinterpret that prompt
-        // as native Ollama role=assistant/role=tool messages, because doing so drops
-        // the injected <tools> definition block used by the manual protocol.
         val messages = buildMessages(systemPart, userPart, images)
         val roles = messages.map { message ->
             message["role"]?.jsonPrimitive?.content
@@ -145,8 +140,131 @@ class OllamaInferenceEngine(
         CloudLog.d(TAG, "Ollama stream finished session=$sessionId")
     }
 
-    /** Always preserve the prompt exactly as the shared manual-tool loop constructed it. */
+    /**
+     * Reconstruct the second and later tool rounds as proper Ollama chat turns.
+     *
+     * The Gemma4 tool schema is injected into the flattened prompt by
+     * GgufToolPromptBuilder. Depending on the prompt builder, it may not be preceded
+     * by the literal "System:" marker, so CloudPromptSplitter can leave it inside
+     * userPart. Extract it explicitly and keep it in the system message. Otherwise
+     * the round-2 reconstruction would lose the tool schema (or leave it in the
+     * ordinary user turn), which is exactly the failure mode seen in logs.
+     */
     private fun buildMessages(
+        systemPart: String?,
+        userPart: String,
+        images: List<ByteArray>
+    ): List<JsonObject> {
+        val toolsStart = userPart.indexOf("<tools>")
+        val toolsEndMarker = "</tools>"
+        val toolsEnd = if (toolsStart >= 0) {
+            userPart.indexOf(toolsEndMarker, toolsStart + "<tools>".length)
+        } else {
+            -1
+        }
+        val extractedTools = if (toolsStart >= 0 && toolsEnd >= 0) {
+            userPart.substring(toolsStart, toolsEnd + toolsEndMarker.length).trim()
+        } else {
+            null
+        }
+
+        val effectiveSystem = when {
+            !systemPart.isNullOrBlank() && extractedTools != null ->
+                systemPart.trimEnd() + "\n\n" + extractedTools
+            !systemPart.isNullOrBlank() -> systemPart
+            extractedTools != null -> extractedTools
+            else -> null
+        }
+
+        val withoutTools = if (toolsStart >= 0 && toolsEnd >= 0) {
+            (userPart.substring(0, toolsStart) + userPart.substring(toolsEnd + toolsEndMarker.length)).trim()
+        } else {
+            userPart
+        }
+
+        val callOpen = "<|tool_call>"
+        val callClose = "<tool_call|>"
+        val responseOpen = "<tool_response>"
+        val responseClose = "</tool_response>"
+        val callStart = withoutTools.lastIndexOf(callOpen)
+        val responseStart = withoutTools.lastIndexOf(responseOpen)
+        val callEndMarker = if (callStart >= 0) {
+            withoutTools.indexOf(callClose, callStart + callOpen.length)
+        } else {
+            -1
+        }
+        val hasCompletedToolTurn =
+            callStart >= 0 && callEndMarker >= 0 && responseStart > callEndMarker
+
+        if (!hasCompletedToolTurn) {
+            return buildSimpleMessages(effectiveSystem, withoutTools, images)
+        }
+
+        val callEnd = callEndMarker + callClose.length
+        val originalUser = withoutTools.substring(0, callStart).trimEnd()
+        val assistantCall = withoutTools.substring(callStart, callEnd).trim()
+
+        val toolResults = mutableListOf<String>()
+        var cursor = responseStart
+        while (cursor < withoutTools.length) {
+            val open = withoutTools.indexOf(responseOpen, cursor)
+            if (open < 0) break
+            val contentStart = open + responseOpen.length
+            val close = withoutTools.indexOf(responseClose, contentStart)
+            if (close < 0) {
+                toolResults += withoutTools.substring(contentStart).trim()
+                break
+            }
+            toolResults += withoutTools.substring(contentStart, close).trim()
+            cursor = close + responseClose.length
+        }
+
+        if (toolResults.isEmpty()) {
+            return buildSimpleMessages(effectiveSystem, withoutTools, images)
+        }
+
+        CloudLog.d(
+            TAG,
+            "Ollama tool round reconstructed: systemLen=${effectiveSystem?.length ?: 0} " +
+                "userLen=${originalUser.length} assistantToolLen=${assistantCall.length} " +
+                "toolResults=${toolResults.size}"
+        )
+
+        return buildList {
+            if (!effectiveSystem.isNullOrBlank()) {
+                add(buildJsonObject {
+                    put("role", "system")
+                    put("content", effectiveSystem)
+                })
+            }
+
+            add(buildJsonObject {
+                put("role", "user")
+                put("content", originalUser)
+                if (images.isNotEmpty()) {
+                    putJsonArray("images") {
+                        images.forEach { jpeg ->
+                            add(ImageEncoding.encodeJpegBase64(jpeg))
+                        }
+                    }
+                }
+            })
+
+            add(buildJsonObject {
+                put("role", "assistant")
+                put("content", assistantCall)
+            })
+
+            toolResults.forEach { result ->
+                add(buildJsonObject {
+                    put("role", "tool")
+                    put("content", result)
+                })
+            }
+        }
+    }
+
+    private fun buildSimpleMessages(
         systemPart: String?,
         userPart: String,
         images: List<ByteArray>
@@ -187,8 +305,6 @@ class OllamaInferenceEngine(
             }.getOrNull()
         }
 
-        // Native Ollama tool_calls can still be surfaced, but manual Gemma4 calls
-        // normally arrive in message.content as the <|tool_call> protocol text.
         val toolCallsDelta = message?.get("tool_calls")?.let { toolCalls ->
             synthesizeGemma4ToolCallText(toolCalls)
         }
@@ -231,7 +347,8 @@ class OllamaInferenceEngine(
             builder.append("<|tool_call>call:")
                 .append(name)
                 .append(argumentsJson)
-                .append("<tool_call|>")
+                .append("<tool_call|")
+                .append(">")
         }
 
         return if (builder.isEmpty()) null else builder.toString()
