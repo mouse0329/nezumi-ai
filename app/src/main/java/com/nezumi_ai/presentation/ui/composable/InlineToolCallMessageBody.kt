@@ -23,6 +23,11 @@ import androidx.compose.ui.unit.sp
 import com.nezumi_ai.R
 import com.nezumi_ai.data.inference.GgufToolCallParser
 import com.nezumi_ai.data.inference.ToolResultCard
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * 本文テキストと `<tool_call>` インラインカードを、生成順序のまま縦に並べて描画する。
@@ -96,7 +101,9 @@ fun InlineToolCallMessageBody(
                         ToolResultCard(
                             toolName = seg.toolCall.name,
                             success = true,
-                            payload = seg.toolCall.arguments
+                            payload = seg.toolCall.arguments.mapValues { (_, value) ->
+                                value.toJsonElement()
+                            }
                         )
                     } else {
                         null
@@ -130,6 +137,25 @@ fun InlineToolCallMessageBody(
                 }
             }
         }
+    }
+}
+
+private fun Any?.toJsonElement(): JsonElement {
+    return when (this) {
+        null -> JsonNull
+        is JsonElement -> this
+        is String -> JsonPrimitive(this)
+        is Boolean -> JsonPrimitive(this)
+        is Number -> JsonPrimitive(this)
+        is Map<*, *> -> JsonObject(
+            entries
+                .filter { it.key is String }
+                .associate { (key, value) ->
+                    (key as String) to value.toJsonElement()
+                }
+        )
+        is Iterable<*> -> JsonArray(map { it.toJsonElement() })
+        else -> JsonPrimitive(toString())
     }
 }
 
