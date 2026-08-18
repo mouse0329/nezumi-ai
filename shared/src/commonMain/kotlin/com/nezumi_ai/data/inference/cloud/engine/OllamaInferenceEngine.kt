@@ -54,25 +54,28 @@ class OllamaInferenceEngine(
         val baseUrl = resolveBaseUrl(); val apiKey = resolveApiKey()
         val endpoint = "$baseUrl/api/chat"
         val (systemPart, userPart) = CloudPromptSplitter.splitOptionalSystem(prompt)
+        val messages = buildMessages(systemPart, userPart, images)
+
+        CloudLog.d(TAG, "Ollama request messages=${messages.size} hasToolTurn=${messages.any { message -> message[\"role\"]?.jsonPrimitive?.content == \"tool\" }}")
 
         val bodyJson = buildJsonObject {
-            put("model", model); put("stream", true)
-            putJsonArray("messages") {
-                if (!systemPart.isNullOrBlank()) addJsonObject { put("role", "system"); put("content", systemPart) }
-                addJsonObject {
-                    put("role", "user"); put("content", userPart)
-                    if (images.isNotEmpty()) putJsonArray("images") { images.forEach { jpeg -> add(ImageEncoding.encodeJpegBase64(jpeg)) } }
-                }
-            }
+            put("model", model)
+            put("stream", true)
+            putJsonArray("messages") { messages.forEach { message -> add(message) } }
             putJsonObject("options") {
-                put("temperature", config.temperature.toDouble()); put("top_p", config.topP.toDouble())
-                put("num_predict", config.maxTokens); put("num_ctx", config.contextWindow)
-                if (config.customStopTokens.isNotEmpty()) putJsonArray("stop") { config.customStopTokens.forEach { add(it) } }
+                put("temperature", config.temperature.toDouble())
+                put("top_p", config.topP.toDouble())
+                put("num_predict", config.maxTokens)
+                put("num_ctx", config.contextWindow)
+                if (config.customStopTokens.isNotEmpty()) {
+                    putJsonArray("stop") { config.customStopTokens.forEach { add(it) } }
+                }
             }
         }
 
         http.preparePost(endpoint) {
-            header(HttpHeaders.Accept, "application/x-ndjson"); contentType(ContentType.Application.Json)
+            header(HttpHeaders.Accept, "application/x-ndjson")
+            contentType(ContentType.Application.Json)
             if (apiKey.isNotBlank()) header(HttpHeaders.Authorization, "Bearer $apiKey")
             setBody(bodyJson.toString())
         }.execute { response ->
@@ -83,7 +86,11 @@ class OllamaInferenceEngine(
             }
             withStreamChannel(response) { ch ->
                 while (!session.isClosedForSend) {
-                    val line = try { if (ch.isClosedForRead) null else ch.readUTF8Line() } catch (t: Throwable) { null } ?: break
+                    val line = try {
+                        if (ch.isClosedForRead) null else ch.readUTF8Line()
+                    } catch (t: Throwable) {
+                        null
+                    } ?: break
                     if (line.isEmpty()) continue
                     val (delta, done) = parseChunk(line)
                     if (!delta.isNullOrEmpty()) onDelta(delta)
@@ -94,14 +101,112 @@ class OllamaInferenceEngine(
         CloudLog.d(TAG, "Ollama stream finished session=$sessionId")
     }
 
+    /**
+     * AbstractCloudInferenceEngine は tool round の履歴を prompt 文字列として組み立てる。
+     * Ollama ではそれを chat の role に戻す必要がある。
+     *
+     * 2回目の request:
+     *   user      = 元の質問
+     *   assistant = Gemma4 の tool_call
+     *   tool      = 実行結果
+     *
+     * これを user 1件に押し込むと、tool 実行後の結果をモデルが tool turn として
+     * 解釈できず、最終回答が空になる。
+     */
+    private fun buildMessages(
+        systemPart: String?,
+        userPart: String,
+        images: List<ByteArray>
+    ): List<JsonObject> {
+        val gemmaOpen = "<|tool_call>"
+        val gemmaClose = "<tool_call|>"
+        val responseOpen = "<tool_response>"
+        val responseClose = "</tool_response>"
+
+        val callStart = userPart.indexOf(gemmaOpen)
+        val responseStart = userPart.indexOf(responseOpen, if (callStart >= 0) callStart else 0)
+
+        if (callStart < 0 || responseStart < 0) {
+            return buildSimpleMessages(systemPart, userPart, images)
+        }
+
+        val callEndMarker = userPart.indexOf(gemmaClose, callStart + gemmaOpen.length)
+        if (callEndMarker < 0 || callEndMarker >= responseStart) {
+            return buildSimpleMessages(systemPart, userPart, images)
+        }
+        val callEnd = callEndMarker + gemmaClose.length
+        val responseEndMarker = userPart.indexOf(responseClose, responseStart + responseOpen.length)
+        val responseEnd = if (responseEndMarker >= 0) responseEndMarker else userPart.length
+
+        val beforeCall = userPart.substring(0, callStart).trim()
+        val assistantCall = userPart.substring(callStart, callEnd).trim()
+        val toolResult = userPart.substring(responseStart + responseOpen.length, responseEnd).trim()
+
+        CloudLog.d(TAG, "Ollama tool round reconstructed: userLen=${beforeCall.length} assistantToolLen=${assistantCall.length} toolResultLen=${toolResult.length}")
+
+        return buildList {
+            if (!systemPart.isNullOrBlank()) {
+                add(buildJsonObject {
+                    put("role", "system")
+                    put("content", systemPart)
+                })
+            }
+            add(buildJsonObject {
+                put("role", "user")
+                put("content", beforeCall)
+                if (images.isNotEmpty()) {
+                    putJsonArray("images") { images.forEach { jpeg -> add(ImageEncoding.encodeJpegBase64(jpeg)) } }
+                }
+            })
+            add(buildJsonObject {
+                put("role", "assistant")
+                put("content", assistantCall)
+            })
+            add(buildJsonObject {
+                put("role", "tool")
+                put("content", toolResult)
+            })
+        }
+    }
+
+    private fun buildSimpleMessages(
+        systemPart: String?,
+        userPart: String,
+        images: List<ByteArray>
+    ): List<JsonObject> = buildList {
+        if (!systemPart.isNullOrBlank()) {
+            add(buildJsonObject {
+                put("role", "system")
+                put("content", systemPart)
+            })
+        }
+        add(buildJsonObject {
+            put("role", "user")
+            put("content", userPart)
+            if (images.isNotEmpty()) {
+                putJsonArray("images") { images.forEach { jpeg -> add(ImageEncoding.encodeJpegBase64(jpeg)) } }
+            }
+        })
+    }
+
     private fun parseChunk(line: String): Pair<String?, Boolean> {
-        val root = runCatching { json.parseToJsonElement(line) }.getOrNull() as? JsonObject ?: return null to false
+        val root = runCatching { json.parseToJsonElement(line) }.getOrNull() as? JsonObject
+            ?: return null to false
         val done = runCatching { root["done"]?.jsonPrimitive?.booleanOrNull }.getOrNull() ?: false
         val message = root["message"] as? JsonObject
-        val contentDelta = message?.let { runCatching { it["content"]?.jsonPrimitive?.content }.getOrNull() }
-        val toolCallsDelta = if (done) {
-            message?.get("tool_calls")?.let { synthesizeGemma4ToolCallText(it) }
-        } else null
+        val contentDelta = message?.let {
+            runCatching { it["content"]?.jsonPrimitive?.content }.getOrNull()
+        }
+
+        // tool_calls は done=true の最終チャンクに限らない。
+        // Ollama のストリーム途中の chunk に来た場合も必ず上位へ渡す。
+        val toolCallsDelta = message?.get("tool_calls")?.let {
+            synthesizeGemma4ToolCallText(it)
+        }
+        if (!toolCallsDelta.isNullOrEmpty()) {
+            CloudLog.d(TAG, "Ollama tool_calls detected chunk; synthesizedLen=${toolCallsDelta.length}")
+        }
+
         val delta = when {
             !toolCallsDelta.isNullOrEmpty() -> contentDelta.orEmpty() + toolCallsDelta
             else -> contentDelta
@@ -117,13 +222,16 @@ class OllamaInferenceEngine(
             val obj = entry as? JsonObject ?: continue
             val function = obj["function"] as? JsonObject ?: continue
             val name = runCatching { function["name"]?.jsonPrimitive?.content }.getOrNull() ?: continue
-            val argumentsJson = when (val a = function["arguments"]) {
-                is JsonObject -> a.toString()
-                is JsonPrimitive -> a.content
+            val argumentsJson = when (val arguments = function["arguments"]) {
+                is JsonObject -> arguments.toString()
+                is JsonPrimitive -> arguments.content
                 null -> "{}"
-                else -> a.toString()
+                else -> arguments.toString()
             }
-            builder.append("<|tool_call>call:").append(name).append(argumentsJson).append("<tool_call|>")
+            builder.append("<|tool_call>call:")
+                .append(name)
+                .append(argumentsJson)
+                .append("<tool_call|>")
         }
         return if (builder.isEmpty()) null else builder.toString()
     }
