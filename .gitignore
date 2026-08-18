@@ -10,6 +10,9 @@
 .DS_Store
 /build
 /app/build
+/shared/build
+/shared/.kotlin
+/shared/.gradle
 /captures
 .externalNativeBuild
 .cxx
