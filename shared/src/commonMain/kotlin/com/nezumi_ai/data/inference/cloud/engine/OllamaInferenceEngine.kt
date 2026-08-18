@@ -14,7 +14,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
-import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -22,7 +21,6 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
-import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -51,12 +49,16 @@ class OllamaInferenceEngine(
         session: ProducerScope<String>, sessionId: Long, model: String, prompt: String,
         images: List<ByteArray>, config: CloudInferenceParams, onDelta: (String) -> Unit
     ) {
-        val baseUrl = resolveBaseUrl(); val apiKey = resolveApiKey()
+        val baseUrl = resolveBaseUrl()
+        val apiKey = resolveApiKey()
         val endpoint = "$baseUrl/api/chat"
         val (systemPart, userPart) = CloudPromptSplitter.splitOptionalSystem(prompt)
         val messages = buildMessages(systemPart, userPart, images)
 
-        CloudLog.d(TAG, "Ollama request messages=${messages.size} hasToolTurn=${messages.any { message -> message[\"role\"]?.jsonPrimitive?.content == \"tool\" }}")
+        CloudLog.d(
+            TAG,
+            "Ollama request messages=${messages.size} hasToolTurn=${messages.any { message -> message[\"role\"]?.jsonPrimitive?.content == \"tool\" }}"
+        )
 
         val bodyJson = buildJsonObject {
             put("model", model)
@@ -84,14 +86,19 @@ class OllamaInferenceEngine(
                 val bodyText = runCatching { response.bodyAsText() }.getOrDefault("")
                 throw CloudRequestException("Ollama request failed: HTTP ${response.status.value} ${bodyText.take(500)}")
             }
+
             withStreamChannel(response) { ch ->
                 while (!session.isClosedForSend) {
-                    val line = try {
-                        if (ch.isClosedForRead) null else ch.readUTF8Line()
-                    } catch (t: Throwable) {
-                        null
-                    } ?: break
+                    // IMPORTANT: do not catch read errors and convert them to EOF.
+                    // AbstractCloudInferenceEngine distinguishes genuine EOF from a broken stream.
+                    val line = readStreamLineOrThrow(ch) ?: break
                     if (line.isEmpty()) continue
+
+                    CloudLog.d(
+                        TAG,
+                        "Ollama raw chunk session=$sessionId len=${line.length} preview=${line.take(300)}"
+                    )
+
                     val (delta, done) = parseChunk(line)
                     if (!delta.isNullOrEmpty()) onDelta(delta)
                     if (done) break
@@ -101,18 +108,6 @@ class OllamaInferenceEngine(
         CloudLog.d(TAG, "Ollama stream finished session=$sessionId")
     }
 
-    /**
-     * AbstractCloudInferenceEngine は tool round の履歴を prompt 文字列として組み立てる。
-     * Ollama ではそれを chat の role に戻す必要がある。
-     *
-     * 2回目の request:
-     *   user      = 元の質問
-     *   assistant = Gemma4 の tool_call
-     *   tool      = 実行結果
-     *
-     * これを user 1件に押し込むと、tool 実行後の結果をモデルが tool turn として
-     * 解釈できず、最終回答が空になる。
-     */
     private fun buildMessages(
         systemPart: String?,
         userPart: String,
@@ -145,17 +140,15 @@ class OllamaInferenceEngine(
         CloudLog.d(TAG, "Ollama tool round reconstructed: userLen=${beforeCall.length} assistantToolLen=${assistantCall.length} toolResultLen=${toolResult.length}")
 
         return buildList {
-            if (!systemPart.isNullOrBlank()) {
-                add(buildJsonObject {
-                    put("role", "system")
-                    put("content", systemPart)
-                })
-            }
+            if (!systemPart.isNullOrBlank()) add(buildJsonObject {
+                put("role", "system")
+                put("content", systemPart)
+            })
             add(buildJsonObject {
                 put("role", "user")
                 put("content", beforeCall)
-                if (images.isNotEmpty()) {
-                    putJsonArray("images") { images.forEach { jpeg -> add(ImageEncoding.encodeJpegBase64(jpeg)) } }
+                if (images.isNotEmpty()) putJsonArray("images") {
+                    images.forEach { jpeg -> add(ImageEncoding.encodeJpegBase64(jpeg)) }
                 }
             })
             add(buildJsonObject {
@@ -174,17 +167,15 @@ class OllamaInferenceEngine(
         userPart: String,
         images: List<ByteArray>
     ): List<JsonObject> = buildList {
-        if (!systemPart.isNullOrBlank()) {
-            add(buildJsonObject {
-                put("role", "system")
-                put("content", systemPart)
-            })
-        }
+        if (!systemPart.isNullOrBlank()) add(buildJsonObject {
+            put("role", "system")
+            put("content", systemPart)
+        })
         add(buildJsonObject {
             put("role", "user")
             put("content", userPart)
-            if (images.isNotEmpty()) {
-                putJsonArray("images") { images.forEach { jpeg -> add(ImageEncoding.encodeJpegBase64(jpeg)) } }
+            if (images.isNotEmpty()) putJsonArray("images") {
+                images.forEach { jpeg -> add(ImageEncoding.encodeJpegBase64(jpeg)) }
             }
         })
     }
@@ -197,20 +188,11 @@ class OllamaInferenceEngine(
         val contentDelta = message?.let {
             runCatching { it["content"]?.jsonPrimitive?.content }.getOrNull()
         }
-
-        // tool_calls は done=true の最終チャンクに限らない。
-        // Ollama のストリーム途中の chunk に来た場合も必ず上位へ渡す。
-        val toolCallsDelta = message?.get("tool_calls")?.let {
-            synthesizeGemma4ToolCallText(it)
-        }
+        val toolCallsDelta = message?.get("tool_calls")?.let { synthesizeGemma4ToolCallText(it) }
         if (!toolCallsDelta.isNullOrEmpty()) {
             CloudLog.d(TAG, "Ollama tool_calls detected chunk; synthesizedLen=${toolCallsDelta.length}")
         }
-
-        val delta = when {
-            !toolCallsDelta.isNullOrEmpty() -> contentDelta.orEmpty() + toolCallsDelta
-            else -> contentDelta
-        }
+        val delta = if (!toolCallsDelta.isNullOrEmpty()) contentDelta.orEmpty() + toolCallsDelta else contentDelta
         return delta to done
     }
 
