@@ -1,41 +1,24 @@
 package com.nezumi_ai.data.inference
 
-/**
- * モデル名から Gemma 4 系かどうかを判定する純粋ロジック。
- *
- * app 側 `PromptBuilder.isGemma4Model` / `isGemma4ModelName` と同じ判定規則を
- * commonMain に抽出したもの (クラウドエンジンがツールコール形式選択に使う)。
- * クラウドモデル ID (`cloud:provider:modelName`) なら実モデル名だけを見て判定する。
- */
+/** モデル名から Gemma 4 系かを判定する純粋ロジック (PromptBuilder と同一規則)。 */
 object Gemma4ModelDetector {
 
     fun isGemma4Model(modelIdOrPath: String): Boolean {
         val raw = modelIdOrPath.trim()
         if (raw.isEmpty()) return false
-        val nameForCheck = resolveModelNameForGemmaCheck(raw)
-        return isGemma4ModelName(nameForCheck.lowercase())
+        return isGemma4ModelName(resolveModelNameForGemmaCheck(raw).lowercase())
     }
 
-    /**
-     * ツールコール形式の選択用に、判定対象のモデル名を正規化する。
-     * - `cloud:provider:modelName` → modelName
-     * - ローカルパス / 識別子 → ファイル名部分 (パスの場合)
-     */
     fun resolveModelNameForGemmaCheck(modelIdOrPath: String): String {
         val trimmed = modelIdOrPath.trim()
         if (trimmed.startsWith("cloud:", ignoreCase = true)) {
             val body = trimmed.substringAfter(":")
             val parts = body.split(":", limit = 2)
-            if (parts.size >= 2) {
-                val modelName = parts[1]
-                if (modelName.isNotBlank()) return modelName
-            }
+            if (parts.size >= 2 && parts[1].isNotBlank()) return parts[1]
             return trimmed
         }
         val slash = maxOf(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
-        if (slash >= 0 && slash < trimmed.lastIndex) {
-            return trimmed.substring(slash + 1)
-        }
+        if (slash >= 0 && slash < trimmed.lastIndex) return trimmed.substring(slash + 1)
         return trimmed
     }
 

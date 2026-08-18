@@ -1,6 +1,8 @@
 package com.nezumi_ai.data.inference.cloud.engine
 
 import com.nezumi_ai.data.inference.CloudInferenceParams
+import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
+import com.nezumi_ai.data.inference.cloud.CloudHttpClient
 import com.nezumi_ai.data.inference.cloud.CloudLog
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -14,47 +16,29 @@ import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
-/**
- * OpenAI Chat Completions API 用ストリーミングエンジン (commonMain / Ktor 版)。
- */
+/** OpenAI Chat Completions API エンジン (commonMain / Ktor)。 */
 class OpenAiInferenceEngine(
     secureStore: com.nezumi_ai.data.inference.cloud.PlatformSecureStore,
     configProvider: com.nezumi_ai.data.inference.CloudModelConfigProvider,
     toolExecutor: com.nezumi_ai.data.inference.CloudToolExecutor?
-) : AbstractCloudInferenceEngine(
-    secureStore, configProvider, toolExecutor,
-    com.nezumi_ai.data.inference.cloud.CloudApiKeyStore.Provider.OPENAI
-) {
+) : AbstractCloudInferenceEngine(secureStore, configProvider, toolExecutor, CloudApiKeyStore.Provider.OPENAI) {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
-    private val http get() = com.nezumi_ai.data.inference.cloud.CloudHttpClient.instance
+    private val http get() = CloudHttpClient.instance
 
     override suspend fun runStreamingInference(
-        session: ProducerScope<String>,
-        sessionId: Long,
-        model: String,
-        prompt: String,
-        images: List<ByteArray>,
-        config: CloudInferenceParams,
-        onDelta: (String) -> Unit
+        session: ProducerScope<String>, sessionId: Long, model: String, prompt: String,
+        images: List<ByteArray>, config: CloudInferenceParams, onDelta: (String) -> Unit
     ) {
-        val apiKey = resolveApiKey()
-        val baseUrl = resolveBaseUrl()
+        val apiKey = resolveApiKey(); val baseUrl = resolveBaseUrl()
         val endpoint = "$baseUrl/v1/chat/completions"
-
-        val bodyJson = OpenAiCompatSupport.buildRequestBody(
-            model = model, prompt = prompt, images = images, config = config,
-            stream = true, useDataUriForImages = true
-        )
+        val bodyJson = OpenAiCompatSupport.buildRequestBody(model, prompt, images, config, stream = true, useDataUriForImages = true)
 
         val response = http.post(endpoint) {
-            header(HttpHeaders.Authorization, "Bearer $apiKey")
-            header(HttpHeaders.Accept, "text/event-stream")
-            contentType(ContentType.Application.Json)
-            setBody(bodyJson.toString())
+            header(HttpHeaders.Authorization, "Bearer $apiKey"); header(HttpHeaders.Accept, "text/event-stream")
+            contentType(ContentType.Application.Json); setBody(bodyJson.toString())
         }
         registerResponse(response)
-
         if (!response.status.isSuccess()) {
             val bodyText = runCatching { response.bodyAsText() }.getOrDefault("")
             throw CloudRequestException("OpenAI request failed: HTTP ${response.status.value} ${bodyText.take(500)}")
@@ -68,34 +52,17 @@ class OpenAiInferenceEngine(
             if (delta != null) onDelta(delta)
             return true
         }
-
         while (true) {
             val line = readStreamLine(response) ?: break
-            if (line.isEmpty()) {
-                if (dataBuffer.isNotEmpty()) {
-                    val data = dataBuffer.toString()
-                    dataBuffer.setLength(0)
-                    if (!dispatch(data)) return
-                }
-                continue
-            }
+            if (line.isEmpty()) { if (dataBuffer.isNotEmpty()) { val d = dataBuffer.toString(); dataBuffer.setLength(0); if (!dispatch(d)) return }; continue }
             if (line.startsWith(":")) continue
-            val colonIdx = line.indexOf(':')
-            if (colonIdx < 0) continue
-            val field = line.substring(0, colonIdx)
-            var raw = line.substring(colonIdx + 1)
-            if (raw.startsWith(" ")) raw = raw.substring(1)
-            if (field == "data") {
-                if (dataBuffer.isNotEmpty()) dataBuffer.append('\n')
-                dataBuffer.append(raw)
-            }
+            val c = line.indexOf(':'); if (c < 0) continue
+            val field = line.substring(0, c); var raw = line.substring(c + 1); if (raw.startsWith(" ")) raw = raw.substring(1)
+            if (field == "data") { if (dataBuffer.isNotEmpty()) dataBuffer.append('\n'); dataBuffer.append(raw) }
         }
         if (dataBuffer.isNotEmpty()) dispatch(dataBuffer.toString())
-
         CloudLog.d(TAG, "OpenAI stream finished session=$sessionId")
     }
 
-    private fun parseSafely(text: String): JsonElement? {
-        return runCatching { json.parseToJsonElement(text) }.getOrNull()
-    }
+    private fun parseSafely(text: String): JsonElement? = runCatching { json.parseToJsonElement(text) }.getOrNull()
 }

@@ -1,5 +1,7 @@
 ﻿package com.nezumi_ai.presentation.ui.fragment
 
+import com.nezumi_ai.data.inference.cloud.*
+
 import android.Manifest
 import android.animation.ValueAnimator
 import android.content.ClipboardManager
@@ -2073,8 +2075,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             options += ModelOption(imported.path, label)
         }
         // 構成済みクラウドモデルもチャットのモデル表示・選択肢に含める
-        com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry.list(requireContext()).forEach { modelId ->
-            if (!com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry.isConfigured(requireContext(), modelId)) {
+        com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry.listForContext(requireContext()).forEach { modelId ->
+            if (!com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry.isConfiguredForContext(requireContext(), modelId)) {
                 return@forEach
             }
             options += ModelOption(

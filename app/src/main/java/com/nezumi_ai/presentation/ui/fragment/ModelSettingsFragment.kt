@@ -1,5 +1,7 @@
 package com.nezumi_ai.presentation.ui.fragment
 
+import com.nezumi_ai.data.inference.cloud.*  // *ForContext 拡張関数 (shared/androidMain) の解決用
+
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -1733,7 +1735,7 @@ open class ModelSettingsFragment : Fragment() {
     /** 登録済みクラウドモデルの一覧。再読み込みは revision をインクリメントして行う。 */
     private var cloudModelsRevision by mutableStateOf(0)
     private val registeredCloudModels: List<String>
-        get() = CloudUserModelRegistry.list(requireContext())
+        get() = CloudUserModelRegistry.listForContext(requireContext())
 
     /**
      * クラウドモデルセクション。カスタムモデルと同じ列に並べる。
@@ -1785,13 +1787,13 @@ open class ModelSettingsFragment : Fragment() {
                 } else {
                     models.forEach { modelId ->
                         val parsed = CloudModelId.parse(modelId)
-                        val configured = CloudUserModelRegistry.isConfigured(context, modelId)
+                        val configured = CloudUserModelRegistry.isConfiguredForContext(context, modelId)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    val overrideKey = CloudUserModelRegistry.getOverrideApiKey(context, modelId)
-                                    val overrideUrl = CloudUserModelRegistry.getOverrideBaseUrl(context, modelId)
+                                    val overrideKey = CloudUserModelRegistry.getOverrideApiKeyForContext(context, modelId)
+                                    val overrideUrl = CloudUserModelRegistry.getOverrideBaseUrlForContext(context, modelId)
                                     cloudDialogState = CloudDialogState(
                                         editingModelId = modelId,
                                         provider = parsed?.provider ?: CloudApiKeyStore.Provider.LM_STUDIO,
@@ -1822,7 +1824,7 @@ open class ModelSettingsFragment : Fragment() {
                             }
                             TextButton(
                                 onClick = {
-                                    CloudUserModelRegistry.remove(context, modelId)
+                                    CloudUserModelRegistry.removeForContext(context, modelId)
                                     cloudModelsRevision++
                                 }
                             ) {
@@ -1850,10 +1852,10 @@ open class ModelSettingsFragment : Fragment() {
 
                     // 編集でプロバイダ/モデル名が変わった場合は古い登録を消して新しい ID で登録する。
                     if (!isNew && saved.editingModelId != modelId) {
-                        CloudUserModelRegistry.remove(context, saved.editingModelId)
+                        CloudUserModelRegistry.removeForContext(context, saved.editingModelId)
                     }
-                    CloudUserModelRegistry.add(context, modelId)
-                    CloudUserModelRegistry.saveOverride(context, modelId, saved.apiKey, saved.baseUrl)
+                    CloudUserModelRegistry.addForContext(context, modelId)
+                    CloudUserModelRegistry.saveOverrideForContext(context, modelId, saved.apiKey, saved.baseUrl)
 
                     toast(getString(R.string.cloud_models_credentials_saved))
                     cloudModelsRevision++
@@ -1966,11 +1968,11 @@ open class ModelSettingsFragment : Fragment() {
                             },
                             modifier = Modifier.fillMaxWidth()
                         )
-                        if (state.provider.defaultBaseUrl != null) {
+                        state.provider.defaultBaseUrl?.let { defaultBaseUrl ->
                             Text(
                                 text = stringResource(
                                     id = R.string.cloud_models_base_url_default_hint,
-                                    state.provider.defaultBaseUrl
+                                    defaultBaseUrl
                                 ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colorResource(id = R.color.text_secondary)

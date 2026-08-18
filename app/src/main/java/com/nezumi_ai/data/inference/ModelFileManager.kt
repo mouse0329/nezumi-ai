@@ -1,5 +1,7 @@
 package com.nezumi_ai.data.inference
 
+import com.nezumi_ai.data.inference.cloud.*  // *ForContext 拡張関数 (shared/androidMain) の解決用
+
 import android.content.Context
 import android.net.Uri
 import android.os.StatFs
@@ -762,12 +764,12 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         val lowered = trimmed.lowercase()
         // クラウドモデル: ローカルファイルの有無ではなく、API キー / Base URL が
         // 「モデル単位 or プロバイダ単位で利用可能に構成済み」かを見る。
-        // CloudApiKeyStore.isConfigured(provider) だけだと、モデル個別オーバーライドの
+        // CloudApiKeyStore.isConfiguredForContext(provider) だけだと、モデル個別オーバーライドの
         // API キーしか設定していない場合に false になり、
         // 「未ダウンロードです。設定画面でダウンロードしてください」と誤表示されていた。
         if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(modelName)) {
             return com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry
-                .isConfigured(context, trimmed)
+                .isConfiguredForContext(context, trimmed)
         }
         if ((lowered.endsWith(".task") || lowered.endsWith(".litertlm")) && File(trimmed).isAbsolute) {
             return validateImportedTaskFile(File(trimmed)).isSuccess

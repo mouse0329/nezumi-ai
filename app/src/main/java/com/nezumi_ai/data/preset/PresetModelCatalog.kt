@@ -1,5 +1,7 @@
 package com.nezumi_ai.data.preset
 
+import com.nezumi_ai.data.inference.cloud.*  // *ForContext 拡張関数 (shared/androidMain) の解決用
+
 import android.content.Context
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.cloud.CloudModelId
@@ -60,8 +62,8 @@ object PresetModelCatalog {
         // 「利用可能に構成済み」のものだけを出す。
         // (未設定のモデルを見せても選択した瞬間に失敗するだけなので、面倒でも
         //  設定ページを先に確認させる方針)
-        CloudUserModelRegistry.list(context).forEach { modelId ->
-            if (!CloudUserModelRegistry.isConfigured(context, modelId)) return@forEach
+        CloudUserModelRegistry.listForContext(context).forEach { modelId ->
+            if (!CloudUserModelRegistry.isConfiguredForContext(context, modelId)) return@forEach
             options += PresetModelOption(modelId, CloudModelId.displayLabel(modelId))
         }
         return options
@@ -82,7 +84,7 @@ object PresetModelCatalog {
             "Gemma4-4B" -> ModelFileManager.isDownloaded(context, ModelFileManager.LocalModel.GEMMA4_4B)
             else -> {
                 if (CloudModelId.isCloud(modelId)) {
-                    CloudUserModelRegistry.isConfigured(context, modelId)
+                    CloudUserModelRegistry.isConfiguredForContext(context, modelId)
                 } else {
                     // インポート済みモデル: modelId はファイルの絶対パス
                     val file = File(modelId)

@@ -14,61 +14,31 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 
-/**
- * OpenAI Chat Completions 互換 API 向け共通ヘルパ (commonMain 版)。
- * 未使用だった extractFullMessage は削除済み (レビュー回答 #5)。
- */
+/** OpenAI 互換 API 共通ヘルパ (commonMain 版)。未使用の extractFullMessage は削除済み。 */
 internal object OpenAiCompatSupport {
 
     fun buildRequestBody(
-        model: String,
-        prompt: String,
-        images: List<ByteArray>,
-        config: CloudInferenceParams,
-        stream: Boolean = true,
-        useDataUriForImages: Boolean = true
+        model: String, prompt: String, images: List<ByteArray>, config: CloudInferenceParams,
+        stream: Boolean = true, useDataUriForImages: Boolean = true
     ): JsonObject {
         val (systemPart, userPart) = CloudPromptSplitter.splitOptionalSystem(prompt)
-
         return buildJsonObject {
-            put("model", model)
-            put("stream", stream)
-            put("temperature", config.temperature.toDouble())
-            put("top_p", config.topP.toDouble())
+            put("model", model); put("stream", stream)
+            put("temperature", config.temperature.toDouble()); put("top_p", config.topP.toDouble())
             put("max_tokens", config.maxTokens)
-            if (config.customStopTokens.isNotEmpty()) {
-                putJsonArray("stop") { config.customStopTokens.forEach { add(it) } }
-            }
+            if (config.customStopTokens.isNotEmpty()) putJsonArray("stop") { config.customStopTokens.forEach { add(it) } }
             putJsonArray("messages") {
-                if (!systemPart.isNullOrBlank()) {
-                    addJsonObject {
-                        put("role", "system")
-                        put("content", systemPart)
-                    }
-                }
+                if (!systemPart.isNullOrBlank()) addJsonObject { put("role", "system"); put("content", systemPart) }
                 addJsonObject {
                     put("role", "user")
-                    if (images.isEmpty()) {
-                        put("content", userPart)
-                    } else {
-                        putJsonArray("content") {
-                            if (userPart.isNotBlank()) {
-                                addJsonObject {
-                                    put("type", "text")
-                                    put("text", userPart)
-                                }
-                            }
-                            images.forEach { jpegBytes ->
-                                addJsonObject {
-                                    put("type", "image_url")
-                                    putJsonObject("image_url") {
-                                        val urlValue = if (useDataUriForImages) {
-                                            ImageEncoding.encodeJpegDataUri(jpegBytes)
-                                        } else {
-                                            ImageEncoding.encodeJpegBase64(jpegBytes)
-                                        }
-                                        put("url", urlValue)
-                                    }
+                    if (images.isEmpty()) put("content", userPart)
+                    else putJsonArray("content") {
+                        if (userPart.isNotBlank()) addJsonObject { put("type", "text"); put("text", userPart) }
+                        images.forEach { jpeg ->
+                            addJsonObject {
+                                put("type", "image_url")
+                                putJsonObject("image_url") {
+                                    put("url", if (useDataUriForImages) ImageEncoding.encodeJpegDataUri(jpeg) else ImageEncoding.encodeJpegBase64(jpeg))
                                 }
                             }
                         }
