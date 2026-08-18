@@ -34,25 +34,20 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlin.concurrent.Volatile
 
 class CloudRequestException(message: String) : Exception(message)
-
 class CloudStreamReadException(message: String, cause: Throwable) : Exception(message, cause)
 
-/** Common base for cloud inference engines. Images are JPEG byte arrays. */
 abstract class AbstractCloudInferenceEngine(
     protected val secureStore: PlatformSecureStore,
     protected val configProvider: CloudModelConfigProvider,
     protected val toolExecutor: CloudToolExecutor?,
     val provider: CloudApiKeyStore.Provider
 ) {
-
     protected val TAG: String = "Cloud/${provider.id}"
 
     private val loadMutex = Mutex()
     private val inferenceMutex = Mutex()
-
     @Volatile protected var currentModelName: String? = null
     @Volatile protected var currentModelId: String? = null
-
     private val inflightLock = Any()
     private var inflightResponse: HttpResponse? = null
 
@@ -61,18 +56,14 @@ abstract class AbstractCloudInferenceEngine(
         return loadModel(modelName, config)
     }
 
-    open suspend fun loadModel(modelName: String, config: CloudInferenceParams): Result<Unit> {
-        return loadMutex.withLock {
-            val cleaned = modelName.trim()
-            if (cleaned.isBlank()) {
-                Result.failure(IllegalArgumentException("model name is blank"))
-            } else if (!isConfiguredForCurrentModel()) {
-                Result.failure(
-                    IllegalStateException(
-                        "Cloud provider '${provider.id}' is not configured. Please set the API key / base URL in the model settings."
-                    )
-                )
-            } else {
+    open suspend fun loadModel(modelName: String, config: CloudInferenceParams): Result<Unit> = loadMutex.withLock {
+        val cleaned = modelName.trim()
+        when {
+            cleaned.isBlank() -> Result.failure(IllegalArgumentException("model name is blank"))
+            !isConfiguredForCurrentModel() -> Result.failure(
+                IllegalStateException("Cloud provider '${provider.id}' is not configured. Please set the API key / base URL in the model settings.")
+            )
+            else -> {
                 currentModelName = cleaned
                 CloudLog.d(TAG, "loadModel bound modelName=$cleaned (modelId=$currentModelId)")
                 Result.success(Unit)
@@ -82,11 +73,8 @@ abstract class AbstractCloudInferenceEngine(
 
     private fun isConfiguredForCurrentModel(): Boolean {
         val id = currentModelId
-        return if (id != null && configProvider.hasOverride(id)) {
-            configProvider.isConfigured(id)
-        } else {
-            CloudApiKeyStore.isConfigured(secureStore, provider)
-        }
+        return if (id != null && configProvider.hasOverride(id)) configProvider.isConfigured(id)
+        else CloudApiKeyStore.isConfigured(secureStore, provider)
     }
 
     open suspend fun unloadModel(): Result<Unit> = loadMutex.withLock {
@@ -96,10 +84,7 @@ abstract class AbstractCloudInferenceEngine(
         Result.success(Unit)
     }
 
-    open suspend fun cancelInference() {
-        cancelInflight()
-    }
-
+    open suspend fun cancelInference() = cancelInflight()
     open suspend fun isAvailable(): Boolean = currentModelName != null && isConfiguredForCurrentModel()
 
     protected fun resolveApiKey(): String {
@@ -122,7 +107,7 @@ abstract class AbstractCloudInferenceEngine(
         prompt: String,
         images: List<ByteArray>,
         config: CloudInferenceParams
-    ): Flow<String> = callbackFlow<String> {
+    ): Flow<String> = callbackFlow {
         inferenceMutex.lock()
         val model = currentModelName
         if (model == null) {
@@ -142,20 +127,15 @@ abstract class AbstractCloudInferenceEngine(
         val toolResultCards = mutableListOf<CloudToolResultCard>()
         var closed = false
         try {
-            CloudLog.d(
-                TAG,
-                "inference start session=$sessionId model=$model promptLen=${prompt.length} images=${images.size} toolCalling=$toolCallingEnabled"
-            )
+            CloudLog.d(TAG, "inference start session=$sessionId model=$model promptLen=${prompt.length} images=${images.size} toolCalling=$toolCallingEnabled")
             var currentPrompt = prompt
             var toolRound = 0
             val isGemma4 = Gemma4ModelDetector.isGemma4Model(model)
             CloudLog.d(TAG, "TOOL_FORMAT cloud model=$model isGemma4=$isGemma4")
-
             while (toolRound < maxToolRounds) {
                 toolRound++
                 val roundText = StringBuilder()
                 val roundImages = if (toolRound == 1) images else emptyList()
-
                 runStreamingInference(this, sessionId, model, currentPrompt, roundImages, config) { delta ->
                     if (delta.isNotEmpty()) {
                         roundText.append(delta)
@@ -163,45 +143,26 @@ abstract class AbstractCloudInferenceEngine(
                         trySend(delta)
                     }
                 }
-
                 if (!toolCallingEnabled) break
 
-                val parsed = CloudToolCallParser.parse(roundText.toString(), isGemma4Model = isGemma4)
+                val parsed = CloudToolCallParser.parse(roundText.toString(), isGemma4 = isGemma4)
                 if (parsed.toolCalls.isEmpty()) {
-                    CloudLog.d(
-                        TAG,
-                        "No tool calls in round=$toolRound session=$sessionId rawLen=${roundText.length} rawPreview=\"${roundText.toString().take(500)}\""
-                    )
+                    CloudLog.d(TAG, "No tool calls in round=$toolRound session=$sessionId rawLen=${roundText.length} rawPreview=\"${roundText.toString().take(500)}\"")
                     break
                 }
                 if (toolRound >= maxToolRounds) {
                     CloudLog.w(TAG, "Tool call loop hit max rounds session=$sessionId")
                     break
                 }
-
-                CloudLog.d(
-                    TAG,
-                    "Tool calls detected round=$toolRound count=${parsed.toolCalls.size} names=${parsed.toolCalls.map { it.name }}"
-                )
+                CloudLog.d(TAG, "Tool calls detected round=$toolRound count=${parsed.toolCalls.size} names=${parsed.toolCalls.map { it.name }}")
                 trySend(InferenceStreamProtocol.encodeToolCallChunk(parsed.toolCalls.map { it.name }))
 
                 val toolResults = mutableListOf<Pair<ParsedToolCall, CloudToolExecutionResult>>()
                 for (toolCall in parsed.toolCalls) {
                     val result = toolExecutor!!.execute(toolCall)
                     toolResults.add(toolCall to result)
-                    trySend(
-                        InferenceStreamProtocol.encodeToolResultChunk(
-                            toolCall.name,
-                            if (result.success) "success" else "error"
-                        )
-                    )
-                    toolResultCards.add(
-                        CloudToolResultCard(
-                            toolCall.name.lowercase(),
-                            result.success,
-                            anyToJsonElementMap(result.payload)
-                        )
-                    )
+                    trySend(InferenceStreamProtocol.encodeToolResultChunk(toolCall.name, if (result.success) "success" else "error"))
+                    toolResultCards.add(CloudToolResultCard(toolCall.name.lowercase(), result.success, anyToJsonElementMap(result.payload)))
                 }
 
                 val toolResponseBlock = CloudToolCallParser.formatToolResults(toolResults)
@@ -225,27 +186,16 @@ abstract class AbstractCloudInferenceEngine(
                 trySend(InferenceStreamProtocol.encodeToolResults(CloudToolResultCard.listToJsonArray(toolResultCards)))
                 trySend(InferenceStreamProtocol.encodeExecutedToolsList(toolResultCards.map { it.toolName }.distinct()))
             }
-            trySend(
-                InferenceStreamProtocol.encodeFinal(
-                    Gemma4ThinkingParser.sanitizeVisibleText(
-                        fullAnswer.toString(),
-                        preserveToolCallTags = toolCallingEnabled
-                    )
-                )
-            )
-            close()
-            closed = true
+            trySend(InferenceStreamProtocol.encodeFinal(Gemma4ThinkingParser.sanitizeVisibleText(fullAnswer.toString(), preserveToolCallTags = toolCallingEnabled)))
+            close(); closed = true
         } catch (c: CancellationException) {
             CloudLog.d(TAG, "inference cancelled session=$sessionId")
             trySend(InferenceStreamProtocol.encodeFinal(fullAnswer.toString()))
-            close()
-            closed = true
-            throw c
+            close(); closed = true; throw c
         } catch (t: Throwable) {
             CloudLog.e(TAG, "inference failed session=$sessionId", t)
             trySend(InferenceStreamProtocol.encodeFinal(fullAnswer.toString()))
-            close(if (t is Exception) t else RuntimeException(t))
-            closed = true
+            close(if (t is Exception) t else RuntimeException(t)); closed = true
         } finally {
             if (!closed) runCatching { close() }
             cancelInflight()
@@ -265,45 +215,28 @@ abstract class AbstractCloudInferenceEngine(
     )
 
     protected fun registerResponse(response: HttpResponse) {
-        synchronized(inflightLock) {
-            inflightResponse = response
-        }
+        synchronized(inflightLock) { inflightResponse = response }
     }
 
-    /**
-     * Create exactly one body channel for this HTTP response and use it for the whole
-     * stream. Each tool round has a new HttpResponse, so it must also get a new channel.
-     */
+    /** A new HTTP response gets a new ByteReadChannel. Never cache it across tool rounds. */
     protected suspend fun <T> withStreamChannel(
         response: HttpResponse,
         block: suspend (io.ktor.utils.io.ByteReadChannel) -> T
-    ): T {
-        val channel = response.bodyAsChannel()
-        return block(channel)
-    }
+    ): T = block(response.bodyAsChannel())
 
-    protected suspend fun readStreamLineOrThrow(
-        ch: io.ktor.utils.io.ByteReadChannel
-    ): String? {
-        return try {
-            if (ch.isClosedForRead) null else ch.readUTF8Line()
-        } catch (c: CancellationException) {
-            throw c
-        } catch (t: Throwable) {
-            CloudLog.w(TAG, "stream read failed: ${t::class.simpleName}: ${t.message}", t)
-            throw CloudStreamReadException("stream read failed: ${t.message}", t)
-        }
+    protected suspend fun readStreamLineOrThrow(ch: io.ktor.utils.io.ByteReadChannel): String? = try {
+        if (ch.isClosedForRead) null else ch.readUTF8Line()
+    } catch (c: CancellationException) {
+        throw c
+    } catch (t: Throwable) {
+        CloudLog.w(TAG, "stream read failed: ${t::class.simpleName}: ${t.message}", t)
+        throw CloudStreamReadException("stream read failed: ${t.message}", t)
     }
 
     private suspend fun cancelInflight() {
-        val resp = synchronized(inflightLock) {
-            val r = inflightResponse
+        synchronized(inflightLock) {
             inflightResponse = null
-            r
         }
-        if (resp == null) return
-        runCatching { resp.call.cancel() }
-            .onFailure { CloudLog.w(TAG, "cancel stream failed", it) }
     }
 
     private fun anyToJsonElementMap(values: Map<String, Any?>): Map<String, JsonElement> =
@@ -315,11 +248,9 @@ abstract class AbstractCloudInferenceEngine(
         is Boolean -> JsonPrimitive(value)
         is Number -> JsonPrimitive(value)
         is String -> JsonPrimitive(value)
-        is Map<*, *> -> JsonObject(
-            value.entries.mapNotNull { (k, v) ->
-                (k?.toString() ?: return@mapNotNull null) to anyToJsonElement(v)
-            }.toMap()
-        )
+        is Map<*, *> -> JsonObject(value.entries.mapNotNull { (k, v) ->
+            (k?.toString() ?: return@mapNotNull null) to anyToJsonElement(v)
+        }.toMap())
         is List<*> -> JsonArray(value.map { anyToJsonElement(it) })
         else -> JsonPrimitive(value.toString())
     }
