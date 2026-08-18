@@ -68,15 +68,22 @@ class OllamaInferenceEngine(
         val split = CloudPromptSplitter.splitOptionalSystem(prompt)
         val systemPart = split.first
         val userPart = split.second
-        val messages = buildMessages(systemPart, userPart, images)
 
+        // Gemma 4 tool calling is intentionally manual in this cloud path.
+        // The shared inference loop already appends tool_call + <tool_response> to
+        // the original prompt for subsequent rounds. Do not reinterpret that prompt
+        // as native Ollama role=assistant/role=tool messages, because doing so drops
+        // the injected <tools> definition block used by the manual protocol.
+        val messages = buildMessages(systemPart, userPart, images)
         val roles = messages.map { message ->
             message["role"]?.jsonPrimitive?.content
         }
-        val hasToolTurn = roles.any { role -> role == "tool" }
+        val hasToolsBlock = prompt.contains("<tools>") && prompt.contains("</tools>")
         CloudLog.d(
             TAG,
-            "Ollama request messages=${messages.size} roles=$roles hasToolTurn=$hasToolTurn"
+            "Ollama request messages=${messages.size} roles=$roles " +
+                "hasToolTurn=${roles.any { role -> role == \"tool\" }} " +
+                "hasToolsBlock=$hasToolsBlock promptLen=${prompt.length}"
         )
 
         val bodyJson = buildJsonObject {
@@ -138,102 +145,8 @@ class OllamaInferenceEngine(
         CloudLog.d(TAG, "Ollama stream finished session=$sessionId")
     }
 
-    /**
-     * Preserve the original tool-definition prompt and add executed tool results
-     * as chat turns for the next Ollama round.
-     */
+    /** Always preserve the prompt exactly as the shared manual-tool loop constructed it. */
     private fun buildMessages(
-        systemPart: String?,
-        userPart: String,
-        images: List<ByteArray>
-    ): List<JsonObject> {
-        val callOpen = "<|tool_call>"
-        val callClose = "<tool_call|>"
-        val responseOpen = "<tool_response>"
-        val responseClose = "</tool_response>"
-
-        val callStart = userPart.lastIndexOf(callOpen)
-        val responseStart = userPart.lastIndexOf(responseOpen)
-        val hasToolTurn = callStart >= 0 && responseStart > callStart
-
-        if (!hasToolTurn) {
-            return buildSimpleMessages(systemPart, userPart, images)
-        }
-
-        val callEndMarker = userPart.indexOf(callClose, callStart + callOpen.length)
-        if (callEndMarker < 0 || callEndMarker >= responseStart) {
-            return buildSimpleMessages(systemPart, userPart, images)
-        }
-
-        val callEnd = callEndMarker + callClose.length
-        val originalUser = userPart.substring(0, callStart).trimEnd()
-        val assistantCall = userPart.substring(callStart, callEnd).trim()
-
-        val toolResults = mutableListOf<String>()
-        var cursor = responseStart
-        while (cursor < userPart.length) {
-            val open = userPart.indexOf(responseOpen, cursor)
-            if (open < 0) break
-
-            val contentStart = open + responseOpen.length
-            val close = userPart.indexOf(responseClose, contentStart)
-            if (close < 0) {
-                toolResults.add(userPart.substring(contentStart).trim())
-                break
-            }
-
-            toolResults.add(userPart.substring(contentStart, close).trim())
-            cursor = close + responseClose.length
-        }
-
-        if (toolResults.isEmpty()) {
-            return buildSimpleMessages(systemPart, userPart, images)
-        }
-
-        val systemLength = systemPart?.length ?: 0
-        CloudLog.d(
-            TAG,
-            "Ollama tool round reconstructed systemLen=$systemLength " +
-                "userLen=${originalUser.length} " +
-                "assistantToolLen=${assistantCall.length} " +
-                "toolResults=${toolResults.size}"
-        )
-
-        return buildList {
-            if (!systemPart.isNullOrBlank()) {
-                add(buildJsonObject {
-                    put("role", "system")
-                    put("content", systemPart)
-                })
-            }
-
-            add(buildJsonObject {
-                put("role", "user")
-                put("content", originalUser)
-                if (images.isNotEmpty()) {
-                    putJsonArray("images") {
-                        images.forEach { jpeg ->
-                            add(ImageEncoding.encodeJpegBase64(jpeg))
-                        }
-                    }
-                }
-            })
-
-            add(buildJsonObject {
-                put("role", "assistant")
-                put("content", assistantCall)
-            })
-
-            toolResults.forEach { result ->
-                add(buildJsonObject {
-                    put("role", "tool")
-                    put("content", result)
-                })
-            }
-        }
-    }
-
-    private fun buildSimpleMessages(
         systemPart: String?,
         userPart: String,
         images: List<ByteArray>
@@ -274,6 +187,8 @@ class OllamaInferenceEngine(
             }.getOrNull()
         }
 
+        // Native Ollama tool_calls can still be surfaced, but manual Gemma4 calls
+        // normally arrive in message.content as the <|tool_call> protocol text.
         val toolCallsDelta = message?.get("tool_calls")?.let { toolCalls ->
             synthesizeGemma4ToolCallText(toolCalls)
         }
@@ -281,7 +196,7 @@ class OllamaInferenceEngine(
         if (!toolCallsDelta.isNullOrEmpty()) {
             CloudLog.d(
                 TAG,
-                "Ollama tool_calls detected chunk synthesizedLen=${toolCallsDelta.length}"
+                "Ollama native tool_calls detected chunk synthesizedLen=${toolCallsDelta.length}"
             )
         }
 
