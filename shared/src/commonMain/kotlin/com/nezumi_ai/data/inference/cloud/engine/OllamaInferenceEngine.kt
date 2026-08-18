@@ -82,7 +82,6 @@ class OllamaInferenceEngine(
                 throw CloudRequestException("Ollama request failed: HTTP ${response.status.value} ${bodyText.take(500)}")
             }
             // ストリーミングではチャネルを1つだけ掴み、行を順次読み進める。
-            // (bodyAsChannel() を毎回呼ぶと先頭の行を繰り返し読んで無限ループする)
             withStreamChannel(response) { ch ->
                 while (!session.isClosedForSend) {
                     val line = try { if (ch.isClosedForRead) null else ch.readUTF8Line() } catch (t: Throwable) { null } ?: break
@@ -99,15 +98,19 @@ class OllamaInferenceEngine(
     private fun parseChunk(line: String): Pair<String?, Boolean> {
         val root = runCatching { json.parseToJsonElement(line) }.getOrNull() as? JsonObject ?: return null to false
         val done = runCatching { root["done"]?.jsonPrimitive?.booleanOrNull }.getOrNull() ?: false
-
         val message = root["message"] as? JsonObject
         val contentDelta = message?.let { runCatching { it["content"]?.jsonPrimitive?.content }.getOrNull() }
-        val toolCallsDelta = if (done) {
-            message?.get("tool_calls")?.let { synthesizeGemma4ToolCallText(it) }
-        } else null
+
+        // Ollama may place native tool calls on a non-terminal streaming chunk.
+        // Tool Calling must not depend on done=true; otherwise a tool-call-only
+        // response can reach AbstractCloudInferenceEngine with an empty roundText.
+        val toolCallsDelta = message?.get("tool_calls")?.let { synthesizeGemma4ToolCallText(it) }
+        if (!toolCallsDelta.isNullOrEmpty()) {
+            CloudLog.d(TAG, "Ollama tool_calls detected chunk; synthesizedLen=${toolCallsDelta.length}")
+        }
 
         val delta = when {
-            !toolCallsDelta.isNullOrEmpty() -> (contentDelta.orEmpty()) + toolCallsDelta
+            !toolCallsDelta.isNullOrEmpty() -> contentDelta.orEmpty() + toolCallsDelta
             else -> contentDelta
         }
         return delta to done
