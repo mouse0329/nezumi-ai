@@ -36,6 +36,12 @@ import kotlin.concurrent.Volatile
 /** クラウド API リクエスト失敗を表す例外 (java.io.IOException の commonMain 代替)。 */
 class CloudRequestException(message: String) : Exception(message)
 
+/**
+ * ストリーミングレスポンス読み取り中の transport/read failure を表す例外。
+ * 真の EOF (readUTF8Line() が null を返した) と区別してハンドリングするために用いる。
+ */
+class CloudStreamReadException(message: String, cause: Throwable) : Exception(message, cause)
+
 /** クラウド API を叩く推論エンジンの共通基底 (commonMain 版)。画像は JPEG バイト列。 */
 abstract class AbstractCloudInferenceEngine(
     protected val secureStore: PlatformSecureStore,
@@ -205,6 +211,28 @@ abstract class AbstractCloudInferenceEngine(
             inflightChannel ?: response.bodyAsChannel().also { inflightChannel = it }
         }
         return block(ch)
+    }
+
+    /**
+     * ストリームから 1 行読み進める共通ヘルパ。
+     *
+     * - チャネルが既に閉じている、または readUTF8Line() が null を返した場合は
+     *   "genuine EOF" とみなして null を返す (呼び出し側は break で抜ける)。
+     * - [CancellationException] はそのまま再スロー (キャンセルは伝播すべき)。
+     * - それ以外の Throwable は transport/read failure とみなし、ログに残した上で
+     *   [CloudStreamReadException] にラップして再スロー する。
+     *   これにより、"stream finished" と "stream broken" がログ上でも呼び出し側でも
+     *   区別できるようになる (旧実装では全て null に潰されていた)。
+     */
+    protected suspend fun readStreamLineOrThrow(ch: io.ktor.utils.io.ByteReadChannel): String? {
+        return try {
+            if (ch.isClosedForRead) null else ch.readUTF8Line()
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            CloudLog.w(TAG, "stream read failed: ${t::class.simpleName}: ${t.message}", t)
+            throw CloudStreamReadException("stream read failed: ${t.message}", t)
+        }
     }
 
     private suspend fun cancelInflight() {

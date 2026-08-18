@@ -14,7 +14,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
-import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -85,7 +84,7 @@ class OllamaInferenceEngine(
             // (bodyAsChannel() を毎回呼ぶと先頭の行を繰り返し読んで無限ループする)
             withStreamChannel(response) { ch ->
                 while (!session.isClosedForSend) {
-                    val line = try { if (ch.isClosedForRead) null else ch.readUTF8Line() } catch (t: Throwable) { null } ?: break
+                    val line = readStreamLineOrThrow(ch) ?: break
                     if (line.isEmpty()) continue
                     val (delta, done) = parseChunk(line)
                     if (!delta.isNullOrEmpty()) onDelta(delta)

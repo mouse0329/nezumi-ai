@@ -15,7 +15,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
-import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -82,7 +81,7 @@ class GeminiInferenceEngine(
             }
             withStreamChannel(response) { ch ->
                 while (true) {
-                    val line = try { if (ch.isClosedForRead) null else ch.readUTF8Line() } catch (t: Throwable) { null } ?: break
+                    val line = readStreamLineOrThrow(ch) ?: break
                     if (line.isEmpty()) { if (dataBuffer.isNotEmpty()) { val d = dataBuffer.toString(); dataBuffer.setLength(0); if (!dispatch(d)) return@withStreamChannel }; continue }
                     if (line.startsWith(":")) continue
                     val c = line.indexOf(':'); if (c < 0) continue
