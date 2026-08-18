@@ -14,7 +14,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
-import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -22,7 +21,6 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
-import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -84,19 +82,25 @@ class OllamaInferenceEngine(
                 val bodyText = runCatching { response.bodyAsText() }.getOrDefault("")
                 throw CloudRequestException("Ollama request failed: HTTP ${response.status.value} ${bodyText.take(500)}")
             }
+
+            var lineCount = 0
             withStreamChannel(response) { ch ->
                 while (!session.isClosedForSend) {
-                    val line = try {
-                        if (ch.isClosedForRead) null else ch.readUTF8Line()
-                    } catch (t: Throwable) {
-                        null
-                    } ?: break
+                    // IMPORTANT: never reacquire bodyAsChannel() and never swallow read errors.
+                    // A swallowed read failure previously looked exactly like an empty model
+                    // response (rawLen=0), preventing the Gemma4 tool-call parser from running.
+                    val line = readStreamLineOrThrow(ch) ?: break
                     if (line.isEmpty()) continue
+                    lineCount++
+                    if (lineCount == 1) {
+                        CloudLog.d(TAG, "Ollama first stream line len=${line.length} preview=\"${line.take(300)}\"")
+                    }
                     val (delta, done) = parseChunk(line)
                     if (!delta.isNullOrEmpty()) onDelta(delta)
                     if (done) break
                 }
             }
+            CloudLog.d(TAG, "Ollama stream reader finished session=$sessionId lines=$lineCount")
         }
         CloudLog.d(TAG, "Ollama stream finished session=$sessionId")
     }
