@@ -70,9 +70,9 @@ class OllamaInferenceEngine(
 
         CloudLog.d(
             TAG,
-            "Ollama request messages=${messages.size} hasToolTurn=${messages.any { message ->
-                message["role"]?.jsonPrimitive?.content == "tool"
-            }}"
+            "Ollama request messages=${messages.size} " +
+                "roles=${messages.map { it[\"role\"]?.jsonPrimitive?.content }} " +
+                "hasToolTurn=${messages.any { it[\"role\"]?.jsonPrimitive?.content == \"tool\" }}"
         )
 
         val bodyJson = buildJsonObject {
@@ -97,9 +97,7 @@ class OllamaInferenceEngine(
         http.preparePost(endpoint) {
             header(HttpHeaders.Accept, "application/x-ndjson")
             contentType(ContentType.Application.Json)
-            if (apiKey.isNotBlank()) {
-                header(HttpHeaders.Authorization, "Bearer $apiKey")
-            }
+            if (apiKey.isNotBlank()) header(HttpHeaders.Authorization, "Bearer $apiKey")
             setBody(bodyJson.toString())
         }.execute { response ->
             registerResponse(response)
@@ -120,9 +118,7 @@ class OllamaInferenceEngine(
                         "Ollama raw chunk session=$sessionId len=${line.length} preview=${line.take(300)}"
                     )
 
-                    val parsed = parseChunk(line)
-                    val delta = parsed.first
-                    val done = parsed.second
+                    val (delta, done) = parseChunk(line)
                     if (!delta.isNullOrEmpty()) onDelta(delta)
                     if (done) break
                 }
@@ -133,14 +129,10 @@ class OllamaInferenceEngine(
     }
 
     /**
-     * The shared cloud tool loop appends a Gemma 4 tool call and tool response to the
-     * prompt string for the next round. Ollama requires those turns to be represented
-     * as chat messages so the model actually receives the executed tool result.
-     *
-     * First round:
-     *   system + user
-     * Tool round:
-     *   system + user + assistant(tool_call) + tool(tool_response)
+     * Preserve the original prompt/tool definitions and add the tool result as chat turns.
+     * The shared cloud loop appends the model's tool call and <tool_response> to the
+     * prompt for round 2. We must not rebuild only from the text after the split point,
+     * otherwise the Gemma4 tool-definition block can be lost.
      */
     private fun buildMessages(
         systemPart: String?,
@@ -152,48 +144,54 @@ class OllamaInferenceEngine(
         val responseOpen = "<tool_response>"
         val responseClose = "</tool_response>"
 
-        val callStart = userPart.lastIndexOf(callOpen)
-        val responseStart = userPart.lastIndexOf(responseOpen)
+        val callInUser = userPart.lastIndexOf(callOpen)
+        val responseInUser = userPart.lastIndexOf(responseOpen)
+        val hasToolTurnInUser = callInUser >= 0 && responseInUser > callInUser
 
-        if (callStart < 0 || responseStart < 0 || responseStart <= callStart) {
+        if (!hasToolTurnInUser) {
             return buildSimpleMessages(systemPart, userPart, images)
         }
 
-        val callEndMarker = userPart.indexOf(callClose, callStart + callOpen.length)
-        if (callEndMarker < 0 || callEndMarker >= responseStart) {
+        val callEndMarker = userPart.indexOf(callClose, callInUser + callOpen.length)
+        if (callEndMarker < 0 || callEndMarker >= responseInUser) {
             return buildSimpleMessages(systemPart, userPart, images)
         }
 
         val callEnd = callEndMarker + callClose.length
-        val beforeCall = userPart.substring(0, callStart).trim()
-        val assistantCall = userPart.substring(callStart, callEnd).trim()
+        val originalUser = userPart.substring(0, callInUser).trimEnd()
+        val assistantCall = userPart.substring(callInUser, callEnd).trim()
 
-        val resultParts = mutableListOf<String>()
-        var cursor = responseStart
-        while (cursor >= 0 && cursor < userPart.length) {
+        val toolResults = mutableListOf<String>()
+        var cursor = responseInUser
+        while (cursor < userPart.length) {
             val open = userPart.indexOf(responseOpen, cursor)
             if (open < 0) break
             val contentStart = open + responseOpen.length
             val close = userPart.indexOf(responseClose, contentStart)
             if (close < 0) {
-                resultParts += userPart.substring(contentStart).trim()
+                toolResults += userPart.substring(contentStart).trim()
                 break
             }
-            resultParts += userPart.substring(contentStart, close).trim()
+            toolResults += userPart.substring(contentStart, close).trim()
             cursor = close + responseClose.length
         }
 
-        if (resultParts.isEmpty()) {
+        if (toolResults.isEmpty()) {
             return buildSimpleMessages(systemPart, userPart, images)
         }
 
         CloudLog.d(
             TAG,
-            "Ollama tool round reconstructed: userLen=${beforeCall.length} " +
-                "assistantToolLen=${assistantCall.length} toolResults=${resultParts.size}"
+            "Ollama tool round reconstructed: " +
+                "systemLen=${systemPart?.length ?: 0} " +
+                "userLen=${originalUser.length} " +
+                "assistantToolLen=${assistantCall.length} " +
+                "toolResults=${toolResults.size}"
         )
 
         return buildList {
+            // Keep the original system prompt untouched. This is where the Gemma4
+            // tool-definition block may live.
             if (!systemPart.isNullOrBlank()) {
                 add(buildJsonObject {
                     put("role", "system")
@@ -203,7 +201,7 @@ class OllamaInferenceEngine(
 
             add(buildJsonObject {
                 put("role", "user")
-                put("content", beforeCall)
+                put("content", originalUser)
                 if (images.isNotEmpty()) {
                     putJsonArray("images") {
                         images.forEach { jpeg -> add(ImageEncoding.encodeJpegBase64(jpeg)) }
@@ -216,7 +214,7 @@ class OllamaInferenceEngine(
                 put("content", assistantCall)
             })
 
-            resultParts.forEach { result ->
+            toolResults.forEach { result ->
                 add(buildJsonObject {
                     put("role", "tool")
                     put("content", result)
@@ -249,30 +247,18 @@ class OllamaInferenceEngine(
     }
 
     private fun parseChunk(line: String): Pair<String?, Boolean> {
-        val root = runCatching {
-            json.parseToJsonElement(line)
-        }.getOrNull() as? JsonObject ?: return null to false
+        val root = runCatching { json.parseToJsonElement(line) }.getOrNull() as? JsonObject
+            ?: return null to false
 
-        val done = runCatching {
-            root["done"]?.jsonPrimitive?.booleanOrNull
-        }.getOrNull() ?: false
-
+        val done = runCatching { root["done"]?.jsonPrimitive?.booleanOrNull }.getOrNull() ?: false
         val message = root["message"] as? JsonObject
-        val contentDelta = message?.let { messageObject ->
-            runCatching {
-                messageObject["content"]?.jsonPrimitive?.content
-            }.getOrNull()
+        val contentDelta = message?.let {
+            runCatching { it["content"]?.jsonPrimitive?.content }.getOrNull()
         }
-
-        val toolCallsDelta = message?.get("tool_calls")?.let { toolCalls ->
-            synthesizeGemma4ToolCallText(toolCalls)
-        }
+        val toolCallsDelta = message?.get("tool_calls")?.let { synthesizeGemma4ToolCallText(it) }
 
         if (!toolCallsDelta.isNullOrEmpty()) {
-            CloudLog.d(
-                TAG,
-                "Ollama tool_calls detected chunk; synthesizedLen=${toolCallsDelta.length}"
-            )
+            CloudLog.d(TAG, "Ollama tool_calls detected chunk; synthesizedLen=${toolCallsDelta.length}")
         }
 
         val delta = if (!toolCallsDelta.isNullOrEmpty()) {
@@ -292,9 +278,7 @@ class OllamaInferenceEngine(
         for (entry in array) {
             val objectEntry = entry as? JsonObject ?: continue
             val function = objectEntry["function"] as? JsonObject ?: continue
-            val name = runCatching {
-                function["name"]?.jsonPrimitive?.content
-            }.getOrNull() ?: continue
+            val name = runCatching { function["name"]?.jsonPrimitive?.content }.getOrNull() ?: continue
 
             val argumentsJson = when (val arguments = function["arguments"]) {
                 is JsonObject -> arguments.toString()
