@@ -14,7 +14,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
-import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -54,12 +54,16 @@ class OllamaInferenceEngine(
         val baseUrl = resolveBaseUrl(); val apiKey = resolveApiKey()
         val endpoint = "$baseUrl/api/chat"
         val (systemPart, userPart) = CloudPromptSplitter.splitOptionalSystem(prompt)
-        val messages = buildOllamaMessages(systemPart, userPart, images)
 
-        CloudLog.d(TAG, "Ollama request messages=${messages.size} hasToolTurn=${messages.any { it[\"role\"]?.jsonPrimitive?.content == \"tool\" }}")
         val bodyJson = buildJsonObject {
             put("model", model); put("stream", true)
-            putJsonArray("messages") { messages.forEach { add(it) } }
+            putJsonArray("messages") {
+                if (!systemPart.isNullOrBlank()) addJsonObject { put("role", "system"); put("content", systemPart) }
+                addJsonObject {
+                    put("role", "user"); put("content", userPart)
+                    if (images.isNotEmpty()) putJsonArray("images") { images.forEach { jpeg -> add(ImageEncoding.encodeJpegBase64(jpeg)) } }
+                }
+            }
             putJsonObject("options") {
                 put("temperature", config.temperature.toDouble()); put("top_p", config.topP.toDouble())
                 put("num_predict", config.maxTokens); put("num_ctx", config.contextWindow)
@@ -79,7 +83,7 @@ class OllamaInferenceEngine(
             }
             withStreamChannel(response) { ch ->
                 while (!session.isClosedForSend) {
-                    val line = readStreamLineOrThrow(ch) ?: break
+                    val line = try { if (ch.isClosedForRead) null else ch.readUTF8Line() } catch (t: Throwable) { null } ?: break
                     if (line.isEmpty()) continue
                     val (delta, done) = parseChunk(line)
                     if (!delta.isNullOrEmpty()) onDelta(delta)
@@ -90,80 +94,14 @@ class OllamaInferenceEngine(
         CloudLog.d(TAG, "Ollama stream finished session=$sessionId")
     }
 
-    /**
-     * Tool round の2回目以降では、tool call と tool result を Ollama の chat message role
-     * として渡す。以前は currentPrompt 全体を1つの user message に押し込んでいたため、
-     * <tool_response> が単なるユーザー文字列になり、モデルの tool-turn として解釈されない
-     * ケースがあった。
-     */
-    private fun buildOllamaMessages(
-        systemPart: String?,
-        userPart: String,
-        images: List<ByteArray>
-    ): List<JsonObject> {
-        val gemmaOpen = "<|tool_call>"
-        val genericOpen = "<tool_call>"
-        val responseOpen = "<tool_response>"
-        val toolCallStart = maxOf(userPart.lastIndexOf(gemmaOpen), userPart.lastIndexOf(genericOpen))
-        val responseStart = userPart.lastIndexOf(responseOpen)
-
-        if (toolCallStart < 0 || responseStart <= toolCallStart) {
-            return buildList {
-                if (!systemPart.isNullOrBlank()) add(buildJsonObject { put("role", "system"); put("content", systemPart) })
-                add(buildJsonObject {
-                    put("role", "user"); put("content", userPart)
-                    if (images.isNotEmpty()) putJsonArray("images") { images.forEach { add(ImageEncoding.encodeJpegBase64(it)) } }
-                })
-            }
-        }
-
-        val toolCallEnd = when {
-            userPart.startsWith(gemmaOpen, toolCallStart) -> {
-                val end = userPart.indexOf("<tool_call|>", toolCallStart + gemmaOpen.length)
-                if (end >= 0) end + "<tool_call|>".length else responseStart
-            }
-            else -> {
-                val end = userPart.indexOf("</tool_call>", toolCallStart + genericOpen.length)
-                if (end >= 0) end + "</tool_call>".length else responseStart
-            }
-        }
-        if (toolCallEnd > responseStart) return buildBasicMessages(systemPart, userPart, images)
-
-        val beforeCall = userPart.substring(0, toolCallStart).trimEnd()
-        val assistantCall = userPart.substring(toolCallStart, toolCallEnd).trim()
-        val toolResult = userPart.substring(responseStart).trim()
-
-        return buildList {
-            if (!systemPart.isNullOrBlank()) add(buildJsonObject { put("role", "system"); put("content", systemPart) })
-            add(buildJsonObject {
-                put("role", "user")
-                put("content", beforeCall)
-                if (images.isNotEmpty()) putJsonArray("images") { images.forEach { add(ImageEncoding.encodeJpegBase64(it)) } }
-            })
-            add(buildJsonObject { put("role", "assistant"); put("content", assistantCall) })
-            add(buildJsonObject { put("role", "tool"); put("content", toolResult) })
-        }
-    }
-
-    private fun buildBasicMessages(
-        systemPart: String?, userPart: String, images: List<ByteArray>
-    ): List<JsonObject> = buildList {
-        if (!systemPart.isNullOrBlank()) add(buildJsonObject { put("role", "system"); put("content", systemPart) })
-        add(buildJsonObject {
-            put("role", "user"); put("content", userPart)
-            if (images.isNotEmpty()) putJsonArray("images") { images.forEach { add(ImageEncoding.encodeJpegBase64(it)) } }
-        })
-    }
-
     private fun parseChunk(line: String): Pair<String?, Boolean> {
         val root = runCatching { json.parseToJsonElement(line) }.getOrNull() as? JsonObject ?: return null to false
         val done = runCatching { root["done"]?.jsonPrimitive?.booleanOrNull }.getOrNull() ?: false
         val message = root["message"] as? JsonObject
         val contentDelta = message?.let { runCatching { it["content"]?.jsonPrimitive?.content }.getOrNull() }
-        val toolCallsDelta = message?.get("tool_calls")?.let { synthesizeGemma4ToolCallText(it) }
-        if (!toolCallsDelta.isNullOrEmpty()) {
-            CloudLog.d(TAG, "Ollama tool_calls detected chunk; synthesizedLen=${toolCallsDelta.length}")
-        }
+        val toolCallsDelta = if (done) {
+            message?.get("tool_calls")?.let { synthesizeGemma4ToolCallText(it) }
+        } else null
         val delta = when {
             !toolCallsDelta.isNullOrEmpty() -> contentDelta.orEmpty() + toolCallsDelta
             else -> contentDelta
