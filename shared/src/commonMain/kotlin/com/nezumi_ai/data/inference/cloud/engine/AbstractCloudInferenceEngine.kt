@@ -33,51 +33,37 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.concurrent.Volatile
 
-/** クラウド API リクエスト失敗を表す例外 (java.io.IOException の commonMain 代替)。 */
 class CloudRequestException(message: String) : Exception(message)
-
-/**
- * ストリーミングレスポンス読み取り中の transport/read failure を表す例外。
- * 真の EOF (readUTF8Line() が null を返した) と区別してハンドリングするために用いる。
- */
 class CloudStreamReadException(message: String, cause: Throwable) : Exception(message, cause)
 
-/** クラウド API を叩く推論エンジンの共通基底 (commonMain 版)。画像は JPEG バイト列。 */
 abstract class AbstractCloudInferenceEngine(
     protected val secureStore: PlatformSecureStore,
     protected val configProvider: CloudModelConfigProvider,
     protected val toolExecutor: CloudToolExecutor?,
     val provider: CloudApiKeyStore.Provider
 ) {
-
     protected val TAG: String = "Cloud/${provider.id}"
 
     private val loadMutex = Mutex()
     private val inferenceMutex = Mutex()
-
     @Volatile protected var currentModelName: String? = null
     @Volatile protected var currentModelId: String? = null
-
     private val inflightLock = Any()
     private var inflightResponse: HttpResponse? = null
-
-    // 行リーダが使い回すボディチャネル。bodyAsChannel() は呼ぶたびに
-    // 先頭からの新しいチャネルを返しうるため、1レスポンスにつき1つだけ掴んで進める。
-    private val inflightChannelMutex = Mutex()
-    private var inflightChannel: io.ktor.utils.io.ByteReadChannel? = null
 
     open suspend fun loadModelWithId(modelId: String, modelName: String, config: CloudInferenceParams): Result<Unit> {
         currentModelId = modelId
         return loadModel(modelName, config)
     }
 
-    open suspend fun loadModel(modelName: String, config: CloudInferenceParams): Result<Unit> {
-        return loadMutex.withLock {
-            val cleaned = modelName.trim()
-            if (cleaned.isBlank()) Result.failure(IllegalArgumentException("model name is blank"))
-            else if (!isConfiguredForCurrentModel()) Result.failure(IllegalStateException(
-                "Cloud provider '${provider.id}' is not configured. Please set the API key / base URL in the model settings."))
-            else {
+    open suspend fun loadModel(modelName: String, config: CloudInferenceParams): Result<Unit> = loadMutex.withLock {
+        val cleaned = modelName.trim()
+        when {
+            cleaned.isBlank() -> Result.failure(IllegalArgumentException("model name is blank"))
+            !isConfiguredForCurrentModel() -> Result.failure(
+                IllegalStateException("Cloud provider '${provider.id}' is not configured. Please set the API key / base URL in the model settings.")
+            )
+            else -> {
                 currentModelName = cleaned
                 CloudLog.d(TAG, "loadModel bound modelName=$cleaned (modelId=$currentModelId)")
                 Result.success(Unit)
@@ -92,11 +78,13 @@ abstract class AbstractCloudInferenceEngine(
     }
 
     open suspend fun unloadModel(): Result<Unit> = loadMutex.withLock {
-        currentModelName = null; currentModelId = null; cancelInflight(); Result.success(Unit)
+        currentModelName = null
+        currentModelId = null
+        cancelInflight()
+        Result.success(Unit)
     }
 
-    open suspend fun cancelInference() { cancelInflight() }
-
+    open suspend fun cancelInference() = cancelInflight()
     open suspend fun isAvailable(): Boolean = currentModelName != null && isConfiguredForCurrentModel()
 
     protected fun resolveApiKey(): String {
@@ -115,17 +103,22 @@ abstract class AbstractCloudInferenceEngine(
         inferenceWithMedia(sessionId, prompt, emptyList(), config)
 
     fun inferenceWithMedia(
-        sessionId: Long, prompt: String, images: List<ByteArray>, config: CloudInferenceParams
-    ): Flow<String> = callbackFlow<String> {
+        sessionId: Long,
+        prompt: String,
+        images: List<ByteArray>,
+        config: CloudInferenceParams
+    ): Flow<String> = callbackFlow {
         inferenceMutex.lock()
         val model = currentModelName
         if (model == null) {
             inferenceMutex.unlock()
-            close(IllegalStateException("Model not loaded. Call loadModel() first.")); return@callbackFlow
+            close(IllegalStateException("Model not loaded. Call loadModel() first."))
+            return@callbackFlow
         }
         if (!isConfiguredForCurrentModel()) {
             inferenceMutex.unlock()
-            close(IllegalStateException("Cloud provider '${provider.id}' is not configured. Please open the model settings and set the API key / base URL.")); return@callbackFlow
+            close(IllegalStateException("Cloud provider '${provider.id}' is not configured. Please open the model settings and set the API key / base URL."))
+            return@callbackFlow
         }
 
         val toolCallingEnabled = config.enableToolCalling && toolExecutor != null
@@ -144,17 +137,26 @@ abstract class AbstractCloudInferenceEngine(
                 val roundText = StringBuilder()
                 val roundImages = if (toolRound == 1) images else emptyList()
                 runStreamingInference(this, sessionId, model, currentPrompt, roundImages, config) { delta ->
-                    if (delta.isNotEmpty()) { roundText.append(delta); fullAnswer.append(delta); trySend(delta) }
+                    if (delta.isNotEmpty()) {
+                        roundText.append(delta)
+                        fullAnswer.append(delta)
+                        trySend(delta)
+                    }
                 }
                 if (!toolCallingEnabled) break
+
                 val parsed = CloudToolCallParser.parse(roundText.toString(), isGemma4 = isGemma4)
                 if (parsed.toolCalls.isEmpty()) {
                     CloudLog.d(TAG, "No tool calls in round=$toolRound session=$sessionId rawLen=${roundText.length} rawPreview=\"${roundText.toString().take(500)}\"")
                     break
                 }
-                if (toolRound >= maxToolRounds) { CloudLog.w(TAG, "Tool call loop hit max rounds session=$sessionId"); break }
+                if (toolRound >= maxToolRounds) {
+                    CloudLog.w(TAG, "Tool call loop hit max rounds session=$sessionId")
+                    break
+                }
                 CloudLog.d(TAG, "Tool calls detected round=$toolRound count=${parsed.toolCalls.size} names=${parsed.toolCalls.map { it.name }}")
                 trySend(InferenceStreamProtocol.encodeToolCallChunk(parsed.toolCalls.map { it.name }))
+
                 val toolResults = mutableListOf<Pair<ParsedToolCall, CloudToolExecutionResult>>()
                 for (toolCall in parsed.toolCalls) {
                     val result = toolExecutor!!.execute(toolCall)
@@ -162,18 +164,24 @@ abstract class AbstractCloudInferenceEngine(
                     trySend(InferenceStreamProtocol.encodeToolResultChunk(toolCall.name, if (result.success) "success" else "error"))
                     toolResultCards.add(CloudToolResultCard(toolCall.name.lowercase(), result.success, anyToJsonElementMap(result.payload)))
                 }
+
                 val toolResponseBlock = CloudToolCallParser.formatToolResults(toolResults)
-                if (toolResponseBlock.isNotEmpty()) { fullAnswer.append(toolResponseBlock); trySend(toolResponseBlock) }
+                if (toolResponseBlock.isNotEmpty()) {
+                    fullAnswer.append(toolResponseBlock)
+                    trySend(toolResponseBlock)
+                }
                 if (toolResultCards.isNotEmpty()) {
                     trySend(InferenceStreamProtocol.encodeToolResults(CloudToolResultCard.listToJsonArray(toolResultCards)))
                     trySend(InferenceStreamProtocol.encodeExecutedToolsList(toolResultCards.map { it.toolName }.distinct()))
                 }
+
                 currentPrompt = buildString {
                     append(prompt)
                     append(Gemma4ThinkingParser.stripThinkingForModelPrompt(roundText.toString()))
                     append(toolResponseBlock)
                 }
             }
+
             if (toolResultCards.isNotEmpty()) {
                 trySend(InferenceStreamProtocol.encodeToolResults(CloudToolResultCard.listToJsonArray(toolResultCards)))
                 trySend(InferenceStreamProtocol.encodeExecutedToolsList(toolResultCards.map { it.toolName }.distinct()))
@@ -197,52 +205,38 @@ abstract class AbstractCloudInferenceEngine(
     }.flowOn(Dispatchers.IO)
 
     protected abstract suspend fun runStreamingInference(
-        session: ProducerScope<String>, sessionId: Long, model: String, prompt: String,
-        images: List<ByteArray>, config: CloudInferenceParams, onDelta: (String) -> Unit
+        session: ProducerScope<String>,
+        sessionId: Long,
+        model: String,
+        prompt: String,
+        images: List<ByteArray>,
+        config: CloudInferenceParams,
+        onDelta: (String) -> Unit
     )
 
     protected fun registerResponse(response: HttpResponse) {
         synchronized(inflightLock) { inflightResponse = response }
     }
 
-    /** ストリーミングボディのチャネルを1つだけ掴んで [block] に渡す (行の読み進め用)。 */
-    protected suspend fun <T> withStreamChannel(response: HttpResponse, block: suspend (io.ktor.utils.io.ByteReadChannel) -> T): T {
-        val ch = inflightChannelMutex.withLock {
-            inflightChannel ?: response.bodyAsChannel().also { inflightChannel = it }
-        }
-        return block(ch)
-    }
+    /** A new HTTP response gets a new ByteReadChannel. Never cache it across tool rounds. */
+    protected suspend fun <T> withStreamChannel(
+        response: HttpResponse,
+        block: suspend (io.ktor.utils.io.ByteReadChannel) -> T
+    ): T = block(response.bodyAsChannel())
 
-    /**
-     * ストリームから 1 行読み進める共通ヘルパ。
-     *
-     * - チャネルが既に閉じている、または readUTF8Line() が null を返した場合は
-     *   "genuine EOF" とみなして null を返す (呼び出し側は break で抜ける)。
-     * - [CancellationException] はそのまま再スロー (キャンセルは伝播すべき)。
-     * - それ以外の Throwable は transport/read failure とみなし、ログに残した上で
-     *   [CloudStreamReadException] にラップして再スロー する。
-     *   これにより、"stream finished" と "stream broken" がログ上でも呼び出し側でも
-     *   区別できるようになる (旧実装では全て null に潰されていた)。
-     */
-    protected suspend fun readStreamLineOrThrow(ch: io.ktor.utils.io.ByteReadChannel): String? {
-        return try {
-            if (ch.isClosedForRead) null else ch.readUTF8Line()
-        } catch (c: CancellationException) {
-            throw c
-        } catch (t: Throwable) {
-            CloudLog.w(TAG, "stream read failed: ${t::class.simpleName}: ${t.message}", t)
-            throw CloudStreamReadException("stream read failed: ${t.message}", t)
-        }
+    protected suspend fun readStreamLineOrThrow(ch: io.ktor.utils.io.ByteReadChannel): String? = try {
+        if (ch.isClosedForRead) null else ch.readUTF8Line()
+    } catch (c: CancellationException) {
+        throw c
+    } catch (t: Throwable) {
+        CloudLog.w(TAG, "stream read failed: ${t::class.simpleName}: ${t.message}", t)
+        throw CloudStreamReadException("stream read failed: ${t.message}", t)
     }
 
     private suspend fun cancelInflight() {
-        val resp = synchronized(inflightLock) { val r = inflightResponse; inflightResponse = null; r }
-        val ch = inflightChannelMutex.withLock {
-            val c = inflightChannel; inflightChannel = null; c
+        synchronized(inflightLock) {
+            inflightResponse = null
         }
-        runCatching { ch?.cancel(CancellationException("cloud inference cancelled")) }
-            .onFailure { CloudLog.w(TAG, "cancel stream failed", it) }
-        if (resp == null && ch == null) return
     }
 
     private fun anyToJsonElementMap(values: Map<String, Any?>): Map<String, JsonElement> =
@@ -254,7 +248,9 @@ abstract class AbstractCloudInferenceEngine(
         is Boolean -> JsonPrimitive(value)
         is Number -> JsonPrimitive(value)
         is String -> JsonPrimitive(value)
-        is Map<*, *> -> JsonObject(value.entries.mapNotNull { (k, v) -> (k?.toString() ?: return@mapNotNull null) to anyToJsonElement(v) }.toMap())
+        is Map<*, *> -> JsonObject(value.entries.mapNotNull { (k, v) ->
+            (k?.toString() ?: return@mapNotNull null) to anyToJsonElement(v)
+        }.toMap())
         is List<*> -> JsonArray(value.map { anyToJsonElement(it) })
         else -> JsonPrimitive(value.toString())
     }

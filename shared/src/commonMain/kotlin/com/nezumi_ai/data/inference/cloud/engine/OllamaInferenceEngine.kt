@@ -69,23 +69,40 @@ class OllamaInferenceEngine(
         val systemPart = split.first
         val userPart = split.second
 
-        val messages = buildMessages(systemPart, userPart, images)
-        val roles = messages.map { message ->
-            message["role"]?.jsonPrimitive?.content
-        }
-        val hasToolTurn = roles.any { role -> role == "tool" }
-        val hasToolsBlock = prompt.contains("<tools>") && prompt.contains("</tools>")
+        // Keep the v2.3.1 wire format: the prompt produced by the shared prompt
+        // builder is passed through unchanged. In particular, do not extract the
+        // <tools> block or reconstruct previous tool turns here. Ollama receives
+        // the same system/user message structure as before the KMP migration.
         CloudLog.d(
             TAG,
-            "Ollama request messages=${messages.size} roles=$roles " +
-                "hasToolTurn=$hasToolTurn hasToolsBlock=$hasToolsBlock promptLen=${prompt.length}"
+            "Ollama request systemLen=${systemPart?.length ?: 0} " +
+                "userLen=${userPart.length} hasToolsBlock=" +
+                (prompt.contains("<tools>") && prompt.contains("</tools>")) +
+                " promptLen=${prompt.length}"
         )
 
         val bodyJson = buildJsonObject {
             put("model", model)
             put("stream", true)
             putJsonArray("messages") {
-                messages.forEach { message -> add(message) }
+                if (!systemPart.isNullOrBlank()) {
+                    add(buildJsonObject {
+                        put("role", "system")
+                        put("content", systemPart)
+                    })
+                }
+
+                add(buildJsonObject {
+                    put("role", "user")
+                    put("content", userPart)
+                    if (images.isNotEmpty()) {
+                        putJsonArray("images") {
+                            images.forEach { jpeg ->
+                                add(ImageEncoding.encodeJpegBase64(jpeg))
+                            }
+                        }
+                    }
+                })
             }
             putJsonObject("options") {
                 put("temperature", config.temperature.toDouble())
@@ -138,156 +155,6 @@ class OllamaInferenceEngine(
         }
 
         CloudLog.d(TAG, "Ollama stream finished session=$sessionId")
-    }
-
-    /**
-     * Reconstruct later tool rounds as proper Ollama chat turns while preserving the
-     * Gemma4 <tools> schema injected by GgufToolPromptBuilder.
-     */
-    private fun buildMessages(
-        systemPart: String?,
-        userPart: String,
-        images: List<ByteArray>
-    ): List<JsonObject> {
-        val toolsStart = userPart.indexOf("<tools>")
-        val toolsEndMarker = "</tools>"
-        val toolsEnd = if (toolsStart >= 0) {
-            userPart.indexOf(toolsEndMarker, toolsStart + "<tools>".length)
-        } else {
-            -1
-        }
-
-        val extractedTools = if (toolsStart >= 0 && toolsEnd >= 0) {
-            userPart.substring(toolsStart, toolsEnd + toolsEndMarker.length).trim()
-        } else {
-            null
-        }
-
-        val effectiveSystem = when {
-            !systemPart.isNullOrBlank() && extractedTools != null ->
-                systemPart.trimEnd() + "\n\n" + extractedTools
-            !systemPart.isNullOrBlank() -> systemPart
-            extractedTools != null -> extractedTools
-            else -> null
-        }
-
-        val withoutTools = if (toolsStart >= 0 && toolsEnd >= 0) {
-            (
-                userPart.substring(0, toolsStart) +
-                    userPart.substring(toolsEnd + toolsEndMarker.length)
-                ).trim()
-        } else {
-            userPart
-        }
-
-        val callOpen = "<|tool_call>"
-        val callClose = "<tool_call|>"
-        val responseOpen = "<tool_response>"
-        val responseClose = "</tool_response>"
-        val callStart = withoutTools.lastIndexOf(callOpen)
-        val responseStart = withoutTools.lastIndexOf(responseOpen)
-        val callEndMarker = if (callStart >= 0) {
-            withoutTools.indexOf(callClose, callStart + callOpen.length)
-        } else {
-            -1
-        }
-
-        val hasCompletedToolTurn =
-            callStart >= 0 && callEndMarker >= 0 && responseStart > callEndMarker
-
-        if (!hasCompletedToolTurn) {
-            return buildSimpleMessages(effectiveSystem, withoutTools, images)
-        }
-
-        val callEnd = callEndMarker + callClose.length
-        val originalUser = withoutTools.substring(0, callStart).trimEnd()
-        val assistantCall = withoutTools.substring(callStart, callEnd).trim()
-
-        val toolResults = mutableListOf<String>()
-        var cursor = responseStart
-        while (cursor < withoutTools.length) {
-            val open = withoutTools.indexOf(responseOpen, cursor)
-            if (open < 0) break
-
-            val contentStart = open + responseOpen.length
-            val close = withoutTools.indexOf(responseClose, contentStart)
-            if (close < 0) {
-                toolResults.add(withoutTools.substring(contentStart).trim())
-                break
-            }
-
-            toolResults.add(withoutTools.substring(contentStart, close).trim())
-            cursor = close + responseClose.length
-        }
-
-        if (toolResults.isEmpty()) {
-            return buildSimpleMessages(effectiveSystem, withoutTools, images)
-        }
-
-        CloudLog.d(
-            TAG,
-            "Ollama tool round reconstructed systemLen=${effectiveSystem?.length ?: 0} " +
-                "userLen=${originalUser.length} assistantToolLen=${assistantCall.length} " +
-                "toolResults=${toolResults.size}"
-        )
-
-        return buildList {
-            if (!effectiveSystem.isNullOrBlank()) {
-                add(buildJsonObject {
-                    put("role", "system")
-                    put("content", effectiveSystem)
-                })
-            }
-
-            add(buildJsonObject {
-                put("role", "user")
-                put("content", originalUser)
-                if (images.isNotEmpty()) {
-                    putJsonArray("images") {
-                        images.forEach { jpeg ->
-                            add(ImageEncoding.encodeJpegBase64(jpeg))
-                        }
-                    }
-                }
-            })
-
-            add(buildJsonObject {
-                put("role", "assistant")
-                put("content", assistantCall)
-            })
-
-            toolResults.forEach { result ->
-                add(buildJsonObject {
-                    put("role", "tool")
-                    put("content", result)
-                })
-            }
-        }
-    }
-
-    private fun buildSimpleMessages(
-        systemPart: String?,
-        userPart: String,
-        images: List<ByteArray>
-    ): List<JsonObject> = buildList {
-        if (!systemPart.isNullOrBlank()) {
-            add(buildJsonObject {
-                put("role", "system")
-                put("content", systemPart)
-            })
-        }
-
-        add(buildJsonObject {
-            put("role", "user")
-            put("content", userPart)
-            if (images.isNotEmpty()) {
-                putJsonArray("images") {
-                    images.forEach { jpeg ->
-                        add(ImageEncoding.encodeJpegBase64(jpeg))
-                    }
-                }
-            }
-        })
     }
 
     private fun parseChunk(line: String): Pair<String?, Boolean> {
