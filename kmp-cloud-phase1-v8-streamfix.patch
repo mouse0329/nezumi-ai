@@ -1,0 +1,472 @@
+From 121fc9c5566ab89a3d19916f7c5cd25cf6316015 Mon Sep 17 00:00:00 2001
+From: nezumi-ai-kmp <kmp@nezumi.local>
+Date: Tue, 18 Aug 2026 04:39:25 +0000
+Subject: [PATCH] fix(shared): use preparePost().execute + single cached
+ channel for streaming
+
+Root cause of infinite loop / stuck first response: engines used http.post()
+(buffers full body) and readStreamLine() called response.bodyAsChannel() on every
+line, which returns a fresh channel positioned at the start -> the same first
+NDJSON/SSE line was re-read forever, so done:true / [DONE] was never reached and
+the tool-call loop never ran.
+
+Fix: switch all 5 engines to preparePost(...).execute { response -> ... } and read
+lines from a single cached ByteReadChannel (withStreamChannel) so reading actually
+advances through the stream. Ollama 'done' now read via booleanOrNull and tool_calls
+only synthesized on the final (done) chunk.
+---
+ .../engine/AbstractCloudInferenceEngine.kt    | 22 ++++--
+ .../cloud/engine/ClaudeInferenceEngine.kt     | 69 ++++++++++---------
+ .../cloud/engine/GeminiInferenceEngine.kt     | 49 ++++++-------
+ .../cloud/engine/LmStudioInferenceEngine.kt   | 54 ++++++++-------
+ .../cloud/engine/OllamaInferenceEngine.kt     | 36 +++++-----
+ .../cloud/engine/OpenAiInferenceEngine.kt     | 53 +++++++-------
+ 6 files changed, 154 insertions(+), 129 deletions(-)
+
+diff --git a/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/AbstractCloudInferenceEngine.kt b/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/AbstractCloudInferenceEngine.kt
+index 0f7d3733..e9174728 100644
+--- a/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/AbstractCloudInferenceEngine.kt
++++ b/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/AbstractCloudInferenceEngine.kt
+@@ -55,6 +55,11 @@ abstract class AbstractCloudInferenceEngine(
+     private val inflightLock = Any()
+     private var inflightResponse: HttpResponse? = null
+ 
++    // 行リーダが使い回すボディチャネル。bodyAsChannel() は呼ぶたびに
++    // 先頭からの新しいチャネルを返しうるため、1レスポンスにつき1つだけ掴んで進める。
++    private val inflightChannelLock = Any()
++    private var inflightChannel: io.ktor.utils.io.ByteReadChannel? = null
++
+     open suspend fun loadModelWithId(modelId: String, modelName: String, config: CloudInferenceParams): Result<Unit> {
+         currentModelId = modelId
+         return loadModel(modelName, config)
+@@ -194,17 +199,20 @@ abstract class AbstractCloudInferenceEngine(
+         synchronized(inflightLock) { inflightResponse = response }
+     }
+ 
+-    protected suspend fun readStreamLine(response: HttpResponse): String? {
+-        return try {
+-            val ch = response.bodyAsChannel()
+-            if (ch.isClosedForRead) null else ch.readUTF8Line()
+-        } catch (t: Throwable) { null }
++    /** ストリーミングボディのチャネルを1つだけ掴んで [block] に渡す (行の読み進め用)。 */
++    protected suspend fun <T> withStreamChannel(response: HttpResponse, block: suspend (io.ktor.utils.io.ByteReadChannel) -> T): T {
++        val ch = synchronized(inflightChannelLock) {
++            inflightChannel ?: response.bodyAsChannel().also { inflightChannel = it }
++        }
++        return block(ch)
+     }
+ 
+     private suspend fun cancelInflight() {
+-        val resp = synchronized(inflightLock) { val r = inflightResponse; inflightResponse = null; r } ?: return
+-        runCatching { resp.bodyAsChannel().cancel(CancellationException("cloud inference cancelled")) }
++        val resp = synchronized(inflightLock) { val r = inflightResponse; inflightResponse = null; r }
++        val ch = synchronized(inflightChannelLock) { val c = inflightChannel; inflightChannel = null; c }
++        runCatching { ch?.cancel(CancellationException("cloud inference cancelled")) }
+             .onFailure { CloudLog.w(TAG, "cancel stream failed", it) }
++        if (resp == null && ch == null) return
+     }
+ 
+     private fun anyToJsonElementMap(values: Map<String, Any?>): Map<String, JsonElement> =
+diff --git a/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/ClaudeInferenceEngine.kt b/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/ClaudeInferenceEngine.kt
+index 2e1ec3df..5051f7e1 100644
+--- a/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/ClaudeInferenceEngine.kt
++++ b/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/ClaudeInferenceEngine.kt
+@@ -7,13 +7,14 @@ import com.nezumi_ai.data.inference.cloud.CloudLog
+ import com.nezumi_ai.data.inference.cloud.CloudPromptSplitter
+ import com.nezumi_ai.data.inference.cloud.ImageEncoding
+ import io.ktor.client.request.header
+-import io.ktor.client.request.post
++import io.ktor.client.request.preparePost
+ import io.ktor.client.request.setBody
+ import io.ktor.client.statement.bodyAsText
+ import io.ktor.http.ContentType
+ import io.ktor.http.HttpHeaders
+ import io.ktor.http.contentType
+ import io.ktor.http.isSuccess
++import io.ktor.utils.io.readUTF8Line
+ import kotlinx.coroutines.channels.ProducerScope
+ import kotlinx.serialization.json.Json
+ import kotlinx.serialization.json.JsonObject
+@@ -66,44 +67,46 @@ class ClaudeInferenceEngine(
+             }
+         }
+ 
+-        val response = http.post(endpoint) {
++        http.preparePost(endpoint) {
+             header("x-api-key", apiKey); header("anthropic-version", ANTHROPIC_VERSION)
+             header(HttpHeaders.Accept, "text/event-stream"); contentType(ContentType.Application.Json)
+             setBody(bodyJson.toString())
+-        }
+-        registerResponse(response)
+-        if (!response.status.isSuccess()) {
+-            val bodyText = runCatching { response.bodyAsText() }.getOrDefault("")
+-            throw CloudRequestException("Claude request failed: HTTP ${response.status.value} ${bodyText.take(500)}")
+-        }
+-
+-        var eventName: String? = null
+-        val dataBuffer = StringBuilder()
+-        suspend fun dispatch(): Boolean {
+-            val ev = eventName; val data = dataBuffer.toString()
+-            eventName = null; dataBuffer.setLength(0)
+-            if (session.isClosedForSend) return false
+-            if (ev == "message_stop") return false
+-            if (ev != null && ev != "content_block_delta") return true
+-            val text = extractTextDelta(data)
+-            if (text != null) onDelta(text)
+-            return true
+-        }
+-        while (true) {
+-            val line = readStreamLine(response) ?: break
+-            if (line.isEmpty()) { if (dataBuffer.isNotEmpty() || eventName != null) { if (!dispatch()) return }; continue }
+-            if (line.startsWith(":")) continue
+-            val c = line.indexOf(':')
+-            val field: String; val value: String
+-            if (c < 0) { field = line; value = "" } else {
+-                field = line.substring(0, c); var raw = line.substring(c + 1); if (raw.startsWith(" ")) raw = raw.substring(1); value = raw
++        }.execute { response ->
++            registerResponse(response)
++            if (!response.status.isSuccess()) {
++                val bodyText = runCatching { response.bodyAsText() }.getOrDefault("")
++                throw CloudRequestException("Claude request failed: HTTP ${response.status.value} ${bodyText.take(500)}")
+             }
+-            when (field) {
+-                "data" -> { if (dataBuffer.isNotEmpty()) dataBuffer.append('\n'); dataBuffer.append(value) }
+-                "event" -> eventName = value
++            var eventName: String? = null
++            val dataBuffer = StringBuilder()
++            suspend fun dispatch(): Boolean {
++                val ev = eventName; val data = dataBuffer.toString()
++                eventName = null; dataBuffer.setLength(0)
++                if (session.isClosedForSend) return false
++                if (ev == "message_stop") return false
++                if (ev != null && ev != "content_block_delta") return true
++                val text = extractTextDelta(data)
++                if (text != null) onDelta(text)
++                return true
++            }
++            withStreamChannel(response) { ch ->
++                while (true) {
++                    val line = try { if (ch.isClosedForRead) null else ch.readUTF8Line() } catch (t: Throwable) { null } ?: break
++                    if (line.isEmpty()) { if (dataBuffer.isNotEmpty() || eventName != null) { if (!dispatch()) return@execute }; continue }
++                    if (line.startsWith(":")) continue
++                    val c = line.indexOf(':')
++                    val field: String; val value: String
++                    if (c < 0) { field = line; value = "" } else {
++                        field = line.substring(0, c); var raw = line.substring(c + 1); if (raw.startsWith(" ")) raw = raw.substring(1); value = raw
++                    }
++                    when (field) {
++                        "data" -> { if (dataBuffer.isNotEmpty()) dataBuffer.append('\n'); dataBuffer.append(value) }
++                        "event" -> eventName = value
++                    }
++                }
++                if (dataBuffer.isNotEmpty() || eventName != null) dispatch()
+             }
+         }
+-        if (dataBuffer.isNotEmpty() || eventName != null) dispatch()
+         CloudLog.d(TAG, "Claude stream finished session=$sessionId")
+     }
+ 
+diff --git a/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/GeminiInferenceEngine.kt b/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/GeminiInferenceEngine.kt
+index 5cc7721b..3a1e3f1f 100644
+--- a/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/GeminiInferenceEngine.kt
++++ b/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/GeminiInferenceEngine.kt
+@@ -8,13 +8,14 @@ import com.nezumi_ai.data.inference.cloud.CloudPromptSplitter
+ import com.nezumi_ai.data.inference.cloud.ImageEncoding
+ import io.ktor.client.request.header
+ import io.ktor.client.request.parameter
+-import io.ktor.client.request.post
++import io.ktor.client.request.preparePost
+ import io.ktor.client.request.setBody
+ import io.ktor.client.statement.bodyAsText
+ import io.ktor.http.ContentType
+ import io.ktor.http.HttpHeaders
+ import io.ktor.http.contentType
+ import io.ktor.http.isSuccess
++import io.ktor.utils.io.readUTF8Line
+ import kotlinx.coroutines.channels.ProducerScope
+ import kotlinx.serialization.json.Json
+ import kotlinx.serialization.json.JsonArray
+@@ -64,31 +65,33 @@ class GeminiInferenceEngine(
+             }
+         }
+ 
+-        val response = http.post(endpoint) {
++        http.preparePost(endpoint) {
+             parameter("alt", "sse"); parameter("key", apiKey)
+             header(HttpHeaders.Accept, "text/event-stream"); contentType(ContentType.Application.Json); setBody(bodyJson.toString())
++        }.execute { response ->
++            registerResponse(response)
++            if (!response.status.isSuccess()) {
++                val bodyText = runCatching { response.bodyAsText() }.getOrDefault("")
++                throw CloudRequestException("Gemini request failed: HTTP ${response.status.value} ${bodyText.take(500)}")
++            }
++            val dataBuffer = StringBuilder()
++            suspend fun dispatch(data: String): Boolean {
++                if (session.isClosedForSend) return false
++                val trimmed = data.trim(); if (trimmed.isEmpty()) return true
++                val text = extractTextParts(trimmed); if (text != null) onDelta(text); return true
++            }
++            withStreamChannel(response) { ch ->
++                while (true) {
++                    val line = try { if (ch.isClosedForRead) null else ch.readUTF8Line() } catch (t: Throwable) { null } ?: break
++                    if (line.isEmpty()) { if (dataBuffer.isNotEmpty()) { val d = dataBuffer.toString(); dataBuffer.setLength(0); if (!dispatch(d)) return@execute }; continue }
++                    if (line.startsWith(":")) continue
++                    val c = line.indexOf(':'); if (c < 0) continue
++                    val field = line.substring(0, c); var raw = line.substring(c + 1); if (raw.startsWith(" ")) raw = raw.substring(1)
++                    if (field == "data") { if (dataBuffer.isNotEmpty()) dataBuffer.append('\n'); dataBuffer.append(raw) }
++                }
++                if (dataBuffer.isNotEmpty()) dispatch(dataBuffer.toString())
++            }
+         }
+-        registerResponse(response)
+-        if (!response.status.isSuccess()) {
+-            val bodyText = runCatching { response.bodyAsText() }.getOrDefault("")
+-            throw CloudRequestException("Gemini request failed: HTTP ${response.status.value} ${bodyText.take(500)}")
+-        }
+-
+-        val dataBuffer = StringBuilder()
+-        suspend fun dispatch(data: String): Boolean {
+-            if (session.isClosedForSend) return false
+-            val trimmed = data.trim(); if (trimmed.isEmpty()) return true
+-            val text = extractTextParts(trimmed); if (text != null) onDelta(text); return true
+-        }
+-        while (true) {
+-            val line = readStreamLine(response) ?: break
+-            if (line.isEmpty()) { if (dataBuffer.isNotEmpty()) { val d = dataBuffer.toString(); dataBuffer.setLength(0); if (!dispatch(d)) return }; continue }
+-            if (line.startsWith(":")) continue
+-            val c = line.indexOf(':'); if (c < 0) continue
+-            val field = line.substring(0, c); var raw = line.substring(c + 1); if (raw.startsWith(" ")) raw = raw.substring(1)
+-            if (field == "data") { if (dataBuffer.isNotEmpty()) dataBuffer.append('\n'); dataBuffer.append(raw) }
+-        }
+-        if (dataBuffer.isNotEmpty()) dispatch(dataBuffer.toString())
+         CloudLog.d(TAG, "Gemini stream finished session=$sessionId")
+     }
+ 
+diff --git a/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/LmStudioInferenceEngine.kt b/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/LmStudioInferenceEngine.kt
+index 63ae0e1e..5a082fa9 100644
+--- a/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/LmStudioInferenceEngine.kt
++++ b/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/LmStudioInferenceEngine.kt
+@@ -5,13 +5,14 @@ import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
+ import com.nezumi_ai.data.inference.cloud.CloudHttpClient
+ import com.nezumi_ai.data.inference.cloud.CloudLog
+ import io.ktor.client.request.header
+-import io.ktor.client.request.post
++import io.ktor.client.request.preparePost
+ import io.ktor.client.request.setBody
+ import io.ktor.client.statement.bodyAsText
+ import io.ktor.http.ContentType
+ import io.ktor.http.HttpHeaders
+ import io.ktor.http.contentType
+ import io.ktor.http.isSuccess
++import io.ktor.utils.io.readUTF8Line
+ import kotlinx.coroutines.channels.ProducerScope
+ import kotlinx.serialization.json.Json
+ import kotlinx.serialization.json.JsonElement
+@@ -51,34 +52,37 @@ class LmStudioInferenceEngine(
+         session: ProducerScope<String>, onDelta: (String) -> Unit
+     ): String? {
+         val bodyJson = OpenAiCompatSupport.buildRequestBody(model, prompt, images, config, stream = true, useDataUriForImages = useDataUriForImages)
+-        val response = http.post(endpoint) {
++        return http.preparePost(endpoint) {
+             header(HttpHeaders.Accept, "text/event-stream"); contentType(ContentType.Application.Json)
+             if (apiKey.isNotBlank()) header(HttpHeaders.Authorization, "Bearer $apiKey")
+             setBody(bodyJson.toString())
++        }.execute { response ->
++            registerResponse(response)
++            if (!response.status.isSuccess()) {
++                val bodyText = runCatching { response.bodyAsText() }.getOrDefault("")
++                return@execute "HTTP ${response.status.value} ${bodyText.take(500)}"
++            }
++            val dataBuffer = StringBuilder()
++            suspend fun dispatch(data: String): Boolean {
++                if (session.isClosedForSend) return false
++                if (data.trim() == "[DONE]") return false
++                val delta = OpenAiCompatSupport.extractDeltaContent(data) { parseSafely(it) }
++                if (delta != null) onDelta(delta)
++                return true
++            }
++            withStreamChannel(response) { ch ->
++                while (true) {
++                    val line = try { if (ch.isClosedForRead) null else ch.readUTF8Line() } catch (t: Throwable) { null } ?: break
++                    if (line.isEmpty()) { if (dataBuffer.isNotEmpty()) { val d = dataBuffer.toString(); dataBuffer.setLength(0); if (!dispatch(d)) return@execute null }; continue }
++                    if (line.startsWith(":")) continue
++                    val c = line.indexOf(':'); if (c < 0) continue
++                    val field = line.substring(0, c); var raw = line.substring(c + 1); if (raw.startsWith(" ")) raw = raw.substring(1)
++                    if (field == "data") { if (dataBuffer.isNotEmpty()) dataBuffer.append('\n'); dataBuffer.append(raw) }
++                }
++                if (dataBuffer.isNotEmpty()) dispatch(dataBuffer.toString())
++            }
++            null
+         }
+-        registerResponse(response)
+-        if (!response.status.isSuccess()) {
+-            val bodyText = runCatching { response.bodyAsText() }.getOrDefault("")
+-            return "HTTP ${response.status.value} ${bodyText.take(500)}"
+-        }
+-        val dataBuffer = StringBuilder()
+-        suspend fun dispatch(data: String): Boolean {
+-            if (session.isClosedForSend) return false
+-            if (data.trim() == "[DONE]") return false
+-            val delta = OpenAiCompatSupport.extractDeltaContent(data) { parseSafely(it) }
+-            if (delta != null) onDelta(delta)
+-            return true
+-        }
+-        while (true) {
+-            val line = readStreamLine(response) ?: break
+-            if (line.isEmpty()) { if (dataBuffer.isNotEmpty()) { val d = dataBuffer.toString(); dataBuffer.setLength(0); if (!dispatch(d)) return null }; continue }
+-            if (line.startsWith(":")) continue
+-            val c = line.indexOf(':'); if (c < 0) continue
+-            val field = line.substring(0, c); var raw = line.substring(c + 1); if (raw.startsWith(" ")) raw = raw.substring(1)
+-            if (field == "data") { if (dataBuffer.isNotEmpty()) dataBuffer.append('\n'); dataBuffer.append(raw) }
+-        }
+-        if (dataBuffer.isNotEmpty()) dispatch(dataBuffer.toString())
+-        return null
+     }
+ 
+     private fun parseSafely(text: String): JsonElement? = runCatching { json.parseToJsonElement(text) }.getOrNull()
+diff --git a/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/OllamaInferenceEngine.kt b/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/OllamaInferenceEngine.kt
+index f2a50072..78d319ba 100644
+--- a/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/OllamaInferenceEngine.kt
++++ b/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/OllamaInferenceEngine.kt
+@@ -7,13 +7,14 @@ import com.nezumi_ai.data.inference.cloud.CloudLog
+ import com.nezumi_ai.data.inference.cloud.CloudPromptSplitter
+ import com.nezumi_ai.data.inference.cloud.ImageEncoding
+ import io.ktor.client.request.header
+-import io.ktor.client.request.post
++import io.ktor.client.request.preparePost
+ import io.ktor.client.request.setBody
+ import io.ktor.client.statement.bodyAsText
+ import io.ktor.http.ContentType
+ import io.ktor.http.HttpHeaders
+ import io.ktor.http.contentType
+ import io.ktor.http.isSuccess
++import io.ktor.utils.io.readUTF8Line
+ import kotlinx.coroutines.channels.ProducerScope
+ import kotlinx.serialization.json.Json
+ import kotlinx.serialization.json.JsonArray
+@@ -70,24 +71,27 @@ class OllamaInferenceEngine(
+             }
+         }
+ 
+-        val response = http.post(endpoint) {
++        http.preparePost(endpoint) {
+             header(HttpHeaders.Accept, "application/x-ndjson"); contentType(ContentType.Application.Json)
+             if (apiKey.isNotBlank()) header(HttpHeaders.Authorization, "Bearer $apiKey")
+             setBody(bodyJson.toString())
+-        }
+-        registerResponse(response)
+-        if (!response.status.isSuccess()) {
+-            val bodyText = runCatching { response.bodyAsText() }.getOrDefault("")
+-            throw CloudRequestException("Ollama request failed: HTTP ${response.status.value} ${bodyText.take(500)}")
+-        }
+-
+-        while (!session.isClosedForSend) {
+-            val line = readStreamLine(response) ?: break
+-            if (line.isEmpty()) continue
+-            CloudLog.d(TAG, "raw NDJSON line: $line")
+-            val (delta, done) = parseChunk(line)
+-            if (!delta.isNullOrEmpty()) onDelta(delta)
+-            if (done) break
++        }.execute { response ->
++            registerResponse(response)
++            if (!response.status.isSuccess()) {
++                val bodyText = runCatching { response.bodyAsText() }.getOrDefault("")
++                throw CloudRequestException("Ollama request failed: HTTP ${response.status.value} ${bodyText.take(500)}")
++            }
++            // ストリーミングではチャネルを1つだけ掴み、行を順次読み進める。
++            // (bodyAsChannel() を毎回呼ぶと先頭の行を繰り返し読んで無限ループする)
++            withStreamChannel(response) { ch ->
++                while (!session.isClosedForSend) {
++                    val line = try { if (ch.isClosedForRead) null else ch.readUTF8Line() } catch (t: Throwable) { null } ?: break
++                    if (line.isEmpty()) continue
++                    val (delta, done) = parseChunk(line)
++                    if (!delta.isNullOrEmpty()) onDelta(delta)
++                    if (done) break
++                }
++            }
+         }
+         CloudLog.d(TAG, "Ollama stream finished session=$sessionId")
+     }
+diff --git a/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/OpenAiInferenceEngine.kt b/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/OpenAiInferenceEngine.kt
+index b152bf22..2791f713 100644
+--- a/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/OpenAiInferenceEngine.kt
++++ b/shared/src/commonMain/kotlin/com/nezumi_ai/data/inference/cloud/engine/OpenAiInferenceEngine.kt
+@@ -5,13 +5,14 @@ import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
+ import com.nezumi_ai.data.inference.cloud.CloudHttpClient
+ import com.nezumi_ai.data.inference.cloud.CloudLog
+ import io.ktor.client.request.header
+-import io.ktor.client.request.post
++import io.ktor.client.request.preparePost
+ import io.ktor.client.request.setBody
+ import io.ktor.client.statement.bodyAsText
+ import io.ktor.http.ContentType
+ import io.ktor.http.HttpHeaders
+ import io.ktor.http.contentType
+ import io.ktor.http.isSuccess
++import io.ktor.utils.io.readUTF8Line
+ import kotlinx.coroutines.channels.ProducerScope
+ import kotlinx.serialization.json.Json
+ import kotlinx.serialization.json.JsonElement
+@@ -34,33 +35,35 @@ class OpenAiInferenceEngine(
+         val endpoint = "$baseUrl/v1/chat/completions"
+         val bodyJson = OpenAiCompatSupport.buildRequestBody(model, prompt, images, config, stream = true, useDataUriForImages = true)
+ 
+-        val response = http.post(endpoint) {
++        http.preparePost(endpoint) {
+             header(HttpHeaders.Authorization, "Bearer $apiKey"); header(HttpHeaders.Accept, "text/event-stream")
+             contentType(ContentType.Application.Json); setBody(bodyJson.toString())
++        }.execute { response ->
++            registerResponse(response)
++            if (!response.status.isSuccess()) {
++                val bodyText = runCatching { response.bodyAsText() }.getOrDefault("")
++                throw CloudRequestException("OpenAI request failed: HTTP ${response.status.value} ${bodyText.take(500)}")
++            }
++            val dataBuffer = StringBuilder()
++            suspend fun dispatch(data: String): Boolean {
++                if (session.isClosedForSend) return false
++                val delta = OpenAiCompatSupport.extractDeltaContent(data) { parseSafely(it) }
++                if (data.trim() == "[DONE]") return false
++                if (delta != null) onDelta(delta)
++                return true
++            }
++            withStreamChannel(response) { ch ->
++                while (true) {
++                    val line = try { if (ch.isClosedForRead) null else ch.readUTF8Line() } catch (t: Throwable) { null } ?: break
++                    if (line.isEmpty()) { if (dataBuffer.isNotEmpty()) { val d = dataBuffer.toString(); dataBuffer.setLength(0); if (!dispatch(d)) return@execute }; continue }
++                    if (line.startsWith(":")) continue
++                    val c = line.indexOf(':'); if (c < 0) continue
++                    val field = line.substring(0, c); var raw = line.substring(c + 1); if (raw.startsWith(" ")) raw = raw.substring(1)
++                    if (field == "data") { if (dataBuffer.isNotEmpty()) dataBuffer.append('\n'); dataBuffer.append(raw) }
++                }
++                if (dataBuffer.isNotEmpty()) dispatch(dataBuffer.toString())
++            }
+         }
+-        registerResponse(response)
+-        if (!response.status.isSuccess()) {
+-            val bodyText = runCatching { response.bodyAsText() }.getOrDefault("")
+-            throw CloudRequestException("OpenAI request failed: HTTP ${response.status.value} ${bodyText.take(500)}")
+-        }
+-
+-        val dataBuffer = StringBuilder()
+-        suspend fun dispatch(data: String): Boolean {
+-            if (session.isClosedForSend) return false
+-            val delta = OpenAiCompatSupport.extractDeltaContent(data) { parseSafely(it) }
+-            if (data.trim() == "[DONE]") return false
+-            if (delta != null) onDelta(delta)
+-            return true
+-        }
+-        while (true) {
+-            val line = readStreamLine(response) ?: break
+-            if (line.isEmpty()) { if (dataBuffer.isNotEmpty()) { val d = dataBuffer.toString(); dataBuffer.setLength(0); if (!dispatch(d)) return }; continue }
+-            if (line.startsWith(":")) continue
+-            val c = line.indexOf(':'); if (c < 0) continue
+-            val field = line.substring(0, c); var raw = line.substring(c + 1); if (raw.startsWith(" ")) raw = raw.substring(1)
+-            if (field == "data") { if (dataBuffer.isNotEmpty()) dataBuffer.append('\n'); dataBuffer.append(raw) }
+-        }
+-        if (dataBuffer.isNotEmpty()) dispatch(dataBuffer.toString())
+         CloudLog.d(TAG, "OpenAI stream finished session=$sessionId")
+     }
+ 
+-- 
+2.43.0
+

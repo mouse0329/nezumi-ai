@@ -55,6 +55,11 @@ abstract class AbstractCloudInferenceEngine(
     private val inflightLock = Any()
     private var inflightResponse: HttpResponse? = null
 
+    // 行リーダが使い回すボディチャネル。bodyAsChannel() は呼ぶたびに
+    // 先頭からの新しいチャネルを返しうるため、1レスポンスにつき1つだけ掴んで進める。
+    private val inflightChannelMutex = Mutex()
+    private var inflightChannel: io.ktor.utils.io.ByteReadChannel? = null
+
     open suspend fun loadModelWithId(modelId: String, modelName: String, config: CloudInferenceParams): Result<Unit> {
         currentModelId = modelId
         return loadModel(modelName, config)
@@ -194,17 +199,22 @@ abstract class AbstractCloudInferenceEngine(
         synchronized(inflightLock) { inflightResponse = response }
     }
 
-    protected suspend fun readStreamLine(response: HttpResponse): String? {
-        return try {
-            val ch = response.bodyAsChannel()
-            if (ch.isClosedForRead) null else ch.readUTF8Line()
-        } catch (t: Throwable) { null }
+    /** ストリーミングボディのチャネルを1つだけ掴んで [block] に渡す (行の読み進め用)。 */
+    protected suspend fun <T> withStreamChannel(response: HttpResponse, block: suspend (io.ktor.utils.io.ByteReadChannel) -> T): T {
+        val ch = inflightChannelMutex.withLock {
+            inflightChannel ?: response.bodyAsChannel().also { inflightChannel = it }
+        }
+        return block(ch)
     }
 
     private suspend fun cancelInflight() {
-        val resp = synchronized(inflightLock) { val r = inflightResponse; inflightResponse = null; r } ?: return
-        runCatching { resp.bodyAsChannel().cancel(CancellationException("cloud inference cancelled")) }
+        val resp = synchronized(inflightLock) { val r = inflightResponse; inflightResponse = null; r }
+        val ch = inflightChannelMutex.withLock {
+            val c = inflightChannel; inflightChannel = null; c
+        }
+        runCatching { ch?.cancel(CancellationException("cloud inference cancelled")) }
             .onFailure { CloudLog.w(TAG, "cancel stream failed", it) }
+        if (resp == null && ch == null) return
     }
 
     private fun anyToJsonElementMap(values: Map<String, Any?>): Map<String, JsonElement> =

@@ -7,13 +7,14 @@ import com.nezumi_ai.data.inference.cloud.CloudLog
 import com.nezumi_ai.data.inference.cloud.CloudPromptSplitter
 import com.nezumi_ai.data.inference.cloud.ImageEncoding
 import io.ktor.client.request.header
-import io.ktor.client.request.post
+import io.ktor.client.request.preparePost
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -70,24 +71,27 @@ class OllamaInferenceEngine(
             }
         }
 
-        val response = http.post(endpoint) {
+        http.preparePost(endpoint) {
             header(HttpHeaders.Accept, "application/x-ndjson"); contentType(ContentType.Application.Json)
             if (apiKey.isNotBlank()) header(HttpHeaders.Authorization, "Bearer $apiKey")
             setBody(bodyJson.toString())
-        }
-        registerResponse(response)
-        if (!response.status.isSuccess()) {
-            val bodyText = runCatching { response.bodyAsText() }.getOrDefault("")
-            throw CloudRequestException("Ollama request failed: HTTP ${response.status.value} ${bodyText.take(500)}")
-        }
-
-        while (!session.isClosedForSend) {
-            val line = readStreamLine(response) ?: break
-            if (line.isEmpty()) continue
-            CloudLog.d(TAG, "raw NDJSON line: $line")
-            val (delta, done) = parseChunk(line)
-            if (!delta.isNullOrEmpty()) onDelta(delta)
-            if (done) break
+        }.execute { response ->
+            registerResponse(response)
+            if (!response.status.isSuccess()) {
+                val bodyText = runCatching { response.bodyAsText() }.getOrDefault("")
+                throw CloudRequestException("Ollama request failed: HTTP ${response.status.value} ${bodyText.take(500)}")
+            }
+            // ストリーミングではチャネルを1つだけ掴み、行を順次読み進める。
+            // (bodyAsChannel() を毎回呼ぶと先頭の行を繰り返し読んで無限ループする)
+            withStreamChannel(response) { ch ->
+                while (!session.isClosedForSend) {
+                    val line = try { if (ch.isClosedForRead) null else ch.readUTF8Line() } catch (t: Throwable) { null } ?: break
+                    if (line.isEmpty()) continue
+                    val (delta, done) = parseChunk(line)
+                    if (!delta.isNullOrEmpty()) onDelta(delta)
+                    if (done) break
+                }
+            }
         }
         CloudLog.d(TAG, "Ollama stream finished session=$sessionId")
     }
