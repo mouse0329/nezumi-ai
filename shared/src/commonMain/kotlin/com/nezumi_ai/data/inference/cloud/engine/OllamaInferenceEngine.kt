@@ -66,7 +66,7 @@ class OllamaInferenceEngine(
         val apiKey = resolveApiKey()
         val endpoint = "$baseUrl/api/chat"
         val (systemPart, userPart) = CloudPromptSplitter.splitOptionalSystem(prompt)
-        val messages = buildSimpleMessages(systemPart, userPart, images)
+        val messages = buildMessages(systemPart, userPart, images)
 
         CloudLog.d(
             TAG,
@@ -112,7 +112,6 @@ class OllamaInferenceEngine(
 
             withStreamChannel(response) { channel ->
                 while (!session.isClosedForSend) {
-                    // A read failure must not be converted into a normal EOF.
                     val line = readStreamLineOrThrow(channel) ?: break
                     if (line.isEmpty()) continue
 
@@ -124,15 +123,106 @@ class OllamaInferenceEngine(
                     val parsed = parseChunk(line)
                     val delta = parsed.first
                     val done = parsed.second
-                    if (!delta.isNullOrEmpty()) {
-                        onDelta(delta)
-                    }
+                    if (!delta.isNullOrEmpty()) onDelta(delta)
                     if (done) break
                 }
             }
         }
 
         CloudLog.d(TAG, "Ollama stream finished session=$sessionId")
+    }
+
+    /**
+     * The shared cloud tool loop appends a Gemma 4 tool call and tool response to the
+     * prompt string for the next round. Ollama requires those turns to be represented
+     * as chat messages so the model actually receives the executed tool result.
+     *
+     * First round:
+     *   system + user
+     * Tool round:
+     *   system + user + assistant(tool_call) + tool(tool_response)
+     */
+    private fun buildMessages(
+        systemPart: String?,
+        userPart: String,
+        images: List<ByteArray>
+    ): List<JsonObject> {
+        val callOpen = "<|tool_call>"
+        val callClose = "<tool_call|>"
+        val responseOpen = "<tool_response>"
+        val responseClose = "</tool_response>"
+
+        val callStart = userPart.lastIndexOf(callOpen)
+        val responseStart = userPart.lastIndexOf(responseOpen)
+
+        if (callStart < 0 || responseStart < 0 || responseStart <= callStart) {
+            return buildSimpleMessages(systemPart, userPart, images)
+        }
+
+        val callEndMarker = userPart.indexOf(callClose, callStart + callOpen.length)
+        if (callEndMarker < 0 || callEndMarker >= responseStart) {
+            return buildSimpleMessages(systemPart, userPart, images)
+        }
+
+        val callEnd = callEndMarker + callClose.length
+        val beforeCall = userPart.substring(0, callStart).trim()
+        val assistantCall = userPart.substring(callStart, callEnd).trim()
+
+        val resultParts = mutableListOf<String>()
+        var cursor = responseStart
+        while (cursor >= 0 && cursor < userPart.length) {
+            val open = userPart.indexOf(responseOpen, cursor)
+            if (open < 0) break
+            val contentStart = open + responseOpen.length
+            val close = userPart.indexOf(responseClose, contentStart)
+            if (close < 0) {
+                resultParts += userPart.substring(contentStart).trim()
+                break
+            }
+            resultParts += userPart.substring(contentStart, close).trim()
+            cursor = close + responseClose.length
+        }
+
+        if (resultParts.isEmpty()) {
+            return buildSimpleMessages(systemPart, userPart, images)
+        }
+
+        CloudLog.d(
+            TAG,
+            "Ollama tool round reconstructed: userLen=${beforeCall.length} " +
+                "assistantToolLen=${assistantCall.length} toolResults=${resultParts.size}"
+        )
+
+        return buildList {
+            if (!systemPart.isNullOrBlank()) {
+                add(buildJsonObject {
+                    put("role", "system")
+                    put("content", systemPart)
+                })
+            }
+
+            add(buildJsonObject {
+                put("role", "user")
+                put("content", beforeCall)
+                if (images.isNotEmpty()) {
+                    putJsonArray("images") {
+                        images.forEach { jpeg -> add(ImageEncoding.encodeJpegBase64(jpeg)) }
+                    }
+                }
+            })
+
+            add(buildJsonObject {
+                put("role", "assistant")
+                put("content", assistantCall)
+            })
+
+            resultParts.forEach { result ->
+                add(buildJsonObject {
+                    put("role", "tool")
+                    put("content", result)
+                })
+            }
+        }
     }
 
     private fun buildSimpleMessages(
@@ -152,9 +242,7 @@ class OllamaInferenceEngine(
             put("content", userPart)
             if (images.isNotEmpty()) {
                 putJsonArray("images") {
-                    images.forEach { jpeg ->
-                        add(ImageEncoding.encodeJpegBase64(jpeg))
-                    }
+                    images.forEach { jpeg -> add(ImageEncoding.encodeJpegBase64(jpeg)) }
                 }
             }
         })
