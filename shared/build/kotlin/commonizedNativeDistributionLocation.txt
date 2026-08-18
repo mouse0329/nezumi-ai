@@ -1,1 +1,0 @@
-C:\Users\mouse\.konan\kotlin-native-prebuilt-windows-x86_64-2.3.20\klib\commonized\2.3.20
