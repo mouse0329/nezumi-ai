@@ -73,12 +73,12 @@ class OllamaInferenceEngine(
         val roles = messages.map { message ->
             message["role"]?.jsonPrimitive?.content
         }
+        val hasToolTurn = roles.any { role -> role == "tool" }
         val hasToolsBlock = prompt.contains("<tools>") && prompt.contains("</tools>")
         CloudLog.d(
             TAG,
             "Ollama request messages=${messages.size} roles=$roles " +
-                "hasToolTurn=${roles.any { role -> role == \"tool\" }} " +
-                "hasToolsBlock=$hasToolsBlock promptLen=${prompt.length}"
+                "hasToolTurn=$hasToolTurn hasToolsBlock=$hasToolsBlock promptLen=${prompt.length}"
         )
 
         val bodyJson = buildJsonObject {
@@ -141,14 +141,8 @@ class OllamaInferenceEngine(
     }
 
     /**
-     * Reconstruct the second and later tool rounds as proper Ollama chat turns.
-     *
-     * The Gemma4 tool schema is injected into the flattened prompt by
-     * GgufToolPromptBuilder. Depending on the prompt builder, it may not be preceded
-     * by the literal "System:" marker, so CloudPromptSplitter can leave it inside
-     * userPart. Extract it explicitly and keep it in the system message. Otherwise
-     * the round-2 reconstruction would lose the tool schema (or leave it in the
-     * ordinary user turn), which is exactly the failure mode seen in logs.
+     * Reconstruct later tool rounds as proper Ollama chat turns while preserving the
+     * Gemma4 <tools> schema injected by GgufToolPromptBuilder.
      */
     private fun buildMessages(
         systemPart: String?,
@@ -162,6 +156,7 @@ class OllamaInferenceEngine(
         } else {
             -1
         }
+
         val extractedTools = if (toolsStart >= 0 && toolsEnd >= 0) {
             userPart.substring(toolsStart, toolsEnd + toolsEndMarker.length).trim()
         } else {
@@ -177,7 +172,10 @@ class OllamaInferenceEngine(
         }
 
         val withoutTools = if (toolsStart >= 0 && toolsEnd >= 0) {
-            (userPart.substring(0, toolsStart) + userPart.substring(toolsEnd + toolsEndMarker.length)).trim()
+            (
+                userPart.substring(0, toolsStart) +
+                    userPart.substring(toolsEnd + toolsEndMarker.length)
+                ).trim()
         } else {
             userPart
         }
@@ -193,6 +191,7 @@ class OllamaInferenceEngine(
         } else {
             -1
         }
+
         val hasCompletedToolTurn =
             callStart >= 0 && callEndMarker >= 0 && responseStart > callEndMarker
 
@@ -209,13 +208,15 @@ class OllamaInferenceEngine(
         while (cursor < withoutTools.length) {
             val open = withoutTools.indexOf(responseOpen, cursor)
             if (open < 0) break
+
             val contentStart = open + responseOpen.length
             val close = withoutTools.indexOf(responseClose, contentStart)
             if (close < 0) {
-                toolResults += withoutTools.substring(contentStart).trim()
+                toolResults.add(withoutTools.substring(contentStart).trim())
                 break
             }
-            toolResults += withoutTools.substring(contentStart, close).trim()
+
+            toolResults.add(withoutTools.substring(contentStart, close).trim())
             cursor = close + responseClose.length
         }
 
@@ -225,7 +226,7 @@ class OllamaInferenceEngine(
 
         CloudLog.d(
             TAG,
-            "Ollama tool round reconstructed: systemLen=${effectiveSystem?.length ?: 0} " +
+            "Ollama tool round reconstructed systemLen=${effectiveSystem?.length ?: 0} " +
                 "userLen=${originalUser.length} assistantToolLen=${assistantCall.length} " +
                 "toolResults=${toolResults.size}"
         )
@@ -347,8 +348,7 @@ class OllamaInferenceEngine(
             builder.append("<|tool_call>call:")
                 .append(name)
                 .append(argumentsJson)
-                .append("<tool_call|")
-                .append(">")
+                .append("<tool_call|>")
         }
 
         return if (builder.isEmpty()) null else builder.toString()
