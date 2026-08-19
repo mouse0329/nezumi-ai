@@ -105,8 +105,8 @@ object GgufToolPromptBuilder {
         ),
         ToolSchema(
             "convert_md_to_document",
-            "Prepare a Word (.docx), PDF (.pdf), or Excel (.xlsx) document from Markdown text. Supports headings, paragraphs, lists, tables, code blocks, quotes, bold/italic text. The content is placed on a card in the chat; the file is converted and saved when the user taps Save.",
-            """{"type":"object","properties":{"markdown":{"type":"string","description":"The Markdown text to convert"},"format":{"type":"string","description":"Output format: 'docx', 'pdf', or 'xlsx'"},"fileName":{"type":"string","description":"Optional output file name without extension"}},"required":["markdown","format"]}"""
+            "Create a Word (.docx), PDF (.pdf), or Excel (.xlsx) document from Markdown text. Supports headings, paragraphs, lists, tables, code blocks, quotes, bold/italic text. The content is placed on a card in the chat; the file is generated and saved when the user taps Save.",
+            """{"type":"object","properties":{"markdown":{"type":"string","description":"The Markdown text to render into the document"},"format":{"type":"string","description":"Output format: 'docx', 'pdf', or 'xlsx'"},"fileName":{"type":"string","description":"Optional output file name without extension"}},"required":["markdown","format"]}"""
         )
     )
 

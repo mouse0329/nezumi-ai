@@ -424,11 +424,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     // NOTE: Kotlin のブロックコメントはネスト可能なので、KDoc 内に `image/*` のような
     // `/*` を含む文字列を書くと新しいブロックコメント開始と見なされて
     // ファイル末尾までコメントになってしまう。ここは 行コメントにすること。
-    // ドキュメント生成カード (convert_md_to_document) の「保存」ボタン用。
+    // ドキュメント作成カード (convert_md_to_document) の「保存」ボタン用。
     //   ツール実行時点では実体ファイルは無く、カードの payload に載っている
     //   Markdown 本文だけがある。保存ボタンが押されたら pendingDocumentSaveRequest に
     //   Markdown/形式/ファイル名を保持して SAF の保存ダイアログを開き、
-    //   保存先が決まった時点で初めて Markdown → docx/pdf/xlsx の変換を行う。
+    //   保存先が決まった時点で初めて Markdown からの docx/pdf/xlsx 作成を行う。
     //   カード側のスピナーは onComplete コールバックで止める。
     private data class PendingDocumentSave(
         val markdown: String,

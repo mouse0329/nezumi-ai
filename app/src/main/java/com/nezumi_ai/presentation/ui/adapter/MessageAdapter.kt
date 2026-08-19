@@ -78,7 +78,7 @@ class MessageAdapter(
     private val onAiVariantSelect: (Long, Int) -> Unit = { _, _ -> },
     private val lifecycleOwner: LifecycleOwner? = null,
     private val viewModelStoreOwner: ViewModelStoreOwner? = null,
-    // ドキュメント生成ツール (convert_md_to_document) の結果カードに付ける
+    // ドキュメント作成ツール (convert_md_to_document) の結果カードに付ける
     // 「保存」ボタンのコールバック。ChatFragment 側で SAF (CreateDocument) と
     // Markdown→docx/pdf/xlsx 変換に繋いである。onComplete は変換+保存の完了時に呼ぶ。
     private val onSaveGeneratedDocument: (markdown: String, format: String, fileName: String, onComplete: (Boolean) -> Unit) -> Unit = { _, _, _, _ -> }
@@ -1224,7 +1224,7 @@ class MessageAdapter(
             toolResults: List<ToolResultCard>,
             isStreaming: Boolean
         ) {
-            // ドキュメント生成カードの保存ボタンは、生成終了後 (ストリーミング完了後)
+            // ドキュメント作成カードの保存ボタンは、生成終了後 (ストリーミング完了後)
             // にのみ有効にする。生成中に押されても中身が未確定のファイルを
             // コピーしてしまうため。
             val saveHandler: ((String, String, String, (Boolean) -> Unit) -> Unit)? =

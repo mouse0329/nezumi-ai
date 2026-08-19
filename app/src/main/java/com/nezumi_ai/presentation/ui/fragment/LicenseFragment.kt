@@ -224,7 +224,7 @@ class LicenseFragment : Fragment() {
                 R.string.license_voicevox_libraries_desc,
                 R.string.license_voicevox_libraries_url
             ),
-            // ドキュメント変換 (Markdown → Word/PDF/Excel 生成、
+            // ドキュメント作成 (Markdown から Word/PDF/Excel を生成、
             // Word/PDF/Excel → Markdown 読み取り) で追加した依存群。
             LicenseItem(
                 R.string.license_apache_poi_title,

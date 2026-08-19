@@ -74,10 +74,10 @@ fun InlineToolCallCard(
     rawJson: String,
     status: InlineToolCallStatus,
     modifier: Modifier = Modifier,
-    // ドキュメント生成ツール (convert_md_to_document) の結果カード用の「保存」コールバック。
+    // ドキュメント作成ツール (convert_md_to_document) の結果カード用の「保存」コールバック。
     //   ツールは Markdown 本文とファイル名をカードに載せるだけで、実際の
-    //   docx/pdf/xlsx への変換はこのコールバック内 (ChatFragment) で行われる。
-    //   onComplete は変換+保存が終わった時点で必ず呼ぶこと (カード側の
+    //   docx/pdf/xlsx の作成はこのコールバック内 (ChatFragment) で行われる。
+    //   onComplete は作成+保存が終わった時点で必ず呼ぶこと (カード側の
     //   スピナーを止めるために使う)。null なら保存ボタンは表示しない。
     onSaveDocument: ((markdown: String, format: String, fileName: String, onComplete: (Boolean) -> Unit) -> Unit)? = null
 ) {
@@ -184,20 +184,29 @@ fun InlineToolCallCard(
                 )
             }
 
-            // ドキュメント生成 (convert_md_to_document) のカードには「保存」ボタンを添える。
+            // ドキュメント作成 (convert_md_to_document) のカードには「保存」ボタンを添える。
             //   ツール実行時点では実体ファイルはまだ無く、カードの payload に載っている
             //   Markdown 本文 (markdown) とファイル名 (fileName) ・形式 (format) を
             //   ボタン押下時に ChatFragment へ渡し、そこで初めて変換→保存が行われる。
             //   変換中はボタンがスピナーに変わる。複数のカードが同時にあっても、
             //   それぞれが独立した saving 状態とボタンを持つため個別に保存できる。
+            //
+            // Bug fix: 以前は `toolName == "convert_md_to_document" || "convertmdtodocument"` と
+            //   生の名前で比較していたため、モデルが camelCase (`convertMdToDocument`)
+            //   で名前を返したときに保存ボタンが出ないケースがあった。
+            //   `ToolResultCard.toolName` の契約は「正規化済みツール名」だが、
+            //   万一 (旧 DB レコードなど) 未正規の名前が混ざる可能性に備え、
+            //   ここでも同じフォールバック規則 (`_` 除去 + 小文字化) で一度
+            //   収束してから `convertmdtodocument` と比べる。
             if (status is InlineToolCallStatus.Success && onSaveDocument != null) {
                 val markdown = status.card?.getPayloadString("markdown")
                 val format = status.card?.getPayloadString("format")
                 val fileName = status.card?.getPayloadString("fileName")
                 val toolName = status.card?.toolName ?: ""
+                val normalizedToolName = toolName.replace("_", "").lowercase()
                 if (!markdown.isNullOrBlank() && !format.isNullOrBlank() &&
                     !fileName.isNullOrBlank() &&
-                    (toolName == "convert_md_to_document" || toolName == "convertmdtodocument")
+                    normalizedToolName == "convertmdtodocument"
                 ) {
                     var saving by remember { mutableStateOf(false) }
                     Spacer(modifier = Modifier.height(8.dp))
@@ -406,7 +415,7 @@ private fun titleForToolCall(toolCall: ToolCall?, rawJson: String): String {
         "get_current_time", "getcurrenttime" -> "現在時刻を確認"
         "get_battery_level", "getbatterylevel" -> "バッテリー残量を確認"
         "generate_image", "generateimage" -> "画像を生成"
-        "convert_md_to_document", "convertmdtodocument" -> "ドキュメントを準備"
+        "convert_md_to_document", "convertmdtodocument" -> "ドキュメントを作成"
         else -> name
     }
 }

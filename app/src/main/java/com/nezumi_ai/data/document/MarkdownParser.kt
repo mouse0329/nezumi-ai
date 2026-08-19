@@ -1,7 +1,7 @@
 package com.nezumi_ai.data.document
 
 /**
- * Markdown → Word/PDF/Excel 変換で共有する、極めて軽量な Markdown パーサ。
+ * Markdown から Word/PDF/Excel ドキュメントを作成する際に共有する、極めて軽量な Markdown パーサ。
  *
  * フル仕様の CommonMark には対応しない。実用上よく使われる範囲のみ:
  *   - 見出し (# ~ ######)

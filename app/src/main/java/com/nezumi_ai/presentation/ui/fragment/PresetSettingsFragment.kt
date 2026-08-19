@@ -1115,7 +1115,7 @@ class PresetSettingsFragment : Fragment() {
             ToolOption(PresetConstants.TOOL_WEB_SEARCH, getString(R.string.preset_tool_name_web_search)),
             // web_search で見つけた URL の本文を Markdown で取得する
             ToolOption(PresetConstants.TOOL_WEB_FETCH, getString(R.string.preset_tool_name_web_fetch)),
-            // ドキュメント変換: Markdown → Word/PDF/Excel 生成。
+            // ドキュメント作成: Markdown から Word/PDF/Excel ファイルを生成。
             // (Word/PDF/Excel の読み取りは添付時に自動で Markdown 変換されるため
             //  ツールとしては存在しない)
             ToolOption(PresetConstants.TOOL_CONVERT_MD_TO_DOCUMENT, getString(R.string.preset_tool_name_convert_md_to_document)),

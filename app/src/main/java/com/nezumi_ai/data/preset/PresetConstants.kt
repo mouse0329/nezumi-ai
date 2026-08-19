@@ -23,7 +23,8 @@ object PresetConstants {
     const val TOOL_WEB_SEARCH = "web_search"
     // web_search で見つけた URL の本文取得 (URL → Markdown)
     const val TOOL_WEB_FETCH = "web_fetch"
-    // Markdown → Word/PDF/Excel 生成
+    // Markdown から Word/PDF/Excel ドキュメントを作成するツール。
+    // ツール名は既存プリセット・履歴との互換のため convert_md_to_document のまま。
     const val TOOL_CONVERT_MD_TO_DOCUMENT = "convert_md_to_document"
 
     val allToolIds: List<String> = listOf(

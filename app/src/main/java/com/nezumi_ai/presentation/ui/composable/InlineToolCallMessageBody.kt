@@ -45,7 +45,7 @@ import kotlinx.serialization.json.JsonPrimitive
  * @param content <tool_call>...</tool_call> タグを保持したままの本文
  * @param toolResults 出現順に並んだツール実行結果 (無ければ空)
  * @param isStreaming ストリーミング中フラグ (末尾未完タグの扱いに影響)
- * @param onSaveDocument ドキュメント生成カードの「保存」ボタンのコールバック。
+ * @param onSaveDocument ドキュメント作成カードの「保存」ボタンのコールバック。
  *   カードごとに独立して呼ばれるため、1メッセージ内で複数ドキュメントが
  *   生成されても個別に保存先を選べる。実際の docx/pdf/xlsx 変換はこの
  *   コールバック内で行われ、完了時に onComplete が呼ばれる。
@@ -91,6 +91,15 @@ fun InlineToolCallMessageBody(
                     // ツール呼び出し自体が COMPLETE になった瞬間には arguments が確定している。
                     // convert_md_to_document は保存ボタンの入力が呼び出し arguments だけで揃うため、
                     // ここで暫定 ToolResultCard を作り、保存ボタンをツール結果待ちにしない。
+                    //
+                    // Bug fix: 暫定カードの toolName に `seg.toolCall.name` (モデルが吐いた
+                    // 生の名前) をそのまま入れると、モデルが camelCase (convertMdToDocument)
+                    // や snake_case (convert_md_to_document) のどちらで返してくるかによって
+                    // InlineToolCallCard 側の保存ボタン判定が素通りし、
+                    // 「呼び出し完了直後は保存ボタンが出ない」バグになる。
+                    // ToolResultCard の toolName の契約は「正規化済みツール名」なので、
+                    // 実行結果カード (ChatViewModel 側で正規化済み) と揃うよう、
+                    // ここでも `_` を除いて小文字化した名前を入れる。
                     val actualCard = toolResults.getOrNull(seg.index)
                         ?: inlineToolResponseCards.getOrNull(seg.index)
                     val completedCallCard = if (
@@ -99,7 +108,7 @@ fun InlineToolCallMessageBody(
                         seg.toolCall != null
                     ) {
                         ToolResultCard(
-                            toolName = seg.toolCall.name,
+                            toolName = normalizeToolNameForCard(seg.toolCall.name),
                             success = true,
                             payload = seg.toolCall.arguments.mapValues { (_, value) ->
                                 value.toJsonElement()
@@ -139,6 +148,16 @@ fun InlineToolCallMessageBody(
         }
     }
 }
+
+/**
+ * 暫定 [ToolResultCard] に載せるツール名を、`NezumiLiteRtToolExecutor.normalizeToolName`
+ * のフォールバック規則 (`_` 除去 + 小文字化) に合わせて正規化する。
+ * 実行結果カードは ChatViewModel 側で常に正規化済みの名前で作られているため、
+ * ここも同じ規則で揃えておかないと、保存ボタン判定など「正規化名で比較する側」の
+ * ロジックが暫定カードだけ素通りしてしまう。
+ */
+private fun normalizeToolNameForCard(name: String): String =
+    name.replace("_", "").lowercase()
 
 private fun Any?.toJsonElement(): JsonElement {
     return when (this) {

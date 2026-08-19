@@ -380,7 +380,7 @@ private class ConvertMdToDocumentSchema : ToolSet {
 /**
  * @param payload UI カード描画用のフルペイロード (InlineToolCallCard / ToolResultCard が参照する)。
  * @param modelPayload モデルへの `<tool_response>` に埋め込むペイロード。省略時は [payload] と同一。
- *   ドキュメント生成ツールのように、UI 表示には元テキスト全文が必要だがモデルには
+ *   ドキュメント作成ツールのように、UI 表示には元テキスト全文が必要だがモデルには
  *   その全文を再送する必要がない (むしろコンテキストの無駄になる) ケースで、
  *   UI 向けとモデル向けのペイロードを分離するために使う。
  *   [GgufToolCallParser.formatToolResults] はこちらを使ってモデル向けレスポンスを組み立てる。
@@ -1093,7 +1093,7 @@ internal class NezumiLiteRtToolExecutor(
     }
 
     // ─────────────────────────────────────────────
-    // ドキュメント変換: Markdown ⇔ Word/PDF/Excel
+    // ドキュメント作成: Markdown から Word/PDF/Excel ファイルを生成する
     // 実処理は DocumentToolBridge 経由で ChatViewModel に委譲する
     // (GenerateImageToolBridge と同一パターン)。
     // ─────────────────────────────────────────────

@@ -30,8 +30,8 @@ enum class NezumiTool(val displayName: String) {
     WEB_SEARCH("ウェブ検索"),
     // web_search で見つけた URL の本文を Markdown で取得する
     WEB_FETCH("ページ取得"),
-    // Markdown → Word/PDF/Excel 生成
-    CONVERT_MD_TO_DOCUMENT("MD→Word/PDF/Excel変換")
+    // Markdown から Word/PDF/Excel ドキュメントを作成
+    CONVERT_MD_TO_DOCUMENT("MDからWord/PDF/Excel作成")
 }
 
 class ToolPreferences(private val context: Context) {

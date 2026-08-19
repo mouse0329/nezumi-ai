@@ -3024,17 +3024,16 @@ class ChatViewModel(
 
     /**
      * convert_md_to_document ツール本体。
-     * Markdown テキストを Word(.docx)/PDF(.pdf)/Excel(.xlsx) に変換し、
-     * 生成ファイルの FileProvider URI をチャットに残す。
-     */
-    /**
-     * convert_md_to_document ツール本体。
      *
-     * このツールは「ドキュメントの実体をその場で生成する」のではなく、
+     * このツールは「ドキュメントの実体をその場で作成する」のではなく、
      * LLM が作成した Markdown 本文・出力形式・ファイル名をツール結果カードに
-     * 載せるためのもの。実際の docx/pdf/xlsx への変換は、チャットに表示された
+     * 載せるためのもの。実際の docx/pdf/xlsx の作成は、チャットに表示された
      * カードの「保存」ボタンをユーザーが押したタイミングで行う
      * (ChatFragment → DocumentConversionManager.generateFromMarkdown)。
+     *
+     * (LLM に見せる description とコード内の呼称は「作成 (create)」寄りに
+     *  統一しているが、ツール名自体は既存プリセット・履歴との互換のため
+     *  convert_md_to_document のまま据え置きにしている。)
      *
      * こうすることで:
      *   - ツール呼び出し自体は即座に完了し、推論ループが重いファイル生成で

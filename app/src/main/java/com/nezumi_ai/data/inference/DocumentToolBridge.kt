@@ -3,7 +3,7 @@ package com.nezumi_ai.data.inference
 import com.google.ai.edge.litertlm.ToolCall
 
 /**
- * Markdown → Word/PDF/Excel 生成ツールの実行委譲先。
+ * Markdown から Word/PDF/Excel ドキュメントを作成するツールの実行委譲先。
  * GenerateImageToolBridge と同じパターンで、ViewModel が生成したハンドラをここに
  * 差し込むことで、実際の処理を ViewModel/UI レイヤーに委譲する。
  *
@@ -11,7 +11,7 @@ import com.google.ai.edge.litertlm.ToolCall
  *  ChatFragment が添付時に DocumentConversionManager.extractMarkdownText() で
  *  直接変換する方式に変更されたため、このブリッジからは削除済み)
  *
- * ドキュメント変換自体はファイル入出力のみで完結し、画像生成のような
+ * ドキュメント作成自体はファイル入出力のみで完結し、画像生成のような
  * 「重い推論をキューイングしてバックグラウンドで進める」必要が薄いため、
  * ハンドラは同期的に完了を待ってから ToolExecutionResult を返す設計とする。
  */
