@@ -113,6 +113,7 @@ import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.presentation.viewmodel.ChatViewModel
 import com.nezumi_ai.presentation.viewmodel.ChatViewModelFactory
+import com.nezumi_ai.presentation.viewmodel.ImageGenConfirmationRequest
 import com.nezumi_ai.presentation.ui.adapter.MessageAdapter
 import com.nezumi_ai.data.inference.ToolCallState
 import com.nezumi_ai.presentation.ui.composable.ToolCallProgressBar
@@ -2207,6 +2208,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         binding.contextMeterCompose.setContent {
             ContextMeterSection()
             ContextRawDialog()
+            ImageGenConfirmationDialog()
         }
 
         binding.scrollToBottomCompose.setViewCompositionStrategy(
@@ -2883,6 +2885,272 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 }
             }
         )
+    }
+
+    /**
+     * 画像生成ツール呼び出し直前に表示する確認ダイアログ。
+     *
+     * ViewModel の confirmationRequest StateFlow を collect して、null でない間だけ
+     * AlertDialog を表示する。プロンプト・モデル・ステップ数をその場で変更できるようにしている。
+     * 「はい、生成する」で onConfirmGenerateImage、キャンセルで onCancelGenerateImage を呼ぶ。
+     */
+    @Composable
+    private fun ImageGenConfirmationDialog() {
+        val request by viewModel.confirmationRequest.collectAsState()
+        val req = request ?: return
+
+        // ダイアログを開くたびに編集状態をリセットする。request の identity (プロンプト文字列 +
+        // defaultModelName + defaultSteps の組) が変わったときだけ初期値を入れ直したいので、
+        // remember のキーに request 自体を渡す。
+        var editedPrompt by remember(req) { mutableStateOf(req.prompt) }
+        var selectedModel by remember(req) { mutableStateOf(req.defaultModelName) }
+        var steps by remember(req) { mutableStateOf(req.defaultSteps.coerceIn(req.minSteps, req.maxSteps)) }
+        var modelDropdownOpen by remember(req) { mutableStateOf(false) }
+
+        val bg = colorResource(id = R.color.image_gen_confirm_bg)
+        val titleColor = colorResource(id = R.color.image_gen_confirm_title_text)
+        val subtitleColor = colorResource(id = R.color.image_gen_confirm_subtitle_text)
+        val iconBg = colorResource(id = R.color.image_gen_confirm_icon_bg)
+        val iconTint = colorResource(id = R.color.image_gen_confirm_icon_tint)
+        val boxBg = colorResource(id = R.color.image_gen_confirm_box_bg)
+        val labelColor = colorResource(id = R.color.image_gen_confirm_label_text)
+        val rowBg = colorResource(id = R.color.image_gen_confirm_row_bg)
+        val stepperBtnBg = colorResource(id = R.color.image_gen_confirm_stepper_btn_bg)
+        val accent = colorResource(id = R.color.image_gen_confirm_accent)
+        val accentSoft = colorResource(id = R.color.image_gen_confirm_accent_soft)
+
+        AlertDialog(
+            onDismissRequest = { viewModel.onCancelGenerateImage() },
+            containerColor = bg,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .background(iconBg, shape = RoundedCornerShape(10.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("◈", fontSize = 15.sp, color = iconTint, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = stringResource(id = R.string.image_gen_confirm_title),
+                            color = titleColor,
+                            fontSize = 15.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = stringResource(id = R.string.image_gen_confirm_subtitle),
+                            color = subtitleColor,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 480.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    // --- プロンプト編集ボックス ---
+                    Text(
+                        text = stringResource(id = R.string.image_gen_confirm_prompt_label),
+                        color = labelColor,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(boxBg, shape = RoundedCornerShape(12.dp))
+                    ) {
+                        androidx.compose.foundation.text.BasicTextField(
+                            value = editedPrompt,
+                            onValueChange = { editedPrompt = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 72.dp, max = 140.dp)
+                                .padding(12.dp),
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                color = titleColor,
+                                fontSize = 13.sp,
+                                lineHeight = 19.sp
+                            ),
+                            cursorBrush = androidx.compose.ui.graphics.SolidColor(accent)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        text = stringResource(id = R.string.image_gen_confirm_settings_label),
+                        color = labelColor,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // --- モデル選択行 ---
+                    if (req.availableModels.isNotEmpty()) {
+                        Box {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(rowBg, shape = RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                                    .clickable { modelDropdownOpen = !modelDropdownOpen },
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = stringResource(id = R.string.image_gen_confirm_model_label),
+                                    color = subtitleColor,
+                                    fontSize = 12.5.sp
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = (selectedModel ?: req.defaultModelName ?: "—").let {
+                                            if (it.length > MODEL_NAME_DISPLAY_CHARS) it.take(MODEL_NAME_DISPLAY_CHARS) + "…" else it
+                                        },
+                                        color = titleColor,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.widthIn(max = 160.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = if (modelDropdownOpen) "▴" else "▾",
+                                        color = labelColor,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+                            if (modelDropdownOpen) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 46.dp)
+                                        .background(bg, shape = RoundedCornerShape(12.dp))
+                                        .padding(4.dp)
+                                ) {
+                                    req.availableModels.forEach { name ->
+                                        val isSelected = name == (selectedModel ?: req.defaultModelName)
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(
+                                                    if (isSelected) accentSoft else Color.Transparent,
+                                                    shape = RoundedCornerShape(8.dp)
+                                                )
+                                                .clickable {
+                                                    selectedModel = name
+                                                    modelDropdownOpen = false
+                                                }
+                                                .padding(horizontal = 10.dp, vertical = 9.dp)
+                                        ) {
+                                            Text(
+                                                text = name,
+                                                color = titleColor,
+                                                fontSize = 12.5.sp,
+                                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+
+                    // --- ステップ数行 ---
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(rowBg, shape = RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(id = R.string.image_gen_confirm_steps_label),
+                            color = subtitleColor,
+                            fontSize = 12.5.sp
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .background(stepperBtnBg, shape = RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        steps = (steps - 1).coerceIn(req.minSteps, req.maxSteps)
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("−", color = titleColor, fontSize = 15.sp)
+                            }
+                            Text(
+                                text = steps.toString(),
+                                color = titleColor,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .padding(horizontal = 10.dp)
+                                    .widthIn(min = 22.dp)
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .background(stepperBtnBg, shape = RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        steps = (steps + 1).coerceIn(req.minSteps, req.maxSteps)
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("+", color = titleColor, fontSize = 15.sp)
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = stepsQualityHint(steps),
+                                color = labelColor,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.onConfirmGenerateImage(
+                        editedPrompt.ifBlank { req.prompt },
+                        selectedModel,
+                        steps
+                    )
+                }) {
+                    Text(stringResource(id = R.string.image_gen_confirm_yes), color = accent, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.onCancelGenerateImage() }) {
+                    Text(stringResource(id = R.string.image_gen_confirm_no), color = subtitleColor)
+                }
+            }
+        )
+    }
+
+    /** ステップ数に応じた品質の目安テキストを返す。 */
+    private fun stepsQualityHint(steps: Int): String = when {
+        steps <= 12 -> getString(R.string.image_gen_confirm_steps_low)
+        steps <= 22 -> getString(R.string.image_gen_confirm_steps_fast)
+        steps <= 34 -> getString(R.string.image_gen_confirm_steps_std)
+        steps <= 48 -> getString(R.string.image_gen_confirm_steps_high)
+        else -> getString(R.string.image_gen_confirm_steps_max)
     }
 
     @Composable
