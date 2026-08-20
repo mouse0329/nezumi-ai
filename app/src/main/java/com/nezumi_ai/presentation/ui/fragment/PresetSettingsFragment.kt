@@ -71,6 +71,7 @@ import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.database.entity.PresetEntity
 import com.nezumi_ai.data.mcp.McpPreferences
 import com.nezumi_ai.presentation.ui.component.McpServerManagerDialog
+import com.nezumi_ai.data.skill.SkillRepository
 import com.nezumi_ai.data.preset.PresetConstants
 import com.nezumi_ai.data.preset.PresetModelCatalog
 import com.nezumi_ai.data.repository.PresetRepository
@@ -687,6 +688,11 @@ class PresetSettingsFragment : Fragment() {
         var toolCallingEnabled by remember {
             mutableStateOf(initialPreset?.toolCallingEnabled ?: false)
         }
+        var skillsEnabled by remember { mutableStateOf(initialPreset?.skillsEnabled ?: false) }
+        var hiddenSkillNames by remember { mutableStateOf(parseToolIds(initialPreset?.hiddenSkillNames ?: "[]")) }
+        val installedSkills by produceState(initialValue = emptyList<com.nezumi_ai.data.skill.Skill>()) {
+            value = withContext(Dispatchers.IO) { SkillRepository(appCtx).scan().skills }
+        }
         // 新規プリセット作成時はすべてのツールをチェックを外した状態（空集合）で始める。
         // 以前は PresetConstants.allToolIds を初期値にしていたため、ツールコールを ON にすると
         // 全ツールが自動で有効化されてしまう仕様だったが、
@@ -831,6 +837,37 @@ class PresetSettingsFragment : Fragment() {
                     }
                     if (toolCallingEnabled) {
                         item {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(stringResource(R.string.preset_edit_skills_label), fontWeight = FontWeight.Bold)
+                                    Text(stringResource(R.string.preset_edit_skills_desc), style = MaterialTheme.typography.bodySmall)
+                                }
+                                Switch(checked = skillsEnabled, onCheckedChange = { skillsEnabled = it })
+                            }
+                        }
+                        if (skillsEnabled) item {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                installedSkills.forEach { skill ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().clickable {
+                                            hiddenSkillNames = toggleId(hiddenSkillNames, skill.name)
+                                        },
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Checkbox(checked = skill.name !in hiddenSkillNames, onCheckedChange = {
+                                            hiddenSkillNames = toggleId(hiddenSkillNames, skill.name)
+                                        })
+                                        Column { Text(skill.name); Text(skill.description, style = MaterialTheme.typography.bodySmall) }
+                                    }
+                                }
+                                if (installedSkills.isEmpty()) Text(stringResource(R.string.preset_edit_skills_empty), style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        item {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(stringResource(id = R.string.preset_edit_tools_label), fontWeight = FontWeight.Bold)
                                 toolOptions.forEach { option ->
@@ -947,7 +984,9 @@ class PresetSettingsFragment : Fragment() {
                                 // 既定値（Long.MAX_VALUE / 空）に戻され、リストの一番下に飛ばされてしまう。
                                 sortOrder = initialPreset?.sortOrder ?: Long.MAX_VALUE,
                                 tagsCsv = initialPreset?.tagsCsv ?: "",
-                                mcpServerIds = McpPreferences.encodeServerIds(selectedMcpServerIds)
+                                mcpServerIds = McpPreferences.encodeServerIds(selectedMcpServerIds),
+                                skillsEnabled = skillsEnabled,
+                                hiddenSkillNames = PresetRepository.encodeToolIds(hiddenSkillNames.toList())
                             )
                         )
                     }

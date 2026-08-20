@@ -9,6 +9,7 @@ import com.google.ai.edge.litertlm.ToolProvider
 import com.google.ai.edge.litertlm.ToolSet
 import com.google.ai.edge.litertlm.tool
 import com.nezumi_ai.data.database.dao.AlarmDao
+import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.database.entity.AlarmEntity
 import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.memory.MemoryTextEmbedder
@@ -20,6 +21,7 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import com.nezumi_ai.data.skill.SkillRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
@@ -109,6 +111,9 @@ private val TOOL_NAME_MAP = mapOf(
     "mcplisttools"         to "mcplisttools",
     // convert_md_to_document: Markdown → Word/PDF/Excel
     "convert_md_to_document" to "convertmdtodocument",
+    "get_skill"           to "getskill",
+    "getSkill"            to "getskill",
+    "getskill"            to "getskill",
     "convertMdToDocument"    to "convertmdtodocument",
     "convertmdtodocument"    to "convertmdtodocument",
 )
@@ -436,6 +441,7 @@ internal class NezumiLiteRtToolExecutor(
             "websearch"       -> executeWebSearch(toolCall)
             "webfetch"        -> executeWebFetch(toolCall)
             "convertmdtodocument"  -> executeConvertMdToDocument(toolCall)
+            "getskill" -> executeGetSkill(toolCall)
             "mcpcall"         -> executeMcpCall(toolCall)
             "mcplisttools"    -> executeMcpListTools()
             else -> {
@@ -477,6 +483,7 @@ internal class NezumiLiteRtToolExecutor(
             // NezumiTool にはマッピングしない
             "mcpcall" -> null
             "mcplisttools" -> null
+            "getskill" -> null
             else -> null
         }
     }
@@ -489,6 +496,31 @@ internal class NezumiLiteRtToolExecutor(
         Log.w(TOOL_TAG, "Tool name not in whitelist: original=$name normalized=$normalized")
         recordUnknownToolNameMetric(original = name, normalized = normalized)
         return normalized
+    }
+
+    private suspend fun executeGetSkill(toolCall: ToolCall): ToolExecutionResult {
+        val skillName = toolCall.arguments["skillName"]?.toString()
+            ?: toolCall.arguments["skill_name"]?.toString()
+            ?: return ToolExecutionResult(false, mapOf("success" to false, "error" to "missing_skill_name"))
+        val referencePath = toolCall.arguments["referencePath"]?.toString()
+            ?: toolCall.arguments["reference_path"]?.toString()
+        val preset = NezumiAiDatabase.getInstance(context).presetDao()
+            .getById(PreferencesHelper.getCurrentPresetId(context))
+        if (preset?.skillsEnabled != true) {
+            return ToolExecutionResult(false, mapOf("success" to false, "error" to "skills_disabled_for_preset"))
+        }
+        val hidden = runCatching {
+            val names = org.json.JSONArray(preset.hiddenSkillNames)
+            buildSet { for (index in 0 until names.length()) add(names.getString(index)) }
+        }.getOrDefault(emptySet())
+        if (skillName in hidden) {
+            return ToolExecutionResult(false, mapOf("success" to false, "error" to "skill_not_available"))
+        }
+        val result = SkillRepository(context).read(skillName, referencePath)
+        return result.fold(
+            onSuccess = { ToolExecutionResult(true, mapOf("success" to true, "skillName" to skillName, "content" to it)) },
+            onFailure = { ToolExecutionResult(false, mapOf("success" to false, "error" to (it.message ?: "skill_read_failed"))) }
+        )
     }
 
     private fun recordUnknownToolNameMetric(original: String, normalized: String) {

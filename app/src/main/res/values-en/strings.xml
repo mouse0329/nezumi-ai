@@ -566,6 +566,24 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>
+    <string name="preset_edit_skills_label">Use skills</string>
+    <string name="preset_edit_skills_desc">Expose the skills available to this preset when tool calling is enabled.</string>
+    <string name="preset_edit_skills_empty">No skills are available.</string>
+    <string name="skills_settings_title">Skills</string>
+    <string name="skills_settings_description">Add ZIP-packaged skills that the model can load when needed.</string>
+    <string name="skills_import_zip">Add skill ZIP</string>
+    <string name="skills_empty">There are no valid installed skills.</string>
+    <string name="skills_invalid_title">Skills disabled</string>
+    <string name="skills_invalid_message">Skill "%1$s" could not be loaded and was disabled.</string>
+    <string name="skills_import_success">Skill added.</string>
+    <string name="skills_import_failed">Could not add skill: %1$s</string>
+    <string name="skills_create">Create skill</string>
+    <string name="skills_edit">Edit</string>
+    <string name="skills_add_markdown">Add Markdown</string>
+    <string name="skills_name">Skill name (lowercase letters, digits, hyphens)</string>
+    <string name="skills_description">English description</string>
+    <string name="skills_markdown_path">Path under references/</string>
+    <string name="skills_markdown_content">Markdown content</string>
     <string name="settings_section_general">General</string>
     <string name="settings_section_inference">Inference</string>
     <string name="settings_section_image">Image</string>
@@ -1261,6 +1279,7 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="storage_no_leaks">No storage leaks detected.</string>
     <string name="storage_clear_detected">Clear detected files</string>
     <string name="settings_section_storage">Storage</string>
+    <string name="settings_section_skills">Skills</string>
     <string name="storage_legend_images">Images</string>
     <string name="storage_legend_cache">Cache</string>
     <string name="storage_legend_temporary">Temporary files</string>

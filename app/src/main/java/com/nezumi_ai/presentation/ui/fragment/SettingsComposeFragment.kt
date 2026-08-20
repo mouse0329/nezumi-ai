@@ -74,6 +74,8 @@ import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.repository.MessageRepository
 import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.data.repository.SettingsRepository
+import com.nezumi_ai.data.skill.SkillRepository
+import com.nezumi_ai.data.skill.SkillScanResult
 import com.nezumi_ai.presentation.viewmodel.ChatViewModelFactory
 
 import com.nezumi_ai.utils.LogcatRecorder
@@ -88,6 +90,8 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import java.io.File
+import java.util.zip.ZipInputStream
 import kotlin.math.roundToInt
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
@@ -164,6 +168,9 @@ class SettingsComposeFragment : Fragment() {
     private var nsfwDebugXsNsfwProb by mutableStateOf<Float?>(null)
     private var nsfwDebugXsSfwProb by mutableStateOf<Float?>(null)
     private lateinit var nsfwDebugPickLauncher: ActivityResultLauncher<String>
+    private lateinit var skillImportLauncher: ActivityResultLauncher<Array<String>>
+    private var skillScanResult by mutableStateOf(SkillScanResult(emptyList(), emptyList()))
+    private var skillDialogMessage by mutableStateOf<String?>(null)
 
     // logcat 常時収集ビューア用の状態。
     //   LogcatRecorder がバックグラウンドでファイルに書き続けているログを
@@ -188,8 +195,8 @@ class SettingsComposeFragment : Fragment() {
         //   sectionTitles = [全般, 推論, 画像, メモリ, チャット, デバッグ] なので
         //   「画像」 = index 2。
         val startSection = arguments?.getInt("startSection", -1) ?: -1
- // ログタブは常時 index 5（リリースでも表示）。ツールタブは常時 index 6。デバッグは DEBUG 時のみ index 7。
-        val maxAllowedSection = if (BuildConfig.DEBUG) 8 else 7
+ // ログタブは常時 index 5。ツール = 6、スキル = 7、ストレージ = 8、デバッグ = 9。
+        val maxAllowedSection = if (BuildConfig.DEBUG) 9 else 8
         if (startSection in 0..maxAllowedSection) {
             selectedSection = startSection
  // スマホで引数指定セクションの詳細を直接表示する
@@ -203,6 +210,10 @@ class SettingsComposeFragment : Fragment() {
             if (uri == null) return@registerForActivityResult
             runNsfwDebugCheck(uri)
         }
+        skillImportLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) lifecycleScope.launch(Dispatchers.IO) { importSkillArchive(uri) }
+        }
+        skillScanResult = SkillRepository(requireContext().applicationContext).scan(force = true)
     }
 
     /**
@@ -436,6 +447,7 @@ class SettingsComposeFragment : Fragment() {
             stringResource(id = R.string.settings_section_chat),
             stringResource(id = R.string.settings_section_logs),
             stringResource(id = R.string.tools_settings),
+            stringResource(id = R.string.settings_section_skills),
             stringResource(id = R.string.settings_section_storage)
         ) + if (BuildConfig.DEBUG) listOf(stringResource(id = R.string.settings_section_debug)) else emptyList()
         Column(
@@ -1030,11 +1042,12 @@ class SettingsComposeFragment : Fragment() {
                     6 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         ToolsSettingsCard()
                     }
-                    7 -> StorageManagementSection(onOpenSession = { sessionId ->
+                    7 -> SkillManagementCard(skillScanResult, onImport = { skillImportLauncher.launch(arrayOf("application/zip")) })
+                    8 -> StorageManagementSection(onOpenSession = { sessionId ->
                         findNavController().navigate(R.id.chatFragment, Bundle().apply { putLong("sessionId", sessionId) })
                     })
-                    // デバッグタブは BuildConfig.DEBUG 時のみ index 8
-                    8 -> if (BuildConfig.DEBUG) {
+                    // デバッグタブは BuildConfig.DEBUG 時のみ index 9
+                    9 -> if (BuildConfig.DEBUG) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             DebugSettingsCard()
                         }
@@ -1374,6 +1387,193 @@ class SettingsComposeFragment : Fragment() {
                 // GGUF / llama.cpp 固有設定は別のカードに移動しました
             }
         }
+    }
+
+    @Composable
+    private fun SkillManagementCard(result: SkillScanResult, onImport: () -> Unit) {
+        val context = LocalContext.current
+        var creatingSkill by remember { mutableStateOf(false) }
+        var editingSkill by remember { mutableStateOf<com.nezumi_ai.data.skill.Skill?>(null) }
+        var addingReferenceTo by remember { mutableStateOf<com.nezumi_ai.data.skill.Skill?>(null) }
+        LaunchedEffect(result.invalidSkills) {
+            if (result.invalidSkills.isNotEmpty()) {
+                skillDialogMessage = context.getString(R.string.skills_invalid_message, result.invalidSkills.joinToString("、"))
+            }
+        }
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.skills_settings_title), fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.skills_settings_description), style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { creatingSkill = true }) { Text(stringResource(R.string.skills_create)) }
+                    TextButton(onClick = onImport) { Text(stringResource(R.string.skills_import_zip)) }
+                }
+                result.skills.forEach { skill ->
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(skill.name)
+                            Text(skill.description, style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (skill.source == com.nezumi_ai.data.skill.Skill.Source.USER) {
+                            TextButton(onClick = { editingSkill = skill }) { Text(stringResource(R.string.skills_edit)) }
+                            TextButton(onClick = { addingReferenceTo = skill }) { Text(stringResource(R.string.skills_add_markdown)) }
+                        }
+                    }
+                }
+                if (result.skills.isEmpty()) Text(stringResource(R.string.skills_empty), style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        if (creatingSkill) {
+            SkillEditorDialog(
+                title = stringResource(R.string.skills_create),
+                initialName = "",
+                initialDescription = "",
+                initialBody = "# Skill\n",
+                onDismiss = { creatingSkill = false },
+                onSave = { name, description, body ->
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        val outcome = createSkill(name, description, body)
+                        withContext(Dispatchers.Main) {
+                            skillScanResult = SkillRepository(requireContext()).scan(force = true)
+                            skillDialogMessage = outcome.exceptionOrNull()?.message ?: getString(R.string.skills_import_success)
+                            creatingSkill = false
+                        }
+                    }
+                }
+            )
+        }
+        editingSkill?.let { skill ->
+            val body = remember(skill.name) { SkillRepository(requireContext()).read(skill.name).getOrDefault("") }
+            SkillEditorDialog(
+                title = skill.name,
+                initialName = skill.name,
+                initialDescription = skill.description,
+                initialBody = body,
+                nameEditable = false,
+                onDismiss = { editingSkill = null },
+                onSave = { _, description, content ->
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        val outcome = updateSkill(skill.name, description, content)
+                        withContext(Dispatchers.Main) {
+                            skillScanResult = SkillRepository(requireContext()).scan(force = true)
+                            skillDialogMessage = outcome.exceptionOrNull()?.message
+                            editingSkill = null
+                        }
+                    }
+                }
+            )
+        }
+        addingReferenceTo?.let { skill ->
+            ReferenceEditorDialog(
+                skillName = skill.name,
+                onDismiss = { addingReferenceTo = null },
+                onSave = { path, content ->
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        val outcome = writeSkillReference(skill.name, path, content)
+                        withContext(Dispatchers.Main) {
+                            skillDialogMessage = outcome.exceptionOrNull()?.message
+                            addingReferenceTo = null
+                        }
+                    }
+                }
+            )
+        }
+        skillDialogMessage?.let { message ->
+            AlertDialog(
+                onDismissRequest = { skillDialogMessage = null },
+                title = { Text(stringResource(R.string.skills_invalid_title)) },
+                text = { Text(message) },
+                confirmButton = { TextButton(onClick = { skillDialogMessage = null }) { Text(stringResource(android.R.string.ok)) } }
+            )
+        }
+    }
+
+    @Composable
+    private fun SkillEditorDialog(title: String, initialName: String, initialDescription: String, initialBody: String, nameEditable: Boolean = true, onDismiss: () -> Unit, onSave: (String, String, String) -> Unit) {
+        var name by remember { mutableStateOf(initialName) }
+        var description by remember { mutableStateOf(initialDescription) }
+        var body by remember { mutableStateOf(initialBody) }
+        AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.skills_name)) }, enabled = nameEditable, singleLine = true)
+                OutlinedTextField(description, { description = it }, label = { Text(stringResource(R.string.skills_description)) })
+                OutlinedTextField(body, { body = it }, label = { Text("SKILL.md") }, minLines = 8)
+            }
+        }, confirmButton = { TextButton(onClick = { onSave(name, description, body) }) { Text(stringResource(R.string.preset_save)) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.preset_cancel)) } })
+    }
+
+    @Composable
+    private fun ReferenceEditorDialog(skillName: String, onDismiss: () -> Unit, onSave: (String, String) -> Unit) {
+        var path by remember { mutableStateOf("guides/guide.md") }
+        var content by remember { mutableStateOf("") }
+        AlertDialog(onDismissRequest = onDismiss, title = { Text("$skillName: ${stringResource(R.string.skills_add_markdown)}") }, text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(path, { path = it }, label = { Text(stringResource(R.string.skills_markdown_path)) }, singleLine = true)
+                OutlinedTextField(content, { content = it }, label = { Text(stringResource(R.string.skills_markdown_content)) }, minLines = 8)
+            }
+        }, confirmButton = { TextButton(onClick = { onSave(path, content) }) { Text(stringResource(R.string.preset_save)) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.preset_cancel)) } })
+    }
+
+    private fun importSkillArchive(uri: Uri) {
+        val context = requireContext().applicationContext
+        val temporaryRoot = File(context.cacheDir, "skill-import-${System.currentTimeMillis()}").apply { mkdirs() }
+        val copied = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                ZipInputStream(stream).use { zip ->
+                    var entry = zip.nextEntry
+                    while (entry != null) {
+                        if (!entry.isDirectory) {
+                            val output = com.nezumi_ai.data.skill.SkillPathResolver.resolveChild(temporaryRoot, entry.name)
+                                ?: error("invalid_archive_path")
+                            output.parentFile?.mkdirs()
+                            output.outputStream().use { zip.copyTo(it) }
+                        }
+                        entry = zip.nextEntry
+                    }
+                }
+            } ?: error("archive_open_failed")
+            val directories = temporaryRoot.listFiles().orEmpty().filter { it.isDirectory }
+            require(directories.size == 1) { "archive_must_contain_one_skill_directory" }
+            val skillDirectory = directories.single()
+            require(com.nezumi_ai.data.skill.SkillPathResolver.isValidName(skillDirectory.name)) { "invalid_skill_name" }
+            require(File(skillDirectory, "SKILL.md").isFile) { "skill_md_missing" }
+            val destination = File(context.filesDir, "skills/${skillDirectory.name}")
+            require(!destination.exists()) { "skill_already_exists" }
+            destination.parentFile?.mkdirs()
+            require(skillDirectory.renameTo(destination)) { "skill_install_failed" }
+        }
+        temporaryRoot.deleteRecursively()
+        skillScanResult = SkillRepository(context).scan(force = true)
+        val error = copied.exceptionOrNull()
+        skillDialogMessage = if (error == null) context.getString(R.string.skills_import_success) else context.getString(R.string.skills_import_failed, error.message ?: "unknown")
+    }
+
+    private fun createSkill(name: String, description: String, body: String): Result<Unit> = runCatching {
+        require(com.nezumi_ai.data.skill.SkillPathResolver.isValidName(name)) { "invalid_skill_name" }
+        require(description.isNotBlank() && description.length <= 1024 && description.all { it.code in 32..126 || it == '\n' || it == '\t' }) { "invalid_skill_description" }
+        val directory = com.nezumi_ai.data.skill.SkillPathResolver.resolveUserSkillDir(requireContext().filesDir, name)
+            ?: error("invalid_skill_path")
+        require(!directory.exists()) { "skill_already_exists" }
+        require(directory.mkdirs()) { "skill_directory_create_failed" }
+        File(directory, "SKILL.md").writeText("---\nname: $name\ndescription: \"$description\"\n---\n\n$body")
+    }
+
+    private fun updateSkill(name: String, description: String, body: String): Result<Unit> = runCatching {
+        require(description.isNotBlank() && description.length <= 1024 && description.all { it.code in 32..126 || it == '\n' || it == '\t' }) { "invalid_skill_description" }
+        val directory = com.nezumi_ai.data.skill.SkillPathResolver.resolveUserSkillDir(requireContext().filesDir, name)
+            ?: error("invalid_skill_path")
+        require(directory.isDirectory) { "skill_not_found" }
+        File(directory, "SKILL.md").writeText("---\nname: $name\ndescription: \"$description\"\n---\n\n$body")
+    }
+
+    private fun writeSkillReference(skillName: String, path: String, content: String): Result<Unit> = runCatching {
+        require(path.endsWith(".md", ignoreCase = true)) { "reference_must_be_markdown" }
+        val directory = com.nezumi_ai.data.skill.SkillPathResolver.resolveUserSkillDir(requireContext().filesDir, skillName)
+            ?: error("invalid_skill_path")
+        val file = com.nezumi_ai.data.skill.SkillPathResolver.resolveReference(directory, path)
+            ?: error("invalid_reference_path")
+        file.parentFile?.mkdirs()
+        file.writeText(content)
     }
 
     @Composable

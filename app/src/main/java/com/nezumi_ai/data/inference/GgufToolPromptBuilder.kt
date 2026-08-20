@@ -2,6 +2,8 @@ package com.nezumi_ai.data.inference
 
 import android.content.Context
 import android.util.Log
+import com.nezumi_ai.data.skill.Skill
+import com.nezumi_ai.data.skill.SkillPromptSpec
 
 /**
  * GGUF / llama.rn 向けにツール定義をシステムプロンプトへ注入する。
@@ -107,6 +109,11 @@ object GgufToolPromptBuilder {
             "convert_md_to_document",
             "Create a Word (.docx), PDF (.pdf), or Excel (.xlsx) document from Markdown text. Supports headings, paragraphs, lists, tables, code blocks, quotes, bold/italic text. The content is placed on a card in the chat; the file is generated and saved when the user taps Save.",
             """{"type":"object","properties":{"markdown":{"type":"string","description":"The Markdown text to render into the document"},"format":{"type":"string","description":"Output format: 'docx', 'pdf', or 'xlsx'"},"fileName":{"type":"string","description":"Optional output file name without extension"}},"required":["markdown","format"]}"""
+        ),
+        ToolSchema(
+            SkillPromptSpec.TOOL_NAME,
+            SkillPromptSpec.TOOL_DESCRIPTION,
+            """{"type":"object","properties":{"skillName":{"type":"string","description":"Name of an available skill"},"referencePath":{"type":"string","description":"Optional path below that skill's references directory"}},"required":["skillName"]}"""
         )
     )
 
@@ -135,7 +142,7 @@ object GgufToolPromptBuilder {
      * 有効化されたビルトインツールと MCP ツールを列挙した JSON を返す。
      * (改行区切り。空文字なら有効ツールなし)
      */
-    private fun collectEnabledToolsJson(context: Context): String {
+    private fun collectEnabledToolsJson(context: Context, skills: List<Skill>): String {
         val enabled = ToolPreferences(context).getEnabledTools()
         val enabledNames = buildSet {
             enabled.forEach { tool -> schemaByTool[tool]?.let { add(it) } }
@@ -153,7 +160,7 @@ object GgufToolPromptBuilder {
                 add("list_sd_models")
             }
         }
-        val schemas = allSchemas.filter { it.name in enabledNames }
+        val schemas = allSchemas.filter { it.name in enabledNames || (it.name == SkillPromptSpec.TOOL_NAME && skills.isNotEmpty()) }
         val mcpJson = McpToolPromptBuilder.currentToolsJson(context)
         val builtinJson = schemas.joinToString("\n") { schema ->
             """{"type":"function","function":{"name":"${schema.name}","description":"${schema.description}","parameters":${schema.parametersJson}}}"""
@@ -170,9 +177,10 @@ object GgufToolPromptBuilder {
     fun appendToolDefinitions(
         context: Context,
         systemPrompt: String,
-        isGemma4: Boolean = false
+        isGemma4: Boolean = false,
+        skills: List<Skill> = emptyList()
     ): String {
-        val toolsJson = collectEnabledToolsJson(context)
+        val toolsJson = collectEnabledToolsJson(context, skills)
         // Bug fix: 組み込みツールが 1 つも有効でなくても、MCP サーバーが接続されていれば
         // MCP ツールだけを列挙する。以前はここで早期 return していたため、
         //「MCP だけ使いたい」プリセットでは MCP ツールが一切見えなかった。
@@ -186,7 +194,8 @@ object GgufToolPromptBuilder {
         // GgufToolCallParser.parse(text, isGemma4) 側の期待形式と一致させる必要がある。
         val toolBlock = if (isGemma4) buildGemma4ToolBlock(toolsJson) else buildGenericToolBlock(toolsJson)
 
-        return if (systemPrompt.isBlank()) toolBlock.trim() else systemPrompt + toolBlock
+        val withTools = if (systemPrompt.isBlank()) toolBlock.trim() else systemPrompt + toolBlock
+        return if (skills.isEmpty()) withTools else "$withTools\n\n${SkillPromptSpec.catalog(skills)}"
     }
 
     /**
@@ -204,9 +213,10 @@ object GgufToolPromptBuilder {
     fun appendForLiteRt(
         context: Context,
         systemPrompt: String,
-        isGemma4: Boolean = false
+        isGemma4: Boolean = false,
+        skills: List<Skill> = emptyList()
     ): String {
-        val toolsJson = collectEnabledToolsJson(context)
+        val toolsJson = collectEnabledToolsJson(context, skills)
         if (toolsJson.isBlank()) {
             Log.d(TAG, "appendForLiteRt: no builtin schema and no MCP tool - skipping")
             return systemPrompt
@@ -218,7 +228,8 @@ object GgufToolPromptBuilder {
             Log.i(TAG, "appendForLiteRt: injected generic <tool_call> block")
             buildGenericToolBlock(toolsJson)
         }
-        return if (systemPrompt.isBlank()) toolBlock.trim() else systemPrompt + toolBlock
+        val withTools = if (systemPrompt.isBlank()) toolBlock.trim() else systemPrompt + toolBlock
+        return if (skills.isEmpty()) withTools else "$withTools\n\n${SkillPromptSpec.catalog(skills)}"
     }
 
     /**

@@ -48,5 +48,9 @@ data class PresetEntity(
      * `[]` (デフォルト) は MCP を使わないことを意味する。
      */
     @ColumnInfo(name = "mcp_server_ids")
-    val mcpServerIds: String = "[]"
+    val mcpServerIds: String = "[]",
+    @ColumnInfo(name = "skills_enabled")
+    val skillsEnabled: Boolean = false,
+    @ColumnInfo(name = "hidden_skill_names")
+    val hiddenSkillNames: String = "[]"
 )

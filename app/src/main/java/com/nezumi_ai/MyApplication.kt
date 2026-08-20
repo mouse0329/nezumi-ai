@@ -138,6 +138,11 @@ class MyApplication : Application() {
             }
         }
 
+        // Skills are scanned once per process start; conversations only use this cached result.
+        applicationScope.launch(Dispatchers.IO) {
+            com.nezumi_ai.data.skill.SkillRepository(this@MyApplication).scan(force = true)
+        }
+
         initializePresetDefaults()
     }
     
