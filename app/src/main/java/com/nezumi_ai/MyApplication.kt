@@ -40,6 +40,12 @@ class MyApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // 未捕捉例外ハンドラは最早期に登録しておく。
+        //   以降の初期化コードを含め、プロセス内のあらゆるクラッシュを
+        //   ファイルに保存し、次回起動時に MainActivity がモーダルで提示する。
+        com.nezumi_ai.utils.CrashReporter.install(this)
+
         PreferencesHelper.applyThemeMode(this)
 
         // クラウドモデル一覧の変更時に PresetModelCatalog のキャッシュを無効化する。

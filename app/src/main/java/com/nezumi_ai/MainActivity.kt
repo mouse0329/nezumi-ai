@@ -35,6 +35,7 @@ import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.databinding.ActivityMainBinding
 import com.nezumi_ai.presentation.ui.adapter.DrawerHistoryAdapter
 import com.nezumi_ai.presentation.ui.adapter.DrawerHistoryItem
+import com.nezumi_ai.utils.CrashLogDialog
 import com.nezumi_ai.utils.LocaleHelper
 import com.nezumi_ai.data.model.sessionDateLabel
 import com.nezumi_ai.R
@@ -131,6 +132,12 @@ class MainActivity : AppCompatActivity() {
                         } else {
                             ensureCurrentSessionExists()
                         }
+                        // 前回起動で未捕捉例外によるクラッシュがあれば内容をモーダルで提示する。
+                        //   CrashReporter が filesDir/crash_records/ に保存したログを読み出し、
+                        //   「閉じる」ボタン押下でクリアされる。
+                        //   ここでダイアログ表示の失敗がアプリ本体の初期化を阻害しないよう防御的に包む。
+                        runCatching { CrashLogDialog.showIfPending(this@MainActivity) }
+                            .onFailure { Log.w(TAG, "Failed to show crash log dialog", it) }
                     }
                 }.onFailure { t ->
                     Log.e(TAG, "Fatal error in DB initialization", t)

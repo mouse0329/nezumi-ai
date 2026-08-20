@@ -18,6 +18,17 @@
 
 それでは、AI チャットをお楽しみください！</string>
 
+    <!-- Crash Log Dialog -->
+    <string name="crash_dialog_title">前回クラッシュしました</string>
+    <string name="crash_dialog_subtitle">発生日時: %1$s</string>
+    <string name="crash_dialog_summary">%1$s: %2$s</string>
+    <string name="crash_dialog_button_close">閉じる</string>
+    <string name="crash_dialog_button_copy">コピー</string>
+    <string name="crash_dialog_button_share">共有</string>
+    <string name="crash_dialog_copied">クラッシュログをクリップボードにコピーしました</string>
+    <string name="crash_dialog_share_chooser">クラッシュログを共有</string>
+    <string name="crash_dialog_clipboard_label">Nezumi AI crash log</string>
+
     <!-- Empty State Messages -->
     <string name="no_sessions_title">チャットはまだありません</string>
     <string name="no_sessions_message">モデルがダウンロードされていることを確認してから「＋」ボタンをタップしてチャットを開始しましょう</string>
@@ -292,12 +303,6 @@ llama.cpp が利用する低レベルのテンソル / 計算バックエンド�
     <string name="license_mnn_desc">Apache License 2.0
 
 オンデバイス画像生成経路で使用するネイティブランタイムです。</string>
-
-    <string name="license_stable_diffusion_mnn_title">stable-diffusion.cpp-mnn</string>
-    <string name="license_stable_diffusion_mnn_url">https://github.com/xororz/stable-diffusion.cpp-mnn</string>
-    <string name="license_stable_diffusion_mnn_desc">上流プロジェクトと関連バックエンドのライセンスに従います。
-
-MNN ベース Stable Diffusion 統合の参照元プロジェクトです。</string>
 
     <string name="license_huggingface_title">Hugging Face Hub</string>
     <string name="license_huggingface_url">https://huggingface.co</string>

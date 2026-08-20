@@ -193,11 +193,6 @@ class LicenseFragment : Fragment() {
                 R.string.license_mnn_url
             ),
             LicenseItem(
-                R.string.license_stable_diffusion_mnn_title,
-                R.string.license_stable_diffusion_mnn_desc,
-                R.string.license_stable_diffusion_mnn_url
-            ),
-            LicenseItem(
                 R.string.license_huggingface_title,
                 R.string.license_huggingface_desc,
                 R.string.license_huggingface_url

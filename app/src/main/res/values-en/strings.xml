@@ -25,6 +25,17 @@
 
 Enjoy chatting with your AI!</string>
 
+    <!-- Crash Log Dialog -->
+    <string name="crash_dialog_title">The app crashed last time</string>
+    <string name="crash_dialog_subtitle">Occurred: %1$s</string>
+    <string name="crash_dialog_summary">%1$s: %2$s</string>
+    <string name="crash_dialog_button_close">Close</string>
+    <string name="crash_dialog_button_copy">Copy</string>
+    <string name="crash_dialog_button_share">Share</string>
+    <string name="crash_dialog_copied">Copied crash log to clipboard</string>
+    <string name="crash_dialog_share_chooser">Share crash log</string>
+    <string name="crash_dialog_clipboard_label">Nezumi AI crash log</string>
+
     <!-- Empty State Messages -->
     <string name="no_sessions_title">No chats yet</string>
     <string name="no_sessions_message">Make sure a model is downloaded, then tap the \"+\" button to start a chat.</string>
@@ -281,12 +292,6 @@ Unicode normalization / transliteration code embedded in the native layer.</stri
     <string name="license_mnn_desc">Apache License 2.0
 
 Native runtime used by the on-device image generation pipeline.</string>
-
-    <string name="license_stable_diffusion_mnn_title">stable-diffusion.cpp-mnn</string>
-    <string name="license_stable_diffusion_mnn_url">https://github.com/xororz/stable-diffusion.cpp-mnn</string>
-    <string name="license_stable_diffusion_mnn_desc">Subject to the licenses of the upstream project and related backends.
-
-Reference project for the MNN-based Stable Diffusion integration.</string>
 
     <string name="license_huggingface_title">Hugging Face Hub</string>
     <string name="license_huggingface_url">https://huggingface.co</string>
