@@ -228,15 +228,15 @@ object GgufToolPromptBuilder {
         appendLine()
         appendLine()
         appendLine("You can call tools to help the user.")
-        appendLine("Available tools are listed in <tools></tools>.")
+        appendLine("Available tools are listed in ${ToolCallTags.TOOLS_OPEN}${ToolCallTags.TOOLS_CLOSE}.")
         appendLine("When calling a tool, respond ONLY with:")
-        appendLine("<tool_call>")
+        appendLine(ToolCallTags.TOOL_CALL_OPEN)
         appendLine("""{"name":"<tool-name>","arguments":{...}}""")
-        appendLine("</tool_call>")
-        appendLine("<tools>")
+        appendLine(ToolCallTags.TOOL_CALL_CLOSE)
+        appendLine(ToolCallTags.TOOLS_OPEN)
         append(toolsJson)
         appendLine()
-        append("</tools>")
+        append(ToolCallTags.TOOLS_CLOSE)
     }
 
     /**
@@ -262,15 +262,15 @@ object GgufToolPromptBuilder {
         appendLine()
         appendLine()
         appendLine("You can call tools to help the user.")
-        appendLine("Available tools are listed in <tools></tools>.")
+        appendLine("Available tools are listed in ${ToolCallTags.TOOLS_OPEN}${ToolCallTags.TOOLS_CLOSE}.")
         appendLine("When calling a tool, respond ONLY with:")
-        appendLine("<|tool_call>call:<tool-name>{arg:<|\"|>value<|\"|>}<tool_call|>")
+        appendLine("${ToolCallTags.GEMMA4_TOOL_CALL_OPEN}call:<tool-name>{arg:<|\"|>value<|\"|>}${ToolCallTags.GEMMA4_TOOL_CALL_CLOSE}")
         appendLine("Do not use any other tool-call format.")
-        appendLine("Tool results will be returned to you wrapped in <tool_response></tool_response>.")
-        appendLine("<tools>")
+        appendLine("Tool results will be returned to you wrapped in ${ToolCallTags.TOOL_RESPONSE_OPEN}${ToolCallTags.TOOL_RESPONSE_CLOSE}.")
+        appendLine(ToolCallTags.TOOLS_OPEN)
         append(gemma4ToolsJson)
         appendLine()
-        append("</tools>")
+        append(ToolCallTags.TOOLS_CLOSE)
     }
 
     /**

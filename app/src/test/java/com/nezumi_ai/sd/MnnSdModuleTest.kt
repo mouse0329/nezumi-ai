@@ -8,15 +8,13 @@ import java.nio.file.Files
 
 class MnnSdModuleTest {
 
-    private val module = MnnSdModule()
-
     @Test
     fun resolveModelDir_findsUnetInSubdirectory() {
         val root = Files.createTempDirectory("mnn_sd_test").toFile()
         val nested = File(root, "pack/model").apply { mkdirs() }
         File(nested, "unet.mnn").writeText("stub")
 
-        assertEquals(nested.absolutePath, module.resolveModelDir(root)?.absolutePath)
+        assertEquals(nested.absolutePath, MnnSdModule.resolveModelDir(root)?.absolutePath)
 
         root.deleteRecursively()
     }
@@ -26,7 +24,7 @@ class MnnSdModuleTest {
         val root = Files.createTempDirectory("mnn_sd_xororz").toFile()
         File(root, "unet_asym_block32.mnn").writeText("stub")
 
-        assertEquals(root.absolutePath, module.resolveModelDir(root)?.absolutePath)
+        assertEquals(root.absolutePath, MnnSdModule.resolveModelDir(root)?.absolutePath)
 
         root.deleteRecursively()
     }
@@ -50,7 +48,7 @@ class MnnSdModuleTest {
     @Test
     fun resolveModelDir_returnsNullWhenMissing() {
         val root = Files.createTempDirectory("mnn_sd_missing").toFile()
-        assertNull(module.resolveModelDir(root))
+        assertNull(MnnSdModule.resolveModelDir(root))
         root.deleteRecursively()
     }
 }

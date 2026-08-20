@@ -85,9 +85,9 @@ object CloudToolCallParser {
         return buildString {
             appendLine()
             results.forEach { (call, result) ->
-                appendLine("<tool_response>")
+                appendLine(ToolCallTags.TOOL_RESPONSE_OPEN)
                 appendLine("""{"name":"${call.name}","content":${resultPayloadJson(result)}}""")
-                appendLine("</tool_response>")
+                appendLine(ToolCallTags.TOOL_RESPONSE_CLOSE)
             }
         }
     }

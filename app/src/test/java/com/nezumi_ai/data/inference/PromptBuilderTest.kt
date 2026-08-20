@@ -119,7 +119,7 @@ class PromptBuilderTest {
         )
         assertFalse(
             "Qwen 3.5 should not receive /think or /no_think soft-switch",
-            prompt.contains("/think") || prompt.contains("/no_think")
+            prompt.lines().any { it == "/think" || it == "/no_think" }
         )
     }
 

@@ -422,12 +422,8 @@ object PromptBuilder {
             prompt = lastUserContent,
             response = lastAssistantContent,
             // Bug fix(#46): thinking プレースホルダは ASSISTANT_TAG だけでなく、Gemma4/Qwen3.5+ の
-            // プレフィル方式でも ON になる必要がある。
-            thinking = enableThinking && (
-                style == ThinkingPromptStyle.ASSISTANT_TAG ||
-                style == ThinkingPromptStyle.GEMMA4_CHANNEL ||
-                style == ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL
-            ),
+            //   プレフィル方式でも ON になる必要がある。Spec に集約済み。
+            thinking = ThinkingPromptStyleSpec.thinkingTemplateFlag(style, enableThinking),
             history = history
         )
         return try {
@@ -467,49 +463,37 @@ object PromptBuilder {
         }
     }
 
-    private fun thinkingGlobalPrefix(style: ThinkingPromptStyle, enableThinking: Boolean): String {
-        // GEMMA_PREFIX のみグローバルプレフィックスを使う。
-        // GEMMA4_CHANNEL はシステムターン内に <|think|> を埋め込むため、グローバルには付けない。
-        return if (enableThinking && style == ThinkingPromptStyle.GEMMA_PREFIX) GEMMA_THINK_PREFIX else ""
-    }
+    /**
+     * プロンプト全体の先頭プレフィックス。Spec に一元化。
+     * GEMMA_PREFIX のみグローバルプレフィックスを使い、GEMMA4_CHANNEL はシステムターン内に
+     * `<|think|>` を埋め込むためグローバルには付けない（旧実装の挙動を維持）。
+     */
+    private fun thinkingGlobalPrefix(style: ThinkingPromptStyle, enableThinking: Boolean): String =
+        ThinkingPromptStyleSpec.globalPrefix(style, enableThinking)
 
     /**
-     * assistant 開始タグの直後に挿入すべきプレフィル文字列を返す。
-     * モデルごとに Thinking ON/OFF を正しく効かせるための中枢ロジック:
+     * assistant 開始タグの直後に挿入すべきプレフィル文字列。Spec に一元化。
      *
-     *   - QWEN_COMMAND + OFF          → 空 <think>\n\n</think>\n\n (Qwen3 公式 non-thinking jinja 相当)
-     *   - QWEN_COMMAND + ON           → prefill なし (ソフトスイッチとデフォルト thinking に任せる)
-     *
-     *   - QWEN_ASSISTANT_PREFILL + OFF → 空 <think>\n\n</think>\n\n (Qwen 3.5+ の公式 jinja 相当)
-     *     Bug fix(#46): llama.rn は公式 chat_template の enable_thinking を使わず自前で ChatML を
-     *     組み立てるため、この prefill を必ず入れないと Qwen3.5-2B が <think> を暴発させる。
-     *   - QWEN_ASSISTANT_PREFILL + ON  → `<think>\n` (thinking 発火を確実にする)
-     *
-     *   - ASSISTANT_TAG/GEMMA4_CHANNEL + ON  → `<think>\n`
-     *   - それ以外 → 何もしない
+     * モデルごとの分岐は [ThinkingPromptStyleSpec.assistantPrefill] を参照:
+     *   - QWEN_COMMAND + OFF          → 空 `<think>\n\n</think>\n\n` (Qwen3 公式 non-thinking jinja 相当)
+     *   - QWEN_COMMAND + ON           → prefill なし (ソフトスイッチに任せる)
+     *   - QWEN_ASSISTANT_PREFILL + OFF → 空 `<think>\n\n</think>\n\n`
+     *   - QWEN_ASSISTANT_PREFILL + ON  → `<think>\n`
+     *   - ASSISTANT_TAG / GEMMA4_CHANNEL + ON → `<think>\n`
+     *   - それ以外 → 空文字
      */
-    private fun assistantPrefillFor(style: ThinkingPromptStyle, enableThinking: Boolean): String {
-        return when {
-            // Qwen 系の OFF: 空 <think></think> を必ず先入れして chat_template の暴発を封じる。
-            !enableThinking && (style == ThinkingPromptStyle.QWEN_COMMAND ||
-                style == ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL) -> QWEN_EMPTY_THINK_PREFILL
-            // Thinking 発火側: <think>\n を assistant 直後に入れる。
-            enableThinking && (style == ThinkingPromptStyle.ASSISTANT_TAG ||
-                style == ThinkingPromptStyle.GEMMA4_CHANNEL ||
-                style == ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL) -> ASSISTANT_THINK_PREFILL
-            else -> ""
-        }
-    }
+    private fun assistantPrefillFor(style: ThinkingPromptStyle, enableThinking: Boolean): String =
+        ThinkingPromptStyleSpec.assistantPrefill(style, enableThinking)
 
     private fun decorateHistoryForThinkingStyle(
         history: List<PromptTemplateEngine.HistoryMessage>,
         style: ThinkingPromptStyle,
         enableThinking: Boolean
     ): List<PromptTemplateEngine.HistoryMessage> {
-        if (style != ThinkingPromptStyle.QWEN_COMMAND) return history
+        if (!ThinkingPromptStyleSpec.usesQwenSoftSwitch(style)) return history
         val lastUserIndex = history.indexOfLast { it.role == "user" && it.content.isNotBlank() }
         if (lastUserIndex < 0) return history
-        val directive = if (enableThinking) QWEN_THINK_COMMAND else QWEN_NO_THINK_COMMAND
+        val directive = ThinkingPromptStyleSpec.qwenSoftSwitchDirective(enableThinking)
         return history.mapIndexed { index, msg ->
             if (index == lastUserIndex) msg.copy(content = appendDirectiveOnce(msg.content, directive)) else msg
         }
@@ -538,11 +522,12 @@ object PromptBuilder {
         val hasPrelude = systemPrompt.isNotEmpty() || !compressedSummary.isNullOrBlank()
         // Gemma4: Google 公式テンプレ仕様に従い、thinking ON 時はシステムターンの先頭に `<|think|>` を埋め込む。
         // システムプロンプトが空の場合でも、Gemma4 では thinking ON のときだけ `<|think|>` 専用システムターンを生成する。
-        val isGemma4Channel = style == ThinkingPromptStyle.GEMMA4_CHANNEL
-        if (hasPrelude || (isGemma4Channel && enableThinking)) {
+        val injectGemma4SystemThink =
+            ThinkingPromptStyleSpec.injectsGemma4SystemThinkTrigger(style, enableThinking)
+        if (hasPrelude || injectGemma4SystemThink) {
             sb.append("<start_of_turn>user\n")
-            if (isGemma4Channel && enableThinking) {
-                sb.append("<|think|>")
+            if (injectGemma4SystemThink) {
+                sb.append(ToolCallTags.GEMMA_THINK_TRIGGER)
                 if (systemPrompt.isNotEmpty() || !compressedSummary.isNullOrBlank()) sb.append('\n')
             }
             if (systemPrompt.isNotEmpty()) sb.append(systemPrompt)
@@ -552,19 +537,21 @@ object PromptBuilder {
             }
             sb.append('\n').append("<end_of_turn>\n")
         }
+        val usesQwenSoftSwitch = ThinkingPromptStyleSpec.usesQwenSoftSwitch(style)
+        val qwenDirective = ThinkingPromptStyleSpec.qwenSoftSwitchDirective(enableThinking)
         for (index in messages.indices) {
             val msg = messages[index]
             var content = sanitizeMessageContent(msg)
             if (content.isBlank()) continue
-            if (style == ThinkingPromptStyle.QWEN_COMMAND && index == lastUserMessage) {
-                content = appendDirectiveOnce(content, if (enableThinking) QWEN_THINK_COMMAND else QWEN_NO_THINK_COMMAND)
+            if (usesQwenSoftSwitch && index == lastUserMessage) {
+                content = appendDirectiveOnce(content, qwenDirective)
             }
             val role = if (msg.role == "assistant") "model" else "user"
             sb.append("<start_of_turn>").append(role).append('\n')
                 .append(content).append('\n').append("<end_of_turn>\n")
         }
         sb.append("<start_of_turn>model\n")
- // Bug fix: assistant 側プレフィルを assistantPrefillFor() で一元化。
+        // Bug fix: assistant 側プレフィルを Spec 経由で一元化。
         //   Qwen OFF 時に「空 <think>\n\n</think>\n\n」をプレフィルして thinking を抑止する。
         sb.append(assistantPrefillFor(style, enableThinking))
         return sb.toString()
@@ -591,29 +578,32 @@ object PromptBuilder {
         }
         // Gemma4 が ChatML テンプレ経由（ユーザーが手動で chatml 選択した場合等）で来た場合も
         // システムターンに <|think|> を埋め込んで thinking を発火させる。
-        val isGemma4Channel = style == ThinkingPromptStyle.GEMMA4_CHANNEL
-        if (systemContent.isNotEmpty() || (isGemma4Channel && enableThinking)) {
+        val injectGemma4SystemThink =
+            ThinkingPromptStyleSpec.injectsGemma4SystemThinkTrigger(style, enableThinking)
+        if (systemContent.isNotEmpty() || injectGemma4SystemThink) {
             sb.append("<|im_start|>system\n")
-            if (isGemma4Channel && enableThinking) {
-                sb.append("<|think|>")
+            if (injectGemma4SystemThink) {
+                sb.append(ToolCallTags.GEMMA_THINK_TRIGGER)
                 if (systemContent.isNotEmpty()) sb.append('\n')
             }
             if (systemContent.isNotEmpty()) sb.append(systemContent)
             sb.append("\n<|im_end|>\n")
         }
+        val usesQwenSoftSwitch = ThinkingPromptStyleSpec.usesQwenSoftSwitch(style)
+        val qwenDirective = ThinkingPromptStyleSpec.qwenSoftSwitchDirective(enableThinking)
         for (index in messages.indices) {
             val msg = messages[index]
             var content = sanitizeMessageContent(msg)
             if (content.isBlank()) continue
-            if (style == ThinkingPromptStyle.QWEN_COMMAND && index == lastUserMessage) {
-                content = appendDirectiveOnce(content, if (enableThinking) QWEN_THINK_COMMAND else QWEN_NO_THINK_COMMAND)
+            if (usesQwenSoftSwitch && index == lastUserMessage) {
+                content = appendDirectiveOnce(content, qwenDirective)
             }
             val role = if (msg.role == "assistant") "assistant" else "user"
             sb.append("<|im_start|>").append(role).append('\n')
                 .append(content).append("\n<|im_end|>\n")
         }
         sb.append("<|im_start|>assistant\n")
- // Bug fix: Qwen OFF 時の「空 <think></think>」も含めてスタイル別に適用。
+        // Bug fix: Qwen OFF 時の「空 <think></think>」も含めて Spec 経由で適用。
         sb.append(assistantPrefillFor(style, enableThinking))
         return sb.toString()
     }

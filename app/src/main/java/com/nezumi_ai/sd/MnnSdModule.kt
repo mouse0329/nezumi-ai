@@ -50,6 +50,8 @@ class MnnSdModule(private val context: Context) {
                 MnnSdNative.BACKEND_OPENCL
             }
         }
+
+        internal fun resolveModelDir(dir: File): File? = SdModelLayout.findModelDir(dir)
     }
 
     private var handle: Long = 0L
@@ -488,5 +490,4 @@ class MnnSdModule(private val context: Context) {
         ProbeResult(layout.modelDir.absolutePath, logs, errors)
     }
 
-    internal fun resolveModelDir(dir: File): File? = SdModelLayout.findModelDir(dir)
 }

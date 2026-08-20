@@ -29,9 +29,9 @@ class LocalDreamModuleTest {
     }
 
     @Test
-    fun resolveEffectiveUseOpenCL_forcedOffOnQnnBackend() {
-        // QNN (GPU/NPU) バックエンド利用時は OpenCL パスに入らない。
-        assertFalse(LocalDreamModule.resolveEffectiveUseOpenCL(true, "qnn", 256))
+    fun resolveEffectiveUseOpenCL_qnnLegacyAliasUsesOpenClAtSafeSize() {
+        // QNN は廃止済みで、旧設定値は OpenCL 経路へ互換的にリダイレクトされる。
+        assertTrue(LocalDreamModule.resolveEffectiveUseOpenCL(true, "qnn", 256))
         assertFalse(LocalDreamModule.resolveEffectiveUseOpenCL(true, "qnn", 512))
     }
 }

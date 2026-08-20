@@ -30,7 +30,16 @@ import kotlinx.serialization.json.jsonPrimitive
 object GgufToolCallParser {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    // ---- 汎用 (Qwen 等) 形式のパターン ----
+    // タグ literal は [ToolCallTags] に集約してある。
+    // ここでは逆に regex の中に埋め込むパターンを作るためにエイリアスを取る。
+    private const val TOOL_CALL_OPEN = ToolCallTags.TOOL_CALL_OPEN
+    private const val TOOL_CALL_CLOSE = ToolCallTags.TOOL_CALL_CLOSE
+    private const val GEMMA4_TOOL_CALL_OPEN = ToolCallTags.GEMMA4_TOOL_CALL_OPEN
+    private const val GEMMA4_TOOL_CALL_CLOSE = ToolCallTags.GEMMA4_TOOL_CALL_CLOSE
+    private const val TOOL_RESPONSE_OPEN = ToolCallTags.TOOL_RESPONSE_OPEN
+    private const val TOOL_RESPONSE_CLOSE = ToolCallTags.TOOL_RESPONSE_CLOSE
+
+    // ---- 汎用 (Qwen / Hermes-Pro / DeepSeek-R1 tool 等) 形式のパターン ----
     private val toolCallTagPattern = Regex(
         "<tool_call>\\s*(.+?)\\s*</tool_call>",
         setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
@@ -470,9 +479,9 @@ object GgufToolCallParser {
         return buildString {
             appendLine()
             results.forEach { (call, result) ->
-                appendLine("<tool_response>")
+                appendLine(TOOL_RESPONSE_OPEN)
                 appendLine("""{"name":"${call.name}","content":${resultPayloadJson(result)}}""")
-                appendLine("</tool_response>")
+                appendLine(TOOL_RESPONSE_CLOSE)
             }
         }
     }
@@ -482,7 +491,8 @@ object GgufToolCallParser {
      * 呼び出し元 (GgufInferenceEngine) が本文末尾に append して、以降の履歴/プロンプトの
      * タグ整合を保つのに使う。
      */
-    fun closingTagFor(isGemma4: Boolean): String = if (isGemma4) "<tool_call|>" else "</tool_call>"
+    fun closingTagFor(isGemma4: Boolean): String =
+        if (isGemma4) GEMMA4_TOOL_CALL_CLOSE else TOOL_CALL_CLOSE
 
     /**
      * トークン切れした未完タグ用の実行失敗 [ToolResultCard] を合成する。
@@ -516,13 +526,13 @@ object GgufToolCallParser {
         val escapedName = name.replace("\"", "\\\"")
         return buildString {
             appendLine()
-            appendLine("<tool_response>")
+            appendLine(TOOL_RESPONSE_OPEN)
             appendLine(
                 """{"name":"$escapedName","content":{"success":false,"error":"truncated",""" +
                     """"message":"Tool call was cut off before completion (token budget exhausted). """ +
                     """Please retry with a shorter arguments payload."}}"""
             )
-            appendLine("</tool_response>")
+            appendLine(TOOL_RESPONSE_CLOSE)
         }
     }
 

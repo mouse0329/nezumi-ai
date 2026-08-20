@@ -11,50 +11,14 @@ data class Gemma4ThinkingParseResult(
 
 object Gemma4ThinkingParser {
 
-    private const val THINKING_START = "<|channel>"
-    private const val THINKING_END = "<channel|>"
-    private const val THOUGHT_LABEL = "thought\n"
+    // タグ literal は [ToolCallTags] に集約済み。ここではエイリアスだけを持つ。
+    private const val THINKING_START = ToolCallTags.CHANNEL_OPEN
+    private const val THINKING_END = ToolCallTags.CHANNEL_CLOSE
+    private const val THOUGHT_LABEL = ToolCallTags.THOUGHT_LABEL
 
     // llama.cpp (GGUF) 系のシンキングタグ
-    private const val THINK_START = "<think>"
-    private const val THINK_END = "</think>"
-
-    /** モデルが回答末尾〜文中に連打することがある（旧 cleanAnswer は末尾1回しか剥がさなかった） */
-    private val STRIP_TOKEN_SEQUENCES = listOf(
-        "<end_of_turn>",
-        "<turn|>",
-        "<eos>",
-        "<|eos|>",
-        "<|eot_id|>",
-        "<|think|>",            // Gemma4 の thinking トリガが可視出力に漏れた場合の防護
-        "<think>",
-        "</think>",
-        "<tool_call>",
-        "</tool_call>",
-        // Gemma 4 Google 公式仕様の tool-call タグ。汎用 <tool_call> と非対称 (`<|tool_call>` / `<tool_call|>`)。
-        "<|tool_call>",
-        "<tool_call|>",
-        "<tool_result>",
-        "</tool_result>",
-        "<tools>",
-        "</tools>",
-        "<tool_response>",
-        "</tool_response>"
-    )
-
-    /**
-     * インライン tool-call カード表示用に、tool-call/tool-response タグは保持したい経路がある。
-     * その場合に限り STRIP_TOKEN_SEQUENCES / removeToolTagSegments から除外するタグの集合。
-     * Gemma 4 の `<|tool_call>` / `<tool_call|>` もここに含め、`preserveToolCallTags=true` のときは保持する。
-     */
-    private val TOOL_CALL_TAG_TOKENS = setOf(
-        "<tool_call>",
-        "</tool_call>",
-        "<|tool_call>",
-        "<tool_call|>",
-        "<tool_response>",
-        "</tool_response>"
-    )
+    private const val THINK_START = ToolCallTags.THINK_OPEN
+    private const val THINK_END = ToolCallTags.THINK_CLOSE
 
     /** llama.cpp の Gemma4 F16 バグで flood する <unusedNN> を一括除去するためのパターン。 */
     private val UNUSED_TOKEN_REGEX: Regex = Regex("<unused\\d+>")
@@ -74,45 +38,12 @@ object Gemma4ThinkingParser {
         if (raw.isEmpty()) return Gemma4ThinkingParseResult(null, "")
 
         // GGUF (<think>...</think>) 形式を優先チェック
-        if (THINK_END in raw) {
-            val parts = raw.split(THINK_END, limit = 2)
-            val thinkingRaw = parts[0].removePrefix(THINK_START).trim()
-            val (thinking, remainder) = splitThinkingBySpecialToken(thinkingRaw)
-            val answer = sanitizeVisibleText((remainder + (parts.getOrNull(1) ?: "")).trim(), preserveToolCallTags)
-            return Gemma4ThinkingParseResult(
-                thinking = thinking.ifBlank { null },
-                answer = answer
-            )
-        }
-        if (raw.startsWith(THINK_START)) {
-            val thinkingRaw = raw.removePrefix(THINK_START).trim()
-            val (thinking, remainder) = splitThinkingBySpecialToken(thinkingRaw)
-            val answer = sanitizeVisibleText(remainder, preserveToolCallTags)
-            return Gemma4ThinkingParseResult(
-                thinking = thinking.ifBlank { null },
-                answer = answer
-            )
-        }
+        splitAtThinkTags(raw, streaming = false, preserveToolCallTags)?.let { return it }
 
         val deduped = dedupeDoubledFullText(raw)
 
-        if (THINKING_END in deduped) {
-            val parts = deduped.split(THINKING_END, limit = 2)
-            val thinkingBlock = parts[0]
-            val answerPart = if (parts.size > 1) sanitizeVisibleText(parts[1], preserveToolCallTags) else ""
-
-            var thinking = if (THINKING_START in thinkingBlock) {
-                thinkingBlock.substringAfter(THINKING_START, "")
-            } else {
-                thinkingBlock
-            }
-            thinking = sanitizeVisibleText(stripThoughtLabel(thinking.trim()).trim())
-            val (finalThinking, remainder) = splitThinkingBySpecialToken(thinking)
-            return Gemma4ThinkingParseResult(
-                thinking = finalThinking.ifBlank { null },
-                answer = sanitizeVisibleText((remainder + answerPart).trim(), preserveToolCallTags)
-            )
-        }
+        // Gemma 4 (<|channel>thought ... <channel|>) 形式
+        splitAtChannelTags(deduped, streaming = false, preserveToolCallTags)?.let { return it }
 
         var answer = stripThoughtLabel(deduped)
         answer = sanitizeVisibleText(answer, preserveToolCallTags)
@@ -137,54 +68,10 @@ object Gemma4ThinkingParser {
         if (rawInput.isEmpty()) return Gemma4ThinkingParseResult(null, "")
 
         // GGUF (<think>...</think>) 形式を優先チェック
-        if (THINK_END in rawInput) {
-            val idx = rawInput.indexOf(THINK_END)
-            val thinking = rawInput.substring(0, idx).removePrefix(THINK_START).trim()
-            val answer = sanitizeVisibleText(rawInput.substring(idx + THINK_END.length), preserveToolCallTags)
-            return Gemma4ThinkingParseResult(
-                thinking = thinking.ifBlank { null },
-                answer = answer
-            )
-        }
-        if (rawInput.startsWith(THINK_START)) {
-            val thinking = rawInput.removePrefix(THINK_START).trim()
-            return Gemma4ThinkingParseResult(
-                thinking = thinking.ifBlank { null },
-                answer = ""
-            )
-        }
+        splitAtThinkTags(rawInput, streaming = true, preserveToolCallTags)?.let { return it }
 
-        if (THINKING_END in rawInput) {
-            val idx = rawInput.indexOf(THINKING_END)
-            val thinkingBlock = rawInput.substring(0, idx)
-            val afterEnd = rawInput.substring(idx + THINKING_END.length)
-            var thinking = if (THINKING_START in thinkingBlock) {
-                thinkingBlock.substringAfter(THINKING_START, "")
-            } else {
-                thinkingBlock
-            }
-            thinking = stripThoughtLabelStreaming(thinking) ?: ""
-            val (finalThinking, remainder) = splitThinkingBySpecialToken(thinking)
-            return Gemma4ThinkingParseResult(
-                thinking = sanitizeVisibleText(finalThinking).ifBlank { null },
-                answer = sanitizeVisibleText((remainder + afterEnd).trim(), preserveToolCallTags)
-            )
-        }
-
-        val startIdx = rawInput.indexOf(THINKING_START)
-        if (startIdx >= 0) {
-            val afterChannel = rawInput.substring(startIdx + THINKING_START.length)
-            val thinking = stripThoughtLabelStreaming(afterChannel)
-            return if (thinking == null) {
-                Gemma4ThinkingParseResult(thinking = null, answer = "")
-            } else {
-                val (finalThinking, remainder) = splitThinkingBySpecialToken(thinking)
-                Gemma4ThinkingParseResult(
-                    thinking = sanitizeVisibleText(finalThinking).ifBlank { null },
-                    answer = sanitizeVisibleText(remainder, preserveToolCallTags)
-                )
-            }
-        }
+        // Gemma 4 (<|channel>thought ... <channel|>) 形式
+        splitAtChannelTags(rawInput, streaming = true, preserveToolCallTags)?.let { return it }
 
         val visible = sanitizeVisibleText(stripThoughtLabel(rawInput), preserveToolCallTags)
         return if (treatUnmarkedInputAsThinking) {
@@ -192,6 +79,105 @@ object Gemma4ThinkingParser {
         } else {
             Gemma4ThinkingParseResult(null, visible)
         }
+    }
+
+    /**
+     * `<think>...</think>` 形式 (GGUF / Qwen 3 / DeepSeek-R1 / QwQ 共通) のスプリット。
+     *
+     * @return タグを検出して回答/思考に分割できた場合の結果。タグが無い場合は null。
+     * @param streaming true のとき、開きタグしか無い状態でも thinking 側を確定して返す (streaming 挙動)。
+     *   false のとき (parse 経路) は末尾から `</think>` を探し、開きタグは prefix として剥がすだけ。
+     */
+    private fun splitAtThinkTags(
+        raw: String,
+        streaming: Boolean,
+        preserveToolCallTags: Boolean
+    ): Gemma4ThinkingParseResult? {
+        val trimmed = if (streaming) raw else raw.trim()
+        if (THINK_END in trimmed) {
+            return if (streaming) {
+                val idx = trimmed.indexOf(THINK_END)
+                val thinking = trimmed.substring(0, idx).removePrefix(THINK_START).trim()
+                val answer = sanitizeVisibleText(
+                    trimmed.substring(idx + THINK_END.length),
+                    preserveToolCallTags
+                )
+                Gemma4ThinkingParseResult(thinking.ifBlank { null }, answer)
+            } else {
+                val parts = trimmed.split(THINK_END, limit = 2)
+                val thinkingRaw = parts[0].removePrefix(THINK_START).trim()
+                val (thinking, remainder) = splitThinkingBySpecialToken(thinkingRaw)
+                val answer = sanitizeVisibleText(
+                    (remainder + (parts.getOrNull(1) ?: "")).trim(),
+                    preserveToolCallTags
+                )
+                Gemma4ThinkingParseResult(thinking.ifBlank { null }, answer)
+            }
+        }
+        if (trimmed.startsWith(THINK_START)) {
+            val body = trimmed.removePrefix(THINK_START).trim()
+            return if (streaming) {
+                Gemma4ThinkingParseResult(body.ifBlank { null }, "")
+            } else {
+                val (thinking, remainder) = splitThinkingBySpecialToken(body)
+                Gemma4ThinkingParseResult(
+                    thinking = thinking.ifBlank { null },
+                    answer = sanitizeVisibleText(remainder, preserveToolCallTags)
+                )
+            }
+        }
+        return null
+    }
+
+    /**
+     * `<|channel>thought\n...<channel|>` 形式 (Gemma 4 公式) のスプリット。
+     *
+     * @return タグを検出できた場合の結果。タグが無い場合は null。
+     * @param streaming true のとき、開きタグ (`<|channel>`) だけで終端タグが未到達でも
+     *   `thought\n` プレフィックスを検出できる限り thinking 側を返す。
+     */
+    private fun splitAtChannelTags(
+        raw: String,
+        streaming: Boolean,
+        preserveToolCallTags: Boolean
+    ): Gemma4ThinkingParseResult? {
+        if (THINKING_END in raw) {
+            val idx = raw.indexOf(THINKING_END)
+            val thinkingBlock = raw.substring(0, idx)
+            val afterEnd = raw.substring(idx + THINKING_END.length)
+            var thinking = if (THINKING_START in thinkingBlock) {
+                thinkingBlock.substringAfter(THINKING_START, "")
+            } else {
+                thinkingBlock
+            }
+            thinking = if (streaming) {
+                stripThoughtLabelStreaming(thinking) ?: ""
+            } else {
+                sanitizeVisibleText(stripThoughtLabel(thinking.trim()).trim())
+            }
+            val (finalThinking, remainder) = splitThinkingBySpecialToken(thinking)
+            return Gemma4ThinkingParseResult(
+                thinking = sanitizeVisibleText(finalThinking).ifBlank { null },
+                answer = sanitizeVisibleText((remainder + afterEnd).trim(), preserveToolCallTags)
+            )
+        }
+        if (streaming) {
+            val startIdx = raw.indexOf(THINKING_START)
+            if (startIdx >= 0) {
+                val afterChannel = raw.substring(startIdx + THINKING_START.length)
+                val thinking = stripThoughtLabelStreaming(afterChannel)
+                return if (thinking == null) {
+                    Gemma4ThinkingParseResult(thinking = null, answer = "")
+                } else {
+                    val (finalThinking, remainder) = splitThinkingBySpecialToken(thinking)
+                    Gemma4ThinkingParseResult(
+                        thinking = sanitizeVisibleText(finalThinking).ifBlank { null },
+                        answer = sanitizeVisibleText(remainder, preserveToolCallTags)
+                    )
+                }
+            }
+        }
+        return null
     }
 
     private fun dedupeDoubledFullText(text: String): String {
@@ -211,23 +197,7 @@ object Gemma4ThinkingParser {
     }
 
     private fun splitThinkingBySpecialToken(thinking: String): Pair<String, String> {
-        val splitIndex = listOf(
-            "```",
-            "`",
-            "{",
-            "}",
-            "<tool_call>",
-            "</tool_call>",
-            // Gemma 4 系の非対称タグでも thinking を確実に切る。
-            "<|tool_call>",
-            "<tool_call|>",
-            "<tool_result>",
-            "</tool_result>",
-            "<tools>",
-            "</tools>",
-            "<tool_response>",
-            "</tool_response>"
-        )
+        val splitIndex = ToolCallTags.THINKING_TERMINATOR_TOKENS
             .mapNotNull { token -> thinking.indexOf(token).takeIf { it >= 0 } }
             .minOrNull() ?: -1
         return if (splitIndex >= 0) {
@@ -332,9 +302,9 @@ object Gemma4ThinkingParser {
         t = stripLeadingControlPrefix(t, preserveToolCallTags)
         t = removeTrailingIncompleteTags(t, preserveToolCallTags)
         val stripSequences = if (preserveToolCallTags) {
-            STRIP_TOKEN_SEQUENCES.filter { it !in TOOL_CALL_TAG_TOKENS }
+            ToolCallTags.STRIP_TOKEN_SEQUENCES.filter { it !in ToolCallTags.TOOL_CALL_TAG_TOKENS }
         } else {
-            STRIP_TOKEN_SEQUENCES
+            ToolCallTags.STRIP_TOKEN_SEQUENCES
         }
         for (i in 0 until 64) {
             val before = t
@@ -395,8 +365,8 @@ object Gemma4ThinkingParser {
         // Gemma 4 の非対称タグ `<|tool_call>` に対応する未閉じ末尾 (`<tool_call|>` が未到達) を掃除する。
         // preserveToolCallTags=true のときはインライン tool-call カード描画のため触らない。
         if (!preserveToolCallTags) {
-            val open = "<|tool_call>"
-            val close = "<tool_call|>"
+            val open = ToolCallTags.GEMMA4_TOOL_CALL_OPEN
+            val close = ToolCallTags.GEMMA4_TOOL_CALL_CLOSE
             val start = t.lastIndexOf(open)
             if (start >= 0 && !t.substring(start).contains(close)) {
                 t = t.removeRange(start, t.length).trimEnd()
