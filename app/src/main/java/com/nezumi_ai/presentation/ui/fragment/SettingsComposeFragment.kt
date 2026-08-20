@@ -76,6 +76,7 @@ import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.data.skill.SkillRepository
 import com.nezumi_ai.data.skill.SkillScanResult
+import com.nezumi_ai.presentation.ui.component.SkillDirectoryDialog
 import com.nezumi_ai.presentation.viewmodel.ChatViewModelFactory
 
 import com.nezumi_ai.utils.LogcatRecorder
@@ -1394,7 +1395,8 @@ class SettingsComposeFragment : Fragment() {
         val context = LocalContext.current
         var creatingSkill by remember { mutableStateOf(false) }
         var editingSkill by remember { mutableStateOf<com.nezumi_ai.data.skill.Skill?>(null) }
-        var addingReferenceTo by remember { mutableStateOf<com.nezumi_ai.data.skill.Skill?>(null) }
+        var browsingSkill by remember { mutableStateOf<com.nezumi_ai.data.skill.Skill?>(null) }
+        var deletingSkill by remember { mutableStateOf<com.nezumi_ai.data.skill.Skill?>(null) }
         LaunchedEffect(result.invalidSkills) {
             if (result.invalidSkills.isNotEmpty()) {
                 skillDialogMessage = context.getString(R.string.skills_invalid_message, result.invalidSkills.joinToString("、"))
@@ -1415,8 +1417,9 @@ class SettingsComposeFragment : Fragment() {
                             Text(skill.description, style = MaterialTheme.typography.bodySmall)
                         }
                         if (skill.source == com.nezumi_ai.data.skill.Skill.Source.USER) {
+                            TextButton(onClick = { browsingSkill = skill }) { Text(stringResource(R.string.skills_browse_files)) }
                             TextButton(onClick = { editingSkill = skill }) { Text(stringResource(R.string.skills_edit)) }
-                            TextButton(onClick = { addingReferenceTo = skill }) { Text(stringResource(R.string.skills_add_markdown)) }
+                            TextButton(onClick = { deletingSkill = skill }) { Text(stringResource(R.string.skills_delete)) }
                         }
                     }
                 }
@@ -1463,17 +1466,44 @@ class SettingsComposeFragment : Fragment() {
                 }
             )
         }
-        addingReferenceTo?.let { skill ->
-            ReferenceEditorDialog(
-                skillName = skill.name,
-                onDismiss = { addingReferenceTo = null },
-                onSave = { path, content ->
-                    lifecycleScope.launch(Dispatchers.IO) {
-                        val outcome = writeSkillReference(skill.name, path, content)
-                        withContext(Dispatchers.Main) {
-                            skillDialogMessage = outcome.exceptionOrNull()?.message
-                            addingReferenceTo = null
+        browsingSkill?.let { skill ->
+            SkillDirectoryDialog(
+                skill = skill,
+                repository = SkillRepository(requireContext()),
+                onDismiss = { browsingSkill = null },
+                onSkillDeleted = {
+                    skillScanResult = SkillRepository(requireContext()).scan(force = true)
+                    skillDialogMessage = getString(R.string.skills_delete_success)
+                    browsingSkill = null
+                },
+                onFilesChanged = {
+                    skillScanResult = SkillRepository(requireContext()).scan(force = true)
+                }
+            )
+        }
+        deletingSkill?.let { skill ->
+            AlertDialog(
+                onDismissRequest = { deletingSkill = null },
+                title = { Text(stringResource(R.string.skills_delete_confirm_title)) },
+                text = { Text(stringResource(R.string.skills_delete_confirm_message, skill.name)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            val outcome = SkillRepository(requireContext()).deleteUserSkill(skill.name)
+                            withContext(Dispatchers.Main) {
+                                skillScanResult = SkillRepository(requireContext()).scan(force = true)
+                                skillDialogMessage = outcome.exceptionOrNull()?.message
+                                    ?: getString(R.string.skills_delete_success)
+                                deletingSkill = null
+                            }
                         }
+                    }) {
+                        Text(stringResource(R.string.skills_delete))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { deletingSkill = null }) {
+                        Text(stringResource(R.string.preset_cancel))
                     }
                 }
             )
@@ -1500,18 +1530,6 @@ class SettingsComposeFragment : Fragment() {
                 OutlinedTextField(body, { body = it }, label = { Text("SKILL.md") }, minLines = 8)
             }
         }, confirmButton = { TextButton(onClick = { onSave(name, description, body) }) { Text(stringResource(R.string.preset_save)) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.preset_cancel)) } })
-    }
-
-    @Composable
-    private fun ReferenceEditorDialog(skillName: String, onDismiss: () -> Unit, onSave: (String, String) -> Unit) {
-        var path by remember { mutableStateOf("guides/guide.md") }
-        var content by remember { mutableStateOf("") }
-        AlertDialog(onDismissRequest = onDismiss, title = { Text("$skillName: ${stringResource(R.string.skills_add_markdown)}") }, text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(path, { path = it }, label = { Text(stringResource(R.string.skills_markdown_path)) }, singleLine = true)
-                OutlinedTextField(content, { content = it }, label = { Text(stringResource(R.string.skills_markdown_content)) }, minLines = 8)
-            }
-        }, confirmButton = { TextButton(onClick = { onSave(path, content) }) { Text(stringResource(R.string.preset_save)) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.preset_cancel)) } })
     }
 
     private fun importSkillArchive(uri: Uri) {
@@ -1564,16 +1582,6 @@ class SettingsComposeFragment : Fragment() {
             ?: error("invalid_skill_path")
         require(directory.isDirectory) { "skill_not_found" }
         File(directory, "SKILL.md").writeText("---\nname: $name\ndescription: \"$description\"\n---\n\n$body")
-    }
-
-    private fun writeSkillReference(skillName: String, path: String, content: String): Result<Unit> = runCatching {
-        require(path.endsWith(".md", ignoreCase = true)) { "reference_must_be_markdown" }
-        val directory = com.nezumi_ai.data.skill.SkillPathResolver.resolveUserSkillDir(requireContext().filesDir, skillName)
-            ?: error("invalid_skill_path")
-        val file = com.nezumi_ai.data.skill.SkillPathResolver.resolveReference(directory, path)
-            ?: error("invalid_reference_path")
-        file.parentFile?.mkdirs()
-        file.writeText(content)
     }
 
     @Composable

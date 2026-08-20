@@ -27,6 +27,53 @@ class SkillRepository(private val context: Context) {
         }
     }
 
+    fun listUserSkillFiles(skillName: String): Result<List<SkillFileEntry>> = runCatching {
+        val directory = userSkillDirectory(skillName) ?: error("invalid_skill_path")
+        require(directory.isDirectory) { "skill_not_found" }
+        buildList {
+            if (File(directory, "SKILL.md").isFile) {
+                add(SkillFileEntry("SKILL.md", "SKILL.md", isDirectory = false))
+            }
+            val referencesRoot = File(directory, "references")
+            if (referencesRoot.isDirectory) {
+                collectSkillFiles(referencesRoot, directory, this)
+            }
+        }
+    }
+
+    fun readUserFile(skillName: String, relativePath: String): Result<String> = runCatching {
+        val file = resolveUserFile(userSkillDirectory(skillName) ?: error("invalid_skill_path"), relativePath)
+            ?: error("invalid_file_path")
+        require(file.isFile) { "skill_file_not_found" }
+        file.readText()
+    }
+
+    fun writeUserFile(skillName: String, relativePath: String, content: String): Result<Unit> = runCatching {
+        require(relativePath.endsWith(".md", ignoreCase = true)) { "file_must_be_markdown" }
+        val directory = userSkillDirectory(skillName) ?: error("invalid_skill_path")
+        val file = resolveUserFile(directory, relativePath) ?: error("invalid_file_path")
+        file.parentFile?.mkdirs()
+        file.writeText(content)
+        invalidateCache()
+    }
+
+    fun deleteUserFile(skillName: String, relativePath: String): Result<Unit> = runCatching {
+        require(relativePath != "SKILL.md") { "cannot_delete_skill_md" }
+        val directory = userSkillDirectory(skillName) ?: error("invalid_skill_path")
+        val file = resolveUserFile(directory, relativePath) ?: error("invalid_file_path")
+        require(file.isFile) { "skill_file_not_found" }
+        require(file.delete()) { "skill_file_delete_failed" }
+        file.parent?.let { parent -> cleanupEmptyDirectories(File(parent), directory) }
+        invalidateCache()
+    }
+
+    fun deleteUserSkill(skillName: String): Result<Unit> = runCatching {
+        val directory = userSkillDirectory(skillName) ?: error("invalid_skill_path")
+        require(directory.isDirectory) { "skill_not_found" }
+        require(directory.deleteRecursively()) { "skill_delete_failed" }
+        invalidateCache()
+    }
+
     private fun scanUser(invalid: MutableList<String>): List<Skill> {
         val root = File(context.filesDir, "skills")
         return root.listFiles().orEmpty().filter { it.isDirectory }.mapNotNull { directory ->
@@ -80,6 +127,48 @@ class SkillRepository(private val context: Context) {
             val content = reader.readText()
             if (reference == null) content.substringAfter("\n---\n", content) else content
         }
+    }
+
+    private fun userSkillDirectory(skillName: String): File? {
+        if (!SkillPathResolver.isValidName(skillName)) return null
+        return SkillPathResolver.resolveUserSkillDir(context.filesDir, skillName)
+    }
+
+    private fun resolveUserFile(skillDirectory: File, relativePath: String): File? = when {
+        relativePath == "SKILL.md" -> SkillPathResolver.resolveChild(skillDirectory, relativePath)
+        relativePath.startsWith("references/") -> {
+            val referenceRelative = relativePath.removePrefix("references/")
+            if (referenceRelative.isBlank() || referenceRelative.endsWith("/")) return null
+            SkillPathResolver.resolveReference(skillDirectory, referenceRelative)
+        }
+        else -> null
+    }
+
+    private fun collectSkillFiles(current: File, skillRoot: File, out: MutableList<SkillFileEntry>) {
+        current.listFiles()
+            ?.sortedWith(compareBy<File>({ !it.isDirectory }, { it.name.lowercase() }))
+            ?.forEach { file ->
+                val relative = file.relativeTo(skillRoot).invariantSeparatorsPath
+                if (file.isDirectory) {
+                    out += SkillFileEntry(relative, "${file.name}/", isDirectory = true)
+                    collectSkillFiles(file, skillRoot, out)
+                } else if (file.extension.equals("md", ignoreCase = true)) {
+                    out += SkillFileEntry(relative, file.name, isDirectory = false)
+                }
+            }
+    }
+
+    private fun cleanupEmptyDirectories(directory: File, skillRoot: File) {
+        var current = directory
+        while (current.path.startsWith(skillRoot.path) && current != skillRoot) {
+            if (!current.isDirectory || !current.list().isNullOrEmpty()) return
+            if (!current.delete()) return
+            current = current.parentFile ?: return
+        }
+    }
+
+    private fun invalidateCache() {
+        synchronized(cacheLock) { cachedResult = null }
     }
 
     companion object {
