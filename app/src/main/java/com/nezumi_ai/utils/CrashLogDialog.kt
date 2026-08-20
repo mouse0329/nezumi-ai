@@ -1,29 +1,57 @@
 package com.nezumi_ai.utils
 
-import android.app.AlertDialog
+import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
-import android.view.LayoutInflater
+import android.view.ViewGroup
 import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.nezumi_ai.R
-import com.nezumi_ai.databinding.DialogCrashLogBinding
+import com.nezumi_ai.presentation.ui.theme.NezumiComposeTheme
 
 /**
  * 前回起動時に発生したクラッシュのスタックトレースをユーザーに提示するモーダル。
  *
- * WelcomeDialog と同系統のパターン (ViewBinding + AlertDialog.Builder + シアン系ボタン色)
- * に揃えている。ボタンは 3 種類:
- *   - 閉じる (POSITIVE): モーダルを閉じ、蓄積されたクラッシュログを削除する
- *   - コピー (NEUTRAL) : スタックトレースをクリップボードへコピー
- *   - 共有   (NEGATIVE): ACTION_SEND で共有シートを開く (メール/Slack 等)
+ * 表示は Compose / Material3（[ErrorModalDialog] と同じ系統）。
+ * MainActivity がまだ XML ホストなので、外側だけ [Dialog] + [ComposeView] で載せる。
  *
- * 「閉じる」を押した時点でクラッシュログは削除される。
- *   → 再表示ループを防ぎつつ、コピー/共有だけしたい場合はダイアログを開いたまま
- *     操作すれば OK (Positive/Neutral/Negative のいずれのボタンも
- *     デフォルトではダイアログを dismiss するが、「閉じる」以外では clearAll を呼ばない)。
+ * ボタン:
+ *   - 閉じる: モーダルを閉じ、蓄積されたクラッシュログを削除する
+ *   - コピー: スタックトレースをクリップボードへコピー（ダイアログは開いたまま）
+ *   - 共有  : ACTION_SEND で共有シートを開く（ダイアログは開いたまま）
  */
 object CrashLogDialog {
 
@@ -38,50 +66,130 @@ object CrashLogDialog {
     }
 
     fun show(context: Context, log: CrashReporter.CrashLog) {
-        val binding = DialogCrashLogBinding.inflate(LayoutInflater.from(context))
-
-        binding.crashSubtitleText.text =
-            context.getString(R.string.crash_dialog_subtitle, log.formattedTimestamp())
-        binding.crashSummaryText.text = context.getString(
-            R.string.crash_dialog_summary,
-            log.exceptionClass.substringAfterLast('.'),
-            log.message
-        )
-        binding.crashStackText.text = buildDisplayText(log)
+        val dialog = Dialog(context)
+        dialog.setCanceledOnTouchOutside(false)
+        dialog.setCancelable(false)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.decorView?.setBackgroundColor(Color.TRANSPARENT)
 
         val shareBody = buildShareText(log)
+        val composeView = ComposeView(context).apply {
+            val lifecycleOwner = context as? LifecycleOwner
+            val savedStateOwner = context as? SavedStateRegistryOwner
+            val viewModelStoreOwner = context as? ViewModelStoreOwner
 
-        val dialog = AlertDialog.Builder(context)
-            .setView(binding.root)
-            .setPositiveButton(R.string.crash_dialog_button_close) { d, _ ->
-                // 「閉じる」で初めて蓄積ログを消す。次回起動時の再表示ループを防ぐ。
-                CrashReporter.clearAll(context)
-                d.dismiss()
-            }
-            .setNeutralButton(R.string.crash_dialog_button_copy) { _, _ ->
-                copyToClipboard(context, shareBody)
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.crash_dialog_copied),
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-            .setNegativeButton(R.string.crash_dialog_button_share) { _, _ ->
-                shareCrashLog(context, shareBody)
-            }
-            .create()
+            if (lifecycleOwner != null) setViewTreeLifecycleOwner(lifecycleOwner)
+            if (savedStateOwner != null) setViewTreeSavedStateRegistryOwner(savedStateOwner)
+            if (viewModelStoreOwner != null) setViewTreeViewModelStoreOwner(viewModelStoreOwner)
 
-        // 表示前にキャンセル動作を無効化して、誤タップで消えるのを防ぐ
-        //   (ボタンからのみ dismiss させる)。
-        dialog.setCanceledOnTouchOutside(false)
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+            setContent {
+                NezumiComposeTheme {
+                    CrashLogDialogContent(
+                        log = log,
+                        onClose = {
+                            CrashReporter.clearAll(context)
+                            dialog.dismiss()
+                        },
+                        onCopy = {
+                            copyToClipboard(context, shareBody)
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.crash_dialog_copied),
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        },
+                        onShare = { shareCrashLog(context, shareBody) }
+                    )
+                }
+            }
+        }
 
+        dialog.setContentView(
+            composeView,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
         dialog.show()
+    }
 
-        // WelcomeDialog と揃えてボタン色を水色に。
-        val cyanColor = Color.parseColor("#4DD0E1")
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setTextColor(cyanColor)
-        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setTextColor(cyanColor)
-        dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setTextColor(cyanColor)
+    @Composable
+    fun CrashLogDialogContent(
+        log: CrashReporter.CrashLog,
+        onClose: () -> Unit,
+        onCopy: () -> Unit,
+        onShare: () -> Unit
+    ) {
+        val shape = RoundedCornerShape(20.dp)
+        Column(
+            modifier = Modifier
+                .padding(16.dp)
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.surface)
+                .border(2.dp, MaterialTheme.colorScheme.error, shape)
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = stringResource(R.string.crash_dialog_title),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = stringResource(R.string.crash_dialog_subtitle, log.formattedTimestamp()),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = stringResource(
+                    R.string.crash_dialog_summary,
+                    log.exceptionClass.substringAfterLast('.'),
+                    log.message
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = buildDisplayText(log),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 320.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .verticalScroll(rememberScrollState())
+                    .padding(8.dp),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(
+                    onClick = onShare,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(stringResource(R.string.crash_dialog_button_share))
+                }
+                TextButton(
+                    onClick = onCopy,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(stringResource(R.string.crash_dialog_button_copy))
+                }
+                TextButton(
+                    onClick = onClose,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(stringResource(R.string.crash_dialog_button_close))
+                }
+            }
+        }
     }
 
     /** ダイアログ本体に表示するテキスト。スタック + logcat 末尾を可読な形で並べる。 */
