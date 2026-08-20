@@ -22,8 +22,8 @@ import com.nezumi_ai.databinding.DialogCrashLogBinding
  *
  * 「閉じる」を押した時点でクラッシュログは削除される。
  *   → 再表示ループを防ぎつつ、コピー/共有だけしたい場合はダイアログを開いたまま
- *     操作すれば OK (Builder の setPositive*/Neutral/Negative* のいずれも
- *     デフォルトではダイアログを dismiss するが、閉じる以外は clearAll しない)。
+ *     操作すれば OK (Positive/Neutral/Negative のいずれのボタンも
+ *     デフォルトではダイアログを dismiss するが、「閉じる」以外では clearAll を呼ばない)。
  */
 object CrashLogDialog {
 
