@@ -604,6 +604,12 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="skills_saved">Saved</string>
     <string name="skills_selected_path">Target: %1$s</string>
     <string name="skills_name_label">Name</string>
+    <string name="skills_close">Close</string>
+    <string name="skills_rename">Rename</string>
+    <string name="skills_rename_title">Rename</string>
+    <string name="skills_delete_folder">Delete folder</string>
+    <string name="skills_delete_folder_confirm_title">Delete folder</string>
+    <string name="skills_delete_folder_confirm_message">Delete folder \"%1$s\" and all of its contents? This cannot be undone.</string>
     <string name="settings_section_general">General</string>
     <string name="settings_section_inference">Inference</string>
     <string name="settings_section_image">Image</string>

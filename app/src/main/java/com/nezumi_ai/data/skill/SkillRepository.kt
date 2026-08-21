@@ -80,6 +80,28 @@ class SkillRepository(private val context: Context) {
         invalidateCache()
     }
 
+    /**
+     * Renames a file or directory inside a user skill, keeping it in the same
+     * parent folder. Returns the new relative path — directories keep their
+     * trailing "/" so the result matches [SkillFileEntry.relativePath].
+     */
+    fun renameUserEntry(skillName: String, relativePath: String, newName: String): Result<String> = runCatching {
+        val normalized = relativePath.trim().trim('/')
+        require(normalized.isNotEmpty()) { "invalid_file_path" }
+        require(normalized != "SKILL.md") { "cannot_rename_skill_md" }
+        val name = newName.trim().trim('/')
+        require(name.isNotEmpty() && !name.contains('/') && name != "." && name != "..") { "invalid_name" }
+        val directory = userSkillDirectory(skillName) ?: error("invalid_skill_path")
+        val source = SkillPathResolver.resolveWithinSkill(directory, normalized) ?: error("invalid_file_path")
+        require(source.exists()) { "skill_file_not_found" }
+        if (source.isFile) require(name.endsWith(".md", ignoreCase = true)) { "file_must_be_markdown" }
+        val target = source.parentFile?.resolve(name) ?: error("invalid_file_path")
+        require(!target.exists()) { "name_already_exists" }
+        require(source.renameTo(target)) { "rename_failed" }
+        invalidateCache()
+        target.relativeTo(directory).invariantSeparatorsPath + if (target.isDirectory) "/" else ""
+    }
+
     fun deleteUserSkill(skillName: String): Result<Unit> = runCatching {
         val directory = userSkillDirectory(skillName) ?: error("invalid_skill_path")
         require(directory.isDirectory) { "skill_not_found" }

@@ -3,25 +3,31 @@ package com.nezumi_ai.presentation.ui.component
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -38,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -45,6 +52,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -68,7 +76,7 @@ private const val ROW_HEIGHT_DP = 28
  * Explorer-style skill file manager.
  *
  * The tree root is the skill folder itself, rendered as a selectable node above
- * everything else. New file / new folder / delete all act on the current
+ * everything else. New file / new folder / rename / delete all act on the current
  * selection, so the user never has to type a path — only a name.
  */
 @Composable
@@ -92,6 +100,7 @@ fun SkillDirectoryDialog(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showNewFileDialog by remember { mutableStateOf(false) }
     var showNewFolderDialog by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
     val expanded = remember(skill.name) { mutableStateMapOf<String, Boolean>().apply { put(ROOT_PATH, true) } }
 
     fun reloadFiles() {
@@ -173,8 +182,13 @@ fun SkillDirectoryDialog(
 
     val isRootSelected = selectedPath == ROOT_PATH
     val isSkillMdSelected = selectedPath == "SKILL.md"
-    // Delete button is disabled for SKILL.md; for root it deletes the whole skill.
+    // Whether the current selection is a folder (root is handled separately).
+    val selectedIsDirectory = !isRootSelected &&
+        files.any { it.relativePath.trimEnd('/') == selectedPath.trimEnd('/') && it.isDirectory }
+    // Delete is disabled for SKILL.md; for root it deletes the whole skill.
     val deleteEnabled = !isSkillMdSelected
+    // Rename is disabled for root (that's the skill itself) and SKILL.md.
+    val renameEnabled = !isRootSelected && !isSkillMdSelected
     val visibleRows = remember(files, expanded.toMap()) { flattenTree(files, expanded) }
 
     Dialog(
@@ -187,7 +201,7 @@ fun SkillDirectoryDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .padding(start = 16.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -201,6 +215,7 @@ fun SkillDirectoryDialog(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.error,
                                     modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
                                         .background(MaterialTheme.colorScheme.errorContainer)
                                         .padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
@@ -218,8 +233,11 @@ fun SkillDirectoryDialog(
                             )
                         }
                     }
-                    TextButton(onClick = onDismiss) {
-                        Text(stringResource(R.string.preset_cancel))
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_close),
+                            contentDescription = stringResource(R.string.skills_close)
+                        )
                     }
                 }
 
@@ -233,27 +251,62 @@ fun SkillDirectoryDialog(
                         stringResource(R.string.skills_selected_path, displayParent),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontFamily = FontFamily.Monospace
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
                             .padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        TextButton(onClick = { showNewFileDialog = true }) {
+                        FilledTonalButton(
+                            onClick = { showNewFileDialog = true },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.markdown_24),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
                             Text(stringResource(R.string.skills_new_file))
                         }
-                        TextButton(onClick = { showNewFolderDialog = true }) {
+                        FilledTonalButton(
+                            onClick = { showNewFolderDialog = true },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.folder_24),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
                             Text(stringResource(R.string.skills_new_folder))
                         }
-                        TextButton(
+                        OutlinedButton(
+                            enabled = renameEnabled,
+                            onClick = { showRenameDialog = true },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text(stringResource(R.string.skills_rename))
+                        }
+                        OutlinedButton(
                             enabled = deleteEnabled,
-                            onClick = { showDeleteConfirm = true }
+                            onClick = { showDeleteConfirm = true },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            )
                         ) {
                             Text(
-                                if (isRootSelected) stringResource(R.string.skills_delete)
-                                else stringResource(R.string.skills_delete_file)
+                                when {
+                                    isRootSelected -> stringResource(R.string.skills_delete)
+                                    selectedIsDirectory -> stringResource(R.string.skills_delete_folder)
+                                    else -> stringResource(R.string.skills_delete_file)
+                                }
                             )
                         }
                     }
@@ -269,46 +322,51 @@ fun SkillDirectoryDialog(
                     )
                 } else {
                     Row(modifier = Modifier.weight(1f)) {
-                        LazyColumn(
+                        // Tree pane: scrolls both vertically and horizontally so deep or
+                        // long directory names never get clipped.
+                        Column(
                             modifier = Modifier
                                 .weight(0.42f)
                                 .fillMaxHeight()
-                                .padding(vertical = 4.dp),
-                            verticalArrangement = Arrangement.spacedBy(0.dp)
+                                .verticalScroll(rememberScrollState())
+                                .horizontalScroll(rememberScrollState())
+                                .padding(vertical = 4.dp)
                         ) {
                             // Skill root node — depth 0, always visible.
-                            item(key = "__root__") {
-                                SkillTreeRow(
-                                    label = skill.name,
-                                    isDirectory = true,
-                                    isRoot = true,
-                                    depth = 0,
-                                    isExpanded = expanded[ROOT_PATH] == true,
-                                    selected = isRootSelected,
-                                    lineFlags = LineFlags(hasParentLines = emptyList(), isLast = true),
-                                    onClick = {
-                                        selectedPath = ROOT_PATH
-                                    },
-                                    onToggle = {
-                                        expanded[ROOT_PATH] = expanded[ROOT_PATH] != true
-                                    }
-                                )
-                            }
+                            SkillTreeRow(
+                                label = skill.name,
+                                isDirectory = true,
+                                isRoot = true,
+                                depth = 0,
+                                isExpanded = expanded[ROOT_PATH] == true,
+                                selected = isRootSelected,
+                                lineFlags = LineFlags(hasParentLines = emptyList(), isLast = true),
+                                onClick = {
+                                    selectedPath = ROOT_PATH
+                                },
+                                onToggle = {
+                                    expanded[ROOT_PATH] = expanded[ROOT_PATH] != true
+                                }
+                            )
                             if (expanded[ROOT_PATH] == true) {
-                                items(visibleRows, key = { it.entry.relativePath }) { row ->
+                                visibleRows.forEach { row ->
                                     val path = row.entry.relativePath
+                                    val pathKey = path.trimEnd('/')
                                     SkillTreeRow(
                                         label = row.entry.displayName.trimEnd('/'),
                                         isDirectory = row.entry.isDirectory,
                                         isRoot = false,
                                         depth = row.depth,
-                                        isExpanded = expanded[path] == true,
+                                        isExpanded = expanded[pathKey] == true,
                                         selected = path == selectedPath,
                                         lineFlags = row.lineFlags,
                                         onClick = { selectedPath = path },
                                         onToggle = {
                                             if (row.entry.isDirectory) {
-                                                expanded[path] = expanded[path] != true
+                                                // Directory entries end with "/", but
+                                                // flattenTree() keys the expanded map by
+                                                // the trimmed path — keep them in sync.
+                                                expanded[pathKey] = expanded[pathKey] != true
                                             } else {
                                                 selectedPath = path
                                             }
@@ -316,13 +374,11 @@ fun SkillDirectoryDialog(
                                     )
                                 }
                                 if (visibleRows.isEmpty()) {
-                                    item {
-                                        Text(
-                                            stringResource(R.string.skills_directory_empty),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            modifier = Modifier.padding(start = (INDENT_DP + 8).dp, top = 6.dp, bottom = 6.dp)
-                                        )
-                                    }
+                                    Text(
+                                        stringResource(R.string.skills_directory_empty),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.padding(start = (INDENT_DP + 8).dp, top = 6.dp, bottom = 6.dp)
+                                    )
                                 }
                             }
                         }
@@ -355,6 +411,8 @@ fun SkillDirectoryDialog(
                                         fileEntry.relativePath,
                                         style = MaterialTheme.typography.labelMedium,
                                         fontFamily = FontFamily.Monospace,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier
                                             .weight(1f)
                                             .padding(bottom = 8.dp)
@@ -375,6 +433,7 @@ fun SkillDirectoryDialog(
                                     modifier = Modifier
                                         .weight(1f)
                                         .fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp),
                                     textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
                                 )
                             }
@@ -401,19 +460,27 @@ fun SkillDirectoryDialog(
     if (showDeleteConfirm) {
         val target = selectedPath
         val isRoot = target == ROOT_PATH
-        val displayTarget = if (isRoot) skill.name else target
+        val targetIsDirectory = !isRoot &&
+            files.any { it.relativePath.trimEnd('/') == target.trimEnd('/') && it.isDirectory }
+        val displayTarget = if (isRoot) skill.name else target.trimEnd('/')
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
             title = {
                 Text(
-                    if (isRoot) stringResource(R.string.skills_delete_confirm_title)
-                    else stringResource(R.string.skills_delete_file_confirm_title)
+                    when {
+                        isRoot -> stringResource(R.string.skills_delete_confirm_title)
+                        targetIsDirectory -> stringResource(R.string.skills_delete_folder_confirm_title)
+                        else -> stringResource(R.string.skills_delete_file_confirm_title)
+                    }
                 )
             },
             text = {
                 Text(
-                    if (isRoot) stringResource(R.string.skills_delete_confirm_message, skill.name)
-                    else stringResource(R.string.skills_delete_file_confirm_message, displayTarget)
+                    when {
+                        isRoot -> stringResource(R.string.skills_delete_confirm_message, skill.name)
+                        targetIsDirectory -> stringResource(R.string.skills_delete_folder_confirm_message, displayTarget)
+                        else -> stringResource(R.string.skills_delete_file_confirm_message, displayTarget)
+                    }
                 )
             },
             confirmButton = {
@@ -507,6 +574,40 @@ fun SkillDirectoryDialog(
             }
         )
     }
+
+    if (showRenameDialog && renameEnabled) {
+        val target = selectedPath
+        val currentName = target.trimEnd('/').substringAfterLast('/')
+        val trimmedTarget = target.trimEnd('/')
+        val parentIdx = trimmedTarget.lastIndexOf('/')
+        val renameParentDisplay = if (parentIdx < 0) "/" else "/${trimmedTarget.substring(0, parentIdx)}/"
+        SkillNameInputDialog(
+            titleRes = R.string.skills_rename_title,
+            labelRes = R.string.skills_name_label,
+            parentDisplay = renameParentDisplay,
+            hint = currentName,
+            initialName = currentName,
+            onDismiss = { showRenameDialog = false },
+            onConfirm = { rawName ->
+                val name = rawName.trim().trim('/')
+                if (name.isEmpty() || name == currentName) return@SkillNameInputDialog
+                // Keep the .md contract for files, mirroring the new-file flow.
+                val finalName = if (!selectedIsDirectory && !name.endsWith(".md", ignoreCase = true)) "$name.md" else name
+                val result = repository.renameUserEntry(skill.name, target, finalName)
+                result.onSuccess { newPath ->
+                    showRenameDialog = false
+                    if (selectedIsDirectory) {
+                        // Carry the expanded state over to the renamed key.
+                        expanded[newPath.trimEnd('/')] = expanded[trimmedTarget] == true
+                        expanded.remove(trimmedTarget)
+                    }
+                    reloadFiles()
+                    selectedPath = newPath
+                    onFilesChanged()
+                }.onFailure { statusMessage = it.message }
+            }
+        )
+    }
 }
 
 private enum class SaveState { Idle, Saving, Saved }
@@ -585,8 +686,9 @@ private fun SkillTreeRow(
     val lineColor = MaterialTheme.colorScheme.outlineVariant
     Row(
         modifier = Modifier
-            .fillMaxWidth()
+            .padding(horizontal = 4.dp)
             .height(ROW_HEIGHT_DP.dp)
+            .clip(RoundedCornerShape(8.dp))
             .background(background)
             .clickable(onClick = onClick),
         verticalAlignment = Alignment.CenterVertically
@@ -668,6 +770,7 @@ private fun SkillTreeRow(
             style = MaterialTheme.typography.bodySmall,
             fontFamily = if (isDirectory) FontFamily.Default else FontFamily.Monospace,
             fontWeight = if (selected || isRoot) FontWeight.Bold else FontWeight.Normal,
+            maxLines = 1,
             modifier = Modifier.padding(end = 8.dp)
         )
     }
@@ -679,10 +782,11 @@ private fun SkillNameInputDialog(
     labelRes: Int,
     parentDisplay: String,
     hint: String,
+    initialName: String = "",
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit
 ) {
-    var name by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf(initialName) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(titleRes)) },
