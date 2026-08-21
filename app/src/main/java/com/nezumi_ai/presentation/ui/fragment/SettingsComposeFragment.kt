@@ -172,7 +172,11 @@ class SettingsComposeFragment : Fragment() {
     private lateinit var nsfwDebugPickLauncher: ActivityResultLauncher<String>
     private lateinit var skillImportLauncher: ActivityResultLauncher<Array<String>>
     private var skillScanResult by mutableStateOf(SkillScanResult(emptyList(), emptyList()))
+    // エラーダイアログ用。追加/削除/リネームが失敗したときのメッセージを保持する。
     private var skillDialogMessage by mutableStateOf<String?>(null)
+    // 成功時に「エラー」タイトルのダイアログが出ていたバグ対策で、
+    // 成功トーストを別ステートで扱う。null 以外なら通知として表示する。
+    private var skillInfoMessage by mutableStateOf<String?>(null)
 
     // logcat 常時収集ビューア用の状態。
     //   LogcatRecorder がバックグラウンドでファイルに書き続けているログを
@@ -1396,6 +1400,7 @@ class SettingsComposeFragment : Fragment() {
         var creatingSkill by remember { mutableStateOf(false) }
         var browsingSkill by remember { mutableStateOf<com.nezumi_ai.data.skill.Skill?>(null) }
         var deletingSkill by remember { mutableStateOf<com.nezumi_ai.data.skill.Skill?>(null) }
+        var renamingSkill by remember { mutableStateOf<com.nezumi_ai.data.skill.Skill?>(null) }
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.skills_settings_title), fontWeight = FontWeight.Bold)
@@ -1408,7 +1413,9 @@ class SettingsComposeFragment : Fragment() {
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(skill.name)
+                                // 一覧では 16 文字を上限とし、超えたら末尾に "…" を付けて省略表示する。
+                                // 詳細画面 (SkillDirectoryDialog) やリネームダイアログではフル名を扱う。
+                                Text(truncateSkillName(skill.name))
                                 if (skill.invalid) {
                                     androidx.compose.foundation.layout.Spacer(Modifier.width(6.dp))
                                     Text(
@@ -1424,7 +1431,7 @@ class SettingsComposeFragment : Fragment() {
                             val subtitle = if (skill.invalid) skill.invalidReason.orEmpty() else skill.description
                             if (subtitle.isNotEmpty()) {
                                 Text(
-                                    subtitle,
+                                    truncateSkillName(subtitle),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (skill.invalid) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                                 )
@@ -1432,6 +1439,7 @@ class SettingsComposeFragment : Fragment() {
                         }
                         if (skill.source == com.nezumi_ai.data.skill.Skill.Source.USER) {
                             TextButton(onClick = { browsingSkill = skill }) { Text(stringResource(R.string.skills_browse_files)) }
+                            TextButton(onClick = { renamingSkill = skill }) { Text(stringResource(R.string.skills_rename)) }
                             TextButton(onClick = { deletingSkill = skill }) { Text(stringResource(R.string.skills_delete)) }
                         }
                     }
@@ -1474,6 +1482,23 @@ class SettingsComposeFragment : Fragment() {
                 }
             )
         }
+        renamingSkill?.let { skill ->
+            SkillRenameDialog(
+                currentName = skill.name,
+                onDismiss = { renamingSkill = null },
+                onRename = { newName ->
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        val repo = SkillRepository(requireContext())
+                        val outcome = repo.renameUserSkill(skill.name, newName)
+                        withContext(Dispatchers.Main) {
+                            skillScanResult = repo.scan(force = true)
+                            outcome.exceptionOrNull()?.let { skillDialogMessage = it.message }
+                            renamingSkill = null
+                        }
+                    }
+                }
+            )
+        }
         deletingSkill?.let { skill ->
             AlertDialog(
                 onDismissRequest = { deletingSkill = null },
@@ -1508,6 +1533,16 @@ class SettingsComposeFragment : Fragment() {
                 confirmButton = { TextButton(onClick = { skillDialogMessage = null }) { Text(stringResource(android.R.string.ok)) } }
             )
         }
+        skillInfoMessage?.let { message ->
+            // 成功通知。従来はこの経路でも "エラー" タイトルの AlertDialog が
+            // 出ていたので、専用ダイアログにタイトルを与えて意味を揃える。
+            AlertDialog(
+                onDismissRequest = { skillInfoMessage = null },
+                title = { Text(stringResource(R.string.skills_settings_title)) },
+                text = { Text(message) },
+                confirmButton = { TextButton(onClick = { skillInfoMessage = null }) { Text(stringResource(android.R.string.ok)) } }
+            )
+        }
     }
 
     @Composable
@@ -1536,6 +1571,54 @@ class SettingsComposeFragment : Fragment() {
                 TextButton(onClick = onDismiss) { Text(stringResource(R.string.preset_cancel)) }
             }
         )
+    }
+
+    /**
+     * ユーザースキルのフォルダ名 (= skill.name) を変更するダイアログ。
+     * SkillPathResolver.isValidName と同じパターン ([a-z0-9-]{1,64}) でバリデーションし、
+     * 現在の名前と同じ場合は確定ボタンを無効化する。
+     */
+    @Composable
+    private fun SkillRenameDialog(
+        currentName: String,
+        onDismiss: () -> Unit,
+        onRename: (String) -> Unit
+    ) {
+        var name by remember(currentName) { mutableStateOf(currentName) }
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text(stringResource(R.string.skills_rename_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text(stringResource(R.string.skills_name)) },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = com.nezumi_ai.data.skill.SkillPathResolver.isValidName(name) && name != currentName,
+                    onClick = { onRename(name) }
+                ) { Text(stringResource(R.string.preset_save)) }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.preset_cancel)) }
+            }
+        )
+    }
+
+    /**
+     * スキル一覧上で長い名前や説明が UI を崩さないよう、
+     * 16 文字を上限とし、超えた分は "…" で切り捨てて返す。
+     * (コードポイント単位。スキル名は ASCII のみなので実質文字と一致するが、
+     *  説明も同じ UI の一行に収めるため共通ヘルパーとして使う。)
+     */
+    private fun truncateSkillName(source: String): String {
+        val limit = 16
+        return if (source.length <= limit) source else source.take(limit) + "…"
     }
 
     private fun importSkillArchive(uri: Uri) {
@@ -1569,7 +1652,13 @@ class SettingsComposeFragment : Fragment() {
         temporaryRoot.deleteRecursively()
         skillScanResult = SkillRepository(context).scan(force = true)
         val error = copied.exceptionOrNull()
-        skillDialogMessage = if (error == null) context.getString(R.string.skills_import_success) else context.getString(R.string.skills_import_failed, error.message ?: "unknown")
+        // 成功時に「エラー」タイトルのダイアログが出ていた不具合を修正:
+        // 成功メッセージは skillInfoMessage 経由で情報通知として表示する。
+        if (error == null) {
+            skillInfoMessage = context.getString(R.string.skills_import_success)
+        } else {
+            skillDialogMessage = context.getString(R.string.skills_import_failed, error.message ?: "unknown")
+        }
     }
 
 

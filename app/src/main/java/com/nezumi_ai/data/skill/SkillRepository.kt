@@ -110,6 +110,46 @@ class SkillRepository(private val context: Context) {
     }
 
     /**
+     * Renames a user skill folder and rewrites its SKILL.md front-matter `name:`
+     * field so the folder name and declared name stay in sync (validate() rejects
+     * mismatched pairs). Built-in (asset) skills cannot be renamed.
+     */
+    fun renameUserSkill(oldName: String, newName: String): Result<Unit> = runCatching {
+        require(SkillPathResolver.isValidName(oldName)) { "invalid_skill_name" }
+        require(SkillPathResolver.isValidName(newName)) { "invalid_skill_name" }
+        if (oldName == newName) return@runCatching
+        val source = SkillPathResolver.resolveUserSkillDir(context.filesDir, oldName) ?: error("invalid_skill_path")
+        require(source.isDirectory) { "skill_not_found" }
+        val target = SkillPathResolver.resolveUserSkillDir(context.filesDir, newName) ?: error("invalid_skill_path")
+        require(!target.exists()) { "skill_already_exists" }
+        require(source.renameTo(target)) { "skill_rename_failed" }
+        // Keep front-matter name in sync with the new folder name so future scans
+        // do not flag this skill as invalid.
+        val skillMd = File(target, "SKILL.md")
+        if (skillMd.isFile) {
+            val original = skillMd.readText()
+            val rewritten = rewriteFrontMatterName(original, newName)
+            if (rewritten != original) skillMd.writeText(rewritten)
+        }
+        invalidateCache()
+    }
+
+    private fun rewriteFrontMatterName(text: String, newName: String): String {
+        if (!text.startsWith("---")) return text
+        val end = text.indexOf("\n---", startIndex = 3)
+        if (end < 0) return text
+        val header = text.substring(0, end)
+        val rest = text.substring(end)
+        val nameLine = Regex("(?m)^name:.*$")
+        val replaced = if (nameLine.containsMatchIn(header)) {
+            header.replaceFirst(nameLine, "name: $newName")
+        } else {
+            header.trimEnd() + "\nname: $newName"
+        }
+        return replaced + rest
+    }
+
+    /**
      * Creates an empty user skill on disk with a SKILL.md scaffold. Description is
      * intentionally optional at this stage — the user edits it from the file manager.
      */
