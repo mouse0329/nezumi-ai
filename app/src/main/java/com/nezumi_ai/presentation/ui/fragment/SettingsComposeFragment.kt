@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -1392,16 +1393,9 @@ class SettingsComposeFragment : Fragment() {
 
     @Composable
     private fun SkillManagementCard(result: SkillScanResult, onImport: () -> Unit) {
-        val context = LocalContext.current
         var creatingSkill by remember { mutableStateOf(false) }
-        var editingSkill by remember { mutableStateOf<com.nezumi_ai.data.skill.Skill?>(null) }
         var browsingSkill by remember { mutableStateOf<com.nezumi_ai.data.skill.Skill?>(null) }
         var deletingSkill by remember { mutableStateOf<com.nezumi_ai.data.skill.Skill?>(null) }
-        LaunchedEffect(result.invalidSkills) {
-            if (result.invalidSkills.isNotEmpty()) {
-                skillDialogMessage = context.getString(R.string.skills_invalid_message, result.invalidSkills.joinToString("、"))
-            }
-        }
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.skills_settings_title), fontWeight = FontWeight.Bold)
@@ -1413,12 +1407,31 @@ class SettingsComposeFragment : Fragment() {
                 result.skills.forEach { skill ->
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(skill.name)
-                            Text(skill.description, style = MaterialTheme.typography.bodySmall)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(skill.name)
+                                if (skill.invalid) {
+                                    androidx.compose.foundation.layout.Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        stringResource(R.string.skills_unavailable_label),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier
+                                            .background(MaterialTheme.colorScheme.errorContainer)
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                            val subtitle = if (skill.invalid) skill.invalidReason.orEmpty() else skill.description
+                            if (subtitle.isNotEmpty()) {
+                                Text(
+                                    subtitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (skill.invalid) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
                         }
                         if (skill.source == com.nezumi_ai.data.skill.Skill.Source.USER) {
                             TextButton(onClick = { browsingSkill = skill }) { Text(stringResource(R.string.skills_browse_files)) }
-                            TextButton(onClick = { editingSkill = skill }) { Text(stringResource(R.string.skills_edit)) }
                             TextButton(onClick = { deletingSkill = skill }) { Text(stringResource(R.string.skills_delete)) }
                         }
                     }
@@ -1427,40 +1440,21 @@ class SettingsComposeFragment : Fragment() {
             }
         }
         if (creatingSkill) {
-            SkillEditorDialog(
-                title = stringResource(R.string.skills_create),
-                initialName = "",
-                initialDescription = "",
-                initialBody = "# Skill\n",
+            SkillCreateDialog(
                 onDismiss = { creatingSkill = false },
-                onSave = { name, description, body ->
+                onCreate = { name ->
                     lifecycleScope.launch(Dispatchers.IO) {
-                        val outcome = createSkill(name, description, body)
+                        val repo = SkillRepository(requireContext())
+                        val outcome = repo.createUserSkill(name)
                         withContext(Dispatchers.Main) {
-                            skillScanResult = SkillRepository(requireContext()).scan(force = true)
-                            skillDialogMessage = outcome.exceptionOrNull()?.message ?: getString(R.string.skills_import_success)
+                            skillScanResult = repo.scan(force = true)
+                            val error = outcome.exceptionOrNull()
+                            if (error != null) {
+                                skillDialogMessage = error.message
+                            } else {
+                                browsingSkill = skillScanResult.skills.firstOrNull { it.name == name }
+                            }
                             creatingSkill = false
-                        }
-                    }
-                }
-            )
-        }
-        editingSkill?.let { skill ->
-            val body = remember(skill.name) { SkillRepository(requireContext()).read(skill.name).getOrDefault("") }
-            SkillEditorDialog(
-                title = skill.name,
-                initialName = skill.name,
-                initialDescription = skill.description,
-                initialBody = body,
-                nameEditable = false,
-                onDismiss = { editingSkill = null },
-                onSave = { _, description, content ->
-                    lifecycleScope.launch(Dispatchers.IO) {
-                        val outcome = updateSkill(skill.name, description, content)
-                        withContext(Dispatchers.Main) {
-                            skillScanResult = SkillRepository(requireContext()).scan(force = true)
-                            skillDialogMessage = outcome.exceptionOrNull()?.message
-                            editingSkill = null
                         }
                     }
                 }
@@ -1473,7 +1467,6 @@ class SettingsComposeFragment : Fragment() {
                 onDismiss = { browsingSkill = null },
                 onSkillDeleted = {
                     skillScanResult = SkillRepository(requireContext()).scan(force = true)
-                    skillDialogMessage = getString(R.string.skills_delete_success)
                     browsingSkill = null
                 },
                 onFilesChanged = {
@@ -1493,7 +1486,6 @@ class SettingsComposeFragment : Fragment() {
                             withContext(Dispatchers.Main) {
                                 skillScanResult = SkillRepository(requireContext()).scan(force = true)
                                 skillDialogMessage = outcome.exceptionOrNull()?.message
-                                    ?: getString(R.string.skills_delete_success)
                                 deletingSkill = null
                             }
                         }
@@ -1511,7 +1503,7 @@ class SettingsComposeFragment : Fragment() {
         skillDialogMessage?.let { message ->
             AlertDialog(
                 onDismissRequest = { skillDialogMessage = null },
-                title = { Text(stringResource(R.string.skills_invalid_title)) },
+                title = { Text(stringResource(R.string.skills_directory_error_title)) },
                 text = { Text(message) },
                 confirmButton = { TextButton(onClick = { skillDialogMessage = null }) { Text(stringResource(android.R.string.ok)) } }
             )
@@ -1519,17 +1511,31 @@ class SettingsComposeFragment : Fragment() {
     }
 
     @Composable
-    private fun SkillEditorDialog(title: String, initialName: String, initialDescription: String, initialBody: String, nameEditable: Boolean = true, onDismiss: () -> Unit, onSave: (String, String, String) -> Unit) {
-        var name by remember { mutableStateOf(initialName) }
-        var description by remember { mutableStateOf(initialDescription) }
-        var body by remember { mutableStateOf(initialBody) }
-        AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.skills_name)) }, enabled = nameEditable, singleLine = true)
-                OutlinedTextField(description, { description = it }, label = { Text(stringResource(R.string.skills_description)) })
-                OutlinedTextField(body, { body = it }, label = { Text("SKILL.md") }, minLines = 8)
+    private fun SkillCreateDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {
+        var name by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text(stringResource(R.string.skills_create)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text(stringResource(R.string.skills_name)) },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = com.nezumi_ai.data.skill.SkillPathResolver.isValidName(name),
+                    onClick = { onCreate(name) }
+                ) { Text(stringResource(R.string.preset_save)) }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.preset_cancel)) }
             }
-        }, confirmButton = { TextButton(onClick = { onSave(name, description, body) }) { Text(stringResource(R.string.preset_save)) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.preset_cancel)) } })
+        )
     }
 
     private fun importSkillArchive(uri: Uri) {
@@ -1566,23 +1572,6 @@ class SettingsComposeFragment : Fragment() {
         skillDialogMessage = if (error == null) context.getString(R.string.skills_import_success) else context.getString(R.string.skills_import_failed, error.message ?: "unknown")
     }
 
-    private fun createSkill(name: String, description: String, body: String): Result<Unit> = runCatching {
-        require(com.nezumi_ai.data.skill.SkillPathResolver.isValidName(name)) { "invalid_skill_name" }
-        require(description.isNotBlank() && description.length <= 1024 && description.all { it.code in 32..126 || it == '\n' || it == '\t' }) { "invalid_skill_description" }
-        val directory = com.nezumi_ai.data.skill.SkillPathResolver.resolveUserSkillDir(requireContext().filesDir, name)
-            ?: error("invalid_skill_path")
-        require(!directory.exists()) { "skill_already_exists" }
-        require(directory.mkdirs()) { "skill_directory_create_failed" }
-        File(directory, "SKILL.md").writeText("---\nname: $name\ndescription: \"$description\"\n---\n\n$body")
-    }
-
-    private fun updateSkill(name: String, description: String, body: String): Result<Unit> = runCatching {
-        require(description.isNotBlank() && description.length <= 1024 && description.all { it.code in 32..126 || it == '\n' || it == '\t' }) { "invalid_skill_description" }
-        val directory = com.nezumi_ai.data.skill.SkillPathResolver.resolveUserSkillDir(requireContext().filesDir, name)
-            ?: error("invalid_skill_path")
-        require(directory.isDirectory) { "skill_not_found" }
-        File(directory, "SKILL.md").writeText("---\nname: $name\ndescription: \"$description\"\n---\n\n$body")
-    }
 
     @Composable
     private fun GgufLlamaCppSettingsCard() {

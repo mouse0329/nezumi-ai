@@ -5,7 +5,9 @@ data class Skill(
     val name: String,
     val description: String,
     val source: Source,
-    val directoryName: String
+    val directoryName: String,
+    val invalid: Boolean = false,
+    val invalidReason: String? = null
 ) {
     enum class Source { ASSET, USER }
 }

@@ -12,14 +12,20 @@ class SkillRepository(private val context: Context) {
         val invalid = mutableListOf<String>()
         val asset = scanAssets(invalid)
         val user = scanUser(invalid)
-        return SkillScanResult((asset + user).associateBy { it.name }.values.sortedBy { it.name }, invalid.distinct()).also {
+        // User entries win over asset entries with the same name (including invalid user
+        // entries: we want them visible in the file manager so the user can fix them).
+        val merged = LinkedHashMap<String, Skill>()
+        asset.forEach { merged[it.name] = it }
+        user.forEach { merged[it.name] = it }
+        val skills = merged.values.sortedWith(compareBy({ it.invalid }, { it.name }))
+        return SkillScanResult(skills, invalid.distinct()).also {
             synchronized(cacheLock) { cachedResult = it }
         }
     }
 
     fun read(skillName: String, referencePath: String? = null): Result<String> {
         if (!SkillPathResolver.isValidName(skillName)) return Result.failure(IllegalArgumentException("invalid_skill_name"))
-        val skill = scan().skills.firstOrNull { it.name == skillName }
+        val skill = scan().skills.firstOrNull { it.name == skillName && !it.invalid }
             ?: return Result.failure(NoSuchElementException("skill_not_found:$skillName"))
         return when (skill.source) {
             Skill.Source.USER -> readUser(skill, referencePath)
@@ -30,40 +36,47 @@ class SkillRepository(private val context: Context) {
     fun listUserSkillFiles(skillName: String): Result<List<SkillFileEntry>> = runCatching {
         val directory = userSkillDirectory(skillName) ?: error("invalid_skill_path")
         require(directory.isDirectory) { "skill_not_found" }
-        buildList {
-            if (File(directory, "SKILL.md").isFile) {
-                add(SkillFileEntry("SKILL.md", "SKILL.md", isDirectory = false))
-            }
-            val referencesRoot = File(directory, "references")
-            if (referencesRoot.isDirectory) {
-                collectSkillFiles(referencesRoot, directory, this)
-            }
-        }
+        buildList { collectSkillFiles(directory, directory, this) }
     }
 
     fun readUserFile(skillName: String, relativePath: String): Result<String> = runCatching {
-        val file = resolveUserFile(userSkillDirectory(skillName) ?: error("invalid_skill_path"), relativePath)
-            ?: error("invalid_file_path")
+        val directory = userSkillDirectory(skillName) ?: error("invalid_skill_path")
+        val file = SkillPathResolver.resolveWithinSkill(directory, relativePath) ?: error("invalid_file_path")
         require(file.isFile) { "skill_file_not_found" }
         file.readText()
     }
 
     fun writeUserFile(skillName: String, relativePath: String, content: String): Result<Unit> = runCatching {
-        require(relativePath.endsWith(".md", ignoreCase = true)) { "file_must_be_markdown" }
+        val normalized = relativePath.trim().trim('/')
+        require(normalized.isNotEmpty()) { "invalid_file_path" }
+        require(normalized.endsWith(".md", ignoreCase = true)) { "file_must_be_markdown" }
         val directory = userSkillDirectory(skillName) ?: error("invalid_skill_path")
-        val file = resolveUserFile(directory, relativePath) ?: error("invalid_file_path")
+        val file = SkillPathResolver.resolveWithinSkill(directory, normalized) ?: error("invalid_file_path")
+        require(!file.isDirectory) { "path_is_directory" }
         file.parentFile?.mkdirs()
         file.writeText(content)
         invalidateCache()
     }
 
-    fun deleteUserFile(skillName: String, relativePath: String): Result<Unit> = runCatching {
-        require(relativePath != "SKILL.md") { "cannot_delete_skill_md" }
+    fun createUserDirectory(skillName: String, relativePath: String): Result<Unit> = runCatching {
+        val normalized = relativePath.trim().trim('/')
+        require(normalized.isNotEmpty()) { "invalid_folder_path" }
         val directory = userSkillDirectory(skillName) ?: error("invalid_skill_path")
-        val file = resolveUserFile(directory, relativePath) ?: error("invalid_file_path")
-        require(file.isFile) { "skill_file_not_found" }
-        require(file.delete()) { "skill_file_delete_failed" }
-        file.parent?.let { parent -> cleanupEmptyDirectories(File(parent), directory) }
+        val target = SkillPathResolver.resolveWithinSkill(directory, normalized) ?: error("invalid_folder_path")
+        require(!target.isFile) { "path_is_file" }
+        require(target.exists() || target.mkdirs()) { "folder_create_failed" }
+        invalidateCache()
+    }
+
+    fun deleteUserFile(skillName: String, relativePath: String): Result<Unit> = runCatching {
+        val normalized = relativePath.trim().trim('/')
+        require(normalized != "SKILL.md") { "cannot_delete_skill_md" }
+        val directory = userSkillDirectory(skillName) ?: error("invalid_skill_path")
+        val target = SkillPathResolver.resolveWithinSkill(directory, normalized) ?: error("invalid_file_path")
+        require(target.exists()) { "skill_file_not_found" }
+        val ok = if (target.isDirectory) target.deleteRecursively() else target.delete()
+        require(ok) { "skill_file_delete_failed" }
+        target.parentFile?.let { parent -> cleanupEmptyDirectories(parent, directory) }
         invalidateCache()
     }
 
@@ -74,28 +87,81 @@ class SkillRepository(private val context: Context) {
         invalidateCache()
     }
 
+    /**
+     * Creates an empty user skill on disk with a SKILL.md scaffold. Description is
+     * intentionally optional at this stage — the user edits it from the file manager.
+     */
+    fun createUserSkill(skillName: String): Result<Unit> = runCatching {
+        require(SkillPathResolver.isValidName(skillName)) { "invalid_skill_name" }
+        val directory = SkillPathResolver.resolveUserSkillDir(context.filesDir, skillName) ?: error("invalid_skill_path")
+        require(!directory.exists()) { "skill_already_exists" }
+        require(directory.mkdirs()) { "skill_directory_create_failed" }
+        val scaffold = buildString {
+            append("---\n")
+            append("name: ").append(skillName).append('\n')
+            append("description: \"Describe what this skill does in one English sentence.\"\n")
+            append("---\n\n")
+            append("# ").append(skillName).append("\n\n")
+            append("Write instructions here.\n")
+        }
+        File(directory, "SKILL.md").writeText(scaffold)
+        invalidateCache()
+    }
+
     private fun scanUser(invalid: MutableList<String>): List<Skill> {
         val root = File(context.filesDir, "skills")
-        return root.listFiles().orEmpty().filter { it.isDirectory }.mapNotNull { directory ->
-            parse(directory.name, Skill.Source.USER, directory.name, directory.resolve("SKILL.md").takeIf { it.isFile }?.readText(), invalid)
+        return root.listFiles().orEmpty().filter { it.isDirectory }.map { directory ->
+            val text = directory.resolve("SKILL.md").takeIf { it.isFile }?.readText()
+            parse(directory.name, Skill.Source.USER, directory.name, text, invalid)
         }
     }
 
     private fun scanAssets(invalid: MutableList<String>): List<Skill> {
         return context.assets.list("skills").orEmpty().mapNotNull { directory ->
             val content = runCatching { context.assets.open("skills/$directory/SKILL.md").bufferedReader().use { it.readText() } }.getOrNull()
-            parse(directory, Skill.Source.ASSET, directory, content, invalid)
+            val parsed = parse(directory, Skill.Source.ASSET, directory, content, invalid)
+            // Invalid built-in skills are not exposed at all — only user skills stay visible
+            // so the user can repair them from the file manager.
+            parsed.takeUnless { it.invalid }
         }
     }
 
-    private fun parse(directory: String, source: Skill.Source, directoryName: String, text: String?, invalid: MutableList<String>): Skill? {
-        val frontMatter = text?.let(::frontMatter)
-        val name = frontMatter?.get("name")?.trim()
-        val description = frontMatter?.get("description")?.trim()?.trim('"', '\'')
-        val valid = name != null && description != null && SkillPathResolver.isValidName(name) && name == directory &&
-            description.isNotBlank() && description.length <= 1024 && description.all { it.code in 32..126 || it == '\n' || it == '\t' }
-        if (!valid) { invalid += name?.ifBlank { directory } ?: directory; return null }
+    /**
+     * Always returns a [Skill] (never null) — invalid entries are surfaced with
+     * `invalid = true` so the UI can show them with a "使用不可" label rather than
+     * silently deleting them from the list.
+     */
+    private fun parse(directory: String, source: Skill.Source, directoryName: String, text: String?, invalid: MutableList<String>): Skill {
+        val reason = validate(directory, text)
+        if (reason != null) {
+            invalid += directory
+            return Skill(
+                name = directory,
+                description = "",
+                source = source,
+                directoryName = directoryName,
+                invalid = true,
+                invalidReason = reason
+            )
+        }
+        val frontMatter = frontMatter(text!!)!!
+        val name = frontMatter["name"]!!.trim()
+        val description = frontMatter["description"]!!.trim().trim('"', '\'')
         return Skill(name, description, source, directoryName)
+    }
+
+    private fun validate(directory: String, text: String?): String? {
+        if (text == null) return "SKILL.md not found"
+        val fm = frontMatter(text) ?: return "SKILL.md front matter missing"
+        val name = fm["name"]?.trim()
+        val description = fm["description"]?.trim()?.trim('"', '\'')
+        if (name.isNullOrBlank()) return "front matter: name missing"
+        if (!SkillPathResolver.isValidName(name)) return "front matter: name invalid"
+        if (name != directory) return "front matter name must match folder name"
+        if (description.isNullOrBlank()) return "front matter: description missing"
+        if (description.length > 1024) return "description too long"
+        if (!description.all { it.code in 32..126 || it == '\n' || it == '\t' }) return "description must be ASCII"
+        return null
     }
 
     private fun frontMatter(text: String): Map<String, String>? {
@@ -110,7 +176,8 @@ class SkillRepository(private val context: Context) {
 
     private fun readUser(skill: Skill, reference: String?): Result<String> = runCatching {
         val directory = SkillPathResolver.resolveUserSkillDir(context.filesDir, skill.directoryName) ?: error("invalid_skill_path")
-        val file = if (reference == null) File(directory, "SKILL.md") else SkillPathResolver.resolveReference(directory, reference) ?: error("invalid_reference_path")
+        val file = if (reference == null) File(directory, "SKILL.md")
+        else SkillPathResolver.resolveWithinSkill(directory, reference) ?: error("invalid_reference_path")
         require(file.isFile) { "skill_file_not_found" }
         val content = file.readText()
         if (reference == null) content.substringAfter("\n---\n", content) else content
@@ -118,10 +185,9 @@ class SkillRepository(private val context: Context) {
 
     private fun readAsset(skill: Skill, reference: String?): Result<String> = runCatching {
         val relative = if (reference == null) "skills/${skill.directoryName}/SKILL.md" else {
-            val root = File("/skills/${skill.directoryName}/references")
-            val safe = SkillPathResolver.resolveReference(File("/skills/${skill.directoryName}"), reference)
-                ?: error("invalid_reference_path")
-            "skills/${skill.directoryName}/references/${safe.relativeTo(root).invariantSeparatorsPath}"
+            val safe = reference.trim().trim('/')
+            require(safe.isNotEmpty() && !safe.contains("..")) { "invalid_reference_path" }
+            "skills/${skill.directoryName}/$safe"
         }
         context.assets.open(relative).bufferedReader().use { reader ->
             val content = reader.readText()
@@ -134,23 +200,13 @@ class SkillRepository(private val context: Context) {
         return SkillPathResolver.resolveUserSkillDir(context.filesDir, skillName)
     }
 
-    private fun resolveUserFile(skillDirectory: File, relativePath: String): File? = when {
-        relativePath == "SKILL.md" -> SkillPathResolver.resolveChild(skillDirectory, relativePath)
-        relativePath.startsWith("references/") -> {
-            val referenceRelative = relativePath.removePrefix("references/")
-            if (referenceRelative.isBlank() || referenceRelative.endsWith("/")) return null
-            SkillPathResolver.resolveReference(skillDirectory, referenceRelative)
-        }
-        else -> null
-    }
-
     private fun collectSkillFiles(current: File, skillRoot: File, out: MutableList<SkillFileEntry>) {
         current.listFiles()
             ?.sortedWith(compareBy<File>({ !it.isDirectory }, { it.name.lowercase() }))
             ?.forEach { file ->
                 val relative = file.relativeTo(skillRoot).invariantSeparatorsPath
                 if (file.isDirectory) {
-                    out += SkillFileEntry(relative, "${file.name}/", isDirectory = true)
+                    out += SkillFileEntry("$relative/", "${file.name}/", isDirectory = true)
                     collectSkillFiles(file, skillRoot, out)
                 } else if (file.extension.equals("md", ignoreCase = true)) {
                     out += SkillFileEntry(relative, file.name, isDirectory = false)

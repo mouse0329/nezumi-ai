@@ -4,5 +4,6 @@ package com.nezumi_ai.data.skill
 data class SkillFileEntry(
     val relativePath: String,
     val displayName: String,
-    val isDirectory: Boolean
+    val isDirectory: Boolean,
+    val depth: Int = relativePath.trimEnd('/').count { it == '/' }
 )

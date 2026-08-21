@@ -25,6 +25,15 @@ class SkillPathResolverTest {
     }
 
     @Test
+    fun resolveWithinSkill_supportsRootAndNestedPaths() {
+        val skill = File(System.getProperty("java.io.tmpdir"), "skill-resolver-test/example")
+        assertNotNull(SkillPathResolver.resolveWithinSkill(skill, "note.md"))
+        assertNotNull(SkillPathResolver.resolveWithinSkill(skill, "a/b/c/deep.md"))
+        assertNotNull(SkillPathResolver.resolveWithinSkill(skill, "docs/"))
+        assertNull(SkillPathResolver.resolveWithinSkill(skill, "../escape.md"))
+    }
+
+    @Test
     fun resolveReference_isConfinedToReferencesDirectory() {
         val skill = File(System.getProperty("java.io.tmpdir"), "skill-resolver-test/example")
         assertNotNull(SkillPathResolver.resolveReference(skill, "guide.md"))

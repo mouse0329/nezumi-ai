@@ -448,6 +448,13 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="skills_delete_file">ファイル削除</string>
     <string name="skills_delete_file_confirm_title">ファイルを削除</string>
     <string name="skills_delete_file_confirm_message">「%1$s」を削除します。元に戻せません。</string>
+    <string name="skills_new_folder">新規フォルダ</string>
+    <string name="skills_folder_path">フォルダのパス</string>
+    <string name="skills_unavailable_label">使用不可</string>
+    <string name="skills_saving">保存中…</string>
+    <string name="skills_saved">保存済み</string>
+    <string name="skills_selected_path">作成先: %1$s</string>
+    <string name="skills_name_label">名前</string>
     <string name="settings_section_general">全般</string>
     <string name="settings_section_inference">推論</string>
     <string name="settings_section_image">画像</string>

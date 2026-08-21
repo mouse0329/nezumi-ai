@@ -597,6 +597,13 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="skills_delete_file">Delete file</string>
     <string name="skills_delete_file_confirm_title">Delete file</string>
     <string name="skills_delete_file_confirm_message">Delete \"%1$s\"? This cannot be undone.</string>
+    <string name="skills_new_folder">New folder</string>
+    <string name="skills_folder_path">Folder path</string>
+    <string name="skills_unavailable_label">Unavailable</string>
+    <string name="skills_saving">Saving…</string>
+    <string name="skills_saved">Saved</string>
+    <string name="skills_selected_path">Target: %1$s</string>
+    <string name="skills_name_label">Name</string>
     <string name="settings_section_general">General</string>
     <string name="settings_section_inference">Inference</string>
     <string name="settings_section_image">Image</string>

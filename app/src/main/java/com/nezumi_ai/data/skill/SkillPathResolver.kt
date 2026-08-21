@@ -11,6 +11,15 @@ object SkillPathResolver {
     fun resolveUserSkillDir(filesDir: File, skillName: String): File? =
         resolveChild(File(filesDir, "skills"), skillName)
 
+    /**
+     * Any path (file or directory) confined inside the skill directory.
+     * Used for the file manager which can now place files/folders anywhere
+     * under a skill root, not only under references/.
+     */
+    fun resolveWithinSkill(skillDirectory: File, relativePath: String): File? =
+        resolveChild(skillDirectory, relativePath.trimEnd('/'))
+
+    /** Legacy: kept so callers targeting the references/ tree still work. */
     fun resolveReference(skillDirectory: File, referencePath: String): File? {
         if (referencePath.isBlank()) return null
         return resolveChild(File(skillDirectory, "references"), referencePath)
