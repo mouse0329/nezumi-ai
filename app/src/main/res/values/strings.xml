@@ -131,7 +131,7 @@
     <string name="import_task_model">モデルファイルを追加 (.task / .litertlm)</string>
     <string name="import_task_loading">モデルファイルを読み込み中...</string>
     <string name="open_hf_approval_page">ページで承認</string>
-    <string name="imported_task_title">追加済みモデルファイル (.task / .litertlm)</string>
+    <string name="imported_task_title">追加済みモデルファイル</string>
     <string name="imported_task_empty">まだ追加されたモデルファイルはありません</string>
     <string name="open_help_page">ヘルプ</string>
     <string name="open_license_page">License</string>
@@ -595,7 +595,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="setup_step_memory">メモリ</string>
     <string name="setup_step_model">モデル</string>
     <string name="setup_welcome_title">Nezumi AI へようこそ</string>
-    <string name="setup_welcome_desc">最初に 4 ステップだけ設定すると、すぐチャットを始められます。</string>
+    <string name="setup_welcome_desc">最初に 3 ステップだけ設定すると、すぐチャットを始められます。</string>
     <string name="setup_welcome_steps">1.ようこそ\n2. 必須モデルのダウンロード\n3. 使いたいモデルを選ぶ\nダウンロードはあとからでも可能です。</string>
     <string name="setup_welcome_ok_later">モデルのダウンロードはあとからでも大丈夫です。</string>
     <string name="setup_welcome_history_info">チャット履歴は最大30件まで保存されます。古いものから自動的に削除されます。設定から変更できます。</string>
@@ -942,10 +942,11 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="secret_mode_waiting">認証待機中...</string>
     <string name="secret_mode_retry">もう一度試す</string>
 
-    <string name="model_settings_builtin_models">組み込みモデル</string>
-    <string name="model_settings_custom_models">カスタムモデル</string>
-    <string name="model_settings_custom_models_empty">カスタムモデルはまだインポートされていません。</string>
-    <string name="model_settings_custom_models_empty_search">検索条件に一致するカスタムモデルがありません。</string>
+    <string name="model_settings_builtin_models">おすすめモデル</string>
+    <string name="model_settings_custom_models">追加済みモデル</string>
+    <string name="model_settings_custom_models_empty">追加済みのモデルはまだありません。</string>
+    <string name="model_settings_custom_models_empty_search">検索条件に一致するモデルがありません。</string>
+    <string name="model_settings_search_added_models">モデルを検索</string>
     <string name="model_settings_sd_zip_import_title">SD モデル zip をインポート</string>
     <!-- クラウドモデル (モデル管理画面に統合) -->
     <string name="cloud_models_entry_button">☁️ クラウドモデルを追加</string>
@@ -1074,6 +1075,15 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="model_tool_calling_disable_confirm_message">このモデルを使用している %1$d 個のプリセットでツール呼び出しが無効になります。よろしいですか？</string>
     <string name="common_deleted">削除しました</string>
     <string name="common_delete_failed">削除に失敗しました</string>
+    <string name="model_download_queued">待機中</string>
+    <string name="model_download_queued_named">ダウンロードキューに追加しました: %1$s</string>
+    <string name="model_download_already_running">すでにダウンロード中です</string>
+    <string name="model_download_paused_toast">一時停止しました。再開時は続きからダウンロードします</string>
+    <string name="model_download_pause">一時停止</string>
+    <string name="model_download_cancel">キャンセル</string>
+    <string name="model_download_queue_builtin_header">おすすめモデル ダウンロード中</string>
+    <string name="model_download_queue_hf_header">追加モデル ダウンロード中</string>
+    <string name="model_download_queue_empty">ダウンロード中のモデルはありません</string>
     <string name="common_cancel">キャンセル</string>
     <string name="common_close">閉じる</string>
     <string name="common_next">次へ</string>
@@ -1329,7 +1339,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="model_settings_additional_downloads_title">追加モデル ダウンロード中</string>
     <string name="model_settings_image_generation_section">画像生成モデル (MNN)</string>
     <string name="model_settings_image_generation_help">上記の「画像生成モデル (MNN)」カードからダウンロードするか、下のボタンから zip をインポートできます</string>
-    <string name="model_settings_imported_models_section">インポートされたモデル</string>
+    <string name="model_settings_imported_models_section">追加済みモデル</string>
     <string name="model_settings_mmproj_file_management">mmproj ファイル</string>
 
     <!-- 添付オプションシート -->
@@ -1527,7 +1537,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="model_loading_phase_memory_check">メモリ確認</string>
     <string name="model_loading_phase_weights">重みロード</string>
     <string name="model_loading_phase_engine_init">エンジン初期化</string>
-    <string name="model_kind_custom">カスタム</string>
+    <string name="model_kind_custom">モデル</string>
 
     <!-- Generation status messages -->
     <string name="vm_generic_error_short">エラーが発生しました</string>

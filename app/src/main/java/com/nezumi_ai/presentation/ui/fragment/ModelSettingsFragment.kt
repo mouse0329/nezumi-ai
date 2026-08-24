@@ -107,6 +107,7 @@ import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ProjectConfig
+import com.nezumi_ai.data.inference.RecommendedModelCatalog
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.presentation.ui.helper.SettingsHelper
 import com.nezumi_ai.utils.PreferencesHelper
@@ -303,6 +304,8 @@ open class ModelSettingsFragment : Fragment() {
     private var selectedTab by mutableStateOf(ModelType.LLM)
 
     private val modelStates = mutableStateMapOf<ModelFileManager.LocalModel, ModelUiState>()
+    /** おすすめ GGUF（RecommendedModelCatalog）の DL 状態。Gemma の modelStates と同じ役割。 */
+    private val recommendedGgufStates = mutableStateMapOf<String, ModelUiState>()
     private val ggufCardMetadataStates = mutableStateMapOf<String, GgufCardMetadataUiState>()
 
  // 埋め込みモデルダウンロード進捗（DLタブで表示）
@@ -379,6 +382,11 @@ open class ModelSettingsFragment : Fragment() {
         presetRepository = PresetRepository(db.presetDao(), requireContext().applicationContext)
         authService = AuthorizationService(requireContext())
         ModelFileManager.LocalModel.entries.forEach { modelStates[it] = ModelUiState(titleFor(it)) }
+        RecommendedModelCatalog.recommended()
+            .filter { it.engine == RecommendedModelCatalog.Engine.GGUF }
+            .forEach { entry ->
+                recommendedGgufStates[entry.id] = ModelUiState(entry.displayName)
+            }
     }
 
     override fun onCreateView(
@@ -399,9 +407,11 @@ open class ModelSettingsFragment : Fragment() {
         renderHfTokenState()
         refreshImportedTasks()
         refreshModelStatus()
+        refreshRecommendedGgufStatus()
         refreshVoicevoxState()
         observeDownloadWork()
         observeCustomHfDownloadWork()
+        observeRecommendedGgufWork()
         observeImageModelDownloadWork()
         observeSafetyModelDownloadWork()
         observeVoicevoxDownloadWork()
@@ -542,11 +552,58 @@ open class ModelSettingsFragment : Fragment() {
                             )
                         }
                     }
+                    // おすすめ GGUF（Qwen3.5 / LFM2.5 など）。Gemma と同じ ModelAccordionItem + WorkManager 経路。
+                    items(
+                        RecommendedModelCatalog.recommended().filter {
+                            it.engine == RecommendedModelCatalog.Engine.GGUF
+                        }
+                    ) { entry ->
+                        val state = recommendedGgufStates[entry.id] ?: ModelUiState(entry.displayName)
+                        val modelKey = "rec_${entry.id}"
+                        val isExpanded = expandedModelKey == modelKey
+                        val sizeBytes = entry.estimatedSizeBytes
+                        val resourceCheck = ModelFileManager.checkDownloadResources(
+                            requireContext(), sizeBytes, preloadMemoryWarningThresholdPercent,
+                            modelIdentifier = entry.id
+                        )
+                        val speedKey = "${entry.hfRepo}/${entry.hfFile?.substringAfterLast('/')}"
+                        ModelAccordionItem(
+                            title = state.title,
+                            status = state.status,
+                            isExpanded = isExpanded,
+                            onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
+                            onDownload = { onRecommendedGgufDownloadClicked(entry) },
+                            onDelete = {
+                                val repo = entry.hfRepo ?: return@ModelAccordionItem
+                                val file = entry.hfFile ?: return@ModelAccordionItem
+                                val target = ModelFileManager.huggingFaceImportedFile(requireContext(), repo, file)
+                                if (target.isFile) target.delete()
+                                ModelFileManager.invalidateImportedListCache()
+                                refreshRecommendedGgufStatus(entry)
+                                refreshImportedTasks()
+                                toast(getString(R.string.common_deleted))
+                                expandedModelKey = null
+                            },
+                            isDownloading = state.isDownloading,
+                            isDownloaded = state.isDownloaded,
+                            progress = state.progress,
+                            progressText = state.progressText,
+                            isMemoryLow = resourceCheck.isMemoryLow,
+                            isStorageLow = resourceCheck.isStorageLow,
+                            fileSizeLabel = formatBytes(sizeBytes),
+                            speedInfo = activeDownloadSpeeds[speedKey],
+                            isPaused = state.isPaused,
+                            engineLabel = "llama.cpp",
+                            onPause = {
+                                val repo = entry.hfRepo ?: return@ModelAccordionItem
+                                val file = entry.hfFile ?: return@ModelAccordionItem
+                                ModelDownloadWorker.cancelCustomHf(requireContext(), repo, file)
+                                toast(getString(R.string.model_download_paused_toast))
+                            }
+                        )
+                    }
                     item { EmbeddingModelsCard() }
- // 「カスタムモデル」見出しと整理 UI（検索 / 並び替え）を、
-                    //   importedTasks が 0 件でも常に表示される位置に出す。
-                    //   以前は if (importedTasks.isNotEmpty()) { … } の中に入れていたため、
-                    //   件数が 0 だと「見えない」状態になっていた。
+                    // 「追加済みモデル」見出しと整理 UI（検索 / 並び替え）
                     item {
                         Text(
                             text = stringResource(id = R.string.model_settings_custom_models),
@@ -557,8 +614,47 @@ open class ModelSettingsFragment : Fragment() {
                         )
                     }
                     item { ImportedModelsFilterBar() }
+
+                    // ダウンロード済みのおすすめ LiteRT（Gemma 等）も追加済みリストに出す
+                    val downloadedBuiltins = ModelFileManager.LocalModel.entries.filter { m ->
+                        m != ModelFileManager.LocalModel.GEMMA3N_2B &&
+                            m != ModelFileManager.LocalModel.GEMMA3N_4B &&
+                            (modelStates[m]?.isDownloaded == true ||
+                                ModelFileManager.isDownloaded(requireContext(), m))
+                    }
+                    items(downloadedBuiltins) { model ->
+                        val state = modelStates[model] ?: return@items
+                        val modelKey = "added_builtin_${model.name}"
+                        val isExpanded = expandedModelKey == modelKey
+                        val sizeBytes = getModelSizeBytes(model)
+                        ModelAccordionItem(
+                            title = state.title,
+                            status = state.status,
+                            isExpanded = isExpanded,
+                            onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
+                            onDownload = { onBuiltinDownloadButtonClicked(model) },
+                            onDelete = {
+                                val ok = ModelFileManager.deleteModel(requireContext(), model)
+                                toast(if (ok) getString(R.string.common_deleted) else getString(R.string.common_delete_failed))
+                                refreshModelStatus(model)
+                                expandedModelKey = null
+                            },
+                            isDownloading = state.isDownloading,
+                            isDownloaded = state.isDownloaded,
+                            progress = state.progress,
+                            progressText = state.progressText,
+                            fileSizeLabel = formatBytes(sizeBytes),
+                            speedInfo = activeDownloadSpeeds[model.name],
+                            isPaused = state.isPaused,
+                            engineLabel = "LiteRT-LM",
+                            onPause = {
+                                ModelDownloadWorker.pause(requireContext(), model)
+                                toast(getString(R.string.model_download_paused_toast))
+                            }
+                        )
+                    }
                     
-                    if (importedTasks.isEmpty()) {
+                    if (importedTasks.isEmpty() && downloadedBuiltins.isEmpty()) {
                         item {
                             Text(
                                 text = stringResource(id = R.string.model_settings_custom_models_empty),
@@ -567,7 +663,7 @@ open class ModelSettingsFragment : Fragment() {
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
                             )
                         }
-                    } else if (displayedImportedTasks.isEmpty()) {
+                    } else if (displayedImportedTasks.isEmpty() && importedTasks.isNotEmpty()) {
                         item {
                             Text(
                                 text = stringResource(id = R.string.model_settings_custom_models_empty_search),
@@ -1567,13 +1663,68 @@ open class ModelSettingsFragment : Fragment() {
     
     @Composable
     private fun DownloadQueueCard() {
-        if (hfQueuedDownloads.isNotEmpty()) {
+        // Gemma (LocalModel) のみここで表示。おすすめ llama.cpp は hfQueuedDownloads 側に出るため二重表示しない。
+        val builtinDownloading = ModelFileManager.LocalModel.entries.mapNotNull { m ->
+            val s = modelStates[m] ?: return@mapNotNull null
+            if (s.isDownloading) m to s else null
+        }
+        if (builtinDownloading.isNotEmpty()) {
             Text(
-                text = "追加モデル ダウンロード中",
+                text = stringResource(id = R.string.model_download_queue_builtin_header),
                 style = MaterialTheme.typography.labelSmall,
                 color = colorResource(id = R.color.text_secondary),
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                builtinDownloading.forEach { (model, state) ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.surface_card))
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(text = state.title, fontWeight = FontWeight.SemiBold)
+                            if (state.progress > 0f) {
+                                LinearProgressIndicator(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    progress = { state.progress },
+                                    color = colorResource(id = R.color.primary),
+                                    trackColor = colorResource(id = R.color.context_meter_track)
+                                )
+                            } else {
+                                LinearProgressIndicator(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = colorResource(id = R.color.primary),
+                                    trackColor = colorResource(id = R.color.context_meter_track)
+                                )
+                            }
+                            Text(
+                                text = state.progressText.ifBlank { state.status },
+                                color = colorResource(id = R.color.text_secondary),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                TextButton(onClick = {
+                                    ModelDownloadWorker.pause(requireContext(), model)
+                                    toast(getString(R.string.model_download_paused_toast))
+                                }) { Text(stringResource(id = R.string.model_download_pause)) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (hfQueuedDownloads.isNotEmpty()) {
+            Text(
+                text = stringResource(id = R.string.model_download_queue_hf_header),
+                style = MaterialTheme.typography.labelSmall,
+                color = colorResource(id = R.color.text_secondary),
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(
+                    start = 4.dp,
+                    bottom = 8.dp,
+                    top = if (builtinDownloading.isNotEmpty()) 16.dp else 0.dp
+                )
             )
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 hfQueuedDownloads.forEach { item ->
@@ -1695,7 +1846,11 @@ open class ModelSettingsFragment : Fragment() {
             ModelDownloadProgressCard(item)
         }
         
-        if (hfQueuedDownloads.isEmpty() && imageModelDownloadStates.isEmpty() && safetyModelDownloadState == null) {
+        val anyRecommendedDownloading = recommendedGgufStates.values.any { it.isDownloading }
+        val anyBuiltinDownloading = modelStates.values.any { it.isDownloading }
+        if (hfQueuedDownloads.isEmpty() && imageModelDownloadStates.isEmpty() &&
+            safetyModelDownloadState == null && !anyRecommendedDownloading && !anyBuiltinDownloading
+        ) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -1703,7 +1858,7 @@ open class ModelSettingsFragment : Fragment() {
                 )
             ) {
                 Text(
-                    text = "ダウンロード中のモデルはありません",
+                    text = stringResource(id = R.string.model_download_queue_empty),
                     style = MaterialTheme.typography.bodyMedium,
                     color = colorResource(id = R.color.text_secondary),
                     modifier = Modifier.padding(16.dp)
@@ -2370,7 +2525,7 @@ open class ModelSettingsFragment : Fragment() {
         if (importedTasks.isEmpty()) return
         
         Text(
-            text = "カスタムモデル",
+            text = stringResource(id = R.string.model_settings_custom_models),
             style = MaterialTheme.typography.labelSmall,
             color = colorResource(id = R.color.text_secondary),
             fontWeight = FontWeight.SemiBold,
@@ -3483,6 +3638,127 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
+    /** おすすめ GGUF を Gemma と同じ enqueueCustomHf + DLタブ経路で開始する。 */
+    private fun onRecommendedGgufDownloadClicked(entry: RecommendedModelCatalog.Entry) {
+        val repo = entry.hfRepo ?: return
+        val file = entry.hfFile ?: return
+        val state = recommendedGgufStates[entry.id] ?: return
+        if (state.isDownloading) {
+            ModelDownloadWorker.cancelCustomHf(requireContext(), repo, file)
+            toast(getString(R.string.model_download_paused_toast))
+            return
+        }
+        val enqueued = ModelDownloadWorker.enqueueCustomHf(requireContext(), repo, file)
+        if (enqueued) {
+            if (hfQueuedDownloads.none { it.modelId == repo && it.filePath == file }) {
+                hfQueuedDownloads = hfQueuedDownloads + HfQueuedDownloadUiState(
+                    modelId = repo,
+                    filePath = file,
+                    downloadedBytes = 0L,
+                    totalBytes = 0L,
+                    statusText = getString(R.string.model_download_queued),
+                    isActive = true
+                )
+            }
+            state.isDownloading = true
+            state.isDownloaded = false
+            state.status = getString(R.string.setup_downloading_status)
+            state.progress = 0f
+            toast(getString(R.string.model_download_queued_named, entry.displayName))
+        } else {
+            toast(getString(R.string.model_download_already_running))
+        }
+    }
+
+    private fun refreshRecommendedGgufStatus(entry: RecommendedModelCatalog.Entry? = null) {
+        val targets = entry?.let { listOf(it) }
+            ?: RecommendedModelCatalog.recommended().filter { it.engine == RecommendedModelCatalog.Engine.GGUF }
+        targets.forEach { e ->
+            val repo = e.hfRepo ?: return@forEach
+            val file = e.hfFile ?: return@forEach
+            val state = recommendedGgufStates[e.id] ?: return@forEach
+            val local = ModelFileManager.huggingFaceImportedFile(requireContext(), repo, file)
+            val downloaded = local.isFile && local.canRead() && local.length() > 0L
+            state.isDownloaded = downloaded
+            if (!state.isDownloading) {
+                state.status = if (downloaded) {
+                    getString(R.string.setup_ready_status)
+                } else {
+                    getString(R.string.setup_not_acquired_status)
+                }
+                state.progress = 0f
+                state.progressText = ""
+            }
+            val partial = java.io.File("${local.absolutePath}.download")
+            state.isPaused = !downloaded && !state.isDownloading && partial.exists() && partial.length() > 0L
+        }
+    }
+
+    /** おすすめ GGUF の WorkManager 進捗をカード状態に反映（DLタブは既存 observeCustomHf が担当）。 */
+    private fun observeRecommendedGgufWork() {
+        WorkManager.getInstance(requireContext())
+            .getWorkInfosByTagLiveData(ModelDownloadWorker.TAG_HF_CUSTOM_DOWNLOAD)
+            .observe(viewLifecycleOwner) { infos ->
+                RecommendedModelCatalog.recommended()
+                    .filter { it.engine == RecommendedModelCatalog.Engine.GGUF }
+                    .forEach { entry ->
+                        val repo = entry.hfRepo ?: return@forEach
+                        val file = entry.hfFile ?: return@forEach
+                        val state = recommendedGgufStates[entry.id] ?: return@forEach
+                        val workName = ModelDownloadWorker.customWorkName(repo, file)
+                        val info = infos.firstOrNull { wi ->
+                            // unique work name は直接取れないので progress/output の modelId+path で突合
+                            val mid = wi.progress.getString(ModelDownloadWorker.KEY_HF_MODEL_ID)
+                                ?: wi.outputData.getString(ModelDownloadWorker.KEY_HF_MODEL_ID)
+                            val fp = wi.progress.getString(ModelDownloadWorker.KEY_HF_FILE_PATH)
+                                ?: wi.outputData.getString(ModelDownloadWorker.KEY_HF_FILE_PATH)
+                            mid == repo && fp == file
+                        }
+                        if (info == null) {
+                            // アクティブな work が無ければファイル有無で再判定
+                            if (state.isDownloading) {
+                                val local = ModelFileManager.huggingFaceImportedFile(requireContext(), repo, file)
+                                if (local.isFile && local.length() > 0L) {
+                                    state.isDownloading = false
+                                    state.isDownloaded = true
+                                    state.status = getString(R.string.setup_ready_status)
+                                    state.progress = 1f
+                                }
+                            }
+                            return@forEach
+                        }
+                        when (info.state) {
+                            WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
+                                state.isDownloading = true
+                                state.isDownloaded = false
+                                val downloaded = info.progress.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
+                                val total = info.progress.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L)
+                                if (total > 0L) {
+                                    state.progress = (downloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+                                    state.progressText = "${(state.progress * 100).toInt()}% (${formatBytes(downloaded)} / ${formatBytes(total)})"
+                                    state.status = getString(R.string.setup_downloading_status)
+                                } else {
+                                    state.status = getString(R.string.setup_downloading_status)
+                                }
+                            }
+                            WorkInfo.State.SUCCEEDED -> {
+                                state.isDownloading = false
+                                state.isDownloaded = true
+                                state.progress = 1f
+                                state.progressText = ""
+                                state.status = getString(R.string.setup_ready_status)
+                                refreshImportedTasks()
+                            }
+                            WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> {
+                                state.isDownloading = false
+                                refreshRecommendedGgufStatus(entry)
+                            }
+                            else -> Unit
+                        }
+                    }
+            }
+    }
+
     @Composable
     private fun ModelAccordionItem(
         title: String,
@@ -3500,6 +3776,7 @@ open class ModelSettingsFragment : Fragment() {
         fileSizeLabel: String? = null,
         speedInfo: DownloadSpeedInfo? = null,
         isPaused: Boolean = false,
+        engineLabel: String = "LiteRT-LM",
         onPause: (() -> Unit)? = null
     ) {
         Card(
@@ -3535,21 +3812,21 @@ open class ModelSettingsFragment : Fragment() {
                             ) {
                                 if (isMemoryLow && isStorageLow) {
                                     Text(
- text = "メモリ・ストレージ不足",
+                                        text = "${stringResource(id = R.string.setup_memory_low)} / ${stringResource(id = R.string.setup_storage_low)}",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.error,
                                         fontWeight = FontWeight.Bold
                                     )
                                 } else if (isMemoryLow) {
                                     Text(
- text = "メモリ不足",
+                                        text = stringResource(id = R.string.setup_memory_low),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.error,
                                         fontWeight = FontWeight.Bold
                                     )
                                 } else if (isStorageLow) {
                                     Text(
- text = "ストレージ不足",
+                                        text = stringResource(id = R.string.setup_storage_low),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.error,
                                         fontWeight = FontWeight.Bold
@@ -3557,10 +3834,9 @@ open class ModelSettingsFragment : Fragment() {
                                 }
                             }
                         }
-                        // 組み込みモデルはすべて LiteRT-LM を使用
                         if (!isExpanded) {
                             Text(
- text = "LiteRT-LM",
+                                text = engineLabel,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colorResource(id = R.color.primary),
                                 modifier = Modifier.padding(top = 2.dp)
@@ -3569,7 +3845,7 @@ open class ModelSettingsFragment : Fragment() {
                     }
                     if (!isExpanded && isDownloaded && !isDownloading) {
                         Text(
- text = "ダウンロード済み",
+                            text = stringResource(id = R.string.setup_ready_status),
                             style = MaterialTheme.typography.labelSmall,
                             color = colorResource(id = R.color.text_secondary),
                             modifier = Modifier.padding(start = 8.dp)
@@ -3581,13 +3857,19 @@ open class ModelSettingsFragment : Fragment() {
                             color = colorResource(id = R.color.text_secondary),
                             modifier = Modifier.padding(start = 8.dp)
                         )
+                    } else if (!isExpanded && !isDownloaded) {
+                        Text(
+                            text = stringResource(id = R.string.setup_not_acquired_status),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colorResource(id = R.color.text_secondary),
+                            modifier = Modifier.padding(start = 8.dp)
+                        )
                     }
                 }
                 if (isExpanded) {
                     Spacer(modifier = Modifier.height(8.dp))
-                    // 展開時にエンジン情報を表示
                     Text(
- text = "LiteRT-LM",
+                        text = engineLabel,
                         style = MaterialTheme.typography.labelMedium,
                         color = colorResource(id = R.color.primary),
                         fontWeight = FontWeight.SemiBold
@@ -5080,9 +5362,9 @@ open class ModelSettingsFragment : Fragment() {
             val tmpFile = java.io.File("${ModelFileManager.modelFile(requireContext(), it).absolutePath}.download")
             state.isPaused = !downloaded && !state.isDownloading && tmpFile.exists() && tmpFile.length() > 0L
             state.status = when {
-                downloaded -> "ダウンロード済み"
-                state.isPaused -> "一時停止中 (${formatBytes(tmpFile.length())} 保存済み)"
-                else -> "未ダウンロード"
+                downloaded -> getString(R.string.setup_ready_status)
+                state.isPaused -> getString(R.string.model_download_paused_toast)
+                else -> getString(R.string.setup_not_acquired_status)
             }
             if (!state.isDownloading) {
                 state.progressText = ""
@@ -5735,7 +6017,7 @@ open class ModelSettingsFragment : Fragment() {
             OutlinedTextField(
                 value = importedSearchQuery,
                 onValueChange = { importedSearchQuery = it },
-                label = { Text("カスタムモデルを検索") },
+                label = { Text(stringResource(id = R.string.model_settings_search_added_models)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 trailingIcon = {

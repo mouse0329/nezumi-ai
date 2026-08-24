@@ -136,7 +136,7 @@ Enjoy chatting with your AI!</string>
     <string name="import_task_model">Add model file (.task / .litertlm)</string>
     <string name="import_task_loading">Loading model file…</string>
     <string name="open_hf_approval_page">Approve on page</string>
-    <string name="imported_task_title">Added model files (.task / .litertlm)</string>
+    <string name="imported_task_title">Added model files</string>
     <string name="imported_task_empty">No model files have been added yet.</string>
     <string name="open_help_page">Help</string>
     <string name="open_license_page">License</string>
@@ -561,7 +561,7 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="model_settings_additional_downloads_title">Additional models downloading</string>
     <string name="model_settings_image_generation_section">Image generation models (MNN)</string>
     <string name="model_settings_image_generation_help">Download from the cards above or import a zip using the button below.</string>
-    <string name="model_settings_imported_models_section">Imported models</string>
+    <string name="model_settings_imported_models_section">Added models</string>
     <string name="model_settings_mmproj_file_management">mmproj files</string>
 
     <!-- Settings -->
@@ -722,7 +722,7 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="setup_step_memory">Memory</string>
     <string name="setup_step_model">Model</string>
     <string name="setup_welcome_title">Welcome to Nezumi AI</string>
-    <string name="setup_welcome_desc">Configure just 4 steps first and you can start chatting immediately.</string>
+    <string name="setup_welcome_desc">Configure just 3 steps first and you can start chatting immediately.</string>
     <string name="setup_welcome_steps">1. Welcome\n2. Download required models\n3. Select the model you want\nDownloads can be done later.</string>
     <string name="setup_welcome_ok_later">Model downloads can be completed later.</string>
     <string name="setup_welcome_history_info">Chat history is saved up to 30 items and old messages are removed automatically. You can change this in settings.</string>
@@ -1062,10 +1062,11 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="secret_mode_waiting">Waiting for authentication...</string>
     <string name="secret_mode_retry">Try again</string>
 
-    <string name="model_settings_builtin_models">Built-in models</string>
-    <string name="model_settings_custom_models">Custom models</string>
-    <string name="model_settings_custom_models_empty">No custom models have been imported yet.</string>
-    <string name="model_settings_custom_models_empty_search">No custom models match the search filter.</string>
+    <string name="model_settings_builtin_models">Recommended models</string>
+    <string name="model_settings_custom_models">Added models</string>
+    <string name="model_settings_custom_models_empty">No models have been added yet.</string>
+    <string name="model_settings_custom_models_empty_search">No models match the search filter.</string>
+    <string name="model_settings_search_added_models">Search models</string>
     <string name="model_settings_sd_zip_import_title">Import SD model zip</string>
     <!-- Cloud models (integrated into the model management screen) -->
     <string name="cloud_models_entry_button">☁️ Add cloud model</string>
@@ -1192,11 +1193,22 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
 
     <!-- Common buttons -->
     <string name="common_delete">Delete</string>
+    <string name="common_deleted">Deleted</string>
+    <string name="common_delete_failed">Failed to delete</string>
     <string name="common_cancel">Cancel</string>
     <string name="common_close">Close</string>
     <string name="common_next">Next</string>
     <string name="common_retry">Try again</string>
     <string name="common_clear">Clear</string>
+    <string name="model_download_queued">Queued</string>
+    <string name="model_download_queued_named">Added to download queue: %1$s</string>
+    <string name="model_download_already_running">Already downloading</string>
+    <string name="model_download_paused_toast">Paused. Resume will continue from where it left off</string>
+    <string name="model_download_pause">Pause</string>
+    <string name="model_download_cancel">Cancel</string>
+    <string name="model_download_queue_builtin_header">Recommended model downloads</string>
+    <string name="model_download_queue_hf_header">Added model downloads</string>
+    <string name="model_download_queue_empty">No downloads in progress</string>
 
     <!-- Image / Media viewer -->
     <string name="viewer_image_preview_title">Image preview</string>
@@ -1457,7 +1469,7 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="model_loading_phase_memory_check">Checking memory</string>
     <string name="model_loading_phase_weights">Loading weights</string>
     <string name="model_loading_phase_engine_init">Initializing engine</string>
-    <string name="model_kind_custom">Custom</string>
+    <string name="model_kind_custom">Model</string>
 
     <!-- Generation status messages -->
     <string name="vm_generic_error_short">An error occurred</string>

@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
@@ -195,15 +196,19 @@ class PresetSettingsFragment : Fragment() {
         var dragIndex by remember { mutableIntStateOf(-1) }
         var dragOffsetY by remember { mutableFloatStateOf(0f) }
         var autoScrollJob by remember { mutableStateOf<Job?>(null) }
- // 自動スクロールの、ループ内で参照される最新のポインタY位置と方向。
+        // 自動スクロールの、ループ内で参照される最新のポインタY位置と方向。
         // onDrag のローカル変数を while(true) のコルーチン内で参照しても stale になるので、
         // 毎回 onDrag で mutableStateOf に上書きして共有する。
         var autoScrollDirection by remember { mutableIntStateOf(0) } // -1: up, 0: none, 1: down
         var autoScrollDistance by remember { mutableFloatStateOf(0f) } // edge への食い込み量(0..edgeThreshold)
- // 並び替え確定後、DB からの新しい順序が Flow で届くまで表示する"暫定並び順"。
+        // 自動スクロール中も指の下にカードが留まるよう、スクロール量に合わせて
+        // dragOffsetY を補償する（スクロールでベース位置が動いても視覚位置を固定）。
+        // 並び替え確定後、DB からの新しい順序が Flow で届くまで表示する"暫定並び順"。
         //   これがある間は displayedPresets(=DBの古い順序) を上書きし、
         //   "決定時に一瞬前の状態が表示される" フリッカーを防ぐ。
         var pendingOrderIds by remember { mutableStateOf<List<String>?>(null) }
+        val density = LocalDensity.current
+        val itemSpacingPx = with(density) { 12.dp.toPx() }
 
         // pendingOrderIds に基づいて displayedPresets を並び替えた最終表示リスト。
         // DB からの新しい順序と pendingOrderIds が一致したら pendingOrderIds を解除する。
@@ -368,21 +373,24 @@ class PresetSettingsFragment : Fragment() {
                         draggingList = visibleList.toMutableList()
                     },
                     onDrag = { dy, pointerYInViewport, threshold ->
+                        // threshold はカード高さのみなので、spacedBy 分を加えて
+                        // 隣アイテムとの実際の間隔に合わせる（これがないと swap 時に指から離れる）
+                        val step = threshold + itemSpacingPx
                         dragOffsetY += dy
                         when {
-                            dragOffsetY > threshold && dragIndex < (draggingList?.lastIndex ?: 0) -> {
+                            dragOffsetY > step && dragIndex < (draggingList?.lastIndex ?: 0) -> {
                                 val list = draggingList!!.toMutableList()
                                 val tmp = list[dragIndex + 1]; list[dragIndex + 1] = list[dragIndex]; list[dragIndex] = tmp
                                 draggingList = list
                                 dragIndex++
-                                dragOffsetY -= threshold
+                                dragOffsetY -= step
                             }
-                            dragOffsetY < -threshold && dragIndex > 0 -> {
+                            dragOffsetY < -step && dragIndex > 0 -> {
                                 val list = draggingList!!.toMutableList()
                                 val tmp = list[dragIndex - 1]; list[dragIndex - 1] = list[dragIndex]; list[dragIndex] = tmp
                                 draggingList = list
                                 dragIndex--
-                                dragOffsetY += threshold
+                                dragOffsetY += step
                             }
                         }
 
@@ -431,6 +439,9 @@ class PresetSettingsFragment : Fragment() {
                                         val pixelsPerFrame = 24f * speedFactor // 1frameあたり最大24px
                                         val delta = pixelsPerFrame * autoScrollDirection
                                         listState.scrollBy(delta)
+                                        // スクロールでアイテムのベース位置が動く分、
+                                        // translation を逆方向に補償して指の下にカードを留める
+                                        dragOffsetY += delta
                                         delay(16)
                                     }
                                 }

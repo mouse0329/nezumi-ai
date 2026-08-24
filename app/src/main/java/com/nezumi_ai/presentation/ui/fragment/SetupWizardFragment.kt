@@ -62,6 +62,7 @@ import com.nezumi_ai.R
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.inference.ModelFileManager
+import com.nezumi_ai.data.inference.RecommendedModelCatalog
 import com.nezumi_ai.data.repository.ChatSessionRepository
 import com.nezumi_ai.data.repository.MessageRepository
 import com.nezumi_ai.data.repository.SettingsRepository
@@ -640,6 +641,80 @@ class SetupWizardFragment : Fragment() {
                 }
             }
         }
+
+        // おすすめ GGUF（RecommendedModelCatalog）。カード見た目は Gemma と同系。
+        RecommendedModelCatalog.recommended()
+            .filter { it.engine == RecommendedModelCatalog.Engine.GGUF }
+            .forEach { entry ->
+                val repo = entry.hfRepo ?: return@forEach
+                val file = entry.hfFile ?: return@forEach
+                val local = ModelFileManager.huggingFaceImportedFile(requireContext(), repo, file)
+                val downloaded = local.isFile && local.length() > 0L
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(
+                            width = 1.dp,
+                            color = textSecondary.copy(alpha = 0.25f),
+                            shape = RoundedCornerShape(18.dp)
+                        ),
+                    colors = CardDefaults.cardColors(
+                        containerColor = colorResource(id = R.color.surface_card)
+                    ),
+                    shape = RoundedCornerShape(18.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = entry.displayName,
+                                    color = textPrimary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = entry.shortDescription,
+                                    color = textSecondary,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    text = "llama.cpp",
+                                    color = accent,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                            Text(
+                                text = if (downloaded) {
+                                    stringResource(id = R.string.setup_ready_status)
+                                } else {
+                                    stringResource(id = R.string.setup_not_acquired_status)
+                                },
+                                color = if (downloaded) accent else textSecondary
+                            )
+                        }
+                        if (!downloaded) {
+                            Button(
+                                onClick = {
+                                    val ok = ModelDownloadWorker.enqueueCustomHf(requireContext(), repo, file)
+                                    toast(
+                                        if (ok) requireContext().getString(R.string.model_download_queued_named, entry.displayName)
+                                        else requireContext().getString(R.string.model_download_already_running)
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(stringResource(id = R.string.setup_download_button))
+                            }
+                        }
+                    }
+                }
+            }
 
         Text(
             text = stringResource(id = R.string.setup_skip_hint),
