@@ -340,7 +340,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         ActivityResultContracts.PickMultipleVisualMedia(MAX_SELECTABLE_IMAGES)
     ) { uris ->
         if (!imageInputEnabled) {
-            Toast.makeText(requireContext(), "このモデルでは画像入力は無効です", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.multimodal_image_disabled), Toast.LENGTH_SHORT).show()
             return@registerForActivityResult
         }
         if (uris.isNotEmpty()) {
@@ -349,7 +349,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             if (remaining <= 0) {
                 Toast.makeText(
                     requireContext(),
-                    "画像は最大 ${MAX_SELECTABLE_IMAGES} 枚までです",
+                    getString(R.string.multimodal_image_max_reached, MAX_SELECTABLE_IMAGES),
                     Toast.LENGTH_SHORT
                 ).show()
                 return@registerForActivityResult
@@ -358,7 +358,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             selectedImageUrisList = (selectedImageUrisList + newUris).take(MAX_SELECTABLE_IMAGES)
             Toast.makeText(
                 requireContext(),
-                "${newUris.size}個の画像を選択しました (${selectedImageUrisList.size}/${MAX_SELECTABLE_IMAGES})",
+                getString(R.string.multimodal_image_selected, newUris.size, selectedImageUrisList.size, MAX_SELECTABLE_IMAGES),
                 Toast.LENGTH_SHORT
             ).show()
             updateMediaPreview()
@@ -377,7 +377,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     ) { uri ->
         if (uri == null) return@registerForActivityResult
         if (!imageInputEnabled) {
-            Toast.makeText(requireContext(), "このモデルでは動画/画像入力は無効です", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.multimodal_video_image_disabled), Toast.LENGTH_SHORT).show()
             return@registerForActivityResult
         }
         processPickedVideo(uri)
@@ -397,7 +397,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     Toast.makeText(requireContext(), "Max 5 images allowed", Toast.LENGTH_SHORT).show()
                 }
             } else {
-                Toast.makeText(requireContext(), "画像データを取得できませんでした", Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), getString(R.string.multimodal_image_fetch_failed), Toast.LENGTH_SHORT).show()
             }
         } else {
             Log.d("ChatFragment", "Camera cancelled by user")
@@ -406,12 +406,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private val audioPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (!audioInputEnabled) {
-            Toast.makeText(requireContext(), "このモデルでは音声入力は無効です", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.multimodal_audio_disabled), Toast.LENGTH_SHORT).show()
             return@registerForActivityResult
         }
         if (uri != null) {
             selectedAudioUri = uri.toString()
-            Toast.makeText(requireContext(), "音声を選択しました", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.multimodal_audio_selected), Toast.LENGTH_SHORT).show()
             updateMediaPreview()
         }
     }
@@ -515,7 +515,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         if (isGranted) {
             launchCameraInternal()
         } else {
-            Toast.makeText(requireContext(), "カメラの権限が必要です", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.perm_camera_required), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -523,7 +523,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         if (isGranted) {
             startAudioRecording()
         } else {
-            Toast.makeText(requireContext(), "マイクの権限が必要です", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.perm_microphone_required), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -551,7 +551,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     context?.let {
                         Toast.makeText(
                             it,
-                            "動画のフレーム抽出に失敗しました",
+                            getString(R.string.multimodal_video_frame_extract_failed),
                             Toast.LENGTH_SHORT
                         ).show()
                     }
@@ -580,7 +580,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     context?.let {
                         Toast.makeText(
                             it,
-                            "動画フレームの保存に失敗しました",
+                            getString(R.string.multimodal_video_frame_save_failed),
                             Toast.LENGTH_SHORT
                         ).show()
                     }
@@ -670,7 +670,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 )
                 if (selectedTextFiles.any { it.uri == entry.uri }) {
                     context?.let {
-                        Toast.makeText(it, "このファイルは既に追加されています", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(it, getString(R.string.attachment_already_added), Toast.LENGTH_SHORT).show()
                     }
                     return@launch
                 }
@@ -1055,7 +1055,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                             viewModel.setCurrentSession(savedSessionId)
                         } else {
                             Log.d("ChatFragment", "Saved session is unavailable or incognito. Creating new session.")
-                            val newSessionId = sessionRepository.createSession("新しいチャット")
+                            val newSessionId = sessionRepository.createSession(getString(R.string.chat_new_session_title))
                             settingsRepository.saveCurrentSessionId(newSessionId)
                             val prefs = requireContext().getSharedPreferences("nezumi_ai_prefs", android.content.Context.MODE_PRIVATE)
                             prefs.edit().putLong("current_session_id", newSessionId).apply()
@@ -1063,7 +1063,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         }
                     } else {
                         Log.d("ChatFragment", "No saved session found. Creating new session.")
-                        val newSessionId = sessionRepository.createSession("新しいチャット")
+                        val newSessionId = sessionRepository.createSession(getString(R.string.chat_new_session_title))
                         settingsRepository.saveCurrentSessionId(newSessionId)
                         val prefs = requireContext().getSharedPreferences("nezumi_ai_prefs", android.content.Context.MODE_PRIVATE)
                         prefs.edit().putLong("current_session_id", newSessionId).apply()
@@ -1073,7 +1073,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 } catch (e: Exception) {
                     Log.e("ChatFragment", "Failed to handle session", e)
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(requireContext(), "セッション処理に失敗しました", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), getString(R.string.chat_session_dispatch_failed), Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -1441,7 +1441,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 if (isGenerating) {
                     responseTypingText = when {
                         compressing -> ""
-                        downloading -> "埋め込みファイルをダウンロード中..."
+                        downloading -> getString(R.string.embedding_download_progress_message)
                         else -> getString(R.string.response_generating)
                     }
                 }
@@ -1504,7 +1504,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.uiMessage.collect { message ->
- val duration = if (message.startsWith("実行ツール")) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
+                // ツール実行入口の長めメッセージは LONG で見せる。日本語/英語両方のプレフィックスを判定。
+                val duration = if (message.startsWith("実行ツール") || message.startsWith("Running ") || message.startsWith("Tool ")) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
                 Toast.makeText(requireContext(), message, duration).show()
             }
         }
@@ -2270,7 +2271,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                             imageUris = selectedImageUrisList,
                             videoUri = selectedVideoUri,
                             audioUri = selectedAudioUri,
-                            title = if (selectedVideoUri != null) "動画・フレーム・音声" else "メディアプレビュー",
+                            title = if (selectedVideoUri != null) requireContext().getString(R.string.multimodal_video_frame_audio_title) else requireContext().getString(R.string.multimodal_media_preview_title),
                             initialIndex = if (selectedKey.startsWith("image:")) {
                                 selectedKey.removePrefix("image:").toIntOrNull() ?: 0
                             } else 0
@@ -2431,7 +2432,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             icon = {
                 Image(
                     painter = painterResource(id = R.drawable.ic_errnezumi),
-                    contentDescription = "エラー",
+                    contentDescription = stringResource(id = R.string.chat_error_icon_description),
                     modifier = Modifier.size(128.dp)
                 )
             },
@@ -2514,7 +2515,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             icon = {
                 Image(
                     painter = painterResource(id = R.drawable.ic_wnezumi),
-                    contentDescription = "警告",
+                    contentDescription = stringResource(id = R.string.warning_icon_description),
                     modifier = Modifier.size(128.dp)
                 )
             },
@@ -2557,7 +2558,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             setPadding(padding, padding, padding, padding)
         }
         val messageView = TextView(context).apply {
-            text = "埋め込みファイルをダウンロード中..."
+            text = context.getString(R.string.embedding_download_progress_message)
             setPadding(0, 0, 0, (12 * resources.displayMetrics.density).toInt())
         }
         val progressBar = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
@@ -2569,9 +2570,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         container.addView(progressBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         val dialog = AlertDialog.Builder(context)
-            .setTitle("埋め込みファイルのダウンロード")
+            .setTitle(context.getString(R.string.embedding_download_dialog_title))
             .setView(container)
-            .setNegativeButton("キャンセル") { _, _ ->
+            .setNegativeButton(context.getString(R.string.embedding_download_cancel)) { _, _ ->
                 viewModel.cancelEmbeddingDownload()
             }
             .setCancelable(false)
@@ -2586,7 +2587,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private fun updateEmbeddingDownloadDialog(progress: ChatViewModel.EmbeddingDownloadProgress?) {
         if (embeddingDownloadDialog?.isShowing != true) return
         if (progress == null) {
-            embeddingDownloadProgressTextView?.text = "埋め込みファイルを準備しています..."
+            embeddingDownloadProgressTextView?.text = getString(R.string.embedding_download_preparing)
             embeddingDownloadProgressBar?.isIndeterminate = true
             return
         }
@@ -2608,14 +2609,16 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private fun showCpuCompatibilityWarningDialog(warning: ChatViewModel.CpuCompatibilityWarningInfo) {
         val alertDialog = androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle("CPU互換性警告")
+            .setTitle(getString(R.string.cpu_compat_warning_title))
             .setIcon(R.drawable.ic_nezumi_ai)
             .setMessage(
-                "モデル「${warning.modelName}」のロード前に確認が必要です。\n\n" +
- warning.message.replace("", "").trim() + "\n\n"+
-                    "ロードを続行しますか？"
+                getString(
+                    R.string.model_load_warning_confirm,
+                    warning.modelName,
+                    warning.message.replace("", "").trim() + "\n\n"
+                )
             )
-            .setPositiveButton("続行") { _, _ ->
+            .setPositiveButton(getString(R.string.cpu_compat_warning_continue)) { _, _ ->
                 val scope = if (view != null && isAdded) {
                     try {
                         viewLifecycleOwner.lifecycleScope
@@ -2633,7 +2636,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     }
                 }
             }
-            .setNegativeButton("キャンセル") { _, _ ->
+            .setNegativeButton(getString(R.string.cancel_generic)) { _, _ ->
                 viewModel.cancelCpuCompatibilityWarning()
             }
             .setCancelable(false)
@@ -2644,7 +2647,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private fun showModelErrorDialog(message: String) {
         // Parse message to extract title, body, and details
         val lines = message.split("\n\n")
-        val title = lines.getOrNull(0) ?: "エラー"
+        val title = lines.getOrNull(0) ?: getString(R.string.chat_error_generic_title)
         val body = lines.getOrNull(1) ?: lines.getOrNull(0) ?: message
         val detail = lines.getOrNull(2)
 
@@ -2740,7 +2743,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "ネズミAI",
+                text = stringResource(id = R.string.brand_name_display),
                 style = MaterialTheme.typography.titleLarge,
                 color = colorResource(id = R.color.text_primary),
                 fontWeight = FontWeight.SemiBold
@@ -3216,7 +3219,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
-                        text = "シンキング",
+                        text = stringResource(id = R.string.chat_thinking_label),
                         color = colorResource(id = R.color.text_secondary),
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -3288,7 +3291,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         view.findViewById<View>(R.id.opt_image).setOnClickListener {
             dialog.dismiss()
             if (!imageInputEnabled) {
-                Toast.makeText(ctx, "このモデルでは画像入力は無効です", Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, getString(R.string.multimodal_image_disabled), Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             imagePickerLauncher.launch(
@@ -3325,14 +3328,14 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             )
             if (mimes.isEmpty()) {
-                Toast.makeText(ctx, "このモデルではファイル添付は無効です", Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, getString(R.string.multimodal_file_disabled), Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             try {
                 genericFilePickerLauncher.launch(mimes.toTypedArray())
             } catch (e: Throwable) {
                 Log.e("ChatFragment", "Error launching file picker", e)
-                Toast.makeText(ctx, "ファイル選択を開けませんでした", Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, getString(R.string.file_picker_open_failed), Toast.LENGTH_SHORT).show()
             }
         }
         view.findViewById<View>(R.id.opt_cancel).setOnClickListener { dialog.dismiss() }
@@ -3386,13 +3389,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         when {
             isImage -> {
                 if (!imageInputEnabled) {
-                    Toast.makeText(requireContext(), "このモデルでは画像入力は無効です", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(requireContext(), getString(R.string.multimodal_image_disabled), Toast.LENGTH_SHORT).show()
                     return
                 }
                 if (selectedImageUrisList.size >= MAX_SELECTABLE_IMAGES) {
                     Toast.makeText(
                         requireContext(),
-                        "画像は最大 ${MAX_SELECTABLE_IMAGES} 枚までです",
+                        getString(R.string.multimodal_image_max_reached, MAX_SELECTABLE_IMAGES),
                         Toast.LENGTH_SHORT
                     ).show()
                     return
@@ -3401,19 +3404,19 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 updateMediaPreview()
                 Toast.makeText(
                     requireContext(),
-                    "画像を追加しました (${selectedImageUrisList.size}/${MAX_SELECTABLE_IMAGES})",
+                    getString(R.string.multimodal_image_added, selectedImageUrisList.size, MAX_SELECTABLE_IMAGES),
                     Toast.LENGTH_SHORT
                 ).show()
             }
             isVideo -> {
                 if (!imageInputEnabled) {
-                    Toast.makeText(requireContext(), "このモデルでは動画入力は無効です", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(requireContext(), getString(R.string.multimodal_video_disabled), Toast.LENGTH_SHORT).show()
                     return
                 }
                 if (!isGemmaVideoCapableModel()) {
                     Toast.makeText(
                         requireContext(),
-                        "動画は Gemma 3n (E2B/E4B) モデルでのみ対応しています",
+                        getString(R.string.multimodal_video_gemma3n_only),
                         Toast.LENGTH_LONG
                     ).show()
                     return
@@ -3422,12 +3425,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
             isAudio -> {
                 if (!audioInputEnabled) {
-                    Toast.makeText(requireContext(), "このモデルでは音声入力は無効です", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(requireContext(), getString(R.string.multimodal_audio_disabled), Toast.LENGTH_SHORT).show()
                     return
                 }
                 selectedAudioUri = uri.toString()
                 updateMediaPreview()
-                Toast.makeText(requireContext(), "音声を追加しました", Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), getString(R.string.multimodal_audio_added), Toast.LENGTH_SHORT).show()
             }
             isDocument -> {
                 // ドキュメント (PDF/Word/Excel/PowerPoint) はピック時点で
@@ -3443,7 +3446,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     uri = uri.toString()
                 )
                 if (selectedTextFiles.any { it.uri == entry.uri }) {
-                    Toast.makeText(requireContext(), "このファイルは既に追加されています", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(requireContext(), getString(R.string.attachment_already_added), Toast.LENGTH_SHORT).show()
                     return
                 }
                 selectedTextFiles = selectedTextFiles + entry
@@ -3457,7 +3460,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             else -> {
                 Toast.makeText(
                     requireContext(),
-                    "対応していないファイル形式です ($mime)",
+                    getString(R.string.unsupported_file_format, mime),
                     Toast.LENGTH_SHORT
                 ).show()
             }
@@ -3466,7 +3469,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private fun launchCamera() {
         if (!imageInputEnabled) {
-            Toast.makeText(requireContext(), "このモデルでは画像入力は無効です", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.multimodal_image_disabled), Toast.LENGTH_SHORT).show()
             return
         }
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA)
@@ -3504,13 +3507,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             cameraLauncher.launch(cameraIntent)
         } catch (e: Exception) {
             Log.e("ChatFragment", "Camera app not found", e)
-            Toast.makeText(requireContext(), "カメラアプリが見つかりません", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.camera_app_not_found), Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun pasteFromClipboard() {
         if (!imageInputEnabled) {
-            Toast.makeText(requireContext(), "このモデルでは画像入力は無効です", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.multimodal_image_disabled), Toast.LENGTH_SHORT).show()
             return
         }
         try {
@@ -3536,7 +3539,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         val cachedFile = java.io.File(cacheDir, "IMG_${System.currentTimeMillis()}.jpg")
                         val inputStream = requireContext().contentResolver.openInputStream(uri)
                         if (inputStream == null) {
-                            Toast.makeText(requireContext(), "クリップボードから画像を取得できませんでした", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), getString(R.string.clipboard_image_fetch_failed), Toast.LENGTH_SHORT).show()
                             return
                         }
                         inputStream.use { input ->
@@ -3553,11 +3556,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         )
                         selectedImageUrisList = selectedImageUrisList + fileUri.toString()
                         updateMediaPreview()
-                        Toast.makeText(requireContext(), "クリップボードから画像を貼り付けました (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), getString(R.string.clipboard_image_pasted, selectedImageUrisList.size, 5), Toast.LENGTH_SHORT).show()
                         Log.d("ChatFragment", "Image pasted from clipboard: ${cachedFile.absolutePath}")
                     } catch (e: Exception) {
                         Log.e("ChatFragment", "Error processing clipboard URI", e)
-                        Toast.makeText(requireContext(), "クリップボードから画像を取得できませんでした", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), getString(R.string.clipboard_image_fetch_failed), Toast.LENGTH_SHORT).show()
                     }
                 } else if (item.text != null) {
                     // テキストがコピーされている場合（テキストURLなど）
@@ -3569,32 +3572,32 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                             if (selectedImageUrisList.size < 5) {
                                 selectedImageUrisList = selectedImageUrisList + uri.toString()
                                 updateMediaPreview()
-                                Toast.makeText(requireContext(), "クリップボードからURIを貼り付けました (${selectedImageUrisList.size}/5)", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(requireContext(), getString(R.string.clipboard_uri_pasted, selectedImageUrisList.size, 5), Toast.LENGTH_SHORT).show()
                             } else {
                                 Toast.makeText(requireContext(), "Max 5 images allowed", Toast.LENGTH_SHORT).show()
                             }
                         } catch (e: Exception) {
                             Log.e("ChatFragment", "Invalid URI in clipboard", e)
-                            Toast.makeText(requireContext(), "無効なURIです", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), getString(R.string.clipboard_invalid_uri), Toast.LENGTH_SHORT).show()
                         }
                     } else {
-                        Toast.makeText(requireContext(), "クリップボードに画像またはURIがありません", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), getString(R.string.clipboard_empty), Toast.LENGTH_SHORT).show()
                     }
                 } else {
-                    Toast.makeText(requireContext(), "クリップボードに有効なデータがありません", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(requireContext(), getString(R.string.clipboard_no_valid_data), Toast.LENGTH_SHORT).show()
                 }
             } else {
-                Toast.makeText(requireContext(), "クリップボードが空です", Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), getString(R.string.clipboard_is_empty), Toast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
             Log.e("ChatFragment", "Error accessing clipboard", e)
-            Toast.makeText(requireContext(), "クリップボードのアクセスに失敗しました", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.clipboard_access_failed), Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun launchAudioRecording() {
         if (!audioInputEnabled) {
-            Toast.makeText(requireContext(), "このモデルでは音声入力は無効です", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.multimodal_audio_disabled), Toast.LENGTH_SHORT).show()
             return
         }
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
@@ -3642,7 +3645,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                                 stopAudioRecording()
                                 Toast.makeText(
                                     requireContext(),
-                                    "録音上限 (${MAX_RECORDING_DURATION_MS / 1000}秒) に達したため停止しました",
+                                    getString(R.string.recording_limit_reached, (MAX_RECORDING_DURATION_MS / 1000).toInt()),
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
@@ -3665,7 +3668,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             startRecordingAmplitudeAnimation()
         } catch (e: Exception) {
             Log.e("ChatFragment", "Error starting audio recording", e)
-            Toast.makeText(requireContext(), "録音の開始に失敗しました", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.recording_start_failed), Toast.LENGTH_SHORT).show()
             isRecordingAudio = false
             mediaRecorder?.release()
             mediaRecorder = null
@@ -3691,7 +3694,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 recordingAnimationJob = null
 
                 // hintを元に戻す（cancelするとアニメJob内の後処理が走らないため明示的に戻す）
-                _binding?.messageInput?.hint = "メッセージを入力..."
+                _binding?.messageInput?.hint = getString(R.string.chat_input_hint)
 
                 // インライン録音バーを閉じて通常の入力 UI に戻す
                 hideInlineRecordingBar()
@@ -3720,16 +3723,16 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         )
                         selectedAudioUri = recordingUri.toString()
                         updateMediaPreview()
-                        Toast.makeText(requireContext(), "音声を追加しました", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), getString(R.string.multimodal_audio_added), Toast.LENGTH_SHORT).show()
                     } catch (e: Exception) {
                         Log.e("ChatFragment", "Error creating FileProvider URI for recording", e)
-                        Toast.makeText(requireContext(), "音声ファイルの処理に失敗しました", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), getString(R.string.recording_audio_process_failed), Toast.LENGTH_SHORT).show()
                     }
                 }
             }
         } catch (e: Exception) {
             Log.e("ChatFragment", "Error stopping audio recording", e)
-            Toast.makeText(requireContext(), "録音の停止に失敗しました", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.recording_stop_failed), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -3821,7 +3824,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
             // アニメーション終了時にプレースホルダーを元に戻す
             withContext(Dispatchers.Main) {
-                _binding?.messageInput?.hint = "メッセージを入力..."
+                _binding?.messageInput?.hint = getString(R.string.chat_input_hint)
             }
         }
     }

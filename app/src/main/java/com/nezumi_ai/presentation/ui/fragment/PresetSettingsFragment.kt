@@ -59,6 +59,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.integerResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -584,10 +585,17 @@ class PresetSettingsFragment : Fragment() {
                             fontWeight = FontWeight.Bold
                         )
                         if (preset.description.isNotBlank()) {
+                            // プリセット一覧の説明行は 1 行に収め、ロケール依存の文字数上限を
+                            // 超えたら … で折り返す。リソース値は JA=16 / EN=32 を想定。
+                            val limit = integerResource(id = R.integer.preset_skill_description_max_chars)
+                            val truncated = if (preset.description.length > limit)
+                                preset.description.take(limit).trimEnd() + "…"
+                            else preset.description
                             Text(
-                                text = preset.description,
+                                text = truncated,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodySmall
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1
                             )
                         }
                     }

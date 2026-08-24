@@ -1,6 +1,7 @@
 package com.nezumi_ai.data.repository
 
 import android.content.Context
+import com.nezumi_ai.R
 import com.nezumi_ai.data.database.dao.PresetDao
 import com.nezumi_ai.data.database.entity.PresetEntity
 import com.nezumi_ai.data.inference.ToolPreferences
@@ -209,7 +210,7 @@ class PresetRepository(
                 createdAt = now,
                 updatedAt = now,
                 memoryEnabled = false,
-                description = PLAIN_PRESET_DESCRIPTION,
+                description = plainDescription(),
                 isLocked = true
             )
         )
@@ -304,9 +305,11 @@ class PresetRepository(
         val now = System.currentTimeMillis()
         return PresetEntity(
             id = DEFAULT_NEZUMI_AI_ID,
-            name = "ネズミAI",
- icon = "",
-            systemPrompt = "あなたはネズミAIです。親しみやすく、簡潔で、ユーザーの意図に寄り添って日本語で応答してください。",
+            // Brand name always renders as "Nezumi AI" per product decision.
+            name = context.getString(R.string.preset_default_nezumi_name),
+            icon = "",
+            // Locale-dependent system prompt (JP for ja resources, EN for en resources).
+            systemPrompt = context.getString(R.string.preset_default_nezumi_system_prompt),
             modelId = "Gemma4-2B",
             // web_search は API キー未設定、flashlight はカメラ権限が必要なため、初期は無効
             enabledTools = encodeToolIds(PresetConstants.defaultInitiallyEnabledToolIds),
@@ -314,7 +317,7 @@ class PresetRepository(
             updatedAt = now,
             isDefault = true,
             memoryEnabled = true,
-            description = "自由に使えるデフォルトプリセット",
+            description = context.getString(R.string.preset_default_nezumi_description),
             toolCallingEnabled = true
         )
     }
@@ -324,8 +327,15 @@ class PresetRepository(
         return !isPlain || PresetModelCatalog.isDownloaded(context, preset.modelId)
     }
 
+    /**
+     * "plain"プリセット（システムプロンプトなし・ツールなし）の説明文を現行ロケールで取得。
+     * 初回作成時だけ使う。既存のプリセットはユーザーデータ保護のため上書きしない。
+     */
+    private fun plainDescription(): String = context.getString(R.string.preset_plain_description)
+
     companion object {
         const val DEFAULT_NEZUMI_AI_ID = "default_nezumi_ai"
+        // 後方互換のために旧文字列も保持。新規はリソース化した preset_plain_description を使う。
         const val PLAIN_PRESET_DESCRIPTION = "システムプロンプトなし・ツールなしの素の状態"
         private const val PLAIN_PRESET_ID_PREFIX = "plain_"
         private val LEGACY_GENERATED_DEFAULT_IDS = listOf(

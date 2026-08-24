@@ -1,6 +1,7 @@
 package com.nezumi_ai.presentation.viewmodel
 
 import android.app.Application
+import com.nezumi_ai.R
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -242,7 +243,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
         return when {
             hasMnn -> "MNN (CPU/GPU)"
-            hasQnn -> "旧 QNN 形式 (非対応)"
+            hasQnn -> getApplication<Application>().getString(R.string.imagegen_legacy_qnn_unsupported)
             else -> "Unknown"
         }
     }
@@ -703,13 +704,13 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         val availableGb = sys.availableMemoryMB / 1024f
         val maxSide = maxOf(width, height)
         val suggestion = when {
-            maxSide >= 512 -> "4bit UNet の軽量モデルに切り替えるか、まず 256px / steps 6-8 で試してください。"
-            maxSide >= 256 -> "4bit UNet の軽量モデルに切り替えるか、まず 192px / steps 4-6 で試してください。"
-            else -> "より軽量な 4bit モデルを使うか、不要なアプリを閉じて空き RAM を増やしてください。"
+            maxSide >= 512 -> getApplication<Application>().getString(R.string.imagegen_ram_hint_512)
+            maxSide >= 256 -> getApplication<Application>().getString(R.string.imagegen_ram_hint_256)
+            else -> getApplication<Application>().getString(R.string.imagegen_ram_hint_low)
         }
         return String.format(
             Locale.US,
-            "端末の総 RAM が小さすぎます（総 %.2fGB / 空き %.2fGB / モデル約 %.2fGB）。UNet と VAE のロードが同時に起きるピーク (目安 %.2fGB) で OOM になるため中止しました。%s",
+            getApplication<Application>().getString(R.string.imagegen_ram_too_small),
             totalGb,
             availableGb,
             modelGb,
@@ -743,8 +744,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         ImageGenerationNotificationManager.showError(
             app,
             ImageGenerationNotificationManager.singleNotificationId(),
-            "画像生成を停止しました",
-            "進行中の画像生成をキャンセルしました"
+            getApplication<Application>().getString(R.string.imagegen_stopped_title),
+            getApplication<Application>().getString(R.string.imagegen_cancelled_in_progress)
         )
         ImageGenerationNotificationManager.cancelQueue(app)
         releaseGenerationWakeLock()
@@ -758,7 +759,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         Log.i(TAG, "[ImageGen] Safety model missing, triggering download...")
         _safetyDownloading.value = true
         _safetyProgress.value = -1f
-        _snackbar.value = "セーフティモデルをダウンロード中です…"
+        _snackbar.value = getApplication<Application>().getString(R.string.safety_model_downloading)
 
         val success = ModelDownloadWorker.awaitSafetyModelReady(
             app,
@@ -774,7 +775,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         _safetyProgress.value = -1f
         if (!success) {
             Log.e(TAG, "[ImageGen] Safety model download failed or timeout")
-            _snackbar.value = "セーフティモデルのダウンロードがタイムアウトしました"
+            _snackbar.value = getApplication<Application>().getString(R.string.safety_model_download_timeout)
         }
         return success
     }
@@ -801,7 +802,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             PromptFilter.check(pr) == PromptFilter.Result.BLOCK) {
             Log.w(TAG, "[ImageGen] Prompt blocked by PromptFilter")
             _safetyVerdict.value = SafetyResult.Verdict.BLOCK
-            _snackbar.value = "プロンプトにポリシー違反のキーワードが含まれています"
+            _snackbar.value = getApplication<Application>().getString(R.string.imagegen_prompt_policy_violation)
             return@launch
         }
         // Safety model が未ダウンロードならダウンロード完了まで待つ (画像ガード有効時のみ)
@@ -854,7 +855,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 ImageGenerationNotificationManager.showError(
                     app,
                     ImageGenerationNotificationManager.singleNotificationId(),
-                    "メモリ不足のため開始できません",
+                    getApplication<Application>().getString(R.string.imagegen_memory_too_low),
                     abortMessage
                 )
                 return@launch
@@ -924,7 +925,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             val lastSafetyVerdict = ld.getLastSafetyVerdict()
             if (lastSafetyVerdict == SafetyResult.Verdict.BLUR) {
                 _safetyVerdict.value = SafetyResult.Verdict.BLUR
-                _snackbar.value = "セーフティフィルターにより画像をぼかして表示しています"
+                _snackbar.value = getApplication<Application>().getString(R.string.imagegen_safety_blurred)
             }
             
             _currentStep.value = totalSteps
@@ -937,27 +938,27 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     ImageGenerationNotificationManager.showError(
                         app,
                         ImageGenerationNotificationManager.singleNotificationId(),
-                        "画像生成を停止しました",
-                        "単体画像の生成をキャンセルしました"
+                        getApplication<Application>().getString(R.string.imagegen_stopped_title),
+                        getApplication<Application>().getString(R.string.imagegen_cancelled_single)
                     )
                 }
                 bmp == null -> {
                     val lastVerdict = lastSafetyVerdict
                     if (lastVerdict == SafetyResult.Verdict.BLOCK) {
                         _safetyVerdict.value = SafetyResult.Verdict.BLOCK
-                        showImageGenError("不適切なコンテンツが検出されたため表示を制限しました")
+                        showImageGenError(getApplication<Application>().getString(R.string.imagegen_unsafe_content_blocked))
                         ImageGenerationNotificationManager.showError(
                             app,
                             ImageGenerationNotificationManager.singleNotificationId(),
-                            "画像生成をブロックしました",
-                            "セーフティガードにより結果の表示を制限しました"
+                            getApplication<Application>().getString(R.string.imagegen_blocked_title),
+                            getApplication<Application>().getString(R.string.imagegen_safety_guard_body)
                         )
                     } else {
-                        showImageGenError("画像生成に失敗しました")
+                        showImageGenError(getApplication<Application>().getString(R.string.image_gen_failed))
                         ImageGenerationNotificationManager.showError(
                             app,
                             ImageGenerationNotificationManager.singleNotificationId(),
-                            "画像生成に失敗しました",
+                            getApplication<Application>().getString(R.string.image_gen_failed),
                             promptPreview
                         )
                     }
@@ -969,7 +970,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     ImageGenerationNotificationManager.showCompleted(
                         app,
                         ImageGenerationNotificationManager.singleNotificationId(),
-                        "画像生成が完了しました",
+                        getApplication<Application>().getString(R.string.imagegen_completed_title),
                         promptPreview
                     )
                     if (uri != null && metadata != null) {
@@ -993,8 +994,8 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 ImageGenerationNotificationManager.showError(
                     app,
                     ImageGenerationNotificationManager.singleNotificationId(),
-                    "画像生成を停止しました",
-                    "単体画像の生成をキャンセルしました"
+                    getApplication<Application>().getString(R.string.imagegen_stopped_title),
+                    getApplication<Application>().getString(R.string.imagegen_cancelled_single)
                 )
             }
         } catch (e: java.net.SocketException) {
@@ -1005,19 +1006,19 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 ImageGenerationNotificationManager.showError(
                     app,
                     ImageGenerationNotificationManager.singleNotificationId(),
-                    "画像生成を停止しました",
-                    "単体画像の生成をキャンセルしました"
+                    getApplication<Application>().getString(R.string.imagegen_stopped_title),
+                    getApplication<Application>().getString(R.string.imagegen_cancelled_single)
                 )
             } else {
-                showImageGenError(e.message ?: "画像生成中に接続が切断されました")
+                showImageGenError(e.message ?: getApplication<Application>().getString(R.string.imagegen_connection_lost))
             }
         } catch (e: Exception) {
             Log.e(TAG, "ImageGen failed", e)
-            showImageGenError(e.message ?: "画像生成に失敗しました")
+            showImageGenError(e.message ?: getApplication<Application>().getString(R.string.image_gen_failed))
             ImageGenerationNotificationManager.showError(
                 app,
                 ImageGenerationNotificationManager.singleNotificationId(),
-                "画像生成に失敗しました",
+                getApplication<Application>().getString(R.string.image_gen_failed),
                 e.message ?: promptPreview
             )
         } finally {
@@ -1136,11 +1137,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     "nezumi-ai SD"
                 )
                 if (uri == null) {
-                    _snackbar.value = "保存に失敗しました"
+                    _snackbar.value = getApplication<Application>().getString(R.string.save_failed)
                     return@launch
                 }
             }
-            _snackbar.value = "ギャラリーに保存しました"
+            _snackbar.value = getApplication<Application>().getString(R.string.save_success)
         } catch (e: Exception) {
             Log.e(TAG, "saveToGallery", e)
             _snackbar.value = e.message ?: "save failed"
@@ -1184,11 +1185,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     "nezumi-ai SD"
                 )
                 if (uri == null) {
-                    _snackbar.value = "保存に失敗しました"
+                    _snackbar.value = getApplication<Application>().getString(R.string.save_failed)
                     return@launch
                 }
             }
-            _snackbar.value = "ギャラリーに保存しました"
+            _snackbar.value = getApplication<Application>().getString(R.string.save_success)
         } catch (e: Exception) {
             Log.e(TAG, "saveBitmapToGallery", e)
             _snackbar.value = e.message ?: "save failed"
@@ -1206,7 +1207,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             withContext(Dispatchers.Main) {
-                context.startActivity(Intent.createChooser(share, "共有"))
+                context.startActivity(Intent.createChooser(share, context.getString(R.string.share_dialog_title)))
             }
         }
     }
@@ -1224,7 +1225,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         val baseScheduler = _scheduler.value.id
 
         if (basePrompt.isEmpty()) {
-            _snackbar.value = "プロンプトを入力してください"
+            _snackbar.value = getApplication<Application>().getString(R.string.imagegen_prompt_empty)
             return false
         }
 
@@ -1246,7 +1247,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         }
 
         _generationQueue.value = GenerationQueue(items = queueItems, currentIndex = 0, isRunning = false)
-        _snackbar.value = "$validCount 個の画像を生成キューに追加しました"
+        _snackbar.value = getApplication<Application>().getString(R.string.imagegen_queue_added, validCount)
         Log.d(TAG, "[Queue] Created queue with $validCount items")
         return true
     }
@@ -1257,12 +1258,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
     fun startQueueGeneration() {
         val queue = _generationQueue.value
         if (queue.items.isEmpty()) {
-            _snackbar.value = "キューが空です"
+            _snackbar.value = getApplication<Application>().getString(R.string.imagegen_queue_empty)
             return
         }
 
         if (_isQueueRunning.value) {
-            _snackbar.value = "キュー実行中です"
+            _snackbar.value = getApplication<Application>().getString(R.string.imagegen_queue_running)
             return
         }
 
@@ -1281,12 +1282,12 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 !ensureSafetyModelReady(app)) {
                 _isQueueRunning.value = false
                 _loading.value = false
-                _snackbar.value = "セーフティモデルのダウンロードに失敗しました"
+                _snackbar.value = getApplication<Application>().getString(R.string.imagegen_safety_model_dl_failed)
                 ImageGenerationNotificationManager.showError(
                     app,
                     ImageGenerationNotificationManager.queueNotificationId(),
-                    "画像生成キューに失敗しました",
-                    "セーフティモデルの準備に失敗しました"
+                    getApplication<Application>().getString(R.string.imagegen_queue_failed_title),
+                    getApplication<Application>().getString(R.string.imagegen_safety_prep_failed)
                 )
                 releaseGenerationWakeLock()
                 return@launch
@@ -1311,7 +1312,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             for (idx in currentQueue.items.indices) {
                 if (!isActive) {
                     Log.i(TAG, "[Queue] Cancelled")
-                    _snackbar.value = "キュー生成がキャンセルされました"
+                    _snackbar.value = getApplication<Application>().getString(R.string.imagegen_queue_cancelled)
                     break
                 }
 
@@ -1354,7 +1355,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                         items = currentQueue.items.mapIndexed { itemIndex, queueItem ->
                             if (itemIndex == idx) queueItem.copy(
                                 status = GenerationQueueItem.GenerationStatus.BLOCKED,
-                                errorMessage = "セーフティガードにより表示を制限しました"
+                                errorMessage = getApplication<Application>().getString(R.string.imagegen_safety_guard_restricted)
                             )
                             else queueItem
                         }
@@ -1391,14 +1392,14 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             // キューの完了通知。BLOCKED は失敗ではないので、保存した枚数と一緒に内訳を提示する。
             val blockedCount = _generationQueue.value.blockedCount
             val summary = buildString {
-                append("$completedCount / $totalItems 枚を保存しました")
-                if (blockedCount > 0) append(" (セーフティガードでブロック: ${blockedCount})")
-                if (failedCount > 0) append(" (失敗: ${failedCount})")
+                append(getApplication<Application>().getString(R.string.imagegen_queue_progress, completedCount, totalItems))
+                if (blockedCount > 0) append(getApplication<Application>().getString(R.string.imagegen_queue_blocked_suffix, blockedCount))
+                if (failedCount > 0) append(getApplication<Application>().getString(R.string.imagegen_queue_failed_suffix, failedCount))
             }
             ImageGenerationNotificationManager.showCompleted(
                 app,
                 ImageGenerationNotificationManager.queueNotificationId(),
-                "画像生成キューが完了しました",
+                getApplication<Application>().getString(R.string.imagegen_queue_completed),
                 summary
             )
             _isQueueRunning.value = false
@@ -1425,7 +1426,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
             if (!ensureSafetyModelReady(app)) {
                 Log.e(TAG, "[QueueItem] Safety model not ready")
-                showImageGenError("セーフティモデルの準備に失敗しました")
+                showImageGenError(getApplication<Application>().getString(R.string.imagegen_safety_prep_failed))
                 return@withContext null
             }
 
@@ -1434,7 +1435,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 PromptFilter.check(item.prompt) == PromptFilter.Result.BLOCK) {
                 Log.w(TAG, "[QueueItem] Prompt blocked by PromptFilter")
                 _safetyVerdict.value = SafetyResult.Verdict.BLOCK
-                showImageGenError("プロンプトにポリシー違反のキーワードが含まれています")
+                showImageGenError(getApplication<Application>().getString(R.string.imagegen_prompt_policy_violation))
                 return@withContext null
             }
 
@@ -1532,7 +1533,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                     // セーフティ違反（後段ガード）
                     Log.w(TAG, "[QueueItem] Image blocked by safety guard")
                     _safetyVerdict.value = SafetyResult.Verdict.BLOCK
-                    showImageGenError("不適切なコンテンツが検出されたため表示を制限しました")
+                    showImageGenError(getApplication<Application>().getString(R.string.imagegen_unsafe_content_blocked))
                     return@withContext null
                 }
             } else {
@@ -1541,10 +1542,10 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
                 if (lastVerdict == SafetyResult.Verdict.BLOCK) {
                     Log.w(TAG, "[QueueItem] Image BLOCK by safety guard (verdict=${lastVerdict})")
                     _safetyVerdict.value = SafetyResult.Verdict.BLOCK
-                    showImageGenError("不適切なコンテンツが検出されたため表示を制限しました")
+                    showImageGenError(getApplication<Application>().getString(R.string.imagegen_unsafe_content_blocked))
                 } else {
                     Log.w(TAG, "[QueueItem] Generation failed or safety check unavailable")
-                    showImageGenError("画像生成に失敗しました")
+                    showImageGenError(getApplication<Application>().getString(R.string.image_gen_failed))
                 }
                 return@withContext null
             }
@@ -1553,11 +1554,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
             throw e
         } catch (e: java.net.SocketException) {
             Log.e(TAG, "[QueueItem] Socket closed during generation (likely due to cancellation)", e)
-            showImageGenError(e.message ?: "画像生成中に接続が切断されました")
+            showImageGenError(e.message ?: getApplication<Application>().getString(R.string.imagegen_connection_lost))
             null
         } catch (e: Exception) {
             Log.e(TAG, "[QueueItem] Error", e)
-            showImageGenError(e.message ?: "画像生成に失敗しました")
+            showImageGenError(e.message ?: getApplication<Application>().getString(R.string.image_gen_failed))
             null
         }
     }
@@ -1620,7 +1621,7 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         _isQueueRunning.value = false
         ImageGenerationNotificationManager.cancelQueue(getApplication())
         releaseGenerationWakeLock()
-        _snackbar.value = "キューをクリアしました"
+        _snackbar.value = getApplication<Application>().getString(R.string.imagegen_queue_cleared)
     }
 
     /**
@@ -1636,11 +1637,11 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         ImageGenerationNotificationManager.showError(
             getApplication(),
             ImageGenerationNotificationManager.queueNotificationId(),
-            "画像生成キューを停止しました",
-            "キュー実行をキャンセルしました"
+            getApplication<Application>().getString(R.string.imagegen_queue_stopped_title),
+            getApplication<Application>().getString(R.string.imagegen_queue_run_cancelled)
         )
         releaseGenerationWakeLock()
-        _snackbar.value = "キュー実行をキャンセルしました"
+        _snackbar.value = getApplication<Application>().getString(R.string.imagegen_queue_run_cancelled)
     }
 
     // ============ メタデータ永続化 ============

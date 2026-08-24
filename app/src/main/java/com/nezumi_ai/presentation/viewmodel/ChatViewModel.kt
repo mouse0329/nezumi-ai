@@ -485,17 +485,15 @@ class ChatViewModel(
     private fun composeModelLoadingLabel(): String {
         val phase = _modelLoadingPhase.value
         val elapsed = _modelLoadingElapsedSec.value
-        val base = "モデル準備中"
+        val base = appContext.getString(R.string.model_preparing_phase_prefix)
         return buildString {
             append(base)
             if (!phase.isNullOrBlank()) {
-                append(" · ")
+                append(appContext.getString(R.string.model_preparing_phase_separator))
                 append(phase)
             }
             if (elapsed > 0) {
-                append(" (")
-                append(elapsed)
-                append("秒)")
+                append(appContext.getString(R.string.model_preparing_elapsed_format, elapsed))
             }
         }
     }
@@ -767,12 +765,12 @@ class ChatViewModel(
     private fun handleModelLoadIssue(
         selectedModel: String,
         error: Throwable?,
-        title: String = "モデルロードエラー",
-        message: String = "モデルのロードに失敗しました。モデル管理画面で再ダウンロードしてください。"
+        title: String = appContext.getString(R.string.model_load_error_title),
+        message: String = appContext.getString(R.string.model_load_error_generic)
     ) {
         val errorMsg = error?.message?.trim().takeUnless { it.isNullOrBlank() }
-        val details = errorMsg?.let { "$it\nモデル: $selectedModel" }
-            ?: "モデル: $selectedModel"
+        val details = errorMsg?.let { appContext.getString(R.string.model_error_detail_with_model, it, selectedModel) }
+            ?: appContext.getString(R.string.model_error_detail_model_only, selectedModel)
         _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
             title = title,
             message = message,
@@ -875,7 +873,7 @@ class ChatViewModel(
     fun cancelCpuCompatibilityWarning() {
         _cpuCompatibilityWarning.value = null
         viewModelScope.launch {
-            _uiMessage.emit("モデルロードをキャンセルしました")
+            _uiMessage.emit(appContext.getString(R.string.vm_model_load_cancelled))
         }
     }
 
@@ -1128,14 +1126,14 @@ class ChatViewModel(
             }
         }
         viewModelScope.launch {
-            _uiMessage.emit(if (disabled) "このチャットでシンキング: OFF" else "このチャットでシンキング: ON")
+            _uiMessage.emit(if (disabled) appContext.getString(R.string.chat_thinking_off_toast) else appContext.getString(R.string.chat_thinking_on_toast))
         }
     }
 
     fun switchModel(model: String) {
         if (_isLoading.value || _isModelLoading.value) {
             viewModelScope.launch {
-                _uiMessage.emit("生成中またはモデル処理中はモデル切替できません")
+                _uiMessage.emit(appContext.getString(R.string.vm_cannot_switch_while_busy))
             }
             return
         }
@@ -1163,8 +1161,8 @@ class ChatViewModel(
                 ) {
                     Log.w(TAG, "モデルファイルの読み込みエラー: $normalizedModel")
                     _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
-                        title = "モデルロードエラー",
-                        message = "モデルファイルが読み込めません。モデル管理画面で再ダウンロードしてください。",
+                        title = appContext.getString(R.string.model_load_error_title),
+                        message = appContext.getString(R.string.model_load_error_unreadable),
                         details = errorMsg
                     )
                     // ファイルを削除してリセット（ローカルモデルのみ）
@@ -1197,8 +1195,8 @@ class ChatViewModel(
 
                 // その他のモデルロードエラー
                 _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
-                    title = "モデルロードエラー",
-                    message = "モデルのロードに失敗しました。",
+                    title = appContext.getString(R.string.model_load_error_title),
+                    message = appContext.getString(R.string.model_load_error_short),
                     details = errorMsg
                 )
 
@@ -1215,9 +1213,9 @@ class ChatViewModel(
             val engineModelName = toEngineModelName(selectedModel)
             if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
                 val msg = if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(selectedModel)) {
-                    "プリセットのクラウドモデル($selectedModel)の API キーまたは接続先が未設定です"
+                    appContext.getString(R.string.cloud_model_unconfigured_preset, selectedModel)
                 } else {
-                    "プリセットのモデル($selectedModel)が未ダウンロードです"
+                    appContext.getString(R.string.preset_model_not_downloaded, selectedModel)
                 }
                 _uiMessage.emit(msg)
                 return@launch
@@ -1234,8 +1232,8 @@ class ChatViewModel(
                 val errorMsg = error?.message ?: ""
                 if (shouldDeleteLocalModelFileOnLoadError(errorMsg)) {
                     _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
-                        title = "モデルロードエラー",
-                        message = "プリセットモデルのロードに失敗しました。ファイルが見つかりません。",
+                        title = appContext.getString(R.string.model_load_error_title),
+                        message = appContext.getString(R.string.model_load_error_preset_missing),
                         details = errorMsg
                     )
                 } else if (error.isMemoryLoadFailure()) {
@@ -1247,8 +1245,8 @@ class ChatViewModel(
                     )
                 } else {
                     _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
-                        title = "モデルロードエラー",
-                        message = "プリセットモデルのロードに失敗しました",
+                        title = appContext.getString(R.string.model_load_error_title),
+                        message = appContext.getString(R.string.model_load_error_preset_generic),
                         details = error?.message
                     )
                 }
@@ -1339,13 +1337,13 @@ class ChatViewModel(
         val sessionId = _currentSessionId.value ?: return
         if (_isLoading.value) {
             viewModelScope.launch {
-                _uiMessage.emit("生成中は圧縮できません")
+                _uiMessage.emit(appContext.getString(R.string.vm_cannot_compress_while_generating))
             }
             return
         }
         if (_isCompressing.value) {
             viewModelScope.launch {
-                _uiMessage.emit("圧縮処理中です")
+                _uiMessage.emit(appContext.getString(R.string.vm_compression_in_progress))
             }
             return
         }
@@ -1357,7 +1355,7 @@ class ChatViewModel(
                 _selectedModel.value = selectedModel
                 val engineModelName = toEngineModelName(selectedModel)
                 if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
-                    _uiMessage.emit("モデル未ダウンロードのため圧縮できません")
+                    _uiMessage.emit(appContext.getString(R.string.model_not_downloaded_for_compression))
                     return@launch
                 }
 
@@ -1372,8 +1370,8 @@ class ChatViewModel(
                         return@launch
                     }
                     _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
-                        title = "モデルロードエラー",
-                        message = "圧縮用時モデルのロードに失敗しました",
+                        title = appContext.getString(R.string.model_load_error_title),
+                        message = appContext.getString(R.string.model_load_error_compression),
                         details = errorMsg
                     )
                     return@launch
@@ -1382,7 +1380,7 @@ class ChatViewModel(
                 val messages = messageRepository.getMessagesForSessionOnce(sessionId)
                     .filterNot { shouldExcludeFromModelContext(it) }
                 if (messages.isEmpty()) {
-                    _uiMessage.emit("圧縮対象のコンテキストがありません")
+                    _uiMessage.emit(appContext.getString(R.string.vm_no_context_to_compress))
                     return@launch
                 }
 
@@ -1400,7 +1398,7 @@ class ChatViewModel(
                 val cached = if (useCache) compressedContextCache[sessionId] else null
 
                 if (cached != null && cached.signature == signature) {
-                    _uiMessage.emit("圧縮コンテキストは最新です")
+                    _uiMessage.emit(appContext.getString(R.string.vm_context_already_latest))
                     return@launch
                 }
 
@@ -1426,12 +1424,12 @@ class ChatViewModel(
                 _contextUsageChars.value = estimateContextUsageChars(updatedMessages)
 
                 Log.d(TAG, "Context compression completed successfully. Messages will use compressed context on next send.")
- _uiMessage.emit("コンテキストを圧縮しました\n次のメッセージ送信から圧縮コンテキストが使用されます")
+ _uiMessage.emit(appContext.getString(R.string.vm_context_compressed))
             } catch (t: Throwable) {
                 _isCompressing.value = false
                 val e = if (t is Exception) t else RuntimeException(t)
                 Log.e(TAG, "Manual context compression failed", e)
-                _uiMessage.emit("圧縮に失敗しました: ${e.message}")
+                _uiMessage.emit(appContext.getString(R.string.compression_failed, e.message ?: ""))
             }
         }
     }
@@ -1487,7 +1485,7 @@ class ChatViewModel(
             val messages = messageRepository.getMessagesForSessionOnce(sessionId)
             val lastUserIndex = messages.indexOfLast { it.role == "user" }
             if (lastUserIndex < 0) {
-                _uiMessage.emit("取り消せるプロンプトがありません")
+                _uiMessage.emit(appContext.getString(R.string.vm_no_undoable_prompt))
                 return@launch
             }
             revokePromptFromMessageInternal(sessionId, messages[lastUserIndex].id)
@@ -1540,7 +1538,7 @@ class ChatViewModel(
                 }
                 if (messages.isEmpty()) {
                     withContext(Dispatchers.Main) {
-                        _uiMessage.emit("再生成する応答がありません")
+                        _uiMessage.emit(appContext.getString(R.string.vm_no_response_to_regenerate))
                     }
                     return@launch
                 }
@@ -1553,7 +1551,7 @@ class ChatViewModel(
                 }
                 if (targetAi == null) {
                     withContext(Dispatchers.Main) {
-                        _uiMessage.emit("再生成する応答がありません")
+                        _uiMessage.emit(appContext.getString(R.string.vm_no_response_to_regenerate))
                     }
                     return@launch
                 }
@@ -1570,7 +1568,7 @@ class ChatViewModel(
                     } else null
                     prevUser?.id ?: run {
                         withContext(Dispatchers.Main) {
-                            _uiMessage.emit("再生成に必要なユーザーメッセージが見つかりません")
+                            _uiMessage.emit(appContext.getString(R.string.vm_no_user_message_to_regenerate))
                         }
                         return@launch
                     }
@@ -1578,7 +1576,7 @@ class ChatViewModel(
                 val userMessage = messages.firstOrNull { it.id == parentUserMessageId && it.role == "user" }
                     ?: run {
                         withContext(Dispatchers.Main) {
-                            _uiMessage.emit("再生成に必要なユーザーメッセージが見つかりません")
+                            _uiMessage.emit(appContext.getString(R.string.vm_no_user_message_to_regenerate))
                         }
                         return@launch
                     }
@@ -1720,7 +1718,7 @@ class ChatViewModel(
         val messages = messageRepository.getMessagesForSessionOnce(sessionId)
         val targetIndex = messages.indexOfFirst { it.id == promptMessageId && it.role == "user" }
         if (targetIndex < 0) {
-            _uiMessage.emit(if (deleteMediaFiles) "取り消せるプロンプトがありません" else "編集できるメッセージがありません")
+            _uiMessage.emit(if (deleteMediaFiles) appContext.getString(R.string.vm_no_undoable_prompt) else appContext.getString(R.string.vm_no_editable_message))
             return
         }
 
@@ -1741,7 +1739,7 @@ class ChatViewModel(
         runCatching { requireModelManager().clearKvCache() }
             .onFailure { Log.w(TAG, "clearKvCache after revoke failed", it) }
         sessionRepository.updateSessionLastUpdated(sessionId)
-        _uiMessage.emit(if (deleteMediaFiles) "プロンプトを取り消しました" else "メッセージを編集します")
+        _uiMessage.emit(if (deleteMediaFiles) appContext.getString(R.string.vm_prompt_undone) else appContext.getString(R.string.vm_message_editing))
     }
 
     private suspend fun generateAIResponse(
@@ -1789,9 +1787,9 @@ class ChatViewModel(
             currentHasMediaInput = hasMediaInput
             if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
                 val unavailableMsg = if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(selectedModel)) {
-                    "クラウドモデル($selectedModel)の API キーまたは接続先が未設定です。設定画面で構成してください。"
+                    appContext.getString(R.string.cloud_model_unconfigured, selectedModel)
                 } else {
-                    "選択モデル($selectedModel)が未ダウンロードです。設定画面でダウンロードしてください。"
+                    appContext.getString(R.string.selected_model_not_downloaded, selectedModel)
                 }
                 messageRepository.addMessage(
                     sessionId = sessionId,
@@ -1868,12 +1866,12 @@ class ChatViewModel(
                     Log.w(TAG, "モデルファイルの読み込みエラー: $selectedModel")
                     // モーダルダイアログ用に詳細をセット
                     _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
-                        title = "モデルロードエラー",
-                        message = "モデルファイルが読み込めません。モデル管理画面で再ダウンロードしてください。",
-                        details = if (errorMsg.isNotBlank()) "${errorMsg}\nパス: $selectedModel" else "パス: $selectedModel"
+                        title = appContext.getString(R.string.model_load_error_title),
+                        message = appContext.getString(R.string.model_load_error_unreadable),
+                        details = if (errorMsg.isNotBlank()) appContext.getString(R.string.model_error_path_with_msg, errorMsg, selectedModel) else appContext.getString(R.string.model_error_path_only, selectedModel)
                     )
                     // 軽い通知も出す
- _uiMessage.emit("モデルファイルが読み込めません。モデル管理画面で再ダウンロードしてください。")
+ _uiMessage.emit(appContext.getString(R.string.model_load_error_unreadable))
 
                     // ファイルを削除してリセット
                     try {
@@ -1944,7 +1942,7 @@ class ChatViewModel(
                         "$modelKindLabel: images sent but image capability off. count=${images.size}"
                     )
                     _uiMessage.emit(
-                        "この${modelKindLabel}モデルでは画像入力がオフです。モデル設定の機能設定で画像を有効にしてください。"
+                        appContext.getString(R.string.vm_model_image_off, modelKindLabel)
                     )
                     return
                 }
@@ -1954,7 +1952,7 @@ class ChatViewModel(
                         "$modelKindLabel: audio sent but audio capability off. count=${audioClips.size}"
                     )
                     _uiMessage.emit(
-                        "この${modelKindLabel}モデルでは音声入力がオフです。モデル設定の機能設定で音声を有効にしてください。"
+                        appContext.getString(R.string.vm_model_audio_off, modelKindLabel)
                     )
                     return
                 }
@@ -2241,10 +2239,10 @@ class ChatViewModel(
                                                     }
                                                 }
                                                 val executingMsg = when (toolName) {
- "set_alarm"-> "アラームを設定中..."
- "send_message"-> "メッセージを送信中..."
- "search"-> "検索中..."
- else -> "$toolName を実行中..."
+ "set_alarm"-> appContext.getString(R.string.tool_exec_set_alarm)
+ "send_message"-> appContext.getString(R.string.tool_exec_send_message)
+ "search"-> appContext.getString(R.string.tool_exec_search)
+ else -> appContext.getString(R.string.tool_exec_generic, toolName)
                                                 }
                                                 Log.d(TAG, "Tool execution started: $toolName")
                                             }
@@ -2264,8 +2262,8 @@ class ChatViewModel(
                                                     )
                                                 }
                                                 val resultMsg = when (status) {
- "success"-> "$toolName: 成功"
- "error"-> "$toolName: 実行失敗"
+ "success"-> appContext.getString(R.string.tool_exec_success, toolName)
+ "error"-> appContext.getString(R.string.tool_exec_failed, toolName)
  else -> "$toolName: $status"
                                                 }
                                                 Log.d(TAG, "Tool execution completed: $toolName status=$status")
@@ -2517,17 +2515,17 @@ class ChatViewModel(
                     collectionError is GenerationStalledException -> {
                         Log.w(TAG, "Generation stalled (no chunks); finalizing partial", collectionError)
                         streamAbortNote =
-                            "\n\n（長時間出力が途切れたため、ここで打ち切りました）"
+                            appContext.getString(R.string.gen_truncated_stall_notice)
                         withContext(Dispatchers.Main) {
- _uiMessage.emit("応答が長時間途切れました。表示された分まで保存しました。")
+ _uiMessage.emit(appContext.getString(R.string.vm_response_paused_saved))
                         }
                     }
                     collectionError is GenerationWallTimeoutException -> {
                         Log.w(TAG, "Generation wall timeout; finalizing partial", collectionError)
                         streamAbortNote =
-                            "\n\n（生成時間の上限に達したため、ここで打ち切りました）"
+                            appContext.getString(R.string.gen_truncated_time_notice)
                         withContext(Dispatchers.Main) {
- _uiMessage.emit("生成時間が上限に達しました。表示された分まで保存しました。")
+ _uiMessage.emit(appContext.getString(R.string.vm_response_gen_time_limit))
                         }
                     }
                     collectionError is UserStopCancellationException -> {
@@ -2733,7 +2731,7 @@ class ChatViewModel(
                         _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
                             title = appContext.getString(R.string.assistant_error_empty_output_title),
                             message = emptyExplanation,
-                            details = if (engineModelName.isNotBlank()) "モデル: $engineModelName" else null
+                            details = if (engineModelName.isNotBlank()) appContext.getString(R.string.model_error_detail_with_engine, engineModelName) else null
                         )
                     }
                 }
@@ -2755,13 +2753,13 @@ class ChatViewModel(
                 if (id != null) {
                     messageRepository.updateMessageContent(
                         messageId = id,
-                        content = "応答開始がタイムアウトしました。もう一度お試しください。",
+                        content = appContext.getString(R.string.vm_response_start_timeout),
                         isStreaming = false,
                         thinkingContent = null
                     )
                 }
                 withContext(Dispatchers.Main) {
- _uiMessage.emit("応答タイムアウト")
+ _uiMessage.emit(appContext.getString(R.string.vm_response_timeout))
                 }
                 return
             }
@@ -2833,18 +2831,18 @@ class ChatViewModel(
             // エラーメッセージを詳細化
             val errorMessage = when {
                 e.message?.contains("Web用モデル") == true ->
-                    "このモデルはWeb用です。AndroidアプリではWeb用モデルは使用できません。本体デバイス用の.taskファイルをお使いください。"
+                    appContext.getString(R.string.web_model_unsupported)
                 e.message?.contains("END header") == true || e.message?.contains("zip END header") == true ->
-                    "モデルファイル(.task)のダウンロードが不完全です。ダウンロード中に中断された可能性があります。モデル管理画面でモデルを削除して再度ダウンロードしてください。"
+                    appContext.getString(R.string.model_task_incomplete_download)
                 e.message?.contains("ZIPファイルが破損") == true ->
-                    "モデルファイル(.task)が破損しています。コピー中にエラーが発生した可能性があります。ファイルを削除して再度追加してください。"
+                    appContext.getString(R.string.model_task_corrupted)
                 e.message?.contains("Unable to open zip archive") == true ->
-                    "モデルファイルが破損しているか不正な形式です。モデル管理画面でモデルを再度ダウンロードしてください。"
+                    appContext.getString(R.string.model_file_corrupted_generic)
                 e.message?.contains("ZIP archive") == true ->
-                    "モデルファイルの整合性チェックに失敗しました。ダウンロードが不完全な可能性があります。モデル管理画面でモデルを削除して再度ダウンロードしてください。"
+                    appContext.getString(R.string.model_integrity_check_failed)
                 e.message?.contains("Model not loaded") == true ->
-                    "モデルがロードされていません。もう一度全てリセットしてから試してください。"
-                else -> "エラー: ${e.message ?: "Unknown error"}"
+                    appContext.getString(R.string.model_load_error_short)
+                else -> appContext.getString(R.string.model_generic_error, e.message ?: appContext.getString(R.string.unknown_error))
             }
             // 従来は errorMessage を assistant レコードの content に書き込んでいたため、
             // LiteRT-LM の一部エラーが「エラーウィンドウに完全には出ず、チャット履歴に
@@ -2870,8 +2868,8 @@ class ChatViewModel(
                 }
                 withContext(Dispatchers.Main) {
                     _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
-                        title = "推論エラー",
-                        message = "モデルの推論中にエラーが発生しました。",
+                        title = appContext.getString(R.string.inference_error_title),
+                        message = appContext.getString(R.string.inference_error_body),
                         details = e.message
                     )
                 }
@@ -2892,7 +2890,7 @@ class ChatViewModel(
                 }
                 // エラーを UI に通知
                 withContext(Dispatchers.Main) {
- _uiMessage.emit(" "+ (e.message?.take(30) ?: "エラーが発生しました"))
+ _uiMessage.emit(" "+ (e.message?.take(30) ?: appContext.getString(R.string.vm_generic_error_short)))
                 }
             }
         } finally {
@@ -2996,7 +2994,7 @@ class ChatViewModel(
             toolName = "user_stop",
             success = true,
             payload = mapOf(
-                "message" to kotlinx.serialization.json.JsonPrimitive("ユーザーが生成を停止しました"),
+                "message" to kotlinx.serialization.json.JsonPrimitive(appContext.getString(R.string.vm_user_stopped_generation)),
                 "icon" to kotlinx.serialization.json.JsonPrimitive("")
             )
         )
@@ -3028,8 +3026,8 @@ class ChatViewModel(
                 handleModelLoadIssue(
                     selectedModel = selectedModel,
                     error = result.exceptionOrNull(),
-                    title = "モデル再ロードエラー",
-                    message = "LLMモデルの再ロードに失敗しました。モデル管理画面で再ダウンロードしてください。"
+                    title = appContext.getString(R.string.model_reload_error_title),
+                    message = appContext.getString(R.string.model_reload_error_generic)
                 )
                 return
             }
@@ -3038,8 +3036,8 @@ class ChatViewModel(
             handleModelLoadIssue(
                 selectedModel = selectedModel,
                 error = e,
-                title = "モデル再ロードエラー",
-                message = "LLMモデルの再ロードに失敗しました。モデル管理画面で再ダウンロードしてください。"
+                title = appContext.getString(R.string.model_reload_error_title),
+                message = appContext.getString(R.string.model_reload_error_generic)
             )
             return
         }
@@ -3210,7 +3208,7 @@ class ChatViewModel(
         _toolCallState.value = ToolCallState.Result(
             toolName = "convert_md_to_document",
             status = "success",
-            resultMessage = "$displayName の内容を用意しました"
+            resultMessage = appContext.getString(R.string.vm_document_prepared, displayName)
         )
 
         // 変換は保存時に行うため、ここでは Markdown 本文とファイル名を
@@ -3302,14 +3300,14 @@ class ChatViewModel(
                 _toolCallState.value = ToolCallState.Result(
                     toolName = "generate_image",
                     status = "cancelled",
-                    resultMessage = "キャンセルしました"
+                    resultMessage = appContext.getString(R.string.vm_cancelled)
                 )
             }
             return ToolExecutionResult(
                 success = true,
                 payload = mapOf(
                     "success" to true,
-                    "message" to "ユーザーが画像生成をキャンセルしました",
+                    "message" to appContext.getString(R.string.vm_user_cancelled_imagegen),
                     "cancelled" to true
                 )
             )
@@ -3365,7 +3363,7 @@ class ChatViewModel(
             success = true,
             payload = mapOf(
                 "success" to true,
-                "message" to "画像生成を開始しました。完了後にユーザーの画面へ表示されます。",
+                "message" to appContext.getString(R.string.vm_imagegen_started),
                 "prompt" to edited
             )
         )
@@ -3397,7 +3395,7 @@ class ChatViewModel(
                     _toolCallState.value = ToolCallState.Result(
                         toolName = "generate_image",
                         status = "error",
-                        resultMessage = "LLM応答終了待ちタイムアウト"
+                        resultMessage = appContext.getString(R.string.vm_llm_wait_timeout)
                     )
                     return@launch
                 }
@@ -3441,7 +3439,7 @@ class ChatViewModel(
             _toolCallState.value = ToolCallState.Result(
                 toolName = "generate_image",
                 status = "cancelled",
-                resultMessage = "キャンセルしました"
+                resultMessage = appContext.getString(R.string.vm_cancelled)
             )
         }
     }
@@ -3466,7 +3464,7 @@ class ChatViewModel(
             _toolCallState.value = ToolCallState.Result(
                 toolName = "generate_image",
                 status = "error",
-                resultMessage = "セーフティモデルDL失敗"
+                resultMessage = appContext.getString(R.string.safety_model_dl_failed)
             )
             return
         }
@@ -3490,7 +3488,7 @@ class ChatViewModel(
             _toolCallState.value = ToolCallState.Result(
                 toolName = "generate_image",
                 status = "error",
-                resultMessage = "LLMモデル解放失敗"
+                resultMessage = appContext.getString(R.string.llm_model_release_failed)
             )
             return
         }
@@ -3577,12 +3575,12 @@ class ChatViewModel(
                 _toolCallState.value = ToolCallState.Result(
                     toolName = "generate_image",
                     status = "error",
-                    resultMessage = "生成失敗"
+                    resultMessage = appContext.getString(R.string.chat_image_gen_failed_short)
                 )
                 ImageGenerationNotificationManager.showError(
                     appContext,
                     ImageGenerationNotificationManager.chatToolNotificationId(),
-                    "チャット画像生成に失敗しました",
+                    appContext.getString(R.string.chat_image_gen_failed),
                     promptPreview
                 )
                 clearImageGenerationStatusSoon()
@@ -3615,12 +3613,12 @@ class ChatViewModel(
                 _toolCallState.value = ToolCallState.Result(
                     toolName = "generate_image",
                     status = "success",
-                    resultMessage = "画像を生成しました"
+                    resultMessage = appContext.getString(R.string.vm_image_generated)
                 )
                 ImageGenerationNotificationManager.showCompleted(
                     appContext,
                     ImageGenerationNotificationManager.chatToolNotificationId(),
-                    "チャット画像生成が完了しました",
+                    appContext.getString(R.string.vm_chat_imagegen_completed),
                     promptPreview
                 )
                 clearImageGenerationStatusSoon()
@@ -3643,8 +3641,8 @@ class ChatViewModel(
             ImageGenerationNotificationManager.showError(
                 appContext,
                 ImageGenerationNotificationManager.chatToolNotificationId(),
-                "チャット画像生成に失敗しました",
-                e.message ?: "不明なエラー"
+                appContext.getString(R.string.chat_image_gen_failed),
+                e.message ?: appContext.getString(R.string.unknown_error)
             )
             clearImageGenerationStatusSoon()
 
@@ -3661,7 +3659,7 @@ class ChatViewModel(
                 Log.e(TAG, "performGenerateImageFromTool: LLM reload failed in finally", reloadError)
                 // UI通知
                 withContext(Dispatchers.Main) {
- _uiMessage.emit("LLMモデルの再ロードに失敗しました。チャットを再起動してください。")
+ _uiMessage.emit(appContext.getString(R.string.model_reload_error_restart))
                 }
             }
         }
@@ -4166,7 +4164,7 @@ class ChatViewModel(
             }
             if (!result && !_isMemoryTemporarilyDisabled.value) {
                 viewModelScope.launch {
-                    _uiMessage.emit("埋め込みファイルのダウンロードに失敗しました。ネットワークを確認してください。")
+                    _uiMessage.emit(appContext.getString(R.string.embedding_download_failed))
                 }
             }
             return result
@@ -4182,7 +4180,7 @@ class ChatViewModel(
         _isMemoryTemporarilyDisabled.value = true
         embeddingDownloadJob?.cancel(CancellationException("Embedding download canceled by user"))
         viewModelScope.launch {
-            _uiMessage.emit("埋め込みダウンロードがキャンセルされたため、メモリ機能を一時的に無効化しました。")
+            _uiMessage.emit(appContext.getString(R.string.embedding_download_cancelled))
         }
     }
 
@@ -4636,11 +4634,11 @@ class ChatViewModel(
             val displayModel = when (model.uppercase()) {
                 "GEMMA4-2B" -> "Gemma4-2B"
                 "GEMMA4-4B" -> "Gemma4-4B"
-                else -> "カスタム"
+                else -> appContext.getString(R.string.model_kind_custom)
             }
 
             // Phase 14: モデルロード前にメモリ確認
-            updateModelLoadingPhase("メモリ確認")
+            updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_memory_check))
             Log.d(
                 TAG,
                 "loadModelWithOverlay: PRE_LOAD_MEMORY_CHECK model=$model backend=${config.backendType} alreadyLoaded=$isModelAlreadyLoaded sameModelLoaded=$isSameModelLoaded skipMemoryWarning=$skipMemoryWarning effectiveSkip=$effectiveSkipMemoryWarning"
@@ -4708,7 +4706,7 @@ class ChatViewModel(
 
                     if (isMemoryLowByFileSize) {
                         Log.w(TAG, "loadModelWithOverlay: MEMORY LOW - model=$model byFileSize=$isMemoryLowByFileSize")
-                        updateModelLoadingPhase("メモリ確認")
+                        updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_memory_check))
 
                         // 警告情報を取得
                         val systemMemInfo = MemoryObserver.getSystemMemoryInfo(appContext)
@@ -4740,12 +4738,12 @@ class ChatViewModel(
             Log.d(TAG, "loadModelWithOverlay: Memory check passed for model=$model")
 
  // 以前「[Gemma4-2B] エンジンを初期化中...」だったのを「エンジン初期化」フェーズに統一。
-            updateModelLoadingPhase(if (isModelAlreadyLoaded) "重みロード" else "エンジン初期化")
+            updateModelLoadingPhase(if (isModelAlreadyLoaded) appContext.getString(R.string.model_loading_phase_weights) else appContext.getString(R.string.model_loading_phase_engine_init))
             Log.d(TAG, "loadModelWithOverlay: model=$model, engineName=$engineModelName, enableThinking=${config.enableThinking}, backend=${config.backendType}, contextWindow=${config.contextWindow}")
 
             // エンジンの loadModel は進捗コールバックを提供していないため、ロード中はフェーズを「重みロード」に切り替えて
             //   タイマーの経過秒数だけで進捗感を見せる。
-            updateModelLoadingPhase("重みロード")
+            updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_weights))
             val result = withContext(Dispatchers.IO) {
                 if (onlyIfAvailable) {
                     manager.initializeModelIfAvailable(engineModelName, config)
@@ -4926,7 +4924,7 @@ class ChatViewModel(
                 Log.e(TAG, "Error sending message with media", e)
                 // UI 更新 - Main スレッド
                 withContext(Dispatchers.Main) {
-                    _uiMessage.emit("メディア付きメッセージの送信に失敗しました: ${e.message}")
+                    _uiMessage.emit(appContext.getString(R.string.media_send_failed, e.message ?: ""))
                 }
             } finally {
                 // UI 更新 - Main スレッド
@@ -4965,7 +4963,7 @@ class ChatViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 if (imageUri == null && audioUri == null) {
-                    _uiMessage.emit("追加するメディアが指定されていません")
+                    _uiMessage.emit(appContext.getString(R.string.vm_media_not_specified))
                     return@launch
                 }
 
@@ -4992,11 +4990,11 @@ class ChatViewModel(
                     imageUri != null -> "画像"
                     else -> "音声"
                 }
-                _uiMessage.emit("$mediaType をメッセージに追加しました")
+                _uiMessage.emit(appContext.getString(R.string.vm_media_added, mediaType))
             } catch (t: Throwable) {
                 val e = if (t is Exception) t else RuntimeException(t)
                 Log.e(TAG, "Error adding media to message", e)
-                _uiMessage.emit("メディア追加に失敗しました: ${e.message}")
+                _uiMessage.emit(appContext.getString(R.string.media_add_failed, e.message ?: ""))
             }
         }
     }
@@ -5022,11 +5020,11 @@ class ChatViewModel(
                     audioUri = updatedAudioUri
                 )
 
-                _uiMessage.emit("$mediaType をメッセージから削除しました")
+                _uiMessage.emit(appContext.getString(R.string.vm_media_removed, mediaType))
             } catch (t: Throwable) {
                 val e = if (t is Exception) t else RuntimeException(t)
                 Log.e(TAG, "Error removing media from message", e)
-                _uiMessage.emit("メディア削除に失敗しました: ${e.message}")
+                _uiMessage.emit(appContext.getString(R.string.media_remove_failed, e.message ?: ""))
             }
         }
     }
@@ -5154,7 +5152,7 @@ class ChatViewModel(
             },
             onError = { error ->
                 viewModelScope.launch {
-                    _uiMessage.emit("音声合成エラー: ${error.message}")
+                    _uiMessage.emit(appContext.getString(R.string.tts_error, error.message ?: ""))
                 }
             },
             onComplete = {

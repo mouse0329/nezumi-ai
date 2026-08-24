@@ -1616,8 +1616,14 @@ class SettingsComposeFragment : Fragment() {
      * (コードポイント単位。スキル名は ASCII のみなので実質文字と一致するが、
      *  説明も同じ UI の一行に収めるため共通ヘルパーとして使う。)
      */
+    /**
+     * Skill 一覧カードの名前行・説明行は 1 行に収めるため、ロケール依存の上限を超えたら
+     * "…" で折り返す。リソースの preset_skill_description_max_chars を使うので、
+     * JA=16 / EN=32 のようにロケールごとに値を切り替えられる。
+     */
+    @Composable
     private fun truncateSkillName(source: String): String {
-        val limit = 16
+        val limit = androidx.compose.ui.res.integerResource(id = R.integer.preset_skill_description_max_chars)
         return if (source.length <= limit) source else source.take(limit) + "…"
     }
 
@@ -3523,7 +3529,7 @@ class SettingsComposeFragment : Fragment() {
                     )
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = "Nezumi AI",
+                            text = stringResource(id = R.string.brand_name_display),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = colorResource(id = R.color.text_primary)

@@ -1310,4 +1310,258 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="storage_legend_cache">Cache</string>
     <string name="storage_legend_temporary">Temporary files</string>
 
+
+    <!-- Brand name -->
+    <string name="brand_name_display" translatable="false">Nezumi AI</string>
+
+    <!-- Chat / thinking / loading labels -->
+    <string name="chat_thinking_label">Thinking</string>
+    <string name="chat_new_session_title">New chat</string>
+    <string name="chat_session_dispatch_failed">Failed to process session</string>
+    <string name="chat_error_generic_title">Error</string>
+    <string name="chat_error_icon_description">Error</string>
+
+    <!-- Embedding download dialog -->
+    <string name="embedding_download_progress_message">Downloading embedding files…</string>
+    <string name="embedding_download_dialog_title">Embedding file download</string>
+    <string name="embedding_download_preparing">Preparing embedding files…</string>
+    <string name="embedding_download_cancel">Cancel</string>
+
+    <!-- Multimodal input toasts -->
+    <string name="multimodal_image_disabled">Image input is disabled for this model</string>
+    <string name="multimodal_video_image_disabled">Video / image input is disabled for this model</string>
+    <string name="multimodal_audio_disabled">Audio input is disabled for this model</string>
+    <string name="multimodal_video_disabled">Video input is disabled for this model</string>
+    <string name="multimodal_file_disabled">File attachment is disabled for this model</string>
+    <string name="multimodal_image_max_reached">You can attach up to %1$d images</string>
+    <string name="multimodal_image_selected">Selected %1$d images (%2$d/%3$d)</string>
+    <string name="multimodal_image_added">Image added (%1$d/%2$d)</string>
+    <string name="multimodal_image_fetch_failed">Could not read the image data</string>
+    <string name="multimodal_audio_selected">Audio selected</string>
+    <string name="multimodal_audio_added">Audio added</string>
+    <string name="multimodal_video_gemma3n_only">Video is only supported on Gemma 3n (E2B/E4B) models</string>
+    <string name="multimodal_video_frame_extract_failed">Failed to extract frames from the video</string>
+    <string name="multimodal_video_frame_save_failed">Failed to save video frames</string>
+    <string name="multimodal_media_preview_title">Media preview</string>
+    <string name="multimodal_video_frame_audio_title">Video · frames · audio</string>
+
+    <!-- Clipboard / recording -->
+    <string name="clipboard_image_fetch_failed">Could not read an image from the clipboard</string>
+    <string name="clipboard_image_pasted">Pasted image from the clipboard (%1$d/%2$d)</string>
+    <string name="clipboard_empty">No image or URI on the clipboard</string>
+    <string name="clipboard_access_failed">Failed to access the clipboard</string>
+    <string name="recording_limit_reached">Recording stopped at the %1$d s limit</string>
+    <string name="recording_start_failed">Failed to start recording</string>
+    <string name="recording_stop_failed">Failed to stop recording</string>
+    <string name="recording_audio_process_failed">Failed to process the audio file</string>
+
+    <!-- Model / inference error dialog messages -->
+    <string name="model_load_error_title">Model load error</string>
+    <string name="model_load_error_generic">Failed to load the model. Please re-download it from the model management screen.</string>
+    <string name="model_load_error_unreadable">Could not read the model file. Please re-download it from the model management screen.</string>
+    <string name="model_load_error_short">Failed to load the model.</string>
+    <string name="model_load_error_preset_missing">Failed to load the preset model. The file was not found.</string>
+    <string name="model_load_error_preset_generic">Failed to load the preset model</string>
+    <string name="model_load_error_compression">Failed to load the model used for compression</string>
+    <string name="model_reload_error_title">Model reload error</string>
+    <string name="model_reload_error_generic">Failed to reload the LLM model. Please re-download it from the model management screen.</string>
+    <string name="model_reload_error_restart">Failed to reload the LLM model. Please restart the chat.</string>
+    <string name="model_task_incomplete_download">The model file (.task) download is incomplete. It may have been interrupted. Delete the model on the model management screen and download it again.</string>
+    <string name="model_task_corrupted">The model file (.task) is corrupted. Something may have gone wrong while copying. Delete the file and add it again.</string>
+    <string name="model_file_corrupted_generic">The model file is corrupted or in an unsupported format. Re-download the model from the model management screen.</string>
+    <string name="model_integrity_check_failed">Model file integrity check failed. The download may be incomplete. Delete the model on the model management screen and download it again.</string>
+    <string name="model_generic_error">Error: %1$s</string>
+    <string name="unknown_error">Unknown error</string>
+    <string name="inference_error_title">Inference error</string>
+    <string name="inference_error_body">An error occurred during model inference.</string>
+    <string name="generic_runtime_error">An error occurred</string>
+
+    <!-- Compression / embedding / memory -->
+    <string name="compression_failed">Compression failed: %1$s</string>
+    <string name="model_not_downloaded_for_compression">Model is not downloaded — cannot compress</string>
+    <string name="embedding_download_failed">Failed to download the embedding files. Please check your network.</string>
+    <string name="embedding_download_cancelled">Embedding download was cancelled, so memory features have been temporarily disabled.</string>
+
+    <!-- Media send error -->
+    <string name="media_send_failed">Failed to send message with media: %1$s</string>
+    <string name="media_add_failed">Failed to add media: %1$s</string>
+    <string name="media_remove_failed">Failed to remove media: %1$s</string>
+    <string name="tts_error">Text-to-speech error: %1$s</string>
+
+    <!-- Image generation -->
+    <string name="image_gen_failed">Image generation failed</string>
+    <string name="chat_image_gen_failed">Chat image generation failed</string>
+    <string name="chat_image_gen_failed_short">Generation failed</string>
+    <string name="safety_model_dl_failed">Safety model DL failed</string>
+    <string name="llm_model_release_failed">LLM model release failed</string>
+    <string name="safety_model_downloading">Downloading safety model…</string>
+    <string name="safety_model_download_timeout">Safety model download timed out</string>
+
+    <!-- Preset defaults -->
+    <string name="preset_default_nezumi_name">Nezumi AI</string>
+    <string name="preset_default_nezumi_description">A default preset you can use freely</string>
+    <string name="preset_default_nezumi_system_prompt">You are Nezumi AI. Be friendly, concise, and stay close to the user\'s intent when responding in English.</string>
+    <string name="preset_plain_description">Bare state — no system prompt, no tools</string>
+
+    <!-- Preset skill/description truncation limits (locale-dependent). EN gets more chars since 1 English char is roughly half a JP char. -->
+    <integer name="preset_skill_description_max_chars">32</integer>
+
+    <!-- Model load warning body -->
+    <string name="model_load_warning_confirm">Confirmation is required before loading model “%1$s”.\n\n%2$sContinue loading?</string>
+    <string name="cancel_generic">Cancel</string>
+
+    <!-- Tool call executing (fallback) -->
+    <string name="tool_execution_failed_format">%1$s: execution failed</string>
+    <string name="model_preparing_short">Preparing model</string>
+
+    <!-- ImageGen queue -->
+    <string name="imagegen_safety_prep_failed">Failed to prepare the safety model</string>
+    <string name="imagegen_queue_cancelled">Queue generation cancelled</string>
+    <string name="imagegen_safety_guard_restricted">The safety guard restricted display</string>
+    <string name="imagegen_queue_progress">Saved %1$d / %2$d images</string>
+    <string name="imagegen_queue_blocked_suffix"> (blocked by safety guard: %1$d)</string>
+    <string name="imagegen_queue_failed_suffix"> (failed: %1$d)</string>
+    <string name="imagegen_queue_completed">Image generation queue finished</string>
+    <string name="imagegen_queue_cleared">Queue cleared</string>
+    <string name="imagegen_queue_stopped_title">Image generation queue stopped</string>
+    <string name="imagegen_queue_run_cancelled">Cancelled the queue run</string>
+
+    <!-- ImageGen ViewModel messages -->
+    <string name="imagegen_legacy_qnn_unsupported">Legacy QNN format (unsupported)</string>
+    <string name="imagegen_ram_hint_512">Switch to a lighter 4bit UNet model, or try 256px / steps 6-8 first.</string>
+    <string name="imagegen_ram_hint_256">Switch to a lighter 4bit UNet model, or try 192px / steps 4-6 first.</string>
+    <string name="imagegen_ram_hint_low">Use a lighter 4bit model, or close unused apps to free RAM.</string>
+    <string name="imagegen_ram_too_small">Total device RAM is too small (total %1$.2fGB / free %2$.2fGB / model ~%3$.2fGB). UNet and VAE loading peaks around %4$.2fGB and would OOM, so generation was aborted. %5$s</string>
+    <string name="imagegen_stopped_title">Image generation stopped</string>
+    <string name="imagegen_cancelled_in_progress">Cancelled the image generation in progress</string>
+    <string name="imagegen_cancelled_single">Cancelled generation of the single image</string>
+    <string name="imagegen_prompt_policy_violation">The prompt contains policy-violating keywords</string>
+    <string name="imagegen_memory_too_low">Cannot start due to low memory</string>
+    <string name="imagegen_safety_blurred">The safety filter has blurred the image</string>
+    <string name="imagegen_unsafe_content_blocked">Unsafe content was detected, so the result was restricted</string>
+    <string name="imagegen_blocked_title">Image generation blocked</string>
+    <string name="imagegen_safety_guard_body">The safety guard restricted the result</string>
+    <string name="imagegen_completed_title">Image generation completed</string>
+    <string name="imagegen_connection_lost">Connection was lost during image generation</string>
+    <string name="save_failed">Save failed</string>
+    <string name="save_success">Saved to gallery</string>
+    <string name="share_dialog_title">Share</string>
+    <string name="imagegen_prompt_empty">Please enter a prompt</string>
+    <string name="imagegen_queue_added">Queued %1$d images for generation</string>
+    <string name="imagegen_queue_empty">The queue is empty</string>
+    <string name="imagegen_queue_running">The queue is already running</string>
+    <string name="imagegen_safety_model_dl_failed">Failed to download the safety model</string>
+    <string name="imagegen_queue_failed_title">Image generation queue failed</string>
+
+    <!-- Model loading phase labels -->
+    <string name="model_loading_phase_memory_check">Checking memory</string>
+    <string name="model_loading_phase_weights">Loading weights</string>
+    <string name="model_loading_phase_engine_init">Initializing engine</string>
+    <string name="model_kind_custom">Custom</string>
+
+    <!-- Generation status messages -->
+    <string name="vm_generic_error_short">An error occurred</string>
+    <string name="vm_user_stopped_generation">User stopped generation</string>
+    <string name="vm_document_prepared">Prepared the contents of %1$s</string>
+    <string name="vm_cancelled">Cancelled</string>
+    <string name="vm_user_cancelled_imagegen">User cancelled image generation</string>
+    <string name="vm_imagegen_started">Image generation started. It will appear on your screen when it finishes.</string>
+    <string name="vm_llm_wait_timeout">Timed out waiting for the LLM response to finish</string>
+    <string name="vm_image_generated">Image generated</string>
+    <string name="vm_chat_imagegen_completed">Chat image generation completed</string>
+
+    <!-- Cloud / model config errors -->
+    <string name="cloud_model_unconfigured_preset">The preset’s cloud model (%1$s) is missing an API key or endpoint</string>
+    <string name="preset_model_not_downloaded">The preset’s model (%1$s) has not been downloaded</string>
+    <string name="cloud_model_unconfigured">Cloud model (%1$s) is missing an API key or endpoint. Please configure it from the settings screen.</string>
+    <string name="selected_model_not_downloaded">The selected model (%1$s) has not been downloaded. Please download it from the settings screen.</string>
+    <string name="web_model_unsupported">This model is a web build. Web-build models cannot be used in the Android app. Please use the .task file for the on-device build.</string>
+    <string name="model_error_path_with_msg">%1$s\nPath: %2$s</string>
+    <string name="model_error_path_only">Path: %1$s</string>
+
+    <!-- Undo/edit -->
+    <string name="vm_no_editable_message">There is no message to edit</string>
+    <string name="vm_prompt_undone">Prompt undone</string>
+    <string name="vm_message_editing">Editing the message</string>
+
+    <!-- Multimodal off -->
+    <string name="vm_model_image_off">Image input is off for this %1$s model. Please turn on images in the model’s feature settings.</string>
+    <string name="vm_model_audio_off">Audio input is off for this %1$s model. Please turn on audio in the model’s feature settings.</string>
+
+    <!-- Tool execution labels -->
+    <string name="tool_exec_set_alarm">Setting an alarm…</string>
+    <string name="tool_exec_send_message">Sending a message…</string>
+    <string name="tool_exec_search">Searching…</string>
+    <string name="tool_exec_generic">Running %1$s…</string>
+    <string name="tool_exec_success">%1$s: succeeded</string>
+    <string name="tool_exec_failed">%1$s: execution failed</string>
+
+    <!-- Generation truncation notice -->
+    <string name="gen_truncated_stall_notice">\n\n(Output stalled for a long time, so we truncated here.)</string>
+    <string name="gen_truncated_time_notice">\n\n(Generation time reached the limit, so we truncated here.)</string>
+    <string name="vm_response_start_timeout">Response start timed out. Please try again.</string>
+    <string name="model_error_detail_with_engine">Model: %1$s</string>
+
+    <!-- Model loading label composition -->
+    <string name="model_preparing_phase_prefix">Preparing model</string>
+    <string name="model_preparing_phase_separator"> · </string>
+    <string name="model_preparing_elapsed_format"> (%1$ds)</string>
+
+    <!-- Thinking on/off toast -->
+    <string name="chat_thinking_on_toast">Thinking: ON for this chat</string>
+    <string name="chat_thinking_off_toast">Thinking: OFF for this chat</string>
+
+    <!-- Model error details -->
+    <string name="model_error_detail_with_model">%1$s\nModel: %2$s</string>
+    <string name="model_error_detail_model_only">Model: %1$s</string>
+
+    <!-- Input hints and remaining UI text -->
+    <string name="chat_input_hint">Type a message…</string>
+    <string name="unsupported_file_format">Unsupported file format (%1$s)</string>
+
+    <!-- ChatViewModel UI messages -->
+    <string name="vm_model_load_cancelled">Model load cancelled</string>
+    <string name="vm_cannot_switch_while_busy">Cannot switch model while generating or processing</string>
+    <string name="vm_cannot_compress_while_generating">Cannot compress while generating</string>
+    <string name="vm_compression_in_progress">Compression in progress</string>
+    <string name="vm_no_context_to_compress">There is no context to compress</string>
+    <string name="vm_context_already_latest">The compressed context is already up to date</string>
+    <string name="vm_context_compressed">Context compressed\nThe compressed context will be used from your next message</string>
+    <string name="vm_no_undoable_prompt">There is no prompt to undo</string>
+    <string name="vm_no_response_to_regenerate">There is no response to regenerate</string>
+    <string name="vm_no_user_message_to_regenerate">Could not find the user message needed to regenerate</string>
+    <string name="vm_response_paused_saved">The response paused for a long time. Saved what was shown so far.</string>
+    <string name="vm_response_gen_time_limit">Generation time reached the limit. Saved what was shown so far.</string>
+    <string name="vm_response_timeout">Response timed out</string>
+    <string name="vm_media_not_specified">No media was specified to add</string>
+    <string name="vm_media_added">Added %1$s to the message</string>
+    <string name="vm_media_removed">Removed %1$s from the message</string>
+
+    <!-- Warning icon -->
+    <string name="warning_icon_description">Warning</string>
+
+    <!-- Permission / camera / URI -->
+    <string name="perm_camera_required">Camera permission is required</string>
+    <string name="perm_microphone_required">Microphone permission is required</string>
+    <string name="camera_app_not_found">No camera app was found</string>
+    <string name="clipboard_invalid_uri">Invalid URI</string>
+
+    <!-- Additional clipboard / duplicates -->
+    <string name="clipboard_uri_pasted">Pasted URI from clipboard (%1$d/%2$d)</string>
+    <string name="clipboard_no_valid_data">No valid data on the clipboard</string>
+    <string name="clipboard_is_empty">The clipboard is empty</string>
+    <string name="attachment_already_added">This file has already been added</string>
+
+    <!-- CPU compatibility warning dialog -->
+    <string name="cpu_compat_warning_title">CPU compatibility warning</string>
+    <string name="cpu_compat_warning_continue">Continue</string>
+
+    <!-- File picker -->
+    <string name="file_picker_open_failed">Could not open the file picker</string>
+
+    <!-- Benchmark -->
+    <string name="benchmark_error_manager_init">Failed to initialize ModelManager: %1$s</string>
+    <string name="benchmark_error_no_model">The selected model is not available. Download it or add one from the settings screen.</string>
+    <string name="benchmark_error_load_failed">Failed to load the model: %1$s</string>
+
 </resources>

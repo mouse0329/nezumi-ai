@@ -1380,4 +1380,258 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="logs_clear_tool_history">ツール履歴を消去</string>
     <string name="logs_tool_history_cleared">ツール履歴を消去しました</string>
 
+    <!-- Brand name (shown in the middle of chat empty state and about screen).
+         Both locales render "Nezumi AI" per product decision. -->
+    <string name="brand_name_display" translatable="false">Nezumi AI</string>
+
+    <!-- Chat / thinking / loading labels that were previously hardcoded -->
+    <string name="chat_thinking_label">シンキング</string>
+    <string name="chat_new_session_title">新しいチャット</string>
+    <string name="chat_session_dispatch_failed">セッション処理に失敗しました</string>
+    <string name="chat_error_generic_title">エラー</string>
+    <string name="chat_error_icon_description">エラー</string>
+
+    <!-- Embedding download dialog -->
+    <string name="embedding_download_progress_message">埋め込みファイルをダウンロード中...</string>
+    <string name="embedding_download_dialog_title">埋め込みファイルのダウンロード</string>
+    <string name="embedding_download_preparing">埋め込みファイルを準備しています...</string>
+    <string name="embedding_download_cancel">キャンセル</string>
+
+    <!-- Multimodal input toasts -->
+    <string name="multimodal_image_disabled">このモデルでは画像入力は無効です</string>
+    <string name="multimodal_video_image_disabled">このモデルでは動画/画像入力は無効です</string>
+    <string name="multimodal_audio_disabled">このモデルでは音声入力は無効です</string>
+    <string name="multimodal_video_disabled">このモデルでは動画入力は無効です</string>
+    <string name="multimodal_file_disabled">このモデルではファイル添付は無効です</string>
+    <string name="multimodal_image_max_reached">画像は最大 %1$d 枚までです</string>
+    <string name="multimodal_image_selected">%1$d個の画像を選択しました (%2$d/%3$d)</string>
+    <string name="multimodal_image_added">画像を追加しました (%1$d/%2$d)</string>
+    <string name="multimodal_image_fetch_failed">画像データを取得できませんでした</string>
+    <string name="multimodal_audio_selected">音声を選択しました</string>
+    <string name="multimodal_audio_added">音声を追加しました</string>
+    <string name="multimodal_video_gemma3n_only">動画は Gemma 3n (E2B/E4B) モデルでのみ対応しています</string>
+    <string name="multimodal_video_frame_extract_failed">動画のフレーム抽出に失敗しました</string>
+    <string name="multimodal_video_frame_save_failed">動画フレームの保存に失敗しました</string>
+    <string name="multimodal_media_preview_title">メディアプレビュー</string>
+    <string name="multimodal_video_frame_audio_title">動画・フレーム・音声</string>
+
+    <!-- Clipboard / recording -->
+    <string name="clipboard_image_fetch_failed">クリップボードから画像を取得できませんでした</string>
+    <string name="clipboard_image_pasted">クリップボードから画像を貼り付けました (%1$d/%2$d)</string>
+    <string name="clipboard_empty">クリップボードに画像またはURIがありません</string>
+    <string name="clipboard_access_failed">クリップボードのアクセスに失敗しました</string>
+    <string name="recording_limit_reached">録音上限 (%1$d秒) に達したため停止しました</string>
+    <string name="recording_start_failed">録音の開始に失敗しました</string>
+    <string name="recording_stop_failed">録音の停止に失敗しました</string>
+    <string name="recording_audio_process_failed">音声ファイルの処理に失敗しました</string>
+
+    <!-- Model / inference error dialog messages -->
+    <string name="model_load_error_title">モデルロードエラー</string>
+    <string name="model_load_error_generic">モデルのロードに失敗しました。モデル管理画面で再ダウンロードしてください。</string>
+    <string name="model_load_error_unreadable">モデルファイルが読み込めません。モデル管理画面で再ダウンロードしてください。</string>
+    <string name="model_load_error_short">モデルのロードに失敗しました。</string>
+    <string name="model_load_error_preset_missing">プリセットモデルのロードに失敗しました。ファイルが見つかりません。</string>
+    <string name="model_load_error_preset_generic">プリセットモデルのロードに失敗しました</string>
+    <string name="model_load_error_compression">圧縮用時モデルのロードに失敗しました</string>
+    <string name="model_reload_error_title">モデル再ロードエラー</string>
+    <string name="model_reload_error_generic">LLMモデルの再ロードに失敗しました。モデル管理画面で再ダウンロードしてください。</string>
+    <string name="model_reload_error_restart">LLMモデルの再ロードに失敗しました。チャットを再起動してください。</string>
+    <string name="model_task_incomplete_download">モデルファイル(.task)のダウンロードが不完全です。ダウンロード中に中断された可能性があります。モデル管理画面でモデルを削除して再度ダウンロードしてください。</string>
+    <string name="model_task_corrupted">モデルファイル(.task)が破損しています。コピー中にエラーが発生した可能性があります。ファイルを削除して再度追加してください。</string>
+    <string name="model_file_corrupted_generic">モデルファイルが破損しているか不正な形式です。モデル管理画面でモデルを再度ダウンロードしてください。</string>
+    <string name="model_integrity_check_failed">モデルファイルの整合性チェックに失敗しました。ダウンロードが不完全な可能性があります。モデル管理画面でモデルを削除して再度ダウンロードしてください。</string>
+    <string name="model_generic_error">エラー: %1$s</string>
+    <string name="unknown_error">Unknown error</string>
+    <string name="inference_error_title">推論エラー</string>
+    <string name="inference_error_body">モデルの推論中にエラーが発生しました。</string>
+    <string name="generic_runtime_error">エラーが発生しました</string>
+
+    <!-- Compression / embedding / memory -->
+    <string name="compression_failed">圧縮に失敗しました: %1$s</string>
+    <string name="model_not_downloaded_for_compression">モデル未ダウンロードのため圧縮できません</string>
+    <string name="embedding_download_failed">埋め込みファイルのダウンロードに失敗しました。ネットワークを確認してください。</string>
+    <string name="embedding_download_cancelled">埋め込みダウンロードがキャンセルされたため、メモリ機能を一時的に無効化しました。</string>
+
+    <!-- Media send error -->
+    <string name="media_send_failed">メディア付きメッセージの送信に失敗しました: %1$s</string>
+    <string name="media_add_failed">メディア追加に失敗しました: %1$s</string>
+    <string name="media_remove_failed">メディア削除に失敗しました: %1$s</string>
+    <string name="tts_error">音声合成エラー: %1$s</string>
+
+    <!-- Image generation -->
+    <string name="image_gen_failed">画像生成に失敗しました</string>
+    <string name="chat_image_gen_failed">チャット画像生成に失敗しました</string>
+    <string name="chat_image_gen_failed_short">生成失敗</string>
+    <string name="safety_model_dl_failed">セーフティモデルDL失敗</string>
+    <string name="llm_model_release_failed">LLMモデル解放失敗</string>
+    <string name="safety_model_downloading">セーフティモデルをダウンロード中です…</string>
+    <string name="safety_model_download_timeout">セーフティモデルのダウンロードがタイムアウトしました</string>
+
+    <!-- Preset defaults (used from PresetRepository) -->
+    <string name="preset_default_nezumi_name">ネズミAI</string>
+    <string name="preset_default_nezumi_description">自由に使えるデフォルトプリセット</string>
+    <string name="preset_default_nezumi_system_prompt">あなたはネズミAIです。親しみやすく、簡潔で、ユーザーの意図に寄り添って日本語で応答してください。</string>
+    <string name="preset_plain_description">システムプロンプトなし・ツールなしの素の状態</string>
+
+    <!-- Preset skill/description truncation limits (locale-dependent) -->
+    <integer name="preset_skill_description_max_chars">16</integer>
+
+    <!-- Model load warning body -->
+    <string name="model_load_warning_confirm">モデル「%1$s」のロード前に確認が必要です。\n\n%2$sロードを続行しますか？</string>
+    <string name="cancel_generic">キャンセル</string>
+
+    <!-- Tool call executing (fallback) -->
+    <string name="tool_execution_failed_format">%1$s: 実行失敗</string>
+    <string name="model_preparing_short">モデル準備中</string>
+
+    <!-- ImageGen queue -->
+    <string name="imagegen_safety_prep_failed">セーフティモデルの準備に失敗しました</string>
+    <string name="imagegen_queue_cancelled">キュー生成がキャンセルされました</string>
+    <string name="imagegen_safety_guard_restricted">セーフティガードにより表示を制限しました</string>
+    <string name="imagegen_queue_progress">%1$d / %2$d 枚を保存しました</string>
+    <string name="imagegen_queue_blocked_suffix"> (セーフティガードでブロック: %1$d)</string>
+    <string name="imagegen_queue_failed_suffix"> (失敗: %1$d)</string>
+    <string name="imagegen_queue_completed">画像生成キューが完了しました</string>
+    <string name="imagegen_queue_cleared">キューをクリアしました</string>
+    <string name="imagegen_queue_stopped_title">画像生成キューを停止しました</string>
+    <string name="imagegen_queue_run_cancelled">キュー実行をキャンセルしました</string>
+
+    <!-- ImageGen ViewModel messages -->
+    <string name="imagegen_legacy_qnn_unsupported">旧 QNN 形式 (非対応)</string>
+    <string name="imagegen_ram_hint_512">4bit UNet の軽量モデルに切り替えるか、まず 256px / steps 6-8 で試してください。</string>
+    <string name="imagegen_ram_hint_256">4bit UNet の軽量モデルに切り替えるか、まず 192px / steps 4-6 で試してください。</string>
+    <string name="imagegen_ram_hint_low">より軽量な 4bit モデルを使うか、不要なアプリを閉じて空き RAM を増やしてください。</string>
+    <string name="imagegen_ram_too_small">端末の総 RAM が小さすぎます（総 %1$.2fGB / 空き %2$.2fGB / モデル約 %3$.2fGB）。UNet と VAE のロードが同時に起きるピーク (目安 %4$.2fGB) で OOM になるため中止しました。%5$s</string>
+    <string name="imagegen_stopped_title">画像生成を停止しました</string>
+    <string name="imagegen_cancelled_in_progress">進行中の画像生成をキャンセルしました</string>
+    <string name="imagegen_cancelled_single">単体画像の生成をキャンセルしました</string>
+    <string name="imagegen_prompt_policy_violation">プロンプトにポリシー違反のキーワードが含まれています</string>
+    <string name="imagegen_memory_too_low">メモリ不足のため開始できません</string>
+    <string name="imagegen_safety_blurred">セーフティフィルターにより画像をぼかして表示しています</string>
+    <string name="imagegen_unsafe_content_blocked">不適切なコンテンツが検出されたため表示を制限しました</string>
+    <string name="imagegen_blocked_title">画像生成をブロックしました</string>
+    <string name="imagegen_safety_guard_body">セーフティガードにより結果の表示を制限しました</string>
+    <string name="imagegen_completed_title">画像生成が完了しました</string>
+    <string name="imagegen_connection_lost">画像生成中に接続が切断されました</string>
+    <string name="save_failed">保存に失敗しました</string>
+    <string name="save_success">ギャラリーに保存しました</string>
+    <string name="share_dialog_title">共有</string>
+    <string name="imagegen_prompt_empty">プロンプトを入力してください</string>
+    <string name="imagegen_queue_added">%1$d 個の画像を生成キューに追加しました</string>
+    <string name="imagegen_queue_empty">キューが空です</string>
+    <string name="imagegen_queue_running">キュー実行中です</string>
+    <string name="imagegen_safety_model_dl_failed">セーフティモデルのダウンロードに失敗しました</string>
+    <string name="imagegen_queue_failed_title">画像生成キューに失敗しました</string>
+
+    <!-- Model loading phase labels -->
+    <string name="model_loading_phase_memory_check">メモリ確認</string>
+    <string name="model_loading_phase_weights">重みロード</string>
+    <string name="model_loading_phase_engine_init">エンジン初期化</string>
+    <string name="model_kind_custom">カスタム</string>
+
+    <!-- Generation status messages -->
+    <string name="vm_generic_error_short">エラーが発生しました</string>
+    <string name="vm_user_stopped_generation">ユーザーが生成を停止しました</string>
+    <string name="vm_document_prepared">%1$s の内容を用意しました</string>
+    <string name="vm_cancelled">キャンセルしました</string>
+    <string name="vm_user_cancelled_imagegen">ユーザーが画像生成をキャンセルしました</string>
+    <string name="vm_imagegen_started">画像生成を開始しました。完了後にユーザーの画面へ表示されます。</string>
+    <string name="vm_llm_wait_timeout">LLM応答終了待ちタイムアウト</string>
+    <string name="vm_image_generated">画像を生成しました</string>
+    <string name="vm_chat_imagegen_completed">チャット画像生成が完了しました</string>
+
+    <!-- Cloud / model config errors -->
+    <string name="cloud_model_unconfigured_preset">プリセットのクラウドモデル(%1$s)の API キーまたは接続先が未設定です</string>
+    <string name="preset_model_not_downloaded">プリセットのモデル(%1$s)が未ダウンロードです</string>
+    <string name="cloud_model_unconfigured">クラウドモデル(%1$s)の API キーまたは接続先が未設定です。設定画面で構成してください。</string>
+    <string name="selected_model_not_downloaded">選択モデル(%1$s)が未ダウンロードです。設定画面でダウンロードしてください。</string>
+    <string name="web_model_unsupported">このモデルはWeb用です。AndroidアプリではWeb用モデルは使用できません。本体デバイス用の.taskファイルをお使いください。</string>
+    <string name="model_error_path_with_msg">%1$s\nパス: %2$s</string>
+    <string name="model_error_path_only">パス: %1$s</string>
+
+    <!-- Undo/edit -->
+    <string name="vm_no_editable_message">編集できるメッセージがありません</string>
+    <string name="vm_prompt_undone">プロンプトを取り消しました</string>
+    <string name="vm_message_editing">メッセージを編集します</string>
+
+    <!-- Multimodal off -->
+    <string name="vm_model_image_off">この%1$sモデルでは画像入力がオフです。モデル設定の機能設定で画像を有効にしてください。</string>
+    <string name="vm_model_audio_off">この%1$sモデルでは音声入力がオフです。モデル設定の機能設定で音声を有効にしてください。</string>
+
+    <!-- Tool execution labels -->
+    <string name="tool_exec_set_alarm">アラームを設定中...</string>
+    <string name="tool_exec_send_message">メッセージを送信中...</string>
+    <string name="tool_exec_search">検索中...</string>
+    <string name="tool_exec_generic">%1$s を実行中...</string>
+    <string name="tool_exec_success">%1$s: 成功</string>
+    <string name="tool_exec_failed">%1$s: 実行失敗</string>
+
+    <!-- Generation truncation notice -->
+    <string name="gen_truncated_stall_notice">\n\n（長時間出力が途切れたため、ここで打ち切りました）</string>
+    <string name="gen_truncated_time_notice">\n\n（生成時間の上限に達したため、ここで打ち切りました）</string>
+    <string name="vm_response_start_timeout">応答開始がタイムアウトしました。もう一度お試しください。</string>
+    <string name="model_error_detail_with_engine">モデル: %1$s</string>
+
+    <!-- Model loading label composition -->
+    <string name="model_preparing_phase_prefix">モデル準備中</string>
+    <string name="model_preparing_phase_separator"> · </string>
+    <string name="model_preparing_elapsed_format"> (%1$d秒)</string>
+
+    <!-- Thinking on/off toast -->
+    <string name="chat_thinking_on_toast">このチャットでシンキング: ON</string>
+    <string name="chat_thinking_off_toast">このチャットでシンキング: OFF</string>
+
+    <!-- Model error details -->
+    <string name="model_error_detail_with_model">%1$s\nモデル: %2$s</string>
+    <string name="model_error_detail_model_only">モデル: %1$s</string>
+
+    <!-- Input hints and remaining UI text -->
+    <string name="chat_input_hint">メッセージを入力...</string>
+    <string name="unsupported_file_format">対応していないファイル形式です (%1$s)</string>
+
+    <!-- ChatViewModel UI messages -->
+    <string name="vm_model_load_cancelled">モデルロードをキャンセルしました</string>
+    <string name="vm_cannot_switch_while_busy">生成中またはモデル処理中はモデル切替できません</string>
+    <string name="vm_cannot_compress_while_generating">生成中は圧縮できません</string>
+    <string name="vm_compression_in_progress">圧縮処理中です</string>
+    <string name="vm_no_context_to_compress">圧縮対象のコンテキストがありません</string>
+    <string name="vm_context_already_latest">圧縮コンテキストは最新です</string>
+    <string name="vm_context_compressed">コンテキストを圧縮しました\n次のメッセージ送信から圧縮コンテキストが使用されます</string>
+    <string name="vm_no_undoable_prompt">取り消せるプロンプトがありません</string>
+    <string name="vm_no_response_to_regenerate">再生成する応答がありません</string>
+    <string name="vm_no_user_message_to_regenerate">再生成に必要なユーザーメッセージが見つかりません</string>
+    <string name="vm_response_paused_saved">応答が長時間途切れました。表示された分まで保存しました。</string>
+    <string name="vm_response_gen_time_limit">生成時間が上限に達しました。表示された分まで保存しました。</string>
+    <string name="vm_response_timeout">応答タイムアウト</string>
+    <string name="vm_media_not_specified">追加するメディアが指定されていません</string>
+    <string name="vm_media_added">%1$s をメッセージに追加しました</string>
+    <string name="vm_media_removed">%1$s をメッセージから削除しました</string>
+
+    <!-- Warning icon -->
+    <string name="warning_icon_description">警告</string>
+
+    <!-- Permission / camera / URI -->
+    <string name="perm_camera_required">カメラの権限が必要です</string>
+    <string name="perm_microphone_required">マイクの権限が必要です</string>
+    <string name="camera_app_not_found">カメラアプリが見つかりません</string>
+    <string name="clipboard_invalid_uri">無効なURIです</string>
+
+    <!-- Additional clipboard / duplicates -->
+    <string name="clipboard_uri_pasted">クリップボードからURIを貼り付けました (%1$d/%2$d)</string>
+    <string name="clipboard_no_valid_data">クリップボードに有効なデータがありません</string>
+    <string name="clipboard_is_empty">クリップボードが空です</string>
+    <string name="attachment_already_added">このファイルは既に追加されています</string>
+
+    <!-- CPU compatibility warning dialog -->
+    <string name="cpu_compat_warning_title">CPU互換性警告</string>
+    <string name="cpu_compat_warning_continue">続行</string>
+
+    <!-- File picker -->
+    <string name="file_picker_open_failed">ファイル選択を開けませんでした</string>
+
+    <!-- Benchmark -->
+    <string name="benchmark_error_manager_init">ModelManager の初期化に失敗: %1$s</string>
+    <string name="benchmark_error_no_model">選択モデルが利用できません。設定画面でダウンロードまたは追加してください。</string>
+    <string name="benchmark_error_load_failed">モデルのロードに失敗しました: %1$s</string>
+
 </resources>
