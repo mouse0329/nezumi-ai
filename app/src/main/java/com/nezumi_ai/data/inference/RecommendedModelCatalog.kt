@@ -86,7 +86,7 @@ object RecommendedModelCatalog {
         Entry(
             id = "LFM2.5-2.6B-Q4_K_M",
             displayName = "LFM2.5 2.6B (Q4_K_M)",
-            shortDescription = "オンデバイス向けハイブリッド。軽くて速い",
+            shortDescription = "オンデバイス向けハイブリッド。軽くて速い。常時thinking対応",
             engine = Engine.GGUF,
             estimatedSizeBytes = 1_700_000_000L,
             hfRepo = "LiquidAI/LFM2.5-2.6B-GGUF",

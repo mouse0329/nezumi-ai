@@ -947,6 +947,9 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="model_settings_custom_models_empty">追加済みのモデルはまだありません。</string>
     <string name="model_settings_custom_models_empty_search">検索条件に一致するモデルがありません。</string>
     <string name="model_settings_search_added_models">モデルを検索</string>
+    <string name="model_settings_add_models_title">モデルを追加</string>
+    <string name="model_settings_local_import_desc">.task / .litertlm / .gguf 対応</string>
+    <string name="model_settings_local_import_button">モデルファイルを追加</string>
     <string name="model_settings_sd_zip_import_title">SD モデル zip をインポート</string>
     <!-- クラウドモデル (モデル管理画面に統合) -->
     <string name="cloud_models_entry_button">☁️ クラウドモデルを追加</string>

@@ -1067,6 +1067,9 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="model_settings_custom_models_empty">No models have been added yet.</string>
     <string name="model_settings_custom_models_empty_search">No models match the search filter.</string>
     <string name="model_settings_search_added_models">Search models</string>
+    <string name="model_settings_add_models_title">Add models</string>
+    <string name="model_settings_local_import_desc">Supports .task / .litertlm / .gguf</string>
+    <string name="model_settings_local_import_button">Add model file</string>
     <string name="model_settings_sd_zip_import_title">Import SD model zip</string>
     <!-- Cloud models (integrated into the model management screen) -->
     <string name="cloud_models_entry_button">☁️ Add cloud model</string>

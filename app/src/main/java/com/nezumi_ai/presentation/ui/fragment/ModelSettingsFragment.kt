@@ -453,6 +453,7 @@ open class ModelSettingsFragment : Fragment() {
         voicevoxLicensePendingStyleId?.let {
             VoicevoxLicenseConfirmDialog()
         }
+        CloudModelDialogHost()
         if (hfSearchResultsDialogVisible) {
             HfSearchResultsContent()
             return
@@ -654,7 +655,9 @@ open class ModelSettingsFragment : Fragment() {
                         )
                     }
                     
-                    if (importedTasks.isEmpty() && downloadedBuiltins.isEmpty()) {
+                    // 追加済みローカルモデル + クラウドモデルを同じリストに並べる
+                    val cloudModels = remember(cloudModelsRevision) { registeredCloudModels }
+                    if (importedTasks.isEmpty() && downloadedBuiltins.isEmpty() && cloudModels.isEmpty()) {
                         item {
                             Text(
                                 text = stringResource(id = R.string.model_settings_custom_models_empty),
@@ -663,7 +666,7 @@ open class ModelSettingsFragment : Fragment() {
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
                             )
                         }
-                    } else if (displayedImportedTasks.isEmpty() && importedTasks.isNotEmpty()) {
+                    } else if (displayedImportedTasks.isEmpty() && importedTasks.isNotEmpty() && cloudModels.isEmpty()) {
                         item {
                             Text(
                                 text = stringResource(id = R.string.model_settings_custom_models_empty_search),
@@ -685,17 +688,20 @@ open class ModelSettingsFragment : Fragment() {
                                     result.onSuccess {
                                         ImportedModelCapabilityStore.clear(requireContext(), model.path)
                                         PromptTemplateStore.clear(requireContext(), model.path)
-                                        toast("削除しました")
+                                        toast(getString(R.string.common_deleted))
                                         refreshImportedTasks()
                                         expandedModelKey = null
                                     }.onFailure {
-                                        toast("削除に失敗しました: ${it.message}")
+                                        toast(getString(R.string.common_delete_failed) + ": ${it.message}")
                                     }
                                 }
                             )
                         }
                     }
-                    item { CloudModelsSection() }
+                    // クラウドモデルを追加済みモデルと同じ場所に並べる
+                    items(cloudModels) { modelId ->
+                        CloudModelListItem(modelId = modelId)
+                    }
                     item { MmprojFilesCard() }
                     item { LocalModelAddCard() }
                 }
@@ -1893,109 +1899,75 @@ open class ModelSettingsFragment : Fragment() {
         get() = CloudUserModelRegistry.listForContext(requireContext())
 
     /**
-     * クラウドモデルセクション。カスタムモデルと同じ列に並べる。
-     * 追加ボタンと、登録済みモデルの一覧 (タップで編集モーダル) を表示する。
+     * 追加済みモデル一覧に並べるクラウドモデル 1 件分の行。
+     * タップで編集モーダル、削除ボタンで登録解除。
      */
     @Composable
-    private fun CloudModelsSection() {
+    private fun CloudModelListItem(modelId: String) {
         val context = requireContext()
-        // revision を読むことで CloudUserModelRegistry の変更を Compose に反映する。
-        val models = remember(cloudModelsRevision) { registeredCloudModels }
-
-        Text(
-            text = stringResource(id = R.string.cloud_models_screen_title),
-            style = MaterialTheme.typography.labelSmall,
-            color = colorResource(id = R.color.text_secondary),
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
-        )
+        val parsed = CloudModelId.parse(modelId)
+        val configured = CloudUserModelRegistry.isConfiguredForContext(context, modelId)
         Card(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    val overrideKey = CloudUserModelRegistry.getOverrideApiKeyForContext(context, modelId)
+                    val overrideUrl = CloudUserModelRegistry.getOverrideBaseUrlForContext(context, modelId)
+                    cloudDialogState = CloudDialogState(
+                        editingModelId = modelId,
+                        provider = parsed?.provider ?: CloudApiKeyStore.Provider.LM_STUDIO,
+                        modelName = parsed?.modelName ?: "",
+                        apiKey = overrideKey,
+                        baseUrl = overrideUrl
+                    )
+                },
             colors = CardDefaults.cardColors(
                 containerColor = colorResource(id = R.color.primary_light)
             )
         ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = stringResource(id = R.string.cloud_models_screen_description),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colorResource(id = R.color.text_secondary)
-                )
-                Button(
-                    onClick = { cloudDialogState = CloudDialogState() },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(36.dp)
-                ) {
-                    Text(stringResource(id = R.string.cloud_models_entry_button), fontSize = 12.sp)
-                }
-
-                if (models.isEmpty()) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = stringResource(id = R.string.cloud_models_empty),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorResource(id = R.color.text_secondary)
+                        text = CloudModelId.displayLabel(modelId),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colorResource(id = R.color.text_primary)
                     )
-                } else {
-                    models.forEach { modelId ->
-                        val parsed = CloudModelId.parse(modelId)
-                        val configured = CloudUserModelRegistry.isConfiguredForContext(context, modelId)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    val overrideKey = CloudUserModelRegistry.getOverrideApiKeyForContext(context, modelId)
-                                    val overrideUrl = CloudUserModelRegistry.getOverrideBaseUrlForContext(context, modelId)
-                                    cloudDialogState = CloudDialogState(
-                                        editingModelId = modelId,
-                                        provider = parsed?.provider ?: CloudApiKeyStore.Provider.LM_STUDIO,
-                                        modelName = parsed?.modelName ?: "",
-                                        apiKey = overrideKey,
-                                        baseUrl = overrideUrl
-                                    )
-                                },
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = CloudModelId.displayLabel(modelId),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = colorResource(id = R.color.text_primary)
-                                )
-                                Text(
-                                    text = stringResource(
-                                        id = if (configured) R.string.cloud_models_status_configured
-                                        else R.string.cloud_models_status_missing
-                                    ),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = colorResource(
-                                        id = if (configured) R.color.primary else R.color.text_secondary
-                                    )
-                                )
-                            }
-                            TextButton(
-                                onClick = {
-                                    CloudUserModelRegistry.removeForContext(context, modelId)
-                                    cloudModelsRevision++
-                                }
-                            ) {
-                                Text(
-                                    stringResource(id = R.string.cloud_models_remove_button),
-                                    fontSize = 12.sp
-                                )
-                            }
-                        }
-                        Divider()
+                    Text(
+                        text = stringResource(
+                            id = if (configured) R.string.cloud_models_status_configured
+                            else R.string.cloud_models_status_missing
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorResource(
+                            id = if (configured) R.color.primary else R.color.text_secondary
+                        )
+                    )
+                }
+                TextButton(
+                    onClick = {
+                        CloudUserModelRegistry.removeForContext(context, modelId)
+                        cloudModelsRevision++
                     }
+                ) {
+                    Text(
+                        stringResource(id = R.string.cloud_models_remove_button),
+                        fontSize = 12.sp
+                    )
                 }
             }
         }
+    }
 
-        // 追加/編集モーダル
+    /** クラウドモデル追加/編集ダイアログを常にコンポジションに載せる（ModelScreen 先頭から呼ぶ）。 */
+    @Composable
+    private fun CloudModelDialogHost() {
+        val context = requireContext()
         cloudDialogState?.let { dialogState ->
             CloudModelDialog(
                 state = dialogState,
@@ -2684,7 +2656,7 @@ open class ModelSettingsFragment : Fragment() {
     @Composable
     private fun LocalModelAddCard() {
         Text(
-            text = "ローカルモデル追加",
+            text = stringResource(id = R.string.model_settings_add_models_title),
             style = MaterialTheme.typography.labelSmall,
             color = colorResource(id = R.color.text_secondary),
             fontWeight = FontWeight.SemiBold,
@@ -2701,7 +2673,7 @@ open class ModelSettingsFragment : Fragment() {
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = ".task / .litertlm / .gguf 対応",
+                    text = stringResource(id = R.string.model_settings_local_import_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = colorResource(id = R.color.text_secondary)
                 )
@@ -2709,7 +2681,21 @@ open class ModelSettingsFragment : Fragment() {
                     modifier = Modifier.fillMaxWidth(),
                     onClick = { importTaskLauncher.launch(arrayOf("*/*")) }
                 ) {
-                    Text("モデルファイルを追加")
+                    Text(stringResource(id = R.string.model_settings_local_import_button))
+                }
+                // GGUF インポートと同じカード内にクラウドモデル追加ボタンを配置
+                Text(
+                    text = stringResource(id = R.string.cloud_models_screen_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_secondary)
+                )
+                Button(
+                    onClick = { cloudDialogState = CloudDialogState() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(36.dp)
+                ) {
+                    Text(stringResource(id = R.string.cloud_models_entry_button), fontSize = 12.sp)
                 }
             }
         }

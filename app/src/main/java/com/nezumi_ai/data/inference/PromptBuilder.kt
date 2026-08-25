@@ -114,8 +114,23 @@ object PromptBuilder {
             // 一致条件: "gemma4", "gemma-4", "gemma_4", e2b/e4b/26b-a4b など Gemma4 サイズ識別子。
             isGemma4ModelName(name) -> ThinkingPromptStyle.GEMMA4_CHANNEL
             "gemma" in name -> ThinkingPromptStyle.GEMMA_PREFIX
+            // LFM / LFM2 / LFM2.5 (Liquid Foundation Models):
+            //   - 公式 chat_template は ChatML + add_generation_prompt 時に
+            //     <|im_start|>assistant\n<think> を付与する (pure reasoning モデルは常時 thinking)。
+            //   - 出力は標準 <think>...</think> CoT → answer。ASSISTANT_TAG で prefill と
+            //     Gemma4ThinkingParser / ThinkingLeakSalvage が正しく分解できる。
+            //   - ツール呼び出しは <|tool_call_start|>[...] <|tool_call_end|> (別途 parser 拡張推奨)。
+            isLfmModelName(name) -> ThinkingPromptStyle.ASSISTANT_TAG
             else -> ThinkingPromptStyle.ASSISTANT_TAG
         }
+    }
+
+    /**
+     * Liquid Foundation Models (LFM / LFM2 / LFM2.5 系) かどうかを判定する。
+     * モデル名に "lfm" が含まれるものを対象 (例: LFM2.5-2.6B, LFM2.5-1.2B-Thinking)。
+     */
+    private fun isLfmModelName(loweredName: String): Boolean {
+        return Regex("(^|[^a-z0-9])lfm([0-9]|[_\\-.]|$)").containsMatchIn(loweredName)
     }
 
     /**
