@@ -41,6 +41,13 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.CloudQueue
+import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.Attachment
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
@@ -237,6 +244,11 @@ open class ModelSettingsFragment : Fragment() {
     private var voicevoxInitializing by mutableStateOf(false)
     private var voicevoxDownloadState by mutableStateOf<VoicevoxDownloadUiState?>(null)
     private var voicevoxStyleMenuExpanded by mutableStateOf(false)
+
+    // モデル管理画面の右下 FAB メニュの開閉状態。
+    // このメニュに「モデルをインポート / mmproj 追加 / クラウドモデル追加 / HF 検索」を集約し、
+    // 旧レイアウトにあった LocalModelAddCard / HfModelSearchCard / mmproj 追加ボタンは廃止した。
+    private var addFabMenuExpanded by mutableStateOf(false)
 
     // --- ダウンロード前ライセンス確認ダイアログ ---
     // 画像モデル: ダウンロードボタン押下時に対象モデルを保持し、ライセンス取得中/取得結果を表示する。
@@ -468,12 +480,17 @@ open class ModelSettingsFragment : Fragment() {
         ) {
             applyImportedModelFilters(importedTasks)
         }
+        val cloudModels = remember(cloudModelsRevision) { registeredCloudModels }
 
-        LazyColumn(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
                 .background(colorResource(id = R.color.bg_session_list))
+        ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -500,7 +517,6 @@ open class ModelSettingsFragment : Fragment() {
             when (selectedTab) {
                 ModelType.LLM -> {
                     item { HfCard() }
-                    item { HfModelSearchCard() }
                     item {
                         Text(
                             text = stringResource(id = R.string.model_settings_builtin_models),
@@ -656,7 +672,6 @@ open class ModelSettingsFragment : Fragment() {
                     }
                     
                     // 追加済みローカルモデル + クラウドモデルを同じリストに並べる
-                    val cloudModels = remember(cloudModelsRevision) { registeredCloudModels }
                     if (importedTasks.isEmpty() && downloadedBuiltins.isEmpty() && cloudModels.isEmpty()) {
                         item {
                             Text(
@@ -703,7 +718,9 @@ open class ModelSettingsFragment : Fragment() {
                         CloudModelListItem(modelId = modelId)
                     }
                     item { MmprojFilesCard() }
-                    item { LocalModelAddCard() }
+                    // 追加ボタン群は右下の FAB メニュ (ModelAddFabMenu) に集約したためカードは廃止。
+                    // 画面末尾に FAB との重なりを避ける余白だけ確保する。
+                    item { Spacer(modifier = Modifier.height(88.dp)) }
                 }
                 ModelType.IMAGE_GENERATION -> {
                     // zip 一括インポートは画像生成モデル (Stable Diffusion / MNN)
@@ -722,6 +739,95 @@ open class ModelSettingsFragment : Fragment() {
  // モデルのアップデート通知は削除（ユーザー要望）
                     // item { RepoUpdateNotificationCard() }
                 }
+            }
+        }
+        // 右下に固定された「＋」ボタン。LazyColumn をスクロールしても常に最上層に浮かぶ。
+        // LLM タブのときのみ表示（他タブは専用カードがあるため）。
+        if (selectedTab == ModelType.LLM) {
+            ModelAddFabMenu(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 20.dp, bottom = 24.dp)
+            )
+        }
+        }
+    }
+
+    /**
+     * 右下のフローティングアクションボタンと、そこから展開される追加メニュ。
+     * 旧カード (LocalModelAddCard / HfModelSearchCard / MmprojFilesCard の追加ボタン) の
+     * 入口をここに全て集約した。
+     */
+    @Composable
+    private fun ModelAddFabMenu(modifier: Modifier = Modifier) {
+        Box(modifier = modifier) {
+            FloatingActionButton(
+                onClick = { addFabMenuExpanded = true },
+                containerColor = colorResource(id = R.color.primary),
+                contentColor = Color.White
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Add,
+                    contentDescription = stringResource(id = R.string.model_settings_add_models_title)
+                )
+            }
+            DropdownMenu(
+                expanded = addFabMenuExpanded,
+                onDismissRequest = { addFabMenuExpanded = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(id = R.string.model_settings_local_import_button)) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.FileUpload,
+                            contentDescription = null
+                        )
+                    },
+                    onClick = {
+                        addFabMenuExpanded = false
+                        importTaskLauncher.launch(arrayOf("*/*"))
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("mmproj を追加") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.Attachment,
+                            contentDescription = null
+                        )
+                    },
+                    onClick = {
+                        addFabMenuExpanded = false
+                        mmprojPickerLauncher.launch(arrayOf("*/*"))
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(id = R.string.cloud_models_entry_button)) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.CloudQueue,
+                            contentDescription = null
+                        )
+                    },
+                    onClick = {
+                        addFabMenuExpanded = false
+                        cloudDialogState = CloudDialogState()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Hugging Face で検索") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.Search,
+                            contentDescription = null
+                        )
+                    },
+                    onClick = {
+                        addFabMenuExpanded = false
+                        // 検索結果ページを直接開く。検索入力欄はそのページの上部にある。
+                        hfSearchResultsDialogVisible = true
+                    }
+                )
             }
         }
     }
@@ -2595,6 +2701,11 @@ open class ModelSettingsFragment : Fragment() {
 
     @Composable
     private fun MmprojFilesCard() {
+        // mmproj の追加ボタンは右下 FAB メニュ (ModelAddFabMenu) に集約したため、
+        // ここでは既に追加されている mmproj ファイルの一覧のみ表示する。
+        // 一覧が 0 件のときは見出しもカードも出さず、モデル一覧を余計に伸ばさないようにする。
+        if (importedMmprojTasks.isEmpty()) return
+
         Text(
             text = "mmproj ファイル",
             style = MaterialTheme.typography.labelSmall,
@@ -2602,53 +2713,26 @@ open class ModelSettingsFragment : Fragment() {
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = 8.dp)
         )
-        
-        if (importedMmprojTasks.isNotEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (mmproj in importedMmprojTasks) {
-                    val mmprojKey = "mmproj_${mmproj.path}"
-                    val isExpanded = expandedModelKey == mmprojKey
-                    MmprojAccordionItem(
-                        model = mmproj,
-                        isExpanded = isExpanded,
-                        onToggle = { expandedModelKey = if (isExpanded) null else mmprojKey },
-                        onDelete = {
-                            val result = ModelFileManager.deleteImportedTask(requireContext(), mmproj.path)
-                            result.onSuccess {
-                                toast("mmproj ファイルを削除しました")
-                                refreshImportedTasks()
-                                expandedModelKey = null
-                            }.onFailure {
-                                toast("削除に失敗しました: ${it.message}")
-                            }
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (mmproj in importedMmprojTasks) {
+                val mmprojKey = "mmproj_${mmproj.path}"
+                val isExpanded = expandedModelKey == mmprojKey
+                MmprojAccordionItem(
+                    model = mmproj,
+                    isExpanded = isExpanded,
+                    onToggle = { expandedModelKey = if (isExpanded) null else mmprojKey },
+                    onDelete = {
+                        val result = ModelFileManager.deleteImportedTask(requireContext(), mmproj.path)
+                        result.onSuccess {
+                            toast("mmproj ファイルを削除しました")
+                            refreshImportedTasks()
+                            expandedModelKey = null
+                        }.onFailure {
+                            toast("削除に失敗しました: ${it.message}")
                         }
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-        }
-        
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = colorResource(id = R.color.primary_light)
-            )
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "ビジョン・オーディオ処理用の投影ファイル",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colorResource(id = R.color.text_secondary)
+                    }
                 )
-                OutlinedButton(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = { mmprojPickerLauncher.launch(arrayOf("*/*")) }
-                ) {
-                    Text("mmproj を追加")
-                }
             }
         }
     }
@@ -3036,135 +3120,214 @@ open class ModelSettingsFragment : Fragment() {
 
     @Composable
     private fun HfSearchResultsContent() {
-        Column(
+        // 旧 HfModelSearchCard を廃止したので、検索入力欄をこのページの上部に移した。
+        // さらにリストを一定量スクロールしたときだけ右下に「上にジャンプ」ボタンを出す。
+        val listState = rememberLazyListState()
+        val scope = androidx.compose.runtime.rememberCoroutineScope()
+        val showJumpTop by remember {
+            derivedStateOf {
+                listState.firstVisibleItemIndex > 0 ||
+                    listState.firstVisibleItemScrollOffset > 200
+            }
+        }
+
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(colorResource(id = R.color.bg_session_list))
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { hfSearchResultsDialogVisible = false }) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_back),
-                        contentDescription = "戻る",
-                        tint = colorResource(id = R.color.text_primary)
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { hfSearchResultsDialogVisible = false }) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_back),
+                            contentDescription = "戻る",
+                            tint = colorResource(id = R.color.text_primary)
+                        )
+                    }
+                    Text(
+                        text = "検索結果",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = colorResource(id = R.color.text_primary),
+                        fontWeight = FontWeight.Bold
                     )
                 }
-                Text(
-                    text = "検索結果",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = colorResource(id = R.color.text_primary),
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            if (hfSearchResults.isEmpty()) {
-                Text(
-                    text = "検索結果がありません",
-                    color = colorResource(id = R.color.text_secondary)
-                )
-            } else {
-                Text(
-                    text = "${hfSearchResults.size}件の結果",
-                    color = colorResource(id = R.color.text_secondary),
-                    style = MaterialTheme.typography.bodySmall
-                )
-                val listState = rememberLazyListState()
- // 次ページの自動読み込み:
-                //   旧: LaunchedEffect(hfSearchResults.size) → trigger item が
-                //       LazyColumn に compose された瞬間に発火していたため、
-                //       ユーザーがスクロールしていなくても全ページを一気に取得してしまう。
-                //   新: リストの末尾付近が実際に表示されたときだけ loadMore を呼ぶ。
-                LaunchedEffect(listState) {
-                    snapshotFlow {
-                        val info = listState.layoutInfo
-                        val total = info.totalItemsCount
-                        val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
-                        // 末尾に多少余裕を持たせる (2item 手前からプリフェッチ)
-                        total > 0 && lastVisible >= total - 2
-                    }
-                        .distinctUntilChanged()
-                        .filter { it }
-                        .collect {
-                            val nextUrl = hfSearchNextPageUrl
-                            if (nextUrl != null && !hfSearchLoadingMore) {
-                                loadMoreHfResults(nextUrl)
-                            }
-                        }
-                }
-                LazyColumn(
-                    state = listState,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+
+                // 検索入力欄（旧 HfModelSearchCard から移行）。
+                //   - 旧実装と同じく hfSearchQuery / searchHfModels() にバインドし、
+                //     検索実行後は現ページに結果リストが差し替わる。
+                //   - クリア・結果を見るボタンはこのページ自体が結果ビューなので不要。
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = colorResource(id = R.color.primary_light)
+                    )
                 ) {
-                    items(hfSearchResults, key = { it.id }) { result ->
-                                Card(
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = colorResource(id = R.color.primary_light)
-                            )
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            OutlinedTextField(
+                                modifier = Modifier.weight(1f),
+                                value = hfSearchQuery,
+                                onValueChange = { hfSearchQuery = it },
+                                placeholder = { Text("キーワード / repo id") },
+                                singleLine = true
+                            )
+                            Button(
+                                enabled = !hfSearchLoading,
+                                onClick = { searchHfModels() },
+                                modifier = Modifier.height(56.dp)
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Text(
-                                        text = "\u2B73",
-                                        color = colorResource(id = R.color.primary),
-                                        fontSize = 18.sp
-                                    )
-                                    Text(text = result.id, fontWeight = FontWeight.SemiBold)
+                                Text(if (hfSearchLoading) "検索中..." else "検索")
+                            }
+                        }
+                        hfSearchError?.let {
+                            Text(
+                                text = it,
+                                color = colorResource(id = R.color.text_primary),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+
+                if (hfSearchResults.isEmpty()) {
+                    Text(
+                        text = if (hfSearchLoading) "検索中..." else "検索結果がありません",
+                        color = colorResource(id = R.color.text_secondary)
+                    )
+                } else {
+                    Text(
+                        text = "${hfSearchResults.size}件の結果",
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+     // 次ページの自動読み込み:
+                    //   旧: LaunchedEffect(hfSearchResults.size) → trigger item が
+                    //       LazyColumn に compose された瞬間に発火していたため、
+                    //       ユーザーがスクロールしていなくても全ページを一気に取得してしまう。
+                    //   新: リストの末尾付近が実際に表示されたときだけ loadMore を呼ぶ。
+                    LaunchedEffect(listState) {
+                        snapshotFlow {
+                            val info = listState.layoutInfo
+                            val total = info.totalItemsCount
+                            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+                            // 末尾に多少余裕を持たせる (2item 手前からプリフェッチ)
+                            total > 0 && lastVisible >= total - 2
+                        }
+                            .distinctUntilChanged()
+                            .filter { it }
+                            .collect {
+                                val nextUrl = hfSearchNextPageUrl
+                                if (nextUrl != null && !hfSearchLoadingMore) {
+                                    loadMoreHfResults(nextUrl)
                                 }
-                                Text(
-                                    text = "DL: ${result.downloads} / Likes: ${result.likes}",
-                                    color = colorResource(id = R.color.text_secondary)
+                            }
+                    }
+                    LazyColumn(
+                        state = listState,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(hfSearchResults, key = { it.id }) { result ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = colorResource(id = R.color.primary_light)
                                 )
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(
-                                        enabled = !hfFilePickerLoading,
-                                        onClick = {
-                                            openHfFilePicker(result)
-                                        }
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Text("ファイル選択")
-                                    }
-                                    TextButton(onClick = {
-                                        val intent = Intent(
-                                            Intent.ACTION_VIEW,
-                                            Uri.parse("https://huggingface.co/${result.id}")
+                                        Text(
+                                            text = "\u2B73",
+                                            color = colorResource(id = R.color.primary),
+                                            fontSize = 18.sp
                                         )
-                                        if (intent.resolveActivity(requireContext().packageManager) != null) {
-                                            startActivity(intent)
-                                        } else {
-                                            toast("ブラウザを起動できませんでした")
+                                        Text(text = result.id, fontWeight = FontWeight.SemiBold)
+                                    }
+                                    Text(
+                                        text = "DL: ${result.downloads} / Likes: ${result.likes}",
+                                        color = colorResource(id = R.color.text_secondary)
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(
+                                            enabled = !hfFilePickerLoading,
+                                            onClick = {
+                                                openHfFilePicker(result)
+                                            }
+                                        ) {
+                                            Text("ファイル選択")
                                         }
-                                    }) {
-                                        Text("ページを開く")
+                                        TextButton(onClick = {
+                                            val intent = Intent(
+                                                Intent.ACTION_VIEW,
+                                                Uri.parse("https://huggingface.co/${result.id}")
+                                            )
+                                            if (intent.resolveActivity(requireContext().packageManager) != null) {
+                                                startActivity(intent)
+                                            } else {
+                                                toast("ブラウザを起動できませんでした")
+                                            }
+                                        }) {
+                                            Text("ページを開く")
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
- // 次ページプレースホルダー: スピナーのみ。loadMore のトリガーは
-                    //   上の snapshotFlow 監視で行うので、この item は "現在ロード中に見える" 存在だけ。
-                    item {
-                        if (hfSearchNextPageUrl != null && hfSearchLoadingMore) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 12.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                SvgSpinner()
+         // 次ページプレースホルダー: スピナーのみ。loadMore のトリガーは
+                        //   上の snapshotFlow 監視で行うので、この item は "現在ロード中に見える" 存在だけ。
+                        item {
+                            if (hfSearchNextPageUrl != null && hfSearchLoadingMore) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 12.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    SvgSpinner()
+                                }
+                            } else if (hfSearchNextPageUrl != null) {
+                                // 候補があるが未ロードのときもプレースホルダーだけ支持しておく（高さは保つ）
+                                Spacer(modifier = Modifier.height(24.dp))
                             }
-                        } else if (hfSearchNextPageUrl != null) {
-                            // 候補があるが未ロードのときもプレースホルダーだけ支持しておく（高さは保つ）
-                            Spacer(modifier = Modifier.height(24.dp))
                         }
                     }
+                }
+            }
+
+            // スクロールして先頭から離れたときだけ右下に「上にジャンプ」 FAB を表示する。
+            // ModelScreen の「＋」FAB と同じ位置だが、他タブと並びではない検索ビュー上のボタンなので衝突はない。
+            if (showJumpTop && hfSearchResults.isNotEmpty()) {
+                FloatingActionButton(
+                    onClick = {
+                        scope.launch { listState.animateScrollToItem(0) }
+                    },
+                    containerColor = colorResource(id = R.color.primary),
+                    contentColor = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 20.dp, bottom = 24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowUp,
+                        contentDescription = "上までジャンプ"
+                    )
                 }
             }
         }
