@@ -16,6 +16,8 @@ object PreferencesHelper {
     private const val KEY_SD_STEPS = "sd_steps"
     private const val KEY_SD_CFG = "sd_cfg"
     private const val KEY_SD_SCHEDULER = "sd_scheduler"
+    private const val KEY_SD_PROMPT = "sd_prompt"
+    private const val KEY_SD_NEGATIVE_PROMPT = "sd_negative_prompt"
     private const val KEY_CURRENT_PRESET_ID = "current_preset_id"
     private const val KEY_BRAVE_SEARCH_API_KEY = "brave_search_api_key"
     private const val KEY_ENABLE_THINKING = "enable_thinking"
@@ -184,6 +186,24 @@ object PreferencesHelper {
     fun setSdScheduler(context: Context, scheduler: String) {
         val normalized = SdScheduler.fromId(scheduler).id
         getSharedPreferences(context).edit().putString(KEY_SD_SCHEDULER, normalized).apply()
+    }
+
+    // 画像生成画面を閉じてもプロンプトを復元できるよう、入力値を保持する。
+    //   steps / cfg / scheduler と同じく「変更の都度保存・初期値は保存値」方式。
+    fun getSdPrompt(context: Context): String {
+        return getSharedPreferences(context).getString(KEY_SD_PROMPT, "") ?: ""
+    }
+
+    fun setSdPrompt(context: Context, prompt: String) {
+        getSharedPreferences(context).edit().putString(KEY_SD_PROMPT, prompt).apply()
+    }
+
+    fun getSdNegativePrompt(context: Context): String {
+        return getSharedPreferences(context).getString(KEY_SD_NEGATIVE_PROMPT, "") ?: ""
+    }
+
+    fun setSdNegativePrompt(context: Context, prompt: String) {
+        getSharedPreferences(context).edit().putString(KEY_SD_NEGATIVE_PROMPT, prompt).apply()
     }
 
     fun getCurrentPresetId(context: Context): String {

@@ -4619,12 +4619,16 @@ open class ModelSettingsFragment : Fragment() {
                 hfSearchResults = list
                 hfSearchNextPageUrl = nextUrl
                 hfSearchError = if (list.isEmpty()) "検索結果がありませんでした" else null
-                hfSearchResultsDialogVisible = list.isNotEmpty()
+                // Bug fix (検索ボタンを押すと検索画面が閉じる):
+                //   旧実装はカード内検索だったため結果が出た瞬間に結果ページへ
+                //   遷移 (hfSearchResultsDialogVisible = true) させていたが、
+                //   現在はこのページ自体が検索画面なので、0件ヒットや失敗時に
+                //   false を代入すると画面ごと閉じてしまう。表示フラグは
+                //   FAB メニューと戻るボタンだけが制御し、ここでは触らない。
             }.onFailure {
                 hfSearchResults = emptyList()
                 hfSearchNextPageUrl = null
                 hfSearchError = "検索失敗: ${it.message}"
-                hfSearchResultsDialogVisible = false
             }
             hfSearchLoading = false
         }

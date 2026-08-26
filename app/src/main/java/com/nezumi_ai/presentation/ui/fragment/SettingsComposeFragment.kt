@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.asImageBitmap
@@ -351,6 +352,18 @@ class SettingsComposeFragment : Fragment() {
         val chatViewModel = ViewModelProvider(requireActivity(), chatViewModelFactory)
             .get(com.nezumi_ai.presentation.viewmodel.ChatViewModel::class.java)
         val sharedModelErrorMessage by chatViewModel.modelErrorDialogMessage.collectAsState()
+
+        // Bug fix (設定のタブ移動が Android の戻る履歴に残らない):
+        //   スマホ表示でのカテゴリ一覧 → 詳細ページ遷移は Fragment 内の Compose
+        //   state (showSettingsListOnPhone) の切り替えでしかなく、NavController
+        //   のバックスタックに乗らない。そのため詳細表示中に端末の戻るボタンを
+        //   押すと設定画面ごと閉じてしまっていた。BackHandler で詳細表示中の
+        //   戻るを横取りし、まずカテゴリ一覧へ戻す。タブレットは常時2ペインで
+        //   一覧に「戻る」概念がないので無効のまま。
+        val isTabletForBack = LocalConfiguration.current.screenWidthDp >= 600
+        BackHandler(enabled = !isTabletForBack && !showSettingsListOnPhone) {
+            showSettingsListOnPhone = true
+        }
 
         // 自動保存レイヤー: 入力フィールドを snapshotFlow で監視し、全項目を
         // すべてハッシュして単一の String キーにして 400ms デバウンスして

@@ -1072,7 +1072,7 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="model_settings_local_import_button">Add model file</string>
     <string name="model_settings_sd_zip_import_title">Import SD model zip</string>
     <!-- Cloud models (integrated into the model management screen) -->
-    <string name="cloud_models_entry_button">☁️ Add cloud model</string>
+    <string name="cloud_models_entry_button">Add cloud model</string>
     <string name="cloud_models_screen_title">Cloud models</string>
     <string name="cloud_models_screen_description">Add Claude / Gemini / ChatGPT / Ollama / LM Studio models to make them selectable from presets. API keys are stored encrypted with the Android Keystore.</string>
     <string name="cloud_models_provider_claude">Claude (Anthropic)</string>

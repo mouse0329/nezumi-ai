@@ -98,7 +98,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.fragment.app.Fragment
-import androidx.fragment.app.viewModels
+import androidx.fragment.app.activityViewModels
 import androidx.navigation.fragment.findNavController
 import com.nezumi_ai.R
 import com.nezumi_ai.presentation.viewmodel.ImageGenViewModel
@@ -129,7 +129,15 @@ data class LibraryItem(
 
 class ImageGenFragment : Fragment() {
 
-    private val viewModel: ImageGenViewModel by viewModels()
+    // Bug fix (画面を閉じるとプロンプト等が失われる / 生成中に閉じると進行度が
+    //   分からなくなる):
+    //   旧実装は Fragment スコープの ViewModel だったため、画像生成画面を
+    //   閉じる (バックスタックから pop) たびに ViewModel ごと破棄され、
+    //   プロンプト・生成中ジョブ・進行度 StateFlow がすべて失われていた。
+    //   Activity スコープに変更してプロンプトと生成状態を保持し、画面を
+    //   閉じても生成は継続 (進行度・完了・失敗は既存の通知で追跡可能) して
+    //   画面を再び開いたときに進行度がそのまま再表示されるようにする。
+    private val viewModel: ImageGenViewModel by activityViewModels()
 
     override fun onResume() {
         super.onResume()
@@ -148,10 +156,11 @@ class ImageGenFragment : Fragment() {
         viewModel.refreshImg2imgCapability()
     }
 
-    override fun onDestroyView() {
-        super.onDestroyView()
-        viewModel.cancel()
-    }
+    // Bug fix (生成中に画面を閉じると進行度が分からなくなる):
+    //   旧実装は onDestroyView で viewModel.cancel() を呼んでおり、設定画面への
+    //   一時的な遷移でも生成が中断され、戻ったときに進行度ゼロからのやり直しに
+    //   なっていた。画面を閉じても生成を継続させるため、ここではキャンセルしない
+    //   (中断したい場合は画面内の停止ボタンを使う)。
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         return ComposeView(requireContext()).apply {

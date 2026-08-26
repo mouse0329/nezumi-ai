@@ -952,7 +952,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="model_settings_local_import_button">モデルファイルを追加</string>
     <string name="model_settings_sd_zip_import_title">SD モデル zip をインポート</string>
     <!-- クラウドモデル (モデル管理画面に統合) -->
-    <string name="cloud_models_entry_button">☁️ クラウドモデルを追加</string>
+    <string name="cloud_models_entry_button">クラウドモデルを追加</string>
     <string name="cloud_models_screen_title">クラウドモデル</string>
     <string name="cloud_models_screen_description">Claude / Gemini / ChatGPT / Ollama / LM Studio のモデルを追加すると、プリセットから選択できるようになります。API キーは Android Keystore で暗号化保存されます。</string>
     <string name="cloud_models_provider_claude">Claude (Anthropic)</string>

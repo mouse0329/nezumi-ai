@@ -259,10 +259,13 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
         _backendInfo.value = format
     }
 
-    private val _prompt = MutableStateFlow("")
+    // Bug fix (画像生成画面を閉じるとプロンプト等が失われる):
+    //   初期値を Preferences の保存値から復元する (steps / cfg / scheduler と同じ
+    //   方式)。Fragment 離脱で ViewModel が再生成されても入力内容が消えない。
+    private val _prompt = MutableStateFlow(PreferencesHelper.getSdPrompt(application))
     val prompt: StateFlow<String> = _prompt.asStateFlow()
 
-    private val _negativePrompt = MutableStateFlow("")
+    private val _negativePrompt = MutableStateFlow(PreferencesHelper.getSdNegativePrompt(application))
     val negativePrompt: StateFlow<String> = _negativePrompt.asStateFlow()
 
     private val _steps = MutableStateFlow(PreferencesHelper.getSdSteps(application))
@@ -546,10 +549,14 @@ class ImageGenViewModel(application: Application) : AndroidViewModel(application
 
     fun setPrompt(p: String) {
         _prompt.value = p
+        // Bug fix: 画面を閉じても復元できるよう、変更の都度保存する
+        //   (setSteps / setCfg と同じパターン)。
+        PreferencesHelper.setSdPrompt(getApplication(), p)
     }
 
     fun setNegativePrompt(p: String) {
         _negativePrompt.value = p
+        PreferencesHelper.setSdNegativePrompt(getApplication(), p)
     }
 
     fun setSteps(s: Int) {
