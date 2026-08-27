@@ -504,7 +504,13 @@ class GgufInferenceEngine(
     ): Flow<String> = inferenceWithMedia(sessionId, prompt, emptyList(), emptyList(), config)
 
     /**
-     * GGUF推論。images / audioClips は現状無視（テキストのみ対応）。
+     * GGUF推論。images / audioClips はネイティブ側 (libmtmd) がサポートする場合のみ利用。
+     *
+     * 音声は一時 WAV ファイル化して nativeCompleteWithMedia() の mediaPaths に
+     * 画像パスと混ぜて渡す。JNI 経由で libmtmd (mtmd_helper_bitmap_init_from_file)
+     * が magic bytes (RIFF/MP3/fLaC) を自動判定し、miniaudio でモデル要求
+     * サンプルレート (mtmd_get_audio_sample_rate) へリサンプルするため、
+     * Kotlin 側では MediaCodec デコードだけ行いリサンプルはネイティブに任せる。
      *
      * 出力フォーマット:
      *   - テキストデルタ: そのまま trySend
@@ -824,10 +830,45 @@ class GgufInferenceEngine(
                 val tempFile = File(appContext.cacheDir, "temp_img_${System.currentTimeMillis()}_$index.jpg")
                 tempFile.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }
                 tempFile.absolutePath
-            }.toTypedArray()
+            }
         } else {
-            emptyArray()
+            emptyList()
         }
+
+        // 音声を一時 WAV ファイルに保存。
+        //
+        // 非対応モデルでは明示的に拒否する。mtmd 内部でも audio 非対応時は
+        // bitmap 生成に失敗するが、ここで事前に弾くことで「音声を捨てて
+        // テキストだけ回答する」誤動作を防ぎ、ユーザーへ原因を伝えられる。
+        val audioPaths = if (audioClips.isNotEmpty()) {
+            if (!ctx.isAudioSupported) {
+                imagePaths.forEach { File(it).delete() }
+                throw IllegalStateException(
+                    "Audio input is not supported by this model (GGUF backend). " +
+                        "Load a model with an audio-capable mmproj."
+                )
+            }
+            audioClips.mapIndexedNotNull { index, clip ->
+                // 任意 codec (m4a/aac/mp3/ogg 等) を 16-bit PCM WAV へデコード。
+                // リサンプルはネイティブ (miniaudio) が行うため、ここでは
+                // decode + WAV 化のみを行う軽量ヘルパーを使う。
+                val wavBytes = LlmMultimodalAudioHelper.decodeToPcmWav(appContext, clip)
+                if (wavBytes == null || wavBytes.isEmpty()) {
+                    Log.w(TAG, "generateRound: audio decode failed at index=$index; skipping")
+                    null
+                } else {
+                    val tempFile = File(appContext.cacheDir, "temp_audio_${System.currentTimeMillis()}_$index.wav")
+                    tempFile.outputStream().use { it.write(wavBytes) }
+                    tempFile.absolutePath
+                }
+            }
+        } else {
+            emptyList()
+        }
+
+        // 画像 + 音声を 1 本の mediaPaths にまとめる。
+        // libmtmd 側でファイル内容から画像/音声が自動ルーティングされる。
+        val mediaPaths = (imagePaths + audioPaths).toTypedArray()
 
         // 推論実行（ブロッキング呼び出し）
         //
@@ -843,7 +884,7 @@ class GgufInferenceEngine(
         //   何分もの間 UI がフリーズして見えていた (= リアルタイム応答が
         //   出力されないバグ)。コールバック経由に切り替えたので、戻り値の
         //   result はもう UI には流さない。
-        Log.d(TAG, "generateRound: Starting inference, imagePaths.size=${imagePaths.size}, prompt.length=${prompt.length}")
+        Log.d(TAG, "generateRound: Starting inference, imagePaths.size=${imagePaths.size}, audioPaths.size=${audioPaths.size}, prompt.length=${prompt.length}")
         // t/s (トークン/秒) が表示されないバグ修正:
         //   以前は streamCallback から PerformanceMonitor.recordToken() を
         //   一切呼んでいなかったため、totalTokens がずっと 0 のままだった。
@@ -858,7 +899,7 @@ class GgufInferenceEngine(
             }
         }
         val result = try {
-            if (imagePaths.isNotEmpty()) {
+            if (mediaPaths.isNotEmpty()) {
                 ctx.completeWithMedia(
                     prompt = prompt,
                     nPredict = maxTokens,
@@ -866,7 +907,7 @@ class GgufInferenceEngine(
                     topP = config.topP,
                     topK = config.maxTopK,
                     stopWords = stopSequences.toTypedArray(),
-                    mediaPaths = imagePaths,
+                    mediaPaths = mediaPaths,
                     onToken = streamCallback
                 )
             } else {
@@ -888,6 +929,7 @@ class GgufInferenceEngine(
         } finally {
             // 一時ファイルを削除（例外/キャンセル時にも必ず実行）
             imagePaths.forEach { File(it).delete() }
+            audioPaths.forEach { File(it).delete() }
         }
         Log.d(TAG, "generateRound: Inference completed, result.length=${result.length}")
 

@@ -23,12 +23,28 @@ object LlmMultimodalAudioHelper {
      * @return 16kHz / mono / 16-bit PCM の WAV バイト列。失敗時は null。
      */
     fun toMono16Bit16kHzWav(context: Context, audioBytes: ByteArray): ByteArray? {
+        return decodeToPcmWav(context, audioBytes, TARGET_SAMPLE_RATE)
+    }
+
+    /**
+     * 任意の音声バイト列 (wav/mp3/m4a/aac/ogg/flac 等) を mono 16-bit PCM の
+     * WAV へデコードする。GGUF (llama.rn / libmtmd) バックエンド向け。
+     *
+     * [targetSampleRate] <= 0 の場合はリサンプルせず入力のサンプルレートを
+     * 保持する。libmtmd 側 (miniaudio) が mtmd_get_audio_sample_rate() の
+     * 要求レートへ自動リサンプルするため、GGUF 経路ではレートを固定しない
+     * (Whisper 系 16kHz 以外のモデルもあるため)。
+     *
+     * @return mono 16-bit PCM の WAV バイト列。失敗時は null。
+     */
+    fun decodeToPcmWav(context: Context, audioBytes: ByteArray, targetSampleRate: Int = 0): ByteArray? {
         if (audioBytes.isEmpty()) return null
         unwrapWavToPcm(audioBytes)?.let { (rate, monoShorts) ->
-            val resampled = resampleLinear(monoShorts, rate, TARGET_SAMPLE_RATE)
-            return pcm16MonoToWav(resampled, TARGET_SAMPLE_RATE)
+            val outRate = if (targetSampleRate > 0) targetSampleRate else rate
+            val resampled = if (outRate == rate) monoShorts else resampleLinear(monoShorts, rate, outRate)
+            return pcm16MonoToWav(resampled, outRate)
         }
-        return decodeFileToMono16kWav(context, audioBytes)
+        return decodeFileToPcmWav(context, audioBytes, targetSampleRate)
     }
 
     /**
@@ -77,7 +93,7 @@ object LlmMultimodalAudioHelper {
         return sampleRate to mono
     }
 
-    private fun decodeFileToMono16kWav(context: Context, audioBytes: ByteArray): ByteArray? {
+    private fun decodeFileToPcmWav(context: Context, audioBytes: ByteArray, targetSampleRate: Int): ByteArray? {
         val inFile = File(context.cacheDir, "llm_audio_in_${System.nanoTime()}.bin")
         return try {
             inFile.outputStream().use { it.write(audioBytes) }
@@ -152,10 +168,11 @@ object LlmMultimodalAudioHelper {
             val raw = pcmOut.toByteArray()
             val shorts = byteArrayToLeShorts(raw) ?: return null
             val mono = if (channels <= 1) shorts else downmixToMono(shorts, channels)
-            val resampled = resampleLinear(mono, rate, TARGET_SAMPLE_RATE)
-            pcm16MonoToWav(resampled, TARGET_SAMPLE_RATE)
+            val outRate = if (targetSampleRate > 0) targetSampleRate else rate
+            val resampled = if (outRate == rate) mono else resampleLinear(mono, rate, outRate)
+            pcm16MonoToWav(resampled, outRate)
         } catch (e: Exception) {
-            Log.e(TAG, "decodeFileToMono16kWav failed", e)
+            Log.e(TAG, "decodeFileToPcmWav failed", e)
             null
         } finally {
             runCatching { if (inFile.exists()) inFile.delete() }

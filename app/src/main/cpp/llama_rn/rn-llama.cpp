@@ -741,6 +741,10 @@ bool llama_rn_context::isMultimodalSupportAudio() const {
     return isMultimodalEnabled() && mtmd_wrapper->supportAudio();
 }
 
+int llama_rn_context::getMultimodalAudioSampleRate() const {
+    return isMultimodalEnabled() ? mtmd_wrapper->audioSampleRate() : -1;
+}
+
 void llama_rn_context::releaseMultimodal() {
     if (mtmd_wrapper != nullptr) {
         delete mtmd_wrapper;

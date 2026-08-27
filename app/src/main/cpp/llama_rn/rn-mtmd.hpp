@@ -77,6 +77,11 @@ struct llama_rn_context_mtmd {
 
     // Check if multimodal supports audio
     bool supportAudio() const;
+
+    // Required audio input sample rate in Hz (-1 when audio is unsupported).
+    // mtmd resamples every decoded file to this rate internally, so callers
+    // can use it to decide whether to pre-resample on the Android side.
+    int audioSampleRate() const;
 };
 
 // FNV-1a hash function for bitmap hashing
@@ -771,6 +776,10 @@ inline bool llama_rn_context_mtmd::supportVision() const {
 
 inline bool llama_rn_context_mtmd::supportAudio() const {
     return mtmd_ctx != nullptr && mtmd_support_audio(mtmd_ctx);
+}
+
+inline int llama_rn_context_mtmd::audioSampleRate() const {
+    return mtmd_ctx != nullptr ? mtmd_get_audio_sample_rate(mtmd_ctx) : -1;
 }
 
 } // namespace rnllama

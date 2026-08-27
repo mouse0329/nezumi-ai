@@ -159,6 +159,31 @@ class RnLlamaContext(
         RnLlamaNative.nativeClearKvCache(p)
     }
 
+    /** ロード中のモデル/mmproj が画像入力をサポートするか。 */
+    val isVisionSupported: Boolean
+        get() {
+            val p = ptr
+            return p != 0L && RnLlamaNative.nativeIsVisionSupported(p)
+        }
+
+    /** ロード中のモデル/mmproj が音声入力をサポートするか。 */
+    val isAudioSupported: Boolean
+        get() {
+            val p = ptr
+            return p != 0L && RnLlamaNative.nativeIsAudioSupported(p)
+        }
+
+    /**
+     * 音声入力が要求するサンプルレート (Hz)。音声非対応モデルでは -1。
+     * ネイティブ側 (libmtmd/miniaudio) が wav/mp3/flac を自動でこのレートへ
+     * リサンプルするため、Kotlin 側での事前リサンプルは省略可能。
+     */
+    val audioSampleRate: Int
+        get() {
+            val p = ptr
+            return if (p == 0L) -1 else RnLlamaNative.nativeGetAudioSampleRate(p)
+        }
+
     fun release() {
         val p = ptr
         if (p == 0L) return

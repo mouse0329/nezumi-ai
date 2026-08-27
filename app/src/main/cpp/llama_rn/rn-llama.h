@@ -182,6 +182,9 @@ struct llama_rn_context {
     bool isMultimodalEnabled() const;
     bool isMultimodalSupportVision() const;
     bool isMultimodalSupportAudio() const;
+    // Required audio input sample rate in Hz, -1 when audio is unsupported
+    // (see llama_rn_context_mtmd::audioSampleRate).
+    int getMultimodalAudioSampleRate() const;
     void releaseMultimodal();
     // Media identity hashes tracked by the multimodal wrapper (empty when
     // multimodal is disabled); persisted alongside session/state files

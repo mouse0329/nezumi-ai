@@ -1018,3 +1018,54 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeClearKvCache(
         }
     }
 }
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeIsVisionSupported(
+    JNIEnv * /*env*/,
+    jclass /*clazz*/,
+    jlong ctxPtr)
+{
+    auto *holder = fromPtr(ctxPtr);
+    if (!holder || !holder->ctx)
+        return JNI_FALSE;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_live_holders.find(holder) == g_live_holders.end())
+        return JNI_FALSE;
+    if (holder->is_released.load(std::memory_order_acquire))
+        return JNI_FALSE;
+    return holder->ctx->isMultimodalSupportVision() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeIsAudioSupported(
+    JNIEnv * /*env*/,
+    jclass /*clazz*/,
+    jlong ctxPtr)
+{
+    auto *holder = fromPtr(ctxPtr);
+    if (!holder || !holder->ctx)
+        return JNI_FALSE;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_live_holders.find(holder) == g_live_holders.end())
+        return JNI_FALSE;
+    if (holder->is_released.load(std::memory_order_acquire))
+        return JNI_FALSE;
+    return holder->ctx->isMultimodalSupportAudio() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeGetAudioSampleRate(
+    JNIEnv * /*env*/,
+    jclass /*clazz*/,
+    jlong ctxPtr)
+{
+    auto *holder = fromPtr(ctxPtr);
+    if (!holder || !holder->ctx)
+        return -1;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_live_holders.find(holder) == g_live_holders.end())
+        return -1;
+    if (holder->is_released.load(std::memory_order_acquire))
+        return -1;
+    return (jint)holder->ctx->getMultimodalAudioSampleRate();
+}

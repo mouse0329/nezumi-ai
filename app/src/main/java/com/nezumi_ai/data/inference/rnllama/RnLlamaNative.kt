@@ -120,4 +120,20 @@ object RnLlamaNative {
      * Call this when switching sessions or models to ensure clean state
      */
     external fun nativeClearKvCache(contextPtr: Long)
+
+    /**
+     * Whether the loaded mmproj/model supports vision input (mtmd_support_vision)
+     */
+    external fun nativeIsVisionSupported(contextPtr: Long): Boolean
+
+    /**
+     * Whether the loaded mmproj/model supports audio input (mtmd_support_audio)
+     */
+    external fun nativeIsAudioSupported(contextPtr: Long): Boolean
+
+    /**
+     * Required audio input sample rate in Hz.
+     * Returns -1 when the model does not support audio input.
+     */
+    external fun nativeGetAudioSampleRate(contextPtr: Long): Int
 }
