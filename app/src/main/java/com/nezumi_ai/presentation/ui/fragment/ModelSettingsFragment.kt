@@ -164,6 +164,9 @@ open class ModelSettingsFragment : Fragment() {
     private var hfSearchQuery by mutableStateOf("")
     private var hfSearchLoading by mutableStateOf(false)
     private var hfSearchError by mutableStateOf<String?>(null)
+    // Bug fix: 検索前から「検索結果がありません」と出ていた。
+    //   未検索 / 検索中 / 0件ヒットを区別するためのフラグ。
+    private var hfHasSearched by mutableStateOf(false)
     private var hfSearchResults by mutableStateOf<List<ModelFileManager.HfModelSearchResult>>(emptyList())
     private var hfSearchNextPageUrl by mutableStateOf<String?>(null)
     private var hfSearchLoadingMore by mutableStateOf(false)
@@ -2483,6 +2486,7 @@ open class ModelSettingsFragment : Fragment() {
                                 hfSearchResults = emptyList()
                                 hfSearchNextPageUrl = null
                                 hfSearchError = null
+                                hfHasSearched = false
                                 hfSearchResultsDialogVisible = false
                             }
                         ) {
@@ -3203,7 +3207,7 @@ open class ModelSettingsFragment : Fragment() {
 
                 if (hfSearchResults.isEmpty()) {
                     Text(
-                        text = if (hfSearchLoading) "検索中..." else "検索結果がありません",
+                        text = if (hfSearchLoading) "検索中..." else if (!hfHasSearched) "キーワードを入力して検索してください" else "検索結果がありません",
                         color = colorResource(id = R.color.text_secondary)
                     )
                 } else {
@@ -4082,11 +4086,15 @@ open class ModelSettingsFragment : Fragment() {
                                 )
                             }
                         }
-                        TextButton(
-                            onClick = onDelete,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(stringResource(id = R.string.delete), fontSize = androidx.compose.material3.LocalTextStyle.current.fontSize * 0.8f)
+                        // Bug fix: 未ダウンロードのモデルにも削除ボタンが表示されていた。
+                        //   削除はダウンロード済み (かつダウンロード中でない) ときだけ出す。
+                        if (isDownloaded && !isDownloading) {
+                            TextButton(
+                                onClick = onDelete,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(stringResource(id = R.string.delete), fontSize = androidx.compose.material3.LocalTextStyle.current.fontSize * 0.8f)
+                            }
                         }
                     }
                 }
@@ -4472,12 +4480,12 @@ open class ModelSettingsFragment : Fragment() {
     private fun renderHfTokenState() {
         val token = HfAuthManager.getToken(requireContext())
         hfLinked = token.isNotBlank()
-        // トークン状態変更時は検索結果をクリア
-        if (hfLinked && hfSearchResults.isNotEmpty()) {
-            hfSearchResults = emptyList()
-            hfSearchNextPageUrl = null
-            hfSearchResultsDialogVisible = false
-        }
+        // Bug fix (検索すると検索画面が閉じる):
+        //   ここで検索結果のクリアや hfSearchResultsDialogVisible = false を
+        //   行っていたが、searchHfModels() から検索のたびに呼ばれるため、
+        //   ログイン済みで前回結果が残っていると再検索の瞬間に画面ごと閉じていた。
+        //   トークン状態 (hfLinked) の更新だけに留め、表示フラグと結果リストは
+        //   FAB メニュー・戻るボタン・クリアボタン・検索処理本体だけが制御する。
     }
 
     private fun logoutHf() {
@@ -4607,6 +4615,7 @@ open class ModelSettingsFragment : Fragment() {
         renderHfTokenState()
         
         hfSearchLoading = true
+        hfHasSearched = true
         hfSearchError = null
         hfSearchNextPageUrl = null
         viewLifecycleOwner.lifecycleScope.launch {

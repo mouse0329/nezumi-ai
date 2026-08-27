@@ -918,43 +918,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val grouped = mutableMapOf<String, MutableList<ChatSessionEntity>>()
+        // ラベル付けは GroupedChatSessions と共通 (今日 / 昨日 / 曜日 / 日付)。
+        //   セッションは lastUpdated 降順なので、LinkedHashMap の挿入順が
+        //   そのまま新しい順のグループ順になる。
+        val grouped = LinkedHashMap<String, MutableList<ChatSessionEntity>>()
         for (session in unpinnedSessions) {
-            val sessionCal = Calendar.getInstance().apply { timeInMillis = session.lastUpdated }
-            sessionCal.set(Calendar.HOUR_OF_DAY, 0)
-            sessionCal.set(Calendar.MINUTE, 0)
-            sessionCal.set(Calendar.SECOND, 0)
-            sessionCal.set(Calendar.MILLISECOND, 0)
-            val sessionTime = sessionCal.timeInMillis
-            val daysDiff = ((todayTime - sessionTime) / (1000 * 60 * 60 * 24)).toInt()
-            val label = sessionDateLabel(this, daysDiff, sessionCal)
+            val label = sessionDateLabel(this, session.lastUpdated)
             grouped.getOrPut(label) { mutableListOf() }.add(session)
         }
 
-        val mon = getString(R.string.day_mon_short)
-        val tue = getString(R.string.day_tue_short)
-        val wed = getString(R.string.day_wed_short)
-        val thu = getString(R.string.day_thu_short)
-        val fri = getString(R.string.day_fri_short)
-        val labelOrder = listOf(
-            getString(R.string.session_group_today),
-            getString(R.string.session_group_yesterday),
-            getString(R.string.session_group_day_before_yesterday),
-            getString(R.string.session_group_this_week_day, mon),
-            getString(R.string.session_group_this_week_day, tue),
-            getString(R.string.session_group_this_week_day, wed),
-            getString(R.string.session_group_this_week_day, thu),
-            getString(R.string.session_group_this_week_day, fri),
-            getString(R.string.session_group_this_week),
-            getString(R.string.session_group_last_week_day, mon),
-            getString(R.string.session_group_last_week_day, tue),
-            getString(R.string.session_group_last_week_day, wed),
-            getString(R.string.session_group_last_week_day, thu),
-            getString(R.string.session_group_last_week_day, fri),
-            getString(R.string.session_group_last_week)
-        )
-        val otherLabels = grouped.keys.filter { !labelOrder.contains(it) }.sorted().reversed()
-        for (label in labelOrder + otherLabels) {
+        for (label in grouped.keys) {
             grouped[label]?.let { sessionList ->
                 result.add(DrawerHistoryItem.Label(label))
                 sessionList.forEach { session ->

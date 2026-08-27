@@ -584,7 +584,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="settings_inference_compression_threshold_title">圧縮しきい値</string>
     <string name="settings_inference_compression_threshold_desc">メモリ使用量がこの割合を超えると自動圧縮します</string>
     <string name="settings_inference_preload_warning_title">プリロードメモリ警告閾値</string>
-    <string name="settings_inference_preload_warning_desc">UI では 0-100、内部では 3 倍の 0-300 の値になります</string>
+    <string name="settings_inference_preload_warning_desc">モデルサイズに対して必要な空きメモリの割合です。例: 2GBのモデルで100%なら約2GB、4GBのモデルで60%なら約2.4GBの空きメモリが必要です</string>
     <string name="settings_inference_setup_open">セットアップを開く</string>
 
     <!-- Setup wizard -->
@@ -1380,6 +1380,15 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="day_fri_short">金</string>
     <string name="day_sat_short">土</string>
     <string name="day_sun_short">日</string>
+    <string-array name="day_names_full">
+        <item>日曜日</item>
+        <item>月曜日</item>
+        <item>火曜日</item>
+        <item>水曜日</item>
+        <item>木曜日</item>
+        <item>金曜日</item>
+        <item>土曜日</item>
+    </string-array>
     <string name="settings_section_logs">ログ</string>
     <string name="logs_page_title">ログ</string>
     <string name="logs_tab_tool_history">ツール呼出履歴</string>

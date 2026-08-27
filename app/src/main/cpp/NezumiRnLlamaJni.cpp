@@ -597,6 +597,24 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeInterrupt(
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeClearInterrupt(
+    JNIEnv * /*env*/,
+    jclass /*clazz*/,
+    jlong ctxPtr)
+{
+    auto *holder = fromPtr(ctxPtr);
+    if (!holder)
+        return;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_live_holders.find(holder) == g_live_holders.end())
+        return;
+    if (holder->completion)
+    {
+        holder->completion->is_interrupted = false;
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeReleaseContext(
     JNIEnv *env,
     jclass /*clazz*/,

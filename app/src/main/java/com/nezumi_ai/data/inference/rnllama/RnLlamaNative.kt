@@ -104,6 +104,13 @@ object RnLlamaNative {
     external fun nativeInterrupt(contextPtr: Long)
 
     /**
+     * interrupt (is_interrupted) フラグをクリアする。
+     * 推論開始前に必ず呼ばないと、停止を短時間に繰り返した際にフラグが
+     * 残ったまま蓄積し、押していないのに次回推論が即座に中断される。
+     */
+    external fun nativeClearInterrupt(contextPtr: Long)
+
+    /**
      * Release context and free native resources
      */
     external fun nativeReleaseContext(contextPtr: Long)

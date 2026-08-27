@@ -523,6 +523,11 @@ class GgufInferenceEngine(
         inferenceMutex.lock()
         inferenceMutexHeld.set(true)
         cancelFlag.set(false)
+        // Bug fix: 推論停止を短時間に繰り返すと、ネイティブ側の is_interrupted
+        //   フラグがクリアされないまま蓄積し、「押していないのに次回推論が
+        //   即座に停止される」状態になっていた。推論開始前に必ずクリアする。
+        runCatching { rnllamaCtx?.clearInterrupt() }
+            .onFailure { Log.w(TAG, "clearInterrupt before inference failed", it) }
 
         val ctx = rnllamaCtx
         if (ctx == null || !ctx.isValid) {

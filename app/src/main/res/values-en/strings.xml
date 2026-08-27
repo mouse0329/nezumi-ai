@@ -709,7 +709,7 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="settings_inference_compression_threshold_title">Compression threshold</string>
     <string name="settings_inference_compression_threshold_desc">Automatic compression kicks in when memory usage exceeds this percentage.</string>
     <string name="settings_inference_preload_warning_title">Preload memory warning threshold</string>
-    <string name="settings_inference_preload_warning_desc">The UI uses 0-100, while the internal value uses 0-300 (three times larger).</string>
+    <string name="settings_inference_preload_warning_desc">Percentage of free memory required relative to the model size. E.g. a 2GB model at 100% needs about 2GB free, and a 4GB model at 60% needs about 2.4GB free.</string>
     <string name="settings_inference_setup_open">Open setup</string>
     <string name="settings_inference_context_shift_title">Context shift</string>
     <string name="settings_inference_context_shift_desc">Automatically remove older content when the context is full.</string>
@@ -1288,6 +1288,15 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="day_fri_short">Fri</string>
     <string name="day_sat_short">Sat</string>
     <string name="day_sun_short">Sun</string>
+    <string-array name="day_names_full">
+        <item>Sunday</item>
+        <item>Monday</item>
+        <item>Tuesday</item>
+        <item>Wednesday</item>
+        <item>Thursday</item>
+        <item>Friday</item>
+        <item>Saturday</item>
+    </string-array>
     <string name="settings_section_logs">Logs</string>
     <string name="logs_page_title">Logs</string>
     <string name="logs_tab_tool_history">Tool call history</string>

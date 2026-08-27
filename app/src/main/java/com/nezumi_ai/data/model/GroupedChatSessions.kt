@@ -16,9 +16,6 @@ fun groupSessionsByDate(
 ): List<GroupedChatSessions> {
     android.util.Log.d("GroupedChatSessions", "groupSessionsByDate: total sessions=${sessions.size}")
     val result = mutableListOf<GroupedChatSessions>()
-    val calendar = Calendar.getInstance()
-    val today = calendar.apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0) }
-    val todayTime = today.timeInMillis
 
     val pinnedSessions = sessions.filter { it.isPinned }
     val unpinnedSessions = sessions.filter { !it.isPinned }
@@ -27,83 +24,49 @@ fun groupSessionsByDate(
         result.add(GroupedChatSessions(context.getString(R.string.session_group_pinned), pinnedSessions))
     }
 
-    val grouped = mutableMapOf<String, MutableList<ChatSessionEntity>>()
+    // ラベル付けは一般的なアプリ (Gmail / メッセージ系など) と同じ規則に揃える:
+    //   今日 / 昨日 / 直近1週間は曜日 / それ以前は日付。
+    //   セッションは lastUpdated 降順で渡ってくるため、LinkedHashMap の
+    //   挿入順がそのまま「新しい順」のグループ順になる (固定の曜日リストは不要)。
+    val grouped = LinkedHashMap<String, MutableList<ChatSessionEntity>>()
     for (session in unpinnedSessions) {
-        val sessionCal = Calendar.getInstance().apply { timeInMillis = session.lastUpdated }
-        sessionCal.set(Calendar.HOUR_OF_DAY, 0)
-        sessionCal.set(Calendar.MINUTE, 0)
-        sessionCal.set(Calendar.SECOND, 0)
-        val sessionTime = sessionCal.timeInMillis
-        val daysDiff = ((todayTime - sessionTime) / (1000 * 60 * 60 * 24)).toInt()
-        val label = sessionDateLabel(context, daysDiff, sessionCal)
+        val label = sessionDateLabel(context, session.lastUpdated)
         grouped.getOrPut(label) { mutableListOf() }.add(session)
     }
-
-    val mon = context.getString(R.string.day_mon_short)
-    val tue = context.getString(R.string.day_tue_short)
-    val wed = context.getString(R.string.day_wed_short)
-    val thu = context.getString(R.string.day_thu_short)
-    val fri = context.getString(R.string.day_fri_short)
-    val labelOrder = listOf(
-        context.getString(R.string.session_group_today),
-        context.getString(R.string.session_group_yesterday),
-        context.getString(R.string.session_group_day_before_yesterday),
-        context.getString(R.string.session_group_this_week_day, mon),
-        context.getString(R.string.session_group_this_week_day, tue),
-        context.getString(R.string.session_group_this_week_day, wed),
-        context.getString(R.string.session_group_this_week_day, thu),
-        context.getString(R.string.session_group_this_week_day, fri),
-        context.getString(R.string.session_group_this_week),
-        context.getString(R.string.session_group_last_week_day, mon),
-        context.getString(R.string.session_group_last_week_day, tue),
-        context.getString(R.string.session_group_last_week_day, wed),
-        context.getString(R.string.session_group_last_week_day, thu),
-        context.getString(R.string.session_group_last_week_day, fri),
-        context.getString(R.string.session_group_last_week)
-    )
-    val otherLabels = grouped.keys.filter { !labelOrder.contains(it) }.sorted().reversed()
-    for (label in labelOrder + otherLabels) {
-        grouped[label]?.let { result.add(GroupedChatSessions(label, it)) }
+    for ((label, list) in grouped) {
+        result.add(GroupedChatSessions(label, list))
     }
     return result
 }
 
-fun sessionDateLabel(context: Context, daysDiff: Int, sessionCal: Calendar): String {
+fun sessionDateLabel(context: Context, timestamp: Long): String {
+    val sessionCal = Calendar.getInstance().apply { timeInMillis = timestamp }
+
+    val todayStart = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }
+    val sessionStart = (sessionCal.clone() as Calendar).apply {
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }
+    val daysDiff = ((todayStart.timeInMillis - sessionStart.timeInMillis) / (1000 * 60 * 60 * 24)).toInt()
+
     return when {
-        daysDiff == 0 -> context.getString(R.string.session_group_today)
+        daysDiff <= 0 -> context.getString(R.string.session_group_today)
         daysDiff == 1 -> context.getString(R.string.session_group_yesterday)
-        daysDiff == 2 -> context.getString(R.string.session_group_day_before_yesterday)
-        daysDiff in 3..6 -> {
-            val dayOfWeek = sessionCal.get(Calendar.DAY_OF_WEEK)
-            val dayName = dayNameShort(context, dayOfWeek)
-            if (dayOfWeek in Calendar.MONDAY..Calendar.FRIDAY)
-                context.getString(R.string.session_group_this_week_day, dayName)
-            else context.getString(R.string.session_group_this_week)
-        }
-        daysDiff in 7..13 -> {
-            val dayOfWeek = sessionCal.get(Calendar.DAY_OF_WEEK)
-            val dayName = dayNameShort(context, dayOfWeek)
-            if (dayOfWeek in Calendar.MONDAY..Calendar.FRIDAY)
-                context.getString(R.string.session_group_last_week_day, dayName)
-            else context.getString(R.string.session_group_last_week)
+        daysDiff in 2..6 -> {
+            // 直近1週間は曜日名 (月曜日 / Monday など)
+            val names = context.resources.getStringArray(R.array.day_names_full)
+            names.getOrElse(sessionCal.get(Calendar.DAY_OF_WEEK) - 1) { "" }
         }
         else -> {
-            val monthsDiff = daysDiff / 30
-            if (monthsDiff <= 1) context.getString(R.string.session_group_months_ago_one)
-            else context.getString(R.string.session_group_months_ago, monthsDiff)
+            // それ以前はロケール標準の日付 (2026/8/26 / Aug 26, 2026 など)
+            android.text.format.DateFormat.getDateFormat(context).format(sessionCal.time)
         }
-    }
-}
-
-fun dayNameShort(context: Context, dayOfWeek: Int): String {
-    return when (dayOfWeek) {
-        Calendar.MONDAY -> context.getString(R.string.day_mon_short)
-        Calendar.TUESDAY -> context.getString(R.string.day_tue_short)
-        Calendar.WEDNESDAY -> context.getString(R.string.day_wed_short)
-        Calendar.THURSDAY -> context.getString(R.string.day_thu_short)
-        Calendar.FRIDAY -> context.getString(R.string.day_fri_short)
-        Calendar.SATURDAY -> context.getString(R.string.day_sat_short)
-        Calendar.SUNDAY -> context.getString(R.string.day_sun_short)
-        else -> ""
     }
 }
