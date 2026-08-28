@@ -17,6 +17,8 @@
             <!-- Audio Playback Button -->
             <LinearLayout android:id="@+id/audio_playback_container" android:layout_width="200dp" android:layout_height="200dp" android:layout_marginTop="8dp" android:orientation="vertical" android:gravity="center" android:visibility="gone" android:background="@color/primary">
                 <com.google.android.material.button.MaterialButton android:id="@+id/user_audio_play_button" style="@style/Widget.MaterialComponents.Button" android:layout_width="56dp" android:layout_height="56dp" android:text="▶" android:textSize="24sp" android:textColor="@color/white" android:insetTop="0dp" android:insetBottom="0dp" />
+                <!-- 送信後も送信前同様にシークできるよう SeekBar を追加 -->
+                <SeekBar android:id="@+id/user_audio_seekbar" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" />
                 <TextView android:id="@+id/user_audio_duration" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="0:00" android:textColor="@color/white" android:textSize="12sp" />
             </LinearLayout>
         </LinearLayout>

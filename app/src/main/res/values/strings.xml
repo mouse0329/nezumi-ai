@@ -1120,6 +1120,12 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="viewer_action_save">保存</string>
     <string name="viewer_bundle_title_video_audio">動画・音声</string>
     <string name="viewer_bundle_title_image_audio">画像・音声</string>
+    <string name="viewer_kind_image">画像</string>
+    <string name="viewer_kind_video">動画</string>
+    <string name="viewer_kind_audio">音声</string>
+    <string name="secret_mode_exit_confirm_title">シークレットモードを終了しますか？</string>
+    <string name="secret_mode_exit_confirm_message">通常セッションに移動すると、シークレットセッションとその内容は削除されます。</string>
+    <string name="secret_mode_exit_confirm_ok">終了して移動</string>
 
     <!-- 画像生成タブ -->
     <string name="image_gen_tab_generate">生成</string>

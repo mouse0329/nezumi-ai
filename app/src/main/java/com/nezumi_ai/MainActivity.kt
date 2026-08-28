@@ -255,26 +255,40 @@ class MainActivity : AppCompatActivity() {
 
     fun openChatSession(sessionId: Long) {
         if (isIncognitoModeActive) {
-            lifecycleScope.launch {
-                runCatching {
-                    leaveIncognitoModeForNormalNavigation()
-                }.onFailure {
-                    Log.e(TAG, "Failed to leave incognito mode before opening normal session", it)
+            // シークレットモードから通常セッションへ移動する前に確認を挟む。
+            // 確認なしだと誤タップでシークレットセッションが即削除されてしまう。
+            MaterialAlertDialogBuilder(this)
+                .setTitle(getString(R.string.secret_mode_exit_confirm_title))
+                .setMessage(getString(R.string.secret_mode_exit_confirm_message))
+                .setNegativeButton(getString(R.string.common_cancel), null)
+                .setPositiveButton(getString(R.string.secret_mode_exit_confirm_ok)) { _, _ ->
+                    openNormalSessionLeavingIncognito(sessionId)
                 }
-                saveCurrentSessionId(sessionId)
-                withContext(Dispatchers.IO) {
-                    settingsRepository.saveCurrentSessionId(sessionId)
-                }
-                navigateToChatSession(sessionId)
-            }
+                .show()
             return
         }
+        proceedOpenChatSession(sessionId)
+    }
+
+    private fun openNormalSessionLeavingIncognito(sessionId: Long) {
+        lifecycleScope.launch {
+            runCatching {
+                leaveIncognitoModeForNormalNavigation()
+            }.onFailure {
+                Log.e(TAG, "Failed to leave incognito mode before opening normal session", it)
+            }
+            proceedOpenChatSession(sessionId)
+        }
+    }
+
+    private fun proceedOpenChatSession(sessionId: Long) {
         saveCurrentSessionId(sessionId)
         lifecycleScope.launch(Dispatchers.IO) {
             settingsRepository.saveCurrentSessionId(sessionId)
         }
         navigateToChatSession(sessionId)
     }
+
 
     private fun saveCurrentSessionId(sessionId: Long) {
         val prefs = getSharedPreferences("nezumi_ai_prefs", Context.MODE_PRIVATE)
@@ -685,6 +699,7 @@ class MainActivity : AppCompatActivity() {
             window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         }
         PreferencesHelper.applyThemeMode(this)
+        notifyChatFragmentIncognitoExited()
         Log.d(TAG, "Exited incognito mode - FLAG_SECURE cleared")
 
         // ホームに戻す
@@ -1011,6 +1026,10 @@ class MainActivity : AppCompatActivity() {
             window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         }
         PreferencesHelper.applyThemeMode(this)
+        // バグ修正: 通常セッションに移動しても見た目がシークレットモードのまま
+        // 戻らない問題。ChatFragment 側の isIncognitoMode フラグが残っていると
+        // ヘッダ色などが復帰しないため、ここで同期する。
+        notifyChatFragmentIncognitoExited()
         withContext(Dispatchers.IO) {
             val ctx = applicationContext
             sessionRepository.deleteAllIncognitoSessionsWithAttachments { imageUri, audioUri ->
@@ -1020,6 +1039,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
         Log.d(TAG, "Exited incognito mode for normal chat navigation")
+    }
+
+    /** シークレットモード終了を ChatFragment に通知し、UI フラグ (ヘッダ色など) を復帰させる。 */
+    private fun notifyChatFragmentIncognitoExited() {
+        val navHost = supportFragmentManager.findFragmentById(R.id.nav_host_fragment_content_main)
+        navHost?.childFragmentManager?.fragments
+            ?.filterIsInstance<com.nezumi_ai.presentation.ui.fragment.ChatFragment>()
+            ?.forEach { it.syncIncognitoModeWithActivity() }
     }
 
     private fun showHistoryItemActions(session: ChatSessionEntity, anchorView: View) {

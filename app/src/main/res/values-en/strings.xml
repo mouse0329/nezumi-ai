@@ -1240,6 +1240,12 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="viewer_action_save">Save</string>
     <string name="viewer_bundle_title_video_audio">Video &amp; audio</string>
     <string name="viewer_bundle_title_image_audio">Image &amp; audio</string>
+    <string name="viewer_kind_image">Image</string>
+    <string name="viewer_kind_video">Video</string>
+    <string name="viewer_kind_audio">Audio</string>
+    <string name="secret_mode_exit_confirm_title">Exit secret mode?</string>
+    <string name="secret_mode_exit_confirm_message">Moving to a normal session will delete the secret session and its contents.</string>
+    <string name="secret_mode_exit_confirm_ok">Exit and continue</string>
 
     <!-- Image generation tab -->
     <string name="image_gen_tab_generate">Generate</string>

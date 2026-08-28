@@ -1971,21 +1971,19 @@ namespace
     //   切り替わらなかった。ここで DDIM / Euler / (LCMはEulerベース) を
     //   実装し、同じ seed でもスケジューラごとに見た目が変わるようにする。
     //
-    //   DPM++ 2M / 2M Karras / UniPC は完全な位相地図を発重させるには
-    //   数百行のコードと karras sigma テーブルが必要なため、小さい
-    //   パッチで実装可能な DDIM / Euler / (LCM=Euler相当) に限定し、
-    //   それ以外は PLMS にフォールバックするというポリシーとする。
-    //   このポリシーは run_pipeline 内の resolve_active_scheduler() で選ぶ。
+    //   DPM-Solver-2 / DPM++ 2M / UniPC-bh2 まで VP 定式で実装する。
 
     enum class ActiveScheduler
     {
-        PLMS = 0,       // PNDM / PLMS (bootstrap 1 step)
-        DDIM,           // deterministic; eta=0
-        EULER,          // 単純オイラー法
-        EULER_A,        // Euler ancestral (ステップの途中で ancestral ノイズを足す)
-        LCM_STEP,       // LCM の 1 ステップ式 (x0 -> x_prev = sqrt(a_prev)*x0 + sqrt(1-a_prev)*noise)
-        DPMPP_2M,       // DPM-Solver++ 2M 多ステップ (linear sigma schedule)
-        DPMPP_2M_KARRAS // DPM-Solver++ 2M + Karras ノイズスケジュール
+        PLMS = 0,        // PNDM / PLMS (bootstrap 1 step)
+        DDIM,            // deterministic; eta=0
+        EULER,           // 単純オイラー法
+        EULER_A,         // Euler ancestral (ステップの途中で ancestral ノイズを足す)
+        LCM_STEP,        // LCM の 1 ステップ式 (x0 -> x_prev = sqrt(a_prev)*x0 + sqrt(1-a_prev)*noise)
+        DPMPP_2M,        // DPM-Solver++ 2M 多ステップ (linear sigma schedule)
+        DPMPP_2M_KARRAS, // DPM-Solver++ 2M + Karras ノイズスケジュール
+        DPM_SOLVER_2,    // DPM-Solver 2 多ステップ (noise-prediction, Lu et al. 2022)
+        UNIPC            // UniPC-bh2 order 2 (Zhao et al. 2023, predict_x0)
     };
 
     // ---------------------------------------------------------------
@@ -1995,6 +1993,38 @@ namespace
     inline float sigma_from_alpha(float a)
     {
         return std::sqrt((1.0f - a) / std::max(a, 1e-6f));
+    }
+
+    // sigma = sqrt((1-a)/a)  ⇒  a = 1/(1+sigma^2)
+    // UNet の timestep 条件付けを、solver が使っている sigma に揃える。
+    inline int timestep_from_sigma(float sigma, const std::vector<float> &alphas_cumprod)
+    {
+        if (alphas_cumprod.empty())
+            return 0;
+        const float s = std::max(sigma, 0.0f);
+        const float target_a = 1.0f / (1.0f + s * s);
+        int best = 0;
+        float best_d = std::fabs(alphas_cumprod[0] - target_a);
+        for (int t = 1; t < (int)alphas_cumprod.size(); ++t)
+        {
+            const float d = std::fabs(alphas_cumprod[t] - target_a);
+            if (d < best_d)
+            {
+                best_d = d;
+                best = t;
+            }
+        }
+        return best;
+    }
+
+    // k-diffusion 空間の sample を VP 訓練済み UNet 入力へ戻す。
+    // x_vp = x_k / sqrt(sigma^2 + 1)
+    inline void scale_k_to_vp(const std::vector<float> &src, float sigma, std::vector<float> &dst)
+    {
+        const float inv = 1.0f / std::sqrt(sigma * sigma + 1.0f);
+        dst.resize(src.size());
+        for (size_t i = 0; i < src.size(); ++i)
+            dst[i] = src[i] * inv;
     }
 
     /**
@@ -2181,6 +2211,254 @@ namespace
         return next;
     }
 
+    inline void ksigma_to_vp(float ksig, float &alpha, float &sigma_vp)
+    {
+        ksig = std::max(ksig, 0.0f);
+        alpha = 1.0f / std::sqrt(ksig * ksig + 1.0f);
+        sigma_vp = ksig * alpha;
+        if (sigma_vp < 1e-8f)
+            sigma_vp = 1e-8f;
+    }
+
+    inline float vp_lambda(float alpha, float sigma_vp)
+    {
+        return std::log(std::max(alpha, 1e-8f)) - std::log(std::max(sigma_vp, 1e-8f));
+    }
+
+    /**
+     * DPM-Solver-2 多ステップ (Lu et al. 2022, algorithm_type=dpmsolver, midpoint).
+     * noise-prediction。1 ステップ 1 UNet。初回と最終手前は 1 次 (DDIM 相当)。
+     */
+    std::vector<float> dpm_solver_2_step(
+        const std::vector<float> &sample,
+        const std::vector<float> &eps,
+        int step_index,
+        const std::vector<float> &sigmas,
+        std::vector<float> &eps_prev_out,
+        const std::vector<float> &eps_prev_in)
+    {
+        const size_t N = sample.size();
+        const int nsig = (int)sigmas.size();
+        if (nsig < 2 || step_index + 1 >= nsig)
+        {
+            eps_prev_out = eps;
+            return sample;
+        }
+
+        float alpha_s, sigma_s, alpha_t, sigma_t;
+        ksigma_to_vp(sigmas[step_index], alpha_s, sigma_s);
+        ksigma_to_vp(sigmas[step_index + 1], alpha_t, sigma_t);
+        const float lambda_s = vp_lambda(alpha_s, sigma_s);
+        const float lambda_t = vp_lambda(alpha_t, sigma_t);
+        const float h = std::max(lambda_t - lambda_s, 1e-5f);
+        const float expm1_h = std::expm1(h);
+
+        const bool last = (sigmas[step_index + 1] <= 1e-8f) || (step_index + 2 >= nsig);
+        if (last)
+        {
+            std::vector<float> x0(N);
+            for (size_t i = 0; i < N; ++i)
+                x0[i] = (sample[i] - sigma_s * eps[i]) / alpha_s;
+            eps_prev_out = eps;
+            return x0;
+        }
+
+        const bool has_prev = !eps_prev_in.empty() && eps_prev_in.size() == N &&
+                              step_index >= 1 && step_index + 2 < nsig;
+        std::vector<float> next(N);
+        if (!has_prev)
+        {
+            const float coef = sigma_t * expm1_h;
+            const float scale = alpha_t / alpha_s;
+            for (size_t i = 0; i < N; ++i)
+            {
+                float v = scale * sample[i] - coef * eps[i];
+                if (!std::isfinite(v))
+                    v = 0.0f;
+                next[i] = v;
+            }
+        }
+        else
+        {
+            float alpha_s1, sigma_s1;
+            ksigma_to_vp(sigmas[step_index - 1], alpha_s1, sigma_s1);
+            const float lambda_s1 = vp_lambda(alpha_s1, sigma_s1);
+            const float h0 = std::max(lambda_s - lambda_s1, 1e-5f);
+            const float r0 = std::min(std::max(h0 / h, 5e-2f), 5.0f);
+            const float coef = sigma_t * expm1_h;
+            const float scale = alpha_t / alpha_s;
+            for (size_t i = 0; i < N; ++i)
+            {
+                const float D0 = eps[i];
+                const float D1 = (D0 - eps_prev_in[i]) / r0;
+                float v = scale * sample[i] - coef * D0 - 0.5f * coef * D1;
+                if (!std::isfinite(v))
+                    v = 0.0f;
+                next[i] = v;
+            }
+        }
+        eps_prev_out = eps;
+        return next;
+    }
+
+    struct UniPCState
+    {
+        std::vector<std::vector<float>> x0s;
+        std::vector<int> step_ids;
+        std::vector<float> last_sample;
+        int this_order = 1;
+        int lower_order_nums = 0;
+    };
+
+    /**
+     * UniPC-bh2, solver_order=2, predict_x0=True (Zhao et al. 2023 / diffusers).
+     * 1 ステップ 1 UNet。corrector は前回予測を現在の x0 で補正し、その後 predictor。
+     */
+    std::vector<float> unipc_step(
+        std::vector<float> sample,
+        const std::vector<float> &eps,
+        int step_index,
+        const std::vector<float> &sigmas,
+        UniPCState &st)
+    {
+        const size_t N = sample.size();
+        const int nsig = (int)sigmas.size();
+        const int solver_order = 2;
+        if (nsig < 2 || step_index + 1 >= nsig)
+            return sample;
+
+        float alpha_s, sigma_s;
+        ksigma_to_vp(sigmas[step_index], alpha_s, sigma_s);
+
+        std::vector<float> x0_cur(N);
+        for (size_t i = 0; i < N; ++i)
+            x0_cur[i] = (sample[i] - sigma_s * eps[i]) / alpha_s;
+
+        const bool use_corrector = (step_index > 2 && !st.last_sample.empty() &&
+                                    st.last_sample.size() == N && !st.x0s.empty());
+        if (use_corrector)
+        {
+            const int order = std::max(1, st.this_order);
+            float alpha_t, sigma_t, alpha_s0, sigma_s0;
+            ksigma_to_vp(sigmas[step_index], alpha_t, sigma_t);
+            ksigma_to_vp(sigmas[step_index - 1], alpha_s0, sigma_s0);
+            const float lambda_t = vp_lambda(alpha_t, sigma_t);
+            const float lambda_s0 = vp_lambda(alpha_s0, sigma_s0);
+            const float h = std::max(lambda_t - lambda_s0, 1e-5f);
+            const float hh = -h;
+            const float h_phi_1 = std::expm1(hh);
+            const float B_h = std::expm1(hh);
+            const std::vector<float> &m0 = st.x0s.back();
+            const std::vector<float> &x = st.last_sample;
+
+            float rho_last = 0.5f;
+            float rho0 = 0.0f;
+            bool has_d1 = false;
+            float rk = 1.0f;
+            if (order >= 2 && st.x0s.size() >= 2 && step_index >= 2)
+            {
+                float alpha_si, sigma_si;
+                ksigma_to_vp(sigmas[step_index - 2], alpha_si, sigma_si);
+                const float lambda_si = vp_lambda(alpha_si, sigma_si);
+                rk = (lambda_si - lambda_s0) / h;
+                if (std::fabs(rk) > 1e-4f)
+                {
+                    has_d1 = true;
+                    float h_phi_k = h_phi_1 / hh - 1.0f;
+                    const float b0 = h_phi_k * 1.0f / B_h;
+                    h_phi_k = h_phi_k / hh - 0.5f;
+                    const float b1 = h_phi_k * 2.0f / B_h;
+                    const float det = 1.0f - rk;
+                    if (std::fabs(det) > 1e-6f)
+                    {
+                        rho0 = (b0 - b1) / det;
+                        rho_last = b0 - rho0;
+                    }
+                }
+            }
+
+            for (size_t i = 0; i < N; ++i)
+            {
+                float xt = (sigma_t / sigma_s0) * x[i] - alpha_t * h_phi_1 * m0[i];
+                float corr = 0.0f;
+                if (has_d1)
+                {
+                    const float D1 = (st.x0s[st.x0s.size() - 2][i] - m0[i]) / rk;
+                    corr += rho0 * D1;
+                }
+                const float D1t = x0_cur[i] - m0[i];
+                xt -= alpha_t * B_h * (corr + rho_last * D1t);
+                if (!std::isfinite(xt))
+                    xt = sample[i];
+                sample[i] = xt;
+            }
+        }
+
+        if ((int)st.x0s.size() >= solver_order)
+        {
+            st.x0s.erase(st.x0s.begin());
+            st.step_ids.erase(st.step_ids.begin());
+        }
+        st.x0s.push_back(x0_cur);
+        st.step_ids.push_back(step_index);
+
+        int remain = (int)sigmas.size() - 1 - step_index;
+        int this_order = std::min(solver_order, std::max(1, remain));
+        this_order = std::min(this_order, st.lower_order_nums + 1);
+        st.this_order = this_order;
+        st.last_sample = sample;
+
+        if (sigmas[step_index + 1] <= 1e-8f)
+        {
+            if (st.lower_order_nums < solver_order)
+                st.lower_order_nums++;
+            return x0_cur;
+        }
+
+        float alpha_t, sigma_t, alpha_s0, sigma_s0;
+        ksigma_to_vp(sigmas[step_index + 1], alpha_t, sigma_t);
+        ksigma_to_vp(sigmas[step_index], alpha_s0, sigma_s0);
+        const float lambda_t = vp_lambda(alpha_t, sigma_t);
+        const float lambda_s0 = vp_lambda(alpha_s0, sigma_s0);
+        const float h = std::max(lambda_t - lambda_s0, 1e-5f);
+        const float hh = -h;
+        const float h_phi_1 = std::expm1(hh);
+        const float B_h = std::expm1(hh);
+        const std::vector<float> &m0 = st.x0s.back();
+
+        std::vector<float> next(N);
+        const bool use_d1 = (this_order >= 2 && st.x0s.size() >= 2 && step_index >= 1);
+        float rk = 1.0f;
+        if (use_d1)
+        {
+            float alpha_si, sigma_si;
+            ksigma_to_vp(sigmas[step_index - 1], alpha_si, sigma_si);
+            const float lambda_si = vp_lambda(alpha_si, sigma_si);
+            rk = (lambda_si - lambda_s0) / h;
+            if (std::fabs(rk) <= 1e-4f)
+            {
+                // fall back to order 1
+            }
+        }
+        const bool d1_ok = use_d1 && std::fabs(rk) > 1e-4f;
+        for (size_t i = 0; i < N; ++i)
+        {
+            float xt = (sigma_t / sigma_s0) * sample[i] - alpha_t * h_phi_1 * m0[i];
+            if (d1_ok)
+            {
+                const float D1 = (st.x0s[st.x0s.size() - 2][i] - m0[i]) / rk;
+                xt -= alpha_t * B_h * (0.5f * D1);
+            }
+            if (!std::isfinite(xt))
+                xt = m0[i];
+            next[i] = xt;
+        }
+
+        if (st.lower_order_nums < solver_order)
+            st.lower_order_nums++;
+        return next;
+    }
+
     // ---------------------------------------------------------------
     // CFG Rescale (Lin et al., 2024 "Common Diffusion Noise Schedules
     // and Sample Steps are Flawed"):
@@ -2292,8 +2570,7 @@ namespace
      *   一致する ("naive LCM"; xororz/local-dream もこの形)。LCM-LoRA + 高
      *   CFG で本家と微妙にずれる可能性はあるが、少ステップ挙動 (4..8) は
      *   実測で本家 diffusers と同等の絵になることを確認している。
-     *   完全な LCMScheduler 実装は将来の TODO とし、今は VP posterior を
-     *   そのまま使う。
+     *   完全な LCMScheduler (c_skip/c_out, timestep_scaling=10) を使う。
      */
     std::vector<float> lcm_step(
         const std::vector<float> &sample,
@@ -2307,10 +2584,17 @@ namespace
         const int t_prev = (step_index + 1 < (int)timesteps.size()) ? timesteps[step_index + 1] : 0;
         const float a_t = alphas_cumprod[t];
         const float a_prev = alphas_cumprod[std::max(0, t_prev)];
-        const float sqrt_a_t = std::sqrt(a_t);
-        const float sqrt_a_prev = std::sqrt(a_prev);
+        const float sqrt_a_t = std::sqrt(std::max(a_t, 1e-8f));
+        const float sqrt_a_prev = std::sqrt(std::max(a_prev, 0.0f));
         const float sqrt_1_minus_at = std::sqrt(std::max(0.0f, 1.0f - a_t));
         const float sqrt_1_minus_prev = std::sqrt(std::max(0.0f, 1.0f - a_prev));
+
+        const float scaled_t = (float)t * 10.0f;
+        const float sigma_data = 0.5f;
+        const float sd2 = sigma_data * sigma_data;
+        const float st2 = scaled_t * scaled_t;
+        const float c_skip = sd2 / (st2 + sd2);
+        const float c_out = scaled_t / std::sqrt(st2 + sd2);
 
         const size_t N = sample.size();
         std::vector<float> next(N);
@@ -2319,8 +2603,11 @@ namespace
         for (size_t i = 0; i < N; ++i)
         {
             float x0 = (sample[i] - sqrt_1_minus_at * eps[i]) / sqrt_a_t;
-            float n = is_last ? 0.0f : dist(rng);
-            next[i] = sqrt_a_prev * x0 + sqrt_1_minus_prev * n;
+            float denoised = c_out * x0 + c_skip * sample[i];
+            if (is_last)
+                next[i] = denoised;
+            else
+                next[i] = sqrt_a_prev * denoised + sqrt_1_minus_prev * dist(rng);
         }
         return next;
     }
@@ -2530,9 +2817,7 @@ extern "C"
         //   ため「スケジューラを指定しても切り替わらない」バグの実装レイヤーの
         //   根本原因は engine 側にある。少ステップ運用で LCM を選んでも
         //   結局 PLMS で走るのが分かるように、ここで明示的にログを残す。
-        //   ユーザーの指定を尊重する完全対応は将来の課題として TODO を残す。
-        // TODO(scheduler): engine 側で Euler / DDIM / DPM++ 2M / LCM /
-        //   Euler a / UniPC の分岐を実装し、params->scheduler に応じて切り替える。
+        //   ユーザーの指定を尊重する。
         PROBE_LOG("mnn_sd_run_pipeline: requested scheduler=%d (0=Euler,1=DDIM,2=DPM,3=DPM++2M,4=DPM++2M-Karras,5=LCM,6=EulerA,7=UniPC); active_scheduler will be resolved below.",
                   static_cast<int>(params->scheduler));
         PROBE_LOG("mnn_sd_run_pipeline: seed=%lld (negative=random)",
@@ -2549,10 +2834,10 @@ extern "C"
         //     Euler      -> Euler パス (既存)
         //     Euler a    -> Euler ancestral パス (新規)
         //     LCM        -> LCM 1 ステップ式 (新規、少ステップに強い)
-        //     DPM        -> 内部実装の DPM はないので PLMS にフォールバック
-        //     DPM++ 2M   -> DPM-Solver++ 2M linear sigma (新規)
-        //     DPM++ 2M K -> DPM-Solver++ 2M Karras sigma  (新規)
-        //     UniPC      -> 実装未対応なので DPM++ 2M にフォールバック (PLMS よりは近い)
+        //     DPM        -> DPM-Solver-2 (noise-prediction, 多ステップ)
+        //     DPM++ 2M   -> DPM-Solver++ 2M linear sigma
+        //     DPM++ 2M K -> DPM-Solver++ 2M Karras sigma
+        //     UniPC      -> UniPC-bh2 order 2 (predict_x0)
         ActiveScheduler active_scheduler = ActiveScheduler::PLMS;
         switch (params->scheduler)
         {
@@ -2575,23 +2860,10 @@ extern "C"
             active_scheduler = ActiveScheduler::DPMPP_2M_KARRAS;
             break;
         case MNN_SD_SCHEDULER_UNIPC:
-            // UniPC はフル実装するにはバッファ管理が大きいので、今は DPM++ 2M で代用。
-            // Bug fix (2026-08 スケジューラ深堀り調査 / S-5):
-            //   フォールバックしたことをユーザーに気付けるよう probe ログに出す。
-            //   結果画像は DPM++ 2M と一致するが「UniPC を選んだのに絵が変わらない」
-            //   というレポートの一次切り分けを速くする。
-            active_scheduler = ActiveScheduler::DPMPP_2M;
-            PROBE_LOG("WARNING: MNN_SD_SCHEDULER_UNIPC has no native implementation; "
-                      "falling back to DPM++ 2M (active_scheduler=DPMPP_2M).");
+            active_scheduler = ActiveScheduler::UNIPC;
             break;
         case MNN_SD_SCHEDULER_DPM:
-            // Bug fix (2026-08 スケジューラ深堀り調査 / S-5):
-            //   単発 DPM (Ancestral ではない旧来 DPM-Solver) は engine 側に
-            //   固有実装がないため PLMS にフォールバックする。ユーザーが
-            //   "DPM を選んだのに PLMS の絵" と勘違いしないよう警告を残す。
-            active_scheduler = ActiveScheduler::PLMS;
-            PROBE_LOG("WARNING: MNN_SD_SCHEDULER_DPM has no native implementation; "
-                      "falling back to PLMS (active_scheduler=PLMS).");
+            active_scheduler = ActiveScheduler::DPM_SOLVER_2;
             break;
         default:
             active_scheduler = ActiveScheduler::PLMS;
@@ -2606,7 +2878,7 @@ extern "C"
         //   が固定される" と見えていた主因。ユーザーが明示的に選んだものを
         //   そのまま使うよう改め、このオート格上げロジックを廃止する。
         PROBE_LOG("mnn_sd_run_pipeline: active_scheduler=%d "
-                  "(0=PLMS,1=DDIM,2=Euler,3=EulerA,4=LCM,5=DPM++2M,6=DPM++2M-Karras)",
+                  "(0=PLMS,1=DDIM,2=Euler,3=EulerA,4=LCM,5=DPM++2M,6=DPM++2M-Karras,7=DPM2,8=UniPC)",
                   static_cast<int>(active_scheduler));
 
         const int steps = params->steps;
@@ -3480,12 +3752,17 @@ extern "C"
             // 新: 明らかに壊れている場合 (NaN / 極端に小さい) だけフォールバックする。
             if (!sigmas.empty() && (!std::isfinite(sigmas[0]) || sigmas[0] < 1.0f))
                 sigmas[0] = 14.6146f;
+            // Karras σ と UNet に渡す t を対応させる。
+            // 末尾の sigma=0 はステップ数外なので steps 個だけ写す。
+            timesteps.resize((size_t)steps);
+            for (int i = 0; i < steps; ++i)
+                timesteps[i] = timestep_from_sigma(sigmas[i], engine->alphas_cumprod);
+            PROBE_LOG("Karras: remapped %d timesteps from sigma table", steps);
         }
-        else if (active_scheduler == ActiveScheduler::DPMPP_2M)
-        {
-            sigmas = sigmas_from_timesteps(timesteps, engine->alphas_cumprod);
-        }
-        else if (active_scheduler == ActiveScheduler::EULER_A)
+        else if (active_scheduler == ActiveScheduler::DPMPP_2M ||
+                 active_scheduler == ActiveScheduler::EULER_A ||
+                 active_scheduler == ActiveScheduler::DPM_SOLVER_2 ||
+                 active_scheduler == ActiveScheduler::UNIPC)
         {
             sigmas = sigmas_from_timesteps(timesteps, engine->alphas_cumprod);
         }
@@ -3586,6 +3863,12 @@ extern "C"
                 break;
             case ActiveScheduler::DPMPP_2M_KARRAS:
                 sched_label = "DPM++2M-K";
+                break;
+            case ActiveScheduler::DPM_SOLVER_2:
+                sched_label = "DPM2";
+                break;
+            case ActiveScheduler::UNIPC:
+                sched_label = "UniPC";
                 break;
             }
             char buf[512];
@@ -3689,6 +3972,8 @@ extern "C"
         std::vector<float> pndm_prev;
         // DPM++ 2M の multistep 係数用: 1 つ前の x0 推定値を保持するバッファ
         std::vector<float> dpmpp_x0_prev;
+        std::vector<float> dpm_eps_prev;
+        UniPCState unipc_state;
         // ancestral / LCM 用の RNG。seed==params->seed の場合は同じ seed で
         // 同じ絵にしたいので、初期 latent とはシードを色々 (offset) 変えて使う。
         std::mt19937 sched_rng(
@@ -3820,11 +4105,12 @@ extern "C"
         }
 
         auto run_unet_once = [&](const float *emb_ptr, const float *pooled_ptr, int ts,
+                                 const float *sample_ptr,
                                  std::vector<float> &out_pred,
                                  const char *tag, int step_index) -> bool
         {
             // Upload sample (毎ステップ変わる)
-            std::memcpy(host_s->host<float>(), latent.data(), latent_bytes);
+            std::memcpy(host_s->host<float>(), sample_ptr, latent_bytes);
             u_sample->copyFromHostTensor(host_s.get());
 
             // Upload timestep (int32, 毎ステップ変わる)
@@ -3925,6 +4211,7 @@ extern "C"
         //   malloc/free)。allocator コンテンションを減らして latent が
         //   L2 に残る確率も上げる。
         std::vector<float> combined(latent_size);
+        std::vector<float> unet_sample;
         for (int i = denoise_start; i < num_solver_iters; ++i)
         {
             if (engine->cancel_requested)
@@ -3935,9 +4222,25 @@ extern "C"
             }
 
             int ts = timesteps[i];
+            const float *sample_ptr = latent.data();
+            if (active_scheduler == ActiveScheduler::EULER_A &&
+                i < (int)sigmas.size())
+            {
+                // solver 状態は k-diffusion (latent *= sigma)、UNet は VP。
+                // x_vp = x_k / sqrt(sigma^2 + 1) に戻してから食わせる。
+                const float sig = std::max(sigmas[i], 1e-6f);
+                scale_k_to_vp(latent, sig, unet_sample);
+                sample_ptr = unet_sample.data();
+                ts = timestep_from_sigma(sig, engine->alphas_cumprod);
+            }
+            else if (active_scheduler == ActiveScheduler::DPMPP_2M_KARRAS &&
+                     i < (int)sigmas.size())
+            {
+                ts = timestep_from_sigma(sigmas[i], engine->alphas_cumprod);
+            }
 
-            if (!run_unet_once(emb_uncond, pooled_uncond, ts, pred_uncond, "uncond", i) ||
-                !run_unet_once(emb_cond, pooled_cond, ts, pred_cond, "cond", i))
+            if (!run_unet_once(emb_uncond, pooled_uncond, ts, sample_ptr, pred_uncond, "uncond", i) ||
+                !run_unet_once(emb_cond, pooled_cond, ts, sample_ptr, pred_cond, "cond", i))
             {
                 if (out_error)
                     std::snprintf(out_error->message, sizeof(out_error->message),
@@ -3978,10 +4281,6 @@ extern "C"
             case ActiveScheduler::DPMPP_2M:
             case ActiveScheduler::DPMPP_2M_KARRAS:
             {
-                // Improved DPM++ 2M for low-step quality:
-                // - VP-parameterised x0 recovery (matches SD1.5 training).
-                // - Stronger guard on r and h_i to prevent multistep instability
-                //   at steps=8..15 (common low-step regime).
                 std::vector<float> x0_next;
                 latent = dpmpp_2m_step(latent, combined, i, sigmas,
                                        timesteps, engine->alphas_cumprod,
@@ -3989,6 +4288,17 @@ extern "C"
                 dpmpp_x0_prev = std::move(x0_next);
                 break;
             }
+            case ActiveScheduler::DPM_SOLVER_2:
+            {
+                std::vector<float> eps_next;
+                latent = dpm_solver_2_step(latent, combined, i, sigmas,
+                                           eps_next, dpm_eps_prev);
+                dpm_eps_prev = std::move(eps_next);
+                break;
+            }
+            case ActiveScheduler::UNIPC:
+                latent = unipc_step(std::move(latent), combined, i, sigmas, unipc_state);
+                break;
             case ActiveScheduler::PLMS:
             default:
                 latent = pndm_step(latent, combined, i, timesteps,
@@ -4071,12 +4381,11 @@ extern "C"
         //   CL_OUT_OF_RESOURCES → プロセス OOM kill になる。
         //   512px 以上では VAE を CPU にフォールバックして GPU メモリ枯渇を
         //   回避する。CPU VAE は fp32 で数秒で完了するため体感影響は小さい。
-        MnnSdBackend vae_backend = effective_backend;
-        if (vae_backend == MNN_SD_BACKEND_OPENCL && max_side >= 512)
+        MnnSdBackend vae_backend = MNN_SD_BACKEND_CPU;
+        if (effective_backend == MNN_SD_BACKEND_OPENCL)
         {
-            PROBE_LOG("VAE fallback to CPU: max_side=%d exceeds OpenCL GPU memory threshold (512)",
-                      max_side);
-            vae_backend = MNN_SD_BACKEND_CPU;
+            PROBE_LOG("VAE forced CPU: OpenCL VAE at 256px leaves a mesh/grain overlay "
+                      "(Mali/Adreno TUNING_FAST). Decode is one shot, CPU is fine.");
         }
         {
             MnnSdError err = create_interpreter_and_session(

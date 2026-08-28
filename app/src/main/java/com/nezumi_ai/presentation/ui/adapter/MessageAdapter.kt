@@ -185,6 +185,21 @@ class MessageAdapter(
             return sdf.format(Date(timestamp))
         }
 
+        /** URI から表示用のファイル名を推測する。 */
+        private fun guessDisplayName(context: Context, uriString: String): String? {
+            return try {
+                val uri = MessageMediaStore.toUri(uriString) ?: return null
+                if (uri.scheme == "content") {
+                    context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                        val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (c.moveToFirst() && idx >= 0) c.getString(idx) else null
+                    }
+                } else {
+                    uri.lastPathSegment?.substringAfterLast('/')
+                }
+            } catch (_: Throwable) { null }
+        }
+
         private fun copyAllToClipboard(context: Context, content: String) {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             if (clipboard != null) {
@@ -348,7 +363,8 @@ class MessageAdapter(
                     }
                     radius = 12f
                     cardElevation = 4f
-                    setCardBackgroundColor(android.graphics.Color.parseColor("#1F2A44"))
+                    // 送信前プレビュー (primary ベース) と見た目を揃える
+                    setCardBackgroundColor(androidx.core.content.ContextCompat.getColor(context, com.nezumi_ai.R.color.primary))
                 }
                 val audioFrame = android.widget.FrameLayout(context).apply {
                     layoutParams = android.view.ViewGroup.LayoutParams(
@@ -367,7 +383,9 @@ class MessageAdapter(
                     )
                 }
                 val label = android.widget.TextView(context).apply {
-                    text = "音声"
+                    // 送信前プレビューと同様に、種別名の代わりにファイル名を表示する
+                    text = MessageAdapter.guessDisplayName(context, audioUri)
+                        ?: context.getString(com.nezumi_ai.R.string.viewer_kind_audio)
                     setTextColor(android.graphics.Color.WHITE)
                     textSize = 11f
                     gravity = android.view.Gravity.CENTER
@@ -631,7 +649,7 @@ class MessageAdapter(
                         singleImageContainer.visibility = View.GONE
                         userImagePreview.visibility = View.GONE
                         audioPlaybackContainer.visibility = View.VISIBLE
-                        setupAudioPlayback(effectiveAudioUri!!, userAudioPlayButton, userAudioDuration)
+                        setupAudioPlayback(effectiveAudioUri!!, userAudioPlayButton, userAudioDuration, userAudioSeekbar)
                         // 音声プレイヤーの下にテキスト添付があれば横スクロールでも並べる
                         if (hasTextFiles) {
                             imageScrollView.visibility = View.VISIBLE
@@ -682,10 +700,15 @@ class MessageAdapter(
             }
         }
         
-        private fun setupAudioPlayback(audioUri: String, playButton: View, durationText: View) {
+        // 送信後も送信前同様の「プレイヤー」(再生ボタン + シークバー + 時間) で操作できるようにする
+        private var audioTickerHandler: android.os.Handler? = null
+        private var audioTicker: Runnable? = null
+
+        private fun setupAudioPlayback(audioUri: String, playButton: View, durationText: View, seekBar: android.widget.SeekBar) {
             try {
                 val audioUriObj = MessageMediaStore.toUri(audioUri) ?: return
                 mediaPlayer?.release()
+                audioTicker?.let { t -> audioTickerHandler?.removeCallbacks(t) }
                 mediaPlayer = MediaPlayer().apply {
                     setDataSource(
                         binding.root.context,
@@ -696,25 +719,63 @@ class MessageAdapter(
                         val minutes = duration / 60
                         val seconds = duration % 60
                         (durationText as? android.widget.TextView)?.text = String.format("%d:%02d", minutes, seconds)
+                        seekBar.max = mp.duration.coerceAtLeast(1)
+                        seekBar.progress = 0
+                    }
+                    setOnCompletionListener {
+                        (playButton as? android.widget.Button)?.text = "▶"
+                        seekBar.progress = 0
                     }
                     prepareAsync()
                 }
-                
-                playButton.setOnClickListener {
-                    if (mediaPlayer?.isPlaying == true) {
-                        mediaPlayer?.pause()
-                        (it as? android.widget.Button)?.text = "▶"
-                    } else {
-                        mediaPlayer?.start()
- (it as? android.widget.Button)?.text = ""
+
+                val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                audioTickerHandler = handler
+                val ticker = object : Runnable {
+                    override fun run() {
+                        try {
+                            mediaPlayer?.let { mp ->
+                                if (mp.isPlaying) {
+                                    seekBar.progress = mp.currentPosition
+                                    val pos = mp.currentPosition / 1000
+                                    val dur = mp.duration / 1000
+                                    (durationText as? android.widget.TextView)?.text =
+                                        String.format("%d:%02d / %d:%02d", pos / 60, pos % 60, dur / 60, dur % 60)
+                                }
+                            }
+                        } catch (_: Throwable) {}
+                        handler.postDelayed(this, 250)
                     }
                 }
+                audioTicker = ticker
+
+                playButton.setOnClickListener {
+                    try {
+                        if (mediaPlayer?.isPlaying == true) {
+                            mediaPlayer?.pause()
+                            (it as? android.widget.Button)?.text = "▶"
+                        } else {
+                            mediaPlayer?.start()
+ (it as? android.widget.Button)?.text = ""
+                            handler.post(ticker)
+                        }
+                    } catch (_: Throwable) {}
+                }
+                seekBar.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(sb: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                        if (!fromUser) return
+                        try { mediaPlayer?.seekTo(progress) } catch (_: Throwable) {}
+                    }
+                    override fun onStartTrackingTouch(sb: android.widget.SeekBar?) {}
+                    override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {}
+                })
             } catch (e: Exception) {
                 Toast.makeText(binding.root.context, "音声の再生に失敗しました", Toast.LENGTH_SHORT).show()
             }
         }
+
     }
-    
+
     inner class AiMessageViewHolder(
         private val binding: ItemMessageAiBinding,
         private val onAiMessageLayoutChanged: () -> Unit,

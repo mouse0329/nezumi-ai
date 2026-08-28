@@ -1686,6 +1686,17 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
     }
 
+    /**
+     * MainActivity 側でシークレットモードが終了/開始されたときに UI フラグを同期する。
+     * これがないと通常セッションに移動してもヘッダ色などがシークレットモードのまま戻らない。
+     */
+    fun syncIncognitoModeWithActivity() {
+        val active = (activity as? com.nezumi_ai.MainActivity)?.isInIncognitoMode() ?: false
+        if (viewModel.isIncognitoMode.value != active) {
+            viewModel.setIncognitoMode(active)
+        }
+    }
+
     private fun updateIncognitoModeIndicator(isIncognito: Boolean) {
         if (isIncognito) {
             binding.backButton.setOnClickListener {

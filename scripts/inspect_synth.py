@@ -1,1 +1,0 @@
-﻿import zipfile, tempfile, os, subprocess; aar=\ app/libs/voicevoxcore-android-0.16.4.aar\; with zipfile.ZipFile(aar) as z: tmp=tempfile.mkdtemp(); z.extract(\classes.jar\, tmp); jar=os.path.join(tmp,\classes.jar\); subprocess.run([\C:/Program Files/Java/jdk-21.0.10/bin/javap.exe\,\-classpath\,jar,\jp.hiroshiba.voicevoxcore.blocking.Synthesizer\], check=True)

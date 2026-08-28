@@ -57,6 +57,8 @@ object MediaViewerDialog {
         // context.getString(R.string.viewer_media_preview_title) などを渡すことを推奨。
         // null を渡された場合は実行時にリソースを参照してフォールバックする。
         val title: String? = null,
+        // 現在選択中メディアのファイル名。トップバーにタイトルの上段として表示する。
+        val fileName: String? = null,
         val initialIndex: Int = 0
     ) {
         fun isEmpty(): Boolean = imageUris.isEmpty() && videoUri.isNullOrBlank() && audioUri.isNullOrBlank()
@@ -108,8 +110,40 @@ object MediaViewerDialog {
         root.addView(column)
 
         // --- Top bar ---
-        val resolvedTitle = bundle.title ?: context.getString(R.string.viewer_media_preview_title)
-        column.addView(buildTopBar(context, resolvedTitle, onClose = { dialog.dismiss() }))
+        // タイトルは「今再生しているもの」(画像/動画/音声) に応じて切り替える。
+        // その上段にファイル名を表示する。
+        val defaultTitle = bundle.title ?: context.getString(R.string.viewer_media_preview_title)
+        val topBarHolder = FrameLayout(context)
+        column.addView(topBarHolder)
+        var currentTopBar: View? = null
+        fun refreshTopBar(selectedKey: String?) {
+            val kind = when {
+                selectedKey == "video" -> "video"
+                selectedKey == "audio" -> "audio"
+                selectedKey != null && selectedKey.startsWith("image:") -> "image"
+                else -> null
+            }
+            val kindLabel = when (kind) {
+                "video" -> context.getString(R.string.viewer_kind_video)
+                "audio" -> context.getString(R.string.viewer_kind_audio)
+                "image" -> context.getString(R.string.viewer_kind_image)
+                else -> null
+            }
+            val title = if (kindLabel != null) kindLabel else defaultTitle
+            val uriForName = when (kind) {
+                "video" -> bundle.videoUri
+                "audio" -> bundle.audioUri
+                "image" -> selectedKey?.removePrefix("image:")?.toIntOrNull()
+                    ?.let { bundle.imageUris.getOrNull(it) }
+                else -> null
+            }
+            val name = bundle.fileName ?: uriForName?.let { guessFileName(context, it) }
+            val bar = buildTopBar(context, title, name, onClose = { dialog.dismiss() })
+            topBarHolder.removeAllViews()
+            topBarHolder.addView(bar)
+            currentTopBar = bar
+        }
+        refreshTopBar(null)
 
         // --- Center stage (画像 or 動画) ---
         val stage = FrameLayout(context).apply {
@@ -180,6 +214,11 @@ object MediaViewerDialog {
                 key == "video" && !bundle.videoUri.isNullOrBlank() -> {
                     imageView.visibility = View.GONE
                     videoView.visibility = View.VISIBLE
+                    refreshTopBar(key)
+                    // バグ修正: 動画再生でシークバーが2個になる問題。VideoView の
+                    // MediaController (シークバー) と下部の音声プレイヤー (シークバー) が
+                    // 同時に出て二重に見えるため、動画再生中は音声プレイヤーを一時的に隠す。
+                    audioPlayerStateRef?.view?.visibility = View.GONE
                     val vUri = MessageMediaStore.toUri(bundle.videoUri) ?: bundle.videoUri.toUri()
                     videoView.setVideoURI(vUri)
                     // MediaController は VideoView 自身ではなく親 stage をアンカーにする。
@@ -216,6 +255,9 @@ object MediaViewerDialog {
                     if (videoView.isPlaying) videoView.pause()
                     videoView.visibility = View.GONE
                     imageView.visibility = View.VISIBLE
+                    refreshTopBar(key)
+                    // 画像表示時は音声プレイヤーを再度表示して個別操作できるようにする
+                    audioPlayerStateRef?.view?.visibility = View.VISIBLE
                     val u = MessageMediaStore.toUri(uriStr) ?: uriStr.toUri()
                     imageView.setImageURI(u)
                 }
@@ -230,7 +272,9 @@ object MediaViewerDialog {
             val player = buildAudioPlayer(
                 context,
                 bundle.audioUri,
-                label = if (hasVideoBundle) context.getString(R.string.viewer_video_audio_label) else null
+                label = if (hasVideoBundle) context.getString(R.string.viewer_video_audio_label) else null,
+                // 「今再生しているもの」を基準にトップバー文言を切り替える
+                onPlay = { refreshTopBar("audio") }
             )
             column.addView(player.view)
             player
@@ -287,9 +331,10 @@ object MediaViewerDialog {
     // Sub-views
     // ---------------------------------------------------------------------
 
-    private fun buildTopBar(context: Context, title: String, onClose: () -> Unit): View {
+    private fun buildTopBar(context: Context, title: String, fileName: String?, onClose: () -> Unit): View {
         val barBg = ContextCompat.getColor(context, R.color.viewer_bar_bg)
         val textPrimary = ContextCompat.getColor(context, R.color.viewer_text_primary)
+        val textSecondary = ContextCompat.getColor(context, R.color.viewer_text_secondary)
         val bar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -297,24 +342,57 @@ object MediaViewerDialog {
             background = ColorDrawable(barBg)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(context, 84)
+                if (!fileName.isNullOrBlank()) dp(context, 100) else dp(context, 84)
             )
         }
-        bar.addView(
+        // 左側: ファイル名 (上段) + 種別タイトル (下段) の縦積み
+        val titleColumn = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+        }
+        if (!fileName.isNullOrBlank()) {
+            titleColumn.addView(
+                TextView(context).apply {
+                    text = fileName
+                    setTextColor(textSecondary)
+                    textSize = 11f
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                }
+            )
+        }
+        titleColumn.addView(
             TextView(context).apply {
                 text = title
                 setTextColor(textPrimary)
                 textSize = 16f
                 typeface = android.graphics.Typeface.DEFAULT_BOLD
-                layoutParams = LinearLayout.LayoutParams(
-                    0,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    1f
-                )
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
             }
         )
+        bar.addView(titleColumn)
         bar.addView(actionText(context, context.getString(R.string.viewer_close), onClose))
         return bar
+    }
+
+    /** URI から表示用のファイル名を推測する。content:// は DISPLAY_NAME、file:// は拡張子を見る。 */
+    private fun guessFileName(context: Context, uriString: String): String? {
+        return try {
+            val uri = MessageMediaStore.toUri(uriString) ?: uriString.toUri()
+            if (uri.scheme == "content") {
+                context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                    val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (c.moveToFirst() && idx >= 0) c.getString(idx) else null
+                }
+            } else {
+                uri.lastPathSegment?.substringAfterLast('/')
+            }
+        } catch (_: Throwable) { null }
     }
 
     private class AudioPlayerState(
@@ -341,7 +419,7 @@ object MediaViewerDialog {
         }
     }
 
-    private fun buildAudioPlayer(context: Context, audioUri: String, label: String? = null): AudioPlayerState {
+    private fun buildAudioPlayer(context: Context, audioUri: String, label: String? = null, onPlay: () -> Unit = {}): AudioPlayerState {
         val outer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
@@ -439,7 +517,8 @@ object MediaViewerDialog {
                     playBtn.text = "▶"
                 } else {
                     mp.start()
- playBtn.text = ""
+                    playBtn.text = ""
+                    onPlay()
                     handler.post(ticker)
                 }
             } catch (_: Throwable) {}
