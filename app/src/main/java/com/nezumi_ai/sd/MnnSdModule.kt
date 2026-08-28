@@ -7,6 +7,7 @@ import com.nezumi_ai.sd.safety.ImageSafetyChecker
 import com.nezumi_ai.sd.safety.ImageSafetyClassifierXs
 import com.nezumi_ai.sd.safety.SafetyPolicy
 import com.nezumi_ai.sd.safety.PromptFilter
+import com.nezumi_ai.sd.safety.SafetyLogFormatter
 import com.nezumi_ai.sd.safety.SafetyResult
 import com.nezumi_ai.sd.safety.toBlurred
 import com.nezumi_ai.utils.PreferencesHelper
@@ -388,24 +389,34 @@ class MnnSdModule(private val context: Context) {
 
     private suspend fun applySafetyFilter(bitmap: Bitmap): Bitmap? = withContext(Dispatchers.Default) {
         if (!com.nezumi_ai.BuildConfig.SAFETY_IMAGE_GUARD_ENABLED) {
+            Log.i(TAG, "Safety: image guard disabled by BuildConfig")
             return@withContext bitmap
         }
 
         // 1) Open NSFW: 性的表現の判定に実績あり
         val rawScores = safetyChecker().check(bitmap)
         if (rawScores == null) {
+            Log.w(TAG, "Safety: Open NSFW check failed or model unavailable — BLOCK (fail-safe)")
             _lastSafetyVerdict = SafetyResult.Verdict.BLOCK
             bitmap.recycle()
             return@withContext null
         }
-        val nsfwVerdict = SafetyPolicy.fromRawOutput(rawScores).verdict
+        val openNsfwResult = SafetyPolicy.fromRawOutput(rawScores)
+        val nsfwVerdict = openNsfwResult.verdict
 
         // 2) image-safety-classifier-xs: NSFL(暴力・グロ)検出を補完
         val classifierResult = classifierXs().check(bitmap)
-        val classifierVerdict = classifierResult?.verdict ?: SafetyResult.Verdict.BLOCK
+        if (classifierResult == null) {
+            Log.w(TAG, "Safety: XS classifier check failed or model unavailable — BLOCK (fail-safe)")
+            _lastSafetyVerdict = SafetyResult.Verdict.BLOCK
+            bitmap.recycle()
+            return@withContext null
+        }
+        val classifierVerdict = classifierResult.verdict
 
         // どちらか一方でも BLOCK/BLUR ならその結果を採用する(OR結合)
         val finalVerdict = SafetyPolicy.combine(nsfwVerdict, classifierVerdict)
+        Log.i(TAG, SafetyLogFormatter.format(openNsfwResult, classifierResult, finalVerdict))
 
         _lastSafetyVerdict = finalVerdict
         when (finalVerdict) {

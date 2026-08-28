@@ -27,3 +27,27 @@ data class ImageSafetyClassifierResult(
 ) {
     val verdict: SafetyResult.Verdict get() = SafetyPolicy.evaluateClassifierXs(this)
 }
+
+/**
+ * 安全判定の可観測性向けに、数値評価と最終判定を固定形式で整形する。
+ * プロンプト、画像パス、画像内容は記録しない。
+ */
+internal object SafetyLogFormatter {
+    fun format(
+        openNsfw: SafetyResult,
+        classifierXs: ImageSafetyClassifierResult,
+        finalVerdict: SafetyResult.Verdict
+    ): String = String.format(
+        java.util.Locale.ROOT,
+        "Safety: scores open_nsfw(normal=%.4f, nsfw=%.4f, verdict=%s), " +
+            "classifier_xs(nsfl=%.4f, nsfw=%.4f[ignored], sfw=%.4f, verdict=%s), final=%s",
+        openNsfw.normalScore,
+        openNsfw.nsfwScore,
+        openNsfw.verdict,
+        classifierXs.nsflScore,
+        classifierXs.nsfwScore,
+        classifierXs.sfwScore,
+        classifierXs.verdict,
+        finalVerdict
+    )
+}

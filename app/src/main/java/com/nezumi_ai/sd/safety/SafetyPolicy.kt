@@ -21,31 +21,17 @@ object SafetyPolicy {
     }
 
     // --- image-safety-classifier-xs (NSFL/NSFW/SFW) ---
-    // 2026-08-16 実データ81枚(生成画像)での検証結果を踏まえて再設定:
-    //   ・NSFWスコア分布は平均0.875と高く偏っており、閾値0.55だと
-    //     境界ケース(NSFW=0.34〜0.38, argmax上はSFW側)を見逃すことが判明。
-    //   ・0.30を下回るのは明確に安全な画像(NSFW=0.04, 0.22)のみだったため、
-    //     BLUR閾値を0.55→0.30に引き下げ、argmaxではなくスコア自体で判定する。
-    //   ・NSFL は学習データが少なくモデルカード自身が精度向上の余地を認めているため、
-    //     NSFWよりやや保守的な閾値(低め)にして見逃しを防ぐ。
-    private const val NSFW_BLOCK_THRESHOLD = 0.85f
-    private const val NSFW_BLUR_THRESHOLD  = 0.30f
+    // classifier-xs の NSFW 出力はモデル特性による誤検知があるため、
+    // 安全判定には使用しない。NSFW値は監査用ログには残すが、判定根拠はNSFLのみとする。
     private const val NSFL_BLOCK_THRESHOLD = 0.75f
     private const val NSFL_BLUR_THRESHOLD  = 0.45f
 
     fun evaluateClassifierXs(result: ImageSafetyClassifierResult): Verdict {
-        val nsfwVerdict = when {
-            result.nsfwScore >= NSFW_BLOCK_THRESHOLD -> Verdict.BLOCK
-            result.nsfwScore >= NSFW_BLUR_THRESHOLD  -> Verdict.BLUR
-            else                                      -> Verdict.ALLOW
-        }
-        val nsflVerdict = when {
+        return when {
             result.nsflScore >= NSFL_BLOCK_THRESHOLD -> Verdict.BLOCK
             result.nsflScore >= NSFL_BLUR_THRESHOLD  -> Verdict.BLUR
             else                                      -> Verdict.ALLOW
         }
-        // 2軸のうち、より厳しい方の判定を採用(論理和)
-        return maxOf(nsfwVerdict, nsflVerdict, compareBy { it.ordinal })
     }
 
     /**
@@ -60,7 +46,8 @@ object SafetyPolicy {
     }
 
     /**
-     * Open NSFW と image-safety-classifier-xs、両方の判定結果を統合する。
+     * Open NSFW と image-safety-classifier-xs の NSFL 判定を統合する。
+     * classifier-xs の NSFW 値は誤検知対策のため、この統合には使用しない。
      * どちらか一方でも BLOCK/BLUR と判定されればその結果を採用する(OR結合)。
      * これにより Open NSFW 単体ではカバーできない暴力・グロ表現(NSFL)を補完する。
      */

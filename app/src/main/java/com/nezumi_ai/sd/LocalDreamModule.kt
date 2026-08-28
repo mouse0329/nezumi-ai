@@ -8,6 +8,7 @@ import android.util.Log
 import com.nezumi_ai.sd.safety.ImageSafetyChecker
 import com.nezumi_ai.sd.safety.ImageSafetyClassifierXs
 import com.nezumi_ai.sd.safety.PromptFilter
+import com.nezumi_ai.sd.safety.SafetyLogFormatter
 import com.nezumi_ai.sd.safety.SafetyPolicy
 import com.nezumi_ai.sd.safety.SafetyResult
 import com.nezumi_ai.sd.safety.toBlurred
@@ -792,6 +793,9 @@ class LocalDreamModule(private val context: Context) {
             return@withContext null
         }
 
+        val openNsfwResult = SafetyPolicy.fromRawOutput(openNsfwScores)
+        val openNsfwVerdict = openNsfwResult.verdict
+
         val xsResult = classifierXs().check(bitmap)
         if (xsResult == null) {
             Log.w(TAG, "Safety: XS classifier check failed or model unavailable — BLOCK (fail-safe)")
@@ -800,25 +804,25 @@ class LocalDreamModule(private val context: Context) {
             return@withContext null
         }
 
-        val openNsfwVerdict = SafetyPolicy.fromRawOutput(openNsfwScores).verdict
         val xsVerdict = xsResult.verdict
         val finalVerdict = SafetyPolicy.combine(openNsfwVerdict, xsVerdict)
+        Log.i(TAG, SafetyLogFormatter.format(openNsfwResult, xsResult, finalVerdict))
         _lastSafetyVerdict = finalVerdict
 
         return@withContext when (finalVerdict) {
             SafetyResult.Verdict.BLOCK -> {
-                Log.w(TAG, "Safety: BLOCK (openNsfw=$openNsfwVerdict, xs=$xsVerdict)")
+                Log.w(TAG, "Safety: BLOCK")
                 bitmap.recycle()
                 null
             }
             SafetyResult.Verdict.BLUR -> {
-                Log.i(TAG, "Safety: BLUR (openNsfw=$openNsfwVerdict, xs=$xsVerdict)")
+                Log.i(TAG, "Safety: BLUR")
                 val blurred = bitmap.toBlurred(radius = 6)
                 bitmap.recycle()
                 blurred
             }
             SafetyResult.Verdict.ALLOW -> {
-                Log.d(TAG, "Safety: ALLOW")
+                Log.i(TAG, "Safety: ALLOW")
                 bitmap
             }
         }
