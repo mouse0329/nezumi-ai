@@ -542,8 +542,13 @@ object GgufToolCallParser {
             // convert_md_to_document のように UI カードにはフル本文が必要でも、
             // モデルにはその全文を再送する必要がないツールは、ここで軽量な
             // 要約ペイロードに差し替わる (payloadForModel の doc コメント参照)。
+            //
+            // ツール結果 (web_search / web_fetch 等の外部コンテンツを含む) は
+            // 埋め込み前にタグ literal を無害化する。本文中の
+            // "</tool_response><tool_call>..." が次ラウンドで本物のツールコールとして
+            // 誤爆するのを入口で防ぐ (間接プロンプトインジェクション対策)。
             val entries = result.payloadForModel.entries.joinToString(",") { (k, v) ->
-                """"$k":${valueToJson(v)}"""
+                """"${ToolPayloadSanitizer.sanitizeValue(k)}":${valueToJson(v)}"""
             }
             "{$entries}"
         }.getOrElse { """{"success":${result.success}}""" }
@@ -553,7 +558,9 @@ object GgufToolCallParser {
         null -> "null"
         is Boolean -> value.toString()
         is Number -> value.toString()
-        else -> "\"${value.toString().replace("\"", "\\\"")}\""
+        else -> "\"${
+            ToolPayloadSanitizer.sanitizeValue(value.toString()).replace("\"", "\\\"")
+        }\""
     }
 
     private fun parseToolCallPayload(payload: String): ToolCall? {

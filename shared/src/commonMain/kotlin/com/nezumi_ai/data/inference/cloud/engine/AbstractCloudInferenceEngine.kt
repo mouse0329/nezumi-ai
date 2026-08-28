@@ -10,6 +10,7 @@ import com.nezumi_ai.data.inference.Gemma4ModelDetector
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.ParsedToolCall
+import com.nezumi_ai.data.inference.ToolPayloadSanitizer
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
 import com.nezumi_ai.data.inference.cloud.CloudLog
 import com.nezumi_ai.data.inference.cloud.PlatformSecureStore
@@ -177,7 +178,15 @@ abstract class AbstractCloudInferenceEngine(
 
                 currentPrompt = buildString {
                     append(prompt)
-                    append(Gemma4ThinkingParser.stripThinkingForModelPrompt(roundText.toString()))
+                    // stripThinkingForModelPrompt はシンキングブロックの除去のみで、
+                    // tool_call タグはモデル文脈として意図的に残す設計。万一 tool_result 系の
+                    // 混入タグがあっても再解釈されないよう、入口で無害化しておく (冪等)。
+                    append(
+                        ToolPayloadSanitizer.sanitizeToolTags(
+                            Gemma4ThinkingParser.stripThinkingForModelPrompt(roundText.toString())
+                        )
+                    )
+                    // toolResponseBlock は formatToolResults 内で既に無害化済み。
                     append(toolResponseBlock)
                 }
             }

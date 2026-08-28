@@ -90,7 +90,7 @@ android {
             applicationIdSuffix = ".open"
         }
 
-        buildConfigField("String", "LITERTLM_VERSION", "\"0.15.0\"")
+        buildConfigField("String", "LITERTLM_VERSION", "\"0.16.1\"")
         buildConfigField("String", "LLAMACPP_VERSION", "\"llama.rn 0.12.8\"")
         buildConfigField("boolean", "CONTEXT_COMPRESSION_ENABLED", "false")
 
@@ -257,7 +257,7 @@ dependencies {
     implementation("ru.noties:jlatexmath-android:0.2.0")
 
     implementation("androidx.navigation:navigation-fragment-ktx:2.9.8")
-    implementation("androidx.navigation:navigation-ui-ktx:2.6.0")
+    implementation("androidx.navigation:navigation-ui-ktx:2.10.0")
 
     implementation("androidx.room:room-runtime:2.7.0")
     implementation("androidx.room:room-ktx:2.7.0")
@@ -269,8 +269,8 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.11.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.15.0")
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.28.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.16.1")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.29.0")
 
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("net.openid:appauth:0.11.1")
@@ -296,7 +296,7 @@ dependencies {
     // "flexmark-html2md" というアーティファクトには jar が存在しないため、
     // 変換器モジュールを直接指定する。
     // ─────────────────────────────────────────────
-    implementation("org.jsoup:jsoup:1.17.2")
+    implementation("org.jsoup:jsoup:1.23.2")
     implementation("com.vladsch.flexmark:flexmark-html2md-converter:0.64.8")
 
     // VOICEVOX integration
@@ -314,11 +314,11 @@ dependencies {
     // "1.8" のような表記のバージョンは存在しないため、明示指定すると
     // 解決エラーになる。
     // ─────────────────────────────────────────────
-    implementation("org.apache.poi:poi:5.4.0")
+    implementation("org.apache.poi:poi:5.5.1")
     implementation("org.apache.poi:poi-ooxml:5.4.0") {
         exclude(group = "org.apache.xmlbeans", module = "xmlbeans")
     }
-    implementation("org.apache.xmlbeans:xmlbeans:5.2.0")
+    implementation("org.apache.xmlbeans:xmlbeans:5.4.0")
     // POI の一部クラスが依存する javax.xml.stream (StAX) 実装。Android には
     // 標準搭載されていないため明示的に追加する。
     implementation("org.codehaus.woodstox:stax2-api:4.2.2")

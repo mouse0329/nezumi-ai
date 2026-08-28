@@ -5,6 +5,7 @@ import android.util.Log
 import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.PromptBuilder
+import com.nezumi_ai.data.inference.ToolPayloadSanitizer
 import org.json.JSONObject
 
 /**
@@ -149,7 +150,11 @@ class PromptBuildingUseCase {
             if (normalized.isEmpty()) return ""
             val visibleOnly = Gemma4ThinkingParser.answerOnlyForModelContext(normalized)
             if (visibleOnly.isEmpty()) return ""
-            return stripSyntheticRoleLoopTail(visibleOnly)
+            // 履歴に保存された assistant 本文には `<tool_response>` ブロックが含まれる。
+            // 入口 (formatToolResults 各経路) での無害化以後に書かれた履歴は既に安全だが、
+            // 無害化導入以前の古い履歴には生の外部コンテンツが残り得るため、再構築時にも
+            // タグを不活性化する (二度がけは全角化ベースのため冪等)。
+            return stripSyntheticRoleLoopTail(ToolPayloadSanitizer.sanitizeToolTags(visibleOnly))
                 .replace(Regex("^(?i)(?:Assistant|アシスタント)\\s*[:：]\\s*"), "")
                 .trim()
         } else {
@@ -171,10 +176,14 @@ class PromptBuildingUseCase {
                     msg.imageDescription?.takeIf { it.isNotBlank() }
                         ?: "(image x$imageCount)"
             }
+            // ユーザー入力・添付テキストの本文にもツールコール系タグを紛れ込ませない。
+            // コピペしたログ等に `<tool_call>` が含まれると、モデルが過去の自分の発話と
+            // 誤認してツール実行フローに入る恐れがあるため、入口で不活性化する。
+            val safeBody = ToolPayloadSanitizer.sanitizeToolTags(normalized)
             return when {
-                imageTokens.isNotEmpty() && normalized.isNotEmpty() -> "$imageTokens\n$normalized"
+                imageTokens.isNotEmpty() && safeBody.isNotEmpty() -> "$imageTokens\n$safeBody"
                 imageTokens.isNotEmpty() -> imageTokens
-                else -> normalized
+                else -> safeBody
             }
         }
     }

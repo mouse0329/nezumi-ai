@@ -94,7 +94,15 @@ object CloudToolCallParser {
 
     private fun resultPayloadJson(result: CloudToolExecutionResult): String {
         return runCatching {
-            val entries = result.payloadForModel.entries.joinToString(",") { (k, v) -> "\"$k\":${valueToJson(v)}" }
+            // ツール結果 (web_search / web_fetch 等の外部コンテンツを含む) は
+            // モデル向け JSON に埋め込む前にタグ literal を無害化する。
+            // ここで防がないと、本文中の "</tool_response><tool_call>..." が
+            // 次ラウンドで本物のツールコールとして誤爆する (間接プロンプトインジェクション)。
+            // 下流の正規表現走査 (Gemma4ThinkingParser 等) は JSON 構造の内/外を
+            // 区別できないため、入口であるここで防御する。
+            val entries = result.payloadForModel.entries.joinToString(",") { (k, v) ->
+                "\"${ToolPayloadSanitizer.sanitizeValue(k)}\":${valueToJson(v)}"
+            }
             "{$entries}"
         }.getOrElse { """{"success":${result.success}}""" }
     }
@@ -103,7 +111,9 @@ object CloudToolCallParser {
         null -> "null"
         is Boolean -> value.toString()
         is Number -> value.toString()
-        else -> "\"${value.toString().replace("\"", "\\\"")}\""
+        else -> "\"${
+            ToolPayloadSanitizer.sanitizeValue(value.toString()).replace("\"", "\\\"")
+        }\""
     }
 
     private fun parseToolCallPayload(payload: String): ParsedToolCall? {

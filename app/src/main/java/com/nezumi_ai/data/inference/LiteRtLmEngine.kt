@@ -1636,9 +1636,23 @@ class LiteRtLmEngine(
      */
     private fun buildToolResponseContentJson(card: ToolResultCard): String {
         return runCatching {
-            val obj = JsonObject(card.payload)
+            val obj = JsonObject(card.payload.mapValues { sanitizeJsonElement(it.value) })
             obj.toString()
         }.getOrElse { "{\"success\":${card.success}}" }
+    }
+
+    /** JSON 値を再帰的に走査し、文字列リーフにだけタグ無害化を適用する。数値・真偽値・構造はそのまま。 */
+    private fun sanitizeJsonElement(element: JsonElement): JsonElement = when (element) {
+        is JsonObject -> JsonObject(
+            element.entries.associate { (k, v) ->
+                ToolPayloadSanitizer.sanitizeValue(k) to sanitizeJsonElement(v)
+            }
+        )
+        is JsonArray -> JsonArray(element.map { sanitizeJsonElement(it) })
+        is JsonPrimitive ->
+            if (element.isString) JsonPrimitive(ToolPayloadSanitizer.sanitizeValue(element.content))
+            else element
+        else -> element
     }
 
     private fun anyToJsonElement(value: Any?): JsonElement {
