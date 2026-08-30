@@ -5118,14 +5118,22 @@ open class ModelSettingsFragment : Fragment() {
                         ?: info.outputData.getLong(ModelDownloadWorker.KEY_TOTAL_BYTES, 0L)
                         .takeIf { it > 0L }
                         ?: imageModelDownloadCardCache[modelId]?.totalBytes ?: 0L
+                    // zip 展開フェーズ: DL 完了後にバイト数が進まない間 (GB 級モデルでは数十秒)
+                    // 「ダウンロード中 100%」のまま止まって見え、モデルがいつまでも追加されない
+                    // 不安を与えるため、ワーカーが立てるフラグで明示的に「展開中」と表示する。
+                    val isExtracting = info.progress.getBoolean(
+                        ModelDownloadWorker.KEY_IMAGE_MODEL_IS_EXTRACTING, false
+                    )
 
-                    val status = when (info.state) {
-                        WorkInfo.State.ENQUEUED -> "待機中"
-                        WorkInfo.State.RUNNING -> if (total > 0L) {
+                    val status = when {
+                        info.state == WorkInfo.State.RUNNING && isExtracting ->
+                            "展開中（しばらくお待ちください）"
+                        info.state == WorkInfo.State.ENQUEUED -> "待機中"
+                        info.state == WorkInfo.State.RUNNING -> if (total > 0L) {
                             val percent = ((downloaded * 100L) / total).toInt().coerceIn(0, 100)
                             "ダウンロード中 $percent% (${formatBytes(downloaded)} / ${formatBytes(total)})"
                         } else "ダウンロード中"
-                        WorkInfo.State.BLOCKED -> "待機中"
+                        info.state == WorkInfo.State.BLOCKED -> "待機中"
                         else -> imageModelDownloadCardCache[modelId]?.statusText ?: "待機中"
                     }
 
@@ -5137,7 +5145,8 @@ open class ModelSettingsFragment : Fragment() {
                         statusText = status,
                         isActive = info.state == WorkInfo.State.ENQUEUED ||
                             info.state == WorkInfo.State.RUNNING ||
-                            info.state == WorkInfo.State.BLOCKED
+                            info.state == WorkInfo.State.BLOCKED,
+                        isExtracting = isExtracting
                     )
                 }
 
@@ -5823,7 +5832,15 @@ open class ModelSettingsFragment : Fragment() {
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text(text = item.modelName, fontWeight = FontWeight.SemiBold)
-                if (item.totalBytes > 0L) {
+                if (item.isExtracting) {
+                    // zip 展開中は DL バイト数が 100% で止まるため、進捗バーは不定 (indeterminate) にして
+                    // 「処理が動き続けている」ことを視覚的に伝える。
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = colorResource(id = R.color.primary),
+                        trackColor = colorResource(id = R.color.context_meter_track)
+                    )
+                } else if (item.totalBytes > 0L) {
                     LinearProgressIndicator(
                         modifier = Modifier.fillMaxWidth(),
                         progress = { item.progress },
@@ -5842,8 +5859,8 @@ open class ModelSettingsFragment : Fragment() {
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodySmall
                 )
-                // 各カードに通信速度と残り時間を表示
-                speedInfo?.let { info ->
+                // 各カードに通信速度と残り時間を表示 (展開中は通信していないので表示しない)
+                if (!item.isExtracting) speedInfo?.let { info ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -5885,7 +5902,8 @@ open class ModelSettingsFragment : Fragment() {
         val downloadedBytes: Long,
         val totalBytes: Long,
         val statusText: String,
-        val isActive: Boolean
+        val isActive: Boolean,
+        val isExtracting: Boolean = false
     ) {
         val progress: Float
             get() = if (totalBytes > 0L) {

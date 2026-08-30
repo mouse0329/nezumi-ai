@@ -497,6 +497,8 @@ class ModelDownloadWorker(
         const val KEY_IMAGE_MODEL_URL = "image_model_url"
         const val KEY_IMAGE_MODEL_FILENAME = "image_model_filename"
         const val KEY_IMAGE_MODEL_NAME = "image_model_name"
+        /** 画像モデル: zip 展開フェーズに入ったことを UI に伝えるフラグ */
+        const val KEY_IMAGE_MODEL_IS_EXTRACTING = "image_model_is_extracting"
         const val DOWNLOAD_KIND_SAFETY_MODEL = "safety_model"
 
         // ── VOICEVOX 音声モデル ─────────────────────────────────
@@ -1394,6 +1396,22 @@ class ModelDownloadWorker(
                 }
 
                 android.util.Log.d("ModelDownloadWorker", "doImageModelWork: download complete, extracting zip")
+
+                // DL 完了〜 zip 展開の間はバイト数が一切進まない (GB 級モデルでは数十秒)。
+                // UI 側が「ダウンロード中 100%」のまま固まって見えるのを防ぐため、
+                // 展開フェーズに入ったことを進捗データと通知に明示する。
+                val zipBytes = tempFile.length()
+                setProgressAsync(
+                    workDataOf(
+                        KEY_DOWNLOAD_KIND to DOWNLOAD_KIND_IMAGE_MODEL,
+                        KEY_IMAGE_MODEL_ID to modelId,
+                        KEY_IMAGE_MODEL_NAME to modelName,
+                        KEY_DOWNLOADED_BYTES to zipBytes,
+                        KEY_TOTAL_BYTES to zipBytes,
+                        KEY_IMAGE_MODEL_IS_EXTRACTING to true
+                    )
+                )
+                setForegroundAsync(createForegroundInfo(displayName, zipBytes, zipBytes, notificationId))
 
                 // Unzip
                 java.util.zip.ZipInputStream(tempFile.inputStream()).use { zis ->

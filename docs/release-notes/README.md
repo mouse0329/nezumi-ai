@@ -5,5 +5,6 @@ GitHub の [Releases](https://github.com/mouse0329/nezumi-ai/releases) にも同
 
 ## 一覧
 
+- [v2.3.2](./v2.3.2.md)
 - [v2.3.1](./v2.3.1.md)
 - [v2.3.0](./v2.3.0.md)
