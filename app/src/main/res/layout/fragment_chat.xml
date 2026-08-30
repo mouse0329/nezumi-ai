@@ -30,6 +30,9 @@
 
             <androidx.compose.ui.platform.ComposeView android:id="@+id/empty_state_compose" android:layout_width="match_parent" android:layout_height="match_parent" />
 
+            <!-- チャット履歴読み込み中スピナー: セッション切替直後、最初のメッセージが届くまで中央に表示 -->
+            <ProgressBar android:id="@+id/messages_loading_indicator" android:layout_width="40dp" android:layout_height="40dp" android:layout_gravity="center" android:indeterminateTint="@color/primary" android:visibility="gone" />
+
             <!-- Overlay layer: typing indicator + tool progress (bottom) / scroll button (top) -->
             <FrameLayout android:layout_width="match_parent" android:layout_height="match_parent">
 

@@ -87,6 +87,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
+import com.nezumi_ai.presentation.ui.theme.nezumiSwitchColors
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 
 class PresetSettingsFragment : Fragment() {
@@ -822,7 +823,8 @@ class PresetSettingsFragment : Fragment() {
                             Text(stringResource(id = R.string.preset_edit_memory_label), fontWeight = FontWeight.Bold)
                             Switch(
                                 checked = memoryEnabled,
-                                onCheckedChange = { memoryEnabled = it }
+                                onCheckedChange = { memoryEnabled = it },
+                                colors = nezumiSwitchColors()
                             )
                         }
                     }
@@ -850,7 +852,8 @@ class PresetSettingsFragment : Fragment() {
                             Switch(
                                 checked = toolCallingEnabled,
                                 onCheckedChange = { if (selectedModelToolCallingAllowed) toolCallingEnabled = it },
-                                enabled = selectedModelToolCallingAllowed
+                                enabled = selectedModelToolCallingAllowed,
+                                colors = nezumiSwitchColors()
                             )
                         }
                     }
@@ -865,7 +868,7 @@ class PresetSettingsFragment : Fragment() {
                                     Text(stringResource(R.string.preset_edit_skills_label), fontWeight = FontWeight.Bold)
                                     Text(stringResource(R.string.preset_edit_skills_desc), style = MaterialTheme.typography.bodySmall)
                                 }
-                                Switch(checked = skillsEnabled, onCheckedChange = { skillsEnabled = it })
+                                Switch(checked = skillsEnabled, onCheckedChange = { skillsEnabled = it }, colors = nezumiSwitchColors())
                             }
                         }
                         if (skillsEnabled) item {

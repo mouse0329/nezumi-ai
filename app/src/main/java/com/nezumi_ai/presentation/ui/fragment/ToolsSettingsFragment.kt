@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.util.Locale
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
+import com.nezumi_ai.presentation.ui.theme.nezumiSwitchColors
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 
 class ToolsSettingsFragment : Fragment() {
@@ -208,7 +209,8 @@ class ToolsSettingsFragment : Fragment() {
                             Switch(
                                 checked = enabled,
                                 enabled = canToggle,
-                                onCheckedChange = { checked -> updateToolEnabled(tool, checked) }
+                                onCheckedChange = { checked -> updateToolEnabled(tool, checked) },
+                                colors = nezumiSwitchColors()
                             )
                         }
                                 if (tool == NezumiTool.LIST_ALARMS && !setAlarmEnabled) {
@@ -264,7 +266,8 @@ class ToolsSettingsFragment : Fragment() {
                                         viewLifecycleOwner.lifecycleScope.launch {
                                             alarmDao.setAlarmEnabled(alarm.id, checked)
                                         }
-                                    }
+                                    },
+                                    colors = nezumiSwitchColors()
                                 )
                                 TextButton(onClick = { dismissAndDeleteAlarm(alarm) }) {
                                     Text(stringResource(id = R.string.delete))

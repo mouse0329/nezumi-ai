@@ -1372,8 +1372,15 @@ class LiteRtLmEngine(
                                             status
                                         )
                                     ).isSuccess
+                                    // モデルへ送り返すのは payload (フル本文) ではなく payloadForModel。
+                                    //   convert_md_to_document のように UI カードには Markdown 全文が必要でも、
+                                    //   モデルにはその全文を <tool_response> 経由で再送する必要がない
+                                    //   (ChatViewModel.invokeConvertMdToDocumentFromTool の modelPayload 参照)。
+                                    //   ここで payload を渡すと、次ラウンド以降のプロンプトに Markdown 本文が
+                                    //   毎回乗り続けてコンテキストを浪費するため、GGUF 側 (GgufToolCallParser
+                                    //   .resultPayloadJson) と同じく要約ペイロードを使う。
                                     roundResponseSlots[callIndex] =
-                                        Content.ToolResponse(toolCall.name, result.payload)
+                                        Content.ToolResponse(toolCall.name, result.payloadForModel)
                                     // ToolResultCard を蓄積（UI表示用）。
                                     // toolCallsInTurn 内での元の呼び出し順 (callIndex) のスロットに
                                     // 書き込むことで、実行完了順ではなく呼び出し順を保つ。

@@ -147,6 +147,7 @@ import com.nezumi_ai.data.inference.cloud.CloudUserModelRegistry
 import com.nezumi_ai.data.inference.cloud.LocalModelListFetcher
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
+import com.nezumi_ai.presentation.ui.theme.nezumiSwitchColors
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 
 enum class ModelType {
@@ -1045,7 +1046,8 @@ open class ModelSettingsFragment : Fragment() {
                         Text(stringResource(id = R.string.model_settings_enable_image_input), color = MaterialTheme.colorScheme.onSurface)
                         Switch(
                             checked = capabilityDialogImageEnabled,
-                            onCheckedChange = { capabilityDialogImageEnabled = it }
+                            onCheckedChange = { capabilityDialogImageEnabled = it },
+                            colors = nezumiSwitchColors()
                         )
                     }
                     if (isGguf && capabilityDialogImageEnabled) {
@@ -1150,7 +1152,8 @@ open class ModelSettingsFragment : Fragment() {
                         Text(stringResource(id = R.string.model_settings_enable_audio_input), color = MaterialTheme.colorScheme.onSurface)
                         Switch(
                             checked = capabilityDialogAudioEnabled,
-                            onCheckedChange = { capabilityDialogAudioEnabled = it }
+                            onCheckedChange = { capabilityDialogAudioEnabled = it },
+                            colors = nezumiSwitchColors()
                         )
                     }
                     // Thinking トグルは GGUF/LiteRT-LM 両方（外部インポート .task / .litertlm 含む）で表示する。
@@ -1164,7 +1167,8 @@ open class ModelSettingsFragment : Fragment() {
                         Text(stringResource(id = R.string.model_settings_enable_thinking), color = MaterialTheme.colorScheme.onSurface)
                         Switch(
                             checked = capabilityDialogThinkingEnabled,
-                            onCheckedChange = { capabilityDialogThinkingEnabled = it }
+                            onCheckedChange = { capabilityDialogThinkingEnabled = it },
+                            colors = nezumiSwitchColors()
                         )
                     }
                     if (supportsToolCalling) {
@@ -1183,7 +1187,8 @@ open class ModelSettingsFragment : Fragment() {
                             }
                             Switch(
                                 checked = capabilityDialogToolCallingEnabled,
-                                onCheckedChange = { capabilityDialogToolCallingEnabled = it }
+                                onCheckedChange = { capabilityDialogToolCallingEnabled = it },
+                                colors = nezumiSwitchColors()
                             )
                         }
                     }

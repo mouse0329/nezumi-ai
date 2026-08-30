@@ -107,6 +107,7 @@ import com.nezumi_ai.sd.SdScheduler
 
 import com.nezumi_ai.sd.safety.SafetyResult
 import java.io.File
+import com.nezumi_ai.presentation.ui.theme.nezumiSwitchColors
 
 data class LibraryItem(
     val bitmap: Bitmap,
@@ -857,7 +858,8 @@ private fun LegacyImageGenScreen(
                                         pickImageLauncher.launch("image/*")
                                     }
                                 },
-                                enabled = !loading
+                                enabled = !loading,
+                                colors = nezumiSwitchColors()
                             )
                         }
                         if (img2imgEnabled) {

@@ -97,6 +97,7 @@ import java.io.File
 import java.util.zip.ZipInputStream
 import kotlin.math.roundToInt
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
+import com.nezumi_ai.presentation.ui.theme.nezumiSwitchColors
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 
 class SettingsComposeFragment : Fragment() {
@@ -792,7 +793,8 @@ class SettingsComposeFragment : Fragment() {
                                                 PreferencesHelper.setAlwaysLockEnabled(context, checked)
                                                 if (!checked) pendingAlwaysLockEnable = false
                                             }
-                                        }
+                                        },
+                                        colors = nezumiSwitchColors()
                                     )
                                 }
 
@@ -821,7 +823,8 @@ class SettingsComposeFragment : Fragment() {
                                         onCheckedChange = { checked ->
                                             isStopKeyboardLearning = checked
                                             PreferencesHelper.setStopKeyboardLearningEnabled(context, checked)
-                                        }
+                                        },
+                                        colors = nezumiSwitchColors()
                                     )
                                 }
 
@@ -850,7 +853,8 @@ class SettingsComposeFragment : Fragment() {
                                         onCheckedChange = { checked ->
                                             isShowContextMeter = checked
                                             PreferencesHelper.setShowContextMeter(context, checked)
-                                        }
+                                        },
+                                        colors = nezumiSwitchColors()
                                     )
                                 }
 
@@ -879,7 +883,8 @@ class SettingsComposeFragment : Fragment() {
                                         onCheckedChange = { checked ->
                                             isShowTps = checked
                                             PreferencesHelper.setShowTps(context, checked)
-                                        }
+                                        },
+                                        colors = nezumiSwitchColors()
                                     )
                                 }
 
@@ -908,7 +913,8 @@ class SettingsComposeFragment : Fragment() {
                                         onCheckedChange = { checked ->
                                             isShowTtft = checked
                                             PreferencesHelper.setShowTtft(context, checked)
-                                        }
+                                        },
+                                        colors = nezumiSwitchColors()
                                     )
                                 }
 
@@ -948,7 +954,8 @@ class SettingsComposeFragment : Fragment() {
                                                     activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
                                                 }
                                             }
-                                        }
+                                        },
+                                        colors = nezumiSwitchColors()
                                     )
                                 }
 
@@ -1312,7 +1319,8 @@ class SettingsComposeFragment : Fragment() {
                             )
                             Switch(
                                 checked = contextCompressionEnabled,
-                                onCheckedChange = { contextCompressionEnabled = it }
+                                onCheckedChange = { contextCompressionEnabled = it },
+                                colors = nezumiSwitchColors()
                             )
                         }
                         Text(
@@ -1859,7 +1867,8 @@ class SettingsComposeFragment : Fragment() {
                                 }
                                 Switch(
                                     checked = llamaCppKvUnified,
-                                    onCheckedChange = { llamaCppKvUnified = it }
+                                    onCheckedChange = { llamaCppKvUnified = it },
+                                    colors = nezumiSwitchColors()
                                 )
                             }
 
@@ -1970,7 +1979,8 @@ class SettingsComposeFragment : Fragment() {
                                 }
                                 Switch(
                                     checked = mtpEnabled,
-                                    onCheckedChange = { mtpEnabled = it }
+                                    onCheckedChange = { mtpEnabled = it },
+                                    colors = nezumiSwitchColors()
                                 )
                             }
 
@@ -2030,7 +2040,8 @@ class SettingsComposeFragment : Fragment() {
                                 }
                                 Switch(
                                     checked = flashAttentionEnabled,
-                                    onCheckedChange = { flashAttentionEnabled = it }
+                                    onCheckedChange = { flashAttentionEnabled = it },
+                                    colors = nezumiSwitchColors()
                                 )
                             }
 
@@ -2054,7 +2065,8 @@ class SettingsComposeFragment : Fragment() {
                                 }
                                 Switch(
                                     checked = dynamicBatchSizeEnabled,
-                                    onCheckedChange = { dynamicBatchSizeEnabled = it }
+                                    onCheckedChange = { dynamicBatchSizeEnabled = it },
+                                    colors = nezumiSwitchColors()
                                 )
                             }
 
@@ -2143,7 +2155,8 @@ class SettingsComposeFragment : Fragment() {
                                 }
                                 Switch(
                                     checked = kvCacheOptimizationEnabled,
-                                    onCheckedChange = { kvCacheOptimizationEnabled = it }
+                                    onCheckedChange = { kvCacheOptimizationEnabled = it },
+                                    colors = nezumiSwitchColors()
                                 )
                             }
 
@@ -2167,7 +2180,8 @@ class SettingsComposeFragment : Fragment() {
                                 }
                                 Switch(
                                     checked = contextShiftEnabled,
-                                    onCheckedChange = { contextShiftEnabled = it }
+                                    onCheckedChange = { contextShiftEnabled = it },
+                                    colors = nezumiSwitchColors()
                                 )
                             }
                         }
@@ -2251,7 +2265,8 @@ class SettingsComposeFragment : Fragment() {
                     }
                     Switch(
                         checked = speculativeDecodingEnabled,
-                        onCheckedChange = { speculativeDecodingEnabled = it }
+                        onCheckedChange = { speculativeDecodingEnabled = it },
+                        colors = nezumiSwitchColors()
                     )
                 }
                 Row(
@@ -2274,7 +2289,8 @@ class SettingsComposeFragment : Fragment() {
                     }
                     Switch(
                         checked = requireMultimodal,
-                        onCheckedChange = { requireMultimodal = it }
+                        onCheckedChange = { requireMultimodal = it },
+                        colors = nezumiSwitchColors()
                     )
                 }
             }
@@ -2651,7 +2667,8 @@ class SettingsComposeFragment : Fragment() {
                         onCheckedChange = { checked ->
                             toolPreferences.setWebFetchJsRenderEnabled(checked)
                             webFetchJsRenderEnabled = checked
-                        }
+                        },
+                        colors = nezumiSwitchColors()
                     )
                 }
             }

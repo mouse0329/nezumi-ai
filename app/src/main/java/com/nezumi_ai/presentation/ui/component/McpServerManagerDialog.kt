@@ -50,6 +50,7 @@ import com.nezumi_ai.data.mcp.PrivateIpValidator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.nezumi_ai.presentation.ui.theme.nezumiSwitchColors
 
 /**
  * MCP サーバー管理ダイアログ。
@@ -314,7 +315,7 @@ private fun McpServerEditorDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(stringResource(id = R.string.mcp_server_enable_server), fontWeight = FontWeight.Bold)
-                    Switch(checked = enabled, onCheckedChange = { enabled = it })
+                    Switch(checked = enabled, onCheckedChange = { enabled = it }, colors = nezumiSwitchColors())
                 }
                 Divider()
                 TextButton(

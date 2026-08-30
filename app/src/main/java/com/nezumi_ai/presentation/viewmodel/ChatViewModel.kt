@@ -294,6 +294,14 @@ class ChatViewModel(
     val messages: StateFlow<List<MessageEntity>> = _messages
 
     /**
+     * チャット履歴の読み込み中かどうか。
+     * セッション切替で true になり、最初のメッセージエミッションが届くと false になる。
+     * UI はこれを見てメッセージ一覧の中央にローディングスピナーを表示する。
+     */
+    private val _isMessagesLoading = MutableStateFlow(false)
+    val isMessagesLoading: StateFlow<Boolean> = _isMessagesLoading
+
+    /**
  * 応答バリアント選択状態:
      *   key = parentUserMessageId, value = 現在選択中の variantIndex。
      *   未登録の user メッセージは "最新バリアント" をデフォルト選択とする。
@@ -1026,6 +1034,9 @@ class ChatViewModel(
         withContext(Dispatchers.Main) {
             _messages.value = emptyList()
             allMessagesSnapshot.value = emptyList()
+            // ローディングスピナー表示開始: 履歴が溜まったセッションでは最初の
+            // エミッションまで時間がかかるため、その間ぐるぐるを出す
+            _isMessagesLoading.value = true
         }
 
         // キャンセル前のコレクションジョブ
@@ -1058,12 +1069,23 @@ class ChatViewModel(
  // バリアント適用前の全件を保持しておき、UI 側で切替可能にする
                     allMessagesSnapshot.value = snapshot
                     val filtered = applyVariantSelection(snapshot, _selectedVariantByParent.value)
-                    val contextUsageChars = estimateContextUsageChars(filtered)
                     withContext(Dispatchers.Main) {
  // 二重ガード: メインスレッドに戻った時点でもセッションIDを確認する
                         if (activeCollectionSessionId == sessionId) {
                             _messages.value = filtered
- // メーター不正確修正: キャッシュクリア完了後にメーター計算を実行
+                            _isMessagesLoading.value = false
+                        }
+                    }
+                    // チャット表示高速化:
+                    //   estimateContextUsageChars はプロンプト全文の組み立てを伴う重い処理で、
+                    //   チャット履歴が蓄積するほど時間がかかる。これをメッセージ表示と同じ
+                    //   エミッション内で同期実行していたため、履歴の多いセッションを開くと
+                    //   本文が表示されるまで待たされていた。表示を優先し、メーター更新は
+                    //   別コルーチンで非同期に後追い実行する (表示より先に終わっても問題ない)。
+                    val estimationSessionId = sessionId
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val contextUsageChars = estimateContextUsageChars(filtered)
+                        if (activeCollectionSessionId == estimationSessionId) {
                             _contextUsageChars.value = contextUsageChars
                         }
                     }

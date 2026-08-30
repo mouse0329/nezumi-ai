@@ -136,6 +136,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.ui.text.style.TextOverflow
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
+import com.nezumi_ai.presentation.ui.theme.nezumiSwitchColors
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 
 class ChatFragment : Fragment(R.layout.fragment_chat) {
@@ -1167,8 +1168,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 }
                 val empty = filteredMessages.isEmpty()
                 messagesIsEmpty = empty
+                // ローディング中はエンプティ表示を出さない (スピナーの背後で一瞬チラつくのを防ぐ)
                 binding.emptyStateCompose.visibility =
-                    if (empty) View.VISIBLE else View.GONE
+                    if (empty && !viewModel.isMessagesLoading.value) View.VISIBLE else View.GONE
                 adapter.submitList(filteredMessages) {
                     if (pendingInitialScrollToBottom && filteredMessages.isNotEmpty()) {
                         pendingInitialScrollToBottom = false
@@ -1536,6 +1538,22 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 contextMeterProgress =
                     (((usedTokens.toLong() * 1000L) / safeMaxTokens.toLong()).toInt().coerceIn(0, 1000) / 1000f)
                 renderCompressButtonState()
+            }
+        }
+
+        // チャット履歴読み込み中スピナー: 履歴が積まれたセッションでは最初の
+        // メッセージ表示まで時間がかかるため、その間は中央のぐるぐるを表示する。
+        // 読み込み中はエンプティ表示も隠す (読み込み完了後のメッセージ収集側で再評価される)。
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.isMessagesLoading.collect { loading ->
+                if (_binding == null) return@collect
+                binding.messagesLoadingIndicator.visibility =
+                    if (loading) View.VISIBLE else View.GONE
+                if (loading) {
+                    binding.emptyStateCompose.visibility = View.GONE
+                } else if (messagesIsEmpty) {
+                    binding.emptyStateCompose.visibility = View.VISIBLE
+                }
             }
         }
 
@@ -3247,7 +3265,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         //   「設定値のみ更新、次回送信時から反映」の設計なので、生成中でも
                         //   切り替えを受け付けて問題ない。ここでは !isGenerating を外し、
                         //   モデルロード中でない限り常時切り替え可能にする。
-                        enabled = thinkingToggleEnabled
+                        enabled = thinkingToggleEnabled,
+                        colors = nezumiSwitchColors()
                     )
                 }
             }

@@ -3,11 +3,14 @@ package com.nezumi_ai.presentation.ui.theme
 import android.content.res.AssetManager
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SwitchColors
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.font.Font
@@ -127,5 +130,38 @@ fun NezumiComposeTheme(content: @Composable () -> Unit) {
         colorScheme = colorScheme,
         typography = typography,
         content = content
+    )
+}
+
+/**
+ * アプリ全体で共有する Switch の色。
+ *
+ * バグ修正 (ライトモードで ON のスイッチが黒く見える):
+ *   M3 の Switch は checkedThumbColor に colorScheme.onPrimary を使う。
+ *   このアプリのライトモードでは onPrimary = #082F49 (濃紺) なので、ON 時の
+ *   つまみが #38BDF8 の水色トラックの上でほぼ黒に見えてしまっていた
+ *   (ダークモードは onPrimary = #FFFFFF のため問題なかった)。
+ *   つまみは両モードとも白系で統一し、トラックは primary / primaryContainer に
+ *   合わせる。設定画面などの Switch はすべてこの色を使う。
+ */
+@Composable
+fun nezumiSwitchColors(): SwitchColors {
+    val primary = colorResource(id = R.color.primary)
+    val primaryContainer = colorResource(id = R.color.nezumi_primary_container)
+    val onPrimaryContainer = colorResource(id = R.color.nezumi_on_primary_container)
+    val onSurfaceVariant = colorResource(id = R.color.text_secondary)
+    return SwitchDefaults.colors(
+        checkedThumbColor = Color.White,
+        checkedTrackColor = primary,
+        checkedBorderColor = primary,
+        uncheckedThumbColor = Color.White,
+        uncheckedTrackColor = primaryContainer,
+        uncheckedBorderColor = onSurfaceVariant,
+        disabledCheckedThumbColor = Color.White.copy(alpha = 0.6f),
+        disabledCheckedTrackColor = primary.copy(alpha = 0.4f),
+        disabledCheckedBorderColor = Color.Transparent,
+        disabledUncheckedThumbColor = Color.White.copy(alpha = 0.6f),
+        disabledUncheckedTrackColor = onPrimaryContainer.copy(alpha = 0.2f),
+        disabledUncheckedBorderColor = onSurfaceVariant.copy(alpha = 0.4f)
     )
 }
