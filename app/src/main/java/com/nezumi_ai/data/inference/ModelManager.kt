@@ -410,6 +410,21 @@ class ModelManager(
     /**
      * 推論を実行
      */
+    suspend fun formatGgufChatTemplate(
+        messagesJson: String,
+        enableThinking: Boolean = false
+    ): String? {
+        val engine = activeEngine as? GgufInferenceEngine ?: return null
+        return engine.formatWithGgufChatTemplate(messagesJson, enableThinking)
+            .takeIf { it.isNotBlank() }
+    }
+
+    fun parseGgufChatOutput(
+        output: String,
+        isPartial: Boolean
+    ): GgufInferenceEngine.GgufChatParseResult? =
+        (activeEngine as? GgufInferenceEngine)?.parseWithGgufChatTemplate(output, isPartial)
+
     suspend fun runInference(
         sessionId: Long,
         prompt: String,

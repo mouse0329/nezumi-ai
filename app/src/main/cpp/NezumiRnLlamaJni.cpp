@@ -37,6 +37,9 @@ namespace
         // (would otherwise fire once per generated token, which on a vision
         // model can be hundreds of times in a single call).
         std::atomic<bool> stream_warning_logged{false};
+        // Parser settings captured from the last GGUF chat-template render.
+        common_chat_params gguf_chat_params{};
+        bool gguf_chat_params_valid = false;
     };
 
     static std::mutex g_mutex;
@@ -682,6 +685,83 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeGetLastTimings(
 
     env->SetFloatArrayRegion(result, 0, 4, timings);
     return result;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeApplyGgufChatTemplate(
+    JNIEnv *env,
+    jclass /*clazz*/,
+    jlong ctxPtr,
+    jstring messagesJson,
+    jboolean enableThinking,
+    jboolean addGenerationPrompt)
+{
+    auto *holder = fromPtr(ctxPtr);
+    if (!holder || !holder->ctx)
+        return newSafeJStringUTF(env, "", "native_apply_gguf_template_empty_context");
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_live_holders.find(holder) == g_live_holders.end() ||
+        holder->is_released.load(std::memory_order_acquire))
+        return newSafeJStringUTF(env, "", "native_apply_gguf_template_invalid_context");
+    const char *jsonChars = messagesJson ? env->GetStringUTFChars(messagesJson, nullptr) : nullptr;
+    const std::string messages = jsonChars ? std::string(jsonChars) : std::string("[]");
+    if (jsonChars) env->ReleaseStringUTFChars(messagesJson, jsonChars);
+    try
+    {
+        const auto formatted = holder->ctx->getFormattedChatWithJinja(
+            messages, "", "", "", false, "", enableThinking == JNI_TRUE,
+            "auto", addGenerationPrompt == JNI_TRUE, "", {}, false);
+        holder->gguf_chat_params = formatted;
+        holder->gguf_chat_params_valid = true;
+        return newSafeJStringUTF(env, formatted.prompt, "native_apply_gguf_template");
+    }
+    catch (const std::exception &e)
+    {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "nativeApplyGgufChatTemplate: %s", e.what());
+        return newSafeJStringUTF(env, "", "native_apply_gguf_template_error");
+    }
+    catch (...)
+    {
+        return newSafeJStringUTF(env, "", "native_apply_gguf_template_unknown_error");
+    }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeParseGgufChatOutput(
+    JNIEnv *env, jclass /*clazz*/, jlong ctxPtr, jstring output, jboolean isPartial)
+{
+    auto *holder = fromPtr(ctxPtr);
+    if (!holder || !holder->ctx || !holder->gguf_chat_params_valid)
+        return newSafeJStringUTF(env, "{}", "native_parse_gguf_output_no_template");
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_live_holders.find(holder) == g_live_holders.end() ||
+        holder->is_released.load(std::memory_order_acquire))
+        return newSafeJStringUTF(env, "{}", "native_parse_gguf_output_invalid_context");
+    const char *chars = output ? env->GetStringUTFChars(output, nullptr) : nullptr;
+    const std::string text = chars ? std::string(chars) : std::string();
+    if (chars) env->ReleaseStringUTFChars(output, chars);
+    try
+    {
+        common_chat_parser_params syntax(holder->gguf_chat_params);
+        syntax.reasoning_format = COMMON_REASONING_FORMAT_AUTO;
+        syntax.parse_tool_calls = true;
+        if (!holder->gguf_chat_params.parser.empty())
+            syntax.parser.load(holder->gguf_chat_params.parser);
+        const common_chat_msg parsed = common_chat_parse(text, isPartial == JNI_TRUE, syntax);
+        nlohmann::ordered_json result;
+        result["content"] = parsed.content;
+        result["reasoning_content"] = parsed.reasoning_content;
+        return newSafeJStringUTF(env, result.dump(), "native_parse_gguf_output");
+    }
+    catch (const std::exception &e)
+    {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "nativeParseGgufChatOutput: %s", e.what());
+        return newSafeJStringUTF(env, "{}", "native_parse_gguf_output_error");
+    }
+    catch (...)
+    {
+        return newSafeJStringUTF(env, "{}", "native_parse_gguf_output_unknown_error");
+    }
 }
 
 extern "C" JNIEXPORT jstring JNICALL

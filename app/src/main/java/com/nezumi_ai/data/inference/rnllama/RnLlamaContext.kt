@@ -66,6 +66,32 @@ class RnLlamaContext(
         })
     }
 
+    /**
+     * Render OpenAI-compatible messages using the loaded GGUF's
+     * tokenizer.chat_template through llama.cpp's native Jinja engine.
+     */
+    fun applyGgufChatTemplate(
+        messagesJson: String,
+        enableThinking: Boolean = false,
+        addGenerationPrompt: Boolean = true
+    ): String {
+        val p = ptr
+        if (p == 0L || messagesJson.isBlank()) return ""
+        return RnLlamaNative.nativeApplyGgufChatTemplate(
+            p,
+            messagesJson,
+            enableThinking,
+            addGenerationPrompt
+        )
+    }
+
+    /** Parse accumulated model output using the parser selected by the GGUF chat template. */
+    fun parseGgufChatOutput(output: String, isPartial: Boolean): String {
+        val p = ptr
+        if (p == 0L) return "{}"
+        return RnLlamaNative.nativeParseGgufChatOutput(p, output, isPartial)
+    }
+
     fun complete(
         prompt: String,
         nPredict: Int,

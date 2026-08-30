@@ -66,6 +66,24 @@ object RnLlamaNative {
     )
 
     /**
+     * Apply the model's GGUF tokenizer.chat_template to OpenAI-compatible messages.
+     * The messages argument is a JSON array of {role, content} objects.
+     */
+    external fun nativeApplyGgufChatTemplate(
+        contextPtr: Long,
+        messagesJson: String,
+        enableThinking: Boolean,
+        addGenerationPrompt: Boolean
+    ): String
+
+    /** Parse generated GGUF output into content/reasoning_content JSON. */
+    external fun nativeParseGgufChatOutput(
+        contextPtr: Long,
+        output: String,
+        isPartial: Boolean
+    ): String
+
+    /**
      * Complete prompt with model
      */
     external fun nativeComplete(

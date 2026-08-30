@@ -76,6 +76,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -2561,9 +2562,28 @@ class ChatViewModel(
                 }
             }
 
+            val nativeGgufParsed = if (
+                isGgufEngineModel(engineModelName) &&
+                PreferencesHelper.isGgufJinjaTemplateEnabled(appContext)
+            ) {
+                manager.parseGgufChatOutput(answerBuilder.toString(), isPartial = false)
+            } else {
+                null
+            }
             val completeResponse: String
             val finalThinking: String?
-            if (nativeThinkingStream) {
+            if (nativeGgufParsed != null) {
+                completeResponse = sanitizeAssistantOutputForModel(
+                    engineModelName = engineModelName,
+                    text = Gemma4ThinkingParser.sanitizeVisibleText(
+                        nativeGgufParsed.content,
+                        preserveToolCallTags = true
+                    )
+                )
+                finalThinking = Gemma4ThinkingParser.sanitizeVisibleText(
+                    nativeGgufParsed.reasoningContent
+                ).ifBlank { null }
+            } else if (nativeThinkingStream) {
                 val rawAnswer = if (config.enableThinking) {
                     answerBuilder.toString()
                 } else {
@@ -4438,13 +4458,16 @@ class ChatViewModel(
         // Tool calling can coexist with thinking directives; do not suppress thinking when tool calling is enabled.
         val enableThinkingForPrompt = enableThinking
         return if (isGgufEngine) {
-            PromptBuilder.buildForGguf(
+            buildGgufPromptFromMessages(
+                messages = recentMessages,
+                systemPrompt = systemPrompt,
+                enableThinking = enableThinkingForPrompt,
+                sanitizer = ::sanitizeMessageContentForPrompt,
+                compressedSummary = compressedSummary
+            ) ?: PromptBuilder.buildForGguf(
                 messages = recentMessages,
                 systemPrompt = systemPrompt,
                 compressedSummary = compressedSummary,
-                // Bug fix(#42): appContext を渡してユーザー選択のテンプレートモードを尊重させる。
-                //   これをしないと GPT-2 アーキテクチャの GGUF にカスタム/ChatML を割り当てても
-                //   PLAIN_COMPLETION にフォールバックされてテンプレが適用されない。
                 format = PromptBuilder.detectGgufFormat(engineModelName, appContext),
                 enableThinking = enableThinkingForPrompt,
                 modelPath = engineModelName,
@@ -4481,6 +4504,38 @@ class ChatViewModel(
 
     private fun shouldExcludeFromModelContext(msg: MessageEntity): Boolean =
         promptBuilding.shouldExcludeFromModelContext(msg)
+
+    private suspend fun buildGgufPromptFromMessages(
+        messages: List<MessageEntity>,
+        systemPrompt: String,
+        enableThinking: Boolean,
+        sanitizer: (MessageEntity) -> String,
+        compressedSummary: String? = null
+    ): String? {
+        val payload = JSONArray()
+        val finalSystem = buildString {
+            if (systemPrompt.isNotBlank()) append(systemPrompt.trim())
+            if (!compressedSummary.isNullOrBlank()) {
+                if (isNotEmpty()) append("\n\n")
+                append("以下は過去会話の圧縮コンテキストです:\n")
+                    .append(compressedSummary.trim())
+            }
+        }
+        if (finalSystem.isNotBlank()) {
+            payload.put(JSONObject().put("role", "system").put("content", finalSystem))
+        }
+        messages.forEach { message ->
+            val content = sanitizer(message)
+            if (content.isNotBlank()) {
+                val role = if (message.role == "assistant") "assistant" else "user"
+                payload.put(JSONObject().put("role", role).put("content", content))
+            }
+        }
+        return requireModelManager().formatGgufChatTemplate(
+            messagesJson = payload.toString(),
+            enableThinking = enableThinking
+        )
+    }
 
     private suspend fun buildPromptFromMessages(
         messages: List<MessageEntity>,
@@ -4531,10 +4586,14 @@ class ChatViewModel(
         // Tool calling can coexist with thinking directives; do not suppress thinking when tool calling is enabled.
         val enableThinkingForPrompt = enableThinking
         return if (isGgufEngine) {
-            PromptBuilder.buildForGguf(
+            buildGgufPromptFromMessages(
                 messages = filteredMessages,
                 systemPrompt = systemPrompt,
-                // Bug fix(#42): ユーザー選択のテンプレートモードを尊重させるため appContext を渡す。
+                enableThinking = enableThinkingForPrompt,
+                sanitizer = sanitizer
+            ) ?: PromptBuilder.buildForGguf(
+                messages = filteredMessages,
+                systemPrompt = systemPrompt,
                 format = PromptBuilder.detectGgufFormat(engineModelName, appContext),
                 enableThinking = enableThinkingForPrompt,
                 modelPath = engineModelName,

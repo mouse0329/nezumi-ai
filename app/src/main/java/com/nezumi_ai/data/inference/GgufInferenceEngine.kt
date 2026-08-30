@@ -495,6 +495,36 @@ class GgufInferenceEngine(
         //   明示的に requestForceClearBeforeNextInference() を呼んでもらうパスに限定する。
     }
 
+    data class GgufChatParseResult(
+        val content: String,
+        val reasoningContent: String
+    )
+
+    /** Parse output using the parser selected by the loaded GGUF chat template. */
+    fun parseWithGgufChatTemplate(output: String, isPartial: Boolean): GgufChatParseResult? {
+        val context = rnllamaCtx ?: return null
+        return runCatching {
+            val json = org.json.JSONObject(context.parseGgufChatOutput(output, isPartial))
+            GgufChatParseResult(
+                content = json.optString("content", ""),
+                reasoningContent = json.optString("reasoning_content", "")
+            )
+        }.getOrNull()
+    }
+
+    /** Render OpenAI-compatible messages with the loaded GGUF chat template. */
+    suspend fun formatWithGgufChatTemplate(
+        messagesJson: String,
+        enableThinking: Boolean = false
+    ): String = withContext(Dispatchers.IO) {
+        val context = rnllamaCtx ?: return@withContext ""
+        context.applyGgufChatTemplate(
+            messagesJson = messagesJson,
+            enableThinking = enableThinking,
+            addGenerationPrompt = true
+        )
+    }
+
     // ─── 推論 ─────────────────────────────────────────────────────
 
     override suspend fun inference(
