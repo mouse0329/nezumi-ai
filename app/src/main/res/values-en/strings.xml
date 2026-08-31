@@ -868,6 +868,7 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="settings_basic_settings">Basic settings</string>
     <string name="settings_cpu_threads">CPU threads</string>
     <string name="settings_gpu_layers">GPU layers (Offload)</string>
+    <string name="settings_gpu_layers_opencl_unavailable">This device does not support OpenCL, so GPU layers cannot be changed.</string>
     <string name="settings_batch_size">Batch size</string>
     <string name="settings_internal_batch_size">Internal batch size (n_ubatch)</string>
     <string name="settings_kv_unified">kvUnified</string>

@@ -7,6 +7,7 @@ import com.nezumi_ai.data.database.dao.ChatSessionDao
 import com.nezumi_ai.data.database.dao.SettingsDao
 import com.nezumi_ai.data.database.entity.SettingsEntity
 import com.nezumi_ai.data.inference.InferenceConfig
+import com.nezumi_ai.data.inference.OpenClAvailability
 import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.memory.MemorySaveMode
@@ -133,7 +134,7 @@ class SettingsRepository(
             enableSpeculativeDecoding = current.speculativeDecodingEnabled,
             backendType = backendForSelected,
             llamaCppThreads = current.llamaCppThreads,
-            llamaCppGpuLayers = current.llamaCppGpuLayers,
+            llamaCppGpuLayers = resolvedGpuLayers(current.llamaCppGpuLayers),
             llamaCppBatchSize = current.llamaCppBatchSize,
             llamaCppUBatchSize = current.llamaCppUBatchSize,
             llamaCppKvUnified = current.llamaCppKvUnified,
@@ -706,18 +707,22 @@ class SettingsRepository(
     }
 
     suspend fun getLlamaCppGpuLayers(): Int {
-        return currentSettings().llamaCppGpuLayers
+        return resolvedGpuLayers(currentSettings().llamaCppGpuLayers)
     }
 
     suspend fun updateLlamaCppGpuLayers(layers: Int) {
         val current = currentSettings()
-        val clamped = layers.coerceIn(0, 100)
+        val clamped = resolvedGpuLayers(layers.coerceIn(0, 100))
         dao.update(
             current.copy(
                 llamaCppGpuLayers = clamped,
                 lastModified = System.currentTimeMillis()
             )
         )
+    }
+
+    private fun resolvedGpuLayers(requested: Int): Int {
+        return if (OpenClAvailability.isAvailable()) requested.coerceIn(0, 100) else 0
     }
 
     suspend fun getLlamaCppBatchSize(): Int {

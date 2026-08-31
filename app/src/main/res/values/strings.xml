@@ -748,6 +748,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="settings_basic_settings">基本設定</string>
     <string name="settings_cpu_threads">CPU スレッド数</string>
     <string name="settings_gpu_layers">GPU レイヤー数 (Offload)</string>
+    <string name="settings_gpu_layers_opencl_unavailable">この端末は OpenCL 非対応のため、GPU レイヤー数は変更できません。</string>
     <string name="settings_batch_size">バッチサイズ</string>
     <string name="settings_internal_batch_size">内部バッチサイズ (n_ubatch)</string>
     <string name="settings_kv_unified">kvUnified</string>

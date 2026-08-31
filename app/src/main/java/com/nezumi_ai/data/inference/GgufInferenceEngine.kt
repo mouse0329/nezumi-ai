@@ -308,7 +308,10 @@ class GgufInferenceEngine(
                 } else {
                     getOptimalThreadCount()
                 }
-                val gpuLayers = when (normalized.backendType.uppercase()) {
+                val gpuLayers = if (!OpenClAvailability.isAvailable()) {
+                    // OpenCL 非対応端末では GPU オフロード不可。レイヤー数は常に 0。
+                    0
+                } else when (normalized.backendType.uppercase()) {
                     "GPU" -> if (normalized.llamaCppGpuLayers > 0) {
                         normalized.llamaCppGpuLayers
                     } else {

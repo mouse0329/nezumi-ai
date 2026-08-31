@@ -69,6 +69,7 @@ import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.InferenceConfig
 import com.nezumi_ai.data.inference.MemoryObserver
+import com.nezumi_ai.data.inference.OpenClAvailability
 import com.nezumi_ai.data.memory.MemorySaveMode
 import com.nezumi_ai.MyApplication
 import com.nezumi_ai.data.repository.ChatSessionRepository
@@ -124,6 +125,7 @@ class SettingsComposeFragment : Fragment() {
     private var llamaCppThreads by mutableStateOf(InferenceConfig.getDefaultThreadCount())
     private var maxThreads by mutableStateOf(InferenceConfig.MAX_THREADS)
     private var llamaCppGpuLayers by mutableStateOf(0)
+    private val openClAvailable: Boolean by lazy { OpenClAvailability.isAvailable() }
     private var llamaCppBatchSize by mutableStateOf(512)
     private var llamaCppUBatchSize by mutableStateOf(512)
     private var llamaCppKvUnified by mutableStateOf(true)
@@ -1782,11 +1784,23 @@ class SettingsComposeFragment : Fragment() {
                                 }
                                 Slider(
                                     value = llamaCppGpuLayers.toFloat(),
-                                    onValueChange = { llamaCppGpuLayers = it.roundToInt() },
+                                    onValueChange = {
+                                        if (openClAvailable) {
+                                            llamaCppGpuLayers = it.roundToInt()
+                                        }
+                                    },
                                     valueRange = 0f..128f,
                                     steps = 127,
+                                    enabled = openClAvailable,
                                     modifier = Modifier.fillMaxWidth()
                                 )
+                                if (!openClAvailable) {
+                                    Text(
+                                        text = stringResource(id = R.string.settings_gpu_layers_opencl_unavailable),
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
                             }
 
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -3391,7 +3405,7 @@ class SettingsComposeFragment : Fragment() {
             braveSearchApiKeyInput = PreferencesHelper.getBraveSearchApiKey(requireContext())
             maxThreads = InferenceConfig.MAX_THREADS
             llamaCppThreads = threads.coerceIn(1, maxThreads)
-            llamaCppGpuLayers = gpuLayers
+            llamaCppGpuLayers = if (openClAvailable) gpuLayers else 0
             llamaCppBatchSize = batchSize
             llamaCppUBatchSize = uBatchSize
             llamaCppKvUnified = settingsRepository.getLlamaCppKvUnified()
