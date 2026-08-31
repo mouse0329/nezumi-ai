@@ -370,6 +370,8 @@ open class ModelSettingsFragment : Fragment() {
                     }
                     toast("モデルを追加しました: ${File(modelPath).name}")
                     refreshImportedTasks()
+                    // ファイルインポートも「追加完了」までが完了。素の状態プリセットを即時作成する。
+                    presetRepository.ensurePlainPresetsForDownloadedModels()
                     val imported = ModelFileManager.ImportedTaskModel(
                         path = modelPath,
                         fileNameStem = File(modelPath).nameWithoutExtension,
@@ -550,12 +552,7 @@ open class ModelSettingsFragment : Fragment() {
                                 isExpanded = isExpanded,
                                 onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
                                 onDownload = { onBuiltinDownloadButtonClicked(model) },
-                                onDelete = {
-                                    val ok = ModelFileManager.deleteModel(requireContext(), model)
-                                    toast(if (ok) getString(R.string.common_deleted) else getString(R.string.common_delete_failed))
-                                    refreshModelStatus(model)
-                                    expandedModelKey = null
-                                },
+                                onDelete = { deleteBuiltinModel(model) },
                                 isDownloading = state.isDownloading,
                                 isDownloaded = state.isDownloaded,
                                 progress = state.progress,
@@ -636,12 +633,14 @@ open class ModelSettingsFragment : Fragment() {
                     item { ImportedModelsFilterBar() }
 
                     // ダウンロード済みのおすすめ LiteRT（Gemma 等）も追加済みリストに出す
-                    val downloadedBuiltins = ModelFileManager.LocalModel.entries.filter { m ->
+                    val allDownloadedBuiltins = ModelFileManager.LocalModel.entries.filter { m ->
                         m != ModelFileManager.LocalModel.GEMMA3N_2B &&
                             m != ModelFileManager.LocalModel.GEMMA3N_4B &&
                             (modelStates[m]?.isDownloaded == true ||
                                 ModelFileManager.isDownloaded(requireContext(), m))
                     }
+                    // Gemma4 等のダウンロード済み組み込みも「追加済みモデル」の検索対象にする
+                    val downloadedBuiltins = allDownloadedBuiltins.filter { matchesImportedSearch(titleFor(it)) }
                     items(downloadedBuiltins) { model ->
                         val state = modelStates[model] ?: return@items
                         val modelKey = "added_builtin_${model.name}"
@@ -653,12 +652,7 @@ open class ModelSettingsFragment : Fragment() {
                             isExpanded = isExpanded,
                             onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
                             onDownload = { onBuiltinDownloadButtonClicked(model) },
-                            onDelete = {
-                                val ok = ModelFileManager.deleteModel(requireContext(), model)
-                                toast(if (ok) getString(R.string.common_deleted) else getString(R.string.common_delete_failed))
-                                refreshModelStatus(model)
-                                expandedModelKey = null
-                            },
+                            onDelete = { deleteBuiltinModel(model) },
                             isDownloading = state.isDownloading,
                             isDownloaded = state.isDownloaded,
                             progress = state.progress,
@@ -675,7 +669,7 @@ open class ModelSettingsFragment : Fragment() {
                     }
                     
                     // 追加済みローカルモデル + クラウドモデルを同じリストに並べる
-                    if (importedTasks.isEmpty() && downloadedBuiltins.isEmpty() && cloudModels.isEmpty()) {
+                    if (importedTasks.isEmpty() && allDownloadedBuiltins.isEmpty() && cloudModels.isEmpty()) {
                         item {
                             Text(
                                 text = stringResource(id = R.string.model_settings_custom_models_empty),
@@ -684,7 +678,7 @@ open class ModelSettingsFragment : Fragment() {
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
                             )
                         }
-                    } else if (displayedImportedTasks.isEmpty() && importedTasks.isNotEmpty() && cloudModels.isEmpty()) {
+                    } else if (displayedImportedTasks.isEmpty() && downloadedBuiltins.isEmpty() && cloudModels.isEmpty()) {
                         item {
                             Text(
                                 text = stringResource(id = R.string.model_settings_custom_models_empty_search),
@@ -701,18 +695,7 @@ open class ModelSettingsFragment : Fragment() {
                                 model = model,
                                 isExpanded = isExpanded,
                                 onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
-                                onDelete = {
-                                    val result = ModelFileManager.deleteImportedTask(requireContext(), model.path)
-                                    result.onSuccess {
-                                        ImportedModelCapabilityStore.clear(requireContext(), model.path)
-                                        PromptTemplateStore.clear(requireContext(), model.path)
-                                        toast(getString(R.string.common_deleted))
-                                        refreshImportedTasks()
-                                        expandedModelKey = null
-                                    }.onFailure {
-                                        toast(getString(R.string.common_delete_failed) + ": ${it.message}")
-                                    }
-                                }
+                                onDelete = { deleteImportedModel(model) }
                             )
                         }
                     }
@@ -2587,12 +2570,7 @@ open class ModelSettingsFragment : Fragment() {
                     isExpanded = isExpanded,
                     onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
                     onDownload = { onBuiltinDownloadButtonClicked(model) },
-                    onDelete = {
-                        val ok = ModelFileManager.deleteModel(requireContext(), model)
-                        toast(if (ok) "削除しました" else "削除に失敗しました")
-                        refreshModelStatus(model)
-                        expandedModelKey = null
-                    },
+                    onDelete = { deleteBuiltinModel(model) },
                     isDownloading = state.isDownloading,
                     isDownloaded = state.isDownloaded,
                     progress = state.progress,
@@ -2630,18 +2608,7 @@ open class ModelSettingsFragment : Fragment() {
                     model = model,
                     isExpanded = isExpanded,
                     onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
-                    onDelete = {
-                        val result = ModelFileManager.deleteImportedTask(requireContext(), model.path)
-                        result.onSuccess {
-                            ImportedModelCapabilityStore.clear(requireContext(), model.path)
-                                        PromptTemplateStore.clear(requireContext(), model.path)
-                            toast("削除しました")
-                            refreshImportedTasks()
-                            expandedModelKey = null
-                        }.onFailure {
-                            toast("削除に失敗しました: ${it.message}")
-                        }
-                    }
+                    onDelete = { deleteImportedModel(model) }
                 )
             }
         }
@@ -3642,12 +3609,7 @@ open class ModelSettingsFragment : Fragment() {
                             isExpanded = isExpanded,
                             onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
                             onDownload = { onBuiltinDownloadButtonClicked(model) },
-                            onDelete = {
-                                val ok = ModelFileManager.deleteModel(requireContext(), model)
-                                toast(if (ok) "削除しました" else "削除に失敗しました")
-                                refreshModelStatus(model)
-                                expandedModelKey = null
-                            },
+                            onDelete = { deleteBuiltinModel(model) },
                             isDownloading = state.isDownloading,
                             isDownloaded = state.isDownloaded,
                             progress = state.progress,
@@ -3729,18 +3691,7 @@ open class ModelSettingsFragment : Fragment() {
                                 model = model,
                                 isExpanded = isExpanded,
                                 onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
-                                onDelete = {
-                                    val result = ModelFileManager.deleteImportedTask(requireContext(), model.path)
-                                    result.onSuccess {
-                                        ImportedModelCapabilityStore.clear(requireContext(), model.path)
-                                        PromptTemplateStore.clear(requireContext(), model.path)
-                                        toast("削除しました")
-                                        refreshImportedTasks()
-                                        expandedModelKey = null
-                                    }.onFailure {
-                                        toast("削除に失敗しました: ${it.message}")
-                                    }
-                                }
+                                onDelete = { deleteImportedModel(model) }
                             )
                         }
                     }
@@ -4501,6 +4452,42 @@ open class ModelSettingsFragment : Fragment() {
         HfAuthManager.clearToken(requireContext())
         renderHfTokenState()
         toast("ログアウトしました")
+    }
+
+    /** 追加済みモデルの検索クエリに一致するか。空クエリなら常に true。 */
+    private fun matchesImportedSearch(vararg names: String): Boolean {
+        val q = importedSearchQuery.trim()
+        return q.isEmpty() || names.any { it.contains(q, ignoreCase = true) }
+    }
+
+    private fun deleteBuiltinModel(model: ModelFileManager.LocalModel) {
+        val ok = ModelFileManager.deleteModel(requireContext(), model)
+        toast(if (ok) getString(R.string.common_deleted) else getString(R.string.common_delete_failed))
+        refreshModelStatus(model)
+        expandedModelKey = null
+        if (ok) {
+            // モデル削除 = プリセットの孤児掃除。素の状態プリセットを DB から除去して一覧へ反映。
+            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                presetRepository.ensurePlainPresetsForDownloadedModels()
+            }
+        }
+    }
+
+    private fun deleteImportedModel(model: ModelFileManager.ImportedTaskModel) {
+        val result = ModelFileManager.deleteImportedTask(requireContext(), model.path)
+        result.onSuccess {
+            ImportedModelCapabilityStore.clear(requireContext(), model.path)
+            PromptTemplateStore.clear(requireContext(), model.path)
+            toast(getString(R.string.common_deleted))
+            refreshImportedTasks()
+            expandedModelKey = null
+            // モデル削除 = プリセットの孤児掃除。素の状態プリセットを DB から除去して一覧へ反映。
+            viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                presetRepository.ensurePlainPresetsForDownloadedModels()
+            }
+        }.onFailure {
+            toast(getString(R.string.common_delete_failed) + ": ${it.message}")
+        }
     }
 
     private fun refreshImportedTasks() {

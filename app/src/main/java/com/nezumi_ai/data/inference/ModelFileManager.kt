@@ -600,6 +600,10 @@ object ModelFileManager {
                     }
                 }
             }
+            // ダウンロード完了 = リスト追加完了。インポート一覧・プリセット選択肢の
+            // キャッシュを破棄して、モデル管理画面・プリセット画面へ即時反映させる。
+            invalidateImportedListCache()
+            com.nezumi_ai.data.preset.PresetModelCatalog.invalidateCache()
             outFile
         }
     }

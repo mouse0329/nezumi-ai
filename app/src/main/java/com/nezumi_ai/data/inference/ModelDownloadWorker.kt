@@ -26,6 +26,8 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.nezumi_ai.MainActivity
 import com.nezumi_ai.R
+import com.nezumi_ai.data.database.NezumiAiDatabase
+import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.utils.ImportedModelCapabilities
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import kotlinx.coroutines.CancellationException
@@ -53,6 +55,20 @@ class ModelDownloadWorker(
                 host.endsWith(".hf.co")
         } catch (_: Exception) {
             false
+        }
+    }
+
+    /**
+     * ダウンロード完了 = 追加完了。
+     * ダウンロード済みモデルの「素の状態」プリセットを即時作成し、
+     * モデル管理画面・プリセット画面のリストへ反映させる（孤児プリセットも掃除）。
+     */
+    private suspend fun registerDownloadedModels() {
+        runCatching {
+            val db = NezumiAiDatabase.getInstance(applicationContext)
+            PresetRepository(db.presetDao(), applicationContext).ensurePlainPresetsForDownloadedModels()
+        }.onFailure {
+            Log.w(TAG, "Failed to register downloaded models as presets", it)
         }
     }
 
@@ -200,6 +216,7 @@ class ModelDownloadWorker(
             result.fold(
                 onSuccess = {
                     doSafetyModelWork() // 画像生成モデルのダウンロード完了時にセーフティモデルも確保
+                    registerDownloadedModels() // ダウンロード完了 = 追加完了（素の状態プリセットを即時作成）
                     showDownloadCompletedNotification(model, it.length(), notificationId)
                     Result.success(
                         workDataOf(
@@ -374,6 +391,7 @@ class ModelDownloadWorker(
                             )
                         )
                     }
+                    registerDownloadedModels() // ダウンロード完了 = 追加完了（素の状態プリセットを即時作成）
                     showCustomDownloadCompletedNotification(modelId, filePath, file.length())
                     Result.success(
                         workDataOf(

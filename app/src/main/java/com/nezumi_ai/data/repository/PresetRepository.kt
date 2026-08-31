@@ -188,6 +188,14 @@ class PresetRepository(
     }
 
     suspend fun ensurePlainPresetsForDownloadedModels() {
+        val downloadedIds = PresetModelCatalog.downloadedModels(context).map { it.id }.toSet()
+        // 孤児プリセットの掃除: モデルが削除されたのに残っている plain プリセットを DB から削除する。
+        // (shouldShowPreset は Room Flow の再発火待ちのため、モデルファイル削除だけでは
+        //  プリセット一覧から消えない。ここで DB を直接更新して Flow を再発火させる)
+        dao.getAll()
+            .filter { it.id.startsWith(PLAIN_PRESET_ID_PREFIX) }
+            .filter { it.id.removePrefix(PLAIN_PRESET_ID_PREFIX) !in downloadedIds }
+            .forEach { dao.delete(it) }
         PresetModelCatalog.downloadedModels(context).forEach { model ->
             // ローカル・インポート・クラウドいずれも「システムプロンプトなし・ツールなし」の
             // ロック済み plain プリセットを用意する。
