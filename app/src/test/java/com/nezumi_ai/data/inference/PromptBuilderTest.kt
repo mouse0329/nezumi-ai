@@ -314,19 +314,18 @@ class PromptBuilderTest {
     }
 
     /**
-     * Bug fix(#48): テンプレが `{{ range .History }}` だけを使う場合でも、
-     * 最後の user ターンが二重展開されないことを確認する。
-     * (以前は Prompt / Response と History の両方で同じ内容が吐かれていた)
+     * Bug fix(#48) 回帰: GGUF ヒューリスティックビルドで履歴の最後の user ターンが
+     * 二重展開されないことを確認する (以前は Prompt / Response 相当と History の両方で
+     * 同じ内容が吐かれていた)。appContext=null のためヒューリスティック経路を検証する。
      */
     @Test
-    fun customTemplate_doesNotDuplicateLastTurnWhenHistoryUsed() {
+    fun ggufHeuristicPrompt_rendersLastUserTurnOnce() {
         val messages = listOf(
             MessageEntity(sessionId = 1L, role = "user", content = "question-A", timestamp = 1L),
             MessageEntity(sessionId = 1L, role = "assistant", content = "answer-A", timestamp = 2L),
             MessageEntity(sessionId = 1L, role = "user", content = "question-B", timestamp = 3L)
         )
-        // フォールバック経路を通すため、不正なテンプレで render を失敗させても
-        // safeFallback が ChatML に値を推定して先頭の user 内容を 1 回だけ吐くことを間接的に確認できる。
+        // ヒューリスティック経路 (ChatML) で最後の user 内容が 1 回だけ吐かれることを確認する。
         val prompt = PromptBuilder.buildForGguf(
             messages = messages,
             systemPrompt = "",

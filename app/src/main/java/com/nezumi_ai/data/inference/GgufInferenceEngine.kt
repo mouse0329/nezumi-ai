@@ -9,6 +9,7 @@ import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.data.inference.rnllama.RnLlamaContext
 import com.nezumi_ai.data.inference.rnllama.RnLlamaNative
+import com.nezumi_ai.utils.GgufMetadataReader
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -388,6 +389,7 @@ class GgufInferenceEngine(
                 loadedConfig = normalized
                 lastSessionId = null  // セッションリセット
                 Log.i(TAG, "GGUF model loaded: $modelPath using rnllama backend")
+                maybeAutoEnableThinkingFromChatTemplate(modelPath)
                 Result.success(Unit)
             } catch (t: Throwable) {
                 Log.e(TAG, "loadModel failed", t)
@@ -495,13 +497,52 @@ class GgufInferenceEngine(
         //   明示的に requestForceClearBeforeNextInference() を呼んでもらうパスに限定する。
     }
 
+    /**
+     * モデルロード時の thinking 自動有効化 (要望D 関連)。
+     *
+     * GGUF の `tokenizer.chat_template` を読み、テンプレート内で `enable_thinking`
+     * (または `<|think|>` 制御トークン) を参照していれば thinking 対応モデルとみなし、
+     * capability ストアの thinkingEnabled を自動で ON にする。
+     * ユーザーが既に設定を保存済みのモデルは尊重して上書きしない。
+     */
+    private fun maybeAutoEnableThinkingFromChatTemplate(modelPath: String) {
+        runCatching {
+            val modelFile = File(modelPath)
+            if (!modelFile.isFile) return@runCatching
+            val template = GgufMetadataReader.readChatTemplate(modelFile) ?: return@runCatching
+            val supportsThinking = template.contains("enable_thinking") ||
+                template.contains("<|think|>")
+            if (!supportsThinking) return@runCatching
+            val current = ImportedModelCapabilityStore.get(appContext, modelPath)
+            if (!current.thinkingEnabled) {
+                ImportedModelCapabilityStore.set(
+                    appContext,
+                    modelPath,
+                    current.copy(thinkingEnabled = true)
+                )
+                Log.i(TAG, "Auto-enabled thinking for GGUF model (chat_template references enable_thinking): $modelPath")
+            }
+        }.onFailure { t ->
+            Log.w(TAG, "maybeAutoEnableThinkingFromChatTemplate failed for $modelPath", t)
+        }
+    }
+
     data class GgufChatParseResult(
         val content: String,
         val reasoningContent: String
     )
 
+    /** Whether a GGUF chat template has been successfully applied to the current context. */
+    fun hasGgufChatTemplate(): Boolean {
+        val context = rnllamaCtx ?: return false
+        return runCatching { context.hasGgufChatTemplate() }.getOrDefault(false)
+    }
+
     /** Parse output using the parser selected by the loaded GGUF chat template. */
     fun parseWithGgufChatTemplate(output: String, isPartial: Boolean): GgufChatParseResult? {
+        // テンプレート未適用 (native 側が "{}" しか返せない) 場合と空出力を区別するため、
+        // テンプレートが無効なら null を返して Kotlin パーサーへフォールバックさせる。
+        if (!hasGgufChatTemplate()) return null
         val context = rnllamaCtx ?: return null
         return runCatching {
             val json = org.json.JSONObject(context.parseGgufChatOutput(output, isPartial))
@@ -520,6 +561,25 @@ class GgufInferenceEngine(
         val context = rnllamaCtx ?: return@withContext ""
         context.applyGgufChatTemplate(
             messagesJson = messagesJson,
+            enableThinking = enableThinking,
+            addGenerationPrompt = true
+        )
+    }
+
+    /**
+     * Render OpenAI-compatible messages with an explicit Jinja chat template
+     * (Hugging Face chat_template compatible). ユーザー選択のカスタム/ビルトイン
+     * テンプレート用。成功時はネイティブ側にパーサーも設定される。
+     */
+    suspend fun formatWithJinjaChatTemplate(
+        messagesJson: String,
+        chatTemplate: String,
+        enableThinking: Boolean
+    ): String = withContext(Dispatchers.IO) {
+        val context = rnllamaCtx ?: return@withContext ""
+        context.applyJinjaChatTemplate(
+            messagesJson = messagesJson,
+            chatTemplate = chatTemplate,
             enableThinking = enableThinking,
             addGenerationPrompt = true
         )

@@ -76,6 +76,22 @@ object RnLlamaNative {
         addGenerationPrompt: Boolean
     ): String
 
+    /**
+     * Apply an explicit Jinja chat template (Hugging Face chat_template compatible)
+     * to OpenAI-compatible messages. Passing a non-empty chatTemplate makes llama.cpp
+     * build a temporary template for rendering and select the matching output parser.
+     */
+    external fun nativeApplyJinjaChatTemplate(
+        contextPtr: Long,
+        messagesJson: String,
+        chatTemplate: String,
+        enableThinking: Boolean,
+        addGenerationPrompt: Boolean
+    ): String
+
+    /** Whether a GGUF chat template has been successfully applied to this context. */
+    external fun nativeHasGgufChatTemplate(contextPtr: Long): Boolean
+
     /** Parse generated GGUF output into content/reasoning_content JSON. */
     external fun nativeParseGgufChatOutput(
         contextPtr: Long,

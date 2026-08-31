@@ -35,8 +35,6 @@ object PreferencesHelper {
     private const val KEY_DISABLE_SCREENSHOT = "disable_screenshot"
  // アプリ UI の言語 (i18n)。SYSTEM / JA / EN のいずれか。
     private const val KEY_LANGUAGE = "app_language"
-    // GGUF内蔵 tokenizer.chat_template を使用する実験機能。既定は無効。
-    private const val KEY_USE_GGUF_JINJA_TEMPLATE = "use_gguf_jinja_template"
 
     const val THEME_SYSTEM = "SYSTEM"
     const val THEME_LIGHT = "LIGHT"
@@ -48,17 +46,6 @@ object PreferencesHelper {
     const val LANG_SYSTEM = "SYSTEM"
     const val LANG_JA = "JA"
     const val LANG_EN = "EN"
-
-    fun isGgufJinjaTemplateEnabled(context: Context): Boolean {
-        return getSharedPreferences(context)
-            .getBoolean(KEY_USE_GGUF_JINJA_TEMPLATE, false)
-    }
-
-    fun setGgufJinjaTemplateEnabled(context: Context, enabled: Boolean) {
-        getSharedPreferences(context).edit()
-            .putBoolean(KEY_USE_GGUF_JINJA_TEMPLATE, enabled)
-            .apply()
-    }
 
     private fun getSharedPreferences(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)

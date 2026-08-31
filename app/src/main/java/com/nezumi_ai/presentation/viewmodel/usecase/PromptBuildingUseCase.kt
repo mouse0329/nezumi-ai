@@ -82,18 +82,27 @@ class PromptBuildingUseCase {
         return 0
     }
 
-    /** 可視本文用に <think>...</think> ブロックだけを取り除く。 */
+    /**
+     * 可視本文用にシンキングブロックだけを取り除く。
+     * 標準 `<think>...</think>` に加え、Qwen 3.5+ の非対称 `<|think|>...<|/think|>` も対象。
+     */
     fun stripThinkSectionsForDisplay(raw: String): String {
         if (raw.isEmpty()) return raw
         var text = raw
-        while (true) {
-            val start = text.indexOf("<think>")
-            if (start < 0) break
-            val end = text.indexOf("</think>", start)
-            text = if (end >= 0) {
-                text.removeRange(start, end + "</think>".length)
-            } else {
-                text.substring(0, start)
+        val pairs = listOf(
+            "<think>" to "</think>",
+            "<|think|>" to "<|/think|>"
+        )
+        for ((open, close) in pairs) {
+            while (true) {
+                val start = text.indexOf(open)
+                if (start < 0) break
+                val end = text.indexOf(close, start)
+                text = if (end >= 0) {
+                    text.removeRange(start, end + close.length)
+                } else {
+                    text.substring(0, start)
+                }
             }
         }
         return text.trim()

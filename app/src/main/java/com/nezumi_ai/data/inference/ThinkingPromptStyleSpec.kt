@@ -7,12 +7,10 @@ import com.nezumi_ai.data.inference.ToolCallTags
  *   - assistant プレフィル
  *   - グローバルプレフィックス
  *   - Qwen `/think` `/no_think` ソフトスイッチ差込
- *   - `{{ if .Thinking }}` テンプレ変数 ON/OFF
  * を 1 箇所に集約する。
  *
  * Bug fix: 以前は `PromptBuilder` の `assistantPrefillFor` / `thinkingGlobalPrefix` /
- * `decorateHistoryForThinkingStyle` / `buildForGgufGemma` / `buildForGgufChatMl` /
- * `buildWithCustomTemplate` の 6 箇所で同じ style flag を when 分岐していた。
+ * `buildForGgufGemma` / `buildForGgufChatMl` の複数箇所で同じ style flag を when 分岐していた。
  * どこか 1 箇所を直し忘れて Thinking ON/OFF の挙動が食い違う恐れがあったので、
  * 「style から Spec を引く」 1 段挟む形にして分岐を単一の表にまとめる。
  *
@@ -55,16 +53,6 @@ internal object ThinkingPromptStyleSpec {
     } else {
         ""
     }
-
-    /** `{{ if .Thinking }}` テンプレ変数の値。 */
-    fun thinkingTemplateFlag(
-        style: PromptBuilder.ThinkingPromptStyle,
-        enableThinking: Boolean
-    ): Boolean = enableThinking && (
-        style == PromptBuilder.ThinkingPromptStyle.ASSISTANT_TAG ||
-            style == PromptBuilder.ThinkingPromptStyle.GEMMA4_CHANNEL ||
-            style == PromptBuilder.ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL
-        )
 
     /**
      * 直近 user メッセージ末尾に `/think` / `/no_think` を差し込むべきかどうか。

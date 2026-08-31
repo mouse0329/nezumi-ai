@@ -419,6 +419,24 @@ class ModelManager(
             .takeIf { it.isNotBlank() }
     }
 
+    /**
+     * ユーザー選択の明示 Jinja テンプレートでレンダリングする。
+     * 失敗時 (空/非 GGUF) は null で呼び出し側が内蔵 GGUF テンプレートへフォールバックする。
+     */
+    suspend fun formatGgufChatTemplateWithJinja(
+        messagesJson: String,
+        chatTemplate: String,
+        enableThinking: Boolean = false
+    ): String? {
+        val engine = activeEngine as? GgufInferenceEngine ?: return null
+        return engine.formatWithJinjaChatTemplate(messagesJson, chatTemplate, enableThinking)
+            .takeIf { it.isNotBlank() }
+    }
+
+    /** 現在の GGUF コンテキストにチャットテンプレートが適用済みかどうか。 */
+    fun hasGgufChatTemplate(): Boolean =
+        (activeEngine as? GgufInferenceEngine)?.hasGgufChatTemplate() ?: false
+
     fun parseGgufChatOutput(
         output: String,
         isPartial: Boolean

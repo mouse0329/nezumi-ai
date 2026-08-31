@@ -1131,11 +1131,12 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="model_settings_display_name_label">Display name</string>
     <string name="model_settings_forbidden_filename_chars">The characters \ / : * ? \" &lt; &gt; | cannot be used.</string>
     <string name="model_settings_chat_template_title">Prompt template</string>
-    <string name="model_settings_chat_template_description">Choose a model-specific chat template. Auto-detect will infer ChatML / Gemma from the model name.</string>
+    <string name="model_settings_chat_template_description">Choose a model-specific chat template. "Auto" applies the GGUF\'s built-in chat_template, falling back to model-name heuristics when it cannot be read.</string>
     <string name="model_settings_template_auto_detect">Auto detect</string>
     <string name="model_settings_template_custom">Custom...</string>
-    <string name="model_settings_custom_template_label">Custom template</string>
-    <string name="model_settings_template_variables">Available variables: {{ .System }} / {{ .Prompt }} / {{ .Response }} / {{ .Thinking }} / {{ range .History }} {{ .Role }} {{ .Content }} {{ end }}</string>
+    <string name="model_settings_custom_template_label">Jinja template (for developers)</string>
+    <string name="model_settings_template_variables">Available variables: messages / add_generation_prompt / enable_thinking (Jinja syntax)</string>
+    <string name="model_settings_template_jinja_hint">Jinja syntax compatible with Hugging Face chat_template (for developers). The legacy Ollama format has been removed.</string>
     <string name="model_settings_stop_tokens_title">Stop tokens (comma-separated)</string>
     <string name="model_settings_additional_stop_tokens_label">Additional stop tokens</string>
     <string name="model_settings_stop_tokens_description">Added to the default stop tokens.</string>

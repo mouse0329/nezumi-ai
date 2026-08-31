@@ -97,4 +97,29 @@ class Gemma4ThinkingParserTest {
 
         assertEquals("", output)
     }
+
+    @Test
+    fun parseStreaming_splitsQwen35AsymmetricThinkTags() {
+        // Qwen 3.5+ の非対称タグ `<|think|>...<|/think|>` で思考と本文を分割できること。
+        val result = Gemma4ThinkingParser.parseStreaming("<|think|>思考<|/think|>本文")
+        assertEquals("思考", result.thinking)
+        assertEquals("本文", result.answer)
+    }
+
+    @Test
+    fun parseStreaming_handlesSeededThinkWithQwen35CloseTag() {
+        // GGUF フォールバック経路の `<think>` prefill seed と Qwen 3.5+ の
+        // 非対称閉じタグが混在するケース。本文が thinking 側に取り込まれないこと。
+        val result = Gemma4ThinkingParser.parseStreaming("\n思考<|/think|>本文")
+        assertEquals("思考", result.thinking)
+        assertEquals("本文", result.answer)
+    }
+
+    @Test
+    fun parseStreaming_qwen35AltOpenOnlyTreatedAsThinkingTail() {
+        // alt 開きタグのみ (閉じタグ未到達) はストリーミング中の思考本文として扱う。
+        val result = Gemma4ThinkingParser.parseStreaming("<|think|>まだ考えている")
+        assertEquals("まだ考えている", result.thinking)
+        assertEquals("", result.answer)
+    }
 }

@@ -85,6 +85,34 @@ class RnLlamaContext(
         )
     }
 
+    /**
+     * Render OpenAI-compatible messages using an explicit Jinja chat template
+     * (Hugging Face chat_template compatible). Used for user-selected custom /
+     * builtin templates instead of the model's embedded GGUF template.
+     */
+    fun applyJinjaChatTemplate(
+        messagesJson: String,
+        chatTemplate: String,
+        enableThinking: Boolean = true,
+        addGenerationPrompt: Boolean = true
+    ): String {
+        val p = ptr
+        if (p == 0L || messagesJson.isBlank() || chatTemplate.isBlank()) return ""
+        return RnLlamaNative.nativeApplyJinjaChatTemplate(
+            p,
+            messagesJson,
+            chatTemplate,
+            enableThinking,
+            addGenerationPrompt
+        )
+    }
+
+    /** Whether a GGUF chat template has been successfully applied to this context. */
+    fun hasGgufChatTemplate(): Boolean {
+        val p = ptr
+        return p != 0L && RnLlamaNative.nativeHasGgufChatTemplate(p)
+    }
+
     /** Parse accumulated model output using the parser selected by the GGUF chat template. */
     fun parseGgufChatOutput(output: String, isPartial: Boolean): String {
         val p = ptr

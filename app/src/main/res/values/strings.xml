@@ -1013,12 +1013,13 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="model_settings_display_name_label">表示名</string>
     <string name="model_settings_forbidden_filename_chars">記号 \ / : * ? " &lt; &gt; | は使用できません。</string>
     <string name="model_settings_chat_template_title">プロンプトテンプレート</string>
-    <string name="model_settings_chat_template_description">モデルごとのチャットテンプレートを選択します。「自動検出」ではモデル名から ChatML / Gemma を推定します。</string>
+    <string name="model_settings_chat_template_description">モデルごとのチャットテンプレートを選択します。「自動検出」では GGUF 内蔵の chat_template を読み込んで適用し、読み取れない場合はモデル名からの推定にフォールバックします。</string>
     <string name="model_settings_template_auto_detect">自動検出</string>
     <string name="model_settings_template_custom">カスタム...</string>
     <string name="model_settings_chat_template_label">チャットテンプレート</string>
-    <string name="model_settings_custom_template_label">カスタムテンプレート</string>
-    <string name="model_settings_template_variables">利用可能な変数: {{ .System }} / {{ .Prompt }} / {{ .Response }} / {{ .Thinking }} / {{ range .History }} {{ .Role }} {{ .Content }} {{ end }}</string>
+    <string name="model_settings_custom_template_label">Jinja テンプレート（開発者向け）</string>
+    <string name="model_settings_template_variables">利用可能な変数: messages / add_generation_prompt / enable_thinking（Jinja 構文）</string>
+    <string name="model_settings_template_jinja_hint">Hugging Face chat_template 互換の Jinja 構文 (開発者向け)。旧 Ollama 形式は廃止されました。</string>
     <string name="model_settings_stop_tokens_title">ストップトークン（カンマ区切り）</string>
     <string name="model_settings_additional_stop_tokens_label">追加ストップトークン</string>
     <string name="model_settings_stop_tokens_description">デフォルトのストップトークンに追加されます。</string>

@@ -13,6 +13,9 @@ object GgufMetadataReader {
     private data class CacheEntry(val summary: Summary, val lastModified: Long)
     private val cache = ConcurrentHashMap<String, CacheEntry>()
 
+    private data class ChatTemplateCacheEntry(val template: String?, val lastModified: Long)
+    private val chatTemplateCache = ConcurrentHashMap<String, ChatTemplateCacheEntry>()
+
     private const val GGUF_MAGIC = 0x46554747
 
     private const val TYPE_UINT8 = 0
@@ -40,7 +43,47 @@ object GgufMetadataReader {
         return summary
     }
 
-    fun invalidate(path: String): Boolean = cache.remove(path) != null
+    fun invalidate(path: String): Boolean {
+        chatTemplateCache.remove(path)
+        return cache.remove(path) != null
+    }
+
+    /**
+     * GGUF メタデータの `tokenizer.chat_template` を読み出す。
+     * 読み取れない場合 (非 GGUF / キーなし) は null を返す。
+     */
+    fun readChatTemplate(file: File): String? {
+        if (!file.isFile) return null
+        val lastModified = file.lastModified()
+        chatTemplateCache[file.absolutePath]?.let { entry ->
+            if (entry.lastModified == lastModified) return entry.template
+        }
+        val template = runCatching { readChatTemplateFromFile(file) }.getOrNull()
+        chatTemplateCache[file.absolutePath] = ChatTemplateCacheEntry(template, lastModified)
+        return template
+    }
+
+    private fun readChatTemplateFromFile(file: File): String? {
+        RandomAccessFile(file, "r").use { raf ->
+            val magic = raf.readLittleInt()
+            if (magic != GGUF_MAGIC) return null
+            val version = raf.readLittleUInt32()
+            if (version !in 1L..3L) return null
+            raf.readLittleUInt64() // tensorCount (不要)
+            val metadataCount = raf.readLittleUInt64()
+            var i = 0L
+            while (i < metadataCount) {
+                val key = raf.readGgufString()
+                val valueType = raf.readLittleUInt32().toInt()
+                if (key == "tokenizer.chat_template") {
+                    return readValueAsString(raf, valueType)?.takeIf { it.isNotBlank() }
+                }
+                skipValue(raf, valueType)
+                i++
+            }
+            return null
+        }
+    }
 
     private fun readSummaryFromFile(file: File): Summary {
         RandomAccessFile(file, "r").use { raf ->

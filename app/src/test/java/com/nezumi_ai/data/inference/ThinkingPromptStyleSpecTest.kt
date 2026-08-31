@@ -160,50 +160,6 @@ class ThinkingPromptStyleSpecTest {
     }
 
     @Test
-    fun thinkingTemplateFlag_onlyForPrefillAndTagStyles() {
-        // {{ if .Thinking }} テンプレ変数が ON になる style を過不足なく確認する。
-        assertTrue(
-            ThinkingPromptStyleSpec.thinkingTemplateFlag(
-                PromptBuilder.ThinkingPromptStyle.ASSISTANT_TAG,
-                enableThinking = true
-            )
-        )
-        assertTrue(
-            ThinkingPromptStyleSpec.thinkingTemplateFlag(
-                PromptBuilder.ThinkingPromptStyle.GEMMA4_CHANNEL,
-                enableThinking = true
-            )
-        )
-        assertTrue(
-            ThinkingPromptStyleSpec.thinkingTemplateFlag(
-                PromptBuilder.ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL,
-                enableThinking = true
-            )
-        )
-        // QWEN_COMMAND は directive 差込で制御するのでテンプレフラグは立てない。
-        assertFalse(
-            ThinkingPromptStyleSpec.thinkingTemplateFlag(
-                PromptBuilder.ThinkingPromptStyle.QWEN_COMMAND,
-                enableThinking = true
-            )
-        )
-        // GEMMA_PREFIX は globalPrefix で制御するのでテンプレフラグは立てない。
-        assertFalse(
-            ThinkingPromptStyleSpec.thinkingTemplateFlag(
-                PromptBuilder.ThinkingPromptStyle.GEMMA_PREFIX,
-                enableThinking = true
-            )
-        )
-        // enableThinking=false のときはどの style でも false。
-        assertFalse(
-            ThinkingPromptStyleSpec.thinkingTemplateFlag(
-                PromptBuilder.ThinkingPromptStyle.ASSISTANT_TAG,
-                enableThinking = false
-            )
-        )
-    }
-
-    @Test
     fun usesQwenSoftSwitch_onlyForQwenCommand() {
         assertTrue(
             ThinkingPromptStyleSpec.usesQwenSoftSwitch(PromptBuilder.ThinkingPromptStyle.QWEN_COMMAND)

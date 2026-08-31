@@ -39,6 +39,26 @@ class ThinkingLeakSalvageTest {
     }
 
     @Test
+    fun `extract strips closed alt think block and salvages body`() {
+        // Qwen 3.5+ の非対称タグ `<|think|>...<|/think|>` 形式。
+        val input = "<|think|>Qwen3.5の思考<|/think|>本文です"
+        val (content, salvaged) =
+            ThinkingLeakSalvage.extractThinkingFromPartialContent(input)
+        assertEquals("本文です", content)
+        assertEquals("Qwen3.5の思考", salvaged)
+    }
+
+    @Test
+    fun `extract strips unclosed alt think tail and salvages body`() {
+        // Qwen 3.5+ の非対称開きタグのみ (閉じタグ未到達) の停止ケース。
+        val input = "本文前<|think|>途中の思考"
+        val (content, salvaged) =
+            ThinkingLeakSalvage.extractThinkingFromPartialContent(input)
+        assertEquals("本文前", content)
+        assertEquals("途中の思考", salvaged)
+    }
+
+    @Test
     fun `extract handles only unclosed think from start`() {
         // 停止時、本文がまだ何も出ておらず <think> のまま止まった状況。
         // Bug fix(#47) 仕様に沿って、content 側は空にして thinking 側へ全部退避する。

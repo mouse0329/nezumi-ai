@@ -14,6 +14,7 @@ import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.ExperimentalApi
 import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.Message
+import com.google.ai.edge.litertlm.Role
 import com.google.ai.edge.litertlm.ToolCall
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.nezumi_ai.data.database.NezumiAiDatabase
@@ -143,8 +144,20 @@ class LiteRtLmEngine(
          * という動的登録の効果が得られる。ツールの見た目・名前・スキーマは今まで通り維持したまま、
          * 反映のタイミングだけを動的化する。
          */
-        val toolPrefsRevision: Int
+        val toolPrefsRevision: Int,
+        /**
+         * Bug fix (LiteRT 二重テンプレート対策): 構造化ペイロード経路では
+         * system instruction の内容が変わったら会話を作り直す必要がある
+         * (KV キャッシュの先頭が変わるため)。
+         */
+        val systemInstruction: String = ""
     )
+
+    /**
+     * 構造化ペイロード経路の「会話作り直し → 送信」間の競合を防ぐロック。
+     * (同一セッションでも内部推論と本流が並走し得るため直列化する)
+     */
+    private val structuredConversationLock = Mutex()
 
     /** セッション遷移検出用 */
     @Volatile
@@ -292,7 +305,8 @@ class LiteRtLmEngine(
     private suspend fun getOrCreateConversation(
         sessionId: Long,
         eng: Engine,
-        config: InferenceConfig
+        config: InferenceConfig,
+        structuredPayload: LiteRtStructuredPrompt.Payload? = null
     ): Conversation {
         val normalized = config.normalized()
         val builtinFp = if (normalized.enableToolCalling) {
@@ -327,7 +341,9 @@ class LiteRtLmEngine(
             mcpFp,
             // v2.1+: ツール ON/OFF / プリセット切替 / MCP サーバー集合変更を revision で拾い、
             //        モデル再ロード無しに Conversation だけを作り直せるようにする。
-            ToolPreferences.currentRevision()
+            ToolPreferences.currentRevision(),
+            // 構造化経路: system instruction の変更も Conversation 再作成トリガに含める。
+            systemInstruction = structuredPayload?.systemInstruction ?: ""
         )
         // Bug fix(#5): media を含むセッションでは KV キャッシュ再利用をやめる。
         val mustRecreateForMedia = sessionsWithMediaHistory.contains(sessionId)
@@ -386,9 +402,28 @@ class LiteRtLmEngine(
                                 "toolPrefsRevision=${ToolPreferences.currentRevision()} " +
                                 "sessionId=$sessionId"
                         )
+                        // Bug fix (LiteRT 二重テンプレート対策):
+                        //   構造化ペイロード経路では systemInstruction / initialMessages を
+                        //   ConversationConfig へ渡し、テンプレート適用はエンジンに委ねる。
+                        //   従来経路 (null) では渡さず、従来動作を維持する。
+                        val systemInstructionContents = structuredPayload?.let {
+                            if (it.systemInstruction.isBlank()) null
+                            else Contents.of(Content.Text(it.systemInstruction))
+                        }
+                        val initialMessages = structuredPayload?.let { payload ->
+                            payload.history.map { turn ->
+                                if (turn.role == "model") {
+                                    Message.of(Content.Text(turn.content)) // This might not set Role.MODEL
+                                } else {
+                                    Message.of(Content.Text(turn.content))
+                                }
+                            }
+                        }
                         val conv = try {
                             eng.createConversation(
                                 ConversationConfig(
+                                    systemInstruction = systemInstructionContents,
+                                    initialMessages = initialMessages ?: emptyList(),
                                     tools = tools,
                                     samplerConfig = samplerConfig,
                                     automaticToolCalling = false
@@ -399,6 +434,8 @@ class LiteRtLmEngine(
                             Log.w(TAG, "createConversation with tools failed; retrying without tools", toolErr)
                             eng.createConversation(
                                 ConversationConfig(
+                                    systemInstruction = systemInstructionContents,
+                                    initialMessages = initialMessages ?: emptyList(),
                                     tools = emptyList(),
                                     samplerConfig = samplerConfig,
                                     automaticToolCalling = false
@@ -1190,12 +1227,33 @@ class LiteRtLmEngine(
             close()
             return@callbackFlow
         }
+        // Bug fix (LiteRT 二重テンプレート対策):
+        //   本流チャットでは ChatViewModel から構造化ペイロード (system / history / current) が
+        //   マーカー付き JSON で届く。デコードできた場合は ConversationConfig
+        //   (systemInstruction / initialMessages) でテンプレート適用をエンジンに委ね、
+        //   現ターンのみを送信する。デコードできない場合は従来通りの単一テキスト扱い
+        //   (クラウド / 圧縮サマリー / メモリ抽出などの内部推論経路)。
+        val structuredPayload =
+            if (useExtractionConversation) null else LiteRtStructuredPrompt.decode(prompt)
+
         try {
-            Log.d(TAG, "LiteRT inference session=$sessionId images=${images.size} audio=${audioClips.size} enableThinking=${normalized.enableThinking} visionEnabled=$visionEnabled")
+            Log.d(TAG, "LiteRT inference session=$sessionId images=${images.size} audio=${audioClips.size} enableThinking=${normalized.enableThinking} visionEnabled=$visionEnabled structured=${structuredPayload != null}")
 
             val conv = if (useExtractionConversation) {
                 Log.d(TAG, "Using dedicated memory extraction conversation for session=$sessionId")
                 getOrCreateMemoryExtractionConversation(eng, normalized)
+            } else if (structuredPayload != null) {
+                // 構造化経路: Conversation API がエンジン側で履歴を管理するため、
+                // 正確性を優先して「毎ターン systemInstruction + initialMessages を載せた
+                // 会話を作り直す」。これは GGUF 経路が毎ターン全文プロンプトを再送するのと
+                // 同等のコストで、履歴編集 (削除 / バリアント切替 / 再生成) や
+                // 内部推論 (圧縮・メモリ抽出) による会話汚染の余地を完全に排除できる。
+                // (KV キャッシュ再利用は行わない。再利用を厳密にやるには assistant 応答を含む
+                //  履歴同期が必要で、不一致時の文脈破壊リスクが大きいため見送る)
+                structuredConversationLock.withLock {
+                    closeAndResetActiveConversation(sessionId)
+                    getOrCreateConversation(sessionId, eng, normalized, structuredPayload)
+                }
             } else {
                 Log.d(TAG, "Using regular chat conversation for session=$sessionId")
                 getOrCreateConversation(sessionId, eng, normalized)
@@ -1235,8 +1293,12 @@ class LiteRtLmEngine(
                     }
                 }
             }
-            if (prompt.trim().isNotEmpty()) {
-                contents.add(Content.Text(prompt))
+            // 構造化経路では prompt はマーカー付き JSON なのでそのまま送ると
+            // JSON テキストがユーザーメッセージとしてモデルに渡ってしまう。
+            // デコード済みの現ターン本文だけを送り、履歴は initialMessages / KV キャッシュに委ねる。
+            val textToSend = structuredPayload?.currentText ?: prompt
+            if (textToSend.trim().isNotEmpty()) {
+                contents.add(Content.Text(textToSend))
             }
 
             val extraContext =

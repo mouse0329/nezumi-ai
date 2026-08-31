@@ -48,6 +48,8 @@ import com.nezumi_ai.data.inference.ToolCallState
 import com.nezumi_ai.data.inference.ToolExecutionResult
 import com.nezumi_ai.data.inference.ToolResultCard
 import com.nezumi_ai.data.inference.PromptBuilder
+import com.nezumi_ai.data.inference.PromptTemplateStore
+import com.nezumi_ai.data.inference.LiteRtStructuredPrompt
 import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import com.nezumi_ai.data.preset.PresetConstants
 import com.nezumi_ai.data.skill.Skill
@@ -1938,13 +1940,26 @@ class ChatViewModel(
                 }
             }
 
-            val promptForModel = buildPromptWithSessionContext(
-                sessionId = sessionId,
-                config = config,
-                manager = manager,
-                engineModelName = engineModelName,
-                currentTurnMessageId = currentTurnMessageId
-            )
+            // LiteRT-LM 経路では Conversation API がエンジン側でチャットテンプレートを適用するため、
+            // アプリ側でテンプレート文字列を組まず構造化ペイロード (system / history / current) を送る。
+            // GGUF / クラウド / 内部推論は従来通りの単一テキストプロンプトを使う。
+            val promptForModel = if (!isGgufEngineModel(engineModelName) &&
+                !com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)
+            ) {
+                buildLiteRtStructuredPayload(
+                    sessionId = sessionId,
+                    config = config,
+                    currentTurnMessageId = currentTurnMessageId
+                )
+            } else {
+                buildPromptWithSessionContext(
+                    sessionId = sessionId,
+                    config = config,
+                    manager = manager,
+                    engineModelName = engineModelName,
+                    currentTurnMessageId = currentTurnMessageId
+                )
+            }
 
             // Bug fix: 外部インポートモデルの capability チェック。
             // GGUF（.gguf）に加え、LiteRT-LM インポート（.task / .litertlm）も同様に
@@ -2108,10 +2123,15 @@ class ChatViewModel(
             // assistant-side `<think>...</think>` prefilling. Qwen uses `/think` appended to the
             // last user turn, and Gemma uses a global `<|think|>` prefix instead; seeding `<think>`
             // for those models would misparse their outputs.
+            // ネイティブ (GGUF chat_template) 適用中はテンプレート側が prefill を制御するため、
+            // Kotlin 側の `<think>` seed は二重適用になるので抑制する。
+            val nativeGgufTemplateActive =
+                isGgufEngineModel(engineModelName) && manager.hasGgufChatTemplate()
             val implicitThinkPrefill =
                 config.enableThinking &&
                     isGgufEngineModel(engineModelName) &&
-                    PromptBuilder.usesAssistantThinkingPrefill(engineModelName)
+                    PromptBuilder.usesAssistantThinkingPrefill(engineModelName) &&
+                    !nativeGgufTemplateActive
             if (implicitThinkPrefill) {
                 answerBuilder.append("<think>\n")
             }
@@ -2404,6 +2424,34 @@ class ChatViewModel(
                                             Log.d(TAG, "CONTENT_THINKING_STATE: content_len=${contentForUi.length} thinking_len=${thinkingForUi?.length ?: 0}")
                                         }
                                     } else {
+                                        // GGUF かつネイティブ chat_template 適用済みのときは、
+                                        // llama.cpp 側のパーサー (部分パース) を優先する。
+                                        // テンプレ未適用時は null が返るため Kotlin パーサーにフォールバックする。
+                                        val nativeStreamParsed =
+                                            if (isGgufEngineModel(engineModelName)) {
+                                                runCatching {
+                                                    manager.parseGgufChatOutput(
+                                                        answerBuilder.toString(),
+                                                        isPartial = true
+                                                    )
+                                                }.getOrNull()
+                                            } else {
+                                                null
+                                            }
+                                        if (nativeStreamParsed != null) {
+                                            contentForUi =
+                                                sanitizeAssistantOutputForModel(
+                                                    engineModelName = engineModelName,
+                                                    text = Gemma4ThinkingParser.sanitizeVisibleText(
+                                                        nativeStreamParsed.content,
+                                                        preserveToolCallTags = true
+                                                    )
+                                                )
+                                            thinkingForUi =
+                                                Gemma4ThinkingParser.sanitizeVisibleText(
+                                                    nativeStreamParsed.reasoningContent
+                                                ).ifBlank { null }
+                                        } else {
                                         // With the `<think>` prefill seeded in answerBuilder, the
                                         // parser can detect thinking boundaries natively. We no
                                         // longer need `treatUnmarkedInputAsThinking`, which caused
@@ -2439,6 +2487,7 @@ class ChatViewModel(
                                                     )
                                                 )
                                             thinkingForUi = extractedThinking
+                                        }
                                         }
                                     }
                                     val now = SystemClock.elapsedRealtime()
@@ -2562,10 +2611,9 @@ class ChatViewModel(
                 }
             }
 
-            val nativeGgufParsed = if (
-                isGgufEngineModel(engineModelName) &&
-                PreferencesHelper.isGgufJinjaTemplateEnabled(appContext)
-            ) {
+            // GGUF かつネイティブ chat_template 適用済みのときは llama.cpp 側のパーサーを既定で使う。
+            // テンプレ未適用時は engine 側が null を返すため Kotlin パーサーにフォールバックする。
+            val nativeGgufParsed = if (isGgufEngineModel(engineModelName)) {
                 manager.parseGgufChatOutput(answerBuilder.toString(), isPartial = false)
             } else {
                 null
@@ -2666,7 +2714,7 @@ class ChatViewModel(
             val contentToSave =
                 when {
                     stoppedWithoutPayload -> ""  // 空の場合は空文字列を保存（後でフォールバックメッセージに置換）
-                    stoppedDuringThinkingOnly -> appContext.getString(R.string.assistant_no_response)
+                    stoppedDuringThinkingOnly -> appContext.getString(R.string.assistant_stopped_by_user)
                     note == null -> completeResponse
                     completeResponse.isNotEmpty() -> completeResponse + note
                     else -> note.trim()
@@ -2767,7 +2815,13 @@ class ChatViewModel(
                 }
             } else {
                 Log.w(TAG, "No payload generated, saving default message")
-                val emptyExplanation = messageForEmptyInferencePayload(hasMediaInput, engineModelName)
+                // ユーザー停止で何も出力が無かった場合は「生成を停止しました」を表示し、
+                // 空出力エラーダイアログは表示しない。
+                val emptyExplanation = if (collectionCancelledByUser) {
+                    appContext.getString(R.string.assistant_stopped_by_user)
+                } else {
+                    messageForEmptyInferencePayload(hasMediaInput, engineModelName)
+                }
                 if (!collectionCancelledByUser) {
                     withContext(Dispatchers.Main) {
                         _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
@@ -4029,6 +4083,94 @@ class ChatViewModel(
         return trimPromptToWindow(prompt, config.contextWindow)
     }
 
+    /**
+     * LiteRT-LM 経路の構造化ペイロードを構築する。
+     *
+     * Conversation API がエンジン側で chat template を適用・履歴管理するため、
+     * ここではテンプレート文字列を組まず system / history / current を分離した
+     * ペイロード (LiteRtStructuredPrompt) を生成する。
+     *
+     * - システムプロンプト: ユーザー名 / メモリブロック込み。thinking ON かつ Gemma4 系なら
+     *   公式仕様の `<|think|>` トリガを system instruction 内に置く。
+     * - 履歴: 現ターン (currentTurnMessageId) を除く有効メッセージを軽量サニタイズして格納。
+     *   コンテキストウィンドウに収まるよう古い側から文字数ベースで間引く。
+     * - 現ターン: 現行 user メッセージのみ (画像/音声はエンジン側で別途付与される)。
+     *
+     * なおこのペイロードは trimPromptToWindow では切り詰めない (JSON 構造を壊すため)。
+     * 履歴側で予め文字数予算を管理する。
+     */
+    private suspend fun buildLiteRtStructuredPayload(
+        sessionId: Long,
+        config: InferenceConfig,
+        currentTurnMessageId: Long?
+    ): String {
+        val rawMessages = messageRepository.getMessagesForSessionOnce(sessionId)
+        if (rawMessages.isEmpty()) return ""
+
+        // バリアント選択 / 再生成対象の除外は buildPromptWithSessionContext と同じ規則で行う。
+        val selectedMessages = applyVariantSelection(rawMessages, _selectedVariantByParent.value)
+        val regeneratingParentId = _pendingAssistantVariantSpec?.parentUserMessageId
+        val messages = if (regeneratingParentId != null && currentTurnMessageId == regeneratingParentId) {
+            selectedMessages.filterNot { msg ->
+                msg.role != "user" && msg.parentUserMessageId == regeneratingParentId
+            }
+        } else {
+            selectedMessages
+        }
+        val validMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
+
+        // 現ターン = currentTurnMessageId の user メッセージ。見つからなければ末尾の user を使う。
+        val currentMessage = validMessages.lastOrNull {
+            it.id == currentTurnMessageId && it.role == "user"
+        } ?: validMessages.lastOrNull { it.role == "user" }
+
+        // システムプロンプト (ユーザー名 + メモリ + thinking トリガ)
+        val memoryBlock = buildRelevantMemoryBlock(messages, sessionId, config.contextWindow)
+        var systemPrompt = getActiveSystemPrompt()
+        val userName = settingsRepository.getUserName()
+        if (userName.isNotEmpty()) {
+            systemPrompt = "ユーザー名：$userName\n\n$systemPrompt"
+        }
+        systemPrompt = appendMemoryBlockToSystemPrompt(systemPrompt, memoryBlock)
+        // Gemma 4 公式仕様: thinking モードは system instruction 内の <|think|> で発火させる。
+        // (enable_thinking はエンジン側が extraContext / ThinkingConfig で別途渡す)
+        val engineModelName = toEngineModelName(getActiveSelectedModel())
+        if (config.enableThinking && PromptBuilder.isGemma4Model(engineModelName)) {
+            systemPrompt =
+                if (systemPrompt.isBlank()) "<|think|>" else "<|think|>\n$systemPrompt"
+        }
+
+        // 履歴は現ターンを除く。テンプレートタグは含めないよう LiteRT 向けサニタイズを使う。
+        val historySource = validMessages.filter { it.id != currentMessage?.id }
+        val historyAll = historySource.mapNotNull { msg ->
+            val content = sanitizeMessageContentForPrompt(msg, isGgufEngine = false, isCurrentTurn = false)
+            if (content.isBlank()) return@mapNotNull null
+            val role = if (msg.role == "assistant") "model" else "user"
+            LiteRtStructuredPrompt.HistoryTurn(id = msg.id, role = role, content = content.trim())
+        }
+
+        // コンテキストウィンドウ予算 (文字数) に収まるよう、現ターンと system を引いた残りを
+        // 履歴に割り当て、古い側から間引く (推定: 1 token ≈ TOKEN_TO_CHAR_RATIO chars)。
+        val currentText = currentMessage?.let {
+            sanitizeMessageContentForPrompt(it, isGgufEngine = false, isCurrentTurn = true).trim()
+        } ?: ""
+        val budgetChars = config.contextWindow * TOKEN_TO_CHAR_RATIO
+        var remaining = budgetChars - systemPrompt.length - currentText.length
+        val history = mutableListOf<LiteRtStructuredPrompt.HistoryTurn>()
+        for (turn in historyAll.asReversed()) {
+            if (turn.content.length > remaining) break
+            history.add(0, turn)
+            remaining -= turn.content.length
+        }
+
+        return LiteRtStructuredPrompt.encode(
+            systemInstruction = systemPrompt,
+            history = history,
+            currentMessageId = currentMessage?.id,
+            currentText = currentText
+        )
+    }
+
     private suspend fun buildRelevantMemoryBlock(
         messages: List<MessageEntity>,
         sessionId: Long,
@@ -4463,7 +4605,8 @@ class ChatViewModel(
                 systemPrompt = systemPrompt,
                 enableThinking = enableThinkingForPrompt,
                 sanitizer = ::sanitizeMessageContentForPrompt,
-                compressedSummary = compressedSummary
+                compressedSummary = compressedSummary,
+                modelPath = engineModelName
             ) ?: PromptBuilder.buildForGguf(
                 messages = recentMessages,
                 systemPrompt = systemPrompt,
@@ -4510,7 +4653,8 @@ class ChatViewModel(
         systemPrompt: String,
         enableThinking: Boolean,
         sanitizer: (MessageEntity) -> String,
-        compressedSummary: String? = null
+        compressedSummary: String? = null,
+        modelPath: String = ""
     ): String? {
         val payload = JSONArray()
         val finalSystem = buildString {
@@ -4531,8 +4675,31 @@ class ChatViewModel(
                 payload.put(JSONObject().put("role", role).put("content", content))
             }
         }
+        val payloadJson = payload.toString()
+        // 優先順位:
+        //   1. ユーザーが明示的に選択したカスタム / ビルトイン Jinja テンプレート
+        //      (ネイティブ llama.cpp minja でレンダリング)
+        //   2. GGUF 内蔵の chat_template (既存動作)
+        //   3. null → 呼び出し元でモデル名判定のヒューリスティックへフォールバック
+        if (modelPath.isNotBlank()) {
+            val userTemplate = runCatching {
+                PromptTemplateStore.resolveTemplate(appContext, modelPath)
+            }.getOrNull()
+            if (!userTemplate.isNullOrBlank()) {
+                val renderedWithUserTemplate = runCatching {
+                    requireModelManager().formatGgufChatTemplateWithJinja(
+                        messagesJson = payloadJson,
+                        chatTemplate = userTemplate,
+                        enableThinking = enableThinking
+                    )
+                }.getOrNull()
+                if (renderedWithUserTemplate != null) return renderedWithUserTemplate
+                // レンダリング失敗 (旧 Ollama 形式の残存データ等) は内蔵テンプレートへフォールバック
+                Log.w(TAG, "buildGgufPromptFromMessages: user Jinja template render failed, falling back to GGUF template")
+            }
+        }
         return requireModelManager().formatGgufChatTemplate(
-            messagesJson = payload.toString(),
+            messagesJson = payloadJson,
             enableThinking = enableThinking
         )
     }
@@ -4590,7 +4757,8 @@ class ChatViewModel(
                 messages = filteredMessages,
                 systemPrompt = systemPrompt,
                 enableThinking = enableThinkingForPrompt,
-                sanitizer = sanitizer
+                sanitizer = sanitizer,
+                modelPath = engineModelName
             ) ?: PromptBuilder.buildForGguf(
                 messages = filteredMessages,
                 systemPrompt = systemPrompt,

@@ -13,9 +13,19 @@ package com.nezumi_ai.data.inference
  */
 object ThinkingLeakSalvage {
 
+    /** 対応する開き/閉じタグのペア。Qwen 3.5+ の非対称タグも含む。 */
+    private val THINK_TAG_PAIRS: List<Pair<String, String>> = listOf(
+        ToolCallTags.THINK_OPEN to ToolCallTags.THINK_CLOSE,
+        ToolCallTags.GEMMA_THINK_TRIGGER to ToolCallTags.THINK_CLOSE_ALT
+    )
+
     /**
-     * `content` から `<think>...(</think> | 末尾)` を剥がし、剥がしたテキストを
-     * Thinking 側へ退避する。
+     * `content` からシンキングブロックを剥がし、剥がしたテキストを Thinking 側へ退避する。
+     *
+     * 対応フォーマット:
+     *   - `<think>...</think>` / 未閉鎖 `<think>...`
+     *   - `<|think|>...<|/think|>` / 未閉鎖 `<|think|>...` (Qwen 3.5+ 非対称タグ)
+     *   - `<|channel>thought\n...<channel|>` / 未閉鎖 `<|channel>thought\n...` (Gemma 4)
      *
      * @return Pair(content 側に残すテキスト, thinking 側へ退避したテキスト?)
      */
@@ -23,20 +33,43 @@ object ThinkingLeakSalvage {
         if (content.isBlank()) return content to null
         val salvaged = StringBuilder()
         var remaining = content
-        // 閉鎖済み <think>...</think> ブロックを順に剥がす
-        val closedPattern = Regex("(?is)<think>(.*?)</think>")
+        for ((open, close) in THINK_TAG_PAIRS) {
+            // 閉鎖済みブロックを順に剥がす
+            val closedPattern = Regex("(?is)" + Regex.escape(open) + "(.*?)" + Regex.escape(close))
+            while (true) {
+                val m = closedPattern.find(remaining) ?: break
+                if (salvaged.isNotEmpty()) salvaged.append("\n")
+                salvaged.append(m.groupValues[1].trim())
+                remaining = remaining.removeRange(m.range)
+            }
+            // 未閉鎖 (末尾まで) を剥がす
+            val openMatch = Regex("(?i)" + Regex.escape(open)).find(remaining)
+            if (openMatch != null) {
+                val openIdx = openMatch.range.first
+                val tail = remaining.substring(openIdx)
+                val body = Regex("(?i)" + Regex.escape(open)).replaceFirst(tail, "").trim()
+                if (body.isNotEmpty()) {
+                    if (salvaged.isNotEmpty()) salvaged.append("\n")
+                    salvaged.append(body)
+                }
+                remaining = remaining.substring(0, openIdx)
+            }
+        }
+        // Gemma 4 channel 形式: 閉鎖ブロックを順に剥がす (thought ラベル込みで判定)
+        val channelOpen = ToolCallTags.CHANNEL_OPEN + ToolCallTags.THOUGHT_LABEL
+        val channelClosedPattern =
+            Regex("(?is)" + Regex.escape(channelOpen) + "(.*?)" + Regex.escape(ToolCallTags.CHANNEL_CLOSE))
         while (true) {
-            val m = closedPattern.find(remaining) ?: break
+            val m = channelClosedPattern.find(remaining) ?: break
             if (salvaged.isNotEmpty()) salvaged.append("\n")
             salvaged.append(m.groupValues[1].trim())
             remaining = remaining.removeRange(m.range)
         }
-        // 未閉鎖 <think>... (末尾まで) を剥がす
-        val openMatch = Regex("(?i)<think>").find(remaining)
-        if (openMatch != null) {
-            val openIdx = openMatch.range.first
-            val tail = remaining.substring(openIdx)
-            val body = Regex("(?i)<think>").replaceFirst(tail, "").trim()
+        // Gemma 4 channel 形式: 未閉鎖 tail を剥がす
+        val channelOpenMatch = Regex("(?i)" + Regex.escape(channelOpen)).find(remaining)
+        if (channelOpenMatch != null) {
+            val openIdx = channelOpenMatch.range.first
+            val body = remaining.substring(openIdx + channelOpen.length).trim()
             if (body.isNotEmpty()) {
                 if (salvaged.isNotEmpty()) salvaged.append("\n")
                 salvaged.append(body)

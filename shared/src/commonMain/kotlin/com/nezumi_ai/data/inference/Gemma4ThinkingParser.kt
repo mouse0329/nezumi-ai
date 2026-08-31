@@ -20,6 +20,11 @@ object Gemma4ThinkingParser {
     private const val THINK_START = ToolCallTags.THINK_OPEN
     private const val THINK_END = ToolCallTags.THINK_CLOSE
 
+    // Qwen 3.5+ の非対称シンキングタグ (`<|think|>...<|/think|>`)。
+    // 開き側は Gemma 4 の thinking トリガと同一リテラル。
+    private const val THINK_START_ALT = ToolCallTags.GEMMA_THINK_TRIGGER
+    private const val THINK_END_ALT = ToolCallTags.THINK_CLOSE_ALT
+
     /** llama.cpp の Gemma4 F16 バグで flood する <unusedNN> を一括除去するためのパターン。 */
     private val UNUSED_TOKEN_REGEX: Regex = Regex("<unused\\d+>")
 
@@ -114,8 +119,38 @@ object Gemma4ThinkingParser {
                 Gemma4ThinkingParseResult(thinking.ifBlank { null }, answer)
             }
         }
+        // Qwen 3.5+ の非対称閉じタグ `<|/think|>` で終わるブロック。
+        // seeded `<think>\n...` (標準 prefill)、`<|think|>` (alt open)、および
+        // prefill 自体が欠落したストリーミング中間状態 (`\n思考<|/think|>本文`) の全てを吸収するため、
+        // 標準 open タグのチェックより先に、閉じタグの存在だけで判定する
+        // (このタグが現れる = 未閉鎖シンキングが必ず先行する。本文側への取り込み漏れを防ぐ)。
+        if (THINK_END_ALT in trimmed) {
+            val idx = trimmed.indexOf(THINK_END_ALT)
+            val thinking = trimmed.substring(0, idx)
+                .removePrefix(THINK_START)
+                .removePrefix(THINK_START_ALT)
+                .trim()
+            val answer = sanitizeVisibleText(
+                trimmed.substring(idx + THINK_END_ALT.length),
+                preserveToolCallTags
+            )
+            return Gemma4ThinkingParseResult(thinking.ifBlank { null }, answer)
+        }
         if (trimmed.startsWith(THINK_START)) {
             val body = trimmed.removePrefix(THINK_START).trim()
+            return if (streaming) {
+                Gemma4ThinkingParseResult(body.ifBlank { null }, "")
+            } else {
+                val (thinking, remainder) = splitThinkingBySpecialToken(body)
+                Gemma4ThinkingParseResult(
+                    thinking = thinking.ifBlank { null },
+                    answer = sanitizeVisibleText(remainder, preserveToolCallTags)
+                )
+            }
+        }
+        // Qwen 3.5+ の alt 開きタグのみ (閉じタグ未到達)。思考本文のみの場合。
+        if (trimmed.startsWith(THINK_START_ALT)) {
+            val body = trimmed.removePrefix(THINK_START_ALT).trim()
             return if (streaming) {
                 Gemma4ThinkingParseResult(body.ifBlank { null }, "")
             } else {

@@ -727,6 +727,67 @@ Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeApplyGgufChatTemp
 }
 
 extern "C" JNIEXPORT jstring JNICALL
+Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeApplyJinjaChatTemplate(
+    JNIEnv *env,
+    jclass /*clazz*/,
+    jlong ctxPtr,
+    jstring messagesJson,
+    jstring chatTemplate,
+    jboolean enableThinking,
+    jboolean addGenerationPrompt)
+{
+    auto *holder = fromPtr(ctxPtr);
+    if (!holder || !holder->ctx)
+        return newSafeJStringUTF(env, "", "native_apply_jinja_template_empty_context");
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_live_holders.find(holder) == g_live_holders.end() ||
+        holder->is_released.load(std::memory_order_acquire))
+        return newSafeJStringUTF(env, "", "native_apply_jinja_template_invalid_context");
+    const char *jsonChars = messagesJson ? env->GetStringUTFChars(messagesJson, nullptr) : nullptr;
+    const std::string messages = jsonChars ? std::string(jsonChars) : std::string("[]");
+    if (jsonChars) env->ReleaseStringUTFChars(messagesJson, jsonChars);
+    const char *tplChars = chatTemplate ? env->GetStringUTFChars(chatTemplate, nullptr) : nullptr;
+    const std::string tpl = tplChars ? std::string(tplChars) : std::string();
+    if (tplChars) env->ReleaseStringUTFChars(chatTemplate, tplChars);
+    if (tpl.empty())
+        return newSafeJStringUTF(env, "", "native_apply_jinja_template_empty_template");
+    try
+    {
+        // 空でない chat_template を渡すと llama.cpp 側で一時テンプレートが構築され、
+        // 対応する出力パーサーも選択される (common_chat_templates_init 経由)。
+        const auto formatted = holder->ctx->getFormattedChatWithJinja(
+            messages, tpl, "", "", false, "", enableThinking == JNI_TRUE,
+            "auto", addGenerationPrompt == JNI_TRUE, "", {}, false);
+        holder->gguf_chat_params = formatted;
+        holder->gguf_chat_params_valid = true;
+        return newSafeJStringUTF(env, formatted.prompt, "native_apply_jinja_template");
+    }
+    catch (const std::exception &e)
+    {
+        __android_log_print(ANDROID_LOG_ERROR, TAG, "nativeApplyJinjaChatTemplate: %s", e.what());
+        return newSafeJStringUTF(env, "", "native_apply_jinja_template_error");
+    }
+    catch (...)
+    {
+        return newSafeJStringUTF(env, "", "native_apply_jinja_template_unknown_error");
+    }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeHasGgufChatTemplate(
+    JNIEnv *env, jclass /*clazz*/, jlong ctxPtr)
+{
+    auto *holder = fromPtr(ctxPtr);
+    if (!holder || !holder->ctx)
+        return JNI_FALSE;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_live_holders.find(holder) == g_live_holders.end() ||
+        holder->is_released.load(std::memory_order_acquire))
+        return JNI_FALSE;
+    return holder->gguf_chat_params_valid ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
 Java_com_nezumi_1ai_data_inference_rnllama_RnLlamaNative_nativeParseGgufChatOutput(
     JNIEnv *env, jclass /*clazz*/, jlong ctxPtr, jstring output, jboolean isPartial)
 {

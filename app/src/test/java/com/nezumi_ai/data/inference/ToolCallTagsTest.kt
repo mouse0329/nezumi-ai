@@ -36,6 +36,8 @@ class ToolCallTagsTest {
     fun thinkingTags_matchQwen3AndDeepSeekR1Spec() {
         assertEquals("<think>", ToolCallTags.THINK_OPEN)
         assertEquals("</think>", ToolCallTags.THINK_CLOSE)
+        // Qwen 3.5+ の非対称シンキング閉じタグ。
+        assertEquals("<|/think|>", ToolCallTags.THINK_CLOSE_ALT)
         // Qwen3 公式 non-thinking jinja の empty prefill と完全一致すること。
         assertEquals("<think>\n\n</think>\n\n", ToolCallTags.QWEN_EMPTY_THINK_PREFILL)
         // DeepSeek-R1 公式ドキュメント推奨の thinking prefill と完全一致すること。
@@ -60,6 +62,7 @@ class ToolCallTagsTest {
         val strip = ToolCallTags.STRIP_TOKEN_SEQUENCES
         assertTrue(ToolCallTags.THINK_OPEN in strip)
         assertTrue(ToolCallTags.THINK_CLOSE in strip)
+        assertTrue(ToolCallTags.THINK_CLOSE_ALT in strip)
         assertTrue(ToolCallTags.TOOL_CALL_OPEN in strip)
         assertTrue(ToolCallTags.TOOL_CALL_CLOSE in strip)
         assertTrue(ToolCallTags.GEMMA4_TOOL_CALL_OPEN in strip)

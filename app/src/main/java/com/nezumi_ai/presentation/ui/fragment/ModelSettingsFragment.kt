@@ -123,7 +123,6 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.platform.LocalUriHandler
-import com.nezumi_ai.data.inference.PromptTemplateEngine
 import com.nezumi_ai.data.inference.PromptTemplateStore
 import com.nezumi_ai.utils.GgufMetadataReader
 import com.nezumi_ai.utils.ImportedModelCapabilities
@@ -1294,12 +1293,17 @@ open class ModelSettingsFragment : Fragment() {
                                     capabilityDialogTemplateError = null
                                 },
                                 label = { Text(stringResource(id = R.string.model_settings_custom_template_label)) },
-                                placeholder = { Text("{{ if .System }}...{{ end }}{{ range .History }}...{{ end }}") },
+                                placeholder = { Text("{% for message in messages %}...{% endfor %}{% if add_generation_prompt %}...{% endif %}") },
                                 minLines = 5,
                                 isError = capabilityDialogTemplateError != null
                             )
                             Text(
                                 text = stringResource(id = R.string.model_settings_template_variables),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = stringResource(id = R.string.model_settings_template_jinja_hint),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -4777,7 +4781,7 @@ open class ModelSettingsFragment : Fragment() {
         val invalidChars = Regex("[\\\\/:*?\"<>|]")
         if (invalidChars.containsMatchIn(displayName)) return
         if (capabilityDialogTemplateMode == PromptTemplateStore.MODE_CUSTOM) {
-            val err = PromptTemplateEngine.validate(capabilityDialogTemplateCustom)
+            val err = PromptTemplateStore.lintJinjaTemplate(capabilityDialogTemplateCustom)
             if (err != null) {
                 capabilityDialogTemplateError = err
                 return

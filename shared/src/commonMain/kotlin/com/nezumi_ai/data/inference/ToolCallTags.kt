@@ -40,6 +40,9 @@ object ToolCallTags {
     const val THINK_OPEN = "<think>"
     const val THINK_CLOSE = "</think>"
 
+    /** Qwen 3.5+ の非対称シンキング閉じタグ。開き側は [GEMMA_THINK_TRIGGER] と同一リテラル。 */
+    const val THINK_CLOSE_ALT = "<|/think|>"
+
     /** Qwen3 公式 non-thinking jinja と同じ「空 `<think></think>`」プレフィル。 */
     const val QWEN_EMPTY_THINK_PREFILL = "<think>\n\n</think>\n\n"
 
@@ -87,6 +90,7 @@ object ToolCallTags {
         "<|eos|>",
         "<|eot_id|>",
         GEMMA_THINK_TRIGGER,     // Gemma 4 の thinking トリガが可視出力に漏れた場合の防護
+        THINK_CLOSE_ALT,         // Qwen 3.5+ の非対称閉じタグが漏れた場合の防護
         THINK_OPEN,
         THINK_CLOSE,
         TOOL_CALL_OPEN,
