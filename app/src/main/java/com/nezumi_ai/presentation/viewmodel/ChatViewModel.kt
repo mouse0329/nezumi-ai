@@ -1233,6 +1233,18 @@ class ChatViewModel(
     fun preloadActivePresetModel() {
         if (_isLoading.value || _isModelLoading.value) return
         viewModelScope.launch(Dispatchers.IO) {
+            // バグ修正: モデル削除でプリセットが未選択状態 (modelId == "") になっているとき、
+            // getActiveSelectedModel() は settingsRepository.getSelectedModel()
+            // (アプリ全体の「最後に使ったモデル」設定、実質「1番目のモデル」) に
+            // 静かにフォールバックしてしまい、ダイアログを出す前にそのモデルの
+            // 読み込みを開始してしまっていた。
+            // ここでプリセット自体の modelId が空かどうかを先に確認し、
+            // 未選択ならロードを一切開始せずに抜ける。ダイアログ表示は
+            // ChatFragment 側の checkAndShowPresetModelUnselectedDialog() が担う。
+            val currentPreset = presetRepository?.getCurrentPreset()
+            if (currentPreset != null && currentPreset.modelId.isBlank()) {
+                return@launch
+            }
             val selectedModel = getActiveSelectedModel()
             _selectedModel.value = selectedModel
             val engineModelName = toEngineModelName(selectedModel)

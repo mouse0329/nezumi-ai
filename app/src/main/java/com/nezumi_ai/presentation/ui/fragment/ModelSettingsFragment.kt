@@ -1509,6 +1509,10 @@ open class ModelSettingsFragment : Fragment() {
                                     }
                                     if (model != null) {
                                         ModelFileManager.deleteModel(requireContext(), model)
+                                        // バグ修正: 更新のための削除でも、一瞬でも
+                                        // プリセットが削除済みモデルを参照したまま残らないよう
+                                        // 孤児プリセットの掃除（model_id クリア）を行う。
+                                        presetRepository.ensurePlainPresetsForDownloadedModels()
                                         withContext(Dispatchers.Main) {
                                             refreshModelStatus(model)
                                             requestNotificationPermissionForDownload(model)
@@ -4466,7 +4470,11 @@ open class ModelSettingsFragment : Fragment() {
         refreshModelStatus(model)
         expandedModelKey = null
         if (ok) {
-            // モデル削除 = プリセットの孤児掃除。素の状態プリセットを DB から除去して一覧へ反映。
+            // モデル削除 = プリセットの孤児掃除。
+            // - plain プリセット (ロック済み・自動生成) は DB から丸ごと除去。
+            // - バグ修正: ユーザーが作成した通常のプリセットは削除せず、
+            //   削除済みモデルを指していた model_id を未選択状態にクリアする。
+            //   （そのままだと一覧に残った上、存在しないモデルで動作させようとしてしまっていた）
             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                 presetRepository.ensurePlainPresetsForDownloadedModels()
             }
@@ -4481,7 +4489,10 @@ open class ModelSettingsFragment : Fragment() {
             toast(getString(R.string.common_deleted))
             refreshImportedTasks()
             expandedModelKey = null
-            // モデル削除 = プリセットの孤児掃除。素の状態プリセットを DB から除去して一覧へ反映。
+            // モデル削除 = プリセットの孤児掃除。
+            // - plain プリセット (ロック済み・自動生成) は DB から丸ごと除去。
+            // - バグ修正: ユーザーが作成した通常のプリセットは削除せず、
+            //   削除済みモデルを指していた model_id を未選択状態にクリアする。
             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                 presetRepository.ensurePlainPresetsForDownloadedModels()
             }

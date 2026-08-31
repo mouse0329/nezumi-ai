@@ -995,6 +995,13 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="default_model_missing_open_settings">モデル管理画面を開く</string>
     <string name="default_model_missing_use_first">%1$s を使う</string>
     <string name="default_model_missing_later">あとで</string>
+    <!-- バグ修正: モデル削除により参照先を失ったプリセットのモデル再選択ダイアログ -->
+    <string name="preset_model_unselected_title">モデルが選択されていません</string>
+    <string name="preset_model_unselected_message">「%1$s」が使用していたモデルは削除されました。このプリセットで使うモデルを選択してください。</string>
+    <string name="preset_model_unselected_no_models">利用可能なモデルがありません。モデル管理画面でモデルをダウンロードするか、クラウドモデルを追加してください。</string>
+    <string name="preset_model_unselected_confirm">このモデルを使う</string>
+    <string name="preset_model_unselected_open_settings">モデル管理画面を開く</string>
+    <string name="preset_model_unselected_later">あとで</string>
     <string name="model_settings_sd_zip_select">SD モデル zip を選択</string>
     <string name="model_settings_sd_zip_formats">対応形式: unet.mnn / clip*.mnn / vae_decoder*.mnn + (tokenizer.json または pos_emb.bin+token_emb.bin)</string>
     <string name="model_settings_sd_zip_select_failed">zip を選択できませんでした: %1$s</string>

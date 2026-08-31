@@ -49,6 +49,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import com.nezumi_ai.presentation.ui.composable.SvgSpinner
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -253,6 +254,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private val autoFollowBottomThresholdPx = 120
     private var lastKnownScrollRange = 0
     private var lastObservedPresetId: String? = null
+    // バグ修正: モデル削除でプリセットが未選択状態になった際のダイアログが
+    // onResume のたびに重複して出ないようにするためのガード。
+    private var presetModelUnselectedDialogShownForPresetId: String? = null
     private var pendingInitialScrollToBottom = true
     // 生成中にユーザーが意図的に上スクロールしたときだけ true。
     // 最下部に戻るか送信するとリセット。
@@ -861,6 +865,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         .firstOrNull()
                 }
                 showDefaultModelMissingDialog(first?.label)
+            } else {
+                // バグ修正: モデル削除によって「現在選択中のプリセット」が
+                // モデル未選択状態になっているケースをここでも検知する。
+                // (デフォルトプリセット自体は正常でも、ユーザーが選んだ別プリセットが
+                //  孤児化している場合があるため、isDefaultPresetModelAvailable とは別チェック)
+                checkAndShowPresetModelUnselectedDialog()
             }
         }
 
@@ -1775,6 +1785,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 } else {
                     lastObservedPresetId = currentPresetId
                 }
+
+                // バグ修正: モデル管理画面でモデルを削除して戻ってきたときに、
+                // 選択中のプリセットが未選択状態になっていないかここでも確認する。
+                checkAndShowPresetModelUnselectedDialog()
             }
         }
     }
@@ -2418,6 +2432,151 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     }
                     TextButton(onClick = onLater) {
                         Text(stringResource(id = R.string.default_model_missing_later))
+                    }
+                }
+            }
+        )
+    }
+
+    /**
+     * バグ修正: モデル削除で現在のプリセットが未選択状態になっていないか確認し、
+     * なっていればモデル再選択ダイアログを出す。
+     * 同じプリセットに対しては、ダイアログを閉じる/選択するまで再表示しない
+     * ([presetModelUnselectedDialogShownForPresetId] でガード)。
+     */
+    private fun checkAndShowPresetModelUnselectedDialog() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val preset = withContext(Dispatchers.IO) { presetRepository.getCurrentPreset() }
+            if (preset == null || preset.modelId.isNotBlank()) {
+                return@launch
+            }
+            if (presetModelUnselectedDialogShownForPresetId == preset.id) {
+                return@launch
+            }
+            presetModelUnselectedDialogShownForPresetId = preset.id
+            val options = withContext(Dispatchers.IO) {
+                com.nezumi_ai.data.preset.PresetModelCatalog.downloadedModels(requireContext())
+            }
+            showPresetModelUnselectedDialog(preset, options)
+        }
+    }
+
+    /**
+     * 「モデルが削除されて未選択状態になったプリセット」向けのモデル再選択モーダル。
+     * 利用可能なモデル一覧から選んでもらい、そのプリセットに割り当てる。
+     */
+    private fun showPresetModelUnselectedDialog(
+        preset: com.nezumi_ai.data.database.entity.PresetEntity,
+        options: List<com.nezumi_ai.data.preset.PresetModelOption>
+    ) {
+        val dialog = android.app.Dialog(requireContext())
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setCancelable(true)
+
+        val composeView = androidx.compose.ui.platform.ComposeView(requireContext()).apply {
+            setViewTreeLifecycleOwner(viewLifecycleOwner)
+            setViewTreeViewModelStoreOwner(this@ChatFragment)
+            setViewTreeSavedStateRegistryOwner(this@ChatFragment)
+            setContent {
+                NezumiComposeTheme {
+                    PresetModelUnselectedDialog(
+                        presetName = "${preset.icon} ${preset.name}".trim(),
+                        options = options,
+                        onConfirm = { selectedModelId ->
+                            dialog.dismiss()
+                            viewLifecycleOwner.lifecycleScope.launch {
+                                withContext(Dispatchers.IO) {
+                                    presetRepository.assignModelToPreset(preset.id, selectedModelId)
+                                }
+                                presetModelUnselectedDialogShownForPresetId = null
+                                refreshPresetHeader()
+                                viewModel.preloadActivePresetModel()
+                            }
+                        },
+                        onOpenSettings = {
+                            dialog.dismiss()
+                            runCatching {
+                                findNavController().navigate(R.id.modelSettingsFragment)
+                            }
+                        },
+                        onLater = { dialog.dismiss() }
+                    )
+                }
+            }
+        }
+
+        dialog.setContentView(composeView)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.show()
+    }
+
+    @Composable
+    private fun PresetModelUnselectedDialog(
+        presetName: String,
+        options: List<com.nezumi_ai.data.preset.PresetModelOption>,
+        onConfirm: (String) -> Unit,
+        onOpenSettings: () -> Unit,
+        onLater: () -> Unit
+    ) {
+        var selectedId by remember(options) { mutableStateOf(options.firstOrNull()?.id ?: "") }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = onLater,
+            title = { Text(stringResource(id = R.string.preset_model_unselected_title)) },
+            text = {
+                Column {
+                    Text(
+                        stringResource(
+                            id = R.string.preset_model_unselected_message,
+                            presetName
+                        )
+                    )
+                    if (options.isEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(stringResource(id = R.string.preset_model_unselected_no_models))
+                    } else {
+                        Spacer(Modifier.height(8.dp))
+                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                            options.forEach { option ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { selectedId = option.id },
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                        selected = selectedId == option.id,
+                                        onClick = { selectedId = option.id }
+                                    )
+                                    Text(option.label)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                if (options.isNotEmpty()) {
+                    TextButton(
+                        onClick = { onConfirm(selectedId) },
+                        enabled = selectedId.isNotBlank()
+                    ) {
+                        Text(stringResource(id = R.string.preset_model_unselected_confirm))
+                    }
+                } else {
+                    TextButton(onClick = onOpenSettings) {
+                        Text(stringResource(id = R.string.preset_model_unselected_open_settings))
+                    }
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (options.isNotEmpty()) {
+                        TextButton(onClick = onOpenSettings) {
+                            Text(stringResource(id = R.string.preset_model_unselected_open_settings))
+                        }
+                    }
+                    TextButton(onClick = onLater) {
+                        Text(stringResource(id = R.string.preset_model_unselected_later))
                     }
                 }
             }

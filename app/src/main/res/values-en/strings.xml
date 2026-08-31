@@ -1115,6 +1115,13 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="default_model_missing_open_settings">Open model settings</string>
     <string name="default_model_missing_use_first">Use %1$s</string>
     <string name="default_model_missing_later">Later</string>
+    <!-- Bug fix: model re-selection dialog for presets that lost their model on deletion -->
+    <string name="preset_model_unselected_title">No model selected</string>
+    <string name="preset_model_unselected_message">The model used by "%1$s" was deleted. Please choose a model for this preset.</string>
+    <string name="preset_model_unselected_no_models">No models are available. Open the model management screen to download a model or add a cloud model.</string>
+    <string name="preset_model_unselected_confirm">Use this model</string>
+    <string name="preset_model_unselected_open_settings">Open model settings</string>
+    <string name="preset_model_unselected_later">Later</string>
     <string name="model_settings_sd_zip_select">Select SD model zip</string>
     <string name="model_settings_sd_zip_formats">Supported formats: unet.mnn / clip*.mnn / vae_decoder*.mnn + (tokenizer.json or pos_emb.bin+token_emb.bin)</string>
     <string name="model_settings_sd_zip_select_failed">Unable to select zip: %1$s</string>

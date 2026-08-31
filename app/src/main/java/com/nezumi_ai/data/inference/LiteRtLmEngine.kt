@@ -406,16 +406,27 @@ class LiteRtLmEngine(
                         //   構造化ペイロード経路では systemInstruction / initialMessages を
                         //   ConversationConfig へ渡し、テンプレート適用はエンジンに委ねる。
                         //   従来経路 (null) では渡さず、従来動作を維持する。
+                        //
+                        // Bug fix: Message.of(text) は @Deprecated であり、実装は常に
+                        //   Message.user(text) のエイリアス (= Role.USER 固定) になっている。
+                        //   これを assistant (model) ターンの履歴にも使っていたため、
+                        //   Conversation API に渡る initialMessages が「全ターン USER ロール」に
+                        //   なってしまい、エンジン側のチャットテンプレート適用時に
+                        //   user/model のロール境界が失われ、ロールタグや発話が本文へ
+                        //   混入する不具合 (見かけ上「テンプレートが二重にかかっている」ような
+                        //   壊れた出力) を引き起こしていた。
+                        //   Message.user() / Message.model() を明示的に使い分けて正しいロールで渡す。
                         val systemInstructionContents = structuredPayload?.let {
                             if (it.systemInstruction.isBlank()) null
                             else Contents.of(Content.Text(it.systemInstruction))
                         }
                         val initialMessages = structuredPayload?.let { payload ->
                             payload.history.map { turn ->
+                                val content = Content.Text(turn.content)
                                 if (turn.role == "model") {
-                                    Message.of(Content.Text(turn.content)) // This might not set Role.MODEL
+                                    Message.model(Contents.of(content))
                                 } else {
-                                    Message.of(Content.Text(turn.content))
+                                    Message.user(Contents.of(content))
                                 }
                             }
                         }

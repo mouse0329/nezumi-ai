@@ -192,16 +192,53 @@ class PresetRepository(
         // 孤児プリセットの掃除: モデルが削除されたのに残っている plain プリセットを DB から削除する。
         // (shouldShowPreset は Room Flow の再発火待ちのため、モデルファイル削除だけでは
         //  プリセット一覧から消えない。ここで DB を直接更新して Flow を再発火させる)
-        dao.getAll()
+        val allPresets = dao.getAll()
+        allPresets
             .filter { it.id.startsWith(PLAIN_PRESET_ID_PREFIX) }
             .filter { it.id.removePrefix(PLAIN_PRESET_ID_PREFIX) !in downloadedIds }
             .forEach { dao.delete(it) }
+        // バグ修正: モデル削除時、ユーザーが作成した（plain でない）プリセットが
+        // 削除済みモデルの model_id を参照したまま残ってしまう問題への対処。
+        // 以前は plain プリセットしか掃除しておらず、通常のプリセットは
+        // 存在しないモデル ID を持ったまま一覧に残り続け、選択すると
+        // 実在しないモデルでロードを試みて失敗していた。
+        // ここでは該当プリセットを削除するのではなく model_id を未選択 ("") に
+        // クリアし、ユーザーがそのプリセット向けに改めてモデルを選び直せるようにする。
+        val now = System.currentTimeMillis()
+        allPresets
+            .filterNot { it.isLocked }
+            .filter { it.modelId.isNotBlank() && it.modelId !in downloadedIds }
+            .forEach { orphaned ->
+                dao.update(orphaned.copy(modelId = "", updatedAt = now))
+            }
         PresetModelCatalog.downloadedModels(context).forEach { model ->
             // ローカル・インポート・クラウドいずれも「システムプロンプトなし・ツールなし」の
             // ロック済み plain プリセットを用意する。
             // クラウドは isConfigured が false になると shouldShowPreset で一覧から消える。
             ensurePlainPreset(model.id, model.label)
         }
+    }
+
+    /** 指定プリセットがモデル未選択状態か（バグ修正: モデル削除で孤児化した場合を検知するため）。 */
+    suspend fun isPresetModelUnselected(id: String): Boolean {
+        val preset = dao.getById(id) ?: return false
+        return preset.modelId.isBlank()
+    }
+
+    /**
+     * モデル未選択状態のプリセットに、モデルを割り当てる。
+     * ダイアログ「そのプリセットでモデルを選択してください」の確定操作から呼ばれる。
+     * plain プリセットのようにロックされている場合でも model_id の更新は許可する
+     * （ロックは「ユーザーによる自由編集の禁止」であり、モデル再割当はシステム側の復旧操作のため）。
+     */
+    suspend fun assignModelToPreset(id: String, modelId: String): Boolean {
+        if (modelId.isBlank()) return false
+        val preset = dao.getById(id) ?: return false
+        dao.update(preset.copy(modelId = modelId, updatedAt = System.currentTimeMillis()))
+        if (PreferencesHelper.getCurrentPresetId(context) == id) {
+            dao.getById(id)?.let { applyPresetTools(it) }
+        }
+        return true
     }
 
     private suspend fun ensurePlainPreset(modelId: String, displayName: String) {
