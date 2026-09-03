@@ -1,5 +1,7 @@
 package com.nezumi_ai.data.inference
 
+import kotlin.math.roundToInt
+
 data class InferenceConfig(
     val contextWindow: Int = 4096,
     val contextCompressionEnabled: Boolean = false,
@@ -15,7 +17,7 @@ data class InferenceConfig(
     /** LiteRT-LM のロード時に vision/audio executor を必須化する。 */
     val requireMultimodal: Boolean = false,
     // llama.cpp settings (最適化版 - Gallery 相準化)
- val llamaCppThreads: Int = 0, // 0 は端末コア数に応じて自動設定
+    val llamaCppThreads: Int = getDefaultThreadCount(),
     val llamaCppGpuLayers: Int = 0,  // GPU 無効化（Tensor G3 は OpenCL 非対応）
  val llamaCppBatchSize: Int = 512, // バッチサイズをデフォルトに戻す：32 → 512
     val llamaCppUBatchSize: Int = 512,  // n_ubatch を独立制御できるように準備
@@ -93,7 +95,11 @@ data class InferenceConfig(
 
         fun getDefaultThreadCount(): Int {
             val availableCores = Runtime.getRuntime().availableProcessors()
-            return availableCores.coerceIn(MIN_THREADS, MAX_THREADS)
+            return (availableCores * 0.7f).roundToInt().coerceIn(MIN_THREADS, availableCores)
+        }
+
+        fun getMaxThreadCount(): Int {
+            return Runtime.getRuntime().availableProcessors().coerceIn(MIN_THREADS, MAX_THREADS)
         }
     }
 

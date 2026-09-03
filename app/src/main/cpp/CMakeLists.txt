@@ -13,6 +13,7 @@ option(LLAMA_BRIDGE_VULKAN "Enable Vulkan backend for llama_bridge (vendor/llama
 # 一括適用すると NDK clang のコンパイルメモリを圧迫するため、-O1 に留める。
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O1 -DNDEBUG")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O1 -DNDEBUG")
+
 # =========================
 # 本家 llama.cpp (vendor) — llama_bridge 用
 # =========================
@@ -21,10 +22,11 @@ set(LLAMA_CPP_UPSTREAM_DIR ${CMAKE_SOURCE_DIR}/../vendor/llama.cpp)
 
 if(EXISTS ${LLAMA_CPP_UPSTREAM_DIR}/CMakeLists.txt)
     # --- クロスコンパイル必須設定 ---
-    set(GGML_NATIVE OFF CACHE BOOL "" FORCE)     # ホストCPUではなくAndroidターゲット向けにビルド
-    set(GGML_OPENMP OFF CACHE BOOL "" FORCE)     # NDKにOpenMPパッケージが無い
-    set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)  # Android未対応
-    set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)   # NDK stable API に無い
+    set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+    set(GGML_CPU_ARM_ARCH "armv8.7a" CACHE STRING "" FORCE)
+    set(GGML_OPENMP OFF CACHE BOOL "" FORCE)      # NDK に OpenMP パッケージが無い
+    set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)   # Android 未対応
+    set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)    # NDK stable API に無い
 
     # --- 不要な成果物を作らない（ライブラリのみ欲しい） ---
     set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -33,27 +35,38 @@ if(EXISTS ${LLAMA_CPP_UPSTREAM_DIR}/CMakeLists.txt)
     set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
     set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
     set(LLAMA_BUILD_COMMON ON CACHE BOOL "" FORCE) # チャットテンプレート等で後々必要
-    set(LLAMA_BUILD_MTMD ON CACHE BOOL "" FORCE)    # マルチモーダル(mtmd)ライブラリを生成
+    set(LLAMA_BUILD_MTMD ON CACHE BOOL "" FORCE)   # マルチモーダル (mtmd) ライブラリを生成
 
     # --- バックエンド ---
-    set(GGML_CPU_REPACK ON CACHE BOOL "" FORCE)
+    set(GGML_CPU_REPACK ON CACHE BOOL "" FORCE)   # 量子化 GEMM の速度を優先
     set(GGML_VULKAN ${LLAMA_BRIDGE_VULKAN} CACHE BOOL "" FORCE)
+
+    if(ANDROID_ABI STREQUAL "arm64-v8a")
+        set(GGML_CPU_KLEIDIAI ON CACHE BOOL "" FORCE)
+    endif()
 
     # llama_bridge と vendor ライブラリを同じプロセスで安全に扱うため STATIC 指定
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
     add_subdirectory(${LLAMA_CPP_UPSTREAM_DIR} ${CMAKE_BINARY_DIR}/llama_cpp_upstream)
 
-    # Keep the Android Debug build usable while optimizing the hot inference
-    # targets. Applying -O3 to every model translation unit can exhaust NDK
-    # compiler memory; -O2 gives the core kernels a useful optimization level.
-    foreach(LLAMA_HOT_TARGET llama ggml ggml-base ggml-cpu mtmd llama-common)
+        # Keep the app itself in Debug while compiling the llama.cpp inference
+        # targets with Release-level optimization in every app build variant.
+    foreach(LLAMA_HOT_TARGET llama ggml ggml-base ggml-cpu mtmd llama-common kleidiai)
         if(TARGET ${LLAMA_HOT_TARGET})
-            target_compile_options(${LLAMA_HOT_TARGET} PRIVATE -O2)
+            target_compile_options(${LLAMA_HOT_TARGET} PRIVATE
+                -O3)
+            target_compile_definitions(${LLAMA_HOT_TARGET} PRIVATE NDEBUG)
+            # Android ABI 固有の最適化
+            if(ANDROID_ABI STREQUAL "arm64-v8a")
+                target_compile_options(${LLAMA_HOT_TARGET} PRIVATE
+                    -march=armv8.7a
+                )
+            endif()
         endif()
     endforeach()
 else()
-    message(WARNING "vendor/llama.cpp が見つかりません。llama_bridge はビルドされません: ${LLAMA_CPP_UPSTREAM_DIR}")
+    message(WARNING "vendor/llama.cpp が見つかりません。llama_bridge はビルドされません：${LLAMA_CPP_UPSTREAM_DIR}")
 endif()
 
 if(TARGET llama)
@@ -63,12 +76,12 @@ if(TARGET llama)
     target_compile_features(llama_bridge PRIVATE cxx_std_17)
 
     set(LLAMA_BRIDGE_LINK_LIBS llama ${LOG_LIB} android)
-    # llama-common: チャットテンプレート(minja/Jinja)実装で後続フェーズにて使用。
+    # llama-common: チャットテンプレート (minja/Jinja) 実装で後続フェーズにて使用。
     # 今はリンクのみ通しておき、llama_bridge.cpp からは未参照でも問題ない。
     if(TARGET llama-common)
         list(APPEND LLAMA_BRIDGE_LINK_LIBS llama-common)
     endif()
-    # mtmd: マルチモーダル(画像/音声)統合
+    # mtmd: マルチモーダル (画像/音声) 統合
     if(TARGET mtmd)
         list(APPEND LLAMA_BRIDGE_LINK_LIBS mtmd)
     endif()

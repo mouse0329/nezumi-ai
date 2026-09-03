@@ -62,6 +62,13 @@ struct NezumiLlamaCtx
     // チャットテンプレート (GGUF 埋め込み)。llamaFree で解放する。
     common_chat_templates *chat_templates = nullptr;
 
+    // 直近の common_chat_templates_apply() 結果。旧 rnllama 方式
+    // (NezumiRnLlamaJni.cpp の gguf_chat_params) と同様にキャッシュし、
+    // nativeParseGgufChatOutput でテンプレート対応パーサーによる
+    // content / reasoning_content 分離に再利用する。
+    common_chat_params chat_params;
+    bool chat_params_valid = false;
+
     int n_ctx = 0;
     int n_batch = 512;
     int n_ubatch = 512;
@@ -1060,6 +1067,9 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyGgufChatTemplate(
     try
     {
         common_chat_params params = common_chat_templates_apply(nc->chat_templates, inputs);
+        // パース用に params 全体をキャッシュ (旧 rnllama の gguf_chat_params と同等)
+        nc->chat_params = params;
+        nc->chat_params_valid = true;
         return utf8_to_jstring(env, params.prompt);
     }
     catch (const std::exception &e)
@@ -1107,6 +1117,9 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyJinjaChatTemplate(
             return env->NewStringUTF("");
         }
         common_chat_params params = common_chat_templates_apply(tmpls.get(), inputs);
+        // 明示テンプレートでも同様にキャッシュし、対応パーサーで分離できるようにする
+        nc->chat_params = params;
+        nc->chat_params_valid = true;
         return utf8_to_jstring(env, params.prompt);
     }
     catch (const std::exception &e)
@@ -1123,7 +1136,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeHasGgufChatTemplate(
     jlong j_ctx)
 {
     auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
-    return (nc && nc->chat_templates) ? JNI_TRUE : JNI_FALSE;
+    return (nc && nc->chat_params_valid) ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -1143,16 +1156,19 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeParseGgufChatOutput(
     nlohmann::ordered_json result;
     try
     {
-        if (nc && nc->chat_templates)
+        if (nc && nc->chat_params_valid)
         {
-            // テンプレートに対応するパーサーで content / reasoning_content を分離
-            common_chat_templates_inputs inputs;
-            inputs.use_jinja = true;
-            common_chat_params chat_params = common_chat_templates_apply(nc->chat_templates, inputs);
-
-            common_chat_parser_params parser_params(chat_params);
-            parser_params.reasoning_format = COMMON_REASONING_FORMAT_DEEPSEEK;
-            parser_params.parse_tool_calls = false;
+            // テンプレート適用時にキャッシュした params から、テンプレートが選択した
+            // フォーマット/パーサーで content / reasoning_content を分離する
+            // (旧 rnllama 方式 nativeParseGgufChatOutput と同等)。
+            common_chat_parser_params parser_params(nc->chat_params);
+            parser_params.reasoning_format = COMMON_REASONING_FORMAT_AUTO;
+            parser_params.parse_tool_calls = true;
+            if (!nc->chat_params.parser.empty())
+            {
+                // PEG ベースのフォーマット (COMMON_CHAT_FORMAT_PEG_*) に対応
+                parser_params.parser.load(nc->chat_params.parser);
+            }
 
             common_chat_msg msg = common_chat_parse(output_str, is_partial, parser_params);
             result["content"] = msg.content;
