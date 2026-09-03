@@ -379,6 +379,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaSample(
         nc->sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
         llama_sampler_chain_add(nc->sampler,
                                 llama_sampler_init_penalties(
+                                    /* n_vocab */ llama_vocab_n_tokens(llama_model_get_vocab(nc->model)),
                                     /* last_n */ 64,
                                     /* repeat_penalty */ repeat_penalty,
                                     /* frequency_penalty */ 0.0f,

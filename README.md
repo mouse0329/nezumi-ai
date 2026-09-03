@@ -56,6 +56,7 @@ git clone https://github.com/mouse0329/nezumi-ai.git
 cd nezumi-ai
 
 # 2. サブモジュールを初期化
+# （app/src/main/vendor/llama.cpp: llama_bridge (JNI) がリンクする本家 llama.cpp）
 git submodule update --init --recursive
 
 # 3. local.properties を設定
@@ -65,6 +66,12 @@ git submodule update --init --recursive
 ./gradlew assembleDebug      # Debug APK
 ./gradlew assembleRelease    # Release APK (署名設定必須)
 ```
+
+> **既にクローン済みでサブモジュールだけ後から取得したい場合**
+> ```bash
+> git submodule update --init --recursive
+> ```
+> を忘れると `app/src/main/vendor/llama.cpp` が空のままとなり、`llama_bridge` ターゲットのビルドがスキップされます（CMake側で警告を出しつつ他のターゲットは継続します）。
 
 ### local.properties の設定
 
