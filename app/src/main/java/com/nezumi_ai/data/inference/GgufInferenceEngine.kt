@@ -7,8 +7,6 @@ import com.google.ai.edge.litertlm.ToolCall
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import com.nezumi_ai.data.repository.MemoryRepository
-import com.nezumi_ai.data.inference.rnllama.RnLlamaContext
-import com.nezumi_ai.data.inference.rnllama.RnLlamaNative
 import com.nezumi_ai.utils.GgufMetadataReader
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import kotlinx.coroutines.CancellationException
@@ -141,9 +139,9 @@ class GgufInferenceEngine(
         private fun getOptimalThreadCount(): Int {
             val cores = Runtime.getRuntime().availableProcessors()
             // 物理コア数の推定（ハイパースレッディング考慮）
-            val physicalCores = (cores / 2).coerceAtLeast(1)
-            // 推論には物理コア数 - 1 を使用（UIスレッド用に1コア残す）
-            return (physicalCores - 1).coerceAtLeast(2).coerceAtMost(8)
+            // Android の big.LITTLE 構成では availableProcessors が実行可能な
+            // CPU 数を返すため、固定値 4 より端末に合わせた方が prompt/decode が速い。
+            return (cores - 1).coerceAtLeast(2).coerceAtMost(8)
         }
 
         internal fun resolveNativeGenerationSettings(
@@ -220,8 +218,8 @@ class GgufInferenceEngine(
     private val inferenceMutex = Mutex()
     private val inferenceMutexHeld = AtomicBoolean(false)
 
-    /** llama.cpp コンテキスト（rnllama経由） */
-    @Volatile private var rnllamaCtx: RnLlamaContext? = null
+    /** Direct vendor/llama.cpp context. */
+    @Volatile private var llamaCppCtx: LlamaCppContext? = null
 
     @Volatile private var loadedModelPath: String? = null
     @Volatile private var loadedConfig: InferenceConfig? = null
@@ -279,8 +277,8 @@ class GgufInferenceEngine(
                     )
 
                 val modelPath = modelFile.absolutePath
-                if (rnllamaCtx != null &&
-                    rnllamaCtx!!.isValid &&
+                if (llamaCppCtx != null &&
+                    llamaCppCtx!!.isValid &&
                     loadedModelPath == modelPath &&
                     loadedConfig == normalized
                 ) {
@@ -308,26 +306,17 @@ class GgufInferenceEngine(
                 } else {
                     getOptimalThreadCount()
                 }
-                val gpuLayers = if (!OpenClAvailability.isAvailable()) {
-                    // OpenCL 非対応端末では GPU オフロード不可。レイヤー数は常に 0。
-                    0
-                } else when (normalized.backendType.uppercase()) {
-                    "GPU" -> if (normalized.llamaCppGpuLayers > 0) {
-                        normalized.llamaCppGpuLayers
-                    } else {
-                        getAdaptiveGpuLayers(normalized.backendType)
-                    }
-                    // NPU/その他は llama.cpp では GPU オフロード不可 → 0
-                    else -> 0
-                }
+                // Direct vendor/llama.cpp is currently built with Vulkan disabled;
+                // OpenCL availability alone cannot enable its GPU backend.
+                val gpuLayers = 0
                 val nativeSettings = resolveNativeGenerationSettings(modelPath, normalized, appContext)
                 if (nativeSettings.batchSize <= 0 || nativeSettings.ubatchSize <= 0) {
                     return@withLock Result.failure(IllegalStateException("Invalid GGUF batch size configuration"))
                 }
 
-                if (!RnLlamaNative.loadLibraryIfNeeded()) {
+                if (!LlamaBridge.isLibraryLoaded()) {
                     return@withLock Result.failure(
-                        IllegalStateException("RnLlamaNative library not loaded: libnezumi_rnllama_jni.so unavailable")
+                        IllegalStateException("LlamaBridge library not loaded: libllama_bridge.so unavailable")
                     )
                 }
 
@@ -346,6 +335,9 @@ class GgufInferenceEngine(
                         "kvUnified=${normalized.llamaCppKvUnified} " +
                         "mtpEnabled=${normalized.mtpEnabled} mtpDraft=${normalized.mtpDraftTokens}"
                 )
+                if (gpuLayers == 0) {
+                    Log.w(TAG, "GGUF direct llama.cpp is running without GPU offload; backend=${normalized.backendType}")
+                }
 
                 if (modelFile.extension.equals("gguf", ignoreCase = true) && !hasGgufMagicHeader(modelFile)) {
                     return@withLock Result.failure(
@@ -360,7 +352,7 @@ class GgufInferenceEngine(
                 }
 
                 val ctx = withContext(Dispatchers.IO) {
-                    RnLlamaContext(
+                    LlamaCppContext(
                         modelPath = modelPath,
                         nCtx = normalized.contextWindow,
                         nBatch = nativeSettings.batchSize,
@@ -375,23 +367,20 @@ class GgufInferenceEngine(
                         // 常にデフォルト値 (base=0f / scale=1f, mtp=off) で動いていた。
                         ropeFreqBase = normalized.llamaCppRopeFreqBase,
                         ropeFreqScale = normalized.llamaCppRopeFreqScale,
-                        mtpEnabled = normalized.mtpEnabled,
-                        mtpDraftTokens = normalized.mtpDraftTokens,
-                        kvCacheOptimizationEnabled = normalized.kvCacheOptimizationEnabled
                     )
                 }
 
                 if (!ctx.isValid) {
                     return@withLock Result.failure(
-                        IllegalStateException("RnLlamaContext failed to initialize — invalid model file or insufficient memory")
+                        IllegalStateException("LlamaCppContext failed to initialize — invalid model file or insufficient memory")
                     )
                 }
 
-                rnllamaCtx = ctx
+                llamaCppCtx = ctx
                 loadedModelPath = modelPath
                 loadedConfig = normalized
                 lastSessionId = null  // セッションリセット
-                Log.i(TAG, "GGUF model loaded: $modelPath using rnllama backend")
+                Log.i(TAG, "GGUF model loaded: $modelPath using direct llama.cpp backend")
                 maybeAutoEnableThinkingFromChatTemplate(modelPath)
                 Result.success(Unit)
             } catch (t: Throwable) {
@@ -414,8 +403,8 @@ class GgufInferenceEngine(
         //   ctx.interrupt() (= nativeInterrupt) を先に呼んでネイティブの
         //   is_interrupted フラグを立てることで、生成ループを即座に脱出させる。
         //   その後 freeNativeCtx() で LLM 本体とマルチモーダルプロジェクター (mmproj)
-        //   を含む RnLlamaContext を完全に解放する。
-        runCatching { rnllamaCtx?.interrupt() }
+        //   を含む llama.cpp コンテキストを完全に解放する。
+        runCatching { llamaCppCtx?.interrupt() }
             .onFailure { Log.w(TAG, "interrupt() before unload failed", it) }
         return try {
             inferenceMutex.withLock {
@@ -443,8 +432,8 @@ class GgufInferenceEngine(
      * nativeReleaseContext 経由で mmproj を含む全リソースを破棄する。
      */
     private fun freeNativeCtx() {
-        rnllamaCtx?.release()
-        rnllamaCtx = null
+        llamaCppCtx?.release()
+        llamaCppCtx = null
         loadedModelPath = null
         loadedConfig = null
     }
@@ -454,7 +443,7 @@ class GgufInferenceEngine(
      * Thinking トグルやセッション切り替え時に前コンテキストが残って交互動作が崩れるのを防ぐ。
      */
     fun clearKvCacheIfLoaded() {
-        val ctx = rnllamaCtx ?: return
+        val ctx = llamaCppCtx ?: return
         if (!ctx.isValid) return
         val didClear = tryClearKvCacheWithInferenceLock(inferenceMutex) {
             runCatching { ctx.clearKvCache() }
@@ -489,7 +478,7 @@ class GgufInferenceEngine(
         //   ctx.interrupt() (= nativeInterrupt) を呼ばないと生成が自然
         //   終了するまで止まらず、ストップボタンもモデル切り替えも
         //   体感上効かなく見える。
-        runCatching { rnllamaCtx?.interrupt() }
+        runCatching { llamaCppCtx?.interrupt() }
             .onFailure { Log.w(TAG, "interrupt() failed", it) }
  // v5.1 fix: ここで forceClearBeforeNextInference を自動セットしてしまうと、
         //   ユーザー停止だけでなく、モデル切替や unload、推論コードパス内部での
@@ -537,7 +526,7 @@ class GgufInferenceEngine(
 
     /** Whether a GGUF chat template has been successfully applied to the current context. */
     fun hasGgufChatTemplate(): Boolean {
-        val context = rnllamaCtx ?: return false
+        val context = llamaCppCtx ?: return false
         return runCatching { context.hasGgufChatTemplate() }.getOrDefault(false)
     }
 
@@ -546,7 +535,7 @@ class GgufInferenceEngine(
         // テンプレート未適用 (native 側が "{}" しか返せない) 場合と空出力を区別するため、
         // テンプレートが無効なら null を返して Kotlin パーサーへフォールバックさせる。
         if (!hasGgufChatTemplate()) return null
-        val context = rnllamaCtx ?: return null
+        val context = llamaCppCtx ?: return null
         return runCatching {
             val json = org.json.JSONObject(context.parseGgufChatOutput(output, isPartial))
             GgufChatParseResult(
@@ -561,12 +550,12 @@ class GgufInferenceEngine(
         messagesJson: String,
         enableThinking: Boolean = false
     ): String = withContext(Dispatchers.IO) {
-        val context = rnllamaCtx ?: return@withContext ""
-        context.applyGgufChatTemplate(
+        val context = llamaCppCtx ?: return@withContext ""
+        normalizeAssistantGenerationPrompt(context.applyGgufChatTemplate(
             messagesJson = messagesJson,
             enableThinking = enableThinking,
             addGenerationPrompt = true
-        )
+        ))
     }
 
     /**
@@ -579,13 +568,30 @@ class GgufInferenceEngine(
         chatTemplate: String,
         enableThinking: Boolean
     ): String = withContext(Dispatchers.IO) {
-        val context = rnllamaCtx ?: return@withContext ""
-        context.applyJinjaChatTemplate(
+        val context = llamaCppCtx ?: return@withContext ""
+        normalizeAssistantGenerationPrompt(context.applyJinjaChatTemplate(
             messagesJson = messagesJson,
             chatTemplate = chatTemplate,
             enableThinking = enableThinking,
             addGenerationPrompt = true
+        ))
+    }
+
+    private fun normalizeAssistantGenerationPrompt(prompt: String): String {
+        if (prompt.isEmpty()) return prompt
+        val markers = listOf(
+            "<start_of_turn>model\\n",
+            "<|im_start|>assistant\\n",
+            "<|start_header_id|>assistant<|end_header_id|>\\n\\n"
         )
+        var normalized = prompt
+        markers.forEach { marker ->
+            val duplicate = marker + marker
+            while (normalized.contains(duplicate)) {
+                normalized = normalized.replace(duplicate, marker)
+            }
+        }
+        return normalized
     }
 
     // ─── 推論 ─────────────────────────────────────────────────────
@@ -625,10 +631,10 @@ class GgufInferenceEngine(
         // Bug fix: 推論停止を短時間に繰り返すと、ネイティブ側の is_interrupted
         //   フラグがクリアされないまま蓄積し、「押していないのに次回推論が
         //   即座に停止される」状態になっていた。推論開始前に必ずクリアする。
-        runCatching { rnllamaCtx?.clearInterrupt() }
+        runCatching { llamaCppCtx?.clearInterrupt() }
             .onFailure { Log.w(TAG, "clearInterrupt before inference failed", it) }
 
-        val ctx = rnllamaCtx
+        val ctx = llamaCppCtx
         if (ctx == null || !ctx.isValid) {
             releaseInferenceMutex()
             close(IllegalStateException("Model not loaded. Call loadModel() first."))
@@ -855,7 +861,7 @@ class GgufInferenceEngine(
             if (t is CancellationException) {
                 // キャンセル時も可能なら timings を送出しておく
                 runCatching {
-                    rnllamaCtx?.getLastTimings()?.decodeTokensPerSecond?.let { tps ->
+                    llamaCppCtx?.getLastTimings()?.decodeTokensPerSecond?.let { tps ->
                         if (tps > 0f) trySend(InferenceStreamProtocol.encodeTps(tps))
                     }
                 }
@@ -888,17 +894,17 @@ class GgufInferenceEngine(
             cancelFlag.set(true)
             // Flow が消費側からキャンセルされたとき（ストップボタン等）も
             // ネイティブの blocking JNI 呼び出しを即座に脱出させる。
-            runCatching { rnllamaCtx?.interrupt() }
+            runCatching { llamaCppCtx?.interrupt() }
                 .onFailure { Log.w(TAG, "awaitClose interrupt() failed", it) }
         }
     }.flowOn(Dispatchers.IO)
 
     // ─── ユーティリティ ──────────────────────────────────────────
 
-    override suspend fun isAvailable(): Boolean = rnllamaCtx?.isValid == true
+    override suspend fun isAvailable(): Boolean = llamaCppCtx?.isValid == true
 
     private suspend fun generateRound(
-        ctx: RnLlamaContext,
+        ctx: LlamaCppContext,
         sessionId: Long,
         prompt: String,
         config: InferenceConfig,
@@ -993,16 +999,21 @@ class GgufInferenceEngine(
         }
         val result = try {
             if (mediaPaths.isNotEmpty()) {
-                ctx.completeWithMedia(
-                    prompt = prompt,
-                    nPredict = maxTokens,
-                    temperature = config.temperature,
-                    topP = config.topP,
-                    topK = config.maxTopK,
-                    stopWords = stopSequences.toTypedArray(),
-                    mediaPaths = mediaPaths,
-                    onToken = streamCallback
-                )
+                ctx.setTokenCallback(streamCallback)
+                try {
+                    ctx.completeWithMedia(
+                        prompt = prompt,
+                        nPredict = maxTokens,
+                        temperature = config.temperature,
+                        topP = config.topP,
+                        topK = config.maxTopK,
+                        repeatPenalty = DEFAULT_REPEAT_PENALTY,
+                        stopWords = stopSequences.toTypedArray(),
+                        mediaPaths = mediaPaths
+                    )
+                } finally {
+                    ctx.setTokenCallback(null)
+                }
             } else {
                 ctx.setTokenCallback(streamCallback)
                 try {
@@ -1012,6 +1023,7 @@ class GgufInferenceEngine(
                         temperature = config.temperature,
                         topP = config.topP,
                         topK = config.maxTopK,
+                        repeatPenalty = DEFAULT_REPEAT_PENALTY,
                         stopWords = stopSequences.toTypedArray()
                     )
                 } finally {

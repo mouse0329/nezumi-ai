@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.util.Log
 import com.nezumi_ai.data.inference.cloud.CloudEngineFactory
 import com.nezumi_ai.data.inference.cloud.CloudModelId
-import com.nezumi_ai.data.inference.rnllama.RnLlamaNative
 import com.nezumi_ai.data.repository.SettingsRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -51,7 +50,7 @@ class ModelManager(
      */
     fun liteRtEngineForMultiTurnMedia(): LiteRtLmEngine? =
         liteRtEngine as? LiteRtLmEngine
-    /** GGUF は初回利用時まで遅延初期化し、nezumi_rnllama_jni を起動直後にロードしない（SD ggml と共存しやすくする） */
+    /** GGUF は初回利用時まで遅延初期化し、llama_bridge を起動直後にロードしない。 */
     private var ggufEngine: GgufInferenceEngine? = null
 
     @Volatile
@@ -73,10 +72,6 @@ class ModelManager(
         ggufEngine?.let { return it }
         synchronized(this) {
             ggufEngine?.let { return it }
-            if (!RnLlamaNative.loadLibraryIfNeeded()) {
-                Log.w(TAG, "GGUF native library unavailable")
-                return null
-            }
             if (!LlamaBridge.isLibraryLoaded()) {
                 Log.w(TAG, "GGUF native bridge unavailable: llama_bridge not loaded")
                 return null

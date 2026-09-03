@@ -35,6 +35,23 @@ class PromptBuildingUseCase {
     fun isGgufEngineModel(engineModelName: String): Boolean =
         engineModelName.lowercase().endsWith(".gguf")
 
+    /** Remove only adjacent duplicate role-open markers from a rendered GGUF prompt. */
+    fun normalizeGgufPromptRoleMarkers(prompt: String): String {
+        if (prompt.isEmpty()) return prompt
+        val markers = listOf(
+            "<|im_start|>assistant",
+            "<start_of_turn>model",
+            "<|start_header_id|>assistant<|end_header_id|>"
+        )
+        return markers.fold(prompt) { current, marker ->
+            val duplicate = Regex(
+                "(?:${Regex.escape(marker)}\\s*){2,}",
+                RegexOption.IGNORE_CASE
+            )
+            duplicate.replace(current) { marker + "\n" }
+        }
+    }
+
     fun isLikelyMarkdownTable(content: String): Boolean {
         if (!content.contains('|')) return false
         val lines = content.lines()
@@ -113,10 +130,32 @@ class PromptBuildingUseCase {
         if (normalized.isEmpty()) return ""
         if (!engineModelName.lowercase().endsWith(".gguf")) return normalized
         val noLoop = stripSyntheticRoleLoopTail(normalized)
-        return noLoop.replace(
-            Regex("^(?i)(?:Assistant|アシスタント)\\s*[:：]\\s*"),
-            ""
-        ).trim()
+        return stripEmbeddedAssistantWrapper(noLoop)
+            .replace(Regex("^(?i)(?:Assistant|アシスタント)\\s*[:：]\\s*"), "")
+            .trim()
+    }
+
+    private fun stripEmbeddedAssistantWrapper(content: String): String {
+        var normalized = content.trim()
+        val leadingWrappers = listOf(
+            Regex("^<\\|im_start\\|>assistant\\s*", RegexOption.IGNORE_CASE),
+            Regex("^<start_of_turn>model\\s*", RegexOption.IGNORE_CASE),
+            Regex("^<\\|start_header_id\\|>assistant<\\|end_header_id\\|>\\s*", RegexOption.IGNORE_CASE)
+        )
+        leadingWrappers.forEach { wrapper ->
+            while (wrapper.containsMatchIn(normalized)) {
+                val stripped = normalized.replace(wrapper, "")
+                if (stripped == normalized) break
+                normalized = stripped.trimStart()
+            }
+        }
+        val trailingWrappers = listOf("<|im_end|>", "<end_of_turn>")
+        trailingWrappers.forEach { marker ->
+            if (normalized.endsWith(marker, ignoreCase = true)) {
+                normalized = normalized.dropLast(marker.length).trimEnd()
+            }
+        }
+        return normalized
     }
 
     private val userTurnMarkerRegex = Regex("(?i)(?:^|[\\s\\n\\r])(?:User|ユーザー)\\s*[:：]")
@@ -163,7 +202,11 @@ class PromptBuildingUseCase {
             // 入口 (formatToolResults 各経路) での無害化以後に書かれた履歴は既に安全だが、
             // 無害化導入以前の古い履歴には生の外部コンテンツが残り得るため、再構築時にも
             // タグを不活性化する (二度がけは全角化ベースのため冪等)。
-            return stripSyntheticRoleLoopTail(ToolPayloadSanitizer.sanitizeToolTags(visibleOnly))
+            return stripSyntheticRoleLoopTail(
+                normalizeGgufPromptRoleMarkers(
+                    ToolPayloadSanitizer.sanitizeToolTags(stripEmbeddedAssistantWrapper(visibleOnly))
+                )
+            )
                 .replace(Regex("^(?i)(?:Assistant|アシスタント)\\s*[:：]\\s*"), "")
                 .trim()
         } else {

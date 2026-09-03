@@ -4619,16 +4619,19 @@ class ChatViewModel(
                 sanitizer = ::sanitizeMessageContentForPrompt,
                 compressedSummary = compressedSummary,
                 modelPath = engineModelName
-            ) ?: PromptBuilder.buildForGguf(
-                messages = recentMessages,
-                systemPrompt = systemPrompt,
-                compressedSummary = compressedSummary,
-                format = PromptBuilder.detectGgufFormat(engineModelName, appContext),
-                enableThinking = enableThinkingForPrompt,
-                modelPath = engineModelName,
-                sanitizeMessageContent = ::sanitizeMessageContentForPrompt,
-                appContext = appContext
-            )
+                )?.let { promptBuilding.normalizeGgufPromptRoleMarkers(it) }
+                    ?: promptBuilding.normalizeGgufPromptRoleMarkers(
+                        PromptBuilder.buildForGguf(
+                            messages = recentMessages,
+                            systemPrompt = systemPrompt,
+                            compressedSummary = compressedSummary,
+                            format = PromptBuilder.detectGgufFormat(engineModelName, appContext),
+                            enableThinking = enableThinkingForPrompt,
+                            modelPath = engineModelName,
+                            sanitizeMessageContent = ::sanitizeMessageContentForPrompt,
+                            appContext = appContext
+                        )
+                    )
         } else {
             PromptBuilder.buildForLiteRt(
                 messages = recentMessages,
@@ -4771,15 +4774,18 @@ class ChatViewModel(
                 enableThinking = enableThinkingForPrompt,
                 sanitizer = sanitizer,
                 modelPath = engineModelName
-            ) ?: PromptBuilder.buildForGguf(
-                messages = filteredMessages,
-                systemPrompt = systemPrompt,
-                format = PromptBuilder.detectGgufFormat(engineModelName, appContext),
-                enableThinking = enableThinkingForPrompt,
-                modelPath = engineModelName,
-                sanitizeMessageContent = sanitizer,
-                appContext = appContext
-            )
+            )?.let { promptBuilding.normalizeGgufPromptRoleMarkers(it) }
+                ?: promptBuilding.normalizeGgufPromptRoleMarkers(
+                    PromptBuilder.buildForGguf(
+                        messages = filteredMessages,
+                        systemPrompt = systemPrompt,
+                        format = PromptBuilder.detectGgufFormat(engineModelName, appContext),
+                        enableThinking = enableThinkingForPrompt,
+                        modelPath = engineModelName,
+                        sanitizeMessageContent = sanitizer,
+                        appContext = appContext
+                    )
+                )
         } else {
             PromptBuilder.buildForLiteRt(
                 messages = filteredMessages,

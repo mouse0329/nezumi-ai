@@ -2,24 +2,15 @@
 
 ## 現在の状態
 
-**GgufInferenceEngine（llama_bridge.so）は現在無効化されています。**
-
-### 理由
-
-1. `libllama_bridge.so`がビルドされていない（CMakeLists.txtでコメントアウト）
-2. vanilla llama.cppサブモジュールが必要
-3. 既存のrnllama実装（llama.rn 0.12.4）で十分な機能を提供
+**GgufInferenceEngine は `libllama_bridge.so` 経由の vendor/llama.cpp を使用しています。**
 
 ### 現在の動作
 
-すべてのモデル（.ggufファイルを含む）は**RnLlamaInferenceEngine**で処理されます：
+`.gguf` の絶対パスを指定したモデルは、以下の経路で処理されます：
 
 ```kotlin
-// ModelManager.kt
-private fun shouldUseGgufEngine(modelName: String): Boolean {
-    // 常にfalseを返してrnllama実装を使用
-    return false
-}
+ModelManager -> GgufInferenceEngine -> LlamaCppContext -> LlamaBridge
+           -> libllama_bridge.so -> vendor/llama.cpp
 ```
 
 ## 最適化機能の使用
