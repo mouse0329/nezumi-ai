@@ -90,8 +90,10 @@ struct NezumiLlamaCtx
 static void nezumi_ggml_log_callback(ggml_log_level level, const char *text, void * /* user_data */)
 {
     int prio = ANDROID_LOG_INFO;
-    if (level == GGML_LOG_LEVEL_WARN) prio = ANDROID_LOG_WARN;
-    else if (level == GGML_LOG_LEVEL_ERROR) prio = ANDROID_LOG_ERROR;
+    if (level == GGML_LOG_LEVEL_WARN)
+        prio = ANDROID_LOG_WARN;
+    else if (level == GGML_LOG_LEVEL_ERROR)
+        prio = ANDROID_LOG_ERROR;
     __android_log_write(prio, LOG_TAG, text);
 }
 
@@ -105,18 +107,43 @@ static jstring utf8_to_jstring(JNIEnv *env, const char *buf, size_t n)
         unsigned char c = static_cast<unsigned char>(buf[i]);
         uint32_t cp = 0;
         int bytes = 0;
-        if (c < 0x80) { cp = c; bytes = 1; }
-        else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; bytes = 2; }
-        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; bytes = 3; }
-        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; bytes = 4; }
-        else { i++; continue; } // 不正バイトはスキップ
+        if (c < 0x80)
+        {
+            cp = c;
+            bytes = 1;
+        }
+        else if ((c & 0xE0) == 0xC0)
+        {
+            cp = c & 0x1F;
+            bytes = 2;
+        }
+        else if ((c & 0xF0) == 0xE0)
+        {
+            cp = c & 0x0F;
+            bytes = 3;
+        }
+        else if ((c & 0xF8) == 0xF0)
+        {
+            cp = c & 0x07;
+            bytes = 4;
+        }
+        else
+        {
+            i++;
+            continue;
+        } // 不正バイトはスキップ
         bool valid = true;
         for (int b = 1; b < bytes; b++)
         {
-            if (i + b >= n) { valid = false; break; }
+            if (i + b >= n)
+            {
+                valid = false;
+                break;
+            }
             cp = (cp << 6) | (static_cast<unsigned char>(buf[i + b]) & 0x3F);
         }
-        if (!valid) break;
+        if (!valid)
+            break;
         i += bytes;
         if (cp < 0x10000)
         {
@@ -143,10 +170,14 @@ static bool decode_single_token(NezumiLlamaCtx *nc, llama_token token)
 {
     nc->batch.n_tokens = 1;
     nc->batch.token[0] = token;
-    if (nc->batch.pos) nc->batch.pos[0] = nc->n_past;
-    if (nc->batch.n_seq_id) nc->batch.n_seq_id[0] = 1;
-    if (nc->batch.seq_id && nc->batch.seq_id[0]) nc->batch.seq_id[0][0] = 0;
-    if (nc->batch.logits) nc->batch.logits[0] = 1;
+    if (nc->batch.pos)
+        nc->batch.pos[0] = nc->n_past;
+    if (nc->batch.n_seq_id)
+        nc->batch.n_seq_id[0] = 1;
+    if (nc->batch.seq_id && nc->batch.seq_id[0])
+        nc->batch.seq_id[0][0] = 0;
+    if (nc->batch.logits)
+        nc->batch.logits[0] = 1;
 
     if (llama_decode(nc->ctx, nc->batch) != 0)
         return false;
@@ -319,7 +350,8 @@ static std::string generate_loop(JNIEnv *env, NezumiLlamaCtx *nc,
                 size_t pending = 0;
                 for (const auto &sw : stop_words)
                 {
-                    if (sw.empty()) continue;
+                    if (sw.empty())
+                        continue;
                     const size_t max_prefix = std::min(result.size(), sw.size() - 1);
                     for (size_t prefix = max_prefix; prefix > pending; --prefix)
                     {
@@ -416,7 +448,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     jboolean context_shift_enabled,
     jint seed)
 {
-    std::call_once(g_backend_init_once, []() { llama_backend_init(); });
+    std::call_once(g_backend_init_once, []()
+                   { llama_backend_init(); });
 
     const char *model_path = env->GetStringUTFChars(j_model_path, nullptr);
 
@@ -857,10 +890,14 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
         for (int j = 0; j < chunk; ++j)
         {
             nc->batch.token[j] = tokens[i + j];
-            if (nc->batch.pos) nc->batch.pos[j] = nc->n_past + j;
-            if (nc->batch.n_seq_id) nc->batch.n_seq_id[j] = 1;
-            if (nc->batch.seq_id && nc->batch.seq_id[j]) nc->batch.seq_id[j][0] = 0;
-            if (nc->batch.logits) nc->batch.logits[j] = 0;
+            if (nc->batch.pos)
+                nc->batch.pos[j] = nc->n_past + j;
+            if (nc->batch.n_seq_id)
+                nc->batch.n_seq_id[j] = 1;
+            if (nc->batch.seq_id && nc->batch.seq_id[j])
+                nc->batch.seq_id[j][0] = 0;
+            if (nc->batch.logits)
+                nc->batch.logits[j] = 0;
         }
         bool last_chunk = (i + chunk >= n_tokens);
         if (nc->batch.logits && last_chunk)
@@ -947,7 +984,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
     mtmd_input_text input_text;
     input_text.text = prompt_str.c_str();
     input_text.text_len = prompt_str.size();
-    input_text.add_special = true;  // BOS 等を付与（チャットテンプレート経由で二重付与になる場合は調整）
+    input_text.add_special = true; // BOS 等を付与（チャットテンプレート経由で二重付与になる場合は調整）
     input_text.parse_special = true;
 
     std::vector<const mtmd_bitmap *> bitmap_ptrs(bitmaps.begin(), bitmaps.end());
