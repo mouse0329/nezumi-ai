@@ -201,6 +201,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 prefs.edit().putLong("current_session_id", sessionId).apply()
                 viewModel.setCurrentSession(sessionId)
                 withContext(Dispatchers.Main) {
+                    // 再利用された Fragment では nav args が更新されないため、
+                    // Activity の現在状態をセッション切り替え後に再同期する。
+                    syncIncognitoModeWithActivity()
                     pendingInitialScrollToBottom = true
                     userScrolledAwayDuringGeneration = false
                     // ドロワーの履歴リストは「セッション更新」をきっかけにしか

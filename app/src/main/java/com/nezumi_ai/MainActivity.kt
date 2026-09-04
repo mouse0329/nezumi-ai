@@ -255,29 +255,36 @@ class MainActivity : AppCompatActivity() {
 
     fun openChatSession(sessionId: Long) {
         if (isIncognitoModeActive) {
-            // シークレットモードから通常セッションへ移動する前に確認を挟む。
-            // 確認なしだと誤タップでシークレットセッションが即削除されてしまう。
-            MaterialAlertDialogBuilder(this)
-                .setTitle(getString(R.string.secret_mode_exit_confirm_title))
-                .setMessage(getString(R.string.secret_mode_exit_confirm_message))
-                .setNegativeButton(getString(R.string.common_cancel), null)
-                .setPositiveButton(getString(R.string.secret_mode_exit_confirm_ok)) { _, _ ->
-                    openNormalSessionLeavingIncognito(sessionId)
+            showIncognitoExitConfirmation {
+                openNormalSessionLeavingIncognito {
+                    proceedOpenChatSession(sessionId)
                 }
-                .show()
+            }
             return
         }
         proceedOpenChatSession(sessionId)
     }
 
-    private fun openNormalSessionLeavingIncognito(sessionId: Long) {
+    private fun showIncognitoExitConfirmation(onConfirmed: () -> Unit) {
+        MaterialAlertDialogBuilder(this)
+            .setTitle(getString(R.string.secret_mode_exit_confirm_title))
+            .setMessage(getString(R.string.secret_mode_exit_confirm_message))
+            .setNegativeButton(getString(R.string.common_cancel), null)
+            .setPositiveButton(getString(R.string.secret_mode_exit_confirm_ok)) { _, _ ->
+                onConfirmed()
+            }
+            .show()
+    }
+
+    private fun openNormalSessionLeavingIncognito(onExited: () -> Unit) {
         lifecycleScope.launch {
             runCatching {
                 leaveIncognitoModeForNormalNavigation()
             }.onFailure {
                 Log.e(TAG, "Failed to leave incognito mode before opening normal session", it)
             }
-            proceedOpenChatSession(sessionId)
+            onExited()
+            recreate()
         }
     }
 
@@ -331,14 +338,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun navigateToChatSession(sessionId: Long) {
+    private fun navigateToChatSession(sessionId: Long, forceNewFragment: Boolean = false) {
         val navController = findNavController(R.id.nav_host_fragment_content_main)
  // セッション遷移最適化: すでに ChatFragment が表示されている場合は、
         //   フラグメントを再生成（popBackStack + navigate）する代わりに、
         //   既存の ChatFragment の switchSession() を呼んでセッションIDだけ切り替える。
         //   これによりフラグメントの再作成による重い処理（ViewBinding再生成、RecyclerView再構築、
         //   Compose再構成など）を回避し、ページ遷移の重さを軽減する。
-        if (navController.currentDestination?.id == R.id.chatFragment) {
+        if (!forceNewFragment && navController.currentDestination?.id == R.id.chatFragment) {
             val chatFragment = supportFragmentManager.findFragmentById(R.id.nav_host_fragment_content_main)
                 ?.let { it as? androidx.navigation.fragment.NavHostFragment }
                 ?.childFragmentManager
@@ -355,7 +362,10 @@ class MainActivity : AppCompatActivity() {
         }
         navController.navigate(
             R.id.chatFragment,
-            Bundle().apply { putLong("sessionId", sessionId) },
+            Bundle().apply {
+                putLong("sessionId", sessionId)
+                putBoolean("isIncognito", false)
+            },
             navOptions {
                 launchSingleTop = true
             }
@@ -954,22 +964,32 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-    private fun createAndOpenSession() {
+    fun createAndOpenSession() {
+        if (isIncognitoModeActive) {
+            showIncognitoExitConfirmation {
+                openNormalSessionLeavingIncognito { createAndOpenSessionAfterIncognitoExit() }
+            }
+            return
+        }
+        createAndOpenSessionAfterIncognitoExit()
+    }
+
+    private fun createAndOpenSessionAfterIncognitoExit() {
         lifecycleScope.launch {
             runCatching {
-                leaveIncognitoModeForNormalNavigation()
                 withContext(Dispatchers.IO) {
                     sessionRepository.createSession("新しいチャット")
                 }
             }.onSuccess { sessionId ->
-                openChatSession(sessionId)
+                saveCurrentSessionId(sessionId)
+                navigateToChatSession(sessionId, forceNewFragment = true)
             }.onFailure {
                 Log.e(TAG, "Failed to create session", it)
             }
         }
     }
 
-    private fun createAndOpenIncognitoSession() {
+    fun createAndOpenIncognitoSession() {
         lifecycleScope.launch {
             if (!ensureSecretModePinBeforeIncognito()) return@launch
 

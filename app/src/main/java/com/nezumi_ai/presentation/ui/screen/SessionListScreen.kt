@@ -32,6 +32,8 @@ import java.util.*
 fun SessionListScreen(
     viewModel: ChatSessionListViewModel,
     onSessionClick: (Long) -> Unit,
+    onCreateSession: () -> Unit,
+    onCreateIncognitoSession: () -> Unit,
     onOpenSettings: () -> Unit,
     onSearchClick: () -> Unit = {},
     currentSessionId: Long?
@@ -77,16 +79,8 @@ fun SessionListScreen(
             onSessionClick = onSessionClick,
             onOpenSettings = onOpenSettings,
             onSearchClick = onSearchClick,
-            onCreateSession = { 
-                viewModel.createNewSession("新しいチャット") { sessionId ->
-                    onSessionClick(sessionId)
-                }
-            },
-            onCreateIncognitoSession = { 
- viewModel.createNewSession("シークレット") { sessionId ->
-                    onSessionClick(sessionId)
-                }
-            },
+            onCreateSession = onCreateSession,
+            onCreateIncognitoSession = onCreateIncognitoSession,
             onDeleteSession = { viewModel.deleteSession(it) },
             onTogglePin = { viewModel.togglePinSession(it) },
             onRenameSession = { sessionId ->

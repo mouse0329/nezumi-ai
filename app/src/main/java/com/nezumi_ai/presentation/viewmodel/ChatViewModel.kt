@@ -83,6 +83,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
@@ -237,7 +238,9 @@ class ChatViewModel(
 
         private fun Throwable?.isModelLoadWarningMarker(): Boolean {
             val errorMsg = this?.message ?: return false
-            return errorMsg == "MEMORY_WARNING_SHOWN" || errorMsg == "CPU_COMPAT_WARNING_SHOWN"
+            return errorMsg == "MEMORY_WARNING_SHOWN" ||
+                errorMsg == "CPU_COMPAT_WARNING_SHOWN" ||
+                errorMsg == "GPU_BACKEND_FALLBACK_CANCELLED"
         }
     }
 
@@ -697,9 +700,12 @@ class ChatViewModel(
 
     private val _gpuBackendFallback = MutableStateFlow<GpuBackendFallbackInfo?>(null)
     val gpuBackendFallback: StateFlow<GpuBackendFallbackInfo?> = _gpuBackendFallback.asStateFlow()
+    @Volatile
+    private var gpuBackendFallbackDecision: CompletableDeferred<Boolean>? = null
 
     /** ダイアログで「CPUのまま続行」を選んだ場合。 */
     fun acknowledgeGpuBackendFallback() {
+        gpuBackendFallbackDecision?.complete(true)
         _gpuBackendFallback.value = null
     }
 
@@ -709,11 +715,8 @@ class ChatViewModel(
      * 黙って別のバックエンドで処理を進めるべきではない。
      */
     fun cancelDueToGpuBackendFallback() {
+        gpuBackendFallbackDecision?.complete(false)
         _gpuBackendFallback.value = null
-        viewModelScope.launch {
-            runCatching { modelManager?.unloadModel() }
-                .onFailure { Log.w(TAG, "cancelDueToGpuBackendFallback: unload failed", it) }
-        }
     }
 
     private val _toolCallState = MutableStateFlow<ToolCallState?>(null)
@@ -5075,6 +5078,18 @@ class ChatViewModel(
                         requestedBackend = requestedBackend,
                         actualBackend = actualBackend
                     )
+                    val decision = CompletableDeferred<Boolean>()
+                    gpuBackendFallbackDecision = decision
+                    try {
+                        if (!decision.await()) {
+                            manager.unloadModel()
+                            return Result.failure(RuntimeException("GPU_BACKEND_FALLBACK_CANCELLED"))
+                        }
+                    } finally {
+                        if (gpuBackendFallbackDecision === decision) {
+                            gpuBackendFallbackDecision = null
+                        }
+                    }
                 }
             } else {
                 val error = result.exceptionOrNull()

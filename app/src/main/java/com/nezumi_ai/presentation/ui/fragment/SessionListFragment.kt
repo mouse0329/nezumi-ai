@@ -82,10 +82,18 @@ class SessionListFragment : Fragment() {
 
                 SessionListScreen(
                     viewModel = viewModel,
+                    onSessionClick = { sessionId ->
+                        (requireActivity() as com.nezumi_ai.MainActivity).openChatSession(sessionId)
+                    },
+                    onCreateSession = {
+                        (requireActivity() as com.nezumi_ai.MainActivity).createAndOpenSession()
+                    },
+                    onCreateIncognitoSession = {
+                        (requireActivity() as com.nezumi_ai.MainActivity).createAndOpenIncognitoSession()
+                    },
                     onOpenSettings = {
                         (requireActivity() as com.nezumi_ai.MainActivity).openDrawer()
                     },
-                    onSessionClick = ::navigateToChat,
                     onSearchClick = { showSearch = true },
                     currentSessionId = currentSessionId
                 )
