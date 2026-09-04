@@ -41,9 +41,18 @@ class MyApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
+        // テレメトリ門番にコンテキストを渡す。ここではまだ Sentry を起動しない。
+        //   実際の起動は「クラウド推論モデルが使われ、かつユーザーが同意している」
+        //   タイミングで TelemetryGate.onCloudInferenceUsed() が呼ばれたときのみ。
+        //   （オンデバイス推論のみで使っている限り、SDKは一切初期化されない）
+        com.nezumi_ai.utils.TelemetryGate.initHooks(this)
+
         // 未捕捉例外ハンドラは最早期に登録しておく。
         //   以降の初期化コードを含め、プロセス内のあらゆるクラッシュを
         //   ファイルに保存し、次回起動時に MainActivity がモーダルで提示する。
+        //   Sentry がアクティブな場合は、ローカル保存に加えて Sentry にも転送する
+        //   （CrashReporter 内部で TelemetryGate.isActive() をチェックするため、
+        //   オフライン利用時は従来通りファイル保存のみで完結する）。
         com.nezumi_ai.utils.CrashReporter.install(this)
 
         PreferencesHelper.applyThemeMode(this)

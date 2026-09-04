@@ -31,6 +31,7 @@ import androidx.compose.material3.Divider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -39,10 +40,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
@@ -519,6 +522,71 @@ class SetupWizardFragment : Fragment() {
     }
 
     @Composable
+    private fun TelemetryConsentSetupSection(
+        textPrimary: androidx.compose.ui.graphics.Color,
+        textSecondary: androidx.compose.ui.graphics.Color
+    ) {
+        val context = LocalContext.current
+        var crashReportsEnabled by remember { mutableStateOf(com.nezumi_ai.utils.TelemetryConsent.isCrashReportsEnabled(context)) }
+        var performanceEnabled by remember { mutableStateOf(com.nezumi_ai.utils.TelemetryConsent.isPerformanceMetricsEnabled(context)) }
+        var diagnosticsEnabled by remember { mutableStateOf(com.nezumi_ai.utils.TelemetryConsent.isInferenceDiagnosticsEnabled(context)) }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.surface_card)
+            ),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = stringResource(id = R.string.setup_telemetry_title),
+                    color = textPrimary,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = stringResource(id = R.string.setup_telemetry_desc),
+                    color = textSecondary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                TelemetrySetupToggleRow(stringResource(R.string.setup_telemetry_crash_title), crashReportsEnabled, textPrimary) { checked ->
+                    crashReportsEnabled = checked
+                    com.nezumi_ai.utils.TelemetryConsent.setCrashReportsEnabled(context, checked)
+                    if (!checked && !com.nezumi_ai.utils.TelemetryConsent.isEnabled(context)) com.nezumi_ai.utils.TelemetryGate.onConsentRevoked()
+                }
+                TelemetrySetupToggleRow(stringResource(R.string.setup_telemetry_performance_title), performanceEnabled, textPrimary) { checked ->
+                    performanceEnabled = checked
+                    com.nezumi_ai.utils.TelemetryConsent.setPerformanceMetricsEnabled(context, checked)
+                    if (!checked && !com.nezumi_ai.utils.TelemetryConsent.isEnabled(context)) com.nezumi_ai.utils.TelemetryGate.onConsentRevoked()
+                }
+                TelemetrySetupToggleRow(stringResource(R.string.setup_telemetry_diagnostics_title), diagnosticsEnabled, textPrimary) { checked ->
+                    diagnosticsEnabled = checked
+                    com.nezumi_ai.utils.TelemetryConsent.setInferenceDiagnosticsEnabled(context, checked)
+                    if (!checked && !com.nezumi_ai.utils.TelemetryConsent.isEnabled(context)) com.nezumi_ai.utils.TelemetryGate.onConsentRevoked()
+                }
+
+                Text(
+                    text = stringResource(id = R.string.setup_telemetry_offline_note),
+                    color = textSecondary,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun TelemetrySetupToggleRow(title: String, checked: Boolean, textPrimary: androidx.compose.ui.graphics.Color, onCheckedChange: (Boolean) -> Unit) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, color = textPrimary, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
+        }
+    }
+
+    @Composable
     private fun ModelStep(
         accent: androidx.compose.ui.graphics.Color,
         textPrimary: androidx.compose.ui.graphics.Color,
@@ -721,6 +789,8 @@ class SetupWizardFragment : Fragment() {
             color = textSecondary,
             style = MaterialTheme.typography.bodySmall
         )
+
+        TelemetryConsentSetupSection(textPrimary, textSecondary)
 
         Row(
             modifier = Modifier.fillMaxWidth(),

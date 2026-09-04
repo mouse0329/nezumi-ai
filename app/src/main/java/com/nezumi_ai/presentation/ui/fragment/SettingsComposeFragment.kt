@@ -1068,6 +1068,7 @@ class SettingsComposeFragment : Fragment() {
                             }
                         }
                         WebSearchApiKeyCard()
+                        TelemetryConsentCard()
                     }
                     1 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         InferenceParamsCard()
@@ -1130,6 +1131,69 @@ class SettingsComposeFragment : Fragment() {
     }
 
 
+
+    @Composable
+    private fun TelemetryConsentCard() {
+        val context = LocalContext.current
+        var crashReportsEnabled by remember { mutableStateOf(com.nezumi_ai.utils.TelemetryConsent.isCrashReportsEnabled(context)) }
+        var performanceEnabled by remember { mutableStateOf(com.nezumi_ai.utils.TelemetryConsent.isPerformanceMetricsEnabled(context)) }
+        var diagnosticsEnabled by remember { mutableStateOf(com.nezumi_ai.utils.TelemetryConsent.isInferenceDiagnosticsEnabled(context)) }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = colorResource(id = R.color.primary_light)
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = stringResource(id = R.string.settings_telemetry_card_title),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = MaterialTheme.typography.titleMedium.fontSize
+                )
+                Text(
+                    text = stringResource(id = R.string.settings_telemetry_card_desc),
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                TelemetryToggleRow(stringResource(R.string.settings_telemetry_crash_title), stringResource(R.string.settings_telemetry_crash_desc), crashReportsEnabled) { checked ->
+                    crashReportsEnabled = checked
+                    com.nezumi_ai.utils.TelemetryConsent.setCrashReportsEnabled(context, checked)
+                    if (!checked && !com.nezumi_ai.utils.TelemetryConsent.isEnabled(context)) com.nezumi_ai.utils.TelemetryGate.onConsentRevoked()
+                }
+                TelemetryToggleRow(stringResource(R.string.settings_telemetry_performance_title), stringResource(R.string.settings_telemetry_performance_desc), performanceEnabled) { checked ->
+                    performanceEnabled = checked
+                    com.nezumi_ai.utils.TelemetryConsent.setPerformanceMetricsEnabled(context, checked)
+                    if (!checked && !com.nezumi_ai.utils.TelemetryConsent.isEnabled(context)) com.nezumi_ai.utils.TelemetryGate.onConsentRevoked()
+                }
+                TelemetryToggleRow(stringResource(R.string.settings_telemetry_diagnostics_title), stringResource(R.string.settings_telemetry_diagnostics_desc), diagnosticsEnabled) { checked ->
+                    diagnosticsEnabled = checked
+                    com.nezumi_ai.utils.TelemetryConsent.setInferenceDiagnosticsEnabled(context, checked)
+                    if (!checked && !com.nezumi_ai.utils.TelemetryConsent.isEnabled(context)) com.nezumi_ai.utils.TelemetryGate.onConsentRevoked()
+                }
+
+                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+
+                Text(
+                    text = stringResource(id = R.string.settings_telemetry_offline_note),
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun TelemetryToggleRow(title: String, description: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, color = colorResource(id = R.color.text_primary), style = MaterialTheme.typography.bodyMedium)
+                Text(description, color = colorResource(id = R.color.text_secondary), style = MaterialTheme.typography.bodySmall)
+            }
+            Switch(checked = checked, onCheckedChange = onCheckedChange, colors = nezumiSwitchColors())
+        }
+    }
 
     @Composable
     private fun WebSearchApiKeyCard() {

@@ -16,6 +16,7 @@ coroutines = "1.11.0"
 ktor = "3.2.3"
 security-crypto = "1.1.0-alpha06"
 kotlinx-serialization-json = "1.11.0"
+sentry = "8.50.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -43,6 +44,7 @@ ktor-client-darwin = { group = "io.ktor", name = "ktor-client-darwin", version.r
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinx-serialization-json" }
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "security-crypto" }
 compose-richtext-ui-material3 = { group = "com.halilibo.compose-richtext", name = "richtext-ui-material3", version = "1.0.0-alpha02" }
+sentry-android = { group = "io.sentry", name = "sentry-android", version.ref = "sentry" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

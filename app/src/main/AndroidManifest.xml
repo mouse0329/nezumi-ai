@@ -38,6 +38,16 @@
 
     <application android:name=".MyApplication" android:allowBackup="true" android:dataExtractionRules="@xml/data_extraction_rules" android:fullBackupContent="@xml/backup_rules" android:icon="@mipmap/ic_launcher" android:label="${appName}" android:supportsRtl="true" android:theme="@style/Theme.Nezumiai" android:largeHeap="true" android:enableOnBackInvokedCallback="true" android:networkSecurityConfig="@xml/network_security_config">
 
+        <!--
+            Sentry の ContentProvider 自動初期化を無効化する。
+            これがないと、アプリ起動時 (Application.onCreate より前) に
+            SentryInitProvider が DSN の有無に関わらず SDK を自動起動してしまい、
+            「クラウド推論利用時のみ・同意済みの場合のみ送信する」という
+            TelemetryGate のポリシーをすり抜けてしまう。
+            SDK の起動は必ず TelemetryGate.onCloudInferenceUsed() 経由で行う。
+        -->
+        <meta-data android:name="io.sentry.auto-init" android:value="false" />
+
         <!-- LiteRT-LM GPU/NPU および llama.cpp OpenCL/Vulkan 用。未宣言だと API 28+ で vendor driver 読み込みがブロックされる。 -->
         <uses-native-library android:name="libvndksupport.so" android:required="false" />
         <uses-native-library android:name="libOpenCL.so" android:required="false" />

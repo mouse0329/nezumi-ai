@@ -522,6 +522,19 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="settings_disable_screenshot_title">スクリーンショットを禁止</string>
     <string name="settings_disable_screenshot_desc">アプリの画面キャプチャをブロックします</string>
 
+    <!-- テレメトリ (クラッシュ・パフォーマンス計測) -->
+    <string name="settings_telemetry_card_title">テレメトリとプライバシー</string>
+    <string name="settings_telemetry_card_desc">ネズミAIはオフラインでの利用を前提に作られており、既定では何も外部送信しません。以下の同意をONにすると、クラウドAIモデルとオンデバイスモデルのクラッシュ情報・推論パフォーマンス（設定値、速度、ロード時間）を、アプリと推論エンジンの改善、性能最適化、不具合調査に使用します。</string>
+    <string name="settings_telemetry_toggle_title">テレメトリを有効にする</string>
+    <string name="settings_telemetry_toggle_desc">クラウドモデル利用時のみ、クラッシュ・パフォーマンス情報を送信します</string>
+    <string name="settings_telemetry_crash_title">クラッシュレポート</string>
+    <string name="settings_telemetry_crash_desc">予期しない終了の原因とスタックトレースを送信</string>
+    <string name="settings_telemetry_performance_title">推論パフォーマンス</string>
+    <string name="settings_telemetry_performance_desc">全エンジンの設定値、モデルのロード時間、推論時間、生成速度を送信し、アプリと推論エンジンの改善に使用</string>
+    <string name="settings_telemetry_diagnostics_title">推論エラー診断</string>
+    <string name="settings_telemetry_diagnostics_desc">モデルのロード・推論失敗の種類を送信</string>
+    <string name="settings_telemetry_offline_note">オンデバイスのデータも、同意した項目はアプリ改善のために送信されます。チャット内容・プロンプト・生成結果・画像などのユーザーコンテンツは送信対象に含まれません。</string>
+
     <!-- チャット履歴 -->
     <string name="settings_chat_history_title">履歴保存件数</string>
     <string name="settings_chat_history_10">10</string>
@@ -616,6 +629,15 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="setup_download_button">ダウンロード</string>
     <string name="setup_deselect_button">選択解除</string>
     <string name="setup_skip_hint">スキップすると、あとでモデル設定からダウンロードできます。</string>
+
+    <!-- セットアップ画面: テレメトリ同意セクション -->
+    <string name="setup_telemetry_title">テレメトリとプライバシー</string>
+    <string name="setup_telemetry_desc">ネズミAIは既定では何も外部送信しません。同意した項目の情報は、クラウドAIモデルとオンデバイスモデルの品質・性能改善、不具合調査に使用します。設定画面でいつでも変更できます。</string>
+    <string name="setup_telemetry_toggle_label">クラウド利用時にテレメトリを送信する</string>
+    <string name="setup_telemetry_crash_title">クラッシュレポート</string>
+    <string name="setup_telemetry_performance_title">推論パフォーマンス</string>
+    <string name="setup_telemetry_diagnostics_title">推論エラー診断</string>
+    <string name="setup_telemetry_offline_note">オンデバイスモデルの設定値や性能情報も、同意した場合は改善のために送信されます。チャット内容・プロンプト・画像は送信されません。</string>
     <string name="setup_skip_button">スキップ</string>
     <string name="setup_chat_button">チャットへ</string>
     <string name="setup_embedding_title">メモリ検索モデル</string>

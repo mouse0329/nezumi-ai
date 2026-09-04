@@ -30,6 +30,10 @@ val releaseStorePassword = envOrLocal("STORE_PASSWORD")
 val releaseKeyAlias = envOrLocal("KEY_ALIAS")
 val releaseKeyPassword = envOrLocal("KEY_PASSWORD")
 
+// Sentry DSN はリポジトリにコミットしない。未設定ならテレメトリは全面的に無効化される
+// (TelemetryGate 側で空文字を検知して初期化自体をスキップする)。
+val sentryDsn = envOrLocal("SENTRY_DSN") ?: ""
+
 val hasReleaseSigning = !releaseStoreFilePath.isNullOrBlank() &&
     File(releaseStoreFilePath).exists() &&
     !releaseStorePassword.isNullOrBlank() &&
@@ -93,6 +97,9 @@ android {
         buildConfigField("String", "LITERTLM_VERSION", "\"0.16.1\"")
         buildConfigField("String", "LLAMACPP_VERSION", "\"67a17c17caa9\"")
         buildConfigField("boolean", "CONTEXT_COMPRESSION_ENABLED", "false")
+
+        // テレメトリ (Sentry) の DSN。空文字の場合、TelemetryGate は初期化を行わない。
+        buildConfigField("String", "SENTRY_DSN", "\"$sentryDsn\"")
 
         ndk {
             abiFilters.add("arm64-v8a")
@@ -286,6 +293,12 @@ dependencies {
     // Android Keystore の AES-256 マスターキーで EncryptedSharedPreferences を
     // 生成する。HfAuthManager が使う平文 SharedPreferences とは別ファイルに分離する。
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // テレメトリ (クラッシュ収集 + パフォーマンス計測)。
+    // 自動初期化 (ContentProvider) を無効化し、TelemetryGate から明示的に
+    // Sentry.init() を呼ぶ運用にするため、Sentry Android Gradle Plugin は使わず
+    // このライブラリ単体を追加する (AndroidManifest.xml で auto-init を off にしている)。
+    implementation(libs.sentry.android)
 
     // ─────────────────────────────────────────────
     // ページ取得ツール (URL → HTML 取得 + Markdown 変換)
