@@ -201,9 +201,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 prefs.edit().putLong("current_session_id", sessionId).apply()
                 viewModel.setCurrentSession(sessionId)
                 withContext(Dispatchers.Main) {
-                    // 再利用された Fragment では nav args が更新されないため、
-                    // Activity の現在状態をセッション切り替え後に再同期する。
-                    syncIncognitoModeWithActivity()
                     pendingInitialScrollToBottom = true
                     userScrolledAwayDuringGeneration = false
                     // ドロワーの履歴リストは「セッション更新」をきっかけにしか
@@ -1031,14 +1028,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             override fun onItemRangeChanged(positionStart: Int, itemCount: Int, payload: Any?) = maybeScrollToBottom()
         })
 
-        // nav args から incognito フラグを適用
-        viewModel.setIncognitoMode(args.isIncognito)
-
-        // Observe incognito mode and apply security settings
+        // 見た目（紫バー・ヘッダ色）は「現在のセッションがシークレットか」だけで決める。
+        // nav args や Activity 側のモードフラグには依存しない（セッション駆動）。
+        // setCurrentSession() がセッション切替のたびに isCurrentSessionIncognito を更新する。
         viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.isIncognitoMode.collect { isIncognito ->
+            viewModel.isCurrentSessionIncognito.collect { isIncognito ->
                 applyIncognitoModeSettings(isIncognito)
-                updateIncognitoModeIndicator(isIncognito)
             }
         }
 
@@ -1668,11 +1663,17 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun applyIncognitoModeSettings(isIncognito: Boolean) {
+        // シークレットセッションの間だけスクリーンショットを禁止し、
+        // 仕様どおりダークモードを強制する。シークレットセッションを抜けたら
+        // ユーザーのテーマ設定（ライト/ダーク/システム）に即座に戻す。
+        // どちらも recreate() を伴わず、現在のセッション状態だけで決まる（セッション駆動）。
         if (isIncognito) {
             requireActivity().window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
             AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         } else {
-            requireActivity().window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            if (!PreferencesHelper.isDisableScreenshot(requireContext())) {
+                requireActivity().window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            }
             PreferencesHelper.applyThemeMode(requireContext())
         }
         val headerColor = if (isIncognito)
@@ -1727,41 +1728,23 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
      * MainActivity 側でシークレットモードが終了/開始されたときに UI フラグを同期する。
      * これがないと通常セッションに移動してもヘッダ色などがシークレットモードのまま戻らない。
      */
-    fun syncIncognitoModeWithActivity() {
-        val active = (activity as? com.nezumi_ai.MainActivity)?.isInIncognitoMode() ?: false
-        if (viewModel.isIncognitoMode.value != active) {
-            viewModel.setIncognitoMode(active)
-        }
-    }
-
-    private fun updateIncognitoModeIndicator(isIncognito: Boolean) {
-        if (isIncognito) {
-            binding.backButton.setOnClickListener {
-                viewModel.setIncognitoMode(false)
-                Toast.makeText(requireContext(), "Incognito mode exited", Toast.LENGTH_SHORT).show()
-            }
-            binding.backButton.contentDescription = "Exit Incognito Mode"
-        } else {
-            binding.backButton.setOnClickListener {
-                (activity as? com.nezumi_ai.MainActivity)?.openDrawer()
-            }
-            binding.backButton.contentDescription = "Menu"
-        }
-    }
-
     override fun onResume() {
         super.onResume()
-        disableKeyboardLearning(viewModel.isIncognitoMode.value)
+        disableKeyboardLearning(viewModel.isCurrentSessionIncognito.value)
 
         // SharedPreferences 初回読取・listFiles・プリセット取得はすべて IO へ逃がす。
         // 以前は onResume のメインスレッド上で PreferencesHelper / getCurrentPreset を
         // 呼んでいたため、チャット画面復帰時に一瞬固まることがあった。
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            val options = buildDownloadedModelOptions()
-            val newContextMeterVisible = PreferencesHelper.isShowContextMeter(requireContext())
-            val newShowTps = PreferencesHelper.isShowTps(requireContext())
-            val newShowTtft = PreferencesHelper.isShowTtft(requireContext())
-            val currentPresetId = PreferencesHelper.getCurrentPresetId(requireContext())
+            // Activity 再構成などで IO 処理の完了前に Fragment が detach されると
+            // requireContext() が IllegalStateException でクラッシュする。
+            // 表示中でないなら処理自体を打ち切る。
+            val ctx = context ?: return@launch
+            val options = runCatching { buildDownloadedModelOptions() }.getOrElse { return@launch }
+            val newContextMeterVisible = PreferencesHelper.isShowContextMeter(ctx)
+            val newShowTps = PreferencesHelper.isShowTps(ctx)
+            val newShowTtft = PreferencesHelper.isShowTtft(ctx)
+            val currentPresetId = PreferencesHelper.getCurrentPresetId(ctx)
             val preset = presetRepository.getCurrentPreset()
 
             withContext(Dispatchers.Main) {

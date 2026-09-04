@@ -621,8 +621,15 @@ class ChatViewModel(
     private val _isIncognitoMode = MutableStateFlow(false)
     val isIncognitoMode: StateFlow<Boolean> = _isIncognitoMode.asStateFlow()
 
+    /** 現在表示中のセッションがシークレットかどうか。
+     *  見た目（紫バー・ヘッダ色など）はこの値だけで決める（セッション駆動）。
+     *  Activity 側のモードフラグや nav args には依存しない。 */
+    private val _isCurrentSessionIncognito = MutableStateFlow(false)
+    val isCurrentSessionIncognito: StateFlow<Boolean> = _isCurrentSessionIncognito.asStateFlow()
+
     fun setIncognitoMode(enabled: Boolean) {
         _isIncognitoMode.value = enabled
+        _isCurrentSessionIncognito.value = enabled
 
         // シークレットモード無効時：セッションをクリア
         if (!enabled) {
@@ -1038,6 +1045,12 @@ class ChatViewModel(
     suspend fun setCurrentSession(sessionId: Long) {
         val previousSessionId = _currentSessionId.value
         _currentSessionId.value = sessionId
+
+        // 見た目（紫バー等）は「現在のセッションがシークレットか」で決める。
+        // 解除時に見た目を戻す処理は不要になり、切替のたびにここで確定する。
+        _isCurrentSessionIncognito.value = runCatching {
+            sessionRepository.getSessionById(sessionId)?.isIncognito == true
+        }.getOrDefault(false)
 
  // セッション切替時に、このセッションのバリアント選択状態を SharedPreferences から復元する。
         //   復元しないと setCurrentSession 内で下にある applyVariantSelection が

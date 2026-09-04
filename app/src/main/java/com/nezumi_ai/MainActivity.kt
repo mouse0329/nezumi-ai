@@ -276,15 +276,18 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun openNormalSessionLeavingIncognito(onExited: () -> Unit) {
+    private fun openNormalSessionLeavingIncognito(onExited: suspend () -> Unit) {
         lifecycleScope.launch {
             runCatching {
                 leaveIncognitoModeForNormalNavigation()
             }.onFailure {
                 Log.e(TAG, "Failed to leave incognito mode before opening normal session", it)
             }
+            // 見た目はセッション駆動（ChatFragment が現在セッションの isIncognito を
+            // 購読して色を決める）になったため、テーマ強制の巻き戻しや recreate() は不要。
+            // recreate() は Activity 二重リローンチと lifecycleScope キャンセル連鎖
+            // （JobCancellationException / Fragment detach クラッシュ）の原因だった。
             onExited()
-            recreate()
         }
     }
 
@@ -708,8 +711,6 @@ class MainActivity : AppCompatActivity() {
         if (!PreferencesHelper.isDisableScreenshot(this)) {
             window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         }
-        PreferencesHelper.applyThemeMode(this)
-        notifyChatFragmentIncognitoExited()
         Log.d(TAG, "Exited incognito mode - FLAG_SECURE cleared")
 
         // ホームに戻す
@@ -724,7 +725,6 @@ class MainActivity : AppCompatActivity() {
     private fun handleAuthenticationFailed() {
         // FLAG_SECURE を解除してから終了
         window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-        PreferencesHelper.applyThemeMode(this)
         // アプリをホーム画面に戻す
         val homeIntent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_HOME)
@@ -971,21 +971,19 @@ class MainActivity : AppCompatActivity() {
             }
             return
         }
-        createAndOpenSessionAfterIncognitoExit()
+        lifecycleScope.launch { createAndOpenSessionAfterIncognitoExit() }
     }
 
-    private fun createAndOpenSessionAfterIncognitoExit() {
-        lifecycleScope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    sessionRepository.createSession("新しいチャット")
-                }
-            }.onSuccess { sessionId ->
-                saveCurrentSessionId(sessionId)
-                navigateToChatSession(sessionId, forceNewFragment = true)
-            }.onFailure {
-                Log.e(TAG, "Failed to create session", it)
+    private suspend fun createAndOpenSessionAfterIncognitoExit() {
+        runCatching {
+            withContext(Dispatchers.IO) {
+                sessionRepository.createSession("新しいチャット")
             }
+        }.onSuccess { sessionId ->
+            saveCurrentSessionId(sessionId)
+            navigateToChatSession(sessionId, forceNewFragment = true)
+        }.onFailure {
+            Log.e(TAG, "Failed to create session", it)
         }
     }
 
@@ -1045,11 +1043,6 @@ class MainActivity : AppCompatActivity() {
         if (!PreferencesHelper.isDisableScreenshot(this)) {
             window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         }
-        PreferencesHelper.applyThemeMode(this)
-        // バグ修正: 通常セッションに移動しても見た目がシークレットモードのまま
-        // 戻らない問題。ChatFragment 側の isIncognitoMode フラグが残っていると
-        // ヘッダ色などが復帰しないため、ここで同期する。
-        notifyChatFragmentIncognitoExited()
         withContext(Dispatchers.IO) {
             val ctx = applicationContext
             sessionRepository.deleteAllIncognitoSessionsWithAttachments { imageUri, audioUri ->
@@ -1061,13 +1054,6 @@ class MainActivity : AppCompatActivity() {
         Log.d(TAG, "Exited incognito mode for normal chat navigation")
     }
 
-    /** シークレットモード終了を ChatFragment に通知し、UI フラグ (ヘッダ色など) を復帰させる。 */
-    private fun notifyChatFragmentIncognitoExited() {
-        val navHost = supportFragmentManager.findFragmentById(R.id.nav_host_fragment_content_main)
-        navHost?.childFragmentManager?.fragments
-            ?.filterIsInstance<com.nezumi_ai.presentation.ui.fragment.ChatFragment>()
-            ?.forEach { it.syncIncognitoModeWithActivity() }
-    }
 
     private fun showHistoryItemActions(session: ChatSessionEntity, anchorView: View) {
         val pinTitle = if (session.isPinned) "固定を解除" else "固定"
