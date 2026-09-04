@@ -39,6 +39,14 @@ class LlamaCppContext(
 
     val isValid: Boolean get() = ptr != 0L
 
+    /** リクエストしたGPUバックエンドが利用できず、実行時にCPUへフォールバックしたか。 */
+    val gpuBackendFallbackOccurred: Boolean
+        get() = ptr != 0L && LlamaBridge.nativeGpuBackendFallbackOccurred(ptr)
+
+    /** 実際にロードされたバックエンド ("CPU" / "OPENCL" / "VULKAN")。リクエスト値ではない。 */
+    val actualGpuBackend: String
+        get() = if (ptr == 0L) LlamaCppGpuBackend.CPU else LlamaBridge.nativeGetActualGpuBackend(ptr)
+
     data class LastTimings(
         val promptMs: Float,
         val promptTokens: Float,

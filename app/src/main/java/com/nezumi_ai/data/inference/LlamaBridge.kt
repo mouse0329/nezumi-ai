@@ -77,6 +77,23 @@ object LlamaBridge {
     /** コンテキスト・モデル・mtmd・チャットテンプレートを解放する。 */
     external fun llamaFree(ctx: Long)
 
+    /**
+     * llamaInit 完了後、実際にロードされたバックエンドを取得する ("CPU" / "OPENCL" / "VULKAN")。
+     * リクエストしたバックエンドが端末で利用できずCPUにフォールバックした場合、
+     * ここで返る値は要求値ではなく実際に使われた "CPU" になる。
+     */
+    external fun nativeGetActualGpuBackend(ctx: Long): String
+
+    /** リクエストしたGPUバックエンドが利用できず、CPUへフォールバックしたかどうか。 */
+    external fun nativeGpuBackendFallbackOccurred(ctx: Long): Boolean
+
+    /**
+     * モデルをロードせずに、指定バックエンド ("OPENCL" / "VULKAN") が実行時に
+     * 本当に使えるデバイスを持つかどうかを問い合わせる。
+     * 設定画面の選択可否判定は、ファイルの有無ではなくこちらを使うこと。
+     */
+    external fun nativeProbeGpuBackendAvailable(gpuBackend: String): Boolean
+
     // ─── トークナイザ ────────────────────────────────────────────
 
     /** テキストをトークン ID 配列に変換する。失敗時は null。 */

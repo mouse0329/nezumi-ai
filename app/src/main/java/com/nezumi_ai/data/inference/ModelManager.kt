@@ -433,6 +433,21 @@ class ModelManager(
     fun hasGgufChatTemplate(): Boolean =
         (activeEngine as? GgufInferenceEngine)?.hasGgufChatTemplate() ?: false
 
+    /**
+     * 直近の initializeModel() で要求したGPUバックエンド (OpenCL / Vulkan) が
+     * この端末では実行時に利用できず、CPUへ静かにフォールバックしたかどうか。
+     *
+     * true の場合、呼び出し側 (ChatViewModel) は必ずユーザーにその旨をダイアログで
+     * 提示し、CPUで続行するか / キャンセルするかを選ばせること。
+     * ユーザーが選んでいないバックエンドで黙って動かし続けてはならない。
+     */
+    fun didFallBackFromRequestedGpuBackend(): Boolean =
+        (activeEngine as? GgufInferenceEngine)?.gpuBackendFallbackOccurred ?: false
+
+    /** 直近ロードで実際に使われたバックエンド ("CPU" / "OPENCL" / "VULKAN")。 */
+    fun currentActualGpuBackend(): String =
+        (activeEngine as? GgufInferenceEngine)?.actualGpuBackend ?: LlamaCppGpuBackend.CPU
+
     fun parseGgufChatOutput(
         output: String,
         isPartial: Boolean

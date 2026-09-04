@@ -221,6 +221,23 @@ class GgufInferenceEngine(
     /** Direct vendor/llama.cpp context. */
     @Volatile private var llamaCppCtx: LlamaCppContext? = null
 
+    /**
+     * 直近の loadModel() で要求したGPUバックエンドが端末で利用できず、
+     * CPUへ静かにフォールバックしたかどうか。
+     *
+     * これまでは logcat の警告としてのみ残り、ユーザーには一切通知されなかった。
+     * UI 側（ChatViewModel）は loadModel 成功直後にこれを確認し、
+     * true の場合は「要求通りに動作しなかった」旨をダイアログでユーザーに提示し、
+     * 続行するか選択させること。ユーザーの同意なくCPUフォールバックのまま
+     * 黙って推論を続けるべきではない。
+     */
+    val gpuBackendFallbackOccurred: Boolean
+        get() = llamaCppCtx?.gpuBackendFallbackOccurred == true
+
+    /** 直近ロードで実際に使われたバックエンド（要求値ではない）。 */
+    val actualGpuBackend: String
+        get() = llamaCppCtx?.actualGpuBackend ?: LlamaCppGpuBackend.CPU
+
     @Volatile private var loadedModelPath: String? = null
     @Volatile private var loadedConfig: InferenceConfig? = null
 
@@ -308,10 +325,17 @@ class GgufInferenceEngine(
                     getOptimalThreadCount()
                 }
                 val gpuBackend = LlamaCppGpuBackend.normalize(normalized.llamaCppGpuBackend)
+                // Bug fix: ファイル存在チェックだけでは「ライブラリはあるがICD/ドライバが
+                // 機能しない」端末を見抜けず、n_gpu_layers>0 を渡した挙句に llamaInit 内部で
+                // 静かにCPUへフォールバックしていた。実デバイス問い合わせ
+                // (nativeProbeGpuBackendAvailable) で事前に判定する。
                 val gpuLayers = when {
                     !LlamaCppGpuBackend.isGpu(gpuBackend) -> 0
-                    gpuBackend == LlamaCppGpuBackend.OPENCL && !OpenClAvailability.isAvailable() -> 0
-                    gpuBackend == LlamaCppGpuBackend.VULKAN && !VulkanAvailability.isAvailable() -> 0
+                    !LlamaBridge.isLibraryLoaded() -> 0
+                    gpuBackend == LlamaCppGpuBackend.OPENCL &&
+                        !runCatching { LlamaBridge.nativeProbeGpuBackendAvailable(LlamaCppGpuBackend.OPENCL) }.getOrDefault(false) -> 0
+                    gpuBackend == LlamaCppGpuBackend.VULKAN &&
+                        !runCatching { LlamaBridge.nativeProbeGpuBackendAvailable(LlamaCppGpuBackend.VULKAN) }.getOrDefault(false) -> 0
                     normalized.llamaCppGpuLayers > 0 -> normalized.llamaCppGpuLayers.coerceIn(0, 128)
                     else -> 0
                 }
@@ -388,7 +412,15 @@ class GgufInferenceEngine(
                 loadedModelPath = modelPath
                 loadedConfig = normalized
                 lastSessionId = null  // セッションリセット
-                Log.i(TAG, "GGUF model loaded: $modelPath using direct llama.cpp backend")
+                if (ctx.gpuBackendFallbackOccurred) {
+                    Log.w(
+                        TAG,
+                        "GGUF model loaded: $modelPath — requested backend=$gpuBackend " +
+                            "was NOT available; running on CPU instead. UI must inform the user."
+                    )
+                } else {
+                    Log.i(TAG, "GGUF model loaded: $modelPath using direct llama.cpp backend (${ctx.actualGpuBackend})")
+                }
                 maybeAutoEnableThinkingFromChatTemplate(modelPath)
                 Result.success(Unit)
             } catch (t: Throwable) {

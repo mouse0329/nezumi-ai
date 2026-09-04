@@ -810,6 +810,10 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="mcp_server_tool_more">... and %1$d more</string>
     <string name="chat_memory_error_title">Out of memory</string>
     <string name="chat_memory_error_body">The process could not continue because memory was insufficient.</string>
+    <string name="chat_gpu_backend_fallback_title">Selected backend is unavailable</string>
+    <string name="chat_gpu_backend_fallback_body">%1$s isn\'t available on this device, so it fell back to %2$s. Continue anyway?</string>
+    <string name="chat_gpu_backend_fallback_continue">Continue on %1$s</string>
+    <string name="chat_gpu_backend_fallback_cancel">Cancel and review settings</string>
     <string name="chat_memory_error_usage">Used: %1$dMB / %2$dMB (%3$d%%)</string>
     <string name="chat_memory_error_advice">Close other apps and try again.</string>
     <string name="chat_memory_error_close">Close</string>

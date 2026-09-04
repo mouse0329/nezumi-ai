@@ -50,6 +50,7 @@ import com.nezumi_ai.data.inference.ToolResultCard
 import com.nezumi_ai.data.inference.PromptBuilder
 import com.nezumi_ai.data.inference.PromptTemplateStore
 import com.nezumi_ai.data.inference.LiteRtStructuredPrompt
+import com.nezumi_ai.data.inference.LlamaCppGpuBackend
 import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import com.nezumi_ai.data.preset.PresetConstants
 import com.nezumi_ai.data.skill.Skill
@@ -678,6 +679,41 @@ class ChatViewModel(
 
     fun dismissMemoryError() {
         _memoryError.value = null
+    }
+
+    /**
+     * ユーザーが設定画面で選んだGPUバックエンド (OpenCL / Vulkan) が、実際には
+     * この端末で利用できずCPUへ自動フォールバックしたことを表す。
+     *
+     * 以前はこの状況が logcat にしか記録されず、ユーザーは自分が選んだ設定通りに
+     * 動いていないことに気づけなかった。モデルロード直後にこの状態を検知し、
+     * ダイアログでユーザーに事実を提示して、CPUで続行するか設定を見直すか
+     * 選ばせる。ユーザーの同意なくフォールバック状態のまま推論を続けてはならない。
+     */
+    data class GpuBackendFallbackInfo(
+        val requestedBackend: String,
+        val actualBackend: String
+    )
+
+    private val _gpuBackendFallback = MutableStateFlow<GpuBackendFallbackInfo?>(null)
+    val gpuBackendFallback: StateFlow<GpuBackendFallbackInfo?> = _gpuBackendFallback.asStateFlow()
+
+    /** ダイアログで「CPUのまま続行」を選んだ場合。 */
+    fun acknowledgeGpuBackendFallback() {
+        _gpuBackendFallback.value = null
+    }
+
+    /**
+     * ダイアログで「続行しない」を選んだ場合。モデルをアンロードしてチャットを止め、
+     * ユーザーが設定を見直せるようにする。要求したバックエンドで動かせないなら
+     * 黙って別のバックエンドで処理を進めるべきではない。
+     */
+    fun cancelDueToGpuBackendFallback() {
+        _gpuBackendFallback.value = null
+        viewModelScope.launch {
+            runCatching { modelManager?.unloadModel() }
+                .onFailure { Log.w(TAG, "cancelDueToGpuBackendFallback: unload failed", it) }
+        }
     }
 
     private val _toolCallState = MutableStateFlow<ToolCallState?>(null)
@@ -5022,6 +5058,24 @@ class ChatViewModel(
             if (result.isSuccess) {
                 updateModelLoadingPhase("ロード完了")
                 Log.d(TAG, "loadModelWithOverlay: SUCCESS - model=$model")
+
+                // 要求したGPUバックエンドが端末で使えずCPUにフォールバックしていないか確認する。
+                // 起きていた場合はユーザーに通知し、続行するか選ばせる（黙って進めない）。
+                val requestedBackend = LlamaCppGpuBackend.normalize(config.llamaCppGpuBackend)
+                if (LlamaCppGpuBackend.isGpu(requestedBackend) &&
+                    manager.didFallBackFromRequestedGpuBackend()
+                ) {
+                    val actualBackend = manager.currentActualGpuBackend()
+                    Log.w(
+                        TAG,
+                        "loadModelWithOverlay: requested backend=$requestedBackend was not available; " +
+                            "running on $actualBackend instead. Notifying user."
+                    )
+                    _gpuBackendFallback.value = GpuBackendFallbackInfo(
+                        requestedBackend = requestedBackend,
+                        actualBackend = actualBackend
+                    )
+                }
             } else {
                 val error = result.exceptionOrNull()
                 Log.e(TAG, "loadModelWithOverlay: FAILED - model=$model, error=${error?.message}", error)

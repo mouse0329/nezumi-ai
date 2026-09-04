@@ -688,6 +688,10 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="chat_warning">警告</string>
     <string name="chat_memory_error_title">メモリ不足</string>
     <string name="chat_memory_error_body">メモリ不足のため、処理を続行できませんでした。</string>
+    <string name="chat_gpu_backend_fallback_title">選択したバックエンドが利用できません</string>
+    <string name="chat_gpu_backend_fallback_body">この端末では %1$s が利用できなかったため、%2$s で実行されています。このまま続行しますか？</string>
+    <string name="chat_gpu_backend_fallback_continue">%1$s で続行</string>
+    <string name="chat_gpu_backend_fallback_cancel">中止して設定を見直す</string>
     <string name="chat_memory_error_usage">使用中: %1$dMB / %2$dMB (%3$d%%)</string>
     <string name="chat_memory_error_advice">他のアプリを閉じてから再試行してください。</string>
     <string name="chat_memory_error_close">閉じる</string>

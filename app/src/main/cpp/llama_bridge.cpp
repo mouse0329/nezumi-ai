@@ -86,12 +86,19 @@ static const char *nezumi_backend_reg_want(const char *gpu_backend)
     return nullptr;
 }
 
-static std::vector<ggml_backend_dev_t> nezumi_collect_devices(const char *gpu_backend, int *n_gpu_layers)
+// gpu_backend: 要求されたバックエンド文字列 ("CPU" / "OPENCL" / "VULKAN")。
+// n_gpu_layers: 失敗時に 0 へ書き換えられる（in/out）。
+// fallback_occurred: 要求バックエンドが見つからずCPUにフォールバックした場合 true（out）。
+static std::vector<ggml_backend_dev_t> nezumi_collect_devices(const char *gpu_backend, int *n_gpu_layers, bool *fallback_occurred)
 {
     std::vector<ggml_backend_dev_t> selected;
+    if (fallback_occurred)
+        *fallback_occurred = false;
+
     const char *want = nezumi_backend_reg_want(gpu_backend);
     if (want == nullptr)
     {
+        // 最初から CPU が要求された場合はフォールバックではない。
         if (n_gpu_layers)
             *n_gpu_layers = 0;
         selected.push_back(nullptr);
@@ -116,6 +123,8 @@ static std::vector<ggml_backend_dev_t> nezumi_collect_devices(const char *gpu_ba
         LOGW("llamaInit: requested backend %s is not available; falling back to CPU", want);
         if (n_gpu_layers)
             *n_gpu_layers = 0;
+        if (fallback_occurred)
+            *fallback_occurred = true;
     }
     selected.push_back(nullptr);
     return selected;
@@ -147,6 +156,11 @@ struct NezumiLlamaCtx
     int n_ubatch = 512;
     int n_past = 0; // KVキャッシュに書き込み済みのトークン数（位置オフセット）
     bool context_shift_enabled = true;
+
+    // 要求バックエンドと実際に使われたバックエンド（フォールバック検知用）。
+    std::string requested_gpu_backend = "CPU";
+    std::string actual_gpu_backend = "CPU";
+    bool gpu_backend_fallback_occurred = false;
 
     // 生成中断フラグ（nativeInterrupt / nativeClearInterrupt）
     std::atomic<bool> interrupted{false};
@@ -537,9 +551,14 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
 
     const char *model_path = env->GetStringUTFChars(j_model_path, nullptr);
     const char *gpu_backend_chars = j_gpu_backend ? env->GetStringUTFChars(j_gpu_backend, nullptr) : nullptr;
-    const std::string gpu_backend = gpu_backend_chars ? gpu_backend_chars : "CPU";
+    const std::string requested_gpu_backend = gpu_backend_chars ? gpu_backend_chars : "CPU";
     int gpu_layers = n_gpu_layers;
-    std::vector<ggml_backend_dev_t> devices = nezumi_collect_devices(gpu_backend.c_str(), &gpu_layers);
+    bool gpu_backend_fallback_occurred = false;
+    std::vector<ggml_backend_dev_t> devices = nezumi_collect_devices(
+        requested_gpu_backend.c_str(), &gpu_layers, &gpu_backend_fallback_occurred);
+    // フォールバック時は実際に使われたバックエンドを "CPU" として記録する。
+    // ログや呼び出し元 (Kotlin) には「要求値」ではなくこちらを返す。
+    const std::string actual_gpu_backend = gpu_backend_fallback_occurred ? "CPU" : requested_gpu_backend;
 
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = gpu_layers;
@@ -594,6 +613,9 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     nc->n_ubatch = static_cast<int>(cparams.n_ubatch);
     nc->context_shift_enabled = context_shift_enabled;
     nc->seed = seed;
+    nc->requested_gpu_backend = requested_gpu_backend;
+    nc->actual_gpu_backend = actual_gpu_backend;
+    nc->gpu_backend_fallback_occurred = gpu_backend_fallback_occurred;
     nc->batch = llama_batch_init(nc->n_batch, 0, 1); // バッチを事前確保
     env->GetJavaVM(&nc->jvm);
 
@@ -630,12 +652,27 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
         LOGW("llamaInit: no usable chat template in GGUF");
     }
 
-    LOGI("llamaInit: OK n_ctx=%d n_batch=%d n_ubatch=%d n_gpu_layers=%d backend=%s flash_attn=%d ctx_shift=%d mtmd=%s chat_tmpl=%s",
-         n_ctx, nc->n_batch, nc->n_ubatch, gpu_layers,
-         gpu_backend.c_str(),
-         flash_attn_enabled, context_shift_enabled,
-         nc->mtmd_ctx ? "loaded" : "none",
-         nc->chat_templates ? "ok" : "none");
+    // backend= には実際に使われたバックエンドを出す（要求値ではない）。
+    // フォールバック発生時は requested= も併記し、ログだけで矛盾なく状況が追える
+    // ようにする（以前は backend=OPENCL なのに n_gpu_layers=0 という矛盾ログだった）。
+    if (gpu_backend_fallback_occurred)
+    {
+        LOGI("llamaInit: OK n_ctx=%d n_batch=%d n_ubatch=%d n_gpu_layers=%d backend=%s requested=%s (FALLBACK) flash_attn=%d ctx_shift=%d mtmd=%s chat_tmpl=%s",
+             n_ctx, nc->n_batch, nc->n_ubatch, gpu_layers,
+             actual_gpu_backend.c_str(), requested_gpu_backend.c_str(),
+             flash_attn_enabled, context_shift_enabled,
+             nc->mtmd_ctx ? "loaded" : "none",
+             nc->chat_templates ? "ok" : "none");
+    }
+    else
+    {
+        LOGI("llamaInit: OK n_ctx=%d n_batch=%d n_ubatch=%d n_gpu_layers=%d backend=%s flash_attn=%d ctx_shift=%d mtmd=%s chat_tmpl=%s",
+             n_ctx, nc->n_batch, nc->n_ubatch, gpu_layers,
+             actual_gpu_backend.c_str(),
+             flash_attn_enabled, context_shift_enabled,
+             nc->mtmd_ctx ? "loaded" : "none",
+             nc->chat_templates ? "ok" : "none");
+    }
     return reinterpret_cast<jlong>(nc);
 }
 
@@ -1359,6 +1396,83 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaVersion(
     jobject /* obj */)
 {
     return env->NewStringUTF(llama_print_system_info());
+}
+
+/**
+ * モデルをロードせずに、要求バックエンド ("OPENCL" / "VULKAN") が実行時に
+ * 本当に使える（ggml_backend_registry にデバイスが1つ以上ある）かどうかを判定する。
+ *
+ * 設定画面はこれまで libOpenCL.so / libvulkan.so の「ファイルの有無」だけで
+ * 選択可否 (enabled) を決めていたため、ライブラリはあってもICD/ドライバが
+ * 機能しない端末では「選択できるのに実際は動かない」状態になっていた。
+ * この関数は llamaInit と同じ ggml_backend_dev_* API で実デバイスを問い合わせる
+ * ため、設定画面の選択可否判定にはファイル存在チェックではなくこちらを使うべき。
+ */
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeProbeGpuBackendAvailable(
+    JNIEnv *env,
+    jobject /* obj */,
+    jstring j_gpu_backend)
+{
+    std::call_once(g_backend_init_once, []()
+                   {
+                       nezumi_prepare_opencl_icd_paths();
+                       llama_backend_init();
+                   });
+
+    if (j_gpu_backend == nullptr)
+        return JNI_FALSE;
+
+    const char *gpu_backend_chars = env->GetStringUTFChars(j_gpu_backend, nullptr);
+    const char *want = nezumi_backend_reg_want(gpu_backend_chars);
+    if (want == nullptr)
+    {
+        env->ReleaseStringUTFChars(j_gpu_backend, gpu_backend_chars);
+        return JNI_FALSE;
+    }
+
+    bool found = false;
+    const size_t n = ggml_backend_dev_count();
+    for (size_t i = 0; i < n; ++i)
+    {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
+        const char *reg_name = ggml_backend_reg_name(reg);
+        if (reg_name && nezumi_iequals(reg_name, want))
+        {
+            found = true;
+            break;
+        }
+    }
+
+    env->ReleaseStringUTFChars(j_gpu_backend, gpu_backend_chars);
+    return found ? JNI_TRUE : JNI_FALSE;
+}
+
+// llamaInit 完了後、実際にロードされたバックエンドを問い合わせる。
+// UI 側でリクエストと異なる場合にフォールバック通知ダイアログを出すために使う。
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeGetActualGpuBackend(
+    JNIEnv *env,
+    jobject /* obj */,
+    jlong ctx_ptr)
+{
+    auto *nc = reinterpret_cast<NezumiLlamaCtx *>(ctx_ptr);
+    if (!nc)
+        return env->NewStringUTF("CPU");
+    return env->NewStringUTF(nc->actual_gpu_backend.c_str());
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeGpuBackendFallbackOccurred(
+    JNIEnv *env,
+    jobject /* obj */,
+    jlong ctx_ptr)
+{
+    auto *nc = reinterpret_cast<NezumiLlamaCtx *>(ctx_ptr);
+    if (!nc)
+        return JNI_FALSE;
+    return nc->gpu_backend_fallback_occurred ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jobjectArray JNICALL

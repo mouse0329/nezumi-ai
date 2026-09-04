@@ -129,8 +129,22 @@ class SettingsComposeFragment : Fragment() {
     private var maxThreads by mutableStateOf(InferenceConfig.getMaxThreadCount())
     private var llamaCppGpuLayers by mutableStateOf(0)
     private var llamaCppGpuBackend by mutableStateOf(LlamaCppGpuBackend.CPU)
-    private val openClAvailable: Boolean by lazy { OpenClAvailability.isAvailable() }
-    private val vulkanAvailable: Boolean by lazy { VulkanAvailability.isAvailable() }
+    // Bug fix: 従来は libOpenCL.so / libvulkan.so の「ファイルの有無」だけで
+    // 選択可否を決めていたため、ライブラリはあってもICD/ドライバが機能しない端末で
+    // 「選択できるのに実際は動かず、CPUへ静かにフォールバックする」問題があった。
+    // ファイル存在チェックは軽量な足切り（ライブラリが無いなら確実に不可）として残しつつ、
+    // 最終判定は llama.cpp の ggml_backend registry に対する実問い合わせ
+    // (nativeProbeGpuBackendAvailable) を必須にする。
+    private val openClAvailable: Boolean by lazy {
+        OpenClAvailability.isAvailable() &&
+            LlamaBridge.isLibraryLoaded() &&
+            runCatching { LlamaBridge.nativeProbeGpuBackendAvailable(LlamaCppGpuBackend.OPENCL) }.getOrDefault(false)
+    }
+    private val vulkanAvailable: Boolean by lazy {
+        VulkanAvailability.isAvailable() &&
+            LlamaBridge.isLibraryLoaded() &&
+            runCatching { LlamaBridge.nativeProbeGpuBackendAvailable(LlamaCppGpuBackend.VULKAN) }.getOrDefault(false)
+    }
     private val llamaCppCompiledGpuBackends: Set<String> by lazy { LlamaBridge.compiledGpuBackends() }
     private var llamaCppBatchSize by mutableStateOf(512)
     private var llamaCppUBatchSize by mutableStateOf(512)

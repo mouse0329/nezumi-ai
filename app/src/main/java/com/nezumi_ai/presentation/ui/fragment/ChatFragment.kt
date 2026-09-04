@@ -1624,6 +1624,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.gpuBackendFallback.collect { info ->
+                if (info != null) showGpuBackendFallbackDialog(info)
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
             viewModel.memoryWarning.collect { warning ->
                 if (warning != null) showMemoryWarningDialog(warning)
             }
@@ -2608,6 +2614,84 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         dialog.setContentView(composeView)
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
         dialog.show()
+    }
+
+    /**
+     * ユーザーが設定で選んだGPUバックエンドが端末で実際には使えず、CPUへ
+     * 自動フォールバックした場合に表示するダイアログ。
+     *
+     * ユーザーに選ばせずに黙って別のバックエンドで動かし続けることは避け、
+     * 「CPUで続行する」か「中止して設定を見直す」かを必ず選んでもらう。
+     * setCancelable(false) にして、背景タップやバックキーでうやむやにできない
+     * ようにする（ダイアログを消すには必ずどちらかのボタンを押す必要がある）。
+     */
+    private fun showGpuBackendFallbackDialog(info: ChatViewModel.GpuBackendFallbackInfo) {
+        val dialog = android.app.Dialog(requireContext())
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setCancelable(false)
+
+        val composeView = androidx.compose.ui.platform.ComposeView(requireContext()).apply {
+            setViewTreeLifecycleOwner(viewLifecycleOwner)
+            setViewTreeViewModelStoreOwner(this@ChatFragment)
+            setViewTreeSavedStateRegistryOwner(this@ChatFragment)
+            setContent {
+                NezumiComposeTheme {
+                    GpuBackendFallbackDialog(
+                        info = info,
+                        onContinueOnCpu = {
+                            dialog.dismiss()
+                            viewModel.acknowledgeGpuBackendFallback()
+                        },
+                        onCancel = {
+                            dialog.dismiss()
+                            viewModel.cancelDueToGpuBackendFallback()
+                        }
+                    )
+                }
+            }
+        }
+
+        dialog.setContentView(composeView)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.show()
+    }
+
+    @Composable
+    private fun GpuBackendFallbackDialog(
+        info: ChatViewModel.GpuBackendFallbackInfo,
+        onContinueOnCpu: () -> Unit,
+        onCancel: () -> Unit
+    ) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { /* 明示的な選択を必須にするため何もしない */ },
+            icon = {
+                Image(
+                    painter = painterResource(id = R.drawable.ic_errnezumi),
+                    contentDescription = stringResource(id = R.string.chat_error_icon_description),
+                    modifier = Modifier.size(128.dp)
+                )
+            },
+            title = { Text(stringResource(id = R.string.chat_gpu_backend_fallback_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        id = R.string.chat_gpu_backend_fallback_body,
+                        info.requestedBackend,
+                        info.actualBackend
+                    )
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = onContinueOnCpu) {
+                    Text(stringResource(id = R.string.chat_gpu_backend_fallback_continue, info.actualBackend))
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = onCancel) {
+                    Text(stringResource(id = R.string.chat_gpu_backend_fallback_cancel))
+                }
+            }
+        )
     }
 
     @Composable
