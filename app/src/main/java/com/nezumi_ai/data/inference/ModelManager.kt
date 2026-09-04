@@ -248,6 +248,7 @@ class ModelManager(
         if (!backendType.equals(request.backendType, ignoreCase = true)) return false
         if (llamaCppThreads != request.llamaCppThreads) return false
         if (llamaCppGpuLayers != request.llamaCppGpuLayers) return false
+        if (!llamaCppGpuBackend.equals(request.llamaCppGpuBackend, ignoreCase = true)) return false
         if (llamaCppBatchSize != request.llamaCppBatchSize) return false
         if (llamaCppUBatchSize != request.llamaCppUBatchSize) return false
         if (llamaCppKvUnified != request.llamaCppKvUnified) return false

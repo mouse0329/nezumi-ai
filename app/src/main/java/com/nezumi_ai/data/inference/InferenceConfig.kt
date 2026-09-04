@@ -18,7 +18,8 @@ data class InferenceConfig(
     val requireMultimodal: Boolean = false,
     // llama.cpp settings (最適化版 - Gallery 相準化)
     val llamaCppThreads: Int = getDefaultThreadCount(),
-    val llamaCppGpuLayers: Int = 0,  // GPU 無効化（Tensor G3 は OpenCL 非対応）
+    val llamaCppGpuLayers: Int = 0,
+    val llamaCppGpuBackend: String = LlamaCppGpuBackend.CPU,
  val llamaCppBatchSize: Int = 512, // バッチサイズをデフォルトに戻す：32 → 512
     val llamaCppUBatchSize: Int = 512,  // n_ubatch を独立制御できるように準備
     val llamaCppKvUnified: Boolean = true,  // KV 統合をデフォルトで有効化
@@ -124,6 +125,7 @@ data class InferenceConfig(
             "NPU" -> "NPU"
             else -> "CPU"
         }
+        val normalizedGpuBackend = LlamaCppGpuBackend.normalize(llamaCppGpuBackend)
         
         return copy(
             contextWindow = normalizedContext,
@@ -135,6 +137,7 @@ data class InferenceConfig(
             llamaCppBatchSize = normalizedBatchSize,
             llamaCppUBatchSize = normalizedUBatchSize,
             backendType = normalizedBackend,
+            llamaCppGpuBackend = normalizedGpuBackend,
             requireMultimodal = requireMultimodal,
             customStopTokens = customStopTokens.map { it.trim() }.filter { it.isNotEmpty() },
             enableToolCalling = enableToolCalling
@@ -148,6 +151,7 @@ data class InferenceConfig(
             requireMultimodal = requireMultimodal,
             llamaCppThreads = llamaCppThreads,
             llamaCppGpuLayers = llamaCppGpuLayers,
+            llamaCppGpuBackend = llamaCppGpuBackend,
             llamaCppBatchSize = llamaCppBatchSize,
             llamaCppUBatchSize = llamaCppUBatchSize,
             llamaCppKvUnified = llamaCppKvUnified,

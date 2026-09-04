@@ -12,7 +12,8 @@ class LlamaCppContext(
     flashAttentionEnabled: Boolean = true,
     contextShiftEnabled: Boolean = true,
     ropeFreqBase: Float = 0f,
-    ropeFreqScale: Float = 1f
+    ropeFreqScale: Float = 1f,
+    gpuBackend: String = LlamaCppGpuBackend.CPU
 ) {
     private var ptr: Long = if (LlamaBridge.isLibraryLoaded()) {
         LlamaBridge.llamaInit(
@@ -29,7 +30,8 @@ class LlamaCppContext(
             mmprojPath,
             flashAttentionEnabled,
             contextShiftEnabled,
-            -1
+            -1,
+            gpuBackend
         )
     } else {
         0L

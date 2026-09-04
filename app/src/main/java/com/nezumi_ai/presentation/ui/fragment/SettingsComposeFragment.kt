@@ -68,8 +68,11 @@ import com.nezumi_ai.R
 import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.InferenceConfig
+import com.nezumi_ai.data.inference.LlamaBridge
+import com.nezumi_ai.data.inference.LlamaCppGpuBackend
 import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.OpenClAvailability
+import com.nezumi_ai.data.inference.VulkanAvailability
 import com.nezumi_ai.data.memory.MemorySaveMode
 import com.nezumi_ai.MyApplication
 import com.nezumi_ai.data.repository.ChatSessionRepository
@@ -125,7 +128,10 @@ class SettingsComposeFragment : Fragment() {
     private var llamaCppThreads by mutableStateOf(InferenceConfig.getDefaultThreadCount())
     private var maxThreads by mutableStateOf(InferenceConfig.getMaxThreadCount())
     private var llamaCppGpuLayers by mutableStateOf(0)
+    private var llamaCppGpuBackend by mutableStateOf(LlamaCppGpuBackend.CPU)
     private val openClAvailable: Boolean by lazy { OpenClAvailability.isAvailable() }
+    private val vulkanAvailable: Boolean by lazy { VulkanAvailability.isAvailable() }
+    private val llamaCppCompiledGpuBackends: Set<String> by lazy { LlamaBridge.compiledGpuBackends() }
     private var llamaCppBatchSize by mutableStateOf(512)
     private var llamaCppUBatchSize by mutableStateOf(512)
     private var llamaCppKvUnified by mutableStateOf(true)
@@ -387,6 +393,7 @@ class SettingsComposeFragment : Fragment() {
                     append(preloadMemoryWarningThresholdPercent); append('|')
                     append(backendType); append('|')
                     append(llamaCppThreads); append('|')
+                    append(llamaCppGpuBackend); append('|')
                     append(llamaCppGpuLayers); append('|')
                     append(llamaCppBatchSize); append('|')
                     append(llamaCppUBatchSize); append('|')
@@ -1733,6 +1740,71 @@ class SettingsComposeFragment : Fragment() {
 
                     if (basicExpanded) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            val openClSelectable = llamaCppCompiledGpuBackends.contains(LlamaCppGpuBackend.OPENCL) && openClAvailable
+                            val vulkanSelectable = llamaCppCompiledGpuBackends.contains(LlamaCppGpuBackend.VULKAN) && vulkanAvailable
+                            val gpuOffloadEnabled = when (llamaCppGpuBackend) {
+                                LlamaCppGpuBackend.OPENCL -> openClSelectable
+                                LlamaCppGpuBackend.VULKAN -> vulkanSelectable
+                                else -> false
+                            }
+
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = stringResource(id = R.string.settings_llamacpp_gpu_backend),
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = stringResource(id = R.string.settings_llamacpp_gpu_backend_desc),
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    FilterChip(
+                                        selected = llamaCppGpuBackend == LlamaCppGpuBackend.CPU,
+                                        onClick = { llamaCppGpuBackend = LlamaCppGpuBackend.CPU },
+                                        label = { Text(stringResource(id = R.string.settings_backend_cpu)) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    FilterChip(
+                                        selected = llamaCppGpuBackend == LlamaCppGpuBackend.OPENCL,
+                                        onClick = {
+                                            llamaCppGpuBackend = LlamaCppGpuBackend.OPENCL
+                                            if (llamaCppGpuLayers == 0) llamaCppGpuLayers = 99
+                                        },
+                                        enabled = openClSelectable,
+                                        label = { Text(stringResource(id = R.string.settings_llamacpp_backend_opencl)) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    FilterChip(
+                                        selected = llamaCppGpuBackend == LlamaCppGpuBackend.VULKAN,
+                                        onClick = {
+                                            llamaCppGpuBackend = LlamaCppGpuBackend.VULKAN
+                                            if (llamaCppGpuLayers == 0) llamaCppGpuLayers = 99
+                                        },
+                                        enabled = vulkanSelectable,
+                                        label = { Text(stringResource(id = R.string.settings_llamacpp_backend_vulkan)) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                if (!openClSelectable || !vulkanSelectable) {
+                                    val unavailable = buildString {
+                                        if (!openClSelectable) append("OpenCL")
+                                        if (!openClSelectable && !vulkanSelectable) append(" / ")
+                                        if (!vulkanSelectable) append("Vulkan")
+                                    }
+                                    Text(
+                                        text = stringResource(id = R.string.settings_llamacpp_gpu_backend_unavailable, unavailable),
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -1785,18 +1857,18 @@ class SettingsComposeFragment : Fragment() {
                                 Slider(
                                     value = llamaCppGpuLayers.toFloat(),
                                     onValueChange = {
-                                        if (openClAvailable) {
+                                        if (gpuOffloadEnabled) {
                                             llamaCppGpuLayers = it.roundToInt()
                                         }
                                     },
                                     valueRange = 0f..128f,
                                     steps = 127,
-                                    enabled = openClAvailable,
+                                    enabled = gpuOffloadEnabled,
                                     modifier = Modifier.fillMaxWidth()
                                 )
-                                if (!openClAvailable) {
+                                if (!gpuOffloadEnabled) {
                                     Text(
-                                        text = stringResource(id = R.string.settings_gpu_layers_opencl_unavailable),
+                                        text = stringResource(id = R.string.settings_gpu_layers_backend_required),
                                         color = colorResource(id = R.color.text_secondary),
                                         style = MaterialTheme.typography.bodySmall
                                     )
@@ -3405,7 +3477,8 @@ class SettingsComposeFragment : Fragment() {
             braveSearchApiKeyInput = PreferencesHelper.getBraveSearchApiKey(requireContext())
             maxThreads = InferenceConfig.getMaxThreadCount()
             llamaCppThreads = threads.coerceIn(1, maxThreads)
-            llamaCppGpuLayers = if (openClAvailable) gpuLayers else 0
+            llamaCppGpuBackend = settingsRepository.getLlamaCppGpuBackend()
+            llamaCppGpuLayers = gpuLayers
             llamaCppBatchSize = batchSize
             llamaCppUBatchSize = uBatchSize
             llamaCppKvUnified = settingsRepository.getLlamaCppKvUnified()
@@ -3501,6 +3574,7 @@ class SettingsComposeFragment : Fragment() {
         settingsRepository.updatePreloadMemoryWarningThresholdPercent(preloadMemoryWarningThresholdPercent)
         settingsRepository.updateMemorySaveMode(MemorySaveMode.valueOf(memorySaveMode))
         settingsRepository.updateLlamaCppThreads(llamaCppThreads)
+        settingsRepository.updateLlamaCppGpuBackend(llamaCppGpuBackend)
         settingsRepository.updateLlamaCppGpuLayers(llamaCppGpuLayers)
         settingsRepository.updateLlamaCppBatchSize(llamaCppBatchSize)
         settingsRepository.updateLlamaCppUBatchSize(llamaCppUBatchSize)

@@ -7,7 +7,7 @@ import com.nezumi_ai.data.database.dao.ChatSessionDao
 import com.nezumi_ai.data.database.dao.SettingsDao
 import com.nezumi_ai.data.database.entity.SettingsEntity
 import com.nezumi_ai.data.inference.InferenceConfig
-import com.nezumi_ai.data.inference.OpenClAvailability
+import com.nezumi_ai.data.inference.LlamaCppGpuBackend
 import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.memory.MemorySaveMode
@@ -134,7 +134,8 @@ class SettingsRepository(
             enableSpeculativeDecoding = current.speculativeDecodingEnabled,
             backendType = backendForSelected,
             llamaCppThreads = current.llamaCppThreads,
-            llamaCppGpuLayers = resolvedGpuLayers(current.llamaCppGpuLayers),
+            llamaCppGpuLayers = current.llamaCppGpuLayers,
+            llamaCppGpuBackend = LlamaCppGpuBackend.normalize(current.llamaCppGpuBackend),
             llamaCppBatchSize = current.llamaCppBatchSize,
             llamaCppUBatchSize = current.llamaCppUBatchSize,
             llamaCppKvUnified = current.llamaCppKvUnified,
@@ -710,12 +711,12 @@ class SettingsRepository(
     }
 
     suspend fun getLlamaCppGpuLayers(): Int {
-        return resolvedGpuLayers(currentSettings().llamaCppGpuLayers)
+        return currentSettings().llamaCppGpuLayers.coerceIn(0, 128)
     }
 
     suspend fun updateLlamaCppGpuLayers(layers: Int) {
         val current = currentSettings()
-        val clamped = resolvedGpuLayers(layers.coerceIn(0, 100))
+        val clamped = layers.coerceIn(0, 128)
         dao.update(
             current.copy(
                 llamaCppGpuLayers = clamped,
@@ -724,8 +725,18 @@ class SettingsRepository(
         )
     }
 
-    private fun resolvedGpuLayers(requested: Int): Int {
-        return if (OpenClAvailability.isAvailable()) requested.coerceIn(0, 100) else 0
+    suspend fun getLlamaCppGpuBackend(): String {
+        return LlamaCppGpuBackend.normalize(currentSettings().llamaCppGpuBackend)
+    }
+
+    suspend fun updateLlamaCppGpuBackend(backend: String) {
+        val current = currentSettings()
+        dao.update(
+            current.copy(
+                llamaCppGpuBackend = LlamaCppGpuBackend.normalize(backend),
+                lastModified = System.currentTimeMillis()
+            )
+        )
     }
 
     suspend fun getLlamaCppBatchSize(): Int {

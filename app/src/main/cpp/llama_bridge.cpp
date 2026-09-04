@@ -20,12 +20,15 @@
  *     nativeHasGgufChatTemplate / nativeParseGgufChatOutput)
  *   - マルチモーダル (mtmd): nativeIsVisionSupported / nativeIsAudioSupported / nativeGetAudioSampleRate
  *   - タイミング統計 (nativeGetLastTimings)
+ *   - GPU バックエンド選択 (CPU / OpenCL / Vulkan)
  */
 
 #include <jni.h>
 #include <android/log.h>
 #include <atomic>
+#include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -47,6 +50,76 @@ static constexpr float CONTEXT_SHIFT_DISCARD_RATIO = 0.5f;
 // stop word 判定用に保持する生成テキストの最大長
 static constexpr size_t STOP_WORD_BUFFER_MAX = 1024;
 static std::once_flag g_backend_init_once;
+
+static bool nezumi_iequals(const char *a, const char *b)
+{
+    if (!a || !b)
+        return false;
+    while (*a && *b)
+    {
+        if (std::tolower(static_cast<unsigned char>(*a)) !=
+            std::tolower(static_cast<unsigned char>(*b)))
+            return false;
+        ++a;
+        ++b;
+    }
+    return *a == *b;
+}
+
+static void nezumi_prepare_opencl_icd_paths()
+{
+    if (getenv("OCL_ICD_VENDORS") != nullptr)
+        return;
+    setenv("OCL_ICD_VENDORS",
+           "/vendor/etc/OpenCL/vendors:/system/etc/OpenCL/vendors:/etc/OpenCL/vendors",
+           0);
+}
+
+static const char *nezumi_backend_reg_want(const char *gpu_backend)
+{
+    if (gpu_backend == nullptr || gpu_backend[0] == '\0' || nezumi_iequals(gpu_backend, "CPU"))
+        return nullptr;
+    if (nezumi_iequals(gpu_backend, "OPENCL") || nezumi_iequals(gpu_backend, "CL"))
+        return "OpenCL";
+    if (nezumi_iequals(gpu_backend, "VULKAN") || nezumi_iequals(gpu_backend, "VK"))
+        return "Vulkan";
+    return nullptr;
+}
+
+static std::vector<ggml_backend_dev_t> nezumi_collect_devices(const char *gpu_backend, int *n_gpu_layers)
+{
+    std::vector<ggml_backend_dev_t> selected;
+    const char *want = nezumi_backend_reg_want(gpu_backend);
+    if (want == nullptr)
+    {
+        if (n_gpu_layers)
+            *n_gpu_layers = 0;
+        selected.push_back(nullptr);
+        return selected;
+    }
+
+    const size_t n = ggml_backend_dev_count();
+    for (size_t i = 0; i < n; ++i)
+    {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
+        const char *reg_name = ggml_backend_reg_name(reg);
+        if (reg_name && nezumi_iequals(reg_name, want))
+        {
+            selected.push_back(dev);
+            LOGI("llamaInit: selected device %s (%s)", ggml_backend_dev_name(dev), reg_name);
+        }
+    }
+
+    if (selected.empty())
+    {
+        LOGW("llamaInit: requested backend %s is not available; falling back to CPU", want);
+        if (n_gpu_layers)
+            *n_gpu_layers = 0;
+    }
+    selected.push_back(nullptr);
+    return selected;
+}
 
 // ネイティブコンテキストを保持する構造体
 struct NezumiLlamaCtx
@@ -453,15 +526,26 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     jstring j_mmproj_path,
     jboolean flash_attn_enabled,
     jboolean context_shift_enabled,
-    jint seed)
+    jint seed,
+    jstring j_gpu_backend)
 {
     std::call_once(g_backend_init_once, []()
-                   { llama_backend_init(); });
+                   {
+                       nezumi_prepare_opencl_icd_paths();
+                       llama_backend_init();
+                   });
 
     const char *model_path = env->GetStringUTFChars(j_model_path, nullptr);
+    const char *gpu_backend_chars = j_gpu_backend ? env->GetStringUTFChars(j_gpu_backend, nullptr) : nullptr;
+    const std::string gpu_backend = gpu_backend_chars ? gpu_backend_chars : "CPU";
+    int gpu_layers = n_gpu_layers;
+    std::vector<ggml_backend_dev_t> devices = nezumi_collect_devices(gpu_backend.c_str(), &gpu_layers);
 
     llama_model_params mparams = llama_model_default_params();
-    mparams.n_gpu_layers = n_gpu_layers;
+    mparams.n_gpu_layers = gpu_layers;
+    // CPU または要求バックエンド未検出時は nullptr（全デバイス + n_gpu_layers=0）。
+    // 空の {nullptr} リストを渡すと llama.cpp がデバイス 0 件でロードに失敗する。
+    mparams.devices = (!devices.empty() && devices.front() != nullptr) ? devices.data() : nullptr;
     // mmap/mlock: 新APIでは llama_load_mode で指定する
     if (use_mmap && use_mlock)
         mparams.load_mode = LLAMA_LOAD_MODE_MMAP_MLOCK;
@@ -474,6 +558,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
 
     llama_model *model = llama_model_load_from_file(model_path, mparams);
     env->ReleaseStringUTFChars(j_model_path, model_path);
+    if (gpu_backend_chars)
+        env->ReleaseStringUTFChars(j_gpu_backend, gpu_backend_chars);
 
     if (!model)
     {
@@ -518,7 +604,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
         mtmd_helper_log_set(nezumi_ggml_log_callback, nullptr);
 
         mtmd_context_params mctx_params = mtmd_context_params_default();
-        mctx_params.use_gpu = n_gpu_layers > 0;
+        mctx_params.use_gpu = gpu_layers > 0;
         mctx_params.n_threads = n_threads;
         mctx_params.flash_attn_type = cparams.flash_attn_type;
         mctx_params.warmup = false; // 起動時間短縮のため warmup は行わない
@@ -544,8 +630,9 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
         LOGW("llamaInit: no usable chat template in GGUF");
     }
 
-    LOGI("llamaInit: OK n_ctx=%d n_batch=%d n_ubatch=%d n_gpu_layers=%d flash_attn=%d ctx_shift=%d mtmd=%s chat_tmpl=%s",
-         n_ctx, nc->n_batch, nc->n_ubatch, n_gpu_layers,
+    LOGI("llamaInit: OK n_ctx=%d n_batch=%d n_ubatch=%d n_gpu_layers=%d backend=%s flash_attn=%d ctx_shift=%d mtmd=%s chat_tmpl=%s",
+         n_ctx, nc->n_batch, nc->n_ubatch, gpu_layers,
+         gpu_backend.c_str(),
          flash_attn_enabled, context_shift_enabled,
          nc->mtmd_ctx ? "loaded" : "none",
          nc->chat_templates ? "ok" : "none");
@@ -1272,4 +1359,27 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaVersion(
     jobject /* obj */)
 {
     return env->NewStringUTF(llama_print_system_info());
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompiledGpuBackends(
+    JNIEnv *env,
+    jobject /* obj */)
+{
+    std::vector<const char *> names;
+#ifdef NEZUMI_LLAMA_OPENCL
+    names.push_back("OPENCL");
+#endif
+#ifdef NEZUMI_LLAMA_VULKAN
+    names.push_back("VULKAN");
+#endif
+    jclass string_class = env->FindClass("java/lang/String");
+    jobjectArray result = env->NewObjectArray(static_cast<jsize>(names.size()), string_class, nullptr);
+    for (size_t i = 0; i < names.size(); ++i)
+    {
+        jstring item = env->NewStringUTF(names[i]);
+        env->SetObjectArrayElement(result, static_cast<jsize>(i), item);
+        env->DeleteLocalRef(item);
+    }
+    return result;
 }

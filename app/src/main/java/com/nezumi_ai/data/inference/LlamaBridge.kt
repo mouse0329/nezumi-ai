@@ -53,6 +53,7 @@ object LlamaBridge {
      * @param flashAttentionEnabled Flash Attention 有効化
      * @param contextShiftEnabled コンテキスト溢れ時のシフト継続
      * @param seed 乱数シード（-1 でランダム）
+     * @param gpuBackend llama.cpp GPU バックエンド (CPU / OPENCL / VULKAN)
      * @return ネイティブコンテキストポインタ（0 = 失敗）
      */
     external fun llamaInit(
@@ -69,7 +70,8 @@ object LlamaBridge {
         mmprojPath: String?,
         flashAttentionEnabled: Boolean,
         contextShiftEnabled: Boolean,
-        seed: Int
+        seed: Int,
+        gpuBackend: String
     ): Long
 
     /** コンテキスト・モデル・mtmd・チャットテンプレートを解放する。 */
@@ -202,4 +204,12 @@ object LlamaBridge {
 
     /** llama.cpp バージョン・システム情報文字列を返す。 */
     external fun llamaVersion(): String
+
+    /** ビルドに含まれている llama.cpp GPU バックエンド (OPENCL / VULKAN)。 */
+    external fun nativeCompiledGpuBackends(): Array<String>
+
+    fun compiledGpuBackends(): Set<String> {
+        if (!libraryLoaded) return emptySet()
+        return nativeCompiledGpuBackends().toSet()
+    }
 }

@@ -307,9 +307,14 @@ class GgufInferenceEngine(
                 } else {
                     getOptimalThreadCount()
                 }
-                // Direct vendor/llama.cpp is currently built with Vulkan disabled;
-                // OpenCL availability alone cannot enable its GPU backend.
-                val gpuLayers = 0
+                val gpuBackend = LlamaCppGpuBackend.normalize(normalized.llamaCppGpuBackend)
+                val gpuLayers = when {
+                    !LlamaCppGpuBackend.isGpu(gpuBackend) -> 0
+                    gpuBackend == LlamaCppGpuBackend.OPENCL && !OpenClAvailability.isAvailable() -> 0
+                    gpuBackend == LlamaCppGpuBackend.VULKAN && !VulkanAvailability.isAvailable() -> 0
+                    normalized.llamaCppGpuLayers > 0 -> normalized.llamaCppGpuLayers.coerceIn(0, 128)
+                    else -> 0
+                }
                 val nativeSettings = resolveNativeGenerationSettings(modelPath, normalized, appContext)
                 if (nativeSettings.batchSize <= 0 || nativeSettings.ubatchSize <= 0) {
                     return@withLock Result.failure(IllegalStateException("Invalid GGUF batch size configuration"))
@@ -327,6 +332,7 @@ class GgufInferenceEngine(
                 Log.i(
                     TAG,
                     "Loading GGUF model: $modelPath backend=${normalized.backendType} " +
+                        "llamaGpuBackend=$gpuBackend " +
                         "threads=$optimalThreads gpuLayers=$gpuLayers " +
                         "nBatch=${nativeSettings.batchSize} nUbatch=${nativeSettings.ubatchSize} " +
                         "ropeFreqBase=${normalized.llamaCppRopeFreqBase} " +
@@ -368,6 +374,7 @@ class GgufInferenceEngine(
                         // 常にデフォルト値 (base=0f / scale=1f, mtp=off) で動いていた。
                         ropeFreqBase = normalized.llamaCppRopeFreqBase,
                         ropeFreqScale = normalized.llamaCppRopeFreqScale,
+                        gpuBackend = gpuBackend,
                     )
                 }
 

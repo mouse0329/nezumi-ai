@@ -33,6 +33,7 @@ data class SettingsEntity(
         .roundToInt()
         .coerceAtLeast(1),
     val llamaCppGpuLayers: Int = 0,
+    val llamaCppGpuBackend: String = "CPU",
     val llamaCppBatchSize: Int = 512,
     val llamaCppUBatchSize: Int = 512,
     val llamaCppKvUnified: Boolean = true,
