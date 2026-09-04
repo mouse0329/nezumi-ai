@@ -87,7 +87,6 @@ data class InferenceConfig(
         const val MIN_TOP_P = 0.0f
         const val MAX_TOP_P = 1.0f
         const val MIN_THREADS = 1
-        const val MAX_THREADS = 16
         const val MIN_BATCH_SIZE = 32
         const val MAX_BATCH_SIZE = 2048
         const val MIN_UBATCH_SIZE = 32
@@ -99,7 +98,7 @@ data class InferenceConfig(
         }
 
         fun getMaxThreadCount(): Int {
-            return Runtime.getRuntime().availableProcessors().coerceIn(MIN_THREADS, MAX_THREADS)
+            return Runtime.getRuntime().availableProcessors().coerceAtLeast(MIN_THREADS)
         }
     }
 

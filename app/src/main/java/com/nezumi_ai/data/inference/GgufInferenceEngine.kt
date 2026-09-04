@@ -299,14 +299,10 @@ class GgufInferenceEngine(
                 //   "GPU" のときは config.llamaCppGpuLayers を尊重し、0 の場合のみ従来の
                 //   getAdaptiveGpuLayers() で自動判定する。
                 val optimalThreads = if (normalized.llamaCppThreads > 0) {
-                    // Bug fix: MAX_THREADS(16) は全端末共通の安全上限に過ぎず、
-                    // 実際の物理/論理コア数を超えるとコンテキストスイッチのオーバーヘッドで
-                    // 逆に生成速度が大きく低下する（例: TensorG3 は8コアなのに13等を許してしまっていた）。
-                    // 端末の availableProcessors() も上限に加える。
-                    val deviceCores = Runtime.getRuntime().availableProcessors()
+                    // スレッド数は端末の論理コア数を上限とする。
                     normalized.llamaCppThreads.coerceIn(
                         InferenceConfig.MIN_THREADS,
-                        minOf(InferenceConfig.MAX_THREADS, deviceCores)
+                        InferenceConfig.getMaxThreadCount()
                     )
                 } else {
                     getOptimalThreadCount()

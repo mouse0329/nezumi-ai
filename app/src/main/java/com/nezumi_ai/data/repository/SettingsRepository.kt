@@ -697,7 +697,10 @@ class SettingsRepository(
 
     suspend fun updateLlamaCppThreads(threads: Int) {
         val current = currentSettings()
-        val clamped = threads.coerceIn(1, 32)
+        val clamped = threads.coerceIn(
+            InferenceConfig.MIN_THREADS,
+            InferenceConfig.getMaxThreadCount()
+        )
         dao.update(
             current.copy(
                 llamaCppThreads = clamped,

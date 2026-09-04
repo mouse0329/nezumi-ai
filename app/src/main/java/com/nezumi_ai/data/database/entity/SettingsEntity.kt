@@ -2,6 +2,7 @@ package com.nezumi_ai.data.database.entity
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import kotlin.math.roundToInt
 
 @Entity(tableName = "settings")
 data class SettingsEntity(
@@ -28,7 +29,9 @@ data class SettingsEntity(
     val userName: String = "",
     val lastModified: Long = System.currentTimeMillis(),
     // llama.cpp settings
-    val llamaCppThreads: Int = 4,
+    val llamaCppThreads: Int = (Runtime.getRuntime().availableProcessors() * 0.7f)
+        .roundToInt()
+        .coerceAtLeast(1),
     val llamaCppGpuLayers: Int = 0,
     val llamaCppBatchSize: Int = 512,
     val llamaCppUBatchSize: Int = 512,

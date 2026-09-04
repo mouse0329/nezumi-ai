@@ -123,7 +123,7 @@ class SettingsComposeFragment : Fragment() {
     private var versionDialogVisible by mutableStateOf(false)
     private var aboutDialogVisible by mutableStateOf(false)
     private var llamaCppThreads by mutableStateOf(InferenceConfig.getDefaultThreadCount())
-    private var maxThreads by mutableStateOf(InferenceConfig.MAX_THREADS)
+    private var maxThreads by mutableStateOf(InferenceConfig.getMaxThreadCount())
     private var llamaCppGpuLayers by mutableStateOf(0)
     private val openClAvailable: Boolean by lazy { OpenClAvailability.isAvailable() }
     private var llamaCppBatchSize by mutableStateOf(512)
@@ -3403,7 +3403,7 @@ class SettingsComposeFragment : Fragment() {
             backendType = config.backendType
             themeMode = PreferencesHelper.getThemeMode(requireContext())
             braveSearchApiKeyInput = PreferencesHelper.getBraveSearchApiKey(requireContext())
-            maxThreads = InferenceConfig.MAX_THREADS
+            maxThreads = InferenceConfig.getMaxThreadCount()
             llamaCppThreads = threads.coerceIn(1, maxThreads)
             llamaCppGpuLayers = if (openClAvailable) gpuLayers else 0
             llamaCppBatchSize = batchSize
