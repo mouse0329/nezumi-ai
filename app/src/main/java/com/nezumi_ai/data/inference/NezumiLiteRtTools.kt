@@ -895,7 +895,8 @@ internal class NezumiLiteRtToolExecutor(
         )
         val topSim = existing.firstOrNull()?.similarity ?: 0f
         if (topSim >= DUPLICATE_SAVE_THRESHOLD) {
-            Log.d(TOOL_TAG, "executeSaveMemory: skipped near-duplicate (similarity=$topSim) content=\"$trimmedContent\"")
+            // プライバシー保護: 記憶内容はPIIを含み得るためログに本文を出力しない
+            Log.d(TOOL_TAG, "executeSaveMemory: skipped near-duplicate (similarity=$topSim) contentLength=${trimmedContent.length}")
             return ToolExecutionResult(
                 success = true,
                 payload = mapOf(
@@ -914,7 +915,8 @@ internal class NezumiLiteRtToolExecutor(
             importance = importance.coerceIn(0f, 1f),
             source = com.nezumi_ai.data.database.entity.MemoryEntity.SOURCE_ASSISTANT
         )
-        Log.i(TOOL_TAG, "executeSaveMemory: saved id=$id importance=$importance content=\"$trimmedContent\"")
+        // プライバシー保護: 記憶内容はPIIを含み得るためログに本文を出力しない
+        Log.i(TOOL_TAG, "executeSaveMemory: saved id=$id importance=$importance contentLength=${trimmedContent.length}")
 
         return ToolExecutionResult(
             success = true,

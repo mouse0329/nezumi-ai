@@ -565,7 +565,8 @@ class MessageAdapter(
         
         fun bind(message: MessageEntity) {
             if (BuildConfig.DEBUG) {
-                Log.d("MessageAdapter", "BIND_USER_MESSAGE: id=${message.id} content='${message.content}'")
+                // プライバシー保護: ユーザーメッセージ本文はPIIを含むためログに出力しない
+                Log.d("MessageAdapter", "BIND_USER_MESSAGE: id=${message.id} contentLength=${message.content.length}")
             }
             binding.apply {
                 // <txtfile> / <video> ブロックはモデル向けの埋め込みなので吹き出しには出さない

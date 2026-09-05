@@ -238,7 +238,8 @@ class MemoryExtractionWorker(
                 MemoryCandidate(content, importance)
             }.distinctBy { it.content }.take(5)
         } catch (e: Exception) {
-            Log.w(TAG, "MEMORY_EXTRACT: parse failed: $response", e)
+            // プライバシー保護: LLM生応答はユーザー由来の内容を含み得るため本文は出力しない
+            Log.w(TAG, "MEMORY_EXTRACT: parse failed: responseLength=${response.length}", e)
             emptyList()
         }
     }
@@ -293,7 +294,8 @@ class MemoryExtractionWorker(
         )
         val duplicate = nearest.firstOrNull { it.similarity >= DUPLICATE_THRESHOLD }
         if (duplicate != null) {
-            Log.d(TAG, "MEMORY_SAVE: duplicate skipped similarity=${duplicate.similarity} content=${candidate.content.take(30)}")
+            // プライバシー保護: 記憶候補はPIIを含み得るため本文は出力しない
+            Log.d(TAG, "MEMORY_SAVE: duplicate skipped similarity=${duplicate.similarity} contentLength=${candidate.content.length}")
             return null
         }
 
@@ -322,7 +324,8 @@ class MemoryExtractionWorker(
             rgaPrevUid = rgaPrevUid
         )
         val savedUid = memoryRepository.getById(savedId)?.rgaUid
-        Log.d(TAG, "MEMORY_SAVE: saved session=$sessionId content=${candidate.content.take(40)} rgaUid=$savedUid")
+        // プライバシー保護: 記憶候補はPIIを含み得るため本文は出力しない
+        Log.d(TAG, "MEMORY_SAVE: saved session=$sessionId contentLength=${candidate.content.length} rgaUid=$savedUid")
         return savedUid
     }
 
@@ -373,7 +376,8 @@ class MemoryExtractionWorker(
         return match.groupValues[1]
             .split(",")
             .mapNotNull { it.trim().toLongOrNull() }
-            .also { Log.d(TAG, "MEMORY_CONTRADICTION: ids_to_delete=$it raw=$raw") }
+            // プライバシー保護: LLM生出力(raw)は記憶内容を含み得るため本文は出力しない
+            .also { Log.d(TAG, "MEMORY_CONTRADICTION: ids_to_delete=$it rawLength=${raw.length}") }
     }
 
     data class MemoryCandidate(

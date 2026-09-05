@@ -39,6 +39,19 @@ object CrashReporter {
     // 大きすぎるとダイアログ描画が重くなるため控えめに。
     private const val LOGCAT_TAIL_MAX_CHARS = 8_000
 
+    // クラッシュログへの同梱時に除外するタグの前方一致パターン。
+    // これらのタグはユーザー生成コンテンツ（チャット内容・記憶データ・LLM生応答）を
+    // 含み得るため、ログ側でマスキング済みでも安全網として二重に除外する。
+    // 将来新しい危険タグが追加された場合はここに追記する。
+    private val SENSITIVE_LOGCAT_TAG_PATTERNS = listOf(
+        "MEMORY_",
+        "MessageAdapter",
+        "RAW_CHUNK",
+        "BIND_USER_MESSAGE",
+        "NezumiTools",
+        "MemoryExtractionWorker"
+    )
+
     private val installed = AtomicBoolean(false)
 
     /**
@@ -108,11 +121,12 @@ object CrashReporter {
         // LogcatRecorder 未起動でも例外を投げないよう防御的に読み出す。
         val logcatTail = runCatching {
             val all = LogcatRecorder.readAllLogs(context, maxChars = LOGCAT_TAIL_MAX_CHARS)
-            if (all.length > LOGCAT_TAIL_MAX_CHARS) {
+            val tail = if (all.length > LOGCAT_TAIL_MAX_CHARS) {
                 "...(\u7701\u7565)...\n" + all.substring(all.length - LOGCAT_TAIL_MAX_CHARS)
             } else {
                 all
             }
+            sanitizeLogcatTail(tail)
         }.getOrDefault("")
 
         val log = CrashLog(
@@ -129,6 +143,22 @@ object CrashReporter {
         file.writeText(log.toText())
 
         enforceRetentionLimit(dir)
+    }
+
+    /**
+     * logcat 末尾から、ユーザー生成コンテンツを含み得るタグの行を除外する安全網。
+     * logcat の各行は "MM-DD HH:mm:ss.SSS  PID  TID PRIORITY TAG: message" 形式のため、
+     * タグ部分への前方一致で判定する。判定不能な行はそのまま残す（過剰除外を避ける）。
+     */
+    private fun sanitizeLogcatTail(tail: String): String {
+        if (tail.isEmpty()) return tail
+        return tail.lineSequence()
+            .filterNot { line ->
+                SENSITIVE_LOGCAT_TAG_PATTERNS.any { pattern ->
+                    line.contains(" $pattern") || line.contains("/$pattern")
+                }
+            }
+            .joinToString("\n")
     }
 
     private fun sortedCrashFiles(dir: File): List<File> {

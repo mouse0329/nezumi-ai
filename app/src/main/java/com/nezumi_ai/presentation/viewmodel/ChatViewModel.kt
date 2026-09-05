@@ -2416,7 +2416,8 @@ class ChatViewModel(
                                                 }
                                                 val currentContent = answerBuilder.toString()
                                                 if (BuildConfig.DEBUG) {
-                                                    Log.d(TAG, "RAW_CHUNK: length=${seg.length} content='${seg.take(100)}'")
+                                                    // プライバシー保護: 生成中テキストはユーザー由来の内容を含み得るため本文は出力しない
+                                                    Log.d(TAG, "RAW_CHUNK: length=${seg.length}")
                                                 }
                                                 val merged = mergeStreamingChunk(currentContent, seg)
                                                 if (merged != currentContent && merged.length >= currentContent.length) {
@@ -2875,7 +2876,8 @@ class ChatViewModel(
                     Log.d(TAG, "Memory extraction enqueued")
                 }
                 if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "AI response saved to database: ${completeResponse.take(50)}...")
+                    // プライバシー保護: AI応答は記憶内容等を含み得るため本文は出力しない
+                    Log.d(TAG, "AI response saved to database: length=${completeResponse.length}")
                 }
             } else {
                 Log.w(TAG, "No payload generated, saving default message")
@@ -3274,7 +3276,8 @@ class ChatViewModel(
                         defaultModelName = defaultModelName,
                         defaultSteps = defaultSteps
                     )
-                    Log.d(TAG, "awaitImageGenerationConfirmation: waiting user confirmation. prompt=${initialPrompt.take(50)}...")
+                    // プライバシー保護: 画像生成プロンプトはユーザー自由入力のため本文は出力しない
+                    Log.d(TAG, "awaitImageGenerationConfirmation: waiting user confirmation. promptLength=${initialPrompt.length}")
                     cont.invokeOnCancellation {
                         Log.d(TAG, "awaitImageGenerationConfirmation: continuation cancelled")
                         imageGenConfirmCont = null
@@ -3291,7 +3294,8 @@ class ChatViewModel(
 
     /** 確認ダイアログの「はい、生成する」を押されたときに UI から呼ばれる。 */
     fun onConfirmGenerateImage(editedPrompt: String, modelName: String?, steps: Int) {
-        Log.d(TAG, "onConfirmGenerateImage: prompt=${editedPrompt.take(50)}..., model=$modelName, steps=$steps")
+        // プライバシー保護: 画像生成プロンプトはユーザー自由入力のため本文は出力しない
+        Log.d(TAG, "onConfirmGenerateImage: promptLength=${editedPrompt.length}, model=$modelName, steps=$steps")
         _confirmationRequest.value = null
         val c = imageGenConfirmCont
         imageGenConfirmCont = null
