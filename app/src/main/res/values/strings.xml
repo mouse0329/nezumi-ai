@@ -1707,4 +1707,41 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="benchmark_error_no_model">選択モデルが利用できません。設定画面でダウンロードまたは追加してください。</string>
     <string name="benchmark_error_load_failed">モデルのロードに失敗しました: %1$s</string>
 
+    <!-- Mini App Platform -->
+    <string name="miniapp_manager_title">Mini Apps</string>
+    <string name="miniapp_install_from_zip">ZIPからインストール</string>
+    <string name="miniapp_install_from_url">URLからインポート</string>
+    <string name="miniapp_installing">インストール処理中…</string>
+    <string name="miniapp_installed_list">インストール済み</string>
+    <string name="miniapp_empty">インストール済みの Mini App はありません</string>
+    <string name="miniapp_open">開く</string>
+    <string name="miniapp_delete">削除</string>
+    <string name="miniapp_install">インストール</string>
+    <string name="miniapp_cancel">キャンセル</string>
+    <string name="miniapp_dev_mode_title">開発者モードの確認</string>
+    <string name="miniapp_dev_mode_unsigned_message">「%1$s」は未署名の Mini App です。作者を確認できません。開発者モードが有効なためインストールできますが、信頼できるソースから入手した場合のみ続行してください。</string>
+    <string name="miniapp_dev_mode_unknown_key_message">「%1$s」は署名されていますが、署名鍵（%2$s）は信頼リストに登録されていません。開発者モードが有効なため、この鍵を信頼してインストールできます。</string>
+    <string name="miniapp_dev_mode_disabled_message">未署名または未信頼の Mini App はインストールできません。設定で開発者モードを有効にしてください。</string>
+    <string name="miniapp_dev_mode_agree">同意して続行</string>
+    <string name="miniapp_dev_mode_trust_key">鍵を信頼してインストール</string>
+    <string name="miniapp_permissions_title">要求される権限</string>
+    <string name="miniapp_permissions_message">「%1$s」 v%2$s は以下の権限を要求しています:</string>
+    <string name="miniapp_permissions_none">このアプリは権限を要求していません</string>
+    <string name="miniapp_delete_title">Mini App の削除</string>
+    <string name="miniapp_delete_message">「%1$s」を削除しますか？アプリのデータ（設定・キャッシュ・ユーザーデータ）もすべて削除されます。</string>
+    <string name="miniapp_badge_dev_mode">開発者モードでインストール（未検証）</string>
+    <string name="miniapp_runner_load_error">Mini App を読み込めませんでした（未インストールか、パッケージが破損しています）</string>
+    <string name="settings_miniapp_dev_mode_title">Mini App 開発者モード</string>
+    <string name="settings_miniapp_dev_mode_desc">未署名または未信頼の署名鍵で作成された Mini App のインストールを許可します。インストールのたびに警告と同意が求められます。</string>
+    <string name="miniapp_info">情報</string>
+    <string name="miniapp_close">閉じる</string>
+    <string name="miniapp_info_title">%1$s の情報</string>
+    <string name="miniapp_storage_usage_title">ストレージ使用量</string>
+    <string name="miniapp_storage_total">合計: %1$s</string>
+    <string name="miniapp_storage_settings">設定: %1$s</string>
+    <string name="miniapp_storage_cache">キャッシュ: %1$s</string>
+    <string name="miniapp_storage_user_data">ユーザーデータ: %1$s</string>
+    <string name="miniapp_storage_initialize">ストレージを初期化</string>
+    <string name="miniapp_storage_initialize_confirm">このアプリの App Data（設定・キャッシュ・ユーザーデータ）をすべて削除して初期化しますか？パッケージ本体は削除されません。</string>
+
 </resources>

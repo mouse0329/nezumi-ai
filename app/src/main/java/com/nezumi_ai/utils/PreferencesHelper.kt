@@ -27,6 +27,7 @@ object PreferencesHelper {
     private const val KEY_ALWAYS_LOCK_ENABLED = "always_lock_enabled"
     private const val KEY_STOP_KEYBOARD_LEARNING = "stop_keyboard_learning"
     private const val KEY_SD_USE_OPENCL = "sd_use_opencl"
+    private const val KEY_MINIAPP_DEV_MODE = "miniapp_dev_mode"
  // 新設: 全般タブで切り替えられる UI 表示オプション。既定はいずれも「表示しない」。
     private const val KEY_SHOW_CONTEXT_METER = "show_context_meter"
     private const val KEY_SHOW_TPS = "show_tps"
@@ -303,6 +304,17 @@ object PreferencesHelper {
 
     fun setShowContextMeter(context: Context, enabled: Boolean) {
         getSharedPreferences(context).edit().putBoolean(KEY_SHOW_CONTEXT_METER, enabled).apply()
+    }
+
+    // Mini App Platform (仕様 v1.1 §32 Developer Mode):
+    // 未署名/未信頼鍵の Mini App インストールを許可するか。既定は無効 (false)。
+    // 同意自体はインストールのたびに明示提示される (§35.5.4) ので、ここはあくまで機能の有効化のみ。
+    fun isMiniAppDevModeEnabled(context: Context): Boolean {
+        return getSharedPreferences(context).getBoolean(KEY_MINIAPP_DEV_MODE, false)
+    }
+
+    fun setMiniAppDevModeEnabled(context: Context, enabled: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_MINIAPP_DEV_MODE, enabled).apply()
     }
 
  // トークン/秒表示の可否。既定は「表示しない (false)」。

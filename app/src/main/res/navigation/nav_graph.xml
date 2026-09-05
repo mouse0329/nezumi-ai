@@ -56,4 +56,28 @@
         android:label="@string/logs_page_title"
         tools:layout="@layout/fragment_settings" />
 
+    <!-- Mini App Platform (仕様 v1.1): Mini App Manager が唯一の入口（§35.5.1） -->
+    <fragment
+        android:id="@+id/miniAppManagerFragment"
+        android:name="com.nezumi_ai.presentation.ui.fragment.MiniAppManagerFragment"
+        android:label="@string/miniapp_manager_title">
+        <action
+            android:id="@+id/action_miniAppManagerFragment_to_miniAppRunnerFragment"
+            app:destination="@id/miniAppRunnerFragment"
+            app:enterAnim="@android:anim/slide_in_left"
+            app:exitAnim="@android:anim/slide_out_right"
+            app:popEnterAnim="@android:anim/slide_in_left"
+            app:popExitAnim="@android:anim/slide_out_right" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/miniAppRunnerFragment"
+        android:name="com.nezumi_ai.presentation.ui.fragment.MiniAppRunnerFragment"
+        android:label="">
+        <argument
+            android:name="appId"
+            app:argType="string"
+            android:defaultValue="" />
+    </fragment>
+
 </navigation>

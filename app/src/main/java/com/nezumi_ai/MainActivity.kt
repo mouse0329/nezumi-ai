@@ -245,6 +245,13 @@ class MainActivity : AppCompatActivity() {
                 navController.navigate(R.id.imageGenFragment)
             }
         }
+        // Mini App Platform (仕様 v1.1 §35.5): Mini App Manager が唯一の入口
+        binding.drawerMiniappsButton.setOnClickListener {
+            closeDrawer()
+            if (navController.currentDestination?.id != R.id.miniAppManagerFragment) {
+                navController.navigate(R.id.miniAppManagerFragment)
+            }
+        }
         // ログ画面は設定の「ログ」タブへ移動。ドロワーからは設定のログセクションを開く
         // drawer_logs_button removed
         binding.drawerSearchButton.setOnClickListener {

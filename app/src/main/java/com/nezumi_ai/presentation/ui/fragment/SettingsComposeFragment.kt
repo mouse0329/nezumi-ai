@@ -659,6 +659,7 @@ class SettingsComposeFragment : Fragment() {
                             var isAlwaysLockEnabled by remember { mutableStateOf(PreferencesHelper.isAlwaysLockEnabled(context)) }
                             var isStopKeyboardLearning by remember { mutableStateOf(PreferencesHelper.isStopKeyboardLearningEnabled(context)) }
                             var isShowContextMeter by remember { mutableStateOf(PreferencesHelper.isShowContextMeter(context)) }
+                            var isMiniAppDevMode by remember { mutableStateOf(PreferencesHelper.isMiniAppDevModeEnabled(context)) }
                             var isShowTps by remember { mutableStateOf(PreferencesHelper.isShowTps(context)) }
                             var isShowTtft by remember { mutableStateOf(PreferencesHelper.isShowTtft(context)) }
                             var isDisableScreenshot by remember { mutableStateOf(PreferencesHelper.isDisableScreenshot(context)) }
@@ -876,6 +877,36 @@ class SettingsComposeFragment : Fragment() {
                                         onCheckedChange = { checked ->
                                             isShowContextMeter = checked
                                             PreferencesHelper.setShowContextMeter(context, checked)
+                                        },
+                                        colors = nezumiSwitchColors()
+                                    )
+                                }
+
+                                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+
+                                // Mini App 開発者モード (仕様 v1.1 §32 Developer Mode)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = stringResource(id = R.string.settings_miniapp_dev_mode_title),
+                                            color = colorResource(id = R.color.text_primary),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Text(
+                                            text = stringResource(id = R.string.settings_miniapp_dev_mode_desc),
+                                            color = colorResource(id = R.color.text_secondary),
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                    Switch(
+                                        checked = isMiniAppDevMode,
+                                        onCheckedChange = { checked ->
+                                            isMiniAppDevMode = checked
+                                            PreferencesHelper.setMiniAppDevModeEnabled(context, checked)
                                         },
                                         colors = nezumiSwitchColors()
                                     )

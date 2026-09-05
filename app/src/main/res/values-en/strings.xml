@@ -1639,4 +1639,41 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="benchmark_error_no_model">The selected model is not available. Download it or add one from the settings screen.</string>
     <string name="benchmark_error_load_failed">Failed to load the model: %1$s</string>
 
+    <!-- Mini App Platform -->
+    <string name="miniapp_manager_title">Mini Apps</string>
+    <string name="miniapp_install_from_zip">Install from ZIP</string>
+    <string name="miniapp_install_from_url">Import from URL</string>
+    <string name="miniapp_installing">Installing…</string>
+    <string name="miniapp_installed_list">Installed</string>
+    <string name="miniapp_empty">No Mini Apps installed</string>
+    <string name="miniapp_open">Open</string>
+    <string name="miniapp_delete">Delete</string>
+    <string name="miniapp_install">Install</string>
+    <string name="miniapp_cancel">Cancel</string>
+    <string name="miniapp_dev_mode_title">Developer Mode Confirmation</string>
+    <string name="miniapp_dev_mode_unsigned_message">"%1$s" is an unsigned Mini App. The author cannot be verified. Developer Mode is enabled, but only continue if you obtained it from a trusted source.</string>
+    <string name="miniapp_dev_mode_unknown_key_message">"%1$s" is signed, but the signing key (%2$s) is not in your trusted keys. Developer Mode is enabled, so you can trust this key and install.</string>
+    <string name="miniapp_dev_mode_disabled_message">Unsigned or untrusted Mini Apps cannot be installed. Enable Developer Mode in Settings.</string>
+    <string name="miniapp_dev_mode_agree">Agree and continue</string>
+    <string name="miniapp_dev_mode_trust_key">Trust key and install</string>
+    <string name="miniapp_permissions_title">Required Permissions</string>
+    <string name="miniapp_permissions_message">"%1$s" v%2$s requests the following permissions:</string>
+    <string name="miniapp_permissions_none">This app requests no permissions</string>
+    <string name="miniapp_delete_title">Delete Mini App</string>
+    <string name="miniapp_delete_message">Delete "%1$s"? All app data (settings, cache, user data) will also be removed.</string>
+    <string name="miniapp_badge_dev_mode">Installed via Developer Mode (unverified)</string>
+    <string name="miniapp_runner_load_error">Failed to load the Mini App (not installed or the package is corrupted)</string>
+    <string name="settings_miniapp_dev_mode_title">Mini App Developer Mode</string>
+    <string name="settings_miniapp_dev_mode_desc">Allow installing Mini Apps that are unsigned or signed with an untrusted key. A warning and explicit consent are required on every install.</string>
+    <string name="miniapp_info">Info</string>
+    <string name="miniapp_close">Close</string>
+    <string name="miniapp_info_title">About %1$s</string>
+    <string name="miniapp_storage_usage_title">Storage Usage</string>
+    <string name="miniapp_storage_total">Total: %1$s</string>
+    <string name="miniapp_storage_settings">Settings: %1$s</string>
+    <string name="miniapp_storage_cache">Cache: %1$s</string>
+    <string name="miniapp_storage_user_data">User data: %1$s</string>
+    <string name="miniapp_storage_initialize">Reset Storage</string>
+    <string name="miniapp_storage_initialize_confirm">Delete all App Data (settings, cache, user data) for this app and reinitialize? The package itself is not removed.</string>
+
 </resources>
