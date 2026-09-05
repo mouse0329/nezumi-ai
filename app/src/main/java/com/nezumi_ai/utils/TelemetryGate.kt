@@ -12,17 +12,19 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * テレメトリ (Sentry) の起動・停止を一元管理する門番。
  *
- * このアプリは「オフライン優先・サーバーへのデータ送信なし」を核とする設計のため、
+ * このアプリは「オフライン優先」を核とする設計だが、実利用の大半を占める
+ * オンデバイス推論（GGUF / LiteRtLm）のクラッシュ・パフォーマンスデータは
+ * デバッグ上の価値が高いため、クラウド推論と同様の条件でテレメトリ対象に含める。
  * テレメトリは以下の 2 条件を **両方** 満たした場合にのみ有効化される:
  *
- *   1. クラウド推論モデル（Claude / Gemini / OpenAI互換 / LM Studio / Ollama）を
- *      実際に使用している（[onCloudInferenceUsed] が呼ばれている）
+ *   1. 推論エンジン（クラウド or オンデバイスのいずれか）が実際に使用されている
+ *      （[onCloudInferenceUsed] または [onLocalInferenceUsed] が呼ばれている）
  *   2. ユーザーがテレメトリ送信に同意している（[TelemetryConsent.isEnabled]）
  *
- * オンデバイス推論のみで使っている間は、AndroidManifest 側で Sentry の
- * ContentProvider 自動初期化を無効化しているため（io.sentry.auto-init=false）、
- * このクラスが明示的に [SentryAndroid.init] を呼ばない限り SDK は一切起動せず、
- * ネットワーク呼び出しも一切発生しない。
+ * ユーザーが同意していない、またはまだ推論を一度も行っていない間は、
+ * AndroidManifest 側で Sentry の ContentProvider 自動初期化を無効化しているため
+ * （io.sentry.auto-init=false）、このクラスが明示的に [SentryAndroid.init] を
+ * 呼ばない限り SDK は一切起動せず、ネットワーク呼び出しも一切発生しない。
  *
  * 送信される内容:
  *   - 未捕捉例外のスタックトレース、メッセージ、発生スレッド名
@@ -59,6 +61,22 @@ object TelemetryGate {
      * （SDK 未起動のまま = ネットワークアクセスなし）。
      */
     fun onCloudInferenceUsed() {
+        val context = appContext ?: return
+        if (!TelemetryConsent.isEnabled(context)) return
+        startSentryIfNeeded(context)
+    }
+
+    /**
+     * オンデバイス推論エンジン（GGUF / LiteRtLm）が実際に呼び出されるタイミングで呼ぶ。
+     *
+     * クラウド利用時と同じ条件（同意済み + DSN 設定済み）を満たせば Sentry を起動する。
+     * ローカルモデルのクラッシュ・パフォーマンスデータの方が実利用の大半を占め、
+     * デバッグ上の価値が高いため、オフライン専用の環境でも計測できるようにしている。
+     * ただし、ユーザーがテレメトリに同意していない限りは従来通り一切起動しない
+     * （オプトインの原則は変わらない。変わるのは「クラウド利用」という追加条件を
+     * 撤廃した点のみ）。
+     */
+    fun onLocalInferenceUsed() {
         val context = appContext ?: return
         if (!TelemetryConsent.isEnabled(context)) return
         startSentryIfNeeded(context)
@@ -147,7 +165,7 @@ object TelemetryGate {
                 options.environment = if (BuildConfig.DEBUG) "debug" else "release"
                 options.release = "nezumi-ai@${BuildConfig.VERSION_NAME}+${BuildConfig.VERSION_CODE}"
             }
-            Log.i(TAG, "Sentry started (cloud inference in use, user consented).")
+            Log.i(TAG, "Sentry started (inference in use, user consented).")
         }.onFailure {
             sentryStarted.set(false)
             Log.w(TAG, "Failed to start Sentry", it)

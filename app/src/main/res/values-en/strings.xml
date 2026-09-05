@@ -651,7 +651,7 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="settings_telemetry_card_title">Telemetry &amp; Privacy</string>
     <string name="settings_telemetry_card_desc">Nezumi AI is built for offline use and sends nothing externally by default. Turning consent ON sends selected crash data and inference performance data (settings, speed, and load time) from cloud and on-device models for app and inference-engine improvements, performance optimization, and bug investigation.</string>
     <string name="settings_telemetry_toggle_title">Enable telemetry</string>
-    <string name="settings_telemetry_toggle_desc">Sends crash and performance data only when a cloud model is used</string>
+    <string name="settings_telemetry_toggle_desc">Sends crash and performance data when either a cloud or on-device model is used</string>
     <string name="settings_telemetry_crash_title">Crash reports</string>
     <string name="settings_telemetry_crash_desc">Send unexpected-exit causes and stack traces</string>
     <string name="settings_telemetry_performance_title">Inference performance</string>
@@ -760,7 +760,7 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <!-- Setup screen: telemetry consent section -->
     <string name="setup_telemetry_title">Telemetry &amp; Privacy</string>
     <string name="setup_telemetry_desc">Nezumi AI sends nothing externally by default. Consented data from cloud and on-device models is used to improve quality and performance and investigate bugs. You can change this anytime in Settings.</string>
-    <string name="setup_telemetry_toggle_label">Send telemetry when using cloud models</string>
+    <string name="setup_telemetry_toggle_label">Send telemetry when using cloud or on-device models</string>
     <string name="setup_telemetry_crash_title">Crash reports</string>
     <string name="setup_telemetry_performance_title">Inference performance</string>
     <string name="setup_telemetry_diagnostics_title">Inference error diagnostics</string>

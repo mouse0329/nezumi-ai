@@ -323,6 +323,7 @@ class ModelManager(
                     Log.e(TAG, "INIT_MODEL_MEMORY_INSUFFICIENT: $errorMsg")
                     val memError = RuntimeException(errorMsg)
                     if (targetEngine !is com.nezumi_ai.data.inference.cloud.AndroidCloudEngineAdapter) {
+                        runCatching { com.nezumi_ai.utils.TelemetryGate.onLocalInferenceUsed() }
                         com.nezumi_ai.utils.InferenceTelemetryRecorder.recordLoadFailure(
                             context, currentEngineLabel(targetEngine), modelName, memError
                         )
@@ -377,6 +378,12 @@ class ModelManager(
                 // クラウドの場合は `cloud:...` プレフィックスを剥いでエンジンに渡す。
                 val engineModel = engineModelName(modelName)
                 val engineLabel = currentEngineLabel(targetEngine)
+                val isLocalEngine = targetEngine !is com.nezumi_ai.data.inference.cloud.AndroidCloudEngineAdapter
+                if (isLocalEngine) {
+                    // オンデバイスモデルのロード・推論テレメトリは、クラウド利用と同じ
+                    // 同意条件で Sentry へ送信され得る（TelemetryGate 側の判定に従う）。
+                    runCatching { com.nezumi_ai.utils.TelemetryGate.onLocalInferenceUsed() }
+                }
                 Log.d(TAG, "Loading model: $modelName (engineArg=$engineModel) with backend: ${normalizedConfig.backendType} engine=$engineLabel")
                 val loadStartMs = System.currentTimeMillis()
                 val result = loadModelOnEngine(targetEngine, modelName, normalizedConfig)
@@ -479,6 +486,9 @@ class ModelManager(
         val engine = activeEngine
         val engineLabel = currentEngineLabel(engine)
         val modelNameForTelemetry = currentModelName ?: "unknown"
+        if (engine !is com.nezumi_ai.data.inference.cloud.AndroidCloudEngineAdapter) {
+            runCatching { com.nezumi_ai.utils.TelemetryGate.onLocalInferenceUsed() }
+        }
         val startMs = System.currentTimeMillis()
         var chunkCount = 0
         var emitted = false
@@ -528,6 +538,9 @@ class ModelManager(
         val engine = activeEngine
         val engineLabel = currentEngineLabel(engine)
         val modelNameForTelemetry = currentModelName ?: "unknown"
+        if (engine !is com.nezumi_ai.data.inference.cloud.AndroidCloudEngineAdapter) {
+            runCatching { com.nezumi_ai.utils.TelemetryGate.onLocalInferenceUsed() }
+        }
         val startMs = System.currentTimeMillis()
         var chunkCount = 0
         var emitted = false

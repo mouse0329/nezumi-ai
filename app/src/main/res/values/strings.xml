@@ -526,7 +526,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="settings_telemetry_card_title">テレメトリとプライバシー</string>
     <string name="settings_telemetry_card_desc">ネズミAIはオフラインでの利用を前提に作られており、既定では何も外部送信しません。以下の同意をONにすると、クラウドAIモデルとオンデバイスモデルのクラッシュ情報・推論パフォーマンス（設定値、速度、ロード時間）を、アプリと推論エンジンの改善、性能最適化、不具合調査に使用します。</string>
     <string name="settings_telemetry_toggle_title">テレメトリを有効にする</string>
-    <string name="settings_telemetry_toggle_desc">クラウドモデル利用時のみ、クラッシュ・パフォーマンス情報を送信します</string>
+    <string name="settings_telemetry_toggle_desc">クラウド・オンデバイスいずれかのモデル利用時に、クラッシュ・パフォーマンス情報を送信します</string>
     <string name="settings_telemetry_crash_title">クラッシュレポート</string>
     <string name="settings_telemetry_crash_desc">予期しない終了の原因とスタックトレースを送信</string>
     <string name="settings_telemetry_performance_title">推論パフォーマンス</string>
@@ -633,7 +633,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <!-- セットアップ画面: テレメトリ同意セクション -->
     <string name="setup_telemetry_title">テレメトリとプライバシー</string>
     <string name="setup_telemetry_desc">ネズミAIは既定では何も外部送信しません。同意した項目の情報は、クラウドAIモデルとオンデバイスモデルの品質・性能改善、不具合調査に使用します。設定画面でいつでも変更できます。</string>
-    <string name="setup_telemetry_toggle_label">クラウド利用時にテレメトリを送信する</string>
+    <string name="setup_telemetry_toggle_label">クラウド・オンデバイスいずれかの利用時にテレメトリを送信する</string>
     <string name="setup_telemetry_crash_title">クラッシュレポート</string>
     <string name="setup_telemetry_performance_title">推論パフォーマンス</string>
     <string name="setup_telemetry_diagnostics_title">推論エラー診断</string>
