@@ -3,9 +3,12 @@ package com.nezumi_ai.data.inference
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
+import com.nezumi_ai.data.inference.cloud.AndroidCloudEngineAdapter
 import com.nezumi_ai.data.inference.cloud.CloudEngineFactory
 import com.nezumi_ai.data.inference.cloud.CloudModelId
 import com.nezumi_ai.data.repository.SettingsRepository
+import com.nezumi_ai.utils.InferenceTelemetryRecorder
+import com.nezumi_ai.utils.TelemetryGate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -130,13 +133,22 @@ class ModelManager(
         config: InferenceConfig
     ): Result<Unit> {
         val engineModel = engineModelName(modelName)
-        val cloudEngine = engine as? com.nezumi_ai.data.inference.cloud.AndroidCloudEngineAdapter
+        val cloudEngine = engine as? AndroidCloudEngineAdapter
         return if (cloudEngine != null && CloudModelId.isCloud(modelName)) {
             cloudEngine.loadModelWithId(modelName, engineModel, config)
         } else {
             engine.loadModel(engineModel, config)
         }
     }
+
+    /**
+     * クラウド推論エンジンかどうかの判定を一本化する。
+     * オンデバイス専用のローカルテレメトリ記録はクラウドエンジンでは
+     * 行わない（クラウド側のエラーはクラウド経路で扱う）等の分類ロジックで
+     * 共通利用する。エンジン種別が増えた場合はここだけを直せばよい。
+     */
+    private fun AIInferenceEngine.isCloudEngine(): Boolean =
+        this is AndroidCloudEngineAdapter
 
     private fun currentEngineLabel(engine: AIInferenceEngine): String {
         return when {
@@ -322,9 +334,9 @@ class ModelManager(
                     val errorMsg = "Cannot load model - memory usage is too high (${getMemoryUsagePercent()}% - ${memStatus.usedMB}/${memStatus.maxMB}MB)"
                     Log.e(TAG, "INIT_MODEL_MEMORY_INSUFFICIENT: $errorMsg")
                     val memError = RuntimeException(errorMsg)
-                    if (targetEngine !is com.nezumi_ai.data.inference.cloud.AndroidCloudEngineAdapter) {
-                        runCatching { com.nezumi_ai.utils.TelemetryGate.onLocalInferenceUsed() }
-                        com.nezumi_ai.utils.InferenceTelemetryRecorder.recordLoadFailure(
+                    if (!targetEngine.isCloudEngine()) {
+                        runCatching { TelemetryGate.onLocalInferenceUsed() }
+                        InferenceTelemetryRecorder.recordLoadFailure(
                             context, currentEngineLabel(targetEngine), modelName, memError
                         )
                     }
@@ -378,11 +390,10 @@ class ModelManager(
                 // クラウドの場合は `cloud:...` プレフィックスを剥いでエンジンに渡す。
                 val engineModel = engineModelName(modelName)
                 val engineLabel = currentEngineLabel(targetEngine)
-                val isLocalEngine = targetEngine !is com.nezumi_ai.data.inference.cloud.AndroidCloudEngineAdapter
-                if (isLocalEngine) {
+                if (!targetEngine.isCloudEngine()) {
                     // オンデバイスモデルのロード・推論テレメトリは、クラウド利用と同じ
                     // 同意条件で Sentry へ送信され得る（TelemetryGate 側の判定に従う）。
-                    runCatching { com.nezumi_ai.utils.TelemetryGate.onLocalInferenceUsed() }
+                    runCatching { TelemetryGate.onLocalInferenceUsed() }
                 }
                 Log.d(TAG, "Loading model: $modelName (engineArg=$engineModel) with backend: ${normalizedConfig.backendType} engine=$engineLabel")
                 val loadStartMs = System.currentTimeMillis()
@@ -394,14 +405,14 @@ class ModelManager(
                     currentModelName = modelName
                     currentConfig = normalizedConfig
                     Log.d(TAG, "Model loaded successfully: $modelName with backend: ${normalizedConfig.backendType}")
-                    com.nezumi_ai.utils.InferenceTelemetryRecorder.recordLoadSuccess(
+                    InferenceTelemetryRecorder.recordLoadSuccess(
                         context, engineLabel, modelName, loadDurationMs, normalizedConfig
                     )
                 } else {
                     val error = result.exceptionOrNull()
                     Log.e(TAG, "Failed to load model: $modelName. Reason: ${error?.message}", error)
-                    if (targetEngine !is com.nezumi_ai.data.inference.cloud.AndroidCloudEngineAdapter && error != null) {
-                        com.nezumi_ai.utils.InferenceTelemetryRecorder.recordLoadFailure(
+                    if (!targetEngine.isCloudEngine() && error != null) {
+                        InferenceTelemetryRecorder.recordLoadFailure(
                             context, engineLabel, modelName, error
                         )
                     }
@@ -486,43 +497,32 @@ class ModelManager(
         val engine = activeEngine
         val engineLabel = currentEngineLabel(engine)
         val modelNameForTelemetry = currentModelName ?: "unknown"
-        if (engine !is com.nezumi_ai.data.inference.cloud.AndroidCloudEngineAdapter) {
-            runCatching { com.nezumi_ai.utils.TelemetryGate.onLocalInferenceUsed() }
+        if (!engine.isCloudEngine()) {
+            runCatching { TelemetryGate.onLocalInferenceUsed() }
         }
-        val startMs = System.currentTimeMillis()
-        var chunkCount = 0
         var emitted = false
         try {
-            val result = jobController.launchInference(sessionId) {
-                engine.inference(sessionId, prompt, config).collect { chunk ->
-                    emitted = true
-                    chunkCount++
-                    emit(chunk)
+            measureAndRecord(engineLabel, modelNameForTelemetry, config) { onChunk ->
+                val result = jobController.launchInference(sessionId) {
+                    engine.inference(sessionId, prompt, config).collect { chunk ->
+                        emitted = true
+                        onChunk(chunk)
+                        emit(chunk)
+                    }
                 }
+                result.getOrThrow()
             }
-            result.getOrThrow()
-            com.nezumi_ai.utils.InferenceTelemetryRecorder.recordInferenceSpeed(
-                context, engineLabel, modelNameForTelemetry,
-                System.currentTimeMillis() - startMs, chunkCount.takeIf { it > 0 }, config.normalized()
-            )
         } catch (t: Throwable) {
             if (t is CancellationException) throw t
             if (!emitted && isCompiledModelInvokeFailure(t) && recoverFromInvokeFailure(config)) {
                 Log.i(TAG, "Retrying inference once after recovery")
-                val retryStartMs = System.currentTimeMillis()
-                var retryChunks = 0
-                activeEngine.inference(sessionId, prompt, config).collect { chunk ->
-                    retryChunks++
-                    emit(chunk)
+                measureAndRecord(engineLabel, modelNameForTelemetry, config) { onChunk ->
+                    activeEngine.inference(sessionId, prompt, config).collect { chunk ->
+                        onChunk(chunk)
+                        emit(chunk)
+                    }
                 }
-                com.nezumi_ai.utils.InferenceTelemetryRecorder.recordInferenceSpeed(
-                    context, engineLabel, modelNameForTelemetry,
-                    System.currentTimeMillis() - retryStartMs, retryChunks.takeIf { it > 0 }, config.normalized()
-                )
             } else {
-                com.nezumi_ai.utils.InferenceTelemetryRecorder.recordInferenceFailure(
-                    context, engineLabel, modelNameForTelemetry, t
-                )
                 throw t
             }
         }
@@ -538,50 +538,67 @@ class ModelManager(
         val engine = activeEngine
         val engineLabel = currentEngineLabel(engine)
         val modelNameForTelemetry = currentModelName ?: "unknown"
-        if (engine !is com.nezumi_ai.data.inference.cloud.AndroidCloudEngineAdapter) {
-            runCatching { com.nezumi_ai.utils.TelemetryGate.onLocalInferenceUsed() }
+        if (!engine.isCloudEngine()) {
+            runCatching { TelemetryGate.onLocalInferenceUsed() }
         }
-        val startMs = System.currentTimeMillis()
-        var chunkCount = 0
         var emitted = false
         try {
-            val result = jobController.launchInference(sessionId) {
-                engine.inferenceWithMedia(sessionId, prompt, images, audioClips, config)
-                    .collect { chunk ->
-                        emitted = true
-                        chunkCount++
-                        emit(chunk)
-                    }
+            measureAndRecord(engineLabel, modelNameForTelemetry, config) { onChunk ->
+                val result = jobController.launchInference(sessionId) {
+                    engine.inferenceWithMedia(sessionId, prompt, images, audioClips, config)
+                        .collect { chunk ->
+                            emitted = true
+                            onChunk(chunk)
+                            emit(chunk)
+                        }
+                }
+                result.getOrThrow()
             }
-            result.getOrThrow()
-            com.nezumi_ai.utils.InferenceTelemetryRecorder.recordInferenceSpeed(
-                context, engineLabel, modelNameForTelemetry,
-                System.currentTimeMillis() - startMs, chunkCount.takeIf { it > 0 }, config.normalized()
-            )
         } catch (t: Throwable) {
             if (t is CancellationException) throw t
             if (!emitted && isCompiledModelInvokeFailure(t) && recoverFromInvokeFailure(config)) {
                 Log.i(TAG, "Retrying multimodal inference once after recovery")
-                val retryStartMs = System.currentTimeMillis()
-                var retryChunks = 0
-                activeEngine.inferenceWithMedia(sessionId, prompt, images, audioClips, config)
-                    .collect { chunk ->
-                        retryChunks++
-                        emit(chunk)
-                    }
-                com.nezumi_ai.utils.InferenceTelemetryRecorder.recordInferenceSpeed(
-                    context, engineLabel, modelNameForTelemetry,
-                    System.currentTimeMillis() - retryStartMs, retryChunks.takeIf { it > 0 }, config.normalized()
-                )
+                measureAndRecord(engineLabel, modelNameForTelemetry, config) { onChunk ->
+                    activeEngine.inferenceWithMedia(sessionId, prompt, images, audioClips, config)
+                        .collect { chunk ->
+                            onChunk(chunk)
+                            emit(chunk)
+                        }
+                }
             } else {
-                com.nezumi_ai.utils.InferenceTelemetryRecorder.recordInferenceFailure(
-                    context, engineLabel, modelNameForTelemetry, t
-                )
                 throw t
             }
         }
     }
-    
+
+    /**
+     * 推論実行に共通のテレメトリ計測をまとめる高階関数。
+     *
+     * 通常パス・リトライパスのどちらから呼ばれても「開始時刻の計測 → 実行 →
+     * 成功時は速度記録 / 失敗時は失敗記録して再送出」の流れが一本化されるため、
+     * 計測実装を変更する際に直す場所はここだけになる。
+     */
+    private suspend fun measureAndRecord(
+        engineLabel: String,
+        modelName: String,
+        config: InferenceConfig,
+        block: suspend (onChunk: suspend (String) -> Unit) -> Unit
+    ) {
+        val startMs = System.currentTimeMillis()
+        var chunkCount = 0
+        try {
+            block { chunkCount++ }
+            InferenceTelemetryRecorder.recordInferenceSpeed(
+                context, engineLabel, modelName,
+                System.currentTimeMillis() - startMs, chunkCount.takeIf { it > 0 }, config.normalized()
+            )
+        } catch (t: Throwable) {
+            if (t is CancellationException) throw t
+            InferenceTelemetryRecorder.recordInferenceFailure(context, engineLabel, modelName, t)
+            throw t
+        }
+    }
+
     /**
      * モデルが利用可能かチェック
      */

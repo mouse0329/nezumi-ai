@@ -41,12 +41,14 @@ object TelemetryGate {
     private const val TAG = "TelemetryGate"
 
     private val sentryStarted = AtomicBoolean(false)
+    private val inferenceInUse = AtomicBoolean(false)
     @Volatile
     private var appContext: Context? = null
 
     /**
      * Application.onCreate() から一度だけ呼ぶ。まだ Sentry は起動しない
-     * （起動は [onCloudInferenceUsed] 経由でのみ行う）。単にコンテキストを保持するだけ。
+     * （起動は [onCloudInferenceUsed] / [onLocalInferenceUsed] 経由でのみ行う）。
+     * 単にコンテキストを保持するだけ。
      */
     fun initHooks(context: Context) {
         appContext = context.applicationContext
@@ -62,22 +64,30 @@ object TelemetryGate {
      */
     fun onCloudInferenceUsed() {
         val context = appContext ?: return
+        inferenceInUse.set(true)
         if (!TelemetryConsent.isEnabled(context)) return
         startSentryIfNeeded(context)
     }
 
     /**
-     * オンデバイス推論エンジン（GGUF / LiteRtLm）が実際に呼び出されるタイミングで呼ぶ。
-     *
-     * クラウド利用時と同じ条件（同意済み + DSN 設定済み）を満たせば Sentry を起動する。
-     * ローカルモデルのクラッシュ・パフォーマンスデータの方が実利用の大半を占め、
-     * デバッグ上の価値が高いため、オフライン専用の環境でも計測できるようにしている。
-     * ただし、ユーザーがテレメトリに同意していない限りは従来通り一切起動しない
-     * （オプトインの原則は変わらない。変わるのは「クラウド利用」という追加条件を
-     * 撤廃した点のみ）。
+     * オンデバイス推論エンジン（GGUF / LiteRT など）が実際に使われる
+     * タイミングで呼ぶ。起動条件は [onCloudInferenceUsed] と同じで、
+     * ユーザー同意済みかつ DSN 設定済みの場合にのみ Sentry を起動する。
      */
     fun onLocalInferenceUsed() {
         val context = appContext ?: return
+        inferenceInUse.set(true)
+        if (!TelemetryConsent.isEnabled(context)) return
+        startSentryIfNeeded(context)
+    }
+
+    /**
+     * 同意状態の変更に応答して、条件（推論利用中 + 同意済み）を再評価する。
+     * [TelemetryConsent] の setter からのみ呼ばれる想定。
+     * 条件が揃っていなければ何もしない（冪等）。
+     */
+    internal fun startIfConsented(context: Context) {
+        if (!inferenceInUse.get()) return
         if (!TelemetryConsent.isEnabled(context)) return
         startSentryIfNeeded(context)
     }
@@ -88,6 +98,12 @@ object TelemetryGate {
      * 無駄な計測コストを避けるために使う。
      */
     fun isActive(): Boolean = sentryStarted.get()
+
+    /**
+     * クラウド/オンデバイスいずれかの推論がこのプロセスで使われたかどうか。
+     * [TelemetryConsent] が同意変更時に Sentry 起動要否を判断するために使う。
+     */
+    fun isInferenceInUse(): Boolean = inferenceInUse.get()
 
     /**
      * ユーザーが設定画面でテレメトリを無効化した場合に呼ぶ。
@@ -128,9 +144,12 @@ object TelemetryGate {
     private fun hasCategory(category: TelemetryCategory): Boolean {
         val context = appContext ?: return false
         return when (category) {
-            TelemetryCategory.CRASH -> TelemetryConsent.isCrashReportsEnabled(context)
-            TelemetryCategory.PERFORMANCE -> TelemetryConsent.isPerformanceMetricsEnabled(context)
-            TelemetryCategory.DIAGNOSTICS -> TelemetryConsent.isInferenceDiagnosticsEnabled(context)
+            TelemetryCategory.CRASH ->
+                TelemetryConsent.isCategoryEnabled(context, TelemetryConsent.Category.CRASH_REPORTS)
+            TelemetryCategory.PERFORMANCE ->
+                TelemetryConsent.isCategoryEnabled(context, TelemetryConsent.Category.PERFORMANCE)
+            TelemetryCategory.DIAGNOSTICS ->
+                TelemetryConsent.isCategoryEnabled(context, TelemetryConsent.Category.DIAGNOSTICS)
         }
     }
 
@@ -156,8 +175,8 @@ object TelemetryGate {
                 // パフォーマンス計測（起動時間・推論時間）を有効化。
                 // ただし送信頻度を抑えるためサンプリングする。
                 options.tracesSampleRate = 0.2
-                // クラウド推論利用時のみ有効化する運用であり、常時起動する
-                // セッション追跡（画面遷移ごとのイベント等）はノイズが多いため無効化。
+                // クラウド or オンデバイスいずれかの推論利用時のみ有効化する運用であり、
+                // 常時起動するセッション追跡（画面遷移ごとのイベント等）はノイズが多いため無効化。
                 options.isEnableAutoSessionTracking = false
                 options.isAttachScreenshot = false
                 options.isAttachViewHierarchy = false

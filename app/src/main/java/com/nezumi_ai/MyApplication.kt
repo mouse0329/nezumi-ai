@@ -42,9 +42,10 @@ class MyApplication : Application() {
         super.onCreate()
 
         // テレメトリ門番にコンテキストを渡す。ここではまだ Sentry を起動しない。
-        //   実際の起動は「クラウド推論モデルが使われ、かつユーザーが同意している」
-        //   タイミングで TelemetryGate.onCloudInferenceUsed() が呼ばれたときのみ。
-        //   （オンデバイス推論のみで使っている限り、SDKは一切初期化されない）
+        //   実際の起動は「クラウド or オンデバイスいずれかの推論が使われ、かつ
+        //   ユーザーが同意している」タイミングで TelemetryGate.onCloudInferenceUsed() /
+        //   onLocalInferenceUsed() のどちらかが呼ばれたときのみ。
+        //   （推論機能を一度も使わない限り、SDKは一切初期化されない）
         com.nezumi_ai.utils.TelemetryGate.initHooks(this)
 
         // 未捕捉例外ハンドラは最早期に登録しておく。

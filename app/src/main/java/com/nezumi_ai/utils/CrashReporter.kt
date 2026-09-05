@@ -57,9 +57,10 @@ object CrashReporter {
             runCatching { saveCrashLog(appContext, thread, throwable) }
                 .onFailure { Log.w(TAG, "Failed to save crash log", it) }
 
-            // Sentry がアクティブ（クラウド推論利用中 + ユーザー同意済み）な場合のみ、
-            // ローカル保存に加えて Sentry にも転送する。TelemetryGate.isActive() が
-            // false（＝オンデバイス推論のみ、または未同意）の間はここは何もしない。
+            // Sentry がアクティブ（クラウド or オンデバイスいずれかの推論利用中
+            // + ユーザー同意済み）な場合のみ、ローカル保存に加えて Sentry にも転送する。
+            // TelemetryGate.isActive() が false（＝推論未使用、または未同意）の間は
+            // ここは何もしない。
             runCatching { TelemetryGate.captureException(throwable) }
                 .onFailure { Log.w(TAG, "Failed to forward crash to Sentry", it) }
 

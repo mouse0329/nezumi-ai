@@ -655,9 +655,9 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="settings_telemetry_crash_title">Crash reports</string>
     <string name="settings_telemetry_crash_desc">Send unexpected-exit causes and stack traces</string>
     <string name="settings_telemetry_performance_title">Inference performance</string>
-    <string name="settings_telemetry_performance_desc">Send all engine settings, model load time, inference time, and generation speed for app and inference-engine improvements</string>
+    <string name="settings_telemetry_performance_desc">Send all engine settings, model load time, inference time, and generation speed for app and inference-engine improvements. Note: load/inference failure reports are sent under the "Inference error diagnostics" category below, not this one</string>
     <string name="settings_telemetry_diagnostics_title">Inference error diagnostics</string>
-    <string name="settings_telemetry_diagnostics_desc">Send the type of model load and inference failures</string>
+    <string name="settings_telemetry_diagnostics_desc">Send the type of model load and inference failures. Failures are classified as diagnostics, so they are sent whenever this category is on, even if "Performance metrics" is off</string>
     <string name="settings_telemetry_offline_note">Selected on-device data is also sent for app improvement when consented. Chat content, prompts, generated results, and images are never included in telemetry.</string>
 
     <!-- Chat history -->

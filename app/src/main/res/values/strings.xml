@@ -530,9 +530,9 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="settings_telemetry_crash_title">クラッシュレポート</string>
     <string name="settings_telemetry_crash_desc">予期しない終了の原因とスタックトレースを送信</string>
     <string name="settings_telemetry_performance_title">推論パフォーマンス</string>
-    <string name="settings_telemetry_performance_desc">全エンジンの設定値、モデルのロード時間、推論時間、生成速度を送信し、アプリと推論エンジンの改善に使用</string>
+    <string name="settings_telemetry_performance_desc">全エンジンの設定値、モデルのロード時間、推論時間、生成速度を送信し、アプリと推論エンジンの改善に使用。なお、ロード・推論の失敗情報は「パフォーマンス計測」ではなく下の「推論エラー診断」カテゴリで送信される</string>
     <string name="settings_telemetry_diagnostics_title">推論エラー診断</string>
-    <string name="settings_telemetry_diagnostics_desc">モデルのロード・推論失敗の種類を送信</string>
+    <string name="settings_telemetry_diagnostics_desc">モデルのロード・推論失敗の種類を送信。失敗情報は障害診断のためにこちらのカテゴリで扱うため、上の「パフォーマンス計測」がOFFでもこのカテゴリがONなら失敗時の情報は送信される</string>
     <string name="settings_telemetry_offline_note">オンデバイスのデータも、同意した項目はアプリ改善のために送信されます。チャット内容・プロンプト・生成結果・画像などのユーザーコンテンツは送信対象に含まれません。</string>
 
     <!-- チャット履歴 -->

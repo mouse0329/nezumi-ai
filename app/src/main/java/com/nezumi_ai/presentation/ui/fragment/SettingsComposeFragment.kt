@@ -1157,20 +1157,20 @@ class SettingsComposeFragment : Fragment() {
                     style = MaterialTheme.typography.bodySmall
                 )
 
+                // 「全カテゴリ OFF 時に Sentry を停止する」判断は TelemetryConsent の
+                // setter 内で行われるため、UI 側は値を渡すだけでよい
+                // （SetupWizardFragment 側と同一の呼び出しパターン）。
                 TelemetryToggleRow(stringResource(R.string.settings_telemetry_crash_title), stringResource(R.string.settings_telemetry_crash_desc), crashReportsEnabled) { checked ->
                     crashReportsEnabled = checked
-                    com.nezumi_ai.utils.TelemetryConsent.setCrashReportsEnabled(context, checked)
-                    if (!checked && !com.nezumi_ai.utils.TelemetryConsent.isEnabled(context)) com.nezumi_ai.utils.TelemetryGate.onConsentRevoked()
+                    com.nezumi_ai.utils.TelemetryConsent.setCategoryEnabled(context, com.nezumi_ai.utils.TelemetryConsent.Category.CRASH_REPORTS, checked)
                 }
                 TelemetryToggleRow(stringResource(R.string.settings_telemetry_performance_title), stringResource(R.string.settings_telemetry_performance_desc), performanceEnabled) { checked ->
                     performanceEnabled = checked
-                    com.nezumi_ai.utils.TelemetryConsent.setPerformanceMetricsEnabled(context, checked)
-                    if (!checked && !com.nezumi_ai.utils.TelemetryConsent.isEnabled(context)) com.nezumi_ai.utils.TelemetryGate.onConsentRevoked()
+                    com.nezumi_ai.utils.TelemetryConsent.setCategoryEnabled(context, com.nezumi_ai.utils.TelemetryConsent.Category.PERFORMANCE, checked)
                 }
                 TelemetryToggleRow(stringResource(R.string.settings_telemetry_diagnostics_title), stringResource(R.string.settings_telemetry_diagnostics_desc), diagnosticsEnabled) { checked ->
                     diagnosticsEnabled = checked
-                    com.nezumi_ai.utils.TelemetryConsent.setInferenceDiagnosticsEnabled(context, checked)
-                    if (!checked && !com.nezumi_ai.utils.TelemetryConsent.isEnabled(context)) com.nezumi_ai.utils.TelemetryGate.onConsentRevoked()
+                    com.nezumi_ai.utils.TelemetryConsent.setCategoryEnabled(context, com.nezumi_ai.utils.TelemetryConsent.Category.DIAGNOSTICS, checked)
                 }
 
                 HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)

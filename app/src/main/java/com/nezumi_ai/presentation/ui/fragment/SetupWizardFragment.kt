@@ -553,20 +553,20 @@ class SetupWizardFragment : Fragment() {
                     style = MaterialTheme.typography.bodySmall
                 )
 
+                // 「全カテゴリ OFF 時に Sentry を停止する」判断は TelemetryConsent の
+                // setter 内で行われるため、UI 側は値を渡すだけでよい
+                // （SettingsComposeFragment 側と同一の呼び出しパターン）。
                 TelemetrySetupToggleRow(stringResource(R.string.setup_telemetry_crash_title), crashReportsEnabled, textPrimary) { checked ->
                     crashReportsEnabled = checked
-                    com.nezumi_ai.utils.TelemetryConsent.setCrashReportsEnabled(context, checked)
-                    if (!checked && !com.nezumi_ai.utils.TelemetryConsent.isEnabled(context)) com.nezumi_ai.utils.TelemetryGate.onConsentRevoked()
+                    com.nezumi_ai.utils.TelemetryConsent.setCategoryEnabled(context, com.nezumi_ai.utils.TelemetryConsent.Category.CRASH_REPORTS, checked)
                 }
                 TelemetrySetupToggleRow(stringResource(R.string.setup_telemetry_performance_title), performanceEnabled, textPrimary) { checked ->
                     performanceEnabled = checked
-                    com.nezumi_ai.utils.TelemetryConsent.setPerformanceMetricsEnabled(context, checked)
-                    if (!checked && !com.nezumi_ai.utils.TelemetryConsent.isEnabled(context)) com.nezumi_ai.utils.TelemetryGate.onConsentRevoked()
+                    com.nezumi_ai.utils.TelemetryConsent.setCategoryEnabled(context, com.nezumi_ai.utils.TelemetryConsent.Category.PERFORMANCE, checked)
                 }
                 TelemetrySetupToggleRow(stringResource(R.string.setup_telemetry_diagnostics_title), diagnosticsEnabled, textPrimary) { checked ->
                     diagnosticsEnabled = checked
-                    com.nezumi_ai.utils.TelemetryConsent.setInferenceDiagnosticsEnabled(context, checked)
-                    if (!checked && !com.nezumi_ai.utils.TelemetryConsent.isEnabled(context)) com.nezumi_ai.utils.TelemetryGate.onConsentRevoked()
+                    com.nezumi_ai.utils.TelemetryConsent.setCategoryEnabled(context, com.nezumi_ai.utils.TelemetryConsent.Category.DIAGNOSTICS, checked)
                 }
 
                 Text(

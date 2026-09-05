@@ -18,12 +18,19 @@ import java.util.Locale
  *   - オンデバイス推論の計測データは常に収集し、filesDir 配下に保存する
  *     （設定画面の「ログ」タブなどから後で閲覧できるようにするため）。
  *   - これらのデータを外部（Sentry）へ送るかどうかは、あくまで
- *     [TelemetryGate] のポリシー（クラウド推論利用時 + ユーザー同意時のみ）に従う。
- *     つまり、オンデバイスのみで使っている間はローカル保存のみで完結し、
- *     一切ネットワークには出ない。
- *   - クラウド推論が使われて Sentry がアクティブになった後は、以後発生した
+ *     [TelemetryGate] のポリシー（クラウド or オンデバイスいずれかの推論
+ *     利用時 + ユーザー同意時のみ）に従う。つまり、推論機能を一度も使わずに
+ *     いる間はローカル保存のみで完結し、一切ネットワークには出ない。
+ *   - いずれかの推論が使われて Sentry がアクティブになった後は、以後発生した
  *     ローカル推論のイベントも breadcrumb/message として送信され得る
  *     （ユーザーの推論プロンプトや生成結果そのものは含めない）。
+ *
+ * Sentry への送信カテゴリ（[TelemetryGate] 経由）:
+ *   - [recordLoadFailure] / [recordInferenceFailure] → 診断情報 (DIAGNOSTICS)
+ *   - [recordLoadSuccess] / [recordInferenceSpeed] → パフォーマンス (PERFORMANCE)
+ * 失敗情報は「アプリ改善のための障害診断」と位置づけ、パフォーマンス計測とは
+ * 別カテゴリに分類している。設定画面のカテゴリ説明文言にも同旨を明記している
+ * （両者を変更する場合は必ず揃えて更新すること）。
  */
 object InferenceTelemetryRecorder {
     private const val TAG = "InferenceTelemetry"
