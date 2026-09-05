@@ -49,7 +49,14 @@ class MiniAppPermissionManager(private val context: Context) {
         if (permission !in manifest.permissions) {
             throw MiniAppException("PERMISSION_NOT_DECLARED", "権限 '$permission' が manifest に宣言されていません")
         }
-        return State.fromWire(prefs(manifest.id).getString(permission, null)) ?: State.PROMPT
+        val permissionPrefs = prefs(manifest.id)
+        val stored = permissionPrefs.getString(permission, null)
+        if (stored != null) return State.fromWire(stored) ?: State.PROMPT
+
+        // インストール確認を通過した旧バージョンのアプリには権限Prefsがない。
+        // manifestの宣言を初回アクセス時に移行し、明示的な拒否状態は上書きしない。
+        permissionPrefs.edit().putString(permission, State.GRANTED.wire).apply()
+        return State.GRANTED
     }
 
     fun isGranted(manifest: MiniAppManifest, permission: String): Boolean =
@@ -70,6 +77,13 @@ class MiniAppPermissionManager(private val context: Context) {
     fun requireGranted(manifest: MiniAppManifest, permission: String) {
         if (!isGranted(manifest, permission)) {
             throw MiniAppException("PERMISSION_DENIED", "権限 '$permission' が許可されていません")
+        }
+    }
+
+    /** 細分化権限または従来の包括権限のどちらかが許可済みなら通す。 */
+    fun requireAnyGranted(manifest: MiniAppManifest, vararg permissions: String) {
+        if (permissions.none { isGranted(manifest, it) }) {
+            throw MiniAppException("PERMISSION_DENIED", "権限 '${permissions.joinToString(" / ")}' が許可されていません")
         }
     }
 

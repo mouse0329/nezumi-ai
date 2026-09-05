@@ -333,7 +333,7 @@ class MiniAppRpcDispatcher(
     }
 
     private suspend fun handleAiLoadModel(params: JSONObject): JSONObject {
-        permissionManager.requireGranted(manifest, "ai")
+        permissionManager.requireAnyGranted(manifest, "ai.loadModel", "ai")
         val modelId = params.optString("id", params.optString("model", ""))
         if (modelId.isBlank()) throw MiniAppException("MODEL_NOT_FOUND", "model が指定されていません")
 
@@ -367,7 +367,7 @@ class MiniAppRpcDispatcher(
     }
 
     private suspend fun handleAiGenerate(params: JSONObject, requestId: String, stream: Boolean): JSONObject {
-        permissionManager.requireGranted(manifest, "ai")
+        permissionManager.requireAnyGranted(manifest, "ai.generate", "ai")
         val prompt = params.optString("prompt", "")
         if (prompt.isBlank()) throw MiniAppException("PACKAGE_INVALID", "prompt が指定されていません")
 
@@ -950,7 +950,7 @@ class MiniAppRpcDispatcher(
     // ---------------------------------------------------------------------
 
     private fun handleOnnxOpen(params: JSONObject): JSONObject {
-        permissionManager.requireGranted(manifest, "ai")
+        permissionManager.requireAnyGranted(manifest, "ai.loadModel", "ai")
         val id = onnxManager.open(params.optString("model", ""))
         return JSONObject().put("sessionId", id)
     }

@@ -170,6 +170,12 @@ object MiniAppInstaller {
                 installedAt = System.currentTimeMillis()
             )
             store.register(app)
+            // PermissionReview の同意を実行時権限として永続化する。
+            // ここを省くと、表示上は許可済みでも RPC 側では prompt のままになる。
+            val permissionManager = MiniAppPermissionManager.get(context)
+            verification.manifest.permissions.forEach { permission ->
+                permissionManager.grant(verification.manifest, permission)
+            }
             Log.i(TAG, "Installed mini app: $appId (update=$isUpdate, signed=${verification.signed})")
             app
         } catch (e: MiniAppException) {
