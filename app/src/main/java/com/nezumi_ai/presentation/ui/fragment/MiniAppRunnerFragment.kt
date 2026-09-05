@@ -34,6 +34,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.fragment.app.Fragment
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import androidx.navigation.fragment.findNavController
 import com.nezumi_ai.R
 import com.nezumi_ai.data.miniapp.MiniAppEventBus
@@ -129,11 +131,25 @@ class MiniAppRunnerFragment : Fragment() {
         })
         wv.addJavascriptInterface(br, "__nezumiBridge")
 
+        // ページ内の最初のスクリプトより前に SDK を利用可能にする。
+        val documentStartSupported = WebViewFeature.isFeatureSupported(
+            WebViewFeature.DOCUMENT_START_SCRIPT
+        )
+        if (documentStartSupported) {
+            WebViewCompat.addDocumentStartJavaScript(
+                wv,
+                MiniAppJsBridge.SDK_JS,
+                setOf("http://127.0.0.1:$port")
+            )
+        }
+
         wv.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                // 仕様 §14: nezumi SDK 名前空間をページスクリプトより先に注入
-                view?.evaluateJavascript(MiniAppJsBridge.SDK_JS, null)
+                // 古い WebView 実装では Document Start API が使えないためフォールバックする。
+                if (!documentStartSupported) {
+                    view?.evaluateJavascript(MiniAppJsBridge.SDK_JS, null)
+                }
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
