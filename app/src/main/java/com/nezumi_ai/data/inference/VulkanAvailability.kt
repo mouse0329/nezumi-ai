@@ -13,7 +13,22 @@ object VulkanAvailability {
 
     fun isAvailable(): Boolean {
         cached?.let { return it }
-        return detect().also { cached = it }
+        return detectAtRuntime().also { cached = it }
+    }
+
+    /**
+     * 実際に llama.cpp が Vulkan バックエンドを初期化できるかをネイティブプローブで判定する。
+     *
+     * libvulkan.so の存在だけでは ICD の健全性までは分からず、Mini App API が
+     * 嘘の available=true を返す原因になっていたため、判定は GgufInferenceEngine の
+     * ロード時チェックと同じ [LlamaBridge.nativeProbeGpuBackendAvailable] に委譲する。
+     * プローブ自体が失敗した (ネイティブ未ロード等) 場合のみ、従来のファイル存在
+     * ベース検出 [detect] にフォールバックする。
+     */
+    private fun detectAtRuntime(): Boolean {
+        runCatching { LlamaBridge.nativeProbeGpuBackendAvailable(LlamaCppGpuBackend.VULKAN) }
+            .getOrNull()?.let { return it }
+        return detect()
     }
 
     internal fun resetCacheForTests() {

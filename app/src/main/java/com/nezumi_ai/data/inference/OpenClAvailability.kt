@@ -15,7 +15,23 @@ object OpenClAvailability {
 
     fun isAvailable(): Boolean {
         cached?.let { return it }
-        return detect().also { cached = it }
+        return detectAtRuntime().also { cached = it }
+    }
+
+    /**
+     * 実際に llama.cpp が OpenCL バックエンドを初期化できるかをネイティブプローブで判定する。
+     *
+     * ライブラリファイルの存在だけでは「ロードできるが初期化に失敗する」端末を
+     * 見抜けず、Mini App API が嘘の available=true を返す原因になっていたため、
+     * 判定は GgufInferenceEngine のロード時チェックと同じ
+     * [LlamaBridge.nativeProbeGpuBackendAvailable] に委譲する。
+     * プローブ自体が失敗した (ネイティブ未ロード等) 場合のみ、従来のファイル存在
+     * ベース検出 [detect] にフォールバックする。
+     */
+    private fun detectAtRuntime(): Boolean {
+        runCatching { LlamaBridge.nativeProbeGpuBackendAvailable(LlamaCppGpuBackend.OPENCL) }
+            .getOrNull()?.let { return it }
+        return detect()
     }
 
     /** テスト用にキャッシュを捨てる。 */

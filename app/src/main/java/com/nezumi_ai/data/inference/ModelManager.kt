@@ -479,6 +479,36 @@ class ModelManager(
     fun didFallBackFromRequestedGpuBackend(): Boolean =
         (activeEngine as? GgufInferenceEngine)?.gpuBackendFallbackOccurred ?: false
 
+    /**
+     * Mini App API (ai.unloadModel) 用。
+     *
+     * llama.cpp (GGUF) 側でモデルがロードされている場合、共有されている GPU /
+     * メモリ資源を即時回収するため LiteRT-LM エンジンを強制解放 (forceReset) する。
+     * LiteRT-LM の GPU リソースは Engine.close() 経由で SIGABRT し得るため、
+     * recoverFromInvokeFailure と同様に forceReset() を使う。
+     * GGUF モデルがロードされていなければ何もしない。
+     *
+     * @return true: GGUF ロード中で LiteRT-LM を強制解放した / false: 対象外で何もしなかった
+     */
+    suspend fun forceReleaseLiteRtIfGgufLoaded(): Boolean {
+        return loadMutex.withLock {
+            val ggufActive = activeEngine is GgufInferenceEngine && currentModelName != null
+            if (!ggufActive) {
+                Log.d(TAG, "forceReleaseLiteRtIfGgufLoaded: no GGUF model loaded, nothing to do")
+                return@withLock false
+            }
+            Log.i(TAG, "forceReleaseLiteRtIfGgufLoaded: GGUF model loaded — forcing LiteRT-LM release")
+            val liteRt = liteRtEngine as? LiteRtLmEngine
+            if (liteRt != null) {
+                runCatching { liteRt.cancelInference() }
+                    .onFailure { Log.w(TAG, "LiteRT cancelInference before forceReset failed", it) }
+                runCatching { liteRt.forceReset() }
+                    .onFailure { Log.w(TAG, "LiteRT forceReset failed", it) }
+            }
+            true
+        }
+    }
+
     /** 直近ロードで実際に使われたバックエンド ("CPU" / "OPENCL" / "VULKAN")。 */
     fun currentActualGpuBackend(): String =
         (activeEngine as? GgufInferenceEngine)?.actualGpuBackend ?: LlamaCppGpuBackend.CPU

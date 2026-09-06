@@ -300,6 +300,10 @@ await nezumi.download.pause(dl.id);   // 一時停止（Range 再開に対応）
 await nezumi.download.resume(dl.id);  // 再開
 await nezumi.download.cancel(dl.id);  // キャンセル
 
+// llama.cpp でモデルロード済みの場合に LiteRT-LM エンジンを強制解放する
+// （共有の GPU / メモリ資源の即時回収用。GGUF 未ロード時は no-op）
+const res = await nezumi.ai.unloadModel();  // { ok: true, released: true|false }
+
 const info = await nezumi.download.get(dl.id);
 const all = await nezumi.download.list();
 ```
@@ -318,6 +322,9 @@ await nezumi.models.exists("gemma-4-2b.litertlm");
 const engines = await nezumi.engines.list();      // llama.cpp / litert / image
 const backends = await nezumi.engines.listBackends("llama.cpp");
 // [{ id: "cpu", available: true }, { id: "vulkan", available: false, reason: "DRIVER_NOT_FOUND" }]
+// 注意: opencl / vulkan の available はアプリ設定ではなく、実際に llama.cpp が
+// バックエンドを初期化できるかのネイティブプローブ結果を返す（実行時判定）。
+// litert エンジンの gpu も OpenCL ランタイムの有無で判定される。
 
 // メモリプローブ（ロード前の確認用）
 const probe = await nezumi.engines.probeMemory();

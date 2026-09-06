@@ -4,6 +4,7 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
+import android.util.Base64
 import android.util.Log
 import java.io.File
 import java.nio.ByteBuffer
@@ -167,13 +168,7 @@ class MiniAppOnnxManager(
                     if (info is ai.onnxruntime.TensorInfo) {
                         val value = r.value
                         val outputName = outputNames.getOrNull(i) ?: "output_$i"
-                        when (value) {
-                            is FloatArray -> out[outputName] = value.joinToString(",")
-                            is IntArray -> out[outputName] = value.joinToString(",")
-                            is LongArray -> out[outputName] = value.joinToString(",")
-                            is Array<*> -> out[outputName] = value.contentDeepToString()
-                            else -> out[outputName] = value.toString()
-                        }
+                        out[outputName] = FLOAT32_BASE64_PREFIX + encodeAsFloat32Base64(value)
                     }
                 }
                 return out
@@ -183,6 +178,38 @@ class MiniAppOnnxManager(
         } catch (e: Exception) {
             throw MiniAppException("INTERNAL_ERROR", "ONNX 推論に失敗しました: ${e.message}", cause = e)
         }
+    }
+
+    private fun encodeAsFloat32Base64(value: Any): String {
+        val count = countNumericElements(value)
+        if (count > Int.MAX_VALUE / Float.SIZE_BYTES) {
+            throw MiniAppException("MEMORY_PRESSURE", "ONNX 出力が大きすぎます: $count elements")
+        }
+        val bytes = ByteBuffer.allocate(count * Float.SIZE_BYTES).order(ByteOrder.LITTLE_ENDIAN)
+        appendNumericElements(value, bytes)
+        return Base64.encodeToString(bytes.array(), Base64.NO_WRAP)
+    }
+
+    private fun countNumericElements(value: Any?): Int {
+        if (value == null) throw MiniAppException("INTERNAL_ERROR", "ONNX 出力に null 要素があります")
+        if (value is Number) return 1
+        val length = java.lang.reflect.Array.getLength(value)
+        var count = 0L
+        for (index in 0 until length) {
+            count += countNumericElements(java.lang.reflect.Array.get(value, index))
+            if (count > Int.MAX_VALUE) throw MiniAppException("MEMORY_PRESSURE", "ONNX 出力が大きすぎます")
+        }
+        return count.toInt()
+    }
+
+    private fun appendNumericElements(value: Any?, buffer: ByteBuffer) {
+        if (value == null) throw MiniAppException("INTERNAL_ERROR", "ONNX 出力に null 要素があります")
+        if (value is Number) {
+            buffer.putFloat(value.toFloat())
+            return
+        }
+        val length = java.lang.reflect.Array.getLength(value)
+        for (index in 0 until length) appendNumericElements(java.lang.reflect.Array.get(value, index), buffer)
     }
 
     fun disposeTensor(tensorId: String) {
@@ -229,5 +256,6 @@ class MiniAppOnnxManager(
     companion object {
         private const val TAG = "MiniAppOnnxManager"
         private const val MAX_TENSOR_BYTES = 2_560L * 1024 * 1024
+        private const val FLOAT32_BASE64_PREFIX = "__f32b64__:"
     }
 }

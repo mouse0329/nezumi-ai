@@ -56,6 +56,16 @@
     language: null
   };
 
+  // Codec IDs use a separate 0..3071 table; they are not tokenizer IDs.
+  const CODEC = {
+    bos: 2149,
+    pad: 2148,
+    think: 2154,
+    thinkBos: 2156,
+    thinkEos: 2157,
+    japanese: 2058
+  };
+
   // ---------------------------------------------------------------------
   // Mel spectrogram front-end for speaker_encoder.onnx
   // Pinned parameters (HiFi-GAN style mel used by Qwen3TTSSpeakerEncoder):
@@ -200,8 +210,34 @@
     if (typeof raw === 'string') {
       const text = raw.trim();
       if (!text) return new Float32Array(0);
-      const body = text[0] === '[' && text[text.length - 1] === ']' ? text.slice(1, -1) : text;
-      return Float32Array.from(body.split(',').map((value) => Number(value.trim())));
+      if (text.startsWith('__f32b64__:')) {
+        const encoded = text.slice('__f32b64__:'.length);
+        const binary = atob(encoded);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+        if (bytes.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0) throw new Error('ONNX Base64 出力のバイト数が不正です。');
+        return new Float32Array(bytes.buffer);
+      }
+      try {
+        const parsed = JSON.parse(text);
+        const values = [];
+        const flatten = (value) => {
+          if (Array.isArray(value)) {
+            for (const item of value) flatten(item);
+          } else if (typeof value === 'number') {
+            values.push(value);
+          }
+        };
+        flatten(parsed);
+        if (values.length) return Float32Array.from(values);
+      } catch {
+        // Android's contentDeepToString is not guaranteed to be strict JSON.
+      }
+      const matches = text.match(/[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/g) || [];
+      if (!matches.length) throw new Error('ONNX出力文字列に数値が含まれていません。');
+      const values = Float32Array.from(matches, Number);
+      if (Array.from(values).some((value) => !Number.isFinite(value))) throw new Error('ONNX出力に有限でない数値が含まれています。');
+      return values;
     }
     throw new Error('未対応の出力データ形式です。');
   }
@@ -219,9 +255,18 @@
       data = toTypedArray(node);
       dims = null;
     }
-    if (!dims) {
+    if (!dims || dims.some((dimension) => dimension === null || dimension === undefined)) {
       const declared = await getDeclaredOutputShape(sessionId, name);
-      if (declared) dims = declared.map((d) => (typeof d === 'number' && d > 0 ? d : null));
+      if (declared) dims = resolveOutputDims(declared, data.length);
+    }
+    if (opts.trailingDim && (!dims || dims.some((dimension) => dimension === null || dimension === undefined))) {
+      if (data.length % opts.trailingDim !== 0) {
+        throw new Error(`ONNX出力 "${name}" のデータ長が語彙サイズと一致しません: ${data.length} / ${opts.trailingDim}`);
+      }
+      dims = [1, data.length / opts.trailingDim, opts.trailingDim];
+    }
+    if (opts.inferShape && (!dims || dims.some((dimension) => dimension === null || dimension === undefined))) {
+      dims = opts.inferShape(data.length);
     }
     if (opts.shapeOptional) return { data, dims: dims || null };
     if (!dims || dims.some((d) => d === null || d === undefined)) {
@@ -240,6 +285,15 @@
     // Resolve a single dynamic (-1/null) dimension from the actual buffer length.
     const knownProduct = dims.reduce((acc, d) => (d === null ? acc : acc * d), 1);
     return dims.map((d) => (d === null ? Math.round(actualLength / (knownProduct * elemsPerLeadingDims)) : d));
+  }
+
+  function resolveOutputDims(dims, actualLength) {
+    const normalized = dims.map((dimension) => (typeof dimension === 'number' && dimension > 0 ? dimension : null));
+    const dynamicCount = normalized.filter((dimension) => dimension === null).length;
+    if (dynamicCount !== 1) return normalized;
+    const knownProduct = normalized.reduce((product, dimension) => dimension === null ? product : product * dimension, 1);
+    if (!Number.isSafeInteger(actualLength) || knownProduct <= 0 || actualLength % knownProduct !== 0) return normalized;
+    return normalized.map((dimension) => dimension === null ? actualLength / knownProduct : dimension);
   }
 
   // ---------------------------------------------------------------------
@@ -278,6 +332,25 @@
     return map[descr];
   }
 
+  const MAX_READ_RANGE = 8 * 1024 * 1024;
+
+  async function readRangeChunked(path, offset, length) {
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 0) {
+      throw new Error(`NPY読み出し範囲が不正です: offset=${offset}, length=${length}`);
+    }
+    const result = new Uint8Array(length);
+    for (let copied = 0; copied < length;) {
+      const chunkLength = Math.min(MAX_READ_RANGE, length - copied);
+      const chunk = new Uint8Array(await state.sdk.files.readRange(path, offset + copied, chunkLength));
+      if (chunk.length !== chunkLength) {
+        throw new Error(`NPY読み出しが短すぎます: ${path} (${chunk.length}/${chunkLength} bytes)`);
+      }
+      result.set(chunk, copied);
+      copied += chunk.length;
+    }
+    return result;
+  }
+
   // Read a full small NPY (weights, biases, per-layer embedding tables) from App Data.
   async function readNpyFull(path) {
     const buf = new Uint8Array(await state.sdk.files.read(path));
@@ -297,13 +370,19 @@
 
   async function readNpyRows(path, header, rowIndices) {
     const [bytesPer, Ctor] = dtypeBytesAndCtor(header.descr);
-    const rowLen = header.shape[1];
+    if (!Array.isArray(header.shape) || header.shape.length < 2) throw new Error(`NPY埋め込みの shape が不正です: ${path}`);
+    const rowCount = header.shape[0];
+    const rowLen = header.shape.slice(1).reduce((product, dimension) => product * dimension, 1);
     const rowBytes = rowLen * bytesPer;
+    if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) throw new Error(`NPYの行サイズが不正です: ${path}`);
     const out = new Float32Array(rowIndices.length * rowLen);
     for (let r = 0; r < rowIndices.length; r++) {
       const rowIndex = rowIndices[r];
+      if (!Number.isInteger(rowIndex) || rowIndex < 0 || rowIndex >= rowCount) {
+        throw new Error(`NPYの行番号が範囲外です: ${path} row=${rowIndex} / ${rowCount}`);
+      }
       const start = header.dataOffset + rowIndex * rowBytes;
-      const raw = new Uint8Array(await state.sdk.files.readRange(path, start, rowBytes));
+      const raw = await readRangeChunked(path, start, rowBytes);
       const rowView = new Ctor(raw.buffer, raw.byteOffset, rowLen);
       out.set(rowView, r * rowLen);
     }
@@ -340,10 +419,6 @@
     const added = new Map();
     for (const t of json.added_tokens || []) added.set(t.content, t.id);
     state.tokenizer = { vocab, rank, byteEncoder, added };
-    // Resolve dynamic special tokens against the actual vocab where possible.
-    for (const [content, key] of [['<think>', 'think'], ['<think_bos>', 'think_bos'], ['<think_eos>', 'think_eos']]) {
-      if (added.has(content)) TOK[key] = added.get(content);
-    }
     return state.tokenizer;
   }
 
@@ -464,7 +539,13 @@
     await state.sdk.onnx.disposeTensor(posT);
     const names = ['logits', 'hidden_states'];
     for (let l = 0; l < TALKER_LAYERS; l++) names.push(`present_key_${l}`, `present_value_${l}`);
-    return normalizeOutputs(sessionId, raw, names); // { logits, hidden_states, present_key_0..27, present_value_0..27 }, each { data, dims }
+    return normalizeOutputs(sessionId, raw, names, {
+      logits: { trailingDim: TALKER_VOCAB },
+      hidden_states: { trailingDim: TALKER_HIDDEN },
+      ...Object.fromEntries(names.filter((name) => name.startsWith('present_')).map((name) => [name, {
+        inferShape: (length) => [1, TALKER_KV_HEADS, length / (TALKER_KV_HEADS * HEAD_DIM), HEAD_DIM]
+      }]))
+    }); // { logits, hidden_states, present_key_0..27, present_value_0..27 }, each { data, dims }
   }
 
   function stackPresentKV(result, layers) {
@@ -497,7 +578,12 @@
       inputs_embeds: embedsT, attention_mask: maskT, position_ids: posT, past_keys: pastK, past_values: pastV
     });
     for (const t of [embedsT, maskT, posT, pastK, pastV]) await state.sdk.onnx.disposeTensor(t);
-    return normalizeOutputs(sessionId, raw, ['logits', 'hidden_states', 'present_keys', 'present_values']);
+    return normalizeOutputs(sessionId, raw, ['logits', 'hidden_states', 'present_keys', 'present_values'], {
+      logits: { trailingDim: TALKER_VOCAB },
+      hidden_states: { trailingDim: TALKER_HIDDEN },
+      present_keys: { inferShape: (length) => [TALKER_LAYERS, 1, TALKER_KV_HEADS, length / (TALKER_LAYERS * TALKER_KV_HEADS * HEAD_DIM), HEAD_DIM] },
+      present_values: { inferShape: (length) => [TALKER_LAYERS, 1, TALKER_KV_HEADS, length / (TALKER_LAYERS * TALKER_KV_HEADS * HEAD_DIM), HEAD_DIM] }
+    });
   }
 
   async function runCodePredictorStep(sessionId, embedsSeq, seqLen, step, cache) {
@@ -507,7 +593,11 @@
     const pastV = await makeF32Tensor(sessionId, [CP_LAYERS, 1, TALKER_KV_HEADS, cache.seq, HEAD_DIM], cache.values);
     const raw = await state.sdk.onnx.run(sessionId, { inputs_embeds: embedsT, generation_steps: stepT, past_keys: pastK, past_values: pastV });
     for (const t of [embedsT, stepT, pastK, pastV]) await state.sdk.onnx.disposeTensor(t);
-    return normalizeOutputs(sessionId, raw, ['logits', 'present_keys', 'present_values']);
+    return normalizeOutputs(sessionId, raw, ['logits', 'present_keys', 'present_values'], {
+      logits: { trailingDim: CP_VOCAB },
+      present_keys: { inferShape: (length) => [CP_LAYERS, 1, TALKER_KV_HEADS, length / (CP_LAYERS * TALKER_KV_HEADS * HEAD_DIM), HEAD_DIM] },
+      present_values: { inferShape: (length) => [CP_LAYERS, 1, TALKER_KV_HEADS, length / (CP_LAYERS * TALKER_KV_HEADS * HEAD_DIM), HEAD_DIM] }
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -531,7 +621,8 @@
       }
     }
     for (let i = 0; i < n; i++) scores[i] = scores[i] === -Infinity ? -Infinity : scores[i] / temperature;
-    const indices = Array.from({ length: n }, (_, i) => i).filter((i) => scores[i] !== -Infinity);
+    const indices = Array.from({ length: n }, (_, i) => i).filter((i) => Number.isFinite(scores[i]));
+    if (indices.length === 0) throw new Error('ONNX logits に有効なサンプル候補がありません。');
     indices.sort((a, b) => scores[b] - scores[a]);
     const top = indices.slice(0, Math.min(topK, indices.length));
     const maxLogit = scores[top[0]];
@@ -802,11 +893,18 @@
     const wantedFrames = Math.max(1, Math.ceil(samples24k.length / SAMPLES_PER_FRAME));
     const dims = result.audio_codes.dims; // may be null/partially symbolic
     const actualFrames = (dims && dims[2]) || Math.round(result.audio_codes.data.length / 16);
+    if (!Number.isInteger(actualFrames) || actualFrames <= 0 || result.audio_codes.data.length < 16 * actualFrames) {
+      throw new Error(`audio_codes の shape が不正です: data=${result.audio_codes.data.length}, frames=${actualFrames}`);
+    }
     const frames = Math.min(actualFrames, wantedFrames);
     const codes = []; // [16][frames]
     for (let g = 0; g < 16; g++) {
       const row = new Array(frames);
-      for (let f = 0; f < frames; f++) row[f] = Number(result.audio_codes.data[g * actualFrames + f]);
+      for (let f = 0; f < frames; f++) {
+        const code = Number(result.audio_codes.data[g * actualFrames + f]);
+        if (!Number.isInteger(code) || code < 0) throw new Error(`audio_codes に不正な値があります: group=${g}, frame=${f}, value=${code}`);
+        row[f] = code;
+      }
       codes.push(row);
     }
     return codes;
@@ -854,12 +952,12 @@
     const cpEmb = embeddings.cpEmb; // per-group cp_codec_embedding rows lookup fn
 
     // codec prefix tokens (think / think_bos / language / think_eos) if resolvable, else skip gracefully
-    const codecPrefixIds = [TOK.think, TOK.think_bos, TOK.language, TOK.think_eos].filter((v) => v !== null && v !== undefined);
+    const codecPrefixIds = [CODEC.think, CODEC.thinkBos, CODEC.japanese, CODEC.thinkEos];
     const codecPrefixEmbeds = codecPrefixIds.length ? await tpEmb(codecPrefixIds) : new Float32Array(0);
 
-    const ttsPadEmb = (await tpEmb([TOK.tts_pad]));
-    const ttsBosEmb = (await tpEmb([TOK.tts_bos]));
-    const codecBosEmb = (await tpEmb([TOK.tts_bos])); // codec_bos shares talker embedding table per notes' "codec side" wording
+    const ttsPadEmb = await projectTextTokens([TOK.tts_pad]);
+    const ttsBosEmb = await projectTextTokens([TOK.tts_bos]);
+    const codecBosEmb = await tpEmb([CODEC.bos]);
 
     const parts = [];
     parts.push(roleEmbeds);
@@ -981,7 +1079,7 @@
       let frameIndex = 0;
 
       // Sum of all 16 codec embeddings for the previous frame + tts_pad becomes next talker input (non-streaming decode).
-      const ttsPadEmb = await embeddings.tpEmb([TOK.tts_pad]);
+      const ttsPadEmb = await projectTextTokens([TOK.tts_pad]);
 
       for (; ;) {
         const forceEosBlock = frameIndex < 2;

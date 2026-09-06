@@ -149,6 +149,7 @@ class MiniAppRpcDispatcher(
             // §16 nezumi.ai
             "ai.listModels" -> handleAiListModels()
             "ai.loadModel" -> handleAiLoadModel(params)
+            "ai.unloadModel" -> handleAiUnloadModel()
             "ai.generate" -> handleAiGenerate(params, requestId.toString(), stream = false)
             "ai.stream" -> handleAiGenerate(params, requestId.toString(), stream = true)
             "ai.stop" -> handleAiStop(params)
@@ -431,6 +432,28 @@ class MiniAppRpcDispatcher(
     }
 
     /** §25 LLM 推論パラメータ → InferenceConfig への変換（User Settings がデフォルト、per-request が最優先）。 */
+    /**
+     * ai.unloadModel: llama.cpp (GGUF) でモデルがロードされている場合、
+     * LiteRT-LM エンジンを強制解放する。
+     *
+     * 仕様: GGUF ロード中は共有の GPU / メモリ資源を即時回収するため、
+     * ModelManager.forceReleaseLiteRtIfGgufLoaded() 経由で LiteRT-LM を
+     * forceReset() する (Engine.close() は GPU バックエンドで SIGABRT し得るため)。
+     * GGUF モデルがロードされていなければ no-op で ok=true を返す。
+     */
+    private suspend fun handleAiUnloadModel(): JSONObject {
+        permissionManager.requireAnyGranted(manifest, "ai.loadModel", "ai")
+        val modelManager = ModelManager.getInstance(context)
+        val released = modelManager.forceReleaseLiteRtIfGgufLoaded()
+        if (released) {
+            eventBus.emit("model.unloaded", JSONObject().put("engine", "litert").toString())
+        }
+        return JSONObject().apply {
+            put("ok", true)
+            put("released", released)
+        }
+    }
+
     private fun inferenceConfigFrom(params: JSONObject): InferenceConfig {
         val base = InferenceConfig()
         return base.copy(
@@ -600,7 +623,10 @@ class MiniAppRpcDispatcher(
             }
             "litert" -> {
                 arr.put(backend("cpu", true))
-                arr.put(backend("gpu", true))
+                // LiteRT-LM の GPU delegate は OpenCL ランタイム上に構築される。
+                // OpenCL 非搭載端末で available=true を返すと嘘になるため、
+                // llama.cpp と同じネイティブプローブ結果 (OpenClAvailability) に揃える。
+                arr.put(backend("gpu", OpenClAvailability.isAvailable(), "DRIVER_NOT_FOUND"))
                 arr.put(backend("npu", false, "SOC_NOT_SUPPORTED"))
             }
             "image" -> {
