@@ -1,11 +1,15 @@
 package com.nezumi_ai.presentation.ui.fragment
 
 import android.content.Intent
+import android.content.Context
+import android.media.MediaPlayer
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.os.Bundle
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.widget.Toast
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
@@ -98,6 +102,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.io.File
+import java.io.RandomAccessFile
+import java.net.HttpURLConnection
+import java.net.URL
+import org.json.JSONObject
 import java.util.zip.ZipInputStream
 import kotlin.math.roundToInt
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
@@ -194,6 +202,25 @@ class SettingsComposeFragment : Fragment() {
     private var nsfwDebugXsNsfwProb by mutableStateOf<Float?>(null)
     private var nsfwDebugXsSfwProb by mutableStateOf<Float?>(null)
     private lateinit var nsfwDebugPickLauncher: ActivityResultLauncher<String>
+
+    // Qwen3-TTS (llama.cpp TTS) デバッグ用の UI 状態。
+    private var ttsDebugStatus by mutableStateOf<String?>(null)
+    private var ttsDebugResult by mutableStateOf<String?>(null)
+    private var ttsDebugReady by mutableStateOf(false)
+    private var ttsDebugDownloading by mutableStateOf(false)
+    private var ttsDebugDownloadProgress by mutableStateOf<Float?>(null)
+    private var ttsDebugSynthesizing by mutableStateOf(false)
+    private var ttsDebugTextInput by mutableStateOf("こんにちは。ネズミAI の音声合成テストです。")
+    private var ttsDebugSpeakerPath by mutableStateOf<String?>(null)
+    private var ttsDebugSpeakerName by mutableStateOf<String?>(null)
+    private var ttsDebugPlayer: MediaPlayer? = null
+    private lateinit var ttsSpeakerPickLauncher: ActivityResultLauncher<String>
+
+    // Qwen3-TTS 0.6B の GGUF (バックボーン + トークナイザ)。llama-tts 形式の 2 ファイル構成。
+    private val ttsDebugBackboneUrl = "https://huggingface.co/Jahaz/Qwen3-tts-0.6b-gguf-for-koboldcpp/resolve/main/qwen3-tts-0.6b-q5k.gguf"
+    private val ttsDebugBackboneName = "qwen3-tts-0.6b-q5k.gguf"
+    private val ttsDebugTokenizerUrl = "https://huggingface.co/Jahaz/Qwen3-tts-0.6b-gguf-for-koboldcpp/resolve/main/qwen3-tts-tokenizer-MXFP4.gguf"
+    private val ttsDebugTokenizerName = "qwen3-tts-tokenizer-MXFP4.gguf"
     private lateinit var skillImportLauncher: ActivityResultLauncher<Array<String>>
     private var skillScanResult by mutableStateOf(SkillScanResult(emptyList(), emptyList()))
     // エラーダイアログ用。追加/削除/リネームが失敗したときのメッセージを保持する。
@@ -242,6 +269,11 @@ class SettingsComposeFragment : Fragment() {
         }
         skillImportLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) lifecycleScope.launch(Dispatchers.IO) { importSkillArchive(uri) }
+        }
+        ttsSpeakerPickLauncher = registerForActivityResult(
+            ActivityResultContracts.GetContent()
+        ) { uri: Uri? ->
+            if (uri != null) importTtsDebugSpeakerAudio(uri)
         }
         skillScanResult = SkillRepository(requireContext().applicationContext).scan(force = true)
     }
@@ -301,6 +333,239 @@ class SettingsComposeFragment : Fragment() {
                 nsfwDebugStatus = "失敗: ${e.message}"
             }
             nsfwDebugRunning = false
+        }
+    }
+
+    // ---- Qwen3-TTS (llama.cpp TTS) デバッグ用ヘルパー ----
+    // モデルは filesDir/tts/ に保存する。バックボーン + トークナイザ (mmproj 相当) の 2 ファイル構成。
+    private fun ttsDebugDir(context: Context): File = File(context.filesDir, "tts")
+    private fun ttsDebugBackboneFile(context: Context): File = File(ttsDebugDir(context), ttsDebugBackboneName)
+    private fun ttsDebugTokenizerFile(context: Context): File = File(ttsDebugDir(context), ttsDebugTokenizerName)
+
+    private fun isTtsDebugGgufFile(file: File): Boolean {
+        if (!file.isFile || file.length() < 4L) return false
+        return runCatching {
+            RandomAccessFile(file, "r").use { raf ->
+                ByteArray(4).also { raf.readFully(it) }.contentEquals(byteArrayOf(
+                    'G'.code.toByte(), 'G'.code.toByte(), 'U'.code.toByte(), 'F'.code.toByte()
+                ))
+            }
+        }.getOrDefault(false)
+    }
+
+    private fun refreshTtsDebugStatus(context: Context) {
+        val backbone = ttsDebugBackboneFile(context)
+        val tokenizer = ttsDebugTokenizerFile(context)
+        val backboneValid = isTtsDebugGgufFile(backbone)
+        val tokenizerValid = isTtsDebugGgufFile(tokenizer)
+        ttsDebugReady = backboneValid && tokenizerValid
+        if (backbone.exists() && !backboneValid) backbone.delete()
+        if (tokenizer.exists() && !tokenizerValid) tokenizer.delete()
+        Log.i(
+            "TtsDebug",
+            "model status: backboneExists=${backbone.exists()}, backboneBytes=${backbone.length()}, " +
+                "tokenizerExists=${tokenizer.exists()}, tokenizerBytes=${tokenizer.length()}, ready=$ttsDebugReady"
+        )
+        if (ttsDebugReady) {
+            ttsDebugStatus = getString(R.string.settings_debug_tts_ready)
+        }
+    }
+
+    private fun downloadTtsDebugModels(context: Context) {
+        if (ttsDebugDownloading) return
+        ttsDebugDownloading = true
+        ttsDebugDownloadProgress = 0f
+        ttsDebugStatus = null
+        val appContext = context.applicationContext
+        lifecycleScope.launch(Dispatchers.IO) {
+            val targets = listOf(
+                ttsDebugBackboneUrl to ttsDebugBackboneFile(appContext),
+                ttsDebugTokenizerUrl to ttsDebugTokenizerFile(appContext)
+            )
+            var ok = true
+            for ((url, dest) in targets) {
+                if (isTtsDebugGgufFile(dest)) {
+                    Log.i("TtsDebug", "model download skipped; valid file exists: ${dest.name}, bytes=${dest.length()}")
+                    continue
+                }
+                if (dest.exists()) dest.delete()
+                ok = downloadTtsDebugFile(url, dest)
+                if (!ok) break
+            }
+            withContext(Dispatchers.Main) {
+                ttsDebugDownloading = false
+                ttsDebugDownloadProgress = null
+                if (ok) {
+                    refreshTtsDebugStatus(appContext)
+                } else {
+                    ttsDebugStatus = getString(R.string.settings_debug_tts_failed, "download")
+                }
+            }
+        }
+    }
+
+    /** Hugging Face (resolve URL) から 1 ファイルをダウンロードする。進捗はステータス欄に反映。 */
+    private suspend fun downloadTtsDebugFile(url: String, dest: File): Boolean {
+        return runCatching {
+            dest.parentFile?.mkdirs()
+            val tmp = File(dest.parentFile, dest.name + ".part")
+            Log.i("TtsDebug", "model download started: file=${dest.name}")
+            val conn = URL(url).openConnection() as HttpURLConnection
+            conn.instanceFollowRedirects = true
+            conn.connectTimeout = 30_000
+            conn.readTimeout = 60_000
+            conn.connect()
+            if (conn.responseCode !in 200..299) {
+                throw java.io.IOException("HTTP ${conn.responseCode} for $url")
+            }
+            conn.inputStream.use { input ->
+                val total = conn.contentLengthLong
+                var lastLoggedPercent = -1
+                var lastLoggedMegabytes = -1L
+                Log.i("TtsDebug", "model download connected: file=${dest.name}, totalBytes=$total")
+                withContext(Dispatchers.Main) {
+                    ttsDebugDownloadProgress = if (total > 0L) 0f else null
+                }
+                tmp.outputStream().use { output ->
+                    val buf = ByteArray(256 * 1024)
+                    var written = 0L
+                    var read: Int
+                    while (input.read(buf).also { read = it } != -1) {
+                        output.write(buf, 0, read)
+                        written += read
+                        if (total > 0) {
+                            val pct = (written * 100 / total).toInt()
+                            withContext(Dispatchers.Main) {
+                                ttsDebugDownloadProgress = (written.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+                                ttsDebugStatus = getString(
+                                    R.string.settings_debug_tts_downloading,
+                                    "${dest.name} $pct%"
+                                )
+                            }
+                            if (pct != lastLoggedPercent) {
+                                Log.d("TtsDebug", "model download progress: file=${dest.name}, percent=$pct, downloadedBytes=$written, totalBytes=$total")
+                                lastLoggedPercent = pct
+                            }
+                        } else {
+                            val megabytes = written / (1024 * 1024)
+                            withContext(Dispatchers.Main) {
+                                ttsDebugDownloadProgress = null
+                                ttsDebugStatus = getString(
+                                    R.string.settings_debug_tts_downloading,
+                                    "${dest.name} ${megabytes} MB"
+                                )
+                            }
+                            if (megabytes != lastLoggedMegabytes) {
+                                Log.d("TtsDebug", "model download progress: file=${dest.name}, downloadedBytes=$written, totalBytes=unknown")
+                                lastLoggedMegabytes = megabytes
+                            }
+                        }
+                    }
+                }
+            }
+            conn.disconnect()
+            if (!tmp.renameTo(dest)) {
+                throw java.io.IOException("failed to move temporary file to ${dest.absolutePath}")
+            }
+            if (!isTtsDebugGgufFile(dest)) {
+                dest.delete()
+                throw java.io.IOException("downloaded file is not a GGUF: ${dest.name}")
+            }
+            Log.i("TtsDebug", "model download completed: file=${dest.name}, bytes=${dest.length()}")
+            dest.length() > 0L
+        }.onFailure { error ->
+            Log.e("TtsDebug", "model download failed: file=${dest.name}, reason=${error.message}", error)
+        }.getOrDefault(false)
+    }
+
+    /** 声色クローン用の参照音声を SAF から取り込み、cacheDir にコピーする。 */
+    private fun importTtsDebugSpeakerAudio(uri: Uri) {
+        val appContext = requireContext().applicationContext
+        lifecycleScope.launch(Dispatchers.IO) {
+            val name = runCatching {
+                appContext.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                    val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (c.moveToFirst() && idx >= 0) c.getString(idx) else null
+                }
+            }.getOrNull() ?: "speaker.wav"
+            val ext = name.substringAfterLast('.', "wav")
+            val dest = File(appContext.cacheDir, "tts_speaker.$ext")
+            val ok = runCatching {
+                appContext.contentResolver.openInputStream(uri)?.use { input ->
+                    dest.outputStream().use { output -> input.copyTo(output) }
+                } != null
+            }.getOrDefault(false)
+            withContext(Dispatchers.Main) {
+                if (ok) {
+                    ttsDebugSpeakerPath = dest.absolutePath
+                    ttsDebugSpeakerName = name
+                } else {
+                    ttsDebugStatus = getString(R.string.settings_debug_tts_failed, name)
+                }
+            }
+        }
+    }
+
+    /** Qwen3-TTS で音声を合成し、MediaPlayer で再生する。ネイティブ側は数十秒ブロックするので IO スレッドで呼ぶ。 */
+    private fun runTtsDebugSynthesis(context: Context) {
+        if (ttsDebugSynthesizing) return
+        ttsDebugSynthesizing = true
+        ttsDebugResult = null
+        val appContext = context.applicationContext
+        lifecycleScope.launch(Dispatchers.IO) {
+            val backbone = ttsDebugBackboneFile(appContext)
+            val tokenizer = ttsDebugTokenizerFile(appContext)
+            Log.i(
+                "TtsDebug",
+                "synthesis requested: backboneExists=${backbone.isFile}, backboneBytes=${backbone.length()}, " +
+                    "backboneGguf=${isTtsDebugGgufFile(backbone)}, tokenizerExists=${tokenizer.isFile}, " +
+                    "tokenizerBytes=${tokenizer.length()}, tokenizerGguf=${isTtsDebugGgufFile(tokenizer)}"
+            )
+            val outFile = File(appContext.cacheDir, "tts_debug_out.wav")
+            val raw = LlamaBridge.nativeTtsSynthesize(
+                backbone.absolutePath,
+                tokenizer.absolutePath,
+                ttsDebugTextInput,
+                ttsDebugSpeakerPath,
+                outFile.absolutePath,
+                4,
+                512,
+                -1
+            )
+            withContext(Dispatchers.Main) {
+                ttsDebugSynthesizing = false
+                runCatching {
+                    val json = JSONObject(raw)
+                    if (json.optBoolean("ok")) {
+                        val sampleRate = json.optInt("sample_rate")
+                        val audioSec = json.optDouble("audio_sec")
+                        ttsDebugResult = getString(
+                            R.string.settings_debug_tts_result,
+                            outFile.name, audioSec, sampleRate
+                        )
+                        playTtsDebugAudio(outFile)
+                    } else {
+                        ttsDebugStatus = getString(
+                            R.string.settings_debug_tts_failed,
+                            json.optString("error")
+                        )
+                    }
+                }.onFailure {
+                    ttsDebugStatus = getString(R.string.settings_debug_tts_failed, raw.take(120))
+                }
+            }
+        }
+    }
+
+    private fun playTtsDebugAudio(file: File) {
+        runCatching {
+            ttsDebugPlayer?.release()
+            ttsDebugPlayer = MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                prepare()
+                setOnCompletionListener { it.release() }
+                start()
+            }
         }
     }
 
@@ -3321,6 +3586,77 @@ class SettingsComposeFragment : Fragment() {
                     modelErrorDialogMessage = localContext.getString(R.string.settings_debug_model_error_message)
                 }) {
                     Text(stringResource(id = R.string.settings_debug_model_error_button))
+                }
+
+                // ---- Qwen3-TTS (llama.cpp TTS) 動作確認 ----
+                Divider(modifier = Modifier.padding(vertical = 4.dp))
+                Text(
+                    text = stringResource(id = R.string.settings_debug_tts_title),
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    text = stringResource(id = R.string.settings_debug_tts_desc),
+                    color = colorResource(id = R.color.text_secondary),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                LaunchedEffect(Unit) { refreshTtsDebugStatus(localContext) }
+                ttsDebugStatus?.let {
+                    Text(
+                        text = it,
+                        color = colorResource(id = R.color.text_secondary),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                if (ttsDebugDownloading) {
+                    ttsDebugDownloadProgress?.let { progress ->
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } ?: LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { downloadTtsDebugModels(localContext) },
+                        enabled = !ttsDebugDownloading && !ttsDebugReady
+                    ) {
+                        Text(stringResource(id = R.string.settings_debug_tts_download))
+                    }
+                    Button(
+                        onClick = { ttsSpeakerPickLauncher.launch("audio/*") },
+                        enabled = ttsDebugReady && !ttsDebugSynthesizing
+                    ) {
+                        Text(stringResource(id = R.string.settings_debug_tts_pick_speaker))
+                    }
+                }
+                Text(
+                    text = ttsDebugSpeakerName?.let {
+                        stringResource(id = R.string.settings_debug_tts_speaker_selected, it)
+                    } ?: stringResource(id = R.string.settings_debug_tts_speaker_none),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorResource(id = R.color.text_secondary)
+                )
+                OutlinedTextField(
+                    value = ttsDebugTextInput,
+                    onValueChange = { ttsDebugTextInput = it },
+                    label = { Text(stringResource(id = R.string.settings_debug_tts_text_label)) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 64.dp),
+                    maxLines = 4
+                )
+                Button(
+                    onClick = { runTtsDebugSynthesis(localContext) },
+                    enabled = ttsDebugReady && !ttsDebugSynthesizing && ttsDebugTextInput.isNotBlank()
+                ) {
+                    Text(
+                        if (ttsDebugSynthesizing) stringResource(id = R.string.settings_debug_tts_synthesizing)
+                        else stringResource(id = R.string.settings_debug_tts_synthesize)
+                    )
+                }
+                ttsDebugResult?.let {
+                    Text(text = it, color = colorResource(id = R.color.primary), style = MaterialTheme.typography.bodySmall)
                 }
 
                 // logcat / ツール履歴は「ログ」タブへ移動

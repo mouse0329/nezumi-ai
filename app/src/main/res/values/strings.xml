@@ -1079,6 +1079,19 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
 
     <!-- デバッグ/ログ -->
     <string name="settings_debug_title">デバッグ</string>
+    <string name="settings_debug_tts_title">Qwen3-TTS 音声合成 (llama.cpp)</string>
+    <string name="settings_debug_tts_desc">llama.cpp の TTS 機能で Qwen3-TTS 0.6B を動作確認します。モデル（約 0.9 GB）をダウンロードし、サンプル音声の声色をクローンしてテキストを読み上げます。</string>
+    <string name="settings_debug_tts_download">モデルをダウンロード</string>
+    <string name="settings_debug_tts_downloading">ダウンロード中… %1$s</string>
+    <string name="settings_debug_tts_ready">モデル準備完了</string>
+    <string name="settings_debug_tts_pick_speaker">サンプル音声を選択</string>
+    <string name="settings_debug_tts_speaker_none">参照音声: 未選択（既定スピーカー）</string>
+    <string name="settings_debug_tts_speaker_selected">参照音声: %1$s</string>
+    <string name="settings_debug_tts_text_label">読み上げテキスト</string>
+    <string name="settings_debug_tts_synthesize">音声を生成して再生</string>
+    <string name="settings_debug_tts_synthesizing">生成中…（数十秒かかります）</string>
+    <string name="settings_debug_tts_result">出力: %1$s（%2$.2f 秒, %3$d Hz）</string>
+    <string name="settings_debug_tts_failed">失敗: %1$s</string>
     <string name="settings_debug_copy_button">コピー</string>
     <string name="settings_debug_export_button">書き出し</string>
     <string name="settings_debug_clear_log_button">ログを消去</string>

@@ -209,6 +209,35 @@ object LlamaBridge {
     /** 音声入力に必要なサンプルレート (Hz)。非対応時は -1。 */
     external fun nativeGetAudioSampleRate(ctx: Long): Int
 
+    // ─── TTS (Qwen3-TTS) ───────────────────────────────────────
+
+    /**
+     * Qwen3-TTS による音声合成を一括で行う（設定 > デバッグの動作確認用）。
+     * チャット用コンテキストとは独立に、バックボーン GGUF と トークナイザ GGUF
+     * (mmproj 相当) を都度ロードして合成し、結果を WAV ファイルへ書き出す。
+     * 手順は tools/tts (llama-tts) と同じものを JNI 経由で再現している。
+     *
+     * @param modelPath バックボーン GGUF の絶対パス
+     * @param tokenizerPath トークナイザ GGUF (mmproj 相当) の絶対パス
+     * @param text 読み上げテキスト
+     * @param speakerPath 声色クローン用の参照音声 (wav/mp3/flac)。null/空で既定スピーカー
+     * @param outPath 出力 WAV の絶対パス
+     * @param nThreads CPU スレッド数
+     * @param nPredict 最大フレーム数（0 以下でデフォルト 512）
+     * @param seed 乱数シード（負でランダム）
+     * @return JSON 文字列。成功: {"ok":true,...} / 失敗: {"ok":false,"error":"..."}
+     */
+    external fun nativeTtsSynthesize(
+        modelPath: String,
+        tokenizerPath: String,
+        text: String,
+        speakerPath: String?,
+        outPath: String,
+        nThreads: Int,
+        nPredict: Int,
+        seed: Int
+    ): String
+
     // ─── タイミング統計 ──────────────────────────────────────────
 
     /**
