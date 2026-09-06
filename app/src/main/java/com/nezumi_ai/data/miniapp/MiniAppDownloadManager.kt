@@ -81,6 +81,7 @@ class MiniAppDownloadManager private constructor(
     private val jobs = ConcurrentHashMap<String, Job>()
     private val cancelFlags = ConcurrentHashMap<String, Boolean>()
     private val pauseFlags = ConcurrentHashMap<String, Boolean>()
+    private val stateLock = Any()
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -121,8 +122,19 @@ class MiniAppDownloadManager private constructor(
         return entry
     }
 
-    fun get(id: String): DownloadEntry =
-        loadEntries()[id] ?: throw MiniAppException("NOT_FOUND", "ダウンロードが見つかりません: $id")
+    fun get(id: String): DownloadEntry {
+        val entry = synchronized(stateLock) {
+            loadEntries()[id]
+        } ?: throw MiniAppException("NOT_FOUND", "ダウンロードが見つかりません: $id")
+        val dest = resolveDest(entry.destPath)
+        if (entry.state != "completed" && dest.isFile && dest.length() > 0L) {
+            synchronized(stateLock) {
+                update(id) { it.state = "completed"; it.bytesDownloaded = dest.length(); it.error = null }
+            }
+            return entry.copy(state = "completed", bytesDownloaded = dest.length(), error = null)
+        }
+        return entry
+    }
 
     fun list(): List<DownloadEntry> = loadEntries().values.sortedBy { it.id }
 
@@ -145,6 +157,9 @@ class MiniAppDownloadManager private constructor(
         if (jobs[id]?.isActive == true) return
         cancelFlags[id] = false
         pauseFlags[id] = false
+        synchronized(stateLock) {
+            update(id) { it.state = "running"; it.error = null }
+        }
         val job = scope.launch {
             runDownload(id, resume)
         }
@@ -152,10 +167,12 @@ class MiniAppDownloadManager private constructor(
     }
 
     private fun update(id: String, block: (DownloadEntry) -> Unit) {
-        val entries = loadEntries()
-        val e = entries[id] ?: return
-        block(e)
-        persist(entries)
+        synchronized(stateLock) {
+            val entries = loadEntries()
+            val e = entries[id] ?: return
+            block(e)
+            persist(entries)
+        }
     }
 
     private suspend fun runDownload(id: String, resume: Boolean) {

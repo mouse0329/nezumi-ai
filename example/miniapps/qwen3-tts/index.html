@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101820">
+  <title>Qwen3 Voice Studio</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div class="brand-mark" aria-hidden="true">Q</div>
+      <div>
+        <p class="eyebrow">LOCAL VOICE CLONING</p>
+        <h1>Qwen3 Voice Studio</h1>
+        <p class="lede">参照音声の声質を保ったまま、端末内で音声を生成します。</p>
+      </div>
+      <div class="runtime-pill" id="runtimePill">SDKを確認中</div>
+    </header>
+
+    <section class="workspace">
+      <div class="panel reference-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">01 / VOICE</p>
+            <h2>参照音声</h2>
+          </div>
+          <span class="status-dot" id="audioStatus"></span>
+        </div>
+        <label class="dropzone" id="dropzone" for="referenceAudio">
+          <input id="referenceAudio" type="file" accept="audio/*">
+          <span class="drop-icon">↗</span>
+          <strong id="audioFileName">音声ファイルを選択</strong>
+          <span>3〜10秒 / 24kHz mono WAV推奨</span>
+        </label>
+        <audio id="referencePreview" controls hidden></audio>
+        <label class="field-label" for="referenceText">参照音声の書き起こし</label>
+        <textarea id="referenceText" rows="3" placeholder="参照音声で話されている内容を入力"></textarea>
+        <p class="field-note">声の特徴を抽出するため、音声内容と正確に一致させてください。</p>
+      </div>
+
+      <div class="panel script-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">02 / SCRIPT</p>
+            <h2>話してほしい文章</h2>
+          </div>
+          <span class="char-count" id="charCount">0 / 800</span>
+        </div>
+        <textarea id="targetText" class="script-input" maxlength="800" placeholder="ここに生成したい文章を入力…">こんにちは。これは端末上で動作する、Qwen3音声合成のテストです。</textarea>
+        <div class="script-footer">
+          <label class="field-label compact" for="language">言語</label>
+          <select id="language">
+            <option value="Japanese">日本語</option>
+            <option value="English">English</option>
+            <option value="Chinese">中文</option>
+            <option value="Korean">한국어</option>
+            <option value="German">Deutsch</option>
+            <option value="French">Français</option>
+          </select>
+          <label class="field-label compact" for="variant">モデル</label>
+          <select id="variant">
+            <option value="int4">INT4 / 省メモリ</option>
+            <option value="fp32">FP32 / 高精度</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <section class="control-strip">
+      <div class="control-copy">
+        <p class="section-kicker">03 / ENGINE</p>
+        <strong id="engineState">モデル未準備</strong>
+        <span id="engineDetail">必要なファイルを端末内にダウンロードしてください。</span>
+      </div>
+      <button class="button secondary" id="downloadButton" type="button">モデルを準備</button>
+      <button class="button primary" id="generateButton" type="button" disabled><span>生成する</span><span aria-hidden="true">→</span></button>
+    </section>
+
+    <section class="progress-panel" id="progressPanel" hidden>
+      <div class="progress-topline"><strong id="progressTitle">準備中</strong><span id="progressValue">0%</span></div>
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+      <p id="progressDetail">モデルファイルを確認しています。</p>
+      <div class="file-progress-list" id="fileProgressList" aria-live="polite"></div>
+    </section>
+
+    <section class="result-panel" id="resultPanel" hidden>
+      <div class="result-heading"><div><p class="section-kicker">OUTPUT</p><h2>生成結果</h2></div><button class="icon-button" id="downloadAudioButton" type="button" aria-label="音声を保存">↓</button></div>
+      <audio id="resultAudio" controls></audio>
+      <p id="resultMeta"></p>
+    </section>
+
+    <footer class="footnote"><span>Qwen3-TTS 0.6B Base ONNX</span><a href="https://huggingface.co/wavekat/Qwen3-TTS-0.6B-Base-ONNX" target="_blank" rel="noopener">モデルカード ↗</a></footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

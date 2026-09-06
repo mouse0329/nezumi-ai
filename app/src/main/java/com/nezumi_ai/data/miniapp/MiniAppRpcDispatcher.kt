@@ -213,6 +213,7 @@ class MiniAppRpcDispatcher(
             "files.list" -> handleFilesList(params)
             "files.exists" -> handleFilesExists(params)
             "files.read" -> handleFilesRead(params)
+            "files.readRange" -> handleFilesReadRange(params)
             "files.write" -> handleFilesWrite(params)
             "files.delete" -> handleFilesDelete(params)
             "files.stat" -> handleFilesStat(params)
@@ -797,6 +798,26 @@ class MiniAppRpcDispatcher(
         return JSONObject().put("data", b64)
     }
 
+    private fun handleFilesReadRange(params: JSONObject): JSONObject {
+        val f = resolveDataPath(params.optString("path", ""), forWrite = false)
+        if (!f.exists() || !f.isFile) throw MiniAppException("FILE_NOT_FOUND", "ファイルが見つかりません")
+        val offset = params.optLong("offset", 0L)
+        val length = params.optLong("length", 0L)
+        if (offset < 0L || length < 0L || length > MAX_FILE_READ_RANGE || offset > f.length()) {
+            throw MiniAppException("INVALID_INPUT", "offset/length が不正です（length は最大 ${MAX_FILE_READ_RANGE / 1024 / 1024}MB）")
+        }
+        val actualLength = minOf(length, f.length() - offset).toInt()
+        val bytes = ByteArray(actualLength)
+        java.io.RandomAccessFile(f, "r").use { input ->
+            input.seek(offset)
+            input.readFully(bytes)
+        }
+        return JSONObject()
+            .put("offset", offset)
+            .put("length", actualLength)
+            .put("data", Base64.encodeToString(bytes, Base64.NO_WRAP))
+    }
+
     private fun handleFilesWrite(params: JSONObject): JSONObject {
         permissionManager.requireGranted(manifest, "files.write")
         val f = resolveDataPath(params.optString("path", ""), forWrite = true)
@@ -1075,5 +1096,6 @@ class MiniAppRpcDispatcher(
 
     companion object {
         private const val TAG = "MiniAppRpcDispatcher"
+        private const val MAX_FILE_READ_RANGE = 8L * 1024 * 1024
     }
 }

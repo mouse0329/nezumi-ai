@@ -175,6 +175,7 @@ class MiniAppJsBridge(
       list: function (path) { return __call('files.list', { path: path }).then(function (r) { return r.entries; }); },
       exists: function (path) { return __call('files.exists', { path: path }).then(function (r) { return r.exists; }); },
       read: function (path) { return __call('files.read', { path: path }).then(function (r) { return base64ToArrayBuffer(r.data); }); },
+      readRange: function (path, offset, length) { return __call('files.readRange', { path: path, offset: offset, length: length }).then(function (r) { return base64ToArrayBuffer(r.data); }); },
       readText: function (path) { return __call('files.read', { path: path }).then(function (r) { return new TextDecoder().decode(base64ToArrayBuffer(r.data)); }); },
       write: function (path, data) {
         var b64 = (typeof data === 'string') ? btoa(unescape(encodeURIComponent(data))) : arrayBufferToBase64(data);

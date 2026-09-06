@@ -1,0 +1,9 @@
+{
+  "id": "com.nezumi.ai.qwen3tts",
+  "name": "Qwen3 Voice Studio",
+  "short_name": "Voice Studio",
+  "version": "0.1.0",
+  "publisher": "Nezumi AI",
+  "entry": "index.html",
+  "permissions": ["ai", "download", "storage", "files.read", "files.write", "microphone"]
+}

@@ -267,6 +267,7 @@ await nezumi.files.write("user-data/notes/hello.txt", "こんにちは");
 // 読み込み
 const text = await nezumi.files.readText("user-data/notes/hello.txt");
 const buf  = await nezumi.files.read("user-data/notes/hello.txt"); // ArrayBuffer
+const chunk = await nezumi.files.readRange("user-data/large.npy", 1024, 4096); // 最大8MiB
 
 // 一覧・存在確認・削除
 const entries = await nezumi.files.list("user-data");  // [{ name, isDirectory, size, lastModified }]
