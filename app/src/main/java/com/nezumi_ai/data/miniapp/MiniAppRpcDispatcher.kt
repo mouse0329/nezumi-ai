@@ -61,9 +61,14 @@ class MiniAppRpcDispatcher(
         MiniAppOnnxManager(context, runtime.runtimeId, store.dataDir(runtime.appId))
     }
 
-    /** §29 Download: runtime 束縛のダウンロード管理。 */
+    /**
+     * §29 Download: appId 単位のシングルトンを共有する。
+     * runtime 破棄後もダウンロードはバックグラウンドで継続するため runtime 束縛にはしない。
+     */
     private val downloadManager by lazy {
-        MiniAppDownloadManager(context, runtime.runtimeId, store.dataDir(runtime.appId), eventBus)
+        MiniAppDownloadManager.get(context, runtime.appId, store.dataDir(runtime.appId)).also {
+            it.attachEventBus(eventBus)
+        }
     }
 
     interface ResultSink {
@@ -77,7 +82,8 @@ class MiniAppRpcDispatcher(
     fun destroy() {
         MiniAppToolRegistry.clearRuntime(runtime.runtimeId)
         runCatching { onnxManager.destroy() }
-        runCatching { downloadManager.destroy() }
+        // ダウンロードはバックグラウンド継続のため中断せず、イベント配信だけデタッチする
+        runCatching { downloadManager.onRuntimeDestroyed(eventBus) }
         scope.cancel()
     }
 
@@ -738,18 +744,15 @@ class MiniAppRpcDispatcher(
 
     /**
      * サンドボックス境界（§6）: App Data ルート配下のみ許可。
-     * `models/` への書き込みは FILE_ACCESS_DENIED（§20、必ず nezumi.models 経由）。
+     * `models/` プレフィックスによるグローバルモデルストレージへの直接アクセスは廃止。
+     * モデルファイルは SDK のダウンロード API で App Data 内に取得して利用する。
      */
     private fun resolveDataPath(path: String, forWrite: Boolean): File {
         if (path.startsWith("models/") || path.startsWith("/models")) {
-            if (forWrite) {
-                throw MiniAppException(
-                    "FILE_ACCESS_DENIED",
-                    "models/ への直接書き込みは禁止です。nezumi.models API を使用してください"
-                )
-            }
-            // 読み出しは Global モデルストレージへ（§37: Global Model 読み出し無許可OK）
-            return safeResolve(File(context.filesDir, "models"), path.removePrefix("/").removePrefix("models/"))
+            throw MiniAppException(
+                "FILE_ACCESS_DENIED",
+                "models/ への直接アクセスは禁止です。モデルファイルは nezumi.download で App Data 内にダウンロードしてください"
+            )
         }
         val root = store.dataDir(runtime.appId)
         if (!root.exists()) {

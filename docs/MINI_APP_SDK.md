@@ -275,7 +275,7 @@ await nezumi.files.delete("user-data/notes/hello.txt");
 await nezumi.files.stat("user-data/notes/hello.txt");
 ```
 
-- `models/` へのパスは **読み出しのみ** 可能で、グローバルモデルストレージに解決されます。書き込みは `FILE_ACCESS_DENIED` になります（モデルの配置は必ず `nezumi.models` / 本体管理経由）。
+- `models/` プレフィックスによるグローバルモデルストレージへの直接アクセスは **廃止** されました。読み出し・書き込みとも `FILE_ACCESS_DENIED` になります。モデルファイルは `nezumi.download` で App Data 内にダウンロードして利用してください。
 
 ---
 
@@ -330,8 +330,8 @@ const probe = await nezumi.engines.probeMemory();
 低レベル推論が必要な場合の ONNX API です（権限 `ai` が必要）。セッション・テンソルはアプリ終了時に自動解放されます。
 
 ```js
-// セッションを開く（App Data またはグローバルモデルストレージ内の .onnx）
-const sessionId = await nezumi.onnx.open({ model: "models/my-model.onnx" });
+// セッションを開く（App Data 内の .onnx。事前に nezumi.download で取得しておく）
+const sessionId = await nezumi.onnx.open({ model: "user-data/my-model.onnx" });
 
 // 入出力情報
 const inputs  = await nezumi.onnx.getInputs(sessionId);   // [{ name, shape, dtype }]

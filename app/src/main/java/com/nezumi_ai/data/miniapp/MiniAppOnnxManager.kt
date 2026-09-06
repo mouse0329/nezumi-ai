@@ -16,7 +16,8 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * - セッション・テンソルは runtimeId に紐付き、runtime 終了で全解放（§18 と同じ寿命管理）。
  * - メモリ上限（§29）: テンソル確保は合計 512MB まで。超過は MEMORY_PRESSURE。
- * - モデルファイルは App Data または Global モデルストレージからのみ読み込み可能（§6/§20）。
+ * - モデルファイルは App Data 内からのみ読み込み可能（§6）。
+ *   グローバルモデルストレージへの直接アクセスは廃止。
  */
 class MiniAppOnnxManager(
     private val context: Context,
@@ -142,24 +143,25 @@ class MiniAppOnnxManager(
         Log.d(TAG, "ONNX resources released for runtime=$runtimeId")
     }
 
-    /** §6/§20: App Data または Global モデルストレージからのみ読み込み。 */
+    /**
+     * §6: App Data 内からのみ読み込み。
+     * `models/` プレフィックスによるグローバルモデルストレージへのアクセスは廃止し、
+     * モデルファイルは SDK のダウンロード API で App Data 内に取得してから開く。
+     */
     private fun resolveModelPath(modelPath: String): File {
         val cleaned = modelPath.removePrefix("/")
-        return if (cleaned.startsWith("models/")) {
-            val root = File(context.filesDir, "models").canonicalFile
-            val target = File(root, cleaned.removePrefix("models/")).canonicalFile
-            if (!target.path.startsWith(root.path + File.separator)) {
-                throw MiniAppException("FILE_ACCESS_DENIED", "モデルストレージ境界外へのアクセスは禁止されています")
-            }
-            target
-        } else {
-            val root = dataRoot.canonicalFile
-            val target = File(root, cleaned).canonicalFile
-            if (!target.path.startsWith(root.path + File.separator)) {
-                throw MiniAppException("FILE_ACCESS_DENIED", "App Data 境界外へのアクセスは禁止されています")
-            }
-            target
+        if (cleaned.startsWith("models/") || cleaned == "models") {
+            throw MiniAppException(
+                "FILE_ACCESS_DENIED",
+                "グローバルモデルストレージへのアクセスは廃止されました。nezumi.download で App Data 内にダウンロードしてください"
+            )
         }
+        val root = dataRoot.canonicalFile
+        val target = File(root, cleaned).canonicalFile
+        if (!target.path.startsWith(root.path + File.separator)) {
+            throw MiniAppException("FILE_ACCESS_DENIED", "App Data 境界外へのアクセスは禁止されています")
+        }
+        return target
     }
 
     companion object {

@@ -5,7 +5,6 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
@@ -20,16 +19,30 @@ import java.util.concurrent.TimeUnit
  * 仕様 v1.1 §29 Download API。
  *
  * - ダウンロード先は App Data 内に限定（§6 ストレージ境界）。
+ *   モデルストレージ（`models/` 宛）へのダウンロードは禁止。
  * - create で登録のみ行い、start/resume で実際の取得を開始する。
  * - pause は HTTP 切断ベース（Range 再開は resume で Content-Range を利用）。
  * - 状態は runtime 横断で App Data の `.downloads.json` に永続化する。
+ * - appId 単位のシングルトンかつプロセス共有スコープで動作するため、
+ *   runtime（WebView）が破棄されてもダウンロードはバックグラウンドで継続する。
+ *   イベント購読は runtime 生存中のみ [attachEventBus] 経由で行われる。
  */
-class MiniAppDownloadManager(
+class MiniAppDownloadManager private constructor(
     private val context: Context,
-    private val runtimeId: String,
-    private val dataRoot: File,
-    private val eventBus: MiniAppEventBus
+    private val appId: String,
+    private val dataRoot: File
 ) {
+    /** イベント配信先。runtime 破棄時は null にデタッチされ、DL 自体は継続する。 */
+    @Volatile
+    private var eventBus: MiniAppEventBus? = null
+
+    fun attachEventBus(bus: MiniAppEventBus) {
+        eventBus = bus
+    }
+
+    fun detachEventBus(bus: MiniAppEventBus) {
+        if (eventBus === bus) eventBus = null
+    }
     data class DownloadEntry(
         val id: String,
         val url: String,
@@ -62,7 +75,9 @@ class MiniAppDownloadManager(
         }
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // バックグラウンド継続のため、runtime ではなくプロセス共有スコープで実行する
+    private val scope: CoroutineScope
+        get() = sharedScope
     private val jobs = ConcurrentHashMap<String, Job>()
     private val cancelFlags = ConcurrentHashMap<String, Boolean>()
     private val pauseFlags = ConcurrentHashMap<String, Boolean>()
@@ -149,7 +164,7 @@ class MiniAppDownloadManager(
         val part = File(dest.parentFile, dest.name + ".part")
         try {
             update(id) { it.state = "running" }
-            eventBus.emit("download.progress", org.json.JSONObject().put("id", id).put("state", "running").toString())
+            eventBus?.emit("download.progress", org.json.JSONObject().put("id", id).put("state", "running").toString())
 
             val existing = if (resume && part.exists()) part.length() else 0L
             val request = Request.Builder().url(entry.url).apply {
@@ -189,7 +204,7 @@ class MiniAppDownloadManager(
                         if (now - lastEmit > 500) {
                             lastEmit = now
                             update(id) { it.bytesDownloaded = downloaded }
-                            eventBus.emit(
+                            eventBus?.emit(
                                 "download.progress",
                                 org.json.JSONObject().put("id", id)
                                     .put("state", "running")
@@ -205,7 +220,7 @@ class MiniAppDownloadManager(
                 part.delete()
             }
             update(id) { it.state = "completed"; it.bytesDownloaded = dest.length() }
-            eventBus.emit("download.progress", org.json.JSONObject().put("id", id).put("state", "completed").toString())
+            eventBus?.emit("download.progress", org.json.JSONObject().put("id", id).put("state", "completed").toString())
         } catch (e: kotlinx.coroutines.CancellationException) {
             if (pauseFlags[id] == true) {
                 update(id) { it.state = "paused" }
@@ -216,7 +231,7 @@ class MiniAppDownloadManager(
         } catch (e: Exception) {
             Log.w(TAG, "download failed: $id", e)
             update(id) { it.state = "failed"; it.error = e.message }
-            eventBus.emit(
+            eventBus?.emit(
                 "download.progress",
                 org.json.JSONObject().put("id", id).put("state", "failed").put("error", e.message ?: "").toString()
             )
@@ -224,20 +239,42 @@ class MiniAppDownloadManager(
     }
 
     private fun resolveDest(destPath: String): File {
+        val cleaned = destPath.removePrefix("/")
+        // モデルストレージへのダウンロード経路は廃止。配置は App Data 限定とする
+        if (cleaned.startsWith("models/") || cleaned == "models") {
+            throw MiniAppException(
+                "FILE_ACCESS_DENIED",
+                "モデルストレージへのダウンロードは禁止されています。App Data 内のパスを指定してください"
+            )
+        }
         val root = dataRoot.canonicalFile
-        val target = File(root, destPath.removePrefix("/")).canonicalFile
+        val target = File(root, cleaned).canonicalFile
         if (!target.path.startsWith(root.path + File.separator)) {
             throw MiniAppException("FILE_ACCESS_DENIED", "App Data 境界外へのダウンロードは禁止されています")
         }
         return target
     }
 
-    fun destroy() {
-        scope.cancel()
-        jobs.clear()
+    /**
+     * runtime 破棄時に呼ばれるが、バックグラウンド継続のため DL ジョブは止めない。
+     * 中断したい場合は呼び出し側が pause/cancel を明示的に行う。
+     */
+    fun onRuntimeDestroyed(bus: MiniAppEventBus) {
+        detachEventBus(bus)
     }
 
     companion object {
         private const val TAG = "MiniAppDownloadMgr"
+
+        /** プロセス共有スコープ。runtime の寿命から独立させ、バックグラウンド DL を継続させる。 */
+        private val sharedScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        private val instances = ConcurrentHashMap<String, MiniAppDownloadManager>()
+
+        /** appId 単位のシングルトンを返す。runtime 横断でジョブと状態を共有する。 */
+        fun get(context: Context, appId: String, dataRoot: File): MiniAppDownloadManager =
+            instances.getOrPut(MiniAppStore.sanitize(appId)) {
+                MiniAppDownloadManager(context.applicationContext, appId, dataRoot)
+            }
     }
 }
