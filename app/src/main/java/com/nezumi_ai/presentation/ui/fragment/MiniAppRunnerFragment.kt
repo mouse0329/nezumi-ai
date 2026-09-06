@@ -1,11 +1,15 @@
 package com.nezumi_ai.presentation.ui.fragment
 
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebChromeClient
+import android.webkit.ValueCallback
 import android.webkit.WebResourceResponse
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -33,6 +37,7 @@ import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -59,6 +64,31 @@ class MiniAppRunnerFragment : Fragment() {
     private var dispatcher: MiniAppRpcDispatcher? = null
     private var bridge: MiniAppJsBridge? = null
     private var webView: WebView? = null
+    private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
+
+    private val fileChooserLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val callback = fileChooserCallback
+        fileChooserCallback = null
+        if (callback == null) return@registerForActivityResult
+
+        val data = result.data
+        if (result.resultCode != Activity.RESULT_OK || data == null) {
+            callback.onReceiveValue(null)
+            return@registerForActivityResult
+        }
+
+        val uris = buildList {
+            data.data?.let(::add)
+            data.clipData?.let { clipData ->
+                for (index in 0 until clipData.itemCount) {
+                    add(clipData.getItemAt(index).uri)
+                }
+            }
+        }.distinct().toTypedArray()
+        callback.onReceiveValue(uris)
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -83,6 +113,8 @@ class MiniAppRunnerFragment : Fragment() {
         dispatcher?.destroy()
         dispatcher = null
         bridge = null
+        fileChooserCallback?.onReceiveValue(null)
+        fileChooserCallback = null
         webView?.destroy()
         webView = null
     }
@@ -188,6 +220,43 @@ class MiniAppRunnerFragment : Fragment() {
 
         // §13 カメラ・マイク: getUserMedia → WebView Permission → Manifest 宣言チェック
         wv.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?
+            ): Boolean {
+                this@MiniAppRunnerFragment.fileChooserCallback?.onReceiveValue(null)
+                this@MiniAppRunnerFragment.fileChooserCallback = filePathCallback
+                    ?: return false
+
+                val params = fileChooserParams
+                val acceptedTypes = params?.acceptTypes
+                    ?.map(String::trim)
+                    ?.filter(String::isNotEmpty)
+                    ?.distinct()
+                    .orEmpty()
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = acceptedTypes.firstOrNull() ?: "*/*"
+                    if (acceptedTypes.size > 1) {
+                        putExtra(Intent.EXTRA_MIME_TYPES, acceptedTypes.toTypedArray())
+                    }
+                    putExtra(
+                        Intent.EXTRA_ALLOW_MULTIPLE,
+                        params?.mode == FileChooserParams.MODE_OPEN_MULTIPLE
+                    )
+                }
+
+                return runCatching {
+                    fileChooserLauncher.launch(intent)
+                    true
+                }.getOrElse {
+                    this@MiniAppRunnerFragment.fileChooserCallback?.onReceiveValue(null)
+                    this@MiniAppRunnerFragment.fileChooserCallback = null
+                    false
+                }
+            }
+
             override fun onPermissionRequest(request: android.webkit.PermissionRequest?) {
                 request ?: return
                 val pm = MiniAppPermissionManager.get(ctx)

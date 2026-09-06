@@ -243,7 +243,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.19.0")
 
     implementation("androidx.appcompat:appcompat:1.7.1")
-    implementation("androidx.webkit:webkit:1.14.0")
+    implementation("androidx.webkit:webkit:1.17.0")
     implementation("com.google.android.material:material:1.14.0")
     implementation("androidx.constraintlayout:constraintlayout:2.2.1")
 
@@ -288,12 +288,12 @@ dependencies {
     // クラウド推論エンジン (Claude / Gemini / OpenAI / LM Studio) の
     // SSE ストリームを行単位で解析するために okhttp-sse を追加。
     // Ollama は NDJSON ストリームなので通常の Response.body().source() で処理する。
-    implementation("com.squareup.okhttp3:okhttp-sse:5.4.0")
+    implementation("com.squareup.okhttp3:okhttp-sse:5.5.0")
 
     // クラウドプロバイダ用 API キー / Base URL を暗号化して保存するために使用。
     // Android Keystore の AES-256 マスターキーで EncryptedSharedPreferences を
     // 生成する。HfAuthManager が使う平文 SharedPreferences とは別ファイルに分離する。
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("androidx.security:security-crypto:1.1.0")
 
     // テレメトリ (クラッシュ収集 + パフォーマンス計測)。
     // 自動初期化 (ContentProvider) を無効化し、TelemetryGate から明示的に
