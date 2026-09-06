@@ -1,0 +1,69 @@
+diff --git a/app/src/main/java/com/nezumi_ai/data/miniapp/MiniAppOnnxManager.kt b/app/src/main/java/com/nezumi_ai/data/miniapp/MiniAppOnnxManager.kt
+index 334ad7cb..97814269 100644
+--- a/app/src/main/java/com/nezumi_ai/data/miniapp/MiniAppOnnxManager.kt
++++ b/app/src/main/java/com/nezumi_ai/data/miniapp/MiniAppOnnxManager.kt
+@@ -32,19 +32,47 @@ class MiniAppOnnxManager(
+     private val tensors = ConcurrentHashMap<String, TensorEntry>()
+     private val totalTensorBytes = java.util.concurrent.atomic.AtomicLong(0)
+ 
+-    /** §27 open: ONNX セッションを開く。 */
+-    fun open(modelPath: String): String {
++    /**
++     * §27 open: ONNX セッションを開く。
++     *
++     * @param backend 実行プロバイダ。"nnapi" | "cpu" | null（省略時は "cpu" 相当のデフォルト）。
++     *   非対応端末や指定バックエンドの初期化に失敗した場合は例外を投げず CPU にフォールバックする
++     *   （Mini App 側の分岐を減らし、開発者が握り潰す必要をなくすため）。
++     */
++    fun open(modelPath: String, backend: String? = null): String {
+         val file = resolveModelPath(modelPath)
+         if (!file.exists()) throw MiniAppException("FILE_NOT_FOUND", "ONNX モデルが見つかりません: $modelPath")
+         val id = UUID.randomUUID().toString()
++        val options = buildSessionOptions(backend)
+         return try {
+-            sessions[id] = SessionEntry(env.createSession(file.absolutePath), file.absolutePath)
++            sessions[id] = SessionEntry(env.createSession(file.absolutePath, options), file.absolutePath)
+             id
+         } catch (e: Exception) {
+             throw MiniAppException("MODEL_LOAD_FAILED", "ONNX セッションの作成に失敗しました: ${e.message}", cause = e)
+         }
+     }
+ 
++    /** 指定バックエンドで SessionOptions を構築する。非対応 backend 文字列は無視して CPU 既定にフォールバック。 */
++    private fun buildSessionOptions(backend: String?): OrtSession.SessionOptions {
++        val options = OrtSession.SessionOptions()
++        when (backend?.lowercase()) {
++            "nnapi" -> {
++                try {
++                    options.addNnapi()
++                } catch (e: Exception) {
++                    Log.w(TAG, "NNAPI 実行プロバイダの有効化に失敗。CPU にフォールバックします: ${e.message}")
++                }
++            }
++            "cpu", null -> {
++                // 明示的な追加は不要（CPU が既定の実行プロバイダ）
++            }
++            else -> {
++                Log.w(TAG, "未知の backend 指定 '$backend' を無視し、CPU で実行します")
++            }
++        }
++        return options
++    }
++
+     fun getInputs(sessionId: String): List<Map<String, Any>> = tensorInfoList(sessionId, inputs = true)
+     fun getOutputs(sessionId: String): List<Map<String, Any>> = tensorInfoList(sessionId, inputs = false)
+ 
+diff --git a/app/src/main/java/com/nezumi_ai/data/miniapp/MiniAppRpcDispatcher.kt b/app/src/main/java/com/nezumi_ai/data/miniapp/MiniAppRpcDispatcher.kt
+index 8c405e12..9e965905 100644
+--- a/app/src/main/java/com/nezumi_ai/data/miniapp/MiniAppRpcDispatcher.kt
++++ b/app/src/main/java/com/nezumi_ai/data/miniapp/MiniAppRpcDispatcher.kt
+@@ -951,7 +951,8 @@ class MiniAppRpcDispatcher(
+ 
+     private fun handleOnnxOpen(params: JSONObject): JSONObject {
+         permissionManager.requireAnyGranted(manifest, "ai.loadModel", "ai")
+-        val id = onnxManager.open(params.optString("model", ""))
++        val backend = if (params.has("backend") && !params.isNull("backend")) params.optString("backend") else null
++        val id = onnxManager.open(params.optString("model", ""), backend)
+         return JSONObject().put("sessionId", id)
+     }
+ 

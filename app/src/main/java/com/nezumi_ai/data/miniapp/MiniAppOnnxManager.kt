@@ -15,7 +15,7 @@ import java.util.concurrent.ConcurrentHashMap
  * 仕様 v1.1 §27 ONNX Low-Level API / Tensor。
  *
  * - セッション・テンソルは runtimeId に紐付き、runtime 終了で全解放（§18 と同じ寿命管理）。
- * - メモリ上限（§29）: テンソル確保は合計 512MB まで。超過は MEMORY_PRESSURE。
+ * - メモリ上限（§29）: テンソル確保は合計 2.5GiB まで。超過は MEMORY_PRESSURE。
  * - モデルファイルは App Data 内からのみ読み込み可能（§6）。
  *   グローバルモデルストレージへの直接アクセスは廃止。
  */
@@ -33,17 +33,45 @@ class MiniAppOnnxManager(
     private val tensors = ConcurrentHashMap<String, TensorEntry>()
     private val totalTensorBytes = java.util.concurrent.atomic.AtomicLong(0)
 
-    /** §27 open: ONNX セッションを開く。 */
-    fun open(modelPath: String): String {
+    /**
+     * §27 open: ONNX セッションを開く。
+     *
+     * @param backend 実行プロバイダ。"nnapi" | "cpu" | null（省略時は "cpu" 相当のデフォルト）。
+     *   非対応端末や指定バックエンドの初期化に失敗した場合は例外を投げず CPU にフォールバックする
+     *   （Mini App 側の分岐を減らし、開発者が握り潰す必要をなくすため）。
+     */
+    fun open(modelPath: String, backend: String? = null): String {
         val file = resolveModelPath(modelPath)
         if (!file.exists()) throw MiniAppException("FILE_NOT_FOUND", "ONNX モデルが見つかりません: $modelPath")
         val id = UUID.randomUUID().toString()
+        val options = buildSessionOptions(backend)
         return try {
-            sessions[id] = SessionEntry(env.createSession(file.absolutePath), file.absolutePath)
+            sessions[id] = SessionEntry(options.use { env.createSession(file.absolutePath, it) }, file.absolutePath)
             id
         } catch (e: Exception) {
             throw MiniAppException("MODEL_LOAD_FAILED", "ONNX セッションの作成に失敗しました: ${e.message}", cause = e)
         }
+    }
+
+    /** 指定バックエンドで SessionOptions を構築する。非対応 backend 文字列は無視して CPU 既定にフォールバック。 */
+    private fun buildSessionOptions(backend: String?): OrtSession.SessionOptions {
+        val options = OrtSession.SessionOptions()
+        when (backend?.lowercase()) {
+            "nnapi" -> {
+                try {
+                    options.addNnapi()
+                } catch (e: Exception) {
+                    Log.w(TAG, "NNAPI 実行プロバイダの有効化に失敗。CPU にフォールバックします: ${e.message}")
+                }
+            }
+            "cpu", null -> {
+                // 明示的な追加は不要（CPU が既定の実行プロバイダ）
+            }
+            else -> {
+                Log.w(TAG, "未知の backend 指定 '$backend' を無視し、CPU で実行します")
+            }
+        }
+        return options
     }
 
     fun getInputs(sessionId: String): List<Map<String, Any>> = tensorInfoList(sessionId, inputs = true)
@@ -64,10 +92,37 @@ class MiniAppOnnxManager(
         }
     }
 
-    /** §27 createTensor: float32 専用（v1.1 実装範囲）。 */
-    fun createTensor(sessionId: String, shape: List<Long>, dataBase64: String): String {
+    /** §27 createTensor: float32/int64/int32 を little-endian で受け取る。 */
+    fun createTensor(
+        sessionId: String,
+        shape: List<Long>,
+        dataBase64: String,
+        dtype: String = "float32"
+    ): String {
         sessions[sessionId] ?: throw MiniAppException("INVALID_STATE", "セッションがありません: $sessionId")
+        if (shape.any { it < 0L }) {
+            throw MiniAppException("INVALID_INPUT", "shape には負の値を指定できません")
+        }
+        val normalizedDtype = dtype.lowercase()
+        val elementBytes = when (normalizedDtype) {
+            "float32", "int32" -> 4L
+            "int64" -> 8L
+            else -> throw MiniAppException("INVALID_INPUT", "未対応の dtype です: $dtype")
+        }
         val bytes = android.util.Base64.decode(dataBase64, android.util.Base64.DEFAULT)
+        val elementCount = shape.fold(1L) { product, dimension ->
+            if (dimension != 0L && product > Long.MAX_VALUE / dimension) {
+                throw MiniAppException("INVALID_INPUT", "shape の要素数が大きすぎます")
+            }
+            product * dimension
+        }
+        val expectedBytes = elementCount * elementBytes
+        if (expectedBytes != bytes.size.toLong()) {
+            throw MiniAppException(
+                "INVALID_INPUT",
+                "data のサイズが shape/dtype と一致しません: expected=$expectedBytes actual=${bytes.size}"
+            )
+        }
         val newTotal = totalTensorBytes.addAndGet(bytes.size.toLong())
         if (newTotal > MAX_TENSOR_BYTES) {
             totalTensorBytes.addAndGet(-bytes.size.toLong())
@@ -79,9 +134,13 @@ class MiniAppOnnxManager(
         val id = UUID.randomUUID().toString()
         return try {
             val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-            val fb = buf.asFloatBuffer()
-            val tensor = OnnxTensor.createTensor(env, fb, shape.toLongArray())
-            tensors[id] = TensorEntry(tensor, bytes.size.toLong(), "float32", shape.toLongArray())
+            val tensor = when (normalizedDtype) {
+                "float32" -> OnnxTensor.createTensor(env, buf.asFloatBuffer(), shape.toLongArray())
+                "int32" -> OnnxTensor.createTensor(env, buf.asIntBuffer(), shape.toLongArray())
+                "int64" -> OnnxTensor.createTensor(env, buf.asLongBuffer(), shape.toLongArray())
+                else -> error("validated dtype")
+            }
+            tensors[id] = TensorEntry(tensor, bytes.size.toLong(), normalizedDtype, shape.toLongArray())
             id
         } catch (e: Exception) {
             totalTensorBytes.addAndGet(-bytes.size.toLong())
@@ -99,23 +158,26 @@ class MiniAppOnnxManager(
                     ?: throw MiniAppException("INVALID_INPUT", "テンソルがありません: $tensorId")
                 tensorMap[name] = t.tensor
             }
-            val results = s.session.run(tensorMap)
-            val out = mutableMapOf<String, String>()
-            val outputNames = s.session.outputNames.toList()
-            for (i in 0 until results.size()) {
-                val r = results.get(i)
-                val info = r.info
-                if (info is ai.onnxruntime.TensorInfo) {
-                    val value = r.value
-                    val outputName = outputNames.getOrNull(i) ?: "output_$i"
-                    when (value) {
-                        is FloatArray -> out[outputName] = value.joinToString(",")
-                        is Array<*> -> out[outputName] = value.contentDeepToString()
-                        else -> out[outputName] = value.toString()
+            s.session.run(tensorMap).use { results ->
+                val out = mutableMapOf<String, String>()
+                val outputNames = s.session.outputNames.toList()
+                for (i in 0 until results.size()) {
+                    val r = results.get(i)
+                    val info = r.info
+                    if (info is ai.onnxruntime.TensorInfo) {
+                        val value = r.value
+                        val outputName = outputNames.getOrNull(i) ?: "output_$i"
+                        when (value) {
+                            is FloatArray -> out[outputName] = value.joinToString(",")
+                            is IntArray -> out[outputName] = value.joinToString(",")
+                            is LongArray -> out[outputName] = value.joinToString(",")
+                            is Array<*> -> out[outputName] = value.contentDeepToString()
+                            else -> out[outputName] = value.toString()
+                        }
                     }
                 }
+                return out
             }
-            return out
         } catch (e: MiniAppException) {
             throw e
         } catch (e: Exception) {
@@ -166,6 +228,6 @@ class MiniAppOnnxManager(
 
     companion object {
         private const val TAG = "MiniAppOnnxManager"
-        private const val MAX_TENSOR_BYTES = 512L * 1024 * 1024
+        private const val MAX_TENSOR_BYTES = 2_560L * 1024 * 1024
     }
 }

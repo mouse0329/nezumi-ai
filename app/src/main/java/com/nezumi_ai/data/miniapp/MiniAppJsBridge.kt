@@ -207,9 +207,9 @@ class MiniAppJsBridge(
       open: function (options) { return __call('onnx.open', options).then(function (r) { return r.sessionId; }); },
       getInputs: function (sessionId) { return __call('onnx.getInputs', { sessionId: sessionId }).then(function (r) { return r.inputs; }); },
       getOutputs: function (sessionId) { return __call('onnx.getOutputs', { sessionId: sessionId }).then(function (r) { return r.outputs; }); },
-      createTensor: function (sessionId, shape, data) {
+      createTensor: function (sessionId, shape, data, dtype) {
         var b64 = (data instanceof ArrayBuffer) ? arrayBufferToBase64(data) : data;
-        return __call('onnx.createTensor', { sessionId: sessionId, shape: shape, data: b64 }).then(function (r) { return r.tensorId; });
+        return __call('onnx.createTensor', { sessionId: sessionId, shape: shape, data: b64, dtype: dtype || 'float32' }).then(function (r) { return r.tensorId; });
       },
       run: function (sessionId, inputs) { return __call('onnx.run', { sessionId: sessionId, inputs: inputs }).then(function (r) { return r.outputs; }); },
       disposeTensor: function (tensorId) { return __call('onnx.disposeTensor', { tensorId: tensorId }); },

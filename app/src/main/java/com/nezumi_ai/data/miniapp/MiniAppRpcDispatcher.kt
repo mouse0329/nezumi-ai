@@ -954,7 +954,8 @@ class MiniAppRpcDispatcher(
 
     private fun handleOnnxOpen(params: JSONObject): JSONObject {
         permissionManager.requireAnyGranted(manifest, "ai.loadModel", "ai")
-        val id = onnxManager.open(params.optString("model", ""))
+        val backend = if (params.has("backend") && !params.isNull("backend")) params.optString("backend") else null
+        val id = onnxManager.open(params.optString("model", ""), backend)
         return JSONObject().put("sessionId", id)
     }
 
@@ -983,7 +984,8 @@ class MiniAppRpcDispatcher(
         val id = onnxManager.createTensor(
             params.optString("sessionId", ""),
             shape,
-            params.optString("data", "")
+            params.optString("data", ""),
+            params.optString("dtype", "float32")
         )
         return JSONObject().put("tensorId", id)
     }

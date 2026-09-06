@@ -341,6 +341,11 @@ const outputs = await nezumi.onnx.getOutputs(sessionId);
 const data = new Float32Array([1, 2, 3, 4]).buffer;
 const tensorId = await nezumi.onnx.createTensor(sessionId, [1, 4], data);
 
+// int64/int32 も指定可能（マスク、位置ID、コード入力など）
+const maskId = await nezumi.onnx.createTensor(
+  sessionId, [1, 4], new BigInt64Array([1n, 1n, 1n, 1n]).buffer, "int64"
+);
+
 // 推論
 const result = await nezumi.onnx.run(sessionId, { input: tensorId });
 
@@ -349,7 +354,7 @@ await nezumi.onnx.disposeTensor(tensorId);
 await nezumi.onnx.close(sessionId);
 ```
 
-> メモリガード: テンソル確保の合計が上限を超えると `MEMORY_PRESSURE` になります。
+> メモリガード: テンソル確保の合計 2.5GiB を超えると `MEMORY_PRESSURE` になります。ONNX本体と `.onnx.data` は同じ App Data ディレクトリへダウンロードしてください。
 
 ---
 
