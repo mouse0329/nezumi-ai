@@ -89,7 +89,7 @@
       let bit = n >> 1;
       for (; j & bit; bit >>= 1) j ^= bit;
       j ^= bit;
-      if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+      if (i < j) { [re[i], re[j]] = [re[j], re[i]];[im[i], im[j]] = [im[j], im[i]]; }
     }
     for (let len = 2; len <= n; len <<= 1) {
       const ang = (-2 * Math.PI) / len;
@@ -350,7 +350,7 @@
   function bpeEncodeWord(word, tokenizer) {
     let parts = Array.from(word);
     if (parts.length <= 1) return parts;
-    for (;;) {
+    for (; ;) {
       let bestPair = null, bestRank = Infinity;
       for (let i = 0; i < parts.length - 1; i++) {
         const key = `${parts[i]} ${parts[i + 1]}`;
@@ -685,7 +685,7 @@
   }
 
   function subscribeDownloadEvents() {
-    return () => {};
+    return () => { };
   }
 
   async function downloadFile(path, index, total) {
@@ -700,7 +700,7 @@
     await state.sdk.download.start(entry.id);
     let polls = 0;
     let resumed = false;
-    for (;;) {
+    for (; ;) {
       const current = await state.sdk.download.get(entry.id);
       const fileProgress = current.totalBytes > 0 ? current.bytesDownloaded / current.totalBytes : 0;
       const percent = fileProgress * 100;
@@ -983,7 +983,7 @@
       // Sum of all 16 codec embeddings for the previous frame + tts_pad becomes next talker input (non-streaming decode).
       const ttsPadEmb = await embeddings.tpEmb([TOK.tts_pad]);
 
-      for (;;) {
+      for (; ;) {
         const forceEosBlock = frameIndex < 2;
         const group0 = softmaxSampleTopK(lastLogits, {
           temperature: generateConfig.temperature, topK: generateConfig.topK, repetitionPenalty: generateConfig.repetitionPenalty,
