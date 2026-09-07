@@ -52,6 +52,7 @@ object LlamaBridge {
      * @param mmprojPath マルチモーダルプロジェクションファイル（null でテキストのみ）
      * @param flashAttentionEnabled Flash Attention 有効化
      * @param contextShiftEnabled コンテキスト溢れ時のシフト継続
+     * @param kvUnified llama.cpp kv_unified（Qwen3.5 / IM-RoPE の位置レイアウト用）
      * @param seed 乱数シード（-1 でランダム）
      * @param gpuBackend llama.cpp GPU バックエンド (CPU / OPENCL / VULKAN)
      * @return ネイティブコンテキストポインタ（0 = 失敗）
@@ -70,6 +71,7 @@ object LlamaBridge {
         mmprojPath: String?,
         flashAttentionEnabled: Boolean,
         contextShiftEnabled: Boolean,
+        kvUnified: Boolean,
         seed: Int,
         gpuBackend: String
     ): Long

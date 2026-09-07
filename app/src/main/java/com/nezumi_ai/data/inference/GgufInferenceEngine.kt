@@ -398,6 +398,7 @@ class GgufInferenceEngine(
                         // 常にデフォルト値 (base=0f / scale=1f, mtp=off) で動いていた。
                         ropeFreqBase = normalized.llamaCppRopeFreqBase,
                         ropeFreqScale = normalized.llamaCppRopeFreqScale,
+                        kvUnified = normalized.llamaCppKvUnified,
                         gpuBackend = gpuBackend,
                     )
                 }
@@ -966,8 +967,16 @@ class GgufInferenceEngine(
         // 画像を一時ファイルに保存
         val imagePaths = if (images.isNotEmpty()) {
             images.mapIndexed { index, bitmap ->
-                val tempFile = File(appContext.cacheDir, "temp_img_${System.currentTimeMillis()}_$index.jpg")
-                tempFile.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+                val tempFile = File(appContext.cacheDir, "temp_img_${System.currentTimeMillis()}_$index.png")
+                val software = if (bitmap.config == Bitmap.Config.HARDWARE) {
+                    bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: bitmap
+                } else {
+                    bitmap
+                }
+                tempFile.outputStream().use { out ->
+                    software.compress(Bitmap.CompressFormat.PNG, 100, out)
+                }
+                if (software !== bitmap) software.recycle()
                 tempFile.absolutePath
             }
         } else {

@@ -11,6 +11,7 @@ class LlamaCppContext(
     mmprojPath: String? = null,
     flashAttentionEnabled: Boolean = true,
     contextShiftEnabled: Boolean = true,
+    kvUnified: Boolean = true,
     ropeFreqBase: Float = 0f,
     ropeFreqScale: Float = 1f,
     gpuBackend: String = LlamaCppGpuBackend.CPU
@@ -30,6 +31,7 @@ class LlamaCppContext(
             mmprojPath,
             flashAttentionEnabled,
             contextShiftEnabled,
+            kvUnified,
             -1,
             gpuBackend
         )

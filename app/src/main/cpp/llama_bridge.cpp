@@ -25,6 +25,7 @@
 
 #include <jni.h>
 #include <android/log.h>
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -540,6 +541,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     jstring j_mmproj_path,
     jboolean flash_attn_enabled,
     jboolean context_shift_enabled,
+    jboolean kv_unified,
     jint seed,
     jstring j_gpu_backend)
 {
@@ -595,6 +597,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     cparams.rope_freq_scale = rope_freq_scale; // 0 = モデルのデフォルト
     cparams.flash_attn_type = flash_attn_enabled ? LLAMA_FLASH_ATTN_TYPE_ENABLED
                                                  : LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    cparams.kv_unified = kv_unified ? true : false;
 
     llama_context *ctx = llama_init_from_model(model, cparams);
     if (!ctx)
@@ -627,8 +630,14 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
         mtmd_context_params mctx_params = mtmd_context_params_default();
         mctx_params.use_gpu = gpu_layers > 0;
         mctx_params.n_threads = n_threads;
-        mctx_params.flash_attn_type = cparams.flash_attn_type;
+        // CPU 上の CLIP Flash Attention は ARM で数値が壊れ、画像後の生成が
+        // 多言語の破片になることがある。GPU オフロード時のみ LLM 側と同じ FA を使う。
+        mctx_params.flash_attn_type = gpu_layers > 0
+                                          ? cparams.flash_attn_type
+                                          : LLAMA_FLASH_ATTN_TYPE_DISABLED;
         mctx_params.warmup = false; // 起動時間短縮のため warmup は行わない
+        // モバイルでは 1472^2 級の ViT は遅すぎて不安定。256 token 程度に抑える。
+        mctx_params.image_max_tokens = 256;
 
         nc->mtmd_ctx = mtmd_init_from_file(mmproj_path, model, mctx_params);
         env->ReleaseStringUTFChars(j_mmproj_path, mmproj_path);
@@ -656,19 +665,19 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     // ようにする（以前は backend=OPENCL なのに n_gpu_layers=0 という矛盾ログだった）。
     if (gpu_backend_fallback_occurred)
     {
-        LOGI("llamaInit: OK n_ctx=%d n_batch=%d n_ubatch=%d n_gpu_layers=%d backend=%s requested=%s (FALLBACK) flash_attn=%d ctx_shift=%d mtmd=%s chat_tmpl=%s",
+        LOGI("llamaInit: OK n_ctx=%d n_batch=%d n_ubatch=%d n_gpu_layers=%d backend=%s requested=%s (FALLBACK) flash_attn=%d kv_unified=%d ctx_shift=%d mtmd=%s chat_tmpl=%s",
              n_ctx, nc->n_batch, nc->n_ubatch, gpu_layers,
              actual_gpu_backend.c_str(), requested_gpu_backend.c_str(),
-             flash_attn_enabled, context_shift_enabled,
+             flash_attn_enabled, kv_unified, context_shift_enabled,
              nc->mtmd_ctx ? "loaded" : "none",
              nc->chat_templates ? "ok" : "none");
     }
     else
     {
-        LOGI("llamaInit: OK n_ctx=%d n_batch=%d n_ubatch=%d n_gpu_layers=%d backend=%s flash_attn=%d ctx_shift=%d mtmd=%s chat_tmpl=%s",
+        LOGI("llamaInit: OK n_ctx=%d n_batch=%d n_ubatch=%d n_gpu_layers=%d backend=%s flash_attn=%d kv_unified=%d ctx_shift=%d mtmd=%s chat_tmpl=%s",
              n_ctx, nc->n_batch, nc->n_ubatch, gpu_layers,
              actual_gpu_backend.c_str(),
-             flash_attn_enabled, context_shift_enabled,
+             flash_attn_enabled, kv_unified, context_shift_enabled,
              nc->mtmd_ctx ? "loaded" : "none",
              nc->chat_templates ? "ok" : "none");
     }
@@ -1114,7 +1123,13 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
     mtmd_input_text input_text;
     input_text.text = prompt_str.c_str();
     input_text.text_len = prompt_str.size();
-    input_text.add_special = true; // BOS 等を付与（チャットテンプレート経由で二重付与になる場合は調整）
+    // チャットテンプレート適用済みのプロンプトに BOS を足すと、Qwen VL の
+    // IM-RoPE 位置がずれて画像後の生成が崩れる。
+    const bool chat_templated =
+        prompt_str.find("<|im_start|>") != std::string::npos ||
+        prompt_str.find("<start_of_turn>") != std::string::npos ||
+        prompt_str.find("<|start_header_id|>") != std::string::npos;
+    input_text.add_special = !chat_templated;
     input_text.parse_special = true;
 
     std::vector<const mtmd_bitmap *> bitmap_ptrs(bitmaps.begin(), bitmaps.end());
@@ -1141,9 +1156,10 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
 
     // チャンクを評価（テキストのデコードと画像エンコードを一括処理）
     llama_pos new_n_past = nc->n_past;
+    const int32_t media_n_batch = std::min(nc->n_batch, 64);
     int32_t eval_ret = mtmd_helper_eval_chunks(nc->mtmd_ctx, nc->ctx, chunks,
                                                nc->n_past, /* seq_id */ 0,
-                                               nc->n_batch, /* logits_last */ true,
+                                               media_n_batch, /* logits_last */ true,
                                                &new_n_past);
     mtmd_input_chunks_free(chunks);
     if (eval_ret != 0)
