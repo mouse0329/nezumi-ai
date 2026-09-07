@@ -58,6 +58,7 @@ if ($SkipMnn -and (Test-Path $LibMnn)) {
         -DMNN_BUILD_DIFFUSION=OFF
 
     & $cmake --build $MnnBuild -j $Jobs
+    if ($LASTEXITCODE -ne 0) { throw "MNN build failed with exit code $LASTEXITCODE" }
 }
 
 if (-not (Test-Path $LibMnn)) { throw "libMNN.so missing: $LibMnn" }
@@ -82,6 +83,7 @@ if (Test-Path $EngineBuild) {
     -DMNN_SD_BUILD_PROBE_CLI=OFF
 
 & $cmake --build $EngineBuild -j $Jobs
+if ($LASTEXITCODE -ne 0) { throw "mnn-sd-engine build failed with exit code $LASTEXITCODE" }
 
 Write-Host "=== 3/3 Deploy to jniLibs ===" -ForegroundColor Cyan
 New-Item -ItemType Directory -Force -Path $JniDest | Out-Null

@@ -18,6 +18,12 @@ set(MNN_SD_SOURCES
     src/c_api.cpp
     src/mnn_session.cpp
     src/model_config.cpp
+    src/engine_detail/sd_lifecycle.cpp
+    src/engine_detail/sd_pipeline.cpp
+    src/engine_detail/sd_schedulers.cpp
+    src/engine_detail/sd_session.cpp
+    src/engine_detail/sd_tensor_io.cpp
+    src/engine_detail/sd_tokenizer.cpp
 )
 
 # --- MNN dependency ---
@@ -79,6 +85,8 @@ target_include_directories(mnn_sd_engine
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 if(MNN_SD_MNN_INCLUDES)

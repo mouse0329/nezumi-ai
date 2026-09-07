@@ -546,8 +546,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     std::call_once(g_backend_init_once, []()
                    {
                        nezumi_prepare_opencl_icd_paths();
-                       llama_backend_init();
-                   });
+                       llama_backend_init(); });
 
     const char *model_path = env->GetStringUTFChars(j_model_path, nullptr);
     const char *gpu_backend_chars = j_gpu_backend ? env->GetStringUTFChars(j_gpu_backend, nullptr) : nullptr;
@@ -1417,8 +1416,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeProbeGpuBackendAvailable(
     std::call_once(g_backend_init_once, []()
                    {
                        nezumi_prepare_opencl_icd_paths();
-                       llama_backend_init();
-                   });
+                       llama_backend_init(); });
 
     if (j_gpu_backend == nullptr)
         return JNI_FALSE;
@@ -1510,59 +1508,78 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompiledGpuBackends(
 //   失敗: {"ok":false,"error":"..."}
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
-        JNIEnv *env, jobject /* thiz */,
-        jstring jModelPath, jstring jTokenizerPath, jstring jText,
-        jstring jSpeakerPath, jstring jOutPath,
-        jint nThreads, jint nPredict, jint seed)
+    JNIEnv *env, jobject /* thiz */,
+    jstring jModelPath, jstring jTokenizerPath, jstring jText,
+    jstring jSpeakerPath, jstring jOutPath,
+    jint nThreads, jint nPredict, jint seed)
 {
-    auto fail = [&](const char *msg) -> jstring {
+    auto fail = [&](const char *msg) -> jstring
+    {
         // JSON 直組みのため引用符・バックスラッシュだけ潰す
         std::string esc;
-        for (const char *p = msg ? msg : "unknown"; *p; ++p) {
+        for (const char *p = msg ? msg : "unknown"; *p; ++p)
+        {
             esc += (*p == '"' || *p == '\\') ? '\'' : *p;
         }
         std::string json = "{\"ok\":false,\"error\":\"" + esc + "\"}";
         return env->NewStringUTF(json.c_str());
     };
 
-    if (!jModelPath || !jTokenizerPath || !jText || !jOutPath) {
+    if (!jModelPath || !jTokenizerPath || !jText || !jOutPath)
+    {
         return fail("null argument");
     }
 
     // Java 文字列の RAII ラッパー（早期 return でも確実に Release する）
-    struct JStr {
+    struct JStr
+    {
         JNIEnv *env;
         jstring js;
         const char *p = nullptr;
-        JStr(JNIEnv *e, jstring s) : env(e), js(s) {
-            if (js) p = env->GetStringUTFChars(js, nullptr);
+        JStr(JNIEnv *e, jstring s) : env(e), js(s)
+        {
+            if (js)
+                p = env->GetStringUTFChars(js, nullptr);
         }
-        ~JStr() { if (js && p) env->ReleaseStringUTFChars(js, p); }
+        ~JStr()
+        {
+            if (js && p)
+                env->ReleaseStringUTFChars(js, p);
+        }
         const char *get() const { return p ? p : ""; }
     };
     JStr modelPath(env, jModelPath), tokenizerPath(env, jTokenizerPath);
     JStr text(env, jText), outPath(env, jOutPath), speakerPath(env, jSpeakerPath);
 
     // ネイティブリソースの RAII ラッパー（解放順序: gen → bitmap → sampler → mtmd → ctx → model）
-    struct TtsRes {
+    struct TtsRes
+    {
         llama_model *model = nullptr;
         llama_context *lctx = nullptr;
         mtmd_context *mctx = nullptr;
         mtmd_helper_gen_audio *gen = nullptr;
         mtmd_bitmap *speaker = nullptr;
         llama_sampler *smpl = nullptr;
-        ~TtsRes() {
-            if (gen) mtmd_helper_gen_audio_free(gen);
-            if (speaker) mtmd_bitmap_free(speaker);
-            if (smpl) llama_sampler_free(smpl);
-            if (mctx) mtmd_free(mctx);
-            if (lctx) llama_free(lctx);
-            if (model) llama_model_free(model);
+        ~TtsRes()
+        {
+            if (gen)
+                mtmd_helper_gen_audio_free(gen);
+            if (speaker)
+                mtmd_bitmap_free(speaker);
+            if (smpl)
+                llama_sampler_free(smpl);
+            if (mctx)
+                mtmd_free(mctx);
+            if (lctx)
+                llama_free(lctx);
+            if (model)
+                llama_model_free(model);
         }
     } res;
 
     static std::once_flag tts_backend_once;
-    std::call_once(tts_backend_once, []() { llama_backend_init(); });
+    std::call_once(tts_backend_once, []()
+                   { llama_backend_init(); });
     // バックボーン読み込み時の llama.cpp 内部エラーも logcat に転送する。
     // これを設定しないと JNI 側では「failed to load backbone」しか分からず、
     // 未対応アーキテクチャ・テンソル不一致・メモリ不足を切り分けられない。
@@ -1572,7 +1589,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
     llama_model_params mparams = llama_model_default_params();
     mparams.load_mode = LLAMA_LOAD_MODE_MMAP;
     res.model = llama_model_load_from_file(modelPath.get(), mparams);
-    if (!res.model) {
+    if (!res.model)
+    {
         LOGE("nativeTtsSynthesize: failed to load backbone: %s", modelPath.get());
         return fail("failed to load backbone model");
     }
@@ -1585,7 +1603,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
     cparams.n_threads = nThreads > 0 ? nThreads : 4;
     cparams.embeddings = true;
     res.lctx = llama_init_from_model(res.model, cparams);
-    if (!res.lctx) {
+    if (!res.lctx)
+    {
         return fail("failed to create llama context");
     }
 
@@ -1593,19 +1612,23 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
     mtmd_context_params mtmd_params = mtmd_context_params_default();
     mtmd_params.use_gpu = false;
     res.mctx = mtmd_init_from_file(tokenizerPath.get(), res.model, mtmd_params);
-    if (!res.mctx) {
+    if (!res.mctx)
+    {
         LOGE("nativeTtsSynthesize: failed to load tokenizer: %s", tokenizerPath.get());
         return fail("failed to load tokenizer (mmproj)");
     }
-    if (mtmd_gen_audio_get_info(res.mctx).type == MTMD_GEN_AUDIO_TYPE_NONE) {
+    if (mtmd_gen_audio_get_info(res.mctx).type == MTMD_GEN_AUDIO_TYPE_NONE)
+    {
         return fail("tokenizer gguf does not support audio generation");
     }
 
     // 声色クローン用の参照音声 (wav/mp3/flac。miniaudio が自動判定)
-    if (speakerPath.get()[0] != '\0') {
+    if (speakerPath.get()[0] != '\0')
+    {
         mtmd_helper_bitmap_wrapper wrapper = mtmd_helper_bitmap_init_from_file(
-                res.mctx, speakerPath.get(), false, mtmd_helper_init_opt_default());
-        if (!wrapper.bitmap) {
+            res.mctx, speakerPath.get(), false, mtmd_helper_init_opt_default());
+        if (!wrapper.bitmap)
+        {
             LOGE("nativeTtsSynthesize: failed to load speaker file: %s", speakerPath.get());
             return fail("failed to load speaker reference audio");
         }
@@ -1613,7 +1636,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
     }
 
     res.gen = mtmd_helper_gen_audio_init(res.lctx, res.mctx);
-    if (!res.gen) {
+    if (!res.gen)
+    {
         return fail("failed to init audio generation helper");
     }
 
@@ -1625,19 +1649,23 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
     inp.lang = nullptr; // 言語は自動判定
     inp.top_k = 40;
     inp.top_p = 0.9f;
-    inp.seed = seed < 0 ? 0xFFFFFFFFu : (uint32_t) seed;
+    inp.seed = seed < 0 ? 0xFFFFFFFFu : (uint32_t)seed;
     inp.out_type = MTMD_HELPER_GEN_AUDIO_OUTTYPE_WAV;
 
     // stage 1: プロンプトをバックボーンで処理しセマンティック表現を作る
-    if (mtmd_helper_gen_audio_set_input(res.gen, &inp) != 0) {
+    if (mtmd_helper_gen_audio_set_input(res.gen, &inp) != 0)
+    {
         return fail("set_input failed");
     }
-    for (;;) {
+    for (;;)
+    {
         int32_t ret = mtmd_helper_gen_audio_step_prompt(res.gen, cparams.n_batch);
-        if (ret < 0) {
+        if (ret < 0)
+        {
             return fail("prompt processing failed");
         }
-        if (ret == 0) {
+        if (ret == 0)
+        {
             break;
         }
     }
@@ -1648,9 +1676,10 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
     llama_sampler_chain_add(res.smpl, llama_sampler_init_top_p(0.9f, 1));
     llama_sampler_chain_add(res.smpl, llama_sampler_init_temp(0.8f));
     llama_sampler_chain_add(res.smpl, llama_sampler_init_dist(
-            seed < 0 ? LLAMA_DEFAULT_SEED : (uint32_t) seed));
+                                          seed < 0 ? LLAMA_DEFAULT_SEED : (uint32_t)seed));
 
-    auto sampleSemantic = [&]() -> llama_token {
+    auto sampleSemantic = [&]() -> llama_token
+    {
         llama_token t = llama_sampler_sample(res.smpl, res.lctx, -1);
         llama_sampler_accept(res.smpl, t);
         return t;
@@ -1662,19 +1691,23 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
     bool stop = false;
     llama_token sampled = sampleSemantic();
     const float *hState = llama_get_embeddings_ith(res.lctx, -1);
-    while (!stop && nFrames < maxNew) {
+    while (!stop && nFrames < maxNew)
+    {
         const float *hNext = nullptr;
-        if (mtmd_helper_gen_audio_step_gen(res.gen, sampled, hState, &hNext, &stop) != 0) {
+        if (mtmd_helper_gen_audio_step_gen(res.gen, sampled, hState, &hNext, &stop) != 0)
+        {
             return fail("audio frame generation failed");
         }
-        if (!hNext) {
+        if (!hNext)
+        {
             break; // フレームを生成せず停止
         }
         nFrames++;
         hState = hNext;
         sampled = sampleSemantic();
     }
-    if (nFrames == 0) {
+    if (nFrames == 0)
+    {
         return fail("no audio frames generated");
     }
 
@@ -1682,15 +1715,18 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
     const char *data = nullptr;
     size_t dataLen = 0;
     int64_t nSamples = 0;
-    if (mtmd_helper_gen_audio_get_output(res.gen, &sampleRate, &data, &dataLen, &nSamples) != 0) {
+    if (mtmd_helper_gen_audio_get_output(res.gen, &sampleRate, &data, &dataLen, &nSamples) != 0)
+    {
         return fail("get_output failed");
     }
-    if (!data || dataLen == 0) {
+    if (!data || dataLen == 0)
+    {
         return fail("empty audio output");
     }
 
     FILE *f = fopen(outPath.get(), "wb");
-    if (!f) {
+    if (!f)
+    {
         LOGE("nativeTtsSynthesize: failed to open output: %s", outPath.get());
         return fail("failed to open output wav");
     }
@@ -1699,7 +1735,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
     LOGI("nativeTtsSynthesize: wrote %s (%zu bytes, %d Hz, %d frames)",
          outPath.get(), dataLen, sampleRate, nFrames);
 
-    double audioSec = sampleRate > 0 ? (double) nSamples / (double) sampleRate : 0.0;
+    double audioSec = sampleRate > 0 ? (double)nSamples / (double)sampleRate : 0.0;
     std::string json = "{\"ok\":true,\"path\":\"";
     json += outPath.get();
     json += "\",\"sample_rate\":" + std::to_string(sampleRate);
