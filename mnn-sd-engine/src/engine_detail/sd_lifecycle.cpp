@@ -539,17 +539,20 @@ namespace mnn_sd_detail
 #endif
     }
 
-
 } // namespace mnn_sd_detail
 
-extern "C" {
-    MnnSdError mnn_sd_initialize_sessions(MnnSdEngine *engine, MnnSdErrorInfo *out_error) {
+extern "C"
+{
+    MnnSdError mnn_sd_initialize_sessions(MnnSdEngine *engine, MnnSdErrorInfo *out_error)
+    {
         return mnn_sd_detail::mnn_sd_initialize_sessions(engine, out_error);
     }
-    void mnn_sd_release_sessions(MnnSdEngine *engine) {
+    void mnn_sd_release_sessions(MnnSdEngine *engine)
+    {
         mnn_sd_detail::mnn_sd_release_sessions(engine);
     }
-    MnnSdError mnn_sd_probe_model(const char *mnn_path, MnnSdBackend backend, char *out_log, size_t out_log_capacity, MnnSdErrorInfo *out_error) {
+    MnnSdError mnn_sd_probe_model(const char *mnn_path, MnnSdBackend backend, char *out_log, size_t out_log_capacity, MnnSdErrorInfo *out_error)
+    {
         return mnn_sd_detail::mnn_sd_probe_model(mnn_path, backend, out_log, out_log_capacity, out_error);
     }
 }

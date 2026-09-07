@@ -18,7 +18,7 @@ $ndk = "$env:LOCALAPPDATA\Android\Sdk\ndk\30.0.14904198"
 if (-not (Test-Path $cmake)) { throw "cmake not found: $cmake" }
 if (-not (Test-Path $ndk)) { throw "NDK not found: $ndk" }
 
-$clang     = "$ndk\toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android30-clang.cmd"
+$clang = "$ndk\toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android30-clang.cmd"
 $clangplus = "$ndk\toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android30-clang++.cmd"
 
 Write-Host "=== 1/3 Build MNN (arm64) ===" -ForegroundColor Cyan
@@ -27,7 +27,8 @@ $LibMnn = Join-Path $MnnBuild "libMNN.so"
 
 if ($SkipMnn -and (Test-Path $LibMnn)) {
     Write-Host "Skipping MNN build (libMNN.so exists, use -SkipMnn:$false to rebuild)" -ForegroundColor Yellow
-} else {
+}
+else {
     if (Test-Path $MnnBuild) {
         Remove-Item $MnnBuild -Recurse -Force
     }
