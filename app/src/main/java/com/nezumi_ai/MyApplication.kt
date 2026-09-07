@@ -6,6 +6,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.app.ActivityManager
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.work.Configuration
@@ -40,6 +42,18 @@ class MyApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // 推論エンジンのプロセス分離 (dual-engine-process-isolation-plan) に伴い、
+        // :gguf / :litert の各ワーカープロセスでも MyApplication.onCreate() が走る。
+        // これらのプロセスで UI/ダウンロード/メディア掃除等の重い初期化を行うと
+        // 余計なメモリを食う上、WorkManager の二重起動などの副作用があるため、
+        // メインプロセス以外ではスキップする。
+        //   各ワーカープロセスで必要な初期化 (Chaquopy / Room 等) は
+        //   サービス内で必要になった時点で遅延的に行われる。
+        if (!isMainProcess()) {
+            Log.i(TAG, "onCreate: skipping main-process initialization in ${currentProcessName()} (pid=${android.os.Process.myPid()})")
+            return
+        }
 
         // テレメトリ門番にコンテキストを渡す。ここではまだ Sentry を起動しない。
         //   実際の起動は「クラウド or オンデバイスいずれかの推論が使われ、かつ
@@ -156,6 +170,24 @@ class MyApplication : Application() {
         initializePresetDefaults()
     }
     
+    /**
+     * 現在のプロセスがメインプロセス (パッケージ名と同名) かどうかを判定する。
+     * :gguf / :litert 等のサフィックス付きプロセスでは false を返す。
+     */
+    private fun isMainProcess(): Boolean = currentProcessName() == packageName
+
+    private fun currentProcessName(): String {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return getProcessName()
+        }
+        @Suppress("DEPRECATION")
+        val pid = android.os.Process.myPid()
+        @Suppress("DEPRECATION")
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return packageName
+        @Suppress("DEPRECATION")
+        return am.runningAppProcesses?.firstOrNull { it.pid == pid }?.processName ?: packageName
+    }
+
     /**
      * アプリ起動時のメディアクリーンアップ処理
      * - 古いメディアファイルの自動削除

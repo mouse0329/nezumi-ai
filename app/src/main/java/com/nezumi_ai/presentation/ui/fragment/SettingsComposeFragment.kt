@@ -72,7 +72,6 @@ import com.nezumi_ai.R
 import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.InferenceConfig
-import com.nezumi_ai.data.inference.LlamaBridge
 import com.nezumi_ai.data.inference.LlamaCppGpuBackend
 import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.OpenClAvailability
@@ -137,23 +136,25 @@ class SettingsComposeFragment : Fragment() {
     private var maxThreads by mutableStateOf(InferenceConfig.getMaxThreadCount())
     private var llamaCppGpuLayers by mutableStateOf(0)
     private var llamaCppGpuBackend by mutableStateOf(LlamaCppGpuBackend.CPU)
-    // Bug fix: 従来は libOpenCL.so / libvulkan.so の「ファイルの有無」だけで
-    // 選択可否を決めていたため、ライブラリはあってもICD/ドライバが機能しない端末で
-    // 「選択できるのに実際は動かず、CPUへ静かにフォールバックする」問題があった。
-    // ファイル存在チェックは軽量な足切り（ライブラリが無いなら確実に不可）として残しつつ、
-    // 最終判定は llama.cpp の ggml_backend registry に対する実問い合わせ
-    // (nativeProbeGpuBackendAvailable) を必須にする。
+    // GGUF 推論エンジンのプロセス分離 (dual-engine-process-isolation-plan) に伴い、
+    // メインプロセスでは llama_bridge をロードしない方針になった。
+    // nativeProbeGpuBackendAvailable は呼ぶと llama_backend_init() が走り
+    // Vulkan/OpenCL のグローバル状態が :main プロセスに残ってしまうため、
+    // ここではファイル存在ベースの足切りのみを行う (OpenClAvailability.detect /
+    // VulkanAvailability.detect)。正確なプローブは :gguf プロセス側の
+    // GgufInferenceEngine のロード時チェックが担い、実際に使えない場合は
+    // 従来通り CPU へのフォールバックとしてユーザーに提示される。
     private val openClAvailable: Boolean by lazy {
-        OpenClAvailability.isAvailable() &&
-            LlamaBridge.isLibraryLoaded() &&
-            runCatching { LlamaBridge.nativeProbeGpuBackendAvailable(LlamaCppGpuBackend.OPENCL) }.getOrDefault(false)
+        runCatching { OpenClAvailability.detect() }.getOrDefault(false)
     }
     private val vulkanAvailable: Boolean by lazy {
-        VulkanAvailability.isAvailable() &&
-            LlamaBridge.isLibraryLoaded() &&
-            runCatching { LlamaBridge.nativeProbeGpuBackendAvailable(LlamaCppGpuBackend.VULKAN) }.getOrDefault(false)
+        runCatching { VulkanAvailability.detect() }.getOrDefault(false)
     }
-    private val llamaCppCompiledGpuBackends: Set<String> by lazy { LlamaBridge.compiledGpuBackends() }
+    // CMakeLists.txt では OpenCL / Vulkan バックエンドがデフォルト ON (option … ON)
+    // でビルドされる。llama_bridge を :main プロセスにロードせず判定するため、
+    // ここではビルド定義と同じ静的な集合を使う。
+    private val llamaCppCompiledGpuBackends: Set<String> =
+        setOf(LlamaCppGpuBackend.OPENCL, LlamaCppGpuBackend.VULKAN)
     private var llamaCppBatchSize by mutableStateOf(512)
     private var llamaCppUBatchSize by mutableStateOf(512)
     private var llamaCppKvUnified by mutableStateOf(true)
@@ -522,16 +523,26 @@ class SettingsComposeFragment : Fragment() {
                     "tokenizerBytes=${tokenizer.length()}, tokenizerGguf=${isTtsDebugGgufFile(tokenizer)}"
             )
             val outFile = File(appContext.cacheDir, "tts_debug_out.wav")
-            val raw = LlamaBridge.nativeTtsSynthesize(
-                backbone.absolutePath,
-                tokenizer.absolutePath,
-                ttsDebugTextInput,
-                ttsDebugSpeakerPath,
-                outFile.absolutePath,
-                4,
-                512,
-                -1
-            )
+            // llama_bridge はプロセス分離後メインプロセスにロードしないため、
+            // TTS 合成は :gguf プロセスの GgufInferenceService 経由で実行する。
+            val raw = try {
+                com.nezumi_ai.data.inference.remote.RemoteGgufInferenceEngine(appContext)
+                    .ttsSynthesize(
+                        backbone.absolutePath,
+                        tokenizer.absolutePath,
+                        ttsDebugTextInput,
+                        ttsDebugSpeakerPath,
+                        outFile.absolutePath,
+                        4,
+                        512,
+                        -1
+                    )
+            } catch (t: Throwable) {
+                org.json.JSONObject()
+                    .put("ok", false)
+                    .put("error", t.message ?: "tts remote call failed")
+                    .toString()
+            }
             withContext(Dispatchers.Main) {
                 ttsDebugSynthesizing = false
                 runCatching {

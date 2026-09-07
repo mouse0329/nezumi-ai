@@ -615,23 +615,29 @@ class MiniAppRpcDispatcher(
     private fun handleEnginesListBackends(params: JSONObject): JSONObject {
         val engineId = params.optString("engineId", "llama.cpp")
         val arr = JSONArray()
+        // プロセス分離後はメインプロセスで llama_bridge をロードしない。
+        // ネイティブプローブ (llama_backend_init を伴う) は :main にグローバル状態を
+        // 残す原因になるため、ここではファイル存在ベースの判定 (detect) に留める。
+        // 正確な可用性は :gguf プロセス内のロード時チェックが担保する。
+        val openClAvailable = runCatching { OpenClAvailability.detect() }.getOrDefault(false)
+        val vulkanAvailable = runCatching { VulkanAvailability.detect() }.getOrDefault(false)
         when (engineId) {
             "llama.cpp" -> {
                 arr.put(backend("cpu", true))
-                arr.put(backend("opencl", OpenClAvailability.isAvailable(), "DRIVER_NOT_FOUND"))
-                arr.put(backend("vulkan", VulkanAvailability.isAvailable(), "DRIVER_NOT_FOUND"))
+                arr.put(backend("opencl", openClAvailable, "DRIVER_NOT_FOUND"))
+                arr.put(backend("vulkan", vulkanAvailable, "DRIVER_NOT_FOUND"))
             }
             "litert" -> {
                 arr.put(backend("cpu", true))
                 // LiteRT-LM の GPU delegate は OpenCL ランタイム上に構築される。
                 // OpenCL 非搭載端末で available=true を返すと嘘になるため、
-                // llama.cpp と同じネイティブプローブ結果 (OpenClAvailability) に揃える。
-                arr.put(backend("gpu", OpenClAvailability.isAvailable(), "DRIVER_NOT_FOUND"))
+                // llama.cpp と同じファイル存在ベース判定に揃える。
+                arr.put(backend("gpu", openClAvailable, "DRIVER_NOT_FOUND"))
                 arr.put(backend("npu", false, "SOC_NOT_SUPPORTED"))
             }
             "image" -> {
                 arr.put(backend("cpu", true))
-                arr.put(backend("opencl", OpenClAvailability.isAvailable(), "DRIVER_NOT_FOUND"))
+                arr.put(backend("opencl", openClAvailable, "DRIVER_NOT_FOUND"))
             }
             else -> throw MiniAppException("BACKEND_NOT_AVAILABLE", "未知のエンジンです: $engineId")
         }

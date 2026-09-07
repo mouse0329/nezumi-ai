@@ -180,6 +180,9 @@ android {
         compose = true
         viewBinding = true
         buildConfig = true
+        // GGUF / LiteRT-LM 推論エンジンのプロセス分離用に
+        // IRemoteInferenceEngine 等の AIDL スタブを生成する。
+        aidl = true
     }
 
     lint {

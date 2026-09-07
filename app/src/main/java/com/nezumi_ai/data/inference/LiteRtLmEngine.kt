@@ -96,6 +96,14 @@ class LiteRtLmEngine(
     private var loadedModelPath: String? = null
     private var loadedConfig: InferenceConfig? = null
     private var loadedBackend: String? = null  // Phase 11: GPU/CPU/NPU バックエンド追跡（キャッシュ無効化用）
+
+    /**
+     * 現在ロード済みのバックエンド名 ("GPU" / "CPU" / "NPU") を返す。未ロード時は null。
+     * `:litert` プロセス側の LiteRtEngineService が getEngineStatus() で参照するための
+     * 読み取り専用アクセサ。メインプロセスからは RemoteLiteRtInferenceEngine.loadedBackend
+     * 経由で取得する。
+     */
+    fun currentLoadedBackend(): String? = loadedBackend
     @Volatile private var loadedWithVisionAudio: Boolean = false
     private var disableXnnpackCacheForProcess: Boolean = false
     private val modelMutex = Mutex()

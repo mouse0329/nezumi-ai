@@ -6,6 +6,8 @@ import android.util.Log
 import com.nezumi_ai.data.inference.cloud.AndroidCloudEngineAdapter
 import com.nezumi_ai.data.inference.cloud.CloudEngineFactory
 import com.nezumi_ai.data.inference.cloud.CloudModelId
+import com.nezumi_ai.data.inference.remote.RemoteGgufInferenceEngine
+import com.nezumi_ai.data.inference.remote.RemoteLiteRtInferenceEngine
 import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.utils.InferenceTelemetryRecorder
 import com.nezumi_ai.utils.TelemetryGate
@@ -44,17 +46,23 @@ class ModelManager(
     }
     
     // Phase 15: LiteRtLm と GGUF エンジンの両方を搭載（モデルごとに切替）
-    private val liteRtEngine: AIInferenceEngine = LiteRtLmEngine(context)
+    //
+    // プロセス分離 (dual-engine-process-isolation-plan):
+    //   llama_backend_init/free がプロセス寿命で1回ずつという API 契約、および
+    //   LiteRT-LM の Engine.close() が SIGABRT し得る問題のため、両エンジンとも
+    //   別プロセス (:litert / :gguf) に隔離した。ここで保持するのは AIDL 越しの
+    //   リモートアダプタであり、推論ロジック本体は各プロセス内の既存エンジンが担う。
+    private val liteRtEngine: AIInferenceEngine = RemoteLiteRtInferenceEngine(context)
 
     /**
      * Bug fix(#5): LiteRT エンジンへ「このセッションは media を含む」と伝えるための
-     * アクセサ。 LiteRtLmEngine 型を露出させ、可変フラグの設定をしてもらう。
+     * アクセサ。 RemoteLiteRtInferenceEngine 型を露出させ、可変フラグの設定をしてもらう。
      * GGUF モードやエンジン未初期化時は null。
      */
-    fun liteRtEngineForMultiTurnMedia(): LiteRtLmEngine? =
-        liteRtEngine as? LiteRtLmEngine
-    /** GGUF は初回利用時まで遅延初期化し、llama_bridge を起動直後にロードしない。 */
-    private var ggufEngine: GgufInferenceEngine? = null
+    fun liteRtEngineForMultiTurnMedia(): RemoteLiteRtInferenceEngine? =
+        liteRtEngine as? RemoteLiteRtInferenceEngine
+    /** GGUF は初回利用時まで遅延初期化し、:gguf プロセスを起動直後に立ち上げない。 */
+    private var ggufEngine: RemoteGgufInferenceEngine? = null
 
     @Volatile
     private var activeEngine: AIInferenceEngine = liteRtEngine
@@ -71,18 +79,17 @@ class ModelManager(
     internal val sessionManager = SessionResourceManager()
     private val jobController = InferenceJobController()
 
-    private fun getOrCreateGgufEngine(): GgufInferenceEngine? {
+    private fun getOrCreateGgufEngine(): RemoteGgufInferenceEngine? {
         ggufEngine?.let { return it }
         synchronized(this) {
             ggufEngine?.let { return it }
-            if (!LlamaBridge.isLibraryLoaded()) {
-                Log.w(TAG, "GGUF native bridge unavailable: llama_bridge not loaded")
-                return null
-            }
             return try {
-                GgufInferenceEngine(context.applicationContext).also { ggufEngine = it }
+                // llama_bridge ライブラリのロード可否は :gguf プロセス側で判定される。
+                // メインプロセスでは llama_bridge を一切ロードしない（ロードすると
+                // llama_backend_init によるグローバル状態が main に残ってしまう）。
+                RemoteGgufInferenceEngine(context.applicationContext).also { ggufEngine = it }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to construct GgufInferenceEngine", e)
+                Log.e(TAG, "Failed to construct RemoteGgufInferenceEngine", e)
                 null
             }
         }
@@ -152,7 +159,7 @@ class ModelManager(
 
     private fun currentEngineLabel(engine: AIInferenceEngine): String {
         return when {
-            engine is GgufInferenceEngine -> "GGUF"
+            engine is RemoteGgufInferenceEngine -> "GGUF"
             engine === liteRtEngine -> "LiteRtLm"
             else -> "Cloud(${engine.javaClass.simpleName})"
         }
@@ -211,7 +218,7 @@ class ModelManager(
         val isGpuBacked = normalized.backendType.equals("GPU", ignoreCase = true) ||
             normalized.backendType.equals("NPU", ignoreCase = true)
 
-        if (isGpuBacked && engine is LiteRtLmEngine) {
+        if (isGpuBacked && engine is RemoteLiteRtInferenceEngine) {
             Log.w(TAG, "GPU/NPU backend: using forceReset() instead of unloadModel() to avoid SIGABRT")
             engine.forceReset()
         } else {
@@ -362,22 +369,38 @@ class ModelManager(
                     runCatching { previousEngine.unloadModel() }
                         .onFailure { Log.w(TAG, "unloadModel failed", it) }
 
-                    // エンジン切り替え時は非アクティブ側も強制停止・unload
-                    // （LLM + マルチモーダルプロジェクターを確実に解放）
+                    // エンジン切り替え時は、切替元エンジンが動いている別プロセス
+                    // (:gguf / :litert) ごと終了させる (dual-engine-process-isolation-plan 5章)。
+                    //
+                    // GGUF 側は llama_backend_free() が API 契約上「プロセス終了時に1回」の
+                    // ため Kotlin/JNI 層では Vulkan/OpenCL のグローバル状態を解放できず、
+                    // LiteRT-LM 側は Engine.close() が SIGABRT し得るため正規の解放パスが
+                    // 使えない。いずれも OS のプロセス回収に委ねるのが確実。
+                    // クラウドエンジンはプロセスを持たないため対象外。
                     if (switchingEngine) {
-                        val inactiveEngine: AIInferenceEngine? =
-                            if (previousEngine is GgufInferenceEngine) liteRtEngine else ggufEngine
-                        inactiveEngine?.let { eng ->
-                            Log.i(TAG, "Forcibly stopping inactive engine (${currentEngineLabel(eng)}) including multimodal projector and LLM to prevent resource conflicts")
-                            runCatching {
-                                eng.cancelInference()
-                                delay(100)
-                                eng.unloadModel()
-                            }.onFailure { Log.w(TAG, "Failed to unload inactive engine", it) }
+                        when (previousEngine) {
+                            is RemoteGgufInferenceEngine -> {
+                                Log.i(TAG, "Switching away from GGUF: shutting down :gguf process")
+                                runCatching { previousEngine.shutdownProcess() }
+                                    .onFailure { Log.w(TAG, "GGUF shutdownProcess failed", it) }
+                            }
+                            is RemoteLiteRtInferenceEngine -> {
+                                Log.i(TAG, "Switching away from LiteRT-LM: shutting down :litert process")
+                                runCatching { previousEngine.shutdownProcess() }
+                                    .onFailure { Log.w(TAG, "LiteRT shutdownProcess failed", it) }
+                            }
+                            else -> {
+                                // クラウドエンジン等: プロセスを持たないため従来通り unload のみ
+                                runCatching {
+                                    previousEngine.cancelInference()
+                                    delay(100)
+                                    previousEngine.unloadModel()
+                                }.onFailure { Log.w(TAG, "Failed to unload previous engine", it) }
+                            }
                         }
 
                         // バックエンド/エンジン切り替え時のメモリ解放
-                        Log.i(TAG, "Engine/backend change detected. Forcing memory cleanup after multimodal projector + LLM stop...")
+                        Log.i(TAG, "Engine/backend change detected. Forcing memory cleanup after engine process shutdown...")
                         System.gc()
                         delay(400)
                     }
@@ -445,7 +468,7 @@ class ModelManager(
         messagesJson: String,
         enableThinking: Boolean = false
     ): String? {
-        val engine = activeEngine as? GgufInferenceEngine ?: return null
+        val engine = activeEngine as? RemoteGgufInferenceEngine ?: return null
         return engine.formatWithGgufChatTemplate(messagesJson, enableThinking)
             .takeIf { it.isNotBlank() }
     }
@@ -459,14 +482,14 @@ class ModelManager(
         chatTemplate: String,
         enableThinking: Boolean = false
     ): String? {
-        val engine = activeEngine as? GgufInferenceEngine ?: return null
+        val engine = activeEngine as? RemoteGgufInferenceEngine ?: return null
         return engine.formatWithJinjaChatTemplate(messagesJson, chatTemplate, enableThinking)
             .takeIf { it.isNotBlank() }
     }
 
     /** 現在の GGUF コンテキストにチャットテンプレートが適用済みかどうか。 */
     fun hasGgufChatTemplate(): Boolean =
-        (activeEngine as? GgufInferenceEngine)?.hasGgufChatTemplate() ?: false
+        (activeEngine as? RemoteGgufInferenceEngine)?.hasGgufChatTemplate() ?: false
 
     /**
      * 直近の initializeModel() で要求したGPUバックエンド (OpenCL / Vulkan) が
@@ -477,33 +500,33 @@ class ModelManager(
      * ユーザーが選んでいないバックエンドで黙って動かし続けてはならない。
      */
     fun didFallBackFromRequestedGpuBackend(): Boolean =
-        (activeEngine as? GgufInferenceEngine)?.gpuBackendFallbackOccurred ?: false
+        (activeEngine as? RemoteGgufInferenceEngine)?.gpuBackendFallbackOccurred ?: false
 
     /**
      * Mini App API (ai.unloadModel) 用。
      *
      * llama.cpp (GGUF) 側でモデルがロードされている場合、共有されている GPU /
-     * メモリ資源を即時回収するため LiteRT-LM エンジンを強制解放 (forceReset) する。
-     * LiteRT-LM の GPU リソースは Engine.close() 経由で SIGABRT し得るため、
-     * recoverFromInvokeFailure と同様に forceReset() を使う。
+     * メモリ資源を即時回収するため :litert プロセスを終了させる。
+     *
+     * プロセス分離前は LiteRtLmEngine.forceReset() (Engine.close() を経ない
+     * 強制無効化) を呼んでいたが、分離後はプロセスごと終了させる方が確実かつ
+     * 完全にリソースを回収できる (dual-engine-process-isolation-plan 5.3 / 5.5)。
      * GGUF モデルがロードされていなければ何もしない。
      *
-     * @return true: GGUF ロード中で LiteRT-LM を強制解放した / false: 対象外で何もしなかった
+     * @return true: GGUF ロード中で :litert プロセスを終了した / false: 対象外で何もしなかった
      */
     suspend fun forceReleaseLiteRtIfGgufLoaded(): Boolean {
         return loadMutex.withLock {
-            val ggufActive = activeEngine is GgufInferenceEngine && currentModelName != null
+            val ggufActive = activeEngine is RemoteGgufInferenceEngine && currentModelName != null
             if (!ggufActive) {
                 Log.d(TAG, "forceReleaseLiteRtIfGgufLoaded: no GGUF model loaded, nothing to do")
                 return@withLock false
             }
-            Log.i(TAG, "forceReleaseLiteRtIfGgufLoaded: GGUF model loaded — forcing LiteRT-LM release")
-            val liteRt = liteRtEngine as? LiteRtLmEngine
+            Log.i(TAG, "forceReleaseLiteRtIfGgufLoaded: GGUF model loaded — killing :litert process")
+            val liteRt = liteRtEngine as? RemoteLiteRtInferenceEngine
             if (liteRt != null) {
-                runCatching { liteRt.cancelInference() }
-                    .onFailure { Log.w(TAG, "LiteRT cancelInference before forceReset failed", it) }
-                runCatching { liteRt.forceReset() }
-                    .onFailure { Log.w(TAG, "LiteRT forceReset failed", it) }
+                runCatching { liteRt.shutdownProcess() }
+                    .onFailure { Log.w(TAG, "LiteRT shutdownProcess failed", it) }
             }
             true
         }
@@ -511,13 +534,13 @@ class ModelManager(
 
     /** 直近ロードで実際に使われたバックエンド ("CPU" / "OPENCL" / "VULKAN")。 */
     fun currentActualGpuBackend(): String =
-        (activeEngine as? GgufInferenceEngine)?.actualGpuBackend ?: LlamaCppGpuBackend.CPU
+        (activeEngine as? RemoteGgufInferenceEngine)?.actualGpuBackend ?: LlamaCppGpuBackend.CPU
 
     fun parseGgufChatOutput(
         output: String,
         isPartial: Boolean
     ): GgufInferenceEngine.GgufChatParseResult? =
-        (activeEngine as? GgufInferenceEngine)?.parseWithGgufChatTemplate(output, isPartial)
+        (activeEngine as? RemoteGgufInferenceEngine)?.parseWithGgufChatTemplate(output, isPartial)
 
     suspend fun runInference(
         sessionId: Long,

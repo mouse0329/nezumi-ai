@@ -72,6 +72,30 @@
 
         <receiver android:name=".data.alarm.AlarmReceiver" android:exported="false" />
 
+        <!--
+            GGUF (llama.cpp) 推論エンジンを :gguf 別プロセスで動かすサービス。
+            llama_backend_init/free がプロセス寿命全体で1回ずつという API 契約のため、
+            同一プロセス内でのエンジン切替では Vulkan/OpenCL のグローバル状態が
+            解放されず LiteRT-LM 側の GPU delegate 初期化と競合していた。
+            別プロセスに隔離し、切替時はプロセスごと終了させることで OS に
+            リソースを強制回収させる (dual-engine-process-isolation-plan 参照)。
+        -->
+        <service
+            android:name=".data.inference.remote.GgufInferenceService"
+            android:process=":gguf"
+            android:exported="false" />
+
+        <!--
+            LiteRT-LM 推論エンジンを :litert 別プロセスで動かすサービス。
+            Engine.close() が GPU バックエンドで SIGABRT し得る既知の問題があり、
+            正規の解放パスが安全に完走しないため、GGUF と同様にプロセス分離して
+            切替時にプロセスごと終了させる。
+        -->
+        <service
+            android:name=".data.inference.remote.LiteRtEngineService"
+            android:process=":litert"
+            android:exported="false" />
+
         <!-- Downloadable Fonts (Noto Sans JP) - Google Play Services Fonts Provider -->
         <meta-data
             android:name="preloaded_fonts"
