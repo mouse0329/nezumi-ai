@@ -25,6 +25,21 @@ fun envOrLocal(key: String): String? =
     System.getenv(key)?.takeIf { it.isNotBlank() }
         ?: localProperties.getProperty(key)?.takeIf { it.isNotBlank() }
 
+fun gitShortRevision(repository: File): String = runCatching {
+    ProcessBuilder("git", "-C", repository.absolutePath, "rev-parse", "--short=12", "HEAD")
+        .redirectErrorStream(true)
+        .start()
+        .let { process ->
+            process.inputStream.bufferedReader().use { reader ->
+                val revision = reader.readText().trim()
+                check(process.waitFor() == 0 && revision.isNotEmpty())
+                revision
+            }
+        }
+}.getOrDefault("unknown")
+
+val llamaCppVersion = gitShortRevision(rootProject.file("app/src/main/vendor/llama.cpp"))
+
 val releaseStoreFilePath = envOrLocal("STORE_FILE")
 val releaseStorePassword = envOrLocal("STORE_PASSWORD")
 val releaseKeyAlias = envOrLocal("KEY_ALIAS")
@@ -49,8 +64,8 @@ android {
         applicationId = "com.nezumi_ai"
         minSdk = 30
         targetSdk = 37
-        versionCode = 21
-        versionName = "2.3.3"
+        versionCode = 22
+        versionName = "2.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -94,8 +109,8 @@ android {
             applicationIdSuffix = ".open"
         }
 
-        buildConfigField("String", "LITERTLM_VERSION", "\"0.16.1\"")
-        buildConfigField("String", "LLAMACPP_VERSION", "\"67a17c17caa9\"")
+        buildConfigField("String", "LITERTLM_VERSION", "\"0.17.0\"")
+        buildConfigField("String", "LLAMACPP_VERSION", "\"$llamaCppVersion\"")
         buildConfigField("boolean", "CONTEXT_COMPRESSION_ENABLED", "false")
 
         // テレメトリ (Sentry) の DSN。空文字の場合、TelemetryGate は初期化を行わない。
@@ -280,7 +295,7 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.11.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.16.1")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.17.0")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.29.0")
 
     implementation("androidx.biometric:biometric:1.1.0")
