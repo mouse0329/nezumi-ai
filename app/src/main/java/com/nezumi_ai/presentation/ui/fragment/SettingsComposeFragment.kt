@@ -291,7 +291,7 @@ class SettingsComposeFragment : Fragment() {
         ) { uri: Uri? ->
             val sourcePath = ttsDebugSavePath
             ttsDebugSavePath = null
-            if (uri != null && sourcePath != null) saveTtsDebugAudio(Uri.parse(sourcePath), uri)
+            if (uri != null && sourcePath != null) saveTtsDebugAudio(File(sourcePath), uri)
         }
         loadTtsDebugAudioHistory(requireContext().applicationContext)
         skillScanResult = SkillRepository(requireContext().applicationContext).scan(force = true)
@@ -378,15 +378,15 @@ class SettingsComposeFragment : Fragment() {
             .map { TtsDebugAudio(it, it.nameWithoutExtension, it.lastModified()) }
     }
 
-    private fun saveTtsDebugAudio(source: Uri, destination: Uri) {
+    private fun saveTtsDebugAudio(source: File, destination: Uri) {
         val context = requireContext().applicationContext
         lifecycleScope.launch(Dispatchers.IO) {
             val result = runCatching {
-                context.contentResolver.openInputStream(source)?.use { input ->
+                source.inputStream().use { input ->
                     context.contentResolver.openOutputStream(destination)?.use { output ->
                         input.copyTo(output)
                     } ?: error("保存先を開けませんでした")
-                } ?: error("生成音声を開けませんでした")
+                }
             }
             withContext(Dispatchers.Main) {
                 result.onFailure {

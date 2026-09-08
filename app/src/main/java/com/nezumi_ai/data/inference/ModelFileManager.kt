@@ -621,6 +621,11 @@ object ModelFileManager {
         return File(importedDir, finalName)
     }
 
+    fun deleteHuggingFacePartial(context: Context, modelId: String, filePath: String) {
+        val outFile = huggingFaceImportedFile(context, modelId, filePath)
+        File("${outFile.absolutePath}.download").delete()
+    }
+
     fun importTaskFromUri(context: Context, uri: Uri): Result<File> = runCatching {
         val displayName = queryDisplayName(context, uri) ?: "custom_model.task"
         val lower = displayName.lowercase()

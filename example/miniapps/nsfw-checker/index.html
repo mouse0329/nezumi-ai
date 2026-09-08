@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>画像コンテンツチェッカー</title>
+<style>
+  body { font-family: sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; }
+  #preview { max-width: 100%; max-height: 300px; display: none; margin-top: 12px; border-radius: 8px; }
+  #result { margin-top: 16px; padding: 12px; border-radius: 8px; display: none; font-weight: bold; }
+  .safe { background: #e6f7e6; color: #1a7a1a; }
+  .unsafe { background: #fce8e8; color: #a11; }
+  #status { margin-top: 8px; color: #666; font-size: 14px; }
+  button { padding: 8px 16px; cursor: pointer; }
+</style>
+</head>
+<body>
+  <h2>画像コンテンツチェッカー</h2>
+  <input type="file" id="fileInput" accept="image/*">
+  <img id="preview">
+  <div id="status"></div>
+  <div id="result"></div>
+
+<script>
+const MODEL_URL = "https://raw.githubusercontent.com/mouse0329/nezumi-ai/main/app/src/main/assets/open_nsfw.onnx";
+const MODEL_PATH = "user-data/open_nsfw.onnx";
+
+let sessionId = null;
+
+const statusEl = document.getElementById("status");
+const resultEl = document.getElementById("result");
+const previewEl = document.getElementById("preview");
+
+function setStatus(msg) {
+  statusEl.textContent = msg;
+}
+
+async function ensureModel() {
+  const exists = await nezumi.files.exists(MODEL_PATH);
+  if (!exists) {
+    setStatus("モデルをダウンロード中...");
+    const dl = await nezumi.download.create({ url: MODEL_URL, destPath: MODEL_PATH });
+    await new Promise((resolve, reject) => {
+      const off = nezumi.events.on("download.progress", (p) => {
+        if (p.id !== dl.id) return;
+        if (p.state === "completed") { off(); resolve(); }
+        if (p.state === "failed") { off(); reject(new Error(p.error || "download failed")); }
+      });
+      nezumi.download.start(dl.id).catch((error) => {
+        off();
+        reject(error);
+      });
+    });
+  }
+  if (!sessionId) {
+    setStatus("モデルを読み込み中...");
+    sessionId = await nezumi.onnx.open({ model: MODEL_PATH, backend: "nnapi" });
+  }
+}
+
+function loadImageData(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, 256, 256);
+      resolve(ctx.getImageData(0, 0, 256, 256));
+      URL.revokeObjectURL(img.src);
+    };
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function preprocess(imageData) {
+  const size = 224;
+  const offset = Math.floor((256 - size) / 2);
+  const arr = new Float32Array(size * size * 3);
+  let idx = 0;
+  for (let y = offset; y < offset + size; y++) {
+    for (let x = offset; x < offset + size; x++) {
+      const p = (y * 256 + x) * 4;
+      const r = imageData.data[p];
+      const g = imageData.data[p + 1];
+      const b = imageData.data[p + 2];
+      arr[idx++] = b - 104.0;
+      arr[idx++] = g - 117.0;
+      arr[idx++] = r - 123.0;
+    }
+  }
+  return arr.buffer;
+}
+
+function decodeFloat32Output(value) {
+  const prefix = "__f32b64__:";
+  const encoded = value.startsWith(prefix) ? value.slice(prefix.length) : value;
+  const binary = atob(encoded);
+  if (binary.length % 4 !== 0) throw new Error("ONNX出力のサイズが不正です");
+
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  const view = new DataView(bytes.buffer);
+  const scores = [];
+  for (let offset = 0; offset < bytes.byteLength; offset += 4) {
+    scores.push(view.getFloat32(offset, true));
+  }
+  return scores;
+}
+
+async function checkImage(file) {
+  resultEl.style.display = "none";
+  try {
+    await ensureModel();
+
+    setStatus("画像を解析中...");
+    const imageData = await loadImageData(file);
+    const inputBuffer = preprocess(imageData);
+    const inputs = await nezumi.onnx.getInputs(sessionId);
+    const inputName = inputs[0]?.name;
+    if (!inputName) throw new Error("ONNX入力が見つかりません");
+
+    const tensorId = await nezumi.onnx.createTensor(sessionId, [1, 224, 224, 3], inputBuffer);
+    try {
+      const output = await nezumi.onnx.run(sessionId, { [inputName]: tensorId });
+      const outputName = Object.keys(output)[0];
+      if (!outputName) throw new Error("ONNX出力が見つかりません");
+
+      const scores = decodeFloat32Output(output[outputName]);
+      const sfwScore = scores[0];
+      const nsfwScore = scores[1];
+      if (!Number.isFinite(sfwScore) || !Number.isFinite(nsfwScore)) {
+        throw new Error("ONNX出力スコアが不正です");
+      }
+
+      const isUnsafe = nsfwScore > 0.5;
+      resultEl.className = isUnsafe ? "unsafe" : "safe";
+      resultEl.textContent = isUnsafe
+        ? `⚠️ 不適切な可能性があります（信頼度: ${(nsfwScore * 100).toFixed(1)}%）`
+        : `✅ 問題ないと判定されました（信頼度: ${(sfwScore * 100).toFixed(1)}%）`;
+      resultEl.style.display = "block";
+      setStatus("");
+    } finally {
+      await nezumi.onnx.disposeTensor(tensorId);
+    }
+  } catch (e) {
+    setStatus(`エラー: ${e.code || ""} ${e.message}`);
+  }
+}
+
+document.getElementById("fileInput").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  previewEl.src = URL.createObjectURL(file);
+  previewEl.style.display = "block";
+  await checkImage(file);
+});
+</script>
+</body>
+</html>

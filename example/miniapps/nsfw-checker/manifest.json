@@ -1,0 +1,9 @@
+{
+  "id": "com.nezumi.ai.nsfwchecker",
+  "name": "画像コンテンツチェッカー",
+  "short_name": "NSFW Checker",
+  "version": "1.0.1",
+  "publisher": "Nezumi AI",
+  "entry": "index.html",
+  "permissions": ["ai", "download", "files.read", "files.write"]
+}

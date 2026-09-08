@@ -289,11 +289,18 @@ const dl = await nezumi.download.create({
   url: "https://example.com/data.zip",
   destPath: "user-data/data.zip"   // App Data 内の保存先
 });
-await nezumi.download.start(dl.id);
-
-// 進捗イベント
-nezumi.events.on("download.progress", (p) => {
-  if (p.id === dl.id) console.log(p.state, p.bytesDownloaded, "/", p.totalBytes);
+// start() より前に購読して、完了イベントを取り逃さないようにする
+await new Promise((resolve, reject) => {
+  const off = nezumi.events.on("download.progress", (p) => {
+    if (p.id !== dl.id) return;
+    console.log(p.state, p.bytesDownloaded, "/", p.totalBytes);
+    if (p.state === "completed") { off(); resolve(); }
+    if (p.state === "failed") { off(); reject(new Error(p.error || "download failed")); }
+  });
+  nezumi.download.start(dl.id).catch((error) => {
+    off();
+    reject(error);
+  });
 });
 
 await nezumi.download.pause(dl.id);   // 一時停止（Range 再開に対応）
@@ -354,8 +361,20 @@ const maskId = await nezumi.onnx.createTensor(
   sessionId, [1, 4], new BigInt64Array([1n, 1n, 1n, 1n]).buffer, "int64"
 );
 
-// 推論
-const result = await nezumi.onnx.run(sessionId, { input: tensorId });
+// 推論。入力名は getInputs() の結果を使う
+const inputName = inputs[0].name;
+const result = await nezumi.onnx.run(sessionId, { [inputName]: tensorId });
+// result は { [outputName]: "__f32b64__:<Base64>" } の形式。
+// 出力値は little-endian の Float32 配列としてエンコードされる。
+const outputName = Object.keys(result)[0];
+const encoded = result[outputName].replace(/^__f32b64__:/, "");
+const binary = atob(encoded);
+const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+const view = new DataView(bytes.buffer);
+const values = Array.from(
+  { length: bytes.byteLength / 4 },
+  (_, i) => view.getFloat32(i * 4, true)
+);
 
 // 解放
 await nezumi.onnx.disposeTensor(tensorId);

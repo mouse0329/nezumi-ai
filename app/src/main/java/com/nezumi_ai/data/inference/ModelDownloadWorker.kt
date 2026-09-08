@@ -651,7 +651,7 @@ class ModelDownloadWorker(
 
         fun cancelCustomHf(context: Context, modelId: String, filePath: String) {
             WorkManager.getInstance(context).cancelUniqueWork(customWorkName(modelId, filePath))
-            // 部分ファイル (.download) は削除しない。ユーザーが再開したい場合に続きから取得できるようにする。
+            ModelFileManager.deleteHuggingFacePartial(context, modelId, filePath)
         }
 
         /**

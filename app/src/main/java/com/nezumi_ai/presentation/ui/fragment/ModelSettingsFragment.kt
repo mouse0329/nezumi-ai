@@ -1893,8 +1893,8 @@ open class ModelSettingsFragment : Fragment() {
                                     }
                                 }
                             }
-                            if (item.isActive) {
-                                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                if (item.isActive) {
                                     TextButton(onClick = {
                                         ModelDownloadWorker.pauseCustomHf(
                                             requireContext(),
@@ -1903,6 +1903,16 @@ open class ModelSettingsFragment : Fragment() {
                                         )
                                         toast("一時停止しました。再開時は続きからダウンロードします")
                                     }) { Text("一時停止") }
+                                } else if (item.isPaused) {
+                                    TextButton(onClick = {
+                                        ModelDownloadWorker.enqueueCustomHf(
+                                            requireContext(),
+                                            item.modelId,
+                                            item.filePath
+                                        )
+                                    }) { Text("再開") }
+                                }
+                                if (item.isActive || item.isPaused) {
                                     TextButton(onClick = {
                                         ModelDownloadWorker.cancelCustomHf(
                                             requireContext(),
@@ -3532,8 +3542,8 @@ open class ModelSettingsFragment : Fragment() {
                                             }
                                         }
                                     }
-                                    if (item.isActive) {
-                                        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                        if (item.isActive) {
                                             TextButton(onClick = {
                                                 ModelDownloadWorker.pauseCustomHf(
                                                     requireContext(),
@@ -3542,6 +3552,16 @@ open class ModelSettingsFragment : Fragment() {
                                                 )
                                                 toast("一時停止しました。再開時は続きからダウンロードします")
                                             }) { Text("一時停止") }
+                                        } else if (item.isPaused) {
+                                            TextButton(onClick = {
+                                                ModelDownloadWorker.enqueueCustomHf(
+                                                    requireContext(),
+                                                    item.modelId,
+                                                    item.filePath
+                                                )
+                                            }) { Text("再開") }
+                                        }
+                                        if (item.isActive || item.isPaused) {
                                             TextButton(onClick = {
                                                 ModelDownloadWorker.cancelCustomHf(
                                                     requireContext(),
@@ -4948,6 +4968,11 @@ open class ModelSettingsFragment : Fragment() {
         WorkManager.getInstance(requireContext())
             .getWorkInfosByTagLiveData(ModelDownloadWorker.TAG_HF_CUSTOM_DOWNLOAD)
             .observe(viewLifecycleOwner) { infos ->
+                val context = requireContext()
+                fun workValue(info: WorkInfo, key: String): String? =
+                    info.progress.getString(key)
+                        ?: info.outputData.getString(key)
+
                 infos.forEach { info ->
                     if (info.state != WorkInfo.State.SUCCEEDED) return@forEach
                     if (!hfSucceededWorkIds.add(info.id)) return@forEach
@@ -4991,17 +5016,36 @@ open class ModelSettingsFragment : Fragment() {
                         toast(ctx.getString(R.string.model_sd_hf_toast_downloaded, File(outPath).name))
                     }
                 }
-                // 終端状態に入ったカードはキャッシュから削除
+                // 一時停止では WorkManager 上は CANCELLED になるが、部分ファイルが残る。
+                // その場合はカードをキャッシュに残し、一覧から続きへ再開できるようにする。
                 val terminalKeys = infos.filter {
                     it.state == WorkInfo.State.SUCCEEDED ||
                         it.state == WorkInfo.State.FAILED ||
                         it.state == WorkInfo.State.CANCELLED
                 }.mapNotNull { info ->
-                    val mid = info.progress.getString(ModelDownloadWorker.KEY_HF_MODEL_ID)
-                        ?: info.outputData.getString(ModelDownloadWorker.KEY_HF_MODEL_ID)
-                    val fp = info.progress.getString(ModelDownloadWorker.KEY_HF_FILE_PATH)
-                        ?: info.outputData.getString(ModelDownloadWorker.KEY_HF_FILE_PATH)
-                    if (mid != null && fp != null) "$mid|$fp" else null
+                    val mid = workValue(info, ModelDownloadWorker.KEY_HF_MODEL_ID)
+                    val fp = workValue(info, ModelDownloadWorker.KEY_HF_FILE_PATH)
+                    if (mid == null || fp == null) return@mapNotNull null
+                    val key = "$mid|$fp"
+                    val partial = File(
+                        "${ModelFileManager.huggingFaceImportedFile(context, mid, fp).absolutePath}.download"
+                    )
+                    if (info.state != WorkInfo.State.SUCCEEDED && partial.isFile && partial.length() > 0L) {
+                        val cached = hfDownloadCardCache[key]
+                        val downloaded = maxOf(cached?.downloadedBytes ?: 0L, partial.length())
+                        hfDownloadCardCache[key] = HfQueuedDownloadUiState(
+                            modelId = mid,
+                            filePath = fp,
+                            downloadedBytes = downloaded,
+                            totalBytes = cached?.totalBytes ?: 0L,
+                            statusText = "一時停止中 (${formatBytes(downloaded)} 保存済み)",
+                            isActive = false,
+                            isPaused = true
+                        )
+                        null
+                    } else {
+                        key
+                    }
                 }.toSet()
                 terminalKeys.forEach { hfDownloadCardCache.remove(it) }
 
@@ -5015,10 +5059,8 @@ open class ModelSettingsFragment : Fragment() {
                         ?: info.outputData.getString(ModelDownloadWorker.KEY_DOWNLOAD_KIND)
                         ?: ModelDownloadWorker.DOWNLOAD_KIND_HF_CUSTOM
                     if (kind != ModelDownloadWorker.DOWNLOAD_KIND_HF_CUSTOM) return@forEach
-                    val modelId = info.progress.getString(ModelDownloadWorker.KEY_HF_MODEL_ID)
-                        ?: info.outputData.getString(ModelDownloadWorker.KEY_HF_MODEL_ID)
-                    val filePath = info.progress.getString(ModelDownloadWorker.KEY_HF_FILE_PATH)
-                        ?: info.outputData.getString(ModelDownloadWorker.KEY_HF_FILE_PATH)
+                    val modelId = workValue(info, ModelDownloadWorker.KEY_HF_MODEL_ID)
+                    val filePath = workValue(info, ModelDownloadWorker.KEY_HF_FILE_PATH)
                     if (modelId == null || filePath == null) return@forEach
                     val key = "$modelId|$filePath"
                     val downloaded = info.progress.getLong(ModelDownloadWorker.KEY_DOWNLOADED_BYTES, 0L)
@@ -5045,7 +5087,8 @@ open class ModelSettingsFragment : Fragment() {
                         downloadedBytes = downloaded, totalBytes = total,
                         statusText = status,
                         isActive = info.state == WorkInfo.State.ENQUEUED ||
-                            info.state == WorkInfo.State.RUNNING || info.state == WorkInfo.State.BLOCKED
+                            info.state == WorkInfo.State.RUNNING || info.state == WorkInfo.State.BLOCKED,
+                        isPaused = false
                     )
                 }
 
@@ -5803,7 +5846,8 @@ open class ModelSettingsFragment : Fragment() {
         val downloadedBytes: Long,
         val totalBytes: Long,
         val statusText: String,
-        val isActive: Boolean
+        val isActive: Boolean,
+        val isPaused: Boolean = false
     ) {
         val progress: Float
             get() = if (totalBytes > 0L) {
