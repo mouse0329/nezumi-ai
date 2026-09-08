@@ -607,6 +607,17 @@ class ChatViewModel(
     private val _contextUsageChars = MutableStateFlow(0)
     val contextUsageChars: StateFlow<Int> = _contextUsageChars
 
+    // コンテキストメーター正確化: トークン数ベースの実測/実トークナイズ値。
+    // > 0 のとき UI は chars 換算ではなくこちらを優先表示する。
+    //   - GGUF: llamaTokenize (実トークナイザ) + n_past (KV 実測値・画像/音声含む)
+    //   - LiteRT-LM: Conversation.getTokenCount() (KV 実測値・画像/音声含む)
+    private val _contextUsageTokens = MutableStateFlow(0)
+    val contextUsageTokens: StateFlow<Int> = _contextUsageTokens
+
+    /** contextUsageTokens のうち画像・音声由来のトークン数 (詳細表示用)。 */
+    private val _contextMediaTokens = MutableStateFlow(0)
+    val contextMediaTokens: StateFlow<Int> = _contextMediaTokens
+
     private val _contextWindowSize = MutableStateFlow(4096)
     val contextWindowSize: StateFlow<Int> = _contextWindowSize
 
@@ -1045,6 +1056,20 @@ class ChatViewModel(
     suspend fun setCurrentSession(sessionId: Long) {
         val previousSessionId = _currentSessionId.value
         _currentSessionId.value = sessionId
+
+        // コンテキストメーター正確化: セッション切替時は一旦リセットし、
+        // 前回保存した実測値 (DB) があればそれで復元する (アプリ再起動対策)。
+        _contextUsageTokens.value = 0
+        _contextMediaTokens.value = 0
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { sessionRepository.getSessionById(sessionId) }.getOrNull()?.let { session ->
+                if (session.lastKnownContextTokens > 0) {
+                    _contextUsageTokens.value = session.lastKnownContextTokens
+                    _contextMediaTokens.value = session.lastKnownMediaTokens
+                    Log.d(TAG, "CONTEXT_METER: restored persisted tokens=${session.lastKnownContextTokens} (media=${session.lastKnownMediaTokens}) session=$sessionId")
+                }
+            }
+        }
 
         // 見た目（紫バー等）は「現在のセッションがシークレットか」で決める。
         // 解除時に見た目を戻す処理は不要になり、切替のたびにここで確定する。
@@ -2812,13 +2837,22 @@ class ChatViewModel(
                 val raw = end - baseStart
                 (raw - thinkingElapsedMs.coerceAtLeast(0L)).coerceAtLeast(0L)
             }
+            // トークン速度正確化:
+            //   LiteRT-LM は getBenchmarkInfo() の実測デコード TPS / トークン数を優先する。
+            //   (enableBenchmark=true で初期化済み。推論完了時にエンジン側が記録する)
+            //   文字数ヒューリスティック (TextTokenEstimator) より正確。
+            val isLiteRtEngineHere = !isGgufEngineModel(engineModelName)
+            val litertExactTps = if (isLiteRtEngineHere) manager.getLastDecodeTpsSync() else null
+            val litertExactDecodeTokens = if (isLiteRtEngineHere) manager.getLastDecodeTokenCountSync() else null
             val tps = if (generationTimeMs != null && generationTimeMs > 0L) {
                 val tokensAfterFirst = if (isGgufEngineModel(engineModelName)) {
                     val nativeTokens = manager.getLastGenerationTokenCount()
                     (nativeTokens?.minus(1f))?.coerceAtLeast(0f)
                         ?: (TextTokenEstimator.estimateOutputTokens(completeResponse) - 1f).coerceAtLeast(0f)
                 } else {
-                    (TextTokenEstimator.estimateOutputTokens(completeResponse) - 1f).coerceAtLeast(0f)
+                    // LiteRT-LM: 実測デコードトークン数を優先、なければ従来の文字数推定
+                    litertExactDecodeTokens?.let { (it - 1).toFloat().coerceAtLeast(0f) }
+                        ?: (TextTokenEstimator.estimateOutputTokens(completeResponse) - 1f).coerceAtLeast(0f)
                 }
                 if (tokensAfterFirst > 0f) {
                     tokensAfterFirst * 1000f / generationTimeMs
@@ -2828,8 +2862,26 @@ class ChatViewModel(
             } else {
                 null
             }
+            // LiteRT-LM: ネイティブ実測 TPS が取れた場合はそちらを優先する
+            val finalTps = litertExactTps ?: tps
 
-            Log.d(TAG, "Inference collection completed: hasPayload=$hasPayload, completeResponse.length=${completeResponse.length}, finalThinking=${!finalThinking.isNullOrEmpty()}, generationTimeMs=$generationTimeMs, tps=$tps")
+            Log.d(TAG, "Inference collection completed: hasPayload=$hasPayload, completeResponse.length=${completeResponse.length}, finalThinking=${!finalThinking.isNullOrEmpty()}, generationTimeMs=$generationTimeMs, tps=$tps finalTps=$finalTps")
+
+            // コンテキストメーター正確化: 推論完了時点の KV 実測値 (画像・音声含む) で更新し、
+            // セッションに永続化する (アプリ再起動後の復元用)。
+            runCatching {
+                val exactContextTokens = manager.getCurrentContextTokenCountSync()
+                if (exactContextTokens != null && exactContextTokens > 0) {
+                    val mediaTokens = manager.getLastPromptTokenInfoSync()?.second ?: 0
+                    _contextUsageTokens.value = exactContextTokens
+                    _contextMediaTokens.value = mediaTokens
+                    // シークレットセッションは DB に残さない (既存のプライバシー方針に合わせる)
+                    if (!_isCurrentSessionIncognito.value) {
+                        sessionRepository.updateLastKnownContextTokens(sessionId, exactContextTokens, mediaTokens)
+                    }
+                    Log.d(TAG, "CONTEXT_METER: exact context tokens=$exactContextTokens (media=$mediaTokens) session=$sessionId")
+                }
+            }.onFailure { Log.w(TAG, "persist context tokens failed", it) }
 
             val finalizationContext =
                 if (collectionCancelledByUser) Dispatchers.IO + NonCancellable else Dispatchers.IO
@@ -2843,7 +2895,7 @@ class ChatViewModel(
                         isStreaming = false,
                         thinkingContent = finalThinking,
                         toolResultsJson = finalToolResultsJson,
-                        generationTps = tps,
+                        generationTps = finalTps,
                         generationTimeMs = generationTimeMs,
                         ttftMs = ttftMs
                     )
@@ -4566,6 +4618,31 @@ class ChatViewModel(
         val basePromptSize = trimmedBase.length
         // モーダル表示用に、現時点で組み立てられている生のプロンプト全文を保持しておく
         _contextRawPrompt.value = trimmedBase
+
+        // コンテキストメーター正確化 (GGUF):
+        //   chars→トークン換算 (÷4) は粗いため、モデルロード済みなら実トークナイザで
+        //   正確なトークン数を取得し、メーターにはトークン数を表示する。
+        //   トークナイズはプロンプト評価を伴わないため軽い。失敗時は従来の chars 換算にフォールバック。
+        val manager = requireModelManager()
+        if (isGgufEngine) {
+            runCatching { manager.countPromptTokensSync(trimmedBase) }
+                .getOrNull()?.let { exactTokens ->
+                    if (exactTokens > 0) {
+                        _contextUsageTokens.value = exactTokens
+                        Log.d(TAG, "CONTEXT_METER: GGUF exact tokenized tokens=$exactTokens (chars=$basePromptSize)")
+                    }
+                }
+        } else {
+            // LiteRT-LM: 会話の KV キャッシュ実測値 (画像・音声を含む) があれば優先する。
+            //   Conversation.getTokenCount() は prefill + decode の実測トークン数を返す。
+            runCatching { manager.getCurrentContextTokenCountSync() }
+                .getOrNull()?.let { exactTokens ->
+                    if (exactTokens > 0) {
+                        _contextUsageTokens.value = exactTokens
+                        Log.d(TAG, "CONTEXT_METER: LiteRT exact KV tokens=$exactTokens (chars=$basePromptSize)")
+                    }
+                }
+        }
 
         // コンテキスト圧縮が無効な場合、またはGPU使用時は未圧縮のサイズをそのまま返す
         if (!config.isContextCompressionEnabledForRuntime() || config.backendType == "GPU") {

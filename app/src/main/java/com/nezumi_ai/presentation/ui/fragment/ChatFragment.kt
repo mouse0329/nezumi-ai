@@ -222,6 +222,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var contextMeterText by mutableStateOf("")
     private var contextMeterProgress by mutableStateOf(0f)
     private var contextUsageCharsNow by mutableStateOf(0)
+    // コンテキストメーター正確化: 実測トークンのうち画像・音声由来のトークン数 (詳細表示用)
+    private var contextMeterMediaTokens by mutableStateOf(0)
  // 新: コンテキストメーターの表示可否。全般タブで切り替えられる。既定は表示しない。
     private var contextMeterVisible by mutableStateOf(false)
     // メーターをタップしたときに表示する raw コンテキストモーダルの可視フラグと中身。
@@ -1535,14 +1537,23 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         viewLifecycleOwner.lifecycleScope.launch {
             combine(
                 viewModel.contextUsageChars,
+                viewModel.contextUsageTokens,
+                viewModel.contextMediaTokens,
                 viewModel.contextWindowSize
-            ) { usedChars, maxTokens ->
-                Pair(usedChars, maxTokens)
-            }.collect { (usedChars, maxTokens) ->
-                val usedTokens = ((usedChars + 3) / 4).coerceAtLeast(0)
+            ) { usedChars, exactTokens, mediaTokens, maxTokens ->
+                arrayOf(usedChars, exactTokens, mediaTokens, maxTokens)
+            }.collect { (usedChars, exactTokens, mediaTokens, maxTokens) ->
+                // コンテキストメーター正確化:
+                //   実測/実トークナイズのトークン数 (contextUsageTokens) が取れているときは
+                //   従来の chars→トークン換算 (÷4) よりそちらを優先表示する。
+                //   画像・音声トークンを含むため、マルチモーダル利用時も実態に近い。
+                val usedTokens = if (exactTokens > 0) exactTokens else ((usedChars + 3) / 4).coerceAtLeast(0)
                 val safeMaxTokens = maxTokens.coerceAtLeast(1)
-                contextUsageCharsNow = usedChars
+                // 実測トークンが取れている場合はタップ可否判定にもそれを使う
+                // (DB 復元直後など usedChars=0 でもメーターを触れるようにする)
+                contextUsageCharsNow = if (exactTokens > 0) usedTokens else usedChars
                 contextMeterText = getString(R.string.context_meter_format, usedTokens, safeMaxTokens)
+                contextMeterMediaTokens = mediaTokens.coerceAtLeast(0)
                 contextMeterProgress =
                     (((usedTokens.toLong() * 1000L) / safeMaxTokens.toLong()).toInt().coerceIn(0, 1000) / 1000f)
                 renderCompressButtonState()

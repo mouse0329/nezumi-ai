@@ -37,6 +37,14 @@ class ChatSessionRepository(
         val session = dao.getSessionById(sessionId) ?: return
         dao.update(session.copy(lastUpdated = System.currentTimeMillis()))
     }
+
+    /**
+     * コンテキストメーター正確化: セッションの最後に実測されたコンテキスト使用量を保存する。
+     * アプリ再起動後のメーター復元に使われる。
+     */
+    suspend fun updateLastKnownContextTokens(sessionId: Long, tokens: Int, mediaTokens: Int) {
+        runCatching { dao.updateLastKnownContextTokens(sessionId, tokens, mediaTokens) }
+    }
     
     suspend fun deleteSession(sessionId: Long) {
         dao.deleteById(sessionId)

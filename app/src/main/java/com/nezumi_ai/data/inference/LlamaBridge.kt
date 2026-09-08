@@ -109,6 +109,26 @@ object LlamaBridge {
     /** KV キャッシュをクリアする。セッション切り替え時に呼ぶ。 */
     external fun llamaClearKvCache(ctx: Long)
 
+    // ─── コンテキストメーター正確化 ──────────────────────────────
+
+    /**
+     * 現在の KV キャッシュ使用量 (n_past) を返す。
+     * テキスト・画像・音声すべての評価済みトークンを含む実測値。未初期化時は -1。
+     */
+    external fun nativeGetPastTokenCount(ctx: Long): Int
+
+    /**
+     * 直近リクエストのプロンプトトークン情報を返す。
+     * 戻り値: [合計トークン数, うちメディア (画像/音声) のトークン数]。未推論時は null。
+     */
+    external fun nativeGetLastPromptTokenInfo(ctx: Long): IntArray?
+
+    /**
+     * テキストを実トークナイザでトークナイズし、トークン数だけを返す。
+     * プロンプト評価は行わないため推論よりはるかに軽い。失敗時は -1。
+     */
+    external fun nativeCountPromptTokens(ctx: Long, text: String): Int
+
     // ─── 低レベル推論プリミティブ ────────────────────────────────
 
     /** トークン列をデコード（KV キャッシュに追加）する。0 = 成功、負値 = エラー。 */

@@ -270,6 +270,19 @@ class GgufInferenceService : Service() {
             }
         }
 
+        // ─── コンテキストメーター正確化 (GGUF 固有) ─────────────────
+
+        override fun getGgufPastTokenCount(): Int =
+            ggufEngine.getPastTokenCount() ?: -1
+
+        override fun getGgufLastPromptTokenInfo(): IntArray? {
+            val info = ggufEngine.getLastPromptTokenInfo() ?: return null
+            return intArrayOf(info.first, info.second)
+        }
+
+        override fun countGgufPromptTokens(text: String?): Int =
+            if (text.isNullOrEmpty()) -1 else ggufEngine.countPromptTokens(text) ?: -1
+
         // ─── LiteRT-LM 固有 (GGUF 側は no-op) ─────────────────────
 
         override fun markSessionHasMedia(sessionId: Long) = Unit

@@ -63,6 +63,20 @@ interface IRemoteInferenceEngine {
     void parseWithGgufChatTemplate(String output, boolean isPartial,
                                    IRemoteStringCallback callback);
 
+    // ─── コンテキストメーター正確化 (GGUF 固有) ─────────────────
+
+    /** 現在の KV キャッシュ使用量 (n_past)。画像・音声を含む実測値。未ロード時は -1。 */
+    int getGgufPastTokenCount();
+
+    /** 直近リクエストのプロンプトトークン [合計, うちメディア]。未推論時は null。 */
+    int[] getGgufLastPromptTokenInfo();
+
+    /**
+     * テキストを実トークナイザでトークナイズしてトークン数だけを返す。
+     * プロンプト評価はしないので軽い。失敗時・未ロード時は -1。
+     */
+    int countGgufPromptTokens(String text);
+
     // ─── LiteRT-LM 固有 (GGUF 側では no-op) ────────────────────
 
     oneway void markSessionHasMedia(long sessionId);

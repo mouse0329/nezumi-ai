@@ -718,6 +718,46 @@ class ModelManager(
         return PerformanceMonitor.getLastCompletedTokenCount()
     }
 
+    // ─── コンテキストメーター / TPS 正確化 ──────────────────────────────
+
+    /**
+     * 現在のコンテキスト (KV キャッシュ) 使用量をトークン数で返す。
+     * 画像・音声を含む実測値。未取得時は null。
+     *   - GGUF: llama.cpp の n_past (評価済みトークン数)
+     *   - LiteRT-LM: Conversation.getTokenCount() (prefill + decode)
+     */
+    fun getCurrentContextTokenCountSync(): Int? = when (val engine = activeEngine) {
+        is RemoteGgufInferenceEngine -> engine.getPastTokenCountSync()
+        is RemoteLiteRtInferenceEngine -> engine.getConversationTokenCountSync()
+        else -> null
+    }
+
+    /**
+     * 直近リクエストのプロンプトトークン (合計, うちメディア)。未取得時は null。
+     *   - GGUF: mtmd_tokenize の実測値 (画像・音声トークンを含む)
+     *   - LiteRT-LM: getBenchmarkInfo().lastPrefillTokenCount (画像・音声を含む)
+     */
+    fun getLastPromptTokenInfoSync(): Pair<Int, Int>? = when (val engine = activeEngine) {
+        is RemoteGgufInferenceEngine -> engine.getLastPromptTokenInfoSync()
+        is RemoteLiteRtInferenceEngine ->
+            engine.getLastBenchmarkSync()?.let { it.prefillTokens to 0 }
+        else -> null
+    }
+
+    /** テキストを実トークナイザでトークナイズしてトークン数だけを返す (GGUF のみ)。未取得時は null。 */
+    fun countPromptTokensSync(text: String): Int? =
+        (activeEngine as? RemoteGgufInferenceEngine)?.countPromptTokensSync(text)
+
+    /** 直近推論の実測デコード TPS (LiteRT-LM のみ)。未取得時は null。 */
+    fun getLastDecodeTpsSync(): Float? =
+        (activeEngine as? RemoteLiteRtInferenceEngine)?.getLastBenchmarkSync()
+            ?.decodeTokensPerSecond?.takeIf { it > 0.0 }?.toFloat()
+
+    /** 直近推論の実測デコードトークン数 (LiteRT-LM のみ)。未取得時は null。 */
+    fun getLastDecodeTokenCountSync(): Int? =
+        (activeEngine as? RemoteLiteRtInferenceEngine)?.getLastBenchmarkSync()
+            ?.decodeTokens?.takeIf { it >= 0 }
+
     /* Phase 15 TODO: calibrateBackend を後で実装
      * 一時的にコメントアウト（SettingsRepository 統合が必要）
      

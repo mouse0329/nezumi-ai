@@ -496,6 +496,33 @@ class GgufInferenceEngine(
     }
 
     /**
+     * 現在の KV キャッシュ使用量 (n_past)。画像・音声を含む実測値。
+     * コンテキストメーター正確化用。未ロード時は null。
+     */
+    fun getPastTokenCount(): Int? {
+        val ctx = llamaCppCtx ?: return null
+        if (!ctx.isValid) return null
+        return ctx.getPastTokenCount().takeIf { it >= 0 }
+    }
+
+    /** 直近リクエストのプロンプトトークン (合計, うちメディア)。未推論時は null。 */
+    fun getLastPromptTokenInfo(): Pair<Int, Int>? {
+        val ctx = llamaCppCtx ?: return null
+        if (!ctx.isValid) return null
+        return ctx.getLastPromptTokenInfo()
+    }
+
+    /**
+     * テキストを実トークナイザでトークナイズしてトークン数だけを返す。
+     * メーター更新 (送信前の推定) 用。未ロード時は null。
+     */
+    fun countPromptTokens(text: String): Int? {
+        val ctx = llamaCppCtx ?: return null
+        if (!ctx.isValid || text.isEmpty()) return null
+        return ctx.countPromptTokens(text).takeIf { it >= 0 }
+    }
+
+    /**
  * 「次回推論開始前に KV を強制クリア」フラグを立てる。
      *
      * ユーザー停止 / revoke 直後の「壊れた状態」に備えてコンテキストを一旦リセットさせる。

@@ -16,4 +16,16 @@ object RemoteEngineStatusKeys {
 
     /** LiteRT-LM: 現在ロード済みのバックエンド ("GPU" / "CPU" / "NPU"、未ロード時は null) */
     const val KEY_LOADED_BACKEND = "loadedBackend"
+
+    /**
+     * LiteRT-LM: 現在の会話の KV キャッシュ内トークン数 (prefill + decode)。
+     * 画像・音声を含む実測値。会話未生成・未取得時は -1。
+     */
+    const val KEY_CONVERSATION_TOKEN_COUNT = "conversationTokenCount"
+
+    /** LiteRT-LM: 直近推論の実測ベンチマーク (未推論時はいずれも -1) */
+    const val KEY_LAST_PREFILL_TOKENS = "lastPrefillTokens"
+    const val KEY_LAST_DECODE_TOKENS = "lastDecodeTokens"
+    const val KEY_LAST_DECODE_TPS = "lastDecodeTokensPerSecond"
+    const val KEY_LAST_TTFT_MS = "lastTtftMs"
 }

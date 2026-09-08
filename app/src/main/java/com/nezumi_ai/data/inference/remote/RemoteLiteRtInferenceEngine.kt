@@ -127,6 +127,39 @@ class RemoteLiteRtInferenceEngine(
             .getString(RemoteEngineStatusKeys.KEY_LOADED_BACKEND)
 
     /**
+     * 現在の会話の KV キャッシュ内トークン数 (prefill + decode)。
+     * 画像・音声を含む実測値。コンテキストメーター正確化用。未取得時は null。
+     */
+    fun getConversationTokenCountSync(): Int? =
+        connection.getEngineStatusSync()
+            .getInt(RemoteEngineStatusKeys.KEY_CONVERSATION_TOKEN_COUNT, -1)
+            .takeIf { it >= 0 }
+
+    /**
+     * 直近推論の実測ベンチマーク。
+     * LiteRT-LM の getBenchmarkInfo() から取得した prefill/decode トークン数と TPS。
+     */
+    data class LiteRtBenchmark(
+        val prefillTokens: Int,
+        val decodeTokens: Int,
+        val decodeTokensPerSecond: Double,
+        val ttftMs: Double,
+    )
+
+    /** 直近推論の実測ベンチマーク。未推論・未取得時は null。 */
+    fun getLastBenchmarkSync(): LiteRtBenchmark? {
+        val status = connection.getEngineStatusSync()
+        val prefill = status.getInt(RemoteEngineStatusKeys.KEY_LAST_PREFILL_TOKENS, -1)
+        if (prefill < 0) return null
+        return LiteRtBenchmark(
+            prefillTokens = prefill,
+            decodeTokens = status.getInt(RemoteEngineStatusKeys.KEY_LAST_DECODE_TOKENS, -1),
+            decodeTokensPerSecond = status.getDouble(RemoteEngineStatusKeys.KEY_LAST_DECODE_TPS, -1.0),
+            ttftMs = status.getDouble(RemoteEngineStatusKeys.KEY_LAST_TTFT_MS, -1.0),
+        )
+    }
+
+    /**
      * 「このセッションは media を含む」ことをリモートの LiteRtLmEngine に伝える。
      * ChatViewModel のマルチターン画像対応で利用する。
      */

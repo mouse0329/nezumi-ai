@@ -21,6 +21,7 @@
  *   - マルチモーダル (mtmd): nativeIsVisionSupported / nativeIsAudioSupported / nativeGetAudioSampleRate
  *   - タイミング統計 (nativeGetLastTimings)
  *   - GPU バックエンド選択 (CPU / OpenCL / Vulkan)
+ *   - コンテキストメーター正確化 (nativeGetPastTokenCount / nativeCountPromptTokens)
  */
 
 #include <jni.h>
@@ -156,6 +157,8 @@ struct NezumiLlamaCtx
     int n_batch = 512;
     int n_ubatch = 512;
     int n_past = 0; // KVキャッシュに書き込み済みのトークン数（位置オフセット）
+    int32_t last_prompt_tokens = 0;      // 直近リクエストのプロンプトトークン数 (画像・音声含む)
+    int32_t last_prompt_media_tokens = 0; // うち画像・音声のトークン数
     bool context_shift_enabled = true;
 
     // 要求バックエンドと実際に使われたバックエンド（フォールバック検知用）。
@@ -1003,6 +1006,11 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
     }
     tokens.resize(n_tokens);
 
+    // コンテキストメーター正確化用に、実際にトークナイズされたプロンプト長を記録する。
+    // テキストのみなのでメディアトークンは 0。
+    nc->last_prompt_tokens = n_tokens;
+    nc->last_prompt_media_tokens = 0;
+
     // プロンプトがコンテキストに収まらない場合は先にシフト/クリア
     if (nc->n_past + n_tokens > nc->n_ctx)
     {
@@ -1143,6 +1151,27 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
         LOGE("nativeCompleteWithMedia: mtmd_tokenize failed ret=%d", tok_ret);
         mtmd_input_chunks_free(chunks);
         return env->NewStringUTF("");
+    }
+
+    // コンテキストメーター正確化用に、実際にトークナイズされた
+    // プロンプト + メディアのトークン数を記録する。
+    // mtmd_input_chunk_get_n_tokens() はテキストチャンクでも有効 (llama_tokenize 結果)。
+    {
+        int32_t total_tokens = 0;
+        int32_t media_tokens = 0;
+        const size_t n_chunks = mtmd_input_chunks_size(chunks);
+        for (size_t i = 0; i < n_chunks; ++i)
+        {
+            const mtmd_input_chunk *chunk = mtmd_input_chunks_get(chunks, i);
+            if (!chunk)
+                continue;
+            const size_t n = mtmd_input_chunk_get_n_tokens(chunk);
+            total_tokens += static_cast<int32_t>(n);
+            if (mtmd_input_chunk_get_type(chunk) != MTMD_INPUT_CHUNK_TYPE_TEXT)
+                media_tokens += static_cast<int32_t>(n);
+        }
+        nc->last_prompt_tokens = total_tokens;
+        nc->last_prompt_media_tokens = media_tokens;
     }
 
     // コンテキストに収まるか確認（超過時はクリア）
@@ -1388,6 +1417,85 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeGetLastTimings(
     jfloatArray result = env->NewFloatArray(4);
     env->SetFloatArrayRegion(result, 0, 4, timings);
     return result;
+}
+
+// ─── コンテキストメーター正確化 ──────────────────────────────────
+
+/**
+ * 現在の KV キャッシュ使用量 (n_past) を返す。
+ * テキスト・画像・音声すべての評価済みトークンを含む実測値。
+ */
+extern "C" JNIEXPORT jint JNICALL
+Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeGetPastTokenCount(
+    JNIEnv * /* env */,
+    jobject /* obj */,
+    jlong j_ctx)
+{
+    auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
+    if (!nc || !nc->ctx)
+        return -1;
+    return static_cast<jint>(nc->n_past);
+}
+
+/**
+ * 直近リクエストのプロンプトトークン情報を返す。
+ * 戻り値: [合計トークン数, うちメディア (画像/音声) のトークン数]。未推論時は null。
+ */
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeGetLastPromptTokenInfo(
+    JNIEnv *env,
+    jobject /* obj */,
+    jlong j_ctx)
+{
+    auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
+    if (!nc || !nc->ctx)
+        return nullptr;
+    jint values[2] = {
+        static_cast<jint>(nc->last_prompt_tokens),
+        static_cast<jint>(nc->last_prompt_media_tokens),
+    };
+    jintArray result = env->NewIntArray(2);
+    env->SetIntArrayRegion(result, 0, 2, values);
+    return result;
+}
+
+/**
+ * テキストを実トークナイザでトークナイズし、トークン数だけを返す。
+ * プロンプト評価は行わないため推論よりはるかに軽い。
+ * 失敗時 (コンテキスト未初期化 / トークナイズ失敗) は -1。
+ */
+extern "C" JNIEXPORT jint JNICALL
+Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCountPromptTokens(
+    JNIEnv *env,
+    jobject /* obj */,
+    jlong j_ctx,
+    jstring j_text)
+{
+    auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
+    if (!nc || !nc->ctx || !j_text)
+        return -1;
+
+    const char *text = env->GetStringUTFChars(j_text, nullptr);
+    if (!text)
+        return -1;
+    const size_t text_len = strlen(text);
+
+    const llama_vocab *vocab = llama_model_get_vocab(nc->model);
+    // まず必要数を取得 (負の戻り値 = 必要バッファサイズ)
+    int n = llama_tokenize(vocab, text, static_cast<int32_t>(text_len),
+                           nullptr, 0, /* add_special */ false, /* parse_special */ true);
+    if (n < 0)
+        n = -n;
+    if (n <= 0)
+    {
+        env->ReleaseStringUTFChars(j_text, text);
+        return -1;
+    }
+    std::vector<llama_token> tokens(n);
+    n = llama_tokenize(vocab, text, static_cast<int32_t>(text_len),
+                       tokens.data(), n, false, true);
+    env->ReleaseStringUTFChars(j_text, text);
+    return n > 0 ? static_cast<jint>(n) : -1;
 }
 
 // ─── ユーティリティ ──────────────────────────────────────────────

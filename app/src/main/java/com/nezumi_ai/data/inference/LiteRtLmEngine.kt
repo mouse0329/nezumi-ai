@@ -104,6 +104,39 @@ class LiteRtLmEngine(
      * 経由で取得する。
      */
     fun currentLoadedBackend(): String? = loadedBackend
+
+    /** 直近の推論完了時点でのネイティブ実測ベンチマーク (getBenchmarkInfo の抜粋)。 */
+    data class InferenceBenchmarkSnapshot(
+        val prefillTokens: Int,
+        val decodeTokens: Int,
+        val prefillTokensPerSecond: Double,
+        val decodeTokensPerSecond: Double,
+        val timeToFirstTokenMs: Double,
+    )
+
+    /** 直近推論の実測ベンチマーク。sendMessageAsync 完了時に記録される。未取得時は null。 */
+    @Volatile var lastInferenceBenchmark: InferenceBenchmarkSnapshot? = null
+        private set
+
+    /**
+     * 現在の会話の KV キャッシュ内トークン数 (prefill + decode) を返す。
+     * LiteRT-LM の [Conversation.getTokenCount] は画像・音声を含む実測値。
+     * コンテキストメーター正確化用。会話未生成・取得失敗時は null。
+     *
+     * LiteRtEngineService の Binder スレッドからも呼ばれるため非サスペンド。
+     * (サスペンド + Mutex 版だと、推論完了直後に inferenceMutex を保持したままの
+     *  Binder スレッドがブロックされ、デッドロックする恐れがある)
+     */
+    fun getConversationTokenCount(): Int? {
+        val conv = activeLiteRtConversation ?: return null
+        return runCatching { conv.getTokenCount() }
+            .onFailure { Log.w(TAG, "getTokenCount failed", it) }
+            .getOrNull()?.takeIf { it >= 0 }
+    }
+
+    /** 直近推論の実測ベンチマーク。未取得時は null。 */
+    fun getLastBenchmarkSnapshot(): InferenceBenchmarkSnapshot? = lastInferenceBenchmark
+
     @Volatile private var loadedWithVisionAudio: Boolean = false
     private var disableXnnpackCacheForProcess: Boolean = false
     private val modelMutex = Mutex()
@@ -888,6 +921,11 @@ class LiteRtLmEngine(
 
             var eng = newEngine(withVisionAudio, backend, initCacheDirForEngine)
             val initStartMs = System.currentTimeMillis()
+            // コンテキストメーター / TPS 正確化:
+            //   getBenchmarkInfo() はエンジン設定でベンチマークが有効化されている必要がある。
+            //   ExperimentalFlags はグローバル設定のため、initialize() 前に立てる。
+            //   (Engine.initialize() が nativeCreateEngine にこのフラグを渡す)
+            ExperimentalFlags.enableBenchmark = true
             try {
                 eng.initialize()
                 val initEndMs = System.currentTimeMillis()
@@ -1541,6 +1579,35 @@ class LiteRtLmEngine(
                     val totalElapsed = System.currentTimeMillis() - inferenceStartMs
                     val finalTps = if (totalElapsed > 0) tokenCount * 1000.0 / totalElapsed else 0.0
                     Log.i(TAG, "Inference complete: %.1f tok/s total (tokens=%.1f, ${totalElapsed}ms) session=$sessionId".format(finalTps, tokenCount))
+
+                    // コンテキストメーター / TPS 正確化:
+                    //   完了時点でネイティブ実測のベンチマーク情報を取得する。
+                    //   getBenchmarkInfo() は enableBenchmark=true でエンジン初期化済みのため有効。
+                    //   - lastDecodeTokenCount / lastDecodeTokensPerSecond: 正確な TPS
+                    //   - lastPrefillTokenCount: 画像・音声を含む正確なプロンプトトークン数
+                    if (!useExtractionConversation) {
+                        runCatching {
+                            val info = conv.getBenchmarkInfo()
+                            val snapshot = InferenceBenchmarkSnapshot(
+                                prefillTokens = info.lastPrefillTokenCount,
+                                decodeTokens = info.lastDecodeTokenCount,
+                                prefillTokensPerSecond = info.lastPrefillTokensPerSecond,
+                                decodeTokensPerSecond = info.lastDecodeTokensPerSecond,
+                                timeToFirstTokenMs = info.timeToFirstTokenInSecond * 1000.0,
+                            )
+                            lastInferenceBenchmark = snapshot
+                            if (snapshot.decodeTokensPerSecond > 0.0) {
+                                trySend(
+                                    InferenceStreamProtocol.encodeTps(
+                                        snapshot.decodeTokensPerSecond.toFloat()
+                                    )
+                                ).isSuccess
+                            }
+                            Log.d(TAG, "Benchmark: prefill=${snapshot.prefillTokens}tok decode=${snapshot.decodeTokens}tok tps=${snapshot.decodeTokensPerSecond} session=$sessionId")
+                        }.onFailure {
+                            Log.w(TAG, "getBenchmarkInfo failed (benchmark may be disabled)", it)
+                        }
+                    }
 
                     // toolResultCards をJSON化して toolResultsJson として送出
                     val toolResultsJson = if (toolResultCards.isNotEmpty()) {

@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 /**
@@ -149,6 +150,28 @@ class RemoteGgufInferenceEngine(
     fun hasGgufChatTemplate(): Boolean =
         connection.getEngineStatusSync()
             .getBoolean(RemoteEngineStatusKeys.KEY_HAS_GGUF_CHAT_TEMPLATE, false)
+
+    /** 現在の KV キャッシュ使用量 (n_past)。画像・音声を含む実測値。未取得時は null。 */
+    fun getPastTokenCountSync(): Int? = runBlocking(Dispatchers.IO) {
+        runCatching { connection.getService().ggufPastTokenCount }
+            .getOrNull()?.takeIf { it >= 0 }
+    }
+
+    /** 直近リクエストのプロンプトトークン (合計, うちメディア)。未取得時は null。 */
+    fun getLastPromptTokenInfoSync(): Pair<Int, Int>? = runBlocking(Dispatchers.IO) {
+        runCatching { connection.getService().ggufLastPromptTokenInfo }
+            .getOrNull()?.takeIf { it.size >= 2 }?.let { it[0] to it[1] }
+    }
+
+    /**
+     * テキストを実トークナイザでトークナイズしてトークン数だけを返す。
+     * メーター更新 (送信前の推定) 用。未取得時は null。
+     */
+    fun countPromptTokensSync(text: String): Int? = runBlocking(Dispatchers.IO) {
+        if (text.isEmpty()) return@runBlocking null
+        runCatching { connection.getService().countGgufPromptTokens(text) }
+            .getOrNull()?.takeIf { it >= 0 }
+    }
 
     fun clearKvCacheIfLoaded() = connection.clearKvCacheIfLoadedSync()
 

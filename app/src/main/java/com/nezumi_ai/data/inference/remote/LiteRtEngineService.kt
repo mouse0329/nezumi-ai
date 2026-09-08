@@ -175,6 +175,17 @@ class LiteRtEngineService : Service() {
 
         override fun getEngineStatus(): Bundle = Bundle().apply {
             putString(RemoteEngineStatusKeys.KEY_LOADED_BACKEND, liteRtEngine.currentLoadedBackend())
+            // コンテキストメーター / TPS 正確化:
+            //   会話の KV トークン数と直近推論の実測ベンチマークを公開する。
+            putInt(
+                RemoteEngineStatusKeys.KEY_CONVERSATION_TOKEN_COUNT,
+                liteRtEngine.getConversationTokenCount() ?: -1
+            )
+            val bench = liteRtEngine.getLastBenchmarkSnapshot()
+            putInt(RemoteEngineStatusKeys.KEY_LAST_PREFILL_TOKENS, bench?.prefillTokens ?: -1)
+            putInt(RemoteEngineStatusKeys.KEY_LAST_DECODE_TOKENS, bench?.decodeTokens ?: -1)
+            putDouble(RemoteEngineStatusKeys.KEY_LAST_DECODE_TPS, bench?.decodeTokensPerSecond ?: -1.0)
+            putDouble(RemoteEngineStatusKeys.KEY_LAST_TTFT_MS, bench?.timeToFirstTokenMs ?: -1.0)
         }
 
         // ─── GGUF 固有 (LiteRT 側は no-op) ────────────────────────
@@ -205,6 +216,12 @@ class LiteRtEngineService : Service() {
         ) {
             callback?.onResult("{}")
         }
+
+        // ─── コンテキストメーター正確化 (GGUF 固有のため LiteRT 側は no-op) ──
+
+        override fun getGgufPastTokenCount(): Int = -1
+        override fun getGgufLastPromptTokenInfo(): IntArray? = null
+        override fun countGgufPromptTokens(text: String?): Int = -1
 
         // ─── LiteRT-LM 固有 ──────────────────────────────────────
 

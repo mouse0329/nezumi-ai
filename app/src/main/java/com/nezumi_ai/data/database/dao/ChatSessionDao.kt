@@ -40,6 +40,10 @@ interface ChatSessionDao {
 
     @Query("UPDATE chat_session SET selectedModel = :newPath WHERE selectedModel = :oldPath")
     suspend fun updateSelectedModelPath(oldPath: String, newPath: String)
+
+    /** コンテキストメーター正確化: 最後に実測されたコンテキスト使用量を保存する。 */
+    @Query("UPDATE chat_session SET lastKnownContextTokens = :tokens, lastKnownMediaTokens = :mediaTokens WHERE id = :sessionId")
+    suspend fun updateLastKnownContextTokens(sessionId: Long, tokens: Int, mediaTokens: Int)
     
     @Query("SELECT COUNT(*) FROM chat_session")
     suspend fun getSessionCount(): Int

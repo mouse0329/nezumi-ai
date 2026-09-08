@@ -35,7 +35,7 @@ import com.nezumi_ai.data.database.entity.ToolCallHistoryEntity
         MemorySessionEntity::class,
         ToolCallHistoryEntity::class
     ],
-    version = 33,
+    version = 34,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
@@ -61,7 +61,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                     NezumiAiDatabase::class.java,
                     "nezumi_ai.db"
                 )
-                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33)
+                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34)
                     // 開発中: スキーマ不一致時は再作成して起動クラッシュを回避
                     .fallbackToDestructiveMigration()
                     .build()
@@ -273,6 +273,18 @@ abstract class NezumiAiDatabase : RoomDatabase() {
         private val MIGRATION_32_33 = object : androidx.room.migration.Migration(32, 33) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE settings ADD COLUMN llamaCppGpuBackend TEXT NOT NULL DEFAULT 'CPU'")
+            }
+        }
+
+        /**
+         * コンテキストメーター正確化:
+         * セッションごとに最後に実測されたコンテキスト使用量 (トークン数) を保存し、
+         * アプリ再起動後もメーターを復元できるようにする。
+         */
+        private val MIGRATION_33_34 = object : androidx.room.migration.Migration(33, 34) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE chat_session ADD COLUMN lastKnownContextTokens INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE chat_session ADD COLUMN lastKnownMediaTokens INTEGER NOT NULL DEFAULT 0")
             }
         }
 

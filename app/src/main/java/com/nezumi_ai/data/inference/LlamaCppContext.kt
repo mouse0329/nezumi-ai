@@ -101,6 +101,27 @@ class LlamaCppContext(
         return LastTimings(values[0], values[1], values[2], values[3])
     }
 
+    /** 現在の KV キャッシュ使用量 (n_past)。画像・音声を含む実測値。未初期化時は -1。 */
+    fun getPastTokenCount(): Int =
+        if (ptr == 0L) -1 else LlamaBridge.nativeGetPastTokenCount(ptr)
+
+    /** 直近リクエストのプロンプトトークン (合計, うちメディア)。未推論時は null。 */
+    fun getLastPromptTokenInfo(): Pair<Int, Int>? {
+        if (ptr == 0L) return null
+        val values = LlamaBridge.nativeGetLastPromptTokenInfo(ptr) ?: return null
+        if (values.size < 2) return null
+        return values[0] to values[1]
+    }
+
+    /**
+     * テキストを実トークナイザでトークナイズしてトークン数だけを返す。
+     * プロンプト評価はしないので軽い。失敗時は -1。
+     */
+    fun countPromptTokens(text: String): Int {
+        if (ptr == 0L || text.isEmpty()) return -1
+        return LlamaBridge.nativeCountPromptTokens(ptr, text)
+    }
+
     fun interrupt() {
         if (ptr != 0L) LlamaBridge.nativeInterrupt(ptr)
     }
