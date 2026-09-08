@@ -79,6 +79,7 @@ class MainActivity : AppCompatActivity() {
     private var isIncognitoModeActive = false
     private var biometricPrompt: BiometricPrompt? = null
     private var authOverlayView: android.view.View? = null
+    private var authOverlayDialog: android.app.Dialog? = null
     private var latestDrawerSessions: List<ChatSessionEntity> = emptyList()
     private var drawerDateRefreshJob: Job? = null
     private var lastRenderedDrawerDayStartMillis: Long = 0L
@@ -550,7 +551,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun createAndShowAuthOverlay() {
         // すでに表示されている場合はスキップ
-        if (authOverlayView != null) return
+        if (authOverlayDialog?.isShowing == true) return
 
         // LinearLayout コンテナを作成
         val overlayContainer = android.widget.LinearLayout(this).apply {
@@ -685,26 +686,41 @@ class MainActivity : AppCompatActivity() {
 
         overlayContainer.addView(buttonContainer)
 
-        authOverlayView = overlayContainer
-
-        // 画面全体に追加
-        (binding.root.parent as? android.view.ViewGroup)?.addView(
-            authOverlayView,
-            android.view.ViewGroup.LayoutParams(
-                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+        // Activity の通常 View では既存の Dialog/BottomSheet より下に回るため、
+        // ロック画面自身を Dialog ウィンドウとして最前面に表示する。
+        val lockDialog = android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen).apply {
+            setCancelable(false)
+            setCanceledOnTouchOutside(false)
+            setContentView(
+                overlayContainer,
+                android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                )
             )
+            setOnDismissListener {
+                if (authOverlayDialog === this) {
+                    authOverlayDialog = null
+                    authOverlayView = null
+                }
+            }
+        }
+        authOverlayView = overlayContainer
+        authOverlayDialog = lockDialog
+        lockDialog.show()
+        lockDialog.window?.setLayout(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT
         )
 
         Log.d(TAG, "Auth overlay displayed")
     }
 
     private fun removeAuthOverlay() {
-        authOverlayView?.let {
-            (it.parent as? android.view.ViewGroup)?.removeView(it)
-            Log.d(TAG, "Auth overlay removed")
-        }
+        authOverlayDialog?.dismiss()
+        authOverlayDialog = null
         authOverlayView = null
+        Log.d(TAG, "Auth overlay removed")
     }
 
     private fun exitIncognitoMode() {
