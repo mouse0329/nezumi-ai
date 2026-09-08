@@ -214,14 +214,24 @@ class SettingsComposeFragment : Fragment() {
     private var ttsDebugTextInput by mutableStateOf("こんにちは。ネズミAI の音声合成テストです。")
     private var ttsDebugSpeakerPath by mutableStateOf<String?>(null)
     private var ttsDebugSpeakerName by mutableStateOf<String?>(null)
+    private var ttsDebugOutputPath by mutableStateOf<String?>(null)
+    private var ttsDebugPlaying by mutableStateOf(false)
     private var ttsDebugPlayer: MediaPlayer? = null
+    private var ttsDebugAudioHistory by mutableStateOf<List<TtsDebugAudio>>(emptyList())
+    private var ttsDebugSavePath: String? = null
     private lateinit var ttsSpeakerPickLauncher: ActivityResultLauncher<String>
+    private lateinit var ttsAudioSaveLauncher: ActivityResultLauncher<String>
 
-    // Qwen3-TTS 0.6B の GGUF (バックボーン + トークナイザ)。llama-tts 形式の 2 ファイル構成。
-    private val ttsDebugBackboneUrl = "https://huggingface.co/Jahaz/Qwen3-tts-0.6b-gguf-for-koboldcpp/resolve/main/qwen3-tts-0.6b-q5k.gguf"
-    private val ttsDebugBackboneName = "qwen3-tts-0.6b-q5k.gguf"
-    private val ttsDebugTokenizerUrl = "https://huggingface.co/Jahaz/Qwen3-tts-0.6b-gguf-for-koboldcpp/resolve/main/qwen3-tts-tokenizer-MXFP4.gguf"
-    private val ttsDebugTokenizerName = "qwen3-tts-tokenizer-MXFP4.gguf"
+    // Qwen3-TTS 0.6B の GGUF (バックボーン + トークナイザ)。llama-tts (mtmd) 形式の 2 ファイル構成。
+    // 差し替え理由: 旧 URL (Jahaz/koboldcpp 向け変換) は本家 llama.cpp の qwen3tts アーキ実装と
+    // メタデータキーの命名規則が食い違い、"key not found in model: qwen3tts.embedding_length" で
+    // ロードに失敗していた。Serveurperso 配布版も general.architecture のハイフン有無や
+    // general.file_type の型 (str/u32) が不正で、結局は自前で最新 llama.cpp 変換した GGUF を
+    // Mouserat/qwen3-tts-0.6b-base-gguf にホストして使う。トークナイザ側は量子化せず f16 のまま。
+    private val ttsDebugBackboneUrl = "https://huggingface.co/Mouserat/qwen3-tts-0.6b-base-gguf/resolve/main/qwen-talker-0.6b-base-Q8_0.gguf"
+    private val ttsDebugBackboneName = "qwen-talker-0.6b-base-Q8_0.gguf"
+    private val ttsDebugTokenizerUrl = "https://huggingface.co/Mouserat/qwen3-tts-0.6b-base-gguf/resolve/main/qwen-tokenizer-12hz-f16.gguf"
+    private val ttsDebugTokenizerName = "qwen-tokenizer-12hz-f16.gguf"
     private lateinit var skillImportLauncher: ActivityResultLauncher<Array<String>>
     private var skillScanResult by mutableStateOf(SkillScanResult(emptyList(), emptyList()))
     // エラーダイアログ用。追加/削除/リネームが失敗したときのメッセージを保持する。
@@ -276,6 +286,14 @@ class SettingsComposeFragment : Fragment() {
         ) { uri: Uri? ->
             if (uri != null) importTtsDebugSpeakerAudio(uri)
         }
+        ttsAudioSaveLauncher = registerForActivityResult(
+            ActivityResultContracts.CreateDocument("audio/wav")
+        ) { uri: Uri? ->
+            val sourcePath = ttsDebugSavePath
+            ttsDebugSavePath = null
+            if (uri != null && sourcePath != null) saveTtsDebugAudio(Uri.parse(sourcePath), uri)
+        }
+        loadTtsDebugAudioHistory(requireContext().applicationContext)
         skillScanResult = SkillRepository(requireContext().applicationContext).scan(force = true)
     }
 
@@ -343,6 +361,53 @@ class SettingsComposeFragment : Fragment() {
     private fun ttsDebugBackboneFile(context: Context): File = File(ttsDebugDir(context), ttsDebugBackboneName)
     private fun ttsDebugTokenizerFile(context: Context): File = File(ttsDebugDir(context), ttsDebugTokenizerName)
 
+    private fun ttsDebugAudioDir(context: Context): File = File(context.filesDir, "tts_generated")
+
+    private data class TtsDebugAudio(
+        val file: File,
+        val text: String,
+        val createdAt: Long
+    )
+
+    private fun loadTtsDebugAudioHistory(context: Context) {
+        val dir = ttsDebugAudioDir(context)
+        ttsDebugAudioHistory = dir.listFiles { file ->
+            file.isFile && file.extension.equals("wav", ignoreCase = true)
+        }.orEmpty()
+            .sortedByDescending { it.lastModified() }
+            .map { TtsDebugAudio(it, it.nameWithoutExtension, it.lastModified()) }
+    }
+
+    private fun saveTtsDebugAudio(source: Uri, destination: Uri) {
+        val context = requireContext().applicationContext
+        lifecycleScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                context.contentResolver.openInputStream(source)?.use { input ->
+                    context.contentResolver.openOutputStream(destination)?.use { output ->
+                        input.copyTo(output)
+                    } ?: error("保存先を開けませんでした")
+                } ?: error("生成音声を開けませんでした")
+            }
+            withContext(Dispatchers.Main) {
+                result.onFailure {
+                    ttsDebugStatus = getString(R.string.settings_debug_tts_failed, it.message ?: "save")
+                }
+            }
+        }
+    }
+
+    private fun requestSaveTtsDebugAudio(audio: TtsDebugAudio) {
+        ttsDebugSavePath = audio.file.absolutePath
+        ttsAudioSaveLauncher.launch(audio.file.name)
+    }
+
+    private fun deleteTtsDebugAudio(audio: TtsDebugAudio) {
+        if (ttsDebugPlaying && ttsDebugOutputPath == audio.file.absolutePath) stopTtsDebugAudio()
+        audio.file.delete()
+        ttsDebugAudioHistory = ttsDebugAudioHistory.filterNot { it.file.absolutePath == audio.file.absolutePath }
+        if (ttsDebugOutputPath == audio.file.absolutePath) ttsDebugOutputPath = null
+    }
+
     private fun isTtsDebugGgufFile(file: File): Boolean {
         if (!file.isFile || file.length() < 4L) return false
         return runCatching {
@@ -369,6 +434,26 @@ class SettingsComposeFragment : Fragment() {
         )
         if (ttsDebugReady) {
             ttsDebugStatus = getString(R.string.settings_debug_tts_ready)
+        }
+    }
+
+    // TTS デバッグ用モデルの削除。tts/ ディレクトリを丸ごと消すことで、
+    // URL 変更前にダウンロードされた古いファイル (例: 旧 Jahaz 版の
+    // qwen3-tts-0.6b-q5k.gguf、旧 Serveurperso 版の qwen-tokenizer-12hz-Q8_0.gguf) が
+    // 残っていてもまとめて片付く。アプリ全体のデータ初期化 (他モデル含め
+    // 全消去) を避けて、TTS モデルだけをピンポイントで消せるようにする。
+    private fun deleteTtsDebugModels(context: Context) {
+        if (ttsDebugDownloading || ttsDebugSynthesizing) return
+        val appContext = context.applicationContext
+        val dir = ttsDebugDir(appContext)
+        val deleted = runCatching { dir.deleteRecursively() }.getOrDefault(false)
+        Log.i("TtsDebug", "model delete: dir=${dir.absolutePath}, deleted=$deleted")
+        ttsDebugReady = false
+        ttsDebugResult = null
+        ttsDebugStatus = if (deleted || !dir.exists()) {
+            getString(R.string.settings_debug_tts_deleted)
+        } else {
+            getString(R.string.settings_debug_tts_failed, "delete")
         }
     }
 
@@ -512,6 +597,8 @@ class SettingsComposeFragment : Fragment() {
         if (ttsDebugSynthesizing) return
         ttsDebugSynthesizing = true
         ttsDebugResult = null
+        ttsDebugOutputPath = null
+        stopTtsDebugAudio()
         val appContext = context.applicationContext
         lifecycleScope.launch(Dispatchers.IO) {
             val backbone = ttsDebugBackboneFile(appContext)
@@ -522,7 +609,10 @@ class SettingsComposeFragment : Fragment() {
                     "backboneGguf=${isTtsDebugGgufFile(backbone)}, tokenizerExists=${tokenizer.isFile}, " +
                     "tokenizerBytes=${tokenizer.length()}, tokenizerGguf=${isTtsDebugGgufFile(tokenizer)}"
             )
-            val outFile = File(appContext.cacheDir, "tts_debug_out.wav")
+            val outFile = File(
+                ttsDebugAudioDir(appContext),
+                "tts_${System.currentTimeMillis()}.wav"
+            ).apply { parentFile?.mkdirs() }
             // llama_bridge はプロセス分離後メインプロセスにロードしないため、
             // TTS 合成は :gguf プロセスの GgufInferenceService 経由で実行する。
             val raw = try {
@@ -554,6 +644,10 @@ class SettingsComposeFragment : Fragment() {
                             R.string.settings_debug_tts_result,
                             outFile.name, audioSec, sampleRate
                         )
+                        ttsDebugOutputPath = outFile.absolutePath
+                        ttsDebugAudioHistory = listOf(
+                            TtsDebugAudio(outFile, ttsDebugTextInput, outFile.lastModified())
+                        ) + ttsDebugAudioHistory
                         playTtsDebugAudio(outFile)
                     } else {
                         ttsDebugStatus = getString(
@@ -574,10 +668,24 @@ class SettingsComposeFragment : Fragment() {
             ttsDebugPlayer = MediaPlayer().apply {
                 setDataSource(file.absolutePath)
                 prepare()
-                setOnCompletionListener { it.release() }
+                setOnCompletionListener {
+                    it.release()
+                    ttsDebugPlaying = false
+                }
                 start()
             }
+            ttsDebugPlaying = true
+        }.onFailure {
+            ttsDebugPlaying = false
+            ttsDebugStatus = getString(R.string.settings_debug_tts_failed, it.message ?: "playback")
         }
+    }
+
+    private fun stopTtsDebugAudio() {
+        ttsDebugPlayer?.runCatching { stop() }
+        ttsDebugPlayer?.release()
+        ttsDebugPlayer = null
+        ttsDebugPlaying = false
     }
 
     private data class DebugSafetyCheckOutput(
@@ -598,6 +706,13 @@ class SettingsComposeFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             runCatching { persistSettings() }
         }
+    }
+
+    override fun onDestroyView() {
+        ttsDebugPlayer?.release()
+        ttsDebugPlayer = null
+        ttsDebugPlaying = false
+        super.onDestroyView()
     }
 
     override fun onCreateView(
@@ -3640,6 +3755,15 @@ class SettingsComposeFragment : Fragment() {
                     ) {
                         Text(stringResource(id = R.string.settings_debug_tts_pick_speaker))
                     }
+                    // アプリ全体のデータ削除に頼らず、TTS モデルだけをここから消せるように。
+                    // ダウンロード先 URL を差し替えた際、古い形式のファイルが tts/ に残っていても
+                    // これで一掃できる。
+                    OutlinedButton(
+                        onClick = { deleteTtsDebugModels(localContext) },
+                        enabled = !ttsDebugDownloading && !ttsDebugSynthesizing
+                    ) {
+                        Text(stringResource(id = R.string.settings_debug_tts_delete))
+                    }
                 }
                 Text(
                     text = ttsDebugSpeakerName?.let {
@@ -3665,6 +3789,53 @@ class SettingsComposeFragment : Fragment() {
                         if (ttsDebugSynthesizing) stringResource(id = R.string.settings_debug_tts_synthesizing)
                         else stringResource(id = R.string.settings_debug_tts_synthesize)
                     )
+                }
+                if (ttsDebugAudioHistory.isNotEmpty()) {
+                    Text(
+                        text = stringResource(id = R.string.settings_debug_tts_history_title),
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ttsDebugAudioHistory.forEach { audio ->
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Column(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(audio.text, maxLines = 2)
+                                    Text(
+                                        text = audio.file.name,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorResource(id = R.color.text_secondary)
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(
+                                            onClick = {
+                                                ttsDebugOutputPath = audio.file.absolutePath
+                                                playTtsDebugAudio(audio.file)
+                                            },
+                                            enabled = !ttsDebugPlaying && audio.file.isFile
+                                        ) {
+                                            Text(stringResource(id = R.string.settings_debug_tts_play))
+                                        }
+                                        OutlinedButton(
+                                            onClick = { stopTtsDebugAudio() },
+                                            enabled = ttsDebugPlaying && ttsDebugOutputPath == audio.file.absolutePath
+                                        ) {
+                                            Text(stringResource(id = R.string.settings_debug_tts_stop))
+                                        }
+                                        TextButton(onClick = { requestSaveTtsDebugAudio(audio) }) {
+                                            Text(stringResource(id = R.string.settings_debug_tts_save))
+                                        }
+                                        TextButton(onClick = { deleteTtsDebugAudio(audio) }) {
+                                            Text(stringResource(id = R.string.settings_debug_tts_delete_audio))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 ttsDebugResult?.let {
                     Text(text = it, color = colorResource(id = R.color.primary), style = MaterialTheme.typography.bodySmall)

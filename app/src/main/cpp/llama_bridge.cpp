@@ -1712,6 +1712,11 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
     // バックボーン (talker) ロード
     llama_model_params mparams = llama_model_default_params();
     mparams.load_mode = LLAMA_LOAD_MODE_MMAP;
+    // ダウンロードする自前変換 GGUF (Mouserat/qwen3-tts-0.6b-base-gguf) は
+    // general.architecture=qwen3tts / general.file_type=u32 が最初から正しく
+    // 書き込まれているため、以前 Serveurperso 配布版向けに入れていた KV
+    // オーバーライドは撤去した。将来別量子化 (例: Q4) に切り替えた際に
+    // file_type=7 固定のまま残ると逆にロードを壊すため。
     res.model = llama_model_load_from_file(modelPath.get(), mparams);
     if (!res.model)
     {
