@@ -2529,27 +2529,38 @@ class ChatViewModel(
                                                 null
                                             }
                                         if (nativeStreamParsed != null) {
-                                            contentForUi =
-                                                sanitizeAssistantOutputForModel(
+                                                // Some templates enable thinking but omit the opening tag.
+                                                // The native parser may classify that prefix as content until
+                                                // </think> appears, so let the Kotlin parser establish the
+                                                // thinking phase while native reasoning is still empty.
+                                                val unmarkedThinking = if (
+                                                    config.enableThinking && nativeStreamParsed.reasoningContent.isBlank()
+                                                ) {
+                                                    Gemma4ThinkingParser.parseStreaming(
+                                                        rawInput = answerBuilder.toString(),
+                                                        treatUnmarkedInputAsThinking = true,
+                                                        preserveToolCallTags = true
+                                                    )
+                                                } else {
+                                                    null
+                                                }
+                                                contentForUi = sanitizeAssistantOutputForModel(
                                                     engineModelName = engineModelName,
                                                     text = Gemma4ThinkingParser.sanitizeVisibleText(
-                                                        nativeStreamParsed.content,
+                                                        unmarkedThinking?.answer ?: nativeStreamParsed.content,
                                                         preserveToolCallTags = true
                                                     )
                                                 )
-                                            thinkingForUi =
-                                                Gemma4ThinkingParser.sanitizeVisibleText(
-                                                    nativeStreamParsed.reasoningContent
+                                                thinkingForUi = Gemma4ThinkingParser.sanitizeVisibleText(
+                                                    unmarkedThinking?.thinking ?: nativeStreamParsed.reasoningContent
                                                 ).ifBlank { null }
                                         } else {
-                                        // With the `<think>` prefill seeded in answerBuilder, the
-                                        // parser can detect thinking boundaries natively. We no
-                                        // longer need `treatUnmarkedInputAsThinking`, which caused
-                                        // unmarked answers to be misclassified as thinking.
+                                        // When thinking is enabled, models that omit the opening tag
+                                        // still begin in the thinking phase until </think> arrives.
                                         val parsedStream =
                                             Gemma4ThinkingParser.parseStreaming(
                                                 rawInput = answerBuilder.toString(),
-                                                treatUnmarkedInputAsThinking = false,
+                                                treatUnmarkedInputAsThinking = config.enableThinking,
                                                 preserveToolCallTags = true
                                             )
                                         // Instant / Thinking OFF 中でも、モデルが実際に <think> を吐いた場合は
@@ -2711,15 +2722,26 @@ class ChatViewModel(
             val completeResponse: String
             val finalThinking: String?
             if (nativeGgufParsed != null) {
+                val unmarkedThinking = if (
+                    config.enableThinking && nativeGgufParsed.reasoningContent.isBlank()
+                ) {
+                    Gemma4ThinkingParser.parse(
+                        rawInput = answerBuilder.toString(),
+                        treatUnmarkedInputAsThinking = true,
+                        preserveToolCallTags = true
+                    )
+                } else {
+                    null
+                }
                 completeResponse = sanitizeAssistantOutputForModel(
                     engineModelName = engineModelName,
                     text = Gemma4ThinkingParser.sanitizeVisibleText(
-                        nativeGgufParsed.content,
+                        unmarkedThinking?.answer ?: nativeGgufParsed.content,
                         preserveToolCallTags = true
                     )
                 )
                 finalThinking = Gemma4ThinkingParser.sanitizeVisibleText(
-                    nativeGgufParsed.reasoningContent
+                    unmarkedThinking?.thinking ?: nativeGgufParsed.reasoningContent
                 ).ifBlank { null }
             } else if (nativeThinkingStream) {
                 val rawAnswer = if (config.enableThinking) {
@@ -2748,7 +2770,7 @@ class ChatViewModel(
                 // applied, raw text without tags is always a real answer, never thinking.
                 val finalParsed = Gemma4ThinkingParser.parse(
                     rawInput = answerBuilder.toString(),
-                    treatUnmarkedInputAsThinking = false,
+                    treatUnmarkedInputAsThinking = config.enableThinking,
                     preserveToolCallTags = true
                 )
                 if (!config.enableThinking) {
