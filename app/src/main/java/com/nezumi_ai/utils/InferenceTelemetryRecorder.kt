@@ -119,8 +119,6 @@ object InferenceTelemetryRecorder {
 
     private fun configJson(config: InferenceConfig): JSONObject = JSONObject().apply {
         put("context_window", config.contextWindow)
-        put("context_compression_enabled", config.contextCompressionEnabled)
-        put("context_compression_threshold_percent", config.contextCompressionThresholdPercent)
         put("temperature", config.temperature)
         put("max_top_k", config.maxTopK)
         put("max_tokens", config.maxTokens)

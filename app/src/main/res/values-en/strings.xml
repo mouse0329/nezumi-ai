@@ -717,10 +717,6 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="settings_inference_temperature_label">Temperature</string>
     <string name="settings_inference_topk_label">Top-K</string>
     <string name="settings_inference_topp_label">Top-P</string>
-    <string name="settings_inference_auto_compress_title">Auto-compress</string>
-    <string name="settings_inference_auto_compress_desc">When enabled, content is automatically compressed once it exceeds the configured ratio.</string>
-    <string name="settings_inference_compression_threshold_title">Compression threshold</string>
-    <string name="settings_inference_compression_threshold_desc">Automatic compression kicks in when memory usage exceeds this percentage.</string>
     <string name="settings_inference_preload_warning_title">Preload memory warning threshold</string>
     <string name="settings_inference_preload_warning_desc">Percentage of free memory required relative to the model size. E.g. a 2GB model at 100% needs about 2GB free, and a 4GB model at 60% needs about 2.4GB free.</string>
     <string name="settings_inference_setup_open">Open setup</string>
@@ -884,7 +880,6 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="settings_inference_topk_range">Top-K must be between %1$s and %2$s.</string>
     <string name="settings_inference_max_tokens_range">Max Tokens must be between %1$s and %2$s.</string>
     <string name="settings_inference_context_range">Context must be between 512 and %1$s.</string>
-    <string name="settings_inference_compression_range">Compression threshold must be between %1$s and %2$s.</string>
     <string name="settings_inference_preload_memory_range">Preload memory warning threshold must be between %1$s and %2$s.</string>
     <string name="settings_common_close">Close</string>
     <string name="settings_error_dialog_title">Settings error</string>
@@ -1457,7 +1452,6 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="model_load_error_short">Failed to load the model.</string>
     <string name="model_load_error_preset_missing">Failed to load the preset model. The file was not found.</string>
     <string name="model_load_error_preset_generic">Failed to load the preset model</string>
-    <string name="model_load_error_compression">Failed to load the model used for compression</string>
     <string name="model_reload_error_title">Model reload error</string>
     <string name="model_reload_error_generic">Failed to reload the LLM model. Please re-download it from the model management screen.</string>
     <string name="model_reload_error_restart">Failed to reload the LLM model. Please restart the chat.</string>
@@ -1472,8 +1466,6 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="generic_runtime_error">An error occurred</string>
 
     <!-- Compression / embedding / memory -->
-    <string name="compression_failed">Compression failed: %1$s</string>
-    <string name="model_not_downloaded_for_compression">Model is not downloaded — cannot compress</string>
     <string name="embedding_download_failed">Failed to download the embedding files. Please check your network.</string>
     <string name="embedding_download_cancelled">Embedding download was cancelled, so memory features have been temporarily disabled.</string>
 
@@ -1617,11 +1609,6 @@ When you attach and send it, the contents are automatically converted to Markdow
     <!-- ChatViewModel UI messages -->
     <string name="vm_model_load_cancelled">Model load cancelled</string>
     <string name="vm_cannot_switch_while_busy">Cannot switch model while generating or processing</string>
-    <string name="vm_cannot_compress_while_generating">Cannot compress while generating</string>
-    <string name="vm_compression_in_progress">Compression in progress</string>
-    <string name="vm_no_context_to_compress">There is no context to compress</string>
-    <string name="vm_context_already_latest">The compressed context is already up to date</string>
-    <string name="vm_context_compressed">Context compressed\nThe compressed context will be used from your next message</string>
     <string name="vm_no_undoable_prompt">There is no prompt to undo</string>
     <string name="vm_no_response_to_regenerate">There is no response to regenerate</string>
     <string name="vm_no_user_message_to_regenerate">Could not find the user message needed to regenerate</string>

@@ -35,7 +35,7 @@ import com.nezumi_ai.data.database.entity.ToolCallHistoryEntity
         MemorySessionEntity::class,
         ToolCallHistoryEntity::class
     ],
-    version = 34,
+    version = 35,
     exportSchema = false
 )
 abstract class NezumiAiDatabase : RoomDatabase() {
@@ -61,7 +61,7 @@ abstract class NezumiAiDatabase : RoomDatabase() {
                     NezumiAiDatabase::class.java,
                     "nezumi_ai.db"
                 )
-                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34)
+                    .addMigrations(MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33, MIGRATION_33_34, MIGRATION_34_35)
                     // 開発中: スキーマ不一致時は再作成して起動クラッシュを回避
                     .fallbackToDestructiveMigration()
                     .build()
@@ -285,6 +285,85 @@ abstract class NezumiAiDatabase : RoomDatabase() {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE chat_session ADD COLUMN lastKnownContextTokens INTEGER NOT NULL DEFAULT 0")
                 database.execSQL("ALTER TABLE chat_session ADD COLUMN lastKnownMediaTokens INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * プロンプトテンプレート刷新 Phase 1: コンテキスト圧縮機能の完全削除。
+         * settings テーブルから contextCompressionEnabled / contextCompressionThresholdPercent を落とす。
+         * SQLite 3.35 未満 (minSdk 30) では DROP COLUMN できないため、Room 標準の
+         * テーブル再作成 (create new / copy / drop old / rename) 方式で行う。
+         */
+        private val MIGRATION_34_35 = object : androidx.room.migration.Migration(34, 35) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS settings_renewed (
+                        id INTEGER PRIMARY KEY NOT NULL,
+                        selectedModel TEXT NOT NULL,
+                        backendType TEXT NOT NULL,
+                        autoFallback INTEGER NOT NULL,
+                        contextWindow INTEGER NOT NULL,
+                        contextWindowMap TEXT NOT NULL,
+                        preloadMemoryWarningThresholdPercent INTEGER NOT NULL,
+                        temperature REAL NOT NULL,
+                        topP REAL NOT NULL,
+                        maxTopK INTEGER NOT NULL,
+                        maxTokens INTEGER NOT NULL,
+                        resourceMonitorEnabled INTEGER NOT NULL,
+                        gemmaThinkingEnabled INTEGER NOT NULL,
+                        speculativeDecodingEnabled INTEGER NOT NULL,
+                        systemPrompt TEXT NOT NULL,
+                        userName TEXT NOT NULL,
+                        lastModified INTEGER NOT NULL,
+                        llamaCppThreads INTEGER NOT NULL,
+                        llamaCppGpuLayers INTEGER NOT NULL,
+                        llamaCppGpuBackend TEXT NOT NULL,
+                        llamaCppBatchSize INTEGER NOT NULL,
+                        llamaCppUBatchSize INTEGER NOT NULL,
+                        llamaCppKvUnified INTEGER NOT NULL,
+                        llamaCppNKeep INTEGER NOT NULL,
+                        llamaCppRopeFreqBase REAL NOT NULL,
+                        llamaCppRopeFreqScale REAL NOT NULL,
+                        memorySaveMode TEXT NOT NULL,
+                        stopTokensMap TEXT NOT NULL,
+                        currentSessionId INTEGER NOT NULL,
+                        chatHistoryLimit INTEGER NOT NULL,
+                        mtpEnabled INTEGER NOT NULL,
+                        mtpDraftTokens INTEGER NOT NULL,
+                        flashAttentionEnabled INTEGER NOT NULL,
+                        dynamicBatchSizeEnabled INTEGER NOT NULL,
+                        promptBatchSize INTEGER NOT NULL,
+                        generationBatchSize INTEGER NOT NULL,
+                        kvCacheOptimizationEnabled INTEGER NOT NULL,
+                        contextShiftEnabled INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                database.execSQL("""
+                    INSERT INTO settings_renewed (
+                        id, selectedModel, backendType, autoFallback, contextWindow, contextWindowMap,
+                        preloadMemoryWarningThresholdPercent, temperature, topP, maxTopK, maxTokens,
+                        resourceMonitorEnabled, gemmaThinkingEnabled, speculativeDecodingEnabled,
+                        systemPrompt, userName, lastModified, llamaCppThreads, llamaCppGpuLayers,
+                        llamaCppGpuBackend, llamaCppBatchSize, llamaCppUBatchSize, llamaCppKvUnified,
+                        llamaCppNKeep, llamaCppRopeFreqBase, llamaCppRopeFreqScale, memorySaveMode,
+                        stopTokensMap, currentSessionId, chatHistoryLimit, mtpEnabled, mtpDraftTokens,
+                        flashAttentionEnabled, dynamicBatchSizeEnabled, promptBatchSize,
+                        generationBatchSize, kvCacheOptimizationEnabled, contextShiftEnabled
+                    )
+                    SELECT
+                        id, selectedModel, backendType, autoFallback, contextWindow, contextWindowMap,
+                        preloadMemoryWarningThresholdPercent, temperature, topP, maxTopK, maxTokens,
+                        resourceMonitorEnabled, gemmaThinkingEnabled, speculativeDecodingEnabled,
+                        systemPrompt, userName, lastModified, llamaCppThreads, llamaCppGpuLayers,
+                        llamaCppGpuBackend, llamaCppBatchSize, llamaCppUBatchSize, llamaCppKvUnified,
+                        llamaCppNKeep, llamaCppRopeFreqBase, llamaCppRopeFreqScale, memorySaveMode,
+                        stopTokensMap, currentSessionId, chatHistoryLimit, mtpEnabled, mtpDraftTokens,
+                        flashAttentionEnabled, dynamicBatchSizeEnabled, promptBatchSize,
+                        generationBatchSize, kvCacheOptimizationEnabled, contextShiftEnabled
+                    FROM settings
+                """.trimIndent())
+                database.execSQL("DROP TABLE settings")
+                database.execSQL("ALTER TABLE settings_renewed RENAME TO settings")
             }
         }
 

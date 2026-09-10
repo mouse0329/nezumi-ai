@@ -48,7 +48,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.LinearProgressIndicator
 import com.nezumi_ai.presentation.ui.composable.SvgSpinner
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -187,7 +186,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var isModelLoadingNow = false
     private var currentBackendType = "CPU"
     private var currentModelKey = "E2B"
-    private var isCompressingNow = false
 
  // セッション切り替え最適化: navigateToChatSession がフラグメントを再生成する代わりに、
     //   このメソッドを呼んでセッションIDだけ切り替えることでページ遷移の重さを軽減する。
@@ -221,7 +219,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var modelLoadingText by mutableStateOf("")
     private var contextMeterText by mutableStateOf("")
     private var contextMeterProgress by mutableStateOf(0f)
-    private var contextUsageCharsNow by mutableStateOf(0)
     // コンテキストメーター正確化: 実測トークンのうち画像・音声由来のトークン数 (詳細表示用)
     private var contextMeterMediaTokens by mutableStateOf(0)
  // 新: コンテキストメーターの表示可否。全般タブで切り替えられる。既定は表示しない。
@@ -236,10 +233,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var showTpsIndicator: Boolean = false
     private var showTtftIndicator: Boolean = false
     private var scrollToBottomVisible by mutableStateOf(false)
-    private var compressButtonVisible by mutableStateOf(true)
-    private var compressButtonEnabled by mutableStateOf(true)
-    private var compressButtonText by mutableStateOf("")
-    private var contextCompressionEnabled by mutableStateOf(false)
     private var thinkingToggleVisible by mutableStateOf(false)
     private var thinkingToggleEnabled by mutableStateOf(false)
     private var thinkingToggleChecked by mutableStateOf(false)
@@ -818,7 +811,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         contextMeterText = getString(R.string.context_meter_format, 0, 0)
  // 初期値として全般タブのコンテキストメーター表示フラグを反映。
         contextMeterVisible = PreferencesHelper.isShowContextMeter(requireContext())
-        compressButtonText = ""
         thinkingToggleText = getString(R.string.chat_thinking_follow_settings)
         setupComposeIndicators()
 
@@ -1042,11 +1034,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         viewLifecycleOwner.lifecycleScope.launch {
             settingsRepository.getSettings().collect { settings ->
-                contextCompressionEnabled = settings?.contextCompressionEnabled == true && BuildConfig.CONTEXT_COMPRESSION_ENABLED
- // Thinking 表示はアダプタ側で「常時表示」に固定済み。
+                // Thinking 表示はアダプタ側で「常時表示」に固定済み。
                 //   そのため adapter.setThinkingVisible(true) の呼び出しは不要になり、完全に廃止された。
                 updateThinkingToggleVisibility()
-                renderCompressButtonState()
             }
         }
 
@@ -1436,28 +1426,20 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
         }
 
-        // #9 fix: merge duplicate isCompressing collects into one combine block to prevent double animation
         viewLifecycleOwner.lifecycleScope.launch {
-            combine(
-                viewModel.isCompressing,
-                viewModel.isEmbeddingDownloadInProgress
-            ) { compressing, downloading -> Pair(compressing, downloading) }
-            .collect { (compressing, downloading) ->
-                isCompressingNow = compressing
+            viewModel.isEmbeddingDownloadInProgress.collect { downloading ->
                 // 抽出中・埋め込みダウンロード中は入力を無効化しないが、ダウンロード中は送信を防ぐ
-                binding.messageInput.isEnabled = !compressing && !downloading
+                binding.messageInput.isEnabled = !downloading
                 binding.sendButton.isEnabled =
-                    isGenerating || (!compressing && !downloading && !isModelLoadingNow)
-                renderCompressButtonState()
+                    isGenerating || (!downloading && !isModelLoadingNow)
                 renderSendButtonState()
                 if (isGenerating) {
                     responseTypingText = when {
-                        compressing -> ""
                         downloading -> getString(R.string.embedding_download_progress_message)
                         else -> getString(R.string.response_generating)
                     }
                 }
-                if (compressing || downloading) startResponseTypingAnimation() else stopResponseTypingAnimation()
+                if (downloading) startResponseTypingAnimation() else stopResponseTypingAnimation()
             }
         }
 
@@ -1549,14 +1531,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 //   画像・音声トークンを含むため、マルチモーダル利用時も実態に近い。
                 val usedTokens = if (exactTokens > 0) exactTokens else ((usedChars + 3) / 4).coerceAtLeast(0)
                 val safeMaxTokens = maxTokens.coerceAtLeast(1)
-                // 実測トークンが取れている場合はタップ可否判定にもそれを使う
-                // (DB 復元直後など usedChars=0 でもメーターを触れるようにする)
-                contextUsageCharsNow = if (exactTokens > 0) usedTokens else usedChars
                 contextMeterText = getString(R.string.context_meter_format, usedTokens, safeMaxTokens)
                 contextMeterMediaTokens = mediaTokens.coerceAtLeast(0)
                 contextMeterProgress =
                     (((usedTokens.toLong() * 1000L) / safeMaxTokens.toLong()).toInt().coerceIn(0, 1000) / 1000f)
-                renderCompressButtonState()
             }
         }
 
@@ -1585,7 +1563,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     if (loading) View.VISIBLE else View.GONE
                 binding.backButton.isEnabled = !loading
                 renderSendButtonState()
-                renderCompressButtonState()
                 binding.messageInput.isEnabled = !loading
                 if (loading) {
                     requireActivity().window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -1655,8 +1632,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 if (!message.isNullOrBlank()) showModelErrorDialog(message)
             }
         }
-
-        // isCompressing handling merged into combine block above
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.isChatReady.collect { isReady ->
@@ -2177,13 +2152,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         binding.micButton.visibility = if (audioInputEnabled) View.VISIBLE else View.GONE
     }
 
-    private fun renderCompressButtonState() {
-        val enabled = !isModelLoadingNow && !isGenerating && contextUsageCharsNow > 0
-        compressButtonVisible = BuildConfig.CONTEXT_COMPRESSION_ENABLED && contextCompressionEnabled && !isCompressingNow
-        compressButtonEnabled = enabled
-        compressButtonText = ""
+    private fun renderThinkingToggleState() {
         // シンキングON/OFFはチャット生成中でも切り替え可能にする（次回送信から反映）
- // Bug fix(#Thinking-Header):
+        // Bug fix(#Thinking-Header):
         //   旧実装は `thinkingToggleEnabled = !isModelLoadingNow && thinkingToggleVisible` だったが、
         //   この式だと thinkingToggleVisible が一旦 false になると enabled も false に固定され、
         //   シンキング生成フェーズで modelSupportsThinking の再評価が遅れるタイミングで
@@ -2196,7 +2167,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private fun updateThinkingToggleVisibility() {
         val modelSupportsThinking = settingsRepository.modelSupportsGemmaThinking(currentModelKey, requireContext())
         thinkingToggleVisible = modelSupportsThinking
-        renderCompressButtonState()
+        renderThinkingToggleState()
     }
 
     private fun refreshCurrentBackendType() {
@@ -2215,11 +2186,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             var dotCount = 0
             while (true) {
                 val dots = ".".repeat(dotCount)
-                val base = if (isCompressingNow) {
-                    ""
-                } else {
-                    getString(R.string.response_generating)
-                }
+                val base = getString(R.string.response_generating)
                 responseTypingText = base + dots
                 dotCount = (dotCount + 1) % 4
                 delay(350)
@@ -3462,10 +3429,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     @Composable
     private fun HeaderActionsSection() {
- // Bug fix(#Thinking-Header):
-        //   旧実装ではシンキング生成中に
-        //   (compressButtonVisible=false + thinkingToggleVisible の一時的な false)
-        //   となり、Column が完全に空になってヘッダー UI が消失して見えていた。
+        // Bug fix(#Thinking-Header):
+        //   旧実装ではシンキング生成中に thinkingToggleVisible が一時的な false となり、
+        //   Column が完全に空になってヘッダー UI が消失して見えていた。
         //   シンキングトグルはモデルがシンキングをサポートする限り常時表示し、
         //   生成中は押下可否 (enabled) だけで制御する。コンテナにも
         //   最低幅 (heightIn) を与え、内容が一瞬空になってもレイアウトごと消失しないようにする。
@@ -3474,14 +3440,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             horizontalAlignment = Alignment.End,
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            if (compressButtonVisible) {
-                OutlinedButton(
-                    onClick = { viewModel.compressContextManually() },
-                    enabled = compressButtonEnabled
-                ) {
-                    Text(text = compressButtonText)
-                }
-            }
             if (thinkingToggleVisible) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

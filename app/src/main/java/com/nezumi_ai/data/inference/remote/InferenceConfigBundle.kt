@@ -16,8 +16,6 @@ import com.nezumi_ai.data.inference.InferenceConfig
 object InferenceConfigBundle {
 
     private const val K_CONTEXT_WINDOW = "contextWindow"
-    private const val K_CONTEXT_COMPRESSION_ENABLED = "contextCompressionEnabled"
-    private const val K_CONTEXT_COMPRESSION_THRESHOLD = "contextCompressionThresholdPercent"
     private const val K_TEMPERATURE = "temperature"
     private const val K_MAX_TOP_K = "maxTopK"
     private const val K_MAX_TOKENS = "maxTokens"
@@ -48,8 +46,6 @@ object InferenceConfigBundle {
 
     fun toBundle(config: InferenceConfig): Bundle = Bundle().apply {
         putInt(K_CONTEXT_WINDOW, config.contextWindow)
-        putBoolean(K_CONTEXT_COMPRESSION_ENABLED, config.contextCompressionEnabled)
-        putInt(K_CONTEXT_COMPRESSION_THRESHOLD, config.contextCompressionThresholdPercent)
         putFloat(K_TEMPERATURE, config.temperature)
         putInt(K_MAX_TOP_K, config.maxTopK)
         putInt(K_MAX_TOKENS, config.maxTokens)
@@ -84,12 +80,6 @@ object InferenceConfigBundle {
         val default = InferenceConfig()
         return InferenceConfig(
             contextWindow = bundle.getInt(K_CONTEXT_WINDOW, default.contextWindow),
-            contextCompressionEnabled = bundle.getBoolean(
-                K_CONTEXT_COMPRESSION_ENABLED, default.contextCompressionEnabled
-            ),
-            contextCompressionThresholdPercent = bundle.getInt(
-                K_CONTEXT_COMPRESSION_THRESHOLD, default.contextCompressionThresholdPercent
-            ),
             temperature = bundle.getFloat(K_TEMPERATURE, default.temperature),
             maxTopK = bundle.getInt(K_MAX_TOP_K, default.maxTopK),
             maxTokens = bundle.getInt(K_MAX_TOKENS, default.maxTokens),

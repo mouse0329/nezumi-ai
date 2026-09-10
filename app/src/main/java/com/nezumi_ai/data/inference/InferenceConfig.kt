@@ -4,8 +4,6 @@ import kotlin.math.roundToInt
 
 data class InferenceConfig(
     val contextWindow: Int = 4096,
-    val contextCompressionEnabled: Boolean = false,
-    val contextCompressionThresholdPercent: Int = 70,
     val temperature: Float = 0.7f,
     val maxTopK: Int = 40,
     val maxTokens: Int = 1024,
@@ -77,8 +75,6 @@ data class InferenceConfig(
     companion object {
         const val MIN_CONTEXT_WINDOW = 512
         const val MAX_CONTEXT_WINDOW = 131072
-        const val MIN_COMPRESSION_THRESHOLD = 50
-        const val MAX_COMPRESSION_THRESHOLD = 95
         const val MIN_TEMPERATURE = 0.0f
         const val MAX_TEMPERATURE = 2.0f
         const val MIN_TOP_K = 1
@@ -103,17 +99,8 @@ data class InferenceConfig(
         }
     }
 
-    fun isContextCompressionEnabledForRuntime(): Boolean {
-        return com.nezumi_ai.BuildConfig.CONTEXT_COMPRESSION_ENABLED && contextCompressionEnabled
-    }
-
     fun normalized(): InferenceConfig {
         val normalizedContext = contextWindow.coerceIn(MIN_CONTEXT_WINDOW, MAX_CONTEXT_WINDOW)
-        val normalizedCompressionThreshold =
-            contextCompressionThresholdPercent.coerceIn(
-                MIN_COMPRESSION_THRESHOLD,
-                MAX_COMPRESSION_THRESHOLD
-            )
         val normalizedTemp = temperature.coerceIn(MIN_TEMPERATURE, MAX_TEMPERATURE)
         val normalizedTopK = maxTopK.coerceIn(MIN_TOP_K, MAX_TOP_K)
         val normalizedMaxTokens = maxTokens.coerceIn(MIN_MAX_TOKENS, MAX_MAX_TOKENS)
@@ -129,7 +116,6 @@ data class InferenceConfig(
         
         return copy(
             contextWindow = normalizedContext,
-            contextCompressionThresholdPercent = normalizedCompressionThreshold,
             temperature = normalizedTemp,
             maxTopK = normalizedTopK,
             maxTokens = normalizedMaxTokens,

@@ -6,7 +6,6 @@ import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.PromptBuilder
 import com.nezumi_ai.data.inference.ToolPayloadSanitizer
-import org.json.JSONObject
 
 /**
  * クラスタ C (プロンプト構築) を ChatViewModel から切り出した純粋ロジック層。
@@ -252,68 +251,7 @@ class PromptBuildingUseCase {
         )
     }
 
-    // ---- 圧縮サマリー関連 (純粋ロジック) ----
-
-    fun compactCompressionSummary(summary: String, maxChars: Int): String {
-        val compact = summary
-            .replace(Regex("[\\r\\n]+"), "\n")
-            .lines()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .joinToString(" / ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-        if (compact.length <= maxChars) return compact
-        return compact.take(maxChars).trimEnd() + "..."
-    }
-
-    fun extractJsonObject(text: String): String? {
-        val start = text.indexOf('{')
-        if (start < 0) return null
-        val end = text.lastIndexOf('}')
-        if (end <= start) return null
-        return text.substring(start, end + 1)
-    }
-
-    fun parseCompressionJson(raw: String): Pair<String, List<String>>? {
-        val jsonText = extractJsonObject(raw) ?: return null
-        return runCatching {
-            val obj = JSONObject(jsonText)
-            val summary = obj.optString("summary").trim()
-            if (summary.isBlank()) return null
-            val keywords = mutableListOf<String>()
-            val arr = obj.optJSONArray("keywords")
-            if (arr != null) {
-                for (i in 0 until arr.length()) {
-                    val kw = arr.optString(i).trim()
-                    if (kw.isNotBlank()) keywords += kw
-                }
-            }
-            val normalized = keywords.distinct().take(8)
-            Pair(summary, if (normalized.isNotEmpty()) normalized else listOf("要点"))
-        }.getOrNull()
-    }
-
-    fun recentMessageCountForWindow(contextWindow: Int): Int {
-        return when {
-            contextWindow <= 2048 -> 4
-            contextWindow <= 4096 -> 6
-            else -> 8
-        }
-    }
-
-    fun buildCompressedSummaryFallback(messages: List<MessageEntity>): String {
-        if (messages.isEmpty()) return "（圧縮対象なし）"
-        return messages.takeLast(24).mapNotNull { msg ->
-            val role = if (msg.role == "assistant") "A" else "U"
-            val text = sanitizeMessageContentForPrompt(msg)
-                .replace("\n", " ")
-                .replace(Regex("\\s+"), " ")
-                .let { if (it.length > 80) it.take(80).trimEnd() + "..." else it }
-            if (text.isBlank()) return@mapNotNull null
-            "[$role] $text"
-        }.joinToString(separator = "\n")
-    }
+    // ---- コンテキスト有効性判定 (assistant 応答のエラー除外) ----
 
     fun isAssistantErrorLikeMessage(content: String): Boolean {
         val t = content.trim()

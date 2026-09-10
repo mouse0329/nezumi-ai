@@ -183,8 +183,7 @@ class MemoryExtractionWorker(
         }
 
         val extractionConfig = config.forModelLoad().copy(
-            temperature = 0.1f,
-            contextCompressionEnabled = false
+            temperature = 0.1f
         )
 
         val raw = withTimeoutOrNull(EXTRACTION_TIMEOUT_MS) {
@@ -349,8 +348,7 @@ class MemoryExtractionWorker(
 
         val raw = withTimeoutOrNull(CONTRADICTION_TIMEOUT_MS) {
             val contradictionConfig = config.forModelLoad().copy(
-                temperature = 0.1f,
-                contextCompressionEnabled = false
+                temperature = 0.1f
             )
             val tempSessionId = manager.sessionManager.createSession()
             try {

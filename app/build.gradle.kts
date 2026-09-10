@@ -111,7 +111,6 @@ android {
 
         buildConfigField("String", "LITERTLM_VERSION", "\"0.17.0\"")
         buildConfigField("String", "LLAMACPP_VERSION", "\"$llamaCppVersion\"")
-        buildConfigField("boolean", "CONTEXT_COMPRESSION_ENABLED", "false")
 
         // テレメトリ (Sentry) の DSN。空文字の場合、TelemetryGate は初期化を行わない。
         buildConfigField("String", "SENTRY_DSN", "\"$sentryDsn\"")

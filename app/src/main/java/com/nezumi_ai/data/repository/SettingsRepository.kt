@@ -125,8 +125,6 @@ class SettingsRepository(
         val requireMultimodal = context?.let { PreferencesHelper.isRequireMultimodal(it) } ?: false
         return InferenceConfig(
             contextWindow = contextWindowForSelected,
-            contextCompressionEnabled = current.contextCompressionEnabled,
-            contextCompressionThresholdPercent = current.contextCompressionThresholdPercent,
             temperature = current.temperature,
             topP = current.topP,
             maxTopK = current.maxTopK,
@@ -299,8 +297,6 @@ class SettingsRepository(
     }
 
     suspend fun updateInferenceConfig(
-        contextCompressionEnabled: Boolean,
-        contextCompressionThresholdPercent: Int,
         temperature: Float,
         topP: Float,
         maxTopK: Int,
@@ -338,8 +334,6 @@ class SettingsRepository(
         }
         val config = InferenceConfig(
             contextWindow = constrainedWindow,
-            contextCompressionEnabled = contextCompressionEnabled,
-            contextCompressionThresholdPercent = contextCompressionThresholdPercent,
             temperature = temperature,
             topP = topP,
             maxTopK = maxTopK,
@@ -350,8 +344,6 @@ class SettingsRepository(
             current.copy(
                 contextWindow = config.contextWindow,
                 contextWindowMap = encodeContextWindowMap(contextWindowMap),
-                contextCompressionEnabled = config.contextCompressionEnabled,
-                contextCompressionThresholdPercent = config.contextCompressionThresholdPercent,
                 temperature = config.temperature,
                 topP = config.topP,
                 maxTopK = config.maxTopK,

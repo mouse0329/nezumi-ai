@@ -66,7 +66,6 @@ import com.nezumi_ai.presentation.viewmodel.platform.android.AndroidPlatformSdMo
 import com.nezumi_ai.presentation.viewmodel.platform.android.AndroidPlatformTtsPlayer
 import com.nezumi_ai.presentation.viewmodel.platform.android.AndroidPlatformWakeLock
 import com.nezumi_ai.presentation.viewmodel.usecase.ChatSessionCoordinator
-import com.nezumi_ai.presentation.viewmodel.usecase.ContextCompressionUseCase
 import com.nezumi_ai.presentation.viewmodel.usecase.ImageToolInvoker
 import com.nezumi_ai.presentation.viewmodel.usecase.ModelSessionCoordinator
 import com.nezumi_ai.presentation.viewmodel.usecase.PromptBuildingUseCase
@@ -176,21 +175,17 @@ class ChatViewModel(
         AndroidPlatformSdModelPathResolver(appContext)
     }
     private val promptBuilding = PromptBuildingUseCase()
-    private val contextCompressionUseCase = ContextCompressionUseCase(promptBuilding)
     private val chatSessionCoordinator by lazy { ChatSessionCoordinator(sessionRepository) }
     private val imageToolInvoker by lazy { ImageToolInvoker(sdModelPathResolver) }
 
     companion object {
         private const val TAG = "ChatViewModel"
         private const val RESPONSE_TIMEOUT_MS = 120_000L
-        private const val COMPRESSION_TIMEOUT_MS = 25_000L
         /** ストリーム中の Room 更新間隔（Gallery レベル：高速更新） */
         private const val STREAM_PERSIST_INTERVAL_MS = 100L
         private const val STREAM_PERSIST_INTERVAL_TABLE_MS = 50L
         /** Phase 14: トークン数と文字数の変換比率（1トークン ≈ 3.5～4文字）*/
         private const val TOKEN_TO_CHAR_RATIO = 4
-        private const val COMPRESSION_RECENT_MESSAGE_COUNT = 6
-        private const val COMPRESSION_SUMMARY_MAX_CHARS = 700
         /** 1 回の生成の上限（ネイティブが onDone を返さない場合の保険） */
         private const val GENERATION_WALL_TIMEOUT_MS = 900_000L
         /** 最初のトークン以降、この時間チャンクが無ければ打ち切り */
@@ -249,11 +244,6 @@ class ChatViewModel(
     private class GenerationStalledException : Exception("GENERATION_STALLED")
 
     private class GenerationWallTimeoutException : Exception("GENERATION_WALL_TIMEOUT")
-
-    private data class CompressedContextCache(
-        val signature: Int,
-        val summary: String
-    )
 
     private suspend fun getActiveSelectedModel(): String {
         val preset = presetRepository?.getCurrentPreset()
@@ -554,9 +544,6 @@ class ChatViewModel(
         _isModelLoading.value = false
         _modelLoadingStatus.value = ""
     }
-
-    private val _isCompressing = MutableStateFlow(false)
-    val isCompressing: StateFlow<Boolean> = _isCompressing
 
     private val _isExtracting = MutableStateFlow(false)
     val isExtracting: StateFlow<Boolean> = _isExtracting.asStateFlow()
@@ -949,8 +936,7 @@ class ChatViewModel(
     private var generationJob: Job? = null
     private val generationControlMutex = Mutex()
     private var messagesCollectionJob: Job? = null
-    private val compressedContextCache = mutableMapOf<Long, CompressedContextCache>()
-    private var currentBackendType = "CPU"  // GPU時はキャッシュを無効化するためのフラグ
+    private var currentBackendType = "CPU"  // GPU/CPU/NPU を保持する (診断ログ用)
     private val userTurnMarkerRegex = Regex("(?i)(?:^|[\\s\\n\\r])(?:User|ユーザー)\\s*[:：]")
     private val assistantTurnMarkerRegex = Regex("(?i)(?:^|[\\s\\n\\r])(?:Assistant|アシスタント)\\s*[:：]")
     private val roleTurnMarkerRegex =
@@ -1102,10 +1088,6 @@ class ChatViewModel(
         }
 
         stopGenerationInternal()
-
- // メーター不正確修正: セッション遷移時に圧縮コンテキストキャッシュをクリア（同期的に実行）
-        clearCompressedContextCache(sessionId)
-        Log.d(TAG, "setCurrentSession: Cleared compressed context cache for sessionId=$sessionId")
 
  // レースコンディション修正: 即座にメッセージをクリアして、前セッションの
         //   メッセージが一瞬表示される（チャットカードが切れる）現象を防ぐ。
@@ -1447,107 +1429,6 @@ class ChatViewModel(
         }
     }
 
-    fun compressContextManually() {
-        val sessionId = _currentSessionId.value ?: return
-        if (_isLoading.value) {
-            viewModelScope.launch {
-                _uiMessage.emit(appContext.getString(R.string.vm_cannot_compress_while_generating))
-            }
-            return
-        }
-        if (_isCompressing.value) {
-            viewModelScope.launch {
-                _uiMessage.emit(appContext.getString(R.string.vm_compression_in_progress))
-            }
-            return
-        }
-
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val manager = requireModelManager()
-                val selectedModel = getActiveSelectedModel()
-                _selectedModel.value = selectedModel
-                val engineModelName = toEngineModelName(selectedModel)
-                if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
-                    _uiMessage.emit(appContext.getString(R.string.model_not_downloaded_for_compression))
-                    return@launch
-                }
-
-                val config = settingsRepository.getInferenceConfigForModel(selectedModel, appContext)
-                val loadResult = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = false)
-                if (loadResult.isFailure) {
-                    val error = loadResult.exceptionOrNull()
-                    val errorMsg = error?.message ?: "Unknown error"
-                    Log.e(TAG, "Compression model load failed: $errorMsg", error)
-                    if (errorMsg == "MEMORY_WARNING_SHOWN" || errorMsg == "CPU_COMPAT_WARNING_SHOWN") {
-                        Log.d(TAG, "Model warning shown during compression - waiting for user action: $errorMsg")
-                        return@launch
-                    }
-                    _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
-                        title = appContext.getString(R.string.model_load_error_title),
-                        message = appContext.getString(R.string.model_load_error_compression),
-                        details = errorMsg
-                    )
-                    return@launch
-                }
-
-                val messages = messageRepository.getMessagesForSessionOnce(sessionId)
-                    .filterNot { shouldExcludeFromModelContext(it) }
-                if (messages.isEmpty()) {
-                    _uiMessage.emit(appContext.getString(R.string.vm_no_context_to_compress))
-                    return@launch
-                }
-
-                val compressionTarget = if (messages.size > COMPRESSION_RECENT_MESSAGE_COUNT) {
-                    messages.dropLast(COMPRESSION_RECENT_MESSAGE_COUNT)
-                } else {
-                    messages
-                }
-                val signature = compressionTarget.fold(17) { acc, msg ->
-                    ((acc * 31) + msg.role.hashCode()) * 31 + msg.content.hashCode()
-                }
-
-                // GPU時はキャッシュを使用せず常に再計算（メモリ安定性優先）
-                val useCache = currentBackendType != "GPU"
-                val cached = if (useCache) compressedContextCache[sessionId] else null
-
-                if (cached != null && cached.signature == signature) {
-                    _uiMessage.emit(appContext.getString(R.string.vm_context_already_latest))
-                    return@launch
-                }
-
-                _isCompressing.value = true
-                val summary = try {
-                    requestCompressedContextSummary(
-                        sessionId = sessionId,
-                        manager = manager,
-                        messages = compressionTarget,
-                        config = config
-                    )
-                } finally {
-                    _isCompressing.value = false
-                }
-
-                // GPU時はキャッシュに保存しない
-                if (useCache) {
-                    compressedContextCache[sessionId] = CompressedContextCache(signature, summary)
-                }
-
-                // 圧縮完了後、コンテキスト使用量を再計算して UI に反映
-                val updatedMessages = messageRepository.getMessagesForSessionOnce(sessionId)
-                _contextUsageChars.value = estimateContextUsageChars(updatedMessages)
-
-                Log.d(TAG, "Context compression completed successfully. Messages will use compressed context on next send.")
- _uiMessage.emit(appContext.getString(R.string.vm_context_compressed))
-            } catch (t: Throwable) {
-                _isCompressing.value = false
-                val e = if (t is Exception) t else RuntimeException(t)
-                Log.e(TAG, "Manual context compression failed", e)
-                _uiMessage.emit(appContext.getString(R.string.compression_failed, e.message ?: ""))
-            }
-        }
-    }
-
     fun stopGeneration() {
         viewModelScope.launch {
             stopGenerationInternal()
@@ -1737,7 +1618,6 @@ class ChatViewModel(
                 // プロンプト内容は applyVariantSelection ・ 新規バリアント選択によって自動的に
                 // 「今選択中の応答だけ」を履歴に含む形で再構築される。
                 withContext(Dispatchers.IO) {
-                    compressedContextCache.remove(sessionId)
                     runCatching { requireModelManager().clearKvCache() }
                         .onFailure { Log.w(TAG, "clearKvCache after regenerate failed", it) }
                     sessionRepository.updateSessionLastUpdated(sessionId)
@@ -1849,7 +1729,6 @@ class ChatViewModel(
             }
             messageRepository.deleteMessageById(msg.id)
         }
-        compressedContextCache.remove(sessionId)
         runCatching { requireModelManager().clearKvCache() }
             .onFailure { Log.w(TAG, "clearKvCache after revoke failed", it) }
         sessionRepository.updateSessionLastUpdated(sessionId)
@@ -2019,8 +1898,7 @@ class ChatViewModel(
                 if (pendingSaveMode != com.nezumi_ai.data.memory.MemorySaveMode.TOOL_ONLY) {
                     memoryExtractionWorker?.processPending(manager, config.copy(
                         temperature = 0.1f,
-                        enableThinking = false,
-                        contextCompressionEnabled = false
+                        enableThinking = false
                     ), pendingSaveMode, { fetchSessionId ->
                         messageRepository.getMessagesForSessionOnce(fetchSessionId)
                     }, suppressContradictionDeletion = true)
@@ -4129,100 +4007,10 @@ class ChatViewModel(
             Log.d(TAG, "PROMPT_BUILD: Messages with thinkingContent found (count=${messagesWithThinking.size}), but they are excluded from prompt as designed")
         }
 
-        // Phase 16: GPU時のコンテキスト圧縮を無効化（メモリ競合防止）
-        // GPU推論中に別の圧縮推論を走らせるとメモリ OOM リスクが高い
-        val effectiveCompressionEnabled = config.isContextCompressionEnabledForRuntime() && config.backendType != "GPU"
-
-        if (!effectiveCompressionEnabled) {
-            return trimPromptToWindow(fullPrompt, config.contextWindow)
-        }
-
-        val validMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
-        val recentMessageCount = recentMessageCountForWindow(config.contextWindow)
-        // 件数が少なくても長文であれば圧縮を発火できるようにする。
-        // ただし直近メッセージを最低2件は保持し、残りを圧縮対象にする。
-        // また、画像を含むメッセージは圧縮対象から除外してコンテキストに残す
-        val messagesWithImages = validMessages.filter { it.imageUri != null && it.imageUri.isNotEmpty() }
-        val minKeepCount = 2 + messagesWithImages.size  // 画像付きメッセージを除外
-        val keepRecentCount = when {
-            validMessages.size <= 2 -> validMessages.size
-            validMessages.size <= recentMessageCount -> validMessages.size - 1
-            else -> maxOf(recentMessageCount, minKeepCount)  // 画像付きメッセージは必ず保持
-        }
-        if (keepRecentCount <= 0) {
-            return trimPromptToWindow(fullPrompt, config.contextWindow)
-        }
-
-        // 圧縮対象のメッセージから画像付きメッセージを除外する
-        val allNonCompressibleMessages = validMessages.filterNot { it.imageUri != null && it.imageUri.isNotEmpty() }
-        val cutoffIndex = maxOf(0, allNonCompressibleMessages.size - (recentMessageCount - messagesWithImages.size))
-
-        val olderMessages = allNonCompressibleMessages.take(cutoffIndex)
-        val recentMessages = validMessages.takeLast(keepRecentCount)
-        val signature = olderMessages.fold(17) { acc, msg ->
-            ((acc * 31) + msg.role.hashCode()) * 31 + msg.content.hashCode()
-        }
-
-        // GPU時はキャッシュを使用せず常に再計算（メモリ安定性優先）
-        val useCache = config.backendType != "GPU"
-        val cached = if (useCache) compressedContextCache[sessionId] else null
-
-        // 手動圧縮済みキャッシュがあれば、閾値より先に優先適用する。
-        if (cached != null && cached.signature == signature) {
-            val prompt = buildPromptWithCompressedSummary(
-                isGgufEngine = isGgufEngine,
-                engineModelName = engineModelName,
-                recentMessages = recentMessages,
-                compressedSummary = cached.summary,
-                enableThinking = config.enableThinking,
-                enableToolCalling = config.enableToolCalling,
-                memoryBlock = memoryBlock
-            )
-            return trimPromptToWindow(prompt, config.contextWindow)
-        }
-
-        // Phase 14: contextWindow はトークン数。閾値計算も「トークン数 × パーセント」
-        val thresholdChars =
-            ((config.contextWindow * config.contextCompressionThresholdPercent) / 100).coerceAtLeast(1)
-        if (fullPrompt.length < thresholdChars) {
-            return trimPromptToWindow(fullPrompt, config.contextWindow)
-        }
-
-        val compressedSummary = if (cached != null && cached.signature == signature) {
-            cached.summary
-        } else {
-            _isCompressing.value = true
-            try {
-                requestCompressedContextSummary(
-                    sessionId = sessionId,
-                    manager = manager,
-                    messages = olderMessages,
-                    config = config
-                ).also { summary ->
-                    // GPU時はキャッシュに保存しない
-                    if (useCache) {
-                        compressedContextCache[sessionId] = CompressedContextCache(signature, summary)
-                    }
-                }
-            } finally {
-                _isCompressing.value = false
-            }
-        }
-
-        // 圧縮コンテキストの使用をログに記録
-        Log.d(TAG, "Using compressed context for inference. Older messages (${olderMessages.size}) summarized, recent messages (${recentMessages.size}) included. Signature=$signature")
-
-        val prompt = buildPromptWithCompressedSummary(
-            isGgufEngine = isGgufEngine,
-            engineModelName = engineModelName,
-            recentMessages = recentMessages,
-            compressedSummary = compressedSummary,
-            enableThinking = config.enableThinking,
-            enableToolCalling = config.enableToolCalling,
-            memoryBlock = memoryBlock
-        )
-
-        return trimPromptToWindow(prompt, config.contextWindow)
+        // コンテキスト圧縮は廃止済み (旧実装はバグ多発のため Phase 1 で削除)。
+        //   代わりにここでは trimPromptToWindow のみで contextWindow に収める。
+        //   将来的な圧縮再実装は Phase 外 (別途リファクタ) とする。
+        return trimPromptToWindow(fullPrompt, config.contextWindow)
     }
 
     /**
@@ -4468,8 +4256,7 @@ class ChatViewModel(
             val selectedModel = getActiveSelectedModel()
             val config = chatInferenceConfigForModel(selectedModel).copy(
                 temperature = 0.1f,
-                enableThinking = false,
-                contextCompressionEnabled = false
+                enableThinking = false
             ).normalized()
             worker.enqueue(sessionId, messages, manager, config, saveMode)
         }
@@ -4515,109 +4302,6 @@ class ChatViewModel(
 
     private fun buildMemorySearchQuery(messages: List<MessageEntity>): String =
         promptBuilding.buildMemorySearchQuery(messages)
-
-    private suspend fun requestCompressedContextSummary(
-        sessionId: Long,
-        manager: ModelManager,
-        messages: List<MessageEntity>,
-        config: InferenceConfig
-    ): String {
-        if (messages.isEmpty()) return "要約: （圧縮対象なし）\nキーワード: なし"
-
-        val transcript = messages.mapNotNull { msg ->
-            val content = sanitizeMessageContentForPrompt(msg)
-            if (content.isBlank()) return@mapNotNull null
-            val role = if (msg.role == "assistant") "assistant" else "user"
-            "$role: $content"
-        }.joinToString(separator = "\n")
-
-        val compressionPrompt = buildString {
-            append("以下の会話履歴を、次回応答に必要な情報だけに圧縮してください。\n")
-            append("出力は必ず日本語。JSONやMarkdownコードブロックは禁止。\n")
-            append("最大4行、各行は簡潔な短文にしてください。\n")
-            append("\n")
-            append("含めるべき情報:\n")
-            append("- ユーザーの目的・依頼内容\n")
-            append("- 決定済みの前提（設定値・制約・方針）\n")
-            append("- 未解決タスクや次のアクション\n")
-            append("- 必要なら固有名詞・数値\n")
-            append("\n")
-            append("不要な情報:\n")
-            append("- 挨拶、言い換え、冗長な説明\n")
-            append("- 既に不要になった古い経緯\n")
-            append("\n")
-            append("会話履歴:\n")
-            append(transcript)
-        }
-
-        val raw = withTimeoutOrNull(COMPRESSION_TIMEOUT_MS) {
-            val compressionConfig = config.copy(
-                temperature = config.temperature.coerceIn(0f, 0.7f),
-                enableThinking = false
-            ).normalized()
-            val flow = manager.runInference(
-                sessionId = sessionId,
-                prompt = compressionPrompt,
-                config = compressionConfig
-            )
-            val builder = StringBuilder()
-            flow.collect { chunk ->
-                val final = InferenceStreamProtocol.decodeFinal(chunk)
-                val toolCallChunk = InferenceStreamProtocol.decodeToolCallChunk(chunk)
-                val toolResultChunk = InferenceStreamProtocol.decodeToolResultChunk(chunk)
-                if (final != null) {
-                    builder.clear()
-                    builder.append(final)
-                } else if (toolCallChunk != null || toolResultChunk != null) {
-                    // 圧縮用途ではツールイベントを本文として扱わない
-                } else if (chunk.isNotEmpty()) {
-                    val currentContent = builder.toString()
-                    val merged = mergeStreamingChunk(currentContent, chunk)
-                    // セーフガード: マージ結果が元のコンテンツより短くならないことを確認
-                    if (merged != currentContent && merged.length >= currentContent.length) {
-                        builder.clear()
-                        builder.append(merged)
-                    } else if (merged.length < currentContent.length) {
-                        Log.w(TAG, "Context compression merge would shrink content: ${currentContent.length} -> ${merged.length}, skipping")
-                    }
-                }
-            }
-            builder.toString().trim()
-        }
-
-        // JSON形式で返ってきてしまったらフィルタリング（防衛線）
-        if (raw?.trim()?.startsWith("{") == true) {
-            Log.w(TAG, "Context compression returned JSON format instead of natural text: $raw")
-            return buildCompressedSummaryFallback(messages)
-        }
-
-        // 自然言語の要約が返ってきた場合（Gemma 4 のシンキングタグは除去して本文だけ使う）
-        return if (!raw.isNullOrBlank()) {
-            val answerOnly = Gemma4ThinkingParser.parse(raw.trim()).answer.ifBlank { raw.trim() }
-            val compact = compactCompressionSummary(answerOnly, COMPRESSION_SUMMARY_MAX_CHARS)
-            buildString {
-                append("要約: ")
-                append(compact)
-            }
-        } else {
-            buildCompressedSummaryFallback(messages)
-        }
-    }
-
-    /**
-     * Phase 14: コンテキストウィンドウ（トークン数）から取得すべき最近メッセージ数を計算
-     * contextWindow はトークン数で表現される（例：4096 tokens）
-     */
-    private fun recentMessageCountForWindow(contextWindow: Int): Int =
-        promptBuilding.recentMessageCountForWindow(contextWindow)
-
-    private fun compactCompressionSummary(summary: String, maxChars: Int): String =
-        promptBuilding.compactCompressionSummary(summary, maxChars)
-
-    private fun parseCompressionJson(raw: String): Pair<String, List<String>>? =
-        promptBuilding.parseCompressionJson(raw)
-
-    private fun extractJsonObject(text: String): String? = promptBuilding.extractJsonObject(text)
 
     private suspend fun estimateContextUsageChars(messages: List<MessageEntity>): Int {
  // バグ修正: メーター計算を実際の推論ロジック（buildPromptWithSessionContext）と統一
@@ -4666,138 +4350,8 @@ class ChatViewModel(
                 }
         }
 
-        // コンテキスト圧縮が無効な場合、またはGPU使用時は未圧縮のサイズをそのまま返す
-        if (!config.isContextCompressionEnabledForRuntime() || config.backendType == "GPU") {
-            return basePromptSize
-        }
-
-        val sessionId = _currentSessionId.value
-        if (sessionId == null) {
-            return basePromptSize
-        }
-
- // buildPromptWithSessionContext と同じロジックで圧縮判定
-        val validMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
-        val recentMessageCount = recentMessageCountForWindow(config.contextWindow)
-        val keepRecentCount = when {
-            validMessages.size <= 2 -> validMessages.size
-            validMessages.size <= recentMessageCount -> validMessages.size - 1
-            else -> recentMessageCount
-        }
-        if (keepRecentCount <= 0) {
-            return basePromptSize
-        }
-
-        val olderMessages = validMessages.dropLast(keepRecentCount)
-        if (olderMessages.isEmpty()) {
-            return basePromptSize
-        }
-
-        val recentMessages = validMessages.takeLast(keepRecentCount)
-        val signature = olderMessages.fold(17) { acc, msg ->
-            ((acc * 31) + msg.role.hashCode()) * 31 + msg.content.hashCode()
-        }
-
- // キャッシュヒット時のみ圧縮サイズを計算
-        val cached = compressedContextCache[sessionId]
-        if (cached != null && cached.signature == signature) {
-            val compressedPrompt = buildPromptWithCompressedSummary(
-                isGgufEngine = isGgufEngine,
-                engineModelName = engineModelName,
-                recentMessages = recentMessages,
-                compressedSummary = cached.summary,
-                enableThinking = config.enableThinking,
-                enableToolCalling = config.enableToolCalling
-            )
-            val trimmedCompressed = trimPromptToWindow(compressedPrompt, config.contextWindow)
-            val compressedSize = trimmedCompressed.length
-            // 圧縮版が生きているときはそちらを raw プレビューにする
-            _contextRawPrompt.value = trimmedCompressed
-            Log.d(TAG, "CONTEXT_METER: Using cached compression | original=${basePromptSize}ch -> compressed=${compressedSize}ch")
-            return compressedSize
-        }
-
- // キャッシュヒット不成功：未圧縮サイズを返す（推論時に圧縮判定され圧縮される可能性あり）
-        // この場合、次の推論で圧縮キャッシュが生成されてメーター精度が向上する
-        Log.d(TAG, "CONTEXT_METER: No cached compression yet | showing uncompressed=${basePromptSize}ch (may be compressed during inference)")
+        // コンテキスト圧縮を廃止したので、未圧縮のプロンプトサイズをそのまま返す。
         return basePromptSize
-    }
-
-    private suspend fun buildPromptWithCompressedSummary(
-        isGgufEngine: Boolean,
-        engineModelName: String,
-        recentMessages: List<MessageEntity>,
-        compressedSummary: String,
-        enableThinking: Boolean = false,
-        enableToolCalling: Boolean = false,
-        memoryBlock: String? = null
-    ): String {
-        Log.d(TAG, "buildPromptWithCompressedSummary: memoryBlock=${if (memoryBlock != null) "present (${memoryBlock.length} chars)" else "null"}")
-        var systemPrompt = getActiveSystemPrompt()
-        val userName = settingsRepository.getUserName()
-        if (userName.isNotEmpty()) {
-            systemPrompt = "ユーザー名：$userName\n\n$systemPrompt"
-        }
-        systemPrompt = appendMemoryBlockToSystemPrompt(systemPrompt, memoryBlock)
-        // ツール形式はモデル名でソフトが判定する。
-        // - Gemma 4 系のみ Google 公式 `<|tool_call>call:NAME{...}<tool_call|>`
-        // - それ以外（Ollama の llama/qwen、LM Studio、OpenAI 互換など）は汎用 `<tool_call>{...}</tool_call>`
-        // クラウド ID は isGemma4Model 内で実モデル名に正規化してから判定する。
-        val isGemma4Model = PromptBuilder.isGemma4Model(engineModelName)
-        val availableSkills = availableSkillsForCurrentPreset(enableToolCalling)
-        if (enableToolCalling) {
-            Log.d(
-                TAG,
-                "TOOL_FORMAT: engine=$engineModelName isGemma4=$isGemma4Model " +
-                    "resolved=${PromptBuilder.resolveModelNameForGemmaCheck(engineModelName)}"
-            )
-            // ツール一覧を組み立てる直前にキャッシュを確認する。
-            // TTL 内かつサーバー構成が同じなら即 return するため、通常は追加コストゼロ。
-            runCatching { McpToolRegistry.get(appContext).ensureFresh() }
-                .onFailure { Log.w(TAG, "MCP tool registry refresh failed", it) }
-            systemPrompt = if (isGgufEngine) {
-                GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt, isGemma4 = isGemma4Model, skills = availableSkills)
-            } else {
-                // LiteRT-LM / クラウド共通:
-                // appendForLiteRt は GGUF と同じ <tools> ブロックを組み立てる。
-                // isGemma4=false（llama/qwen 等）なら汎用 tool_call 形式のみを注入する。
-                GgufToolPromptBuilder.appendForLiteRt(appContext, systemPrompt, isGemma4 = isGemma4Model, skills = availableSkills)
-            }
-        }
-        // Tool calling can coexist with thinking directives; do not suppress thinking when tool calling is enabled.
-        val enableThinkingForPrompt = enableThinking
-        return if (isGgufEngine) {
-            buildGgufPromptFromMessages(
-                messages = recentMessages,
-                systemPrompt = systemPrompt,
-                enableThinking = enableThinkingForPrompt,
-                sanitizer = ::sanitizeMessageContentForPrompt,
-                compressedSummary = compressedSummary,
-                modelPath = engineModelName
-                )?.let { promptBuilding.normalizeGgufPromptRoleMarkers(it) }
-                    ?: promptBuilding.normalizeGgufPromptRoleMarkers(
-                        PromptBuilder.buildForGguf(
-                            messages = recentMessages,
-                            systemPrompt = systemPrompt,
-                            compressedSummary = compressedSummary,
-                            format = PromptBuilder.detectGgufFormat(engineModelName, appContext),
-                            enableThinking = enableThinkingForPrompt,
-                            modelPath = engineModelName,
-                            sanitizeMessageContent = ::sanitizeMessageContentForPrompt,
-                            appContext = appContext
-                        )
-                    )
-        } else {
-            PromptBuilder.buildForLiteRt(
-                messages = recentMessages,
-                systemPrompt = systemPrompt,
-                injectGemmaThinkTrigger = enableThinkingForPrompt && settingsRepository.shouldInjectGemmaThinkTrigger(),
-                compressedSummary = compressedSummary,
-                sanitizeMessageContent = ::sanitizeMessageContentForPrompt,
-                appContext = appContext,
-                modelPath = engineModelName
-            )
-        }
     }
 
     private fun isAssistantErrorLikeMessage(content: String): Boolean =
@@ -4823,18 +4377,10 @@ class ChatViewModel(
         systemPrompt: String,
         enableThinking: Boolean,
         sanitizer: (MessageEntity) -> String,
-        compressedSummary: String? = null,
         modelPath: String = ""
     ): String? {
         val payload = JSONArray()
-        val finalSystem = buildString {
-            if (systemPrompt.isNotBlank()) append(systemPrompt.trim())
-            if (!compressedSummary.isNullOrBlank()) {
-                if (isNotEmpty()) append("\n\n")
-                append("以下は過去会話の圧縮コンテキストです:\n")
-                    .append(compressedSummary.trim())
-            }
-        }
+        val finalSystem = systemPrompt.trim()
         if (finalSystem.isNotBlank()) {
             payload.put(JSONObject().put("role", "system").put("content", finalSystem))
         }
@@ -4952,9 +4498,6 @@ class ChatViewModel(
             )
         }
     }
-
-    private fun buildCompressedSummaryFallback(messages: List<MessageEntity>): String =
-        promptBuilding.buildCompressedSummaryFallback(messages)
 
     private fun trimPromptToWindow(prompt: String, contextWindowTokens: Int): String =
         promptBuilding.trimPromptToWindow(prompt, contextWindowTokens)
@@ -5540,24 +5083,8 @@ class ChatViewModel(
      */
     fun setBackendType(type: String) {
         if (type != currentBackendType) {
-            Log.d(TAG, "Backend changed from $currentBackendType to $type, clearing cache")
+            Log.d(TAG, "Backend changed from $currentBackendType to $type")
             currentBackendType = type
-            // バックエンド切り替え時にキャッシュをクリア
-            clearCompressedContextCache()
-        }
-    }
-
-    /**
-     * 圧縮コンテキストキャッシュをクリア
-     * @param sessionId クリアする特定のセッション（nullの場合は全キャッシュクリア）
-     */
-    fun clearCompressedContextCache(sessionId: Long? = null) {
-        if (sessionId != null) {
-            compressedContextCache.remove(sessionId)
-            Log.d(TAG, "Cache cleared for session: $sessionId")
-        } else {
-            compressedContextCache.clear()
-            Log.d(TAG, "All compressed context cache cleared")
         }
     }
 

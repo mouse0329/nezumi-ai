@@ -120,9 +120,6 @@ class SettingsComposeFragment : Fragment() {
     private var topPInput by mutableStateOf("0.95")
     private var topkInput by mutableStateOf("40")
     private var maxTokensInput by mutableStateOf("1024")
-    private var contextCompressionEnabled by mutableStateOf(false)
-    private var contextCompressionThresholdPercent by mutableStateOf(70)
-    private val contextCompressionUiEnabled = BuildConfig.CONTEXT_COMPRESSION_ENABLED
     private var speculativeDecodingEnabled by mutableStateOf(false)
     private var requireMultimodal by mutableStateOf(false)
     private var preloadMemoryWarningThresholdPercent by mutableStateOf(MemoryObserver.DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT)
@@ -791,8 +788,6 @@ class SettingsComposeFragment : Fragment() {
                     append(topPInput); append('|')
                     append(topkInput); append('|')
                     append(maxTokensInput); append('|')
-                    append(contextCompressionEnabled); append('|')
-                    append(contextCompressionThresholdPercent); append('|')
                     append(speculativeDecodingEnabled); append('|')
                     append(requireMultimodal); append('|')
                     append(preloadMemoryWarningThresholdPercent); append('|')
@@ -1807,81 +1802,6 @@ class SettingsComposeFragment : Fragment() {
                         steps = 100,
                         modifier = Modifier.fillMaxWidth()
                     )
-                }
-
-
-
-                if (contextCompressionUiEnabled) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        // 自動圧縮トグル
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = stringResource(id = R.string.settings_inference_auto_compress_title),
-                                color = colorResource(id = R.color.text_secondary),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Switch(
-                                checked = contextCompressionEnabled,
-                                onCheckedChange = { contextCompressionEnabled = it },
-                                colors = nezumiSwitchColors()
-                            )
-                        }
-                        Text(
-                            text = stringResource(id = R.string.settings_inference_auto_compress_desc),
-                            color = colorResource(id = R.color.text_secondary),
-                            style = MaterialTheme.typography.bodySmall
-                        )
-
-                        // 圧縮しきい値（animatedAlphaとかで無効時は薄くしてもいい）
-                        if (contextCompressionEnabled) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = stringResource(id = R.string.settings_inference_compression_threshold_title),
-                                    color = colorResource(id = R.color.text_secondary),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "${contextCompressionThresholdPercent}%",
-                                    color = colorResource(id = R.color.primary),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                                )
-                            }
-                            Slider(
-                                value = contextCompressionThresholdPercent.toFloat(),
-                                onValueChange = { value ->
-                                    contextCompressionThresholdPercent = value.roundToInt()
-                                        .coerceIn(
-                                            InferenceConfig.MIN_COMPRESSION_THRESHOLD,
-                                            InferenceConfig.MAX_COMPRESSION_THRESHOLD
-                                        )
-                                },
-                                valueRange = InferenceConfig.MIN_COMPRESSION_THRESHOLD.toFloat()..
-                                    InferenceConfig.MAX_COMPRESSION_THRESHOLD.toFloat(),
-                                steps = InferenceConfig.MAX_COMPRESSION_THRESHOLD -
-                                    InferenceConfig.MIN_COMPRESSION_THRESHOLD - 1,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Text(
-                                text = stringResource(id = R.string.settings_inference_compression_threshold_desc),
-                                color = colorResource(id = R.color.text_secondary),
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
-                    }
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -4095,8 +4015,6 @@ class SettingsComposeFragment : Fragment() {
             maxTokensInput = config.maxTokens.toString()
             preloadMemoryWarningThresholdPercent = settingsRepository.getPreloadMemoryWarningThresholdPercent()
             memorySaveMode = settingsRepository.getMemorySaveMode().name
-            contextCompressionEnabled = config.contextCompressionEnabled
-            contextCompressionThresholdPercent = config.contextCompressionThresholdPercent
             speculativeDecodingEnabled = settingsRepository.isSpeculativeDecodingEnabled()
             requireMultimodal = PreferencesHelper.isRequireMultimodal(requireContext())
             backendType = config.backendType
@@ -4162,11 +4080,6 @@ class SettingsComposeFragment : Fragment() {
         if (contextWindow !in 512..maxContextWindow) {
             return requireContext().getString(R.string.settings_inference_context_range, maxContextWindow.toString())
         }
-        if (contextCompressionThresholdPercent !in
-            InferenceConfig.MIN_COMPRESSION_THRESHOLD..InferenceConfig.MAX_COMPRESSION_THRESHOLD
-        ) {
-            return requireContext().getString(R.string.settings_inference_compression_range, InferenceConfig.MIN_COMPRESSION_THRESHOLD.toString(), InferenceConfig.MAX_COMPRESSION_THRESHOLD.toString())
-        }
         if (preloadMemoryWarningThresholdPercent !in
             MemoryObserver.MIN_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT..MemoryObserver.MAX_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT
         ) {
@@ -4183,8 +4096,6 @@ class SettingsComposeFragment : Fragment() {
         val contextWindow = contextWindowInput.toIntOrNull() ?: 4096
 
         settingsRepository.updateInferenceConfig(
-            contextCompressionEnabled = contextCompressionEnabled,
-            contextCompressionThresholdPercent = contextCompressionThresholdPercent,
             temperature = temperature,
             topP = topP,
             maxTopK = topK,
