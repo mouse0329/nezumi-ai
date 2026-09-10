@@ -2450,12 +2450,18 @@ class ChatViewModel(
                                                     unmarkedThinking?.thinking ?: nativeStreamParsed.reasoningContent
                                                 ).ifBlank { null }
                                         } else {
-                                        // When thinking is enabled, models that omit the opening tag
-                                        // still begin in the thinking phase until </think> arrives.
+                                        // Phase 4 補完 (計画書 1.2b): LiteRT-LM 経路では文字列推測
+                                        // (treatUnmarkedInputAsThinking) を使わない。
+                                        // thinking 判定はエンジンの message.channels[THOUGHT_CHANNEL]
+                                        // (nativeThinkingStream=true 分岐) に委ね、チャンネル未送出の間は
+                                        // answerBuilder の内容は本文として扱う。GGUF 経路のみ、
+                                        // thinking ON 時に開始タグを省略するモデルの救済として従来の推測を残す。
+                                        val guessUnmarkedAsThinking =
+                                            config.enableThinking && isGgufEngineModel(engineModelName)
                                         val parsedStream =
                                             Gemma4ThinkingParser.parseStreaming(
                                                 rawInput = answerBuilder.toString(),
-                                                treatUnmarkedInputAsThinking = config.enableThinking,
+                                                treatUnmarkedInputAsThinking = guessUnmarkedAsThinking,
                                                 preserveToolCallTags = true
                                             )
                                         // Instant / Thinking OFF 中でも、モデルが実際に <think> を吐いた場合は
@@ -2663,9 +2669,12 @@ class ChatViewModel(
                     )
                 // See the comment near answerBuilder initialization: with the `<think>` prefill
                 // applied, raw text without tags is always a real answer, never thinking.
+                // Phase 4 補完 (計画書 1.2b): LiteRT-LM 経路では文字列推測を使わない
+                // (think チャンネルを出さない/出し始めが遅いモデルで本文が thinking と
+                //  誤認され表示されなくなるバグの根絶)。GGUF 経路のみ従来の推測を残す。
                 val finalParsed = Gemma4ThinkingParser.parse(
                     rawInput = answerBuilder.toString(),
-                    treatUnmarkedInputAsThinking = config.enableThinking,
+                    treatUnmarkedInputAsThinking = config.enableThinking && isGgufEngineModel(engineModelName),
                     preserveToolCallTags = true
                 )
                 if (!config.enableThinking) {
