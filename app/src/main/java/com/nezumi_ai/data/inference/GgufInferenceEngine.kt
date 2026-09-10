@@ -151,7 +151,8 @@ class GgufInferenceEngine(
         ): NativeGenerationSettings {
             // Bug fix(#42): ユーザーがテンプレートを明示選択している場合は GPT-2 専用の
             // 保守的ネイティブ設定 (batch=32 / flashAttn=off) を抑制する。
-            val isGpt2Model = PromptBuilder.detectGgufFormat(modelPath, appContext) == PromptBuilder.GgufPromptFormat.PLAIN_COMPLETION
+            val isGpt2Model = GgufFormatResolver.resolveGgufFormat(modelPath, appContext) ==
+                com.nezumi_ai.data.inference.prompt.PromptFormat.PlainCompletion
             return if (isGpt2Model) {
                 NativeGenerationSettings(
                     batchSize = 32,
@@ -350,7 +351,9 @@ class GgufInferenceEngine(
                     )
                 }
 
-                if (PromptBuilder.detectGgufFormat(modelPath, appContext) == PromptBuilder.GgufPromptFormat.PLAIN_COMPLETION) {
+                if (GgufFormatResolver.resolveGgufFormat(modelPath, appContext) ==
+                    com.nezumi_ai.data.inference.prompt.PromptFormat.PlainCompletion
+                ) {
                     Log.w(TAG, "Using conservative native settings for GPT-2 model: batch=${nativeSettings.batchSize}, ubatch=${nativeSettings.ubatchSize}, flashAttention=${nativeSettings.flashAttentionEnabled}, ctxShift=${nativeSettings.contextShiftEnabled}")
                 }
                 Log.i(
@@ -745,7 +748,7 @@ class GgufInferenceEngine(
             // Gemma 4 判定: モデルパスから 1 回だけ決定してツールループ内で使い回す。
             // GgufToolCallParser.parse / formatToolResults を Gemma 4 形式
             // (<|tool_call>call:NAME{...}<tool_call|>) に切り替えるためのフラグ。
-            val isGemma4 = PromptBuilder.isGemma4Model(ctx.modelPath)
+            val isGemma4 = com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.isGemma4Model(ctx.modelPath)
 
             val toolResultCards = mutableListOf<ToolResultCard>()
             while (isActive && toolRound < maxToolRounds) {

@@ -22,7 +22,8 @@ import kotlinx.serialization.json.jsonPrimitive
  *      [ParseResult.hadTruncatedToolCall] = true で通知する。呼び出し元 (GgufInferenceEngine) は
  *      失敗ステータスの ToolResultCard を合成し、閉じタグを補完してモデルに戻す。
  *
- * Gemma 4 のパースを有効にするには、呼び出し元で [PromptBuilder.isGemma4Model] の判定結果を
+ * Gemma 4 のパースを有効にするには、呼び出し元で
+ * [com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.isGemma4Model] の判定結果を
  * `isGemma4` として渡す。UI 描画向けの [parseSegments] / [parseToolResponseCards] /
  * [stripToolResponseBlocks] は「メッセージ本文がどちらの形式で生成されたか」を復元できないため、
  * 常に両方を同時に走査する (パラメータを取らない) 仕様。

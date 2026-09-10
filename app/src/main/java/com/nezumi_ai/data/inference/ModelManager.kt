@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
 import com.nezumi_ai.data.inference.cloud.AndroidCloudEngineAdapter
+import com.nezumi_ai.data.inference.cloud.CloudChatMessage
 import com.nezumi_ai.data.inference.cloud.CloudEngineFactory
 import com.nezumi_ai.data.inference.cloud.CloudModelId
 import com.nezumi_ai.data.inference.remote.RemoteGgufInferenceEngine
@@ -578,6 +579,46 @@ class ModelManager(
             } else {
                 throw t
             }
+        }
+    }
+
+    /**
+     * Phase 5/6 のクラウド正式経路: role 付きメッセージ配列を受け取り、
+     * AndroidCloudEngineAdapter 経由で構造化されたままクラウド API に届ける。
+     * クラウドエンジン以外に対して呼ばれた場合は平文連結にフォールバックする
+     * (本来は ChatViewModel 側でクラウドと判定済みの場合のみ呼ばれる想定)。
+     */
+    suspend fun runCloudInferenceWithMessages(
+        sessionId: Long,
+        messages: List<CloudChatMessage>,
+        images: List<Bitmap> = emptyList(),
+        config: InferenceConfig
+    ): Flow<String> = flow {
+        val engine = activeEngine as? AndroidCloudEngineAdapter
+        if (engine == null) {
+            // フォールバック: クラウド以外では平文に潰して従来経路へ。
+            val flat = messages.joinToString("\n") { it.text }
+            runInference(sessionId, flat, config).collect { emit(it) }
+            return@flow
+        }
+        val engineLabel = currentEngineLabel(engine)
+        val modelNameForTelemetry = currentModelName ?: "unknown"
+        try {
+            measureAndRecord(engineLabel, modelNameForTelemetry, config) { onChunk ->
+                val flow = if (images.isEmpty()) {
+                    engine.inferenceWithMessages(sessionId, messages, config)
+                } else {
+                    engine.inferenceWithMessagesAndMedia(sessionId, messages, images, config)
+                }
+                flow.collect { chunk ->
+                    onChunk(chunk)
+                    emit(chunk)
+                }
+            }
+        } catch (t: Throwable) {
+            if (t is CancellationException) throw t
+            InferenceTelemetryRecorder.recordInferenceFailure(context, engineLabel, modelNameForTelemetry, t)
+            throw t
         }
     }
 

@@ -3,8 +3,8 @@ package com.nezumi_ai.data.inference.cloud.engine
 import com.nezumi_ai.data.inference.CloudInferenceParams
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
 import com.nezumi_ai.data.inference.cloud.CloudHttpClient
+import com.nezumi_ai.data.inference.cloud.CloudChatMessage
 import com.nezumi_ai.data.inference.cloud.CloudLog
-import com.nezumi_ai.data.inference.cloud.CloudPromptSplitter
 import com.nezumi_ai.data.inference.cloud.ImageEncoding
 import io.ktor.client.request.header
 import io.ktor.client.request.preparePost
@@ -36,28 +36,44 @@ class ClaudeInferenceEngine(
     private val http get() = CloudHttpClient.instance
 
     override suspend fun runStreamingInference(
-        session: ProducerScope<String>, sessionId: Long, model: String, prompt: String,
-        images: List<ByteArray>, config: CloudInferenceParams, onDelta: (String) -> Unit
+        session: ProducerScope<String>, sessionId: Long, model: String, messages: List<CloudChatMessage>,
+        config: CloudInferenceParams, onDelta: (String) -> Unit
     ) {
         val apiKey = resolveApiKey(); val baseUrl = resolveBaseUrl()
         val endpoint = "$baseUrl/v1/messages"
-        val (systemPart, userPart) = CloudPromptSplitter.splitOptionalSystem(prompt)
+
+        // Phase 5: role 付きメッセージ配列から直接構築する。
+        // Claude API は system をトップレベルフィールドで受けるため SYSTEM ターンは連結してそこへ。
+        // TOOL_RESULT (ツール呼び出し継続) は user ロールのテキストとして送る。
+        val systemText = messages
+            .filter { it.role == CloudChatMessage.Role.SYSTEM }
+            .joinToString("\n") { it.text }
+            .trim()
 
         val bodyJson = buildJsonObject {
             put("model", model); put("max_tokens", config.maxTokens)
             put("temperature", config.temperature.toDouble()); put("top_p", config.topP.toDouble()); put("stream", true)
-            if (!systemPart.isNullOrBlank()) put("system", systemPart)
+            if (systemText.isNotBlank()) put("system", systemText)
             if (config.customStopTokens.isNotEmpty()) putJsonArray("stop_sequences") { config.customStopTokens.forEach { add(it) } }
             putJsonArray("messages") {
-                addJsonObject {
-                    put("role", "user")
-                    putJsonArray("content") {
-                        if (userPart.isNotBlank()) addJsonObject { put("type", "text"); put("text", userPart) }
-                        images.forEach { jpeg ->
-                            addJsonObject {
-                                put("type", "image")
-                                putJsonObject("source") {
-                                    put("type", "base64"); put("media_type", ImageEncoding.DEFAULT_MIME); put("data", ImageEncoding.encodeJpegBase64(jpeg))
+                messages.forEach { msg ->
+                    val role = when (msg.role) {
+                        CloudChatMessage.Role.SYSTEM -> return@forEach
+                        CloudChatMessage.Role.ASSISTANT -> "assistant"
+                        CloudChatMessage.Role.USER,
+                        CloudChatMessage.Role.TOOL_RESULT -> "user"
+                    }
+                    if (msg.text.isBlank() && msg.images.isEmpty()) return@forEach
+                    addJsonObject {
+                        put("role", role)
+                        putJsonArray("content") {
+                            if (msg.text.isNotBlank()) addJsonObject { put("type", "text"); put("text", msg.text) }
+                            msg.images.forEach { jpeg ->
+                                addJsonObject {
+                                    put("type", "image")
+                                    putJsonObject("source") {
+                                        put("type", "base64"); put("media_type", ImageEncoding.DEFAULT_MIME); put("data", ImageEncoding.encodeJpegBase64(jpeg))
+                                    }
                                 }
                             }
                         }

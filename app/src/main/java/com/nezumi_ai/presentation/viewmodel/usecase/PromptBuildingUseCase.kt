@@ -4,8 +4,10 @@ import android.content.Context
 import android.util.Log
 import com.nezumi_ai.data.database.entity.MessageEntity
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
-import com.nezumi_ai.data.inference.PromptBuilder
 import com.nezumi_ai.data.inference.ToolPayloadSanitizer
+import com.nezumi_ai.data.inference.prompt.ConversationInput
+import com.nezumi_ai.data.inference.prompt.ConversationTurn
+import com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
 
 /**
  * クラスタ C (プロンプト構築) を ChatViewModel から切り出した純粋ロジック層。
@@ -337,56 +339,67 @@ class PromptBuildingUseCase {
         return result
     }
 
-    fun detectGgufFormat(
-        engineModelName: String,
-        appContext: Context?
-    ): PromptBuilder.GgufPromptFormat = PromptBuilder.detectGgufFormat(engineModelName, appContext)
+    // ---- Phase 6: ConversationInput 構築 (プロンプト構築の正規入口) ----
 
-    fun buildForGguf(
+    /**
+     * MessageEntity 列からエンジン非依存の [ConversationInput] を構築する。
+     *
+     * 旧来は GGUF / LiteRT / クラウドの各経路がそれぞれ messages + systemPrompt + ... を
+     * 引き回していたが、ここで単一の正規入力に集約する (計画書 Phase 6)。
+     * systemPrompt にはメモリブロック・ツール定義ブロック注入済みの最終文字列を渡す
+     * (ツール定義は system 内連結の既存要件を維持するため toolsBlock 分離は行わない)。
+     *
+     * サニタイズは [sanitizeMessageContentForPrompt] を各ターンに適用し、
+     * GGUF の現ターン (isCurrentTurn) では `<__media__>` トークンが content に含まれる。
+     */
+    fun buildConversationInput(
         messages: List<MessageEntity>,
         systemPrompt: String,
-        compressedSummary: String?,
-        format: PromptBuilder.GgufPromptFormat,
         enableThinking: Boolean,
-        modelPath: String,
-        sanitizeMessageContent: (MessageEntity) -> String,
-        appContext: Context?
-    ): String = PromptBuilder.buildForGguf(
-        messages = messages,
-        systemPrompt = systemPrompt,
-        compressedSummary = compressedSummary,
-        format = format,
-        enableThinking = enableThinking,
-        modelPath = modelPath,
-        sanitizeMessageContent = sanitizeMessageContent,
-        appContext = appContext
-    )
+        enableToolCalling: Boolean,
+        currentTurnMessageId: Long?,
+        isGgufEngine: Boolean,
+    ): ConversationInput {
+        val turns = messages.mapNotNull { msg ->
+            val isCurrentTurn = msg.id == currentTurnMessageId && msg.role == "user"
+            val content = sanitizeMessageContentForPrompt(
+                msg,
+                isGgufEngine = isGgufEngine,
+                isCurrentTurn = isCurrentTurn
+            ).trim()
+            if (content.isBlank()) return@mapNotNull null
+            val role = if (msg.role == "assistant") {
+                ConversationTurn.Role.ASSISTANT
+            } else {
+                ConversationTurn.Role.USER
+            }
+            ConversationTurn(
+                id = msg.id,
+                role = role,
+                content = content,
+                isCurrentTurn = isCurrentTurn,
+            )
+        }
+        return ConversationInput(
+            systemInstruction = systemPrompt,
+            history = turns,
+            currentTurnId = currentTurnMessageId,
+            toolsBlock = null,
+            enableThinking = enableThinking,
+            enableToolCalling = enableToolCalling,
+        )
+    }
 
-    fun buildForLiteRt(
-        messages: List<MessageEntity>,
-        systemPrompt: String,
-        injectGemmaThinkTrigger: Boolean,
-        compressedSummary: String?,
-        sanitizeMessageContent: (MessageEntity) -> String,
-        appContext: Context?,
-        modelPath: String
-    ): String = PromptBuilder.buildForLiteRt(
-        messages = messages,
-        systemPrompt = systemPrompt,
-        injectGemmaThinkTrigger = injectGemmaThinkTrigger,
-        compressedSummary = compressedSummary,
-        sanitizeMessageContent = sanitizeMessageContent,
-        appContext = appContext,
-        modelPath = modelPath
-    )
+    // ---- モデル名判定 (ModelNameHeuristics への委譲。旧 PromptBuilder 呼び出しの移行先) ----
 
-    fun isGemma4Model(engineModelName: String): Boolean = PromptBuilder.isGemma4Model(engineModelName)
+    fun isGemma4Model(engineModelName: String): Boolean =
+        ModelNameHeuristics.isGemma4Model(engineModelName)
 
     fun usesAssistantThinkingPrefill(engineModelName: String): Boolean =
-        PromptBuilder.usesAssistantThinkingPrefill(engineModelName)
+        ModelNameHeuristics.usesAssistantThinkingPrefill(engineModelName)
 
     fun resolveModelNameForGemmaCheck(engineModelName: String): String =
-        PromptBuilder.resolveModelNameForGemmaCheck(engineModelName)
+        ModelNameHeuristics.resolveModelNameForCheck(engineModelName)
 
     companion object {
         private const val TAG = "PromptBuildingUseCase"

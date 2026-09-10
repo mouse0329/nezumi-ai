@@ -2,6 +2,7 @@ package com.nezumi_ai.data.inference.cloud.engine
 
 import com.nezumi_ai.data.inference.CloudInferenceParams
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
+import com.nezumi_ai.data.inference.cloud.CloudChatMessage
 import com.nezumi_ai.data.inference.cloud.CloudHttpClient
 import com.nezumi_ai.data.inference.cloud.CloudLog
 import io.ktor.client.request.header
@@ -27,16 +28,17 @@ class LmStudioInferenceEngine(
     private val http get() = CloudHttpClient.instance
 
     override suspend fun runStreamingInference(
-        session: ProducerScope<String>, sessionId: Long, model: String, prompt: String,
-        images: List<ByteArray>, config: CloudInferenceParams, onDelta: (String) -> Unit
+        session: ProducerScope<String>, sessionId: Long, model: String, messages: List<CloudChatMessage>,
+        config: CloudInferenceParams, onDelta: (String) -> Unit
     ) {
         val baseUrl = resolveBaseUrl(); val apiKey = resolveApiKey()
         val endpoint = "$baseUrl/v1/chat/completions"
-        val firstErr = attempt(endpoint, apiKey, model, prompt, images, config, true, session, onDelta)
-        if (firstErr != null && images.isNotEmpty()) {
+        val hasImages = messages.any { it.images.isNotEmpty() }
+        val firstErr = attempt(endpoint, apiKey, model, messages, config, true, session, onDelta)
+        if (firstErr != null && hasImages) {
             if (firstErr.contains(" 4", ignoreCase = false) || firstErr.contains("400", ignoreCase = false)) {
                 CloudLog.w(TAG, "Retrying LM Studio without data URI due to: $firstErr")
-                val secondErr = attempt(endpoint, apiKey, model, prompt, images, config, false, session, onDelta)
+                val secondErr = attempt(endpoint, apiKey, model, messages, config, false, session, onDelta)
                 if (secondErr != null) throw CloudRequestException("LM Studio request failed after retry: $secondErr")
                 return
             }
@@ -46,11 +48,11 @@ class LmStudioInferenceEngine(
     }
 
     private suspend fun attempt(
-        endpoint: String, apiKey: String, model: String, prompt: String, images: List<ByteArray>,
+        endpoint: String, apiKey: String, model: String, messages: List<CloudChatMessage>,
         config: CloudInferenceParams, useDataUriForImages: Boolean,
         session: ProducerScope<String>, onDelta: (String) -> Unit
     ): String? {
-        val bodyJson = OpenAiCompatSupport.buildRequestBody(model, prompt, images, config, stream = true, useDataUriForImages = useDataUriForImages)
+        val bodyJson = OpenAiCompatSupport.buildRequestBody(model, messages, config, stream = true, useDataUriForImages = useDataUriForImages)
         return http.preparePost(endpoint) {
             header(HttpHeaders.Accept, "text/event-stream"); contentType(ContentType.Application.Json)
             if (apiKey.isNotBlank()) header(HttpHeaders.Authorization, "Bearer $apiKey")

@@ -3,8 +3,8 @@ package com.nezumi_ai.data.inference.cloud.engine
 import com.nezumi_ai.data.inference.CloudInferenceParams
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
 import com.nezumi_ai.data.inference.cloud.CloudHttpClient
+import com.nezumi_ai.data.inference.cloud.CloudChatMessage
 import com.nezumi_ai.data.inference.cloud.CloudLog
-import com.nezumi_ai.data.inference.cloud.CloudPromptSplitter
 import com.nezumi_ai.data.inference.cloud.ImageEncoding
 import io.ktor.client.request.header
 import io.ktor.client.request.preparePost
@@ -57,52 +57,49 @@ class OllamaInferenceEngine(
         session: ProducerScope<String>,
         sessionId: Long,
         model: String,
-        prompt: String,
-        images: List<ByteArray>,
+        messages: List<CloudChatMessage>,
         config: CloudInferenceParams,
         onDelta: (String) -> Unit
     ) {
         val baseUrl = resolveBaseUrl()
         val apiKey = resolveApiKey()
         val endpoint = "$baseUrl/api/chat"
-        val split = CloudPromptSplitter.splitOptionalSystem(prompt)
-        val systemPart = split.first
-        val userPart = split.second
 
-        // Keep the v2.3.1 wire format: the prompt produced by the shared prompt
-        // builder is passed through unchanged. In particular, do not extract the
-        // <tools> block or reconstruct previous tool turns here. Ollama receives
-        // the same system/user message structure as before the KMP migration.
+        // Phase 5: role 付きメッセージ配列から直接構築する。
+        // <tools> ブロックの抽出や tool ターンの再構築はここでは行わず、
+        // system 内のツール定義テキストはそのまま system メッセージとして送る。
+        // 複数ターン履歴は role 配列として正しく構造化される (旧来の平文連結を廃止)。
         CloudLog.d(
             TAG,
-            "Ollama request systemLen=${systemPart?.length ?: 0} " +
-                "userLen=${userPart.length} hasToolsBlock=" +
-                (prompt.contains("<tools>") && prompt.contains("</tools>")) +
-                " promptLen=${prompt.length}"
+            "Ollama request messages=${messages.size} " +
+                "systemLen=${messages.filter { it.role == CloudChatMessage.Role.SYSTEM }.sumOf { it.text.length }} " +
+                "hasToolsBlock=" + messages.any { it.text.contains("<tools>") && it.text.contains("</tools>") }
         )
 
         val bodyJson = buildJsonObject {
             put("model", model)
             put("stream", true)
             putJsonArray("messages") {
-                if (!systemPart.isNullOrBlank()) {
+                messages.forEach { msg ->
+                    val role = when (msg.role) {
+                        CloudChatMessage.Role.SYSTEM -> "system"
+                        CloudChatMessage.Role.ASSISTANT -> "assistant"
+                        CloudChatMessage.Role.USER,
+                        CloudChatMessage.Role.TOOL_RESULT -> "user"
+                    }
+                    if (msg.text.isBlank() && msg.images.isEmpty()) return@forEach
                     add(buildJsonObject {
-                        put("role", "system")
-                        put("content", systemPart)
-                    })
-                }
-
-                add(buildJsonObject {
-                    put("role", "user")
-                    put("content", userPart)
-                    if (images.isNotEmpty()) {
-                        putJsonArray("images") {
-                            images.forEach { jpeg ->
-                                add(ImageEncoding.encodeJpegBase64(jpeg))
+                        put("role", role)
+                        put("content", msg.text)
+                        if (msg.images.isNotEmpty()) {
+                            putJsonArray("images") {
+                                msg.images.forEach { jpeg ->
+                                    add(ImageEncoding.encodeJpegBase64(jpeg))
+                                }
                             }
                         }
-                    }
-                })
+                    })
+                }
             }
             putJsonObject("options") {
                 put("temperature", config.temperature.toDouble())

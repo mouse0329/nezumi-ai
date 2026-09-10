@@ -33,6 +33,11 @@ data class ConversationTurn(
      * `imageDescription` の生成やコンテキスト予算調整のヒントに使う。
      */
     val imageCount: Int = 0,
+    /**
+     * GGUF の現ターンかどうか (マルチモーダル `<__media__>` トークン注入の判定用)。
+     * 上位層 (ChatViewModel) で currentTurnMessageId と一致する user ターンにのみ true を立てる。
+     */
+    val isCurrentTurn: Boolean = false,
 ) {
     enum class Role { SYSTEM, USER, ASSISTANT }
 
@@ -41,14 +46,16 @@ data class ConversationTurn(
             content: String,
             id: Long? = null,
             imageCount: Int = 0,
-            imageDescription: String? = null
+            imageDescription: String? = null,
+            isCurrentTurn: Boolean = false
         ): ConversationTurn =
             ConversationTurn(
                 id = id,
                 role = Role.USER,
                 content = content,
                 imageCount = imageCount,
-                imageDescription = imageDescription
+                imageDescription = imageDescription,
+                isCurrentTurn = isCurrentTurn
             )
 
         fun assistant(content: String, id: Long? = null): ConversationTurn =

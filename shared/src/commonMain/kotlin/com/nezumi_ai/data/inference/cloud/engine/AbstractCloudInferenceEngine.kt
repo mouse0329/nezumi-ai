@@ -6,12 +6,13 @@ import com.nezumi_ai.data.inference.CloudToolCallParser
 import com.nezumi_ai.data.inference.CloudToolExecutionResult
 import com.nezumi_ai.data.inference.CloudToolExecutor
 import com.nezumi_ai.data.inference.CloudToolResultCard
-import com.nezumi_ai.data.inference.Gemma4ModelDetector
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
+import com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
 import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.ParsedToolCall
 import com.nezumi_ai.data.inference.ToolPayloadSanitizer
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
+import com.nezumi_ai.data.inference.cloud.CloudChatMessage
 import com.nezumi_ai.data.inference.cloud.CloudLog
 import com.nezumi_ai.data.inference.cloud.PlatformSecureStore
 import io.ktor.client.statement.HttpResponse
@@ -100,12 +101,17 @@ abstract class AbstractCloudInferenceEngine(
         else CloudApiKeyStore.getBaseUrl(secureStore, provider)
     }
 
-    fun inference(sessionId: Long, prompt: String, config: CloudInferenceParams): Flow<String> =
-        inferenceWithMedia(sessionId, prompt, emptyList(), config)
+    fun inference(sessionId: Long, messages: List<CloudChatMessage>, config: CloudInferenceParams): Flow<String> =
+        inferenceWithMedia(sessionId, messages, emptyList(), config)
 
+    /**
+     * Phase 5: プロンプトは平文 String ではなく role 付きメッセージ配列で受け取る。
+     * 複数ターン履歴が正しく role 配列でクラウド API へ送られ、ツール呼び出しの
+     * マルチターン継続もメッセージ追加で表現する (旧来の平文連結を廃止)。
+     */
     fun inferenceWithMedia(
         sessionId: Long,
-        prompt: String,
+        messages: List<CloudChatMessage>,
         images: List<ByteArray>,
         config: CloudInferenceParams
     ): Flow<String> = callbackFlow {
@@ -128,16 +134,24 @@ abstract class AbstractCloudInferenceEngine(
         val toolResultCards = mutableListOf<CloudToolResultCard>()
         var closed = false
         try {
-            CloudLog.d(TAG, "inference start session=$sessionId model=$model promptLen=${prompt.length} images=${images.size} toolCalling=$toolCallingEnabled")
-            var currentPrompt = prompt
+            CloudLog.d(TAG, "inference start session=$sessionId model=$model messages=${messages.size} images=${images.size} toolCalling=$toolCallingEnabled")
+            // Phase 5: マルチターン継続用の会話列。各ラウンドで ASSISTANT / TOOL_RESULT を
+            // メッセージとして追加し、プロンプトの平文連結は行わない。
+            val conversation = messages.toMutableList()
             var toolRound = 0
-            val isGemma4 = Gemma4ModelDetector.isGemma4Model(model)
+            val isGemma4 = ModelNameHeuristics.isGemma4Model(model)
             CloudLog.d(TAG, "TOOL_FORMAT cloud model=$model isGemma4=$isGemma4")
             while (toolRound < maxToolRounds) {
                 toolRound++
                 val roundText = StringBuilder()
-                val roundImages = if (toolRound == 1) images else emptyList()
-                runStreamingInference(this, sessionId, model, currentPrompt, roundImages, config) { delta ->
+                // 画像は現ターン (末尾 USER) にのみ同梱する (2ラウンド目以降は送らない)。
+                if (toolRound == 1 && images.isNotEmpty()) {
+                    val lastUserIndex = conversation.indexOfLast { it.role == CloudChatMessage.Role.USER }
+                    if (lastUserIndex >= 0) {
+                        conversation[lastUserIndex] = conversation[lastUserIndex].copy(images = images)
+                    }
+                }
+                runStreamingInference(this, sessionId, model, conversation.toList(), config) { delta ->
                     if (delta.isNotEmpty()) {
                         roundText.append(delta)
                         fullAnswer.append(delta)
@@ -176,18 +190,20 @@ abstract class AbstractCloudInferenceEngine(
                     trySend(InferenceStreamProtocol.encodeExecutedToolsList(toolResultCards.map { it.toolName }.distinct()))
                 }
 
-                currentPrompt = buildString {
-                    append(prompt)
-                    // stripThinkingForModelPrompt はシンキングブロックの除去のみで、
-                    // tool_call タグはモデル文脈として意図的に残す設計。万一 tool_result 系の
-                    // 混入タグがあっても再解釈されないよう、入口で無害化しておく (冪等)。
-                    append(
-                        ToolPayloadSanitizer.sanitizeToolTags(
-                            Gemma4ThinkingParser.stripThinkingForModelPrompt(roundText.toString())
-                        )
-                    )
-                    // toolResponseBlock は formatToolResults 内で既に無害化済み。
-                    append(toolResponseBlock)
+                // Phase 5: 次ラウンドへの継続はメッセージ追加で表現する。
+                // assistant 側の応答 (思考除去済み) とツール結果を role 付きで積む。
+                // stripThinkingForModelPrompt はシンキングブロックの除去のみで、
+                // tool_call タグはモデル文脈として意図的に残す設計。万一 tool_result 系の
+                // 混入タグがあっても再解釈されないよう、入口で無害化しておく (冪等)。
+                val assistantRound = ToolPayloadSanitizer.sanitizeToolTags(
+                    Gemma4ThinkingParser.stripThinkingForModelPrompt(roundText.toString())
+                )
+                if (assistantRound.isNotBlank()) {
+                    conversation += CloudChatMessage(CloudChatMessage.Role.ASSISTANT, assistantRound)
+                }
+                // toolResponseBlock は formatToolResults 内で既に無害化済み。
+                if (toolResponseBlock.isNotBlank()) {
+                    conversation += CloudChatMessage(CloudChatMessage.Role.TOOL_RESULT, toolResponseBlock)
                 }
             }
 
@@ -217,8 +233,7 @@ abstract class AbstractCloudInferenceEngine(
         session: ProducerScope<String>,
         sessionId: Long,
         model: String,
-        prompt: String,
-        images: List<ByteArray>,
+        messages: List<CloudChatMessage>,
         config: CloudInferenceParams,
         onDelta: (String) -> Unit
     )

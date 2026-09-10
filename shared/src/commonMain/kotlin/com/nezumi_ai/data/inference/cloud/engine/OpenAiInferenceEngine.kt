@@ -2,6 +2,7 @@ package com.nezumi_ai.data.inference.cloud.engine
 
 import com.nezumi_ai.data.inference.CloudInferenceParams
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
+import com.nezumi_ai.data.inference.cloud.CloudChatMessage
 import com.nezumi_ai.data.inference.cloud.CloudHttpClient
 import com.nezumi_ai.data.inference.cloud.CloudLog
 import io.ktor.client.request.header
@@ -27,12 +28,12 @@ class OpenAiInferenceEngine(
     private val http get() = CloudHttpClient.instance
 
     override suspend fun runStreamingInference(
-        session: ProducerScope<String>, sessionId: Long, model: String, prompt: String,
-        images: List<ByteArray>, config: CloudInferenceParams, onDelta: (String) -> Unit
+        session: ProducerScope<String>, sessionId: Long, model: String, messages: List<CloudChatMessage>,
+        config: CloudInferenceParams, onDelta: (String) -> Unit
     ) {
         val apiKey = resolveApiKey(); val baseUrl = resolveBaseUrl()
         val endpoint = "$baseUrl/v1/chat/completions"
-        val bodyJson = OpenAiCompatSupport.buildRequestBody(model, prompt, images, config, stream = true, useDataUriForImages = true)
+        val bodyJson = OpenAiCompatSupport.buildRequestBody(model, messages, config, stream = true, useDataUriForImages = true)
 
         http.preparePost(endpoint) {
             header(HttpHeaders.Authorization, "Bearer $apiKey"); header(HttpHeaders.Accept, "text/event-stream")

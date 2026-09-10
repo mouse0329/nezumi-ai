@@ -17,6 +17,7 @@ import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.Role
 import com.google.ai.edge.litertlm.ToolCall
 import com.google.ai.edge.litertlm.SamplerConfig
+import com.google.ai.edge.litertlm.ThinkingConfig
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import java.io.ByteArrayOutputStream
@@ -478,7 +479,14 @@ class LiteRtLmEngine(
                                     initialMessages = initialMessages ?: emptyList(),
                                     tools = tools,
                                     samplerConfig = samplerConfig,
-                                    automaticToolCalling = false
+                                    automaticToolCalling = false,
+                                    // Phase 4: thinking 制御は正規の ThinkingConfig を使う。
+                                    // extraContext["enable_thinking"] の文字列渡しは廃止。
+                                    // channels は指定せず (null) モデル内蔵 LlmMetadata の
+                                    // チャンネル自動解決に委ねる。
+                                    thinkingConfig = ThinkingConfig(
+                                        enableThinking = normalized.enableThinking
+                                    )
                                 )
                             )
                         } catch (toolErr: Throwable) {
@@ -490,7 +498,10 @@ class LiteRtLmEngine(
                                     initialMessages = initialMessages ?: emptyList(),
                                     tools = emptyList(),
                                     samplerConfig = samplerConfig,
-                                    automaticToolCalling = false
+                                    automaticToolCalling = false,
+                                    thinkingConfig = ThinkingConfig(
+                                        enableThinking = normalized.enableThinking
+                                    )
                                 )
                             )
                         }
@@ -588,7 +599,11 @@ class LiteRtLmEngine(
                         ConversationConfig(
                             tools = emptyList(),  // メモリ抽出はツール不要
                             samplerConfig = samplerConfig,
-                            automaticToolCalling = false
+                            automaticToolCalling = false,
+                            // メモリ抽出は JSON 応答の確実性を優先し、thinking は明示的に OFF。
+                            // (thinking モデルが推論チャンネルに本文を逃がして
+                            //  JSON パースが失敗するのを防ぐ)
+                            thinkingConfig = ThinkingConfig(enableThinking = false)
                         )
                     )
 
@@ -1358,8 +1373,8 @@ class LiteRtLmEngine(
                 contents.add(Content.Text(textToSend))
             }
 
-            val extraContext =
-                if (normalized.enableThinking) mapOf("enable_thinking" to "true") else emptyMap()
+            // Phase 4: extraContext["enable_thinking"] の非公式な文字列渡しは廃止。
+            // thinking 制御は ConversationConfig.thinkingConfig (正規 API) で伝える。
 
             val answerAccum = StringBuilder()
             val toolResultCards = mutableListOf<ToolResultCard>()
@@ -1387,12 +1402,11 @@ class LiteRtLmEngine(
                         var roundAccum = ""
                         val messageFlow = if (firstRequest) {
                             firstRequest = false
-                            conv.sendMessageAsync(Contents.of(contents), extraContext)
+                            conv.sendMessageAsync(Contents.of(contents))
                         } else {
                             conv.sendMessageAsync(
                                 pendingToolResponseMessage
-                                    ?: throw IllegalStateException("Tool response message missing"),
-                                extraContext
+                                    ?: throw IllegalStateException("Tool response message missing")
                             )
                         }
                         messageFlow.collect { message ->

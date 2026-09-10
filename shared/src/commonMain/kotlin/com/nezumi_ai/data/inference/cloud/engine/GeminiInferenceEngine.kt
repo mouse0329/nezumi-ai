@@ -3,8 +3,8 @@ package com.nezumi_ai.data.inference.cloud.engine
 import com.nezumi_ai.data.inference.CloudInferenceParams
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
 import com.nezumi_ai.data.inference.cloud.CloudHttpClient
+import com.nezumi_ai.data.inference.cloud.CloudChatMessage
 import com.nezumi_ai.data.inference.cloud.CloudLog
-import com.nezumi_ai.data.inference.cloud.CloudPromptSplitter
 import com.nezumi_ai.data.inference.cloud.ImageEncoding
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -38,22 +38,38 @@ class GeminiInferenceEngine(
     private val http get() = CloudHttpClient.instance
 
     override suspend fun runStreamingInference(
-        session: ProducerScope<String>, sessionId: Long, model: String, prompt: String,
-        images: List<ByteArray>, config: CloudInferenceParams, onDelta: (String) -> Unit
+        session: ProducerScope<String>, sessionId: Long, model: String, messages: List<CloudChatMessage>,
+        config: CloudInferenceParams, onDelta: (String) -> Unit
     ) {
         val apiKey = resolveApiKey(); val baseUrl = resolveBaseUrl()
         val endpoint = "$baseUrl/v1beta/models/$model:streamGenerateContent"
-        val (systemPart, userPart) = CloudPromptSplitter.splitOptionalSystem(prompt)
+
+        // Phase 5: role 付きメッセージ配列から直接構築する。
+        // Gemini API は systemInstruction をトップレベルで受け、contents は user / model の
+        // 2ロールのみ対応する。ASSISTANT は model に、TOOL_RESULT は user に射影する。
+        val systemText = messages
+            .filter { it.role == CloudChatMessage.Role.SYSTEM }
+            .joinToString("\n") { it.text }
+            .trim()
 
         val bodyJson = buildJsonObject {
-            if (!systemPart.isNullOrBlank()) putJsonObject("systemInstruction") { putJsonArray("parts") { addJsonObject { put("text", systemPart) } } }
+            if (systemText.isNotBlank()) putJsonObject("systemInstruction") { putJsonArray("parts") { addJsonObject { put("text", systemText) } } }
             putJsonArray("contents") {
-                addJsonObject {
-                    put("role", "user")
-                    putJsonArray("parts") {
-                        if (userPart.isNotBlank()) addJsonObject { put("text", userPart) }
-                        images.forEach { jpeg ->
-                            addJsonObject { putJsonObject("inline_data") { put("mime_type", ImageEncoding.DEFAULT_MIME); put("data", ImageEncoding.encodeJpegBase64(jpeg)) } }
+                messages.forEach { msg ->
+                    val role = when (msg.role) {
+                        CloudChatMessage.Role.SYSTEM -> return@forEach
+                        CloudChatMessage.Role.ASSISTANT -> "model"
+                        CloudChatMessage.Role.USER,
+                        CloudChatMessage.Role.TOOL_RESULT -> "user"
+                    }
+                    if (msg.text.isBlank() && msg.images.isEmpty()) return@forEach
+                    addJsonObject {
+                        put("role", role)
+                        putJsonArray("parts") {
+                            if (msg.text.isNotBlank()) addJsonObject { put("text", msg.text) }
+                            msg.images.forEach { jpeg ->
+                                addJsonObject { putJsonObject("inline_data") { put("mime_type", ImageEncoding.DEFAULT_MIME); put("data", ImageEncoding.encodeJpegBase64(jpeg)) } }
+                            }
                         }
                     }
                 }

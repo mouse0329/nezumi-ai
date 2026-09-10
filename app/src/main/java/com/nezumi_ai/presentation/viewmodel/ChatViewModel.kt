@@ -47,7 +47,9 @@ import com.nezumi_ai.data.inference.TextTokenEstimator
 import com.nezumi_ai.data.inference.ToolCallState
 import com.nezumi_ai.data.inference.ToolExecutionResult
 import com.nezumi_ai.data.inference.ToolResultCard
-import com.nezumi_ai.data.inference.PromptBuilder
+import com.nezumi_ai.data.inference.cloud.CloudChatMessage
+import com.nezumi_ai.data.inference.prompt.CloudRenderer
+import com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
 import com.nezumi_ai.data.inference.PromptTemplateStore
 import com.nezumi_ai.data.inference.LiteRtStructuredPrompt
 import com.nezumi_ai.data.inference.LlamaCppGpuBackend
@@ -2031,7 +2033,22 @@ class ChatViewModel(
 
             // ストリーミング推論を実行（マルチモーダル対応）
             val aiResponseFlow: Flow<String> = withContext(Dispatchers.IO) {
-                if (effectiveHasMediaInput) {
+                if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)) {
+                    // Phase 5/6: クラウドは role 付きメッセージ配列を構造化して送る正式経路。
+                    // 旧来の平文プロンプト (Gemma タグ込み単一文字列) は使わない (計画書 1.2)。
+                    Log.d(TAG, "Using cloud structured inference: images=${combinedImages.size}")
+                    manager.runCloudInferenceWithMessages(
+                        sessionId = sessionId,
+                        messages = buildCloudChatMessages(
+                            sessionId = sessionId,
+                            config = config,
+                            engineModelName = engineModelName,
+                            currentTurnMessageId = currentTurnMessageId
+                        ),
+                        images = combinedImages,
+                        config = config
+                    )
+                } else if (effectiveHasMediaInput) {
                     // マルチモーダル推論
                     Log.d(TAG, "Using multimodal inference: ${combinedImages.size} images, ${combinedAudio.size} audio clips (incl. past turns)")
                     manager.runInferenceWithMedia(
@@ -2097,7 +2114,7 @@ class ChatViewModel(
             val implicitThinkPrefill =
                 config.enableThinking &&
                     isGgufEngineModel(engineModelName) &&
-                    PromptBuilder.usesAssistantThinkingPrefill(engineModelName) &&
+                    ModelNameHeuristics.usesAssistantThinkingPrefill(engineModelName) &&
                     !nativeGgufTemplateActive
             if (implicitThinkPrefill) {
                 answerBuilder.append("<think>\n")
@@ -4065,7 +4082,7 @@ class ChatViewModel(
         // Gemma 4 公式仕様: thinking モードは system instruction 内の <|think|> で発火させる。
         // (enable_thinking はエンジン側が extraContext / ThinkingConfig で別途渡す)
         val engineModelName = toEngineModelName(getActiveSelectedModel())
-        if (config.enableThinking && PromptBuilder.isGemma4Model(engineModelName)) {
+        if (config.enableThinking && ModelNameHeuristics.isGemma4Model(engineModelName)) {
             systemPrompt =
                 if (systemPrompt.isBlank()) "<|think|>" else "<|think|>\n$systemPrompt"
         }
@@ -4099,6 +4116,70 @@ class ChatViewModel(
             currentMessageId = currentMessage?.id,
             currentText = currentText
         )
+    }
+
+    /**
+     * クラウド経路の構造化メッセージを構築する (計画書 Phase 6)。
+     *
+     * 旧来は buildPromptFromMessages がクラウドモデルにも Gemma 固定の
+     * `PromptBuilder.buildForLiteRt` を適用し、CloudPromptSplitter が「System:\n」
+     * マーカーで分解できず全文が user ロール1個に潰されていた (計画書 1.2)。
+     * ここでは role 付きメッセージ配列 (CloudChatMessage) を直接構築して返し、
+     * テンプレートタグは一切書かない (role 構造はクラウド API 側の責務)。
+     *
+     * system にはユーザー名 / メモリブロック / ツール定義を注入した最終文字列を乗せる
+     * (buildPromptFromMessages の system 組み立てと同一の手順)。
+     */
+    private suspend fun buildCloudChatMessages(
+        sessionId: Long,
+        config: InferenceConfig,
+        engineModelName: String,
+        currentTurnMessageId: Long?
+    ): List<CloudChatMessage> {
+        val rawMessages = messageRepository.getMessagesForSessionOnce(sessionId)
+        if (rawMessages.isEmpty()) return emptyList()
+
+        // バリアント選択 / 再生成対象の除外は buildLiteRtStructuredPayload と同じ規則で行う。
+        val selectedMessages = applyVariantSelection(rawMessages, _selectedVariantByParent.value)
+        val regeneratingParentId = _pendingAssistantVariantSpec?.parentUserMessageId
+        val messages = if (regeneratingParentId != null && currentTurnMessageId == regeneratingParentId) {
+            selectedMessages.filterNot { msg ->
+                msg.role != "user" && msg.parentUserMessageId == regeneratingParentId
+            }
+        } else {
+            selectedMessages
+        }
+        val filteredMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
+
+        // システムプロンプト (ユーザー名 + メモリ + ツール定義)。
+        // クラウドのツール呼び出しは system 内テキスト注入方式のため toolsBlock 分離はしない。
+        val memoryBlock = buildRelevantMemoryBlock(messages, sessionId, config.contextWindow)
+        var systemPrompt = getActiveSystemPrompt()
+        val userName = settingsRepository.getUserName()
+        if (userName.isNotEmpty()) {
+            systemPrompt = "ユーザー名：$userName\n\n$systemPrompt"
+        }
+        systemPrompt = appendMemoryBlockToSystemPrompt(systemPrompt, memoryBlock)
+        if (config.enableToolCalling) {
+            val isGemma4Model = ModelNameHeuristics.isGemma4Model(engineModelName)
+            val availableSkills = availableSkillsForCurrentPreset(config.enableToolCalling)
+            runCatching { McpToolRegistry.get(appContext).ensureFresh() }
+                .onFailure { Log.w(TAG, "MCP tool registry refresh failed", it) }
+            systemPrompt = GgufToolPromptBuilder.appendForLiteRt(
+                appContext, systemPrompt, isGemma4 = isGemma4Model, skills = availableSkills
+            )
+        }
+
+        // クラウドは GGUF ではないため isGgufEngine=false (画像はエンジン API 経由で別送)。
+        val conversationInput = promptBuilding.buildConversationInput(
+            messages = filteredMessages,
+            systemPrompt = systemPrompt,
+            enableThinking = config.enableThinking,
+            enableToolCalling = config.enableToolCalling,
+            currentTurnMessageId = currentTurnMessageId,
+            isGgufEngine = false,
+        )
+        return CloudRenderer.render(conversationInput)
     }
 
     private suspend fun buildRelevantMemoryBlock(
@@ -4446,13 +4527,13 @@ class ChatViewModel(
         val filteredMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
         var systemPrompt = appendMemoryBlockToSystemPrompt(getActiveSystemPrompt(), memoryBlock)
         // ツール形式はモデル名でソフトが判定（Gemma4 のみ公式形式、他は汎用 tool_call）。
-        val isGemma4Model = PromptBuilder.isGemma4Model(engineModelName)
+        val isGemma4Model = ModelNameHeuristics.isGemma4Model(engineModelName)
         val availableSkills = availableSkillsForCurrentPreset(enableToolCalling)
         if (enableToolCalling) {
             Log.d(
                 TAG,
                 "TOOL_FORMAT: engine=$engineModelName isGemma4=$isGemma4Model " +
-                    "resolved=${PromptBuilder.resolveModelNameForGemmaCheck(engineModelName)}"
+                    "resolved=${ModelNameHeuristics.resolveModelNameForCheck(engineModelName)}"
             )
             runCatching { McpToolRegistry.get(appContext).ensureFresh() }
                 .onFailure { Log.w(TAG, "MCP tool registry refresh failed", it) }
@@ -4464,38 +4545,55 @@ class ChatViewModel(
             }
         }
 
-        val sanitizer = makeSanitizer(isGgufEngine, currentTurnMessageId)
-
-        // Tool calling can coexist with thinking directives; do not suppress thinking when tool calling is enabled.
-        val enableThinkingForPrompt = enableThinking
+        // Phase 6: ConversationInput 構築 → エンジン判定 → 各 Renderer 呼び出しの一本道。
+        // GGUF のみ FormatResolver (ユーザー指定 → 内蔵 → 推定) の優先順位で書式を解決し、
+        // 推定フォールバック時のみ GgufRenderer で手組みする。
+        // LiteRT / クラウドはモデル名推定を行わず、旧 PromptBuilder.buildForLiteRt
+        // (Gemma 固定) への誤ったフォールバックをここで根絶する (計画書 1.1 / 1.2)。
+        val conversationInput = promptBuilding.buildConversationInput(
+            messages = filteredMessages,
+            systemPrompt = systemPrompt,
+            enableThinking = enableThinking,
+            enableToolCalling = enableToolCalling,
+            currentTurnMessageId = currentTurnMessageId,
+            isGgufEngine = isGgufEngine,
+        )
         return if (isGgufEngine) {
+            // 1. ユーザー指定テンプレート / 2. GGUF 内蔵テンプレート (ネイティブ minja)
             buildGgufPromptFromMessages(
                 messages = filteredMessages,
                 systemPrompt = systemPrompt,
-                enableThinking = enableThinkingForPrompt,
-                sanitizer = sanitizer,
+                enableThinking = enableThinking,
+                sanitizer = makeSanitizer(isGgufEngine, currentTurnMessageId),
                 modelPath = engineModelName
             )?.let { promptBuilding.normalizeGgufPromptRoleMarkers(it) }
-                ?: promptBuilding.normalizeGgufPromptRoleMarkers(
-                    PromptBuilder.buildForGguf(
-                        messages = filteredMessages,
-                        systemPrompt = systemPrompt,
-                        format = PromptBuilder.detectGgufFormat(engineModelName, appContext),
-                        enableThinking = enableThinkingForPrompt,
-                        modelPath = engineModelName,
-                        sanitizeMessageContent = sanitizer,
-                        appContext = appContext
+                ?: run {
+                    // 3. 推定フォールバック: GgufRenderer (手組み)
+                    val format = com.nezumi_ai.data.inference.GgufFormatResolver.resolveGgufFormat(engineModelName, appContext)
+                    promptBuilding.normalizeGgufPromptRoleMarkers(
+                        com.nezumi_ai.data.inference.prompt.GgufRenderer.render(
+                            input = conversationInput,
+                            format = format,
+                            modelPathOrName = engineModelName,
+                            hasExplicitUserTemplate = com.nezumi_ai.data.inference.GgufFormatResolver.hasExplicitUserTemplate(appContext, engineModelName),
+                        )
                     )
-                )
+                }
+        } else if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)) {
+            // クラウド: CloudChatMessage 配列に構造化 (テンプレートタグは一切書かない)。
+            // 呼び出し元はエンジンに構造化経路で渡すため、ここでは診断用に1行要約のみ返す。
+            // 実際の構造化送信は呼び出し元の CloudRenderer.render 経路で行う。
+            conversationInput.history.joinToString("\n") { it.content }
         } else {
-            PromptBuilder.buildForLiteRt(
-                messages = filteredMessages,
-                systemPrompt = systemPrompt,
-                injectGemmaThinkTrigger = enableThinkingForPrompt && settingsRepository.shouldInjectGemmaThinkTrigger(),
-                sanitizeMessageContent = sanitizer,
-                appContext = appContext,
-                modelPath = engineModelName
-            )
+            // LiteRT-LM: 構造化ペイロード経路 (buildLiteRtStructuredPayload) が別途存在する。
+            // この関数はコンテキストメーター等の「文字数推定」用途で呼ばれるため、
+            // 構造化ペイロードの近似として system + 履歴 + 現ターンを連結した文字数を返す。
+            val payload = com.nezumi_ai.data.inference.prompt.LiteRtRenderer.render(conversationInput)
+            buildString {
+                if (payload.systemInstruction.isNotBlank()) append(payload.systemInstruction).append("\n")
+                payload.history.forEach { append(it.content).append("\n") }
+                append(payload.currentText)
+            }
         }
     }
 
