@@ -2424,30 +2424,17 @@ class ChatViewModel(
                                                 null
                                             }
                                         if (nativeStreamParsed != null) {
-                                                // Some templates enable thinking but omit the opening tag.
-                                                // The native parser may classify that prefix as content until
-                                                // </think> appears, so let the Kotlin parser establish the
-                                                // thinking phase while native reasoning is still empty.
-                                                val unmarkedThinking = if (
-                                                    config.enableThinking && nativeStreamParsed.reasoningContent.isBlank()
-                                                ) {
-                                                    Gemma4ThinkingParser.parseStreaming(
-                                                        rawInput = answerBuilder.toString(),
-                                                        treatUnmarkedInputAsThinking = true,
-                                                        preserveToolCallTags = true
-                                                    )
-                                                } else {
-                                                    null
-                                                }
-                                                contentForUi = sanitizeAssistantOutputForModel(
+                                            contentForUi =
+                                                sanitizeAssistantOutputForModel(
                                                     engineModelName = engineModelName,
                                                     text = Gemma4ThinkingParser.sanitizeVisibleText(
-                                                        unmarkedThinking?.answer ?: nativeStreamParsed.content,
+                                                        nativeStreamParsed.content,
                                                         preserveToolCallTags = true
                                                     )
                                                 )
-                                                thinkingForUi = Gemma4ThinkingParser.sanitizeVisibleText(
-                                                    unmarkedThinking?.thinking ?: nativeStreamParsed.reasoningContent
+                                            thinkingForUi =
+                                                Gemma4ThinkingParser.sanitizeVisibleText(
+                                                    nativeStreamParsed.reasoningContent
                                                 ).ifBlank { null }
                                         } else {
                                         // Phase 4 補完 (計画書 1.2b): LiteRT-LM 経路では文字列推測
@@ -2548,25 +2535,30 @@ class ChatViewModel(
                                     //   Thinking フェーズかどうかに関わらず _messages を in-memory 更新する。
                                     //   Room Flow 再配信で古いスナップショットが届いても、次の persist で
                                     //   thinkingContent が保存されているため上書きされない。
-                                    if (isThinkingOnlyPhase && !shouldPersistToDb) {
+                                    if (!shouldPersistToDb) {
                                         if (BuildConfig.DEBUG) {
-                                            Log.d(TAG, "THINKING_ONLY_PHASE: in-memory update id=$id thinkingLen=${thinkingForUi?.length ?: 0}")
+                                            Log.d(
+                                                TAG,
+                                                "STREAM_INMEMORY_UPDATE: id=$id contentLen=${contentForUi.length} " +
+                                                    "thinkingLen=${thinkingForUi?.length ?: 0} thinkingOnly=$isThinkingOnlyPhase"
+                                            )
                                         }
                                         val currentMsgs = _messages.value.toMutableList()
                                         val idx = currentMsgs.indexOfFirst { it.id == id }
                                         if (idx >= 0) {
- // isStreaming フラグを保持したまま thinkingContent のみ更新する。
-                                            //   これがないと MessageAdapter 側で「生成完了」と誤認され、
-                                            //   Thinking ブロックのトグル行が表示されてしまう。
+                                            // persist 間引き中も content / thinkingContent を UI へ即時反映する。
+                                            // isStreaming=true を維持しないと MessageAdapter が生成完了と誤認し、
+                                            // Thinking トグル行が出てしまう。
                                             val original = currentMsgs[idx]
                                             val updated = original.copy(
+                                                content = contentForUi,
                                                 thinkingContent = thinkingForUi,
                                                 isStreaming = true
                                             )
                                             currentMsgs[idx] = updated
                                             _messages.value = currentMsgs.toList()
                                         } else if (BuildConfig.DEBUG) {
-                                            Log.w(TAG, "THINKING_ONLY_PHASE: could not find message id=$id in ${currentMsgs.map { it.id }}")
+                                            Log.w(TAG, "STREAM_INMEMORY_UPDATE: could not find message id=$id in ${currentMsgs.map { it.id }}")
                                         }
                                     }
                                 }
@@ -2674,7 +2666,7 @@ class ChatViewModel(
                 //  誤認され表示されなくなるバグの根絶)。GGUF 経路のみ従来の推測を残す。
                 val finalParsed = Gemma4ThinkingParser.parse(
                     rawInput = answerBuilder.toString(),
-                    treatUnmarkedInputAsThinking = config.enableThinking && isGgufEngineModel(engineModelName),
+                    treatUnmarkedInputAsThinking = false,
                     preserveToolCallTags = true
                 )
                 if (!config.enableThinking) {

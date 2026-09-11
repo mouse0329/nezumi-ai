@@ -134,4 +134,29 @@ class GgufToolCallParserSegmentTest {
         assertEquals("85", cards[1].getPayloadString("level"))
         assertNull(cards.getOrNull(2))
     }
+
+    @Test
+    fun parse_generic_keepsNarrativeBetweenMultipleToolCalls() {
+        val raw = """
+            天気を調べますね。
+            <tool_call>
+            {"name":"get_weather","arguments":{"location":"Tokyo"}}
+            </tool_call>
+            続いてニュースも確認します。
+            <tool_call>
+            {"name":"get_news","arguments":{"topic":"tech"}}
+            </tool_call>
+            まとめてお伝えします。
+        """.trimIndent()
+
+        val parsed = GgufToolCallParser.parse(raw, isGemma4 = false)
+
+        assertEquals(2, parsed.toolCalls.size)
+        assertEquals("get_weather", parsed.toolCalls[0].name)
+        assertEquals("get_news", parsed.toolCalls[1].name)
+        assertTrue(parsed.textBeforeTools.contains("天気を調べますね"))
+        assertTrue(parsed.textAfterTools.contains("続いてニュースも確認します"))
+        assertTrue(parsed.textAfterTools.contains("まとめてお伝えします"))
+        assertFalse(parsed.textAfterTools.contains("<tool_call>"))
+    }
 }

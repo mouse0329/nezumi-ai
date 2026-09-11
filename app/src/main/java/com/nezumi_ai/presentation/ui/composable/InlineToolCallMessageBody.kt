@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nezumi_ai.R
 import com.nezumi_ai.data.inference.GgufToolCallParser
+import com.nezumi_ai.data.inference.ToolCallTags
 import com.nezumi_ai.data.inference.ToolResultCard
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -59,8 +60,10 @@ fun InlineToolCallMessageBody(
     modifier: Modifier = Modifier,
     onSaveDocument: ((markdown: String, format: String, fileName: String, onComplete: (Boolean) -> Unit) -> Unit)? = null
 ) {
-    val segments = GgufToolCallParser.parseSegments(content)
-    val inlineToolResponseCards = GgufToolCallParser.parseToolResponseCards(content)
+    // クラウド経路でモデルが全角 ＜＞ タグを出しても、タグ解釈直前で半角に戻す。
+    val contentForParse = ToolCallTags.normalizeFullwidthToolTagDelimiters(content)
+    val segments = GgufToolCallParser.parseSegments(contentForParse)
+    val inlineToolResponseCards = GgufToolCallParser.parseToolResponseCards(contentForParse)
 
     // タグが 1 つも無いレガシー本文 (旧DBレコード) はセグメント化されないので、
     // 従来通り単一の Markdown ブロックとして描画する。

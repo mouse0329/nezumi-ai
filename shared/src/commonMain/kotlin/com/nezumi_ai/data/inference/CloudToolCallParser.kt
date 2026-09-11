@@ -2,10 +2,15 @@ package com.nezumi_ai.data.inference
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-/** ツール呼び出し抽出 (commonMain 版、ParsedToolCall を返す)。実行用 parse/formatToolResults のみ。 */
+/**
+ * ツール呼び出し抽出 (commonMain 版、ParsedToolCall を返す)。
+ * 実行用 [parse] / [formatToolResults] に加え、UI カード化用の
+ * [parseSegments] / [parseToolResponseCards] / [stripToolResponseBlocks] を持つ。
+ */
 object CloudToolCallParser {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -13,6 +18,7 @@ object CloudToolCallParser {
     data class ParseResult(val toolCalls: List<ParsedToolCall>, val hadTruncatedToolCall: Boolean = false)
 
     private val toolCallTagPattern = Regex("<tool_call>\\s*(.+?)\\s*</tool_call>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    private val toolResponseTagPattern = Regex("<tool_response>\\s*(.+?)\\s*</tool_response>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
     private val bareToolCallJsonPattern = Regex("""\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"arguments"\s*:\s*(\{[\s\S]*?\}|"[\s\S]*?")\s*\}""")
     private val openToolCallTag = Regex("(?is)<tool_call>")
     private val closeToolCallTag = Regex("(?is)</tool_call>")
@@ -20,6 +26,21 @@ object CloudToolCallParser {
     private val closeGemma4ToolCallTag = Regex("(?is)<tool_call\\|>")
     private val gemma4CallBodyPattern = Regex("""(?is)\s*call\s*:\s*([A-Za-z_][A-Za-z0-9_\-]*)\s*(\{[\s\S]*\})\s*""")
     private val gemma4StringTokenPattern = Regex("<\\|\"\\|>((?:(?!<\\|\"\\|>)[\\s\\S])*)<\\|\"\\|>")
+
+    sealed class Segment {
+        data class TextSegment(val text: String) : Segment()
+
+        enum class CompletionStatus { COMPLETE, PENDING, TRUNCATED }
+
+        data class ToolCallSegment(
+            val index: Int,
+            val toolCall: ParsedToolCall?,
+            val rawJson: String,
+            val status: CompletionStatus
+        ) : Segment() {
+            val isComplete: Boolean get() = status == CompletionStatus.COMPLETE
+        }
+    }
 
     private fun normalizeGemma4Json(raw: String): String {
         val quotesRestored = gemma4StringTokenPattern.replace(raw) { m -> "\"${m.groupValues[1].replace("\"", "\\\"")}\"" }
@@ -29,6 +50,7 @@ object CloudToolCallParser {
     }
 
     fun parse(text: String, isGemma4: Boolean = false): ParseResult {
+        val text = ToolCallTags.normalizeFullwidthToolTagDelimiters(text)
         val primary = if (isGemma4) parseGemma4(text) else parseGeneric(text)
         if (primary.toolCalls.isNotEmpty() || primary.hadTruncatedToolCall) return primary
         val alternate = if (isGemma4) parseGeneric(text) else parseGemma4(text)
@@ -80,7 +102,107 @@ object CloudToolCallParser {
         return if (toolCalls.isEmpty()) ParseResult(emptyList(), hadTruncated) else ParseResult(toolCalls, hadTruncated)
     }
 
-    fun formatToolResults(results: List<Pair<ParsedToolCall, CloudToolExecutionResult>>): String {
+    /**
+     * 本文を `<tool_call>` / `<|tool_call>` 位置でセグメント化する。
+     * [GgufToolCallParser.parseSegments] と同じ走査規則。クラウド経路でも
+     * 本文中のタグを残し、UI がカードへ差し替えられるようにする。
+     */
+    fun parseSegments(text: String): List<Segment> {
+        if (text.isEmpty()) return emptyList()
+        val text = ToolCallTags.normalizeFullwidthToolTagDelimiters(text)
+        val segments = mutableListOf<Segment>()
+        var cursor = 0
+        var toolIndex = 0
+        while (cursor < text.length) {
+            val openGeneric = openToolCallTag.find(text, cursor)
+            val openGemma4 = openGemma4ToolCallTag.find(text, cursor)
+            val useGemma4 = when {
+                openGeneric == null && openGemma4 == null -> break
+                openGeneric == null -> true
+                openGemma4 == null -> false
+                else -> openGemma4.range.first < openGeneric.range.first
+            }
+            val open = if (useGemma4) openGemma4!! else openGeneric!!
+            val before = stripToolResponseBlocks(text.substring(cursor, open.range.first))
+            if (before.isNotEmpty()) {
+                segments += Segment.TextSegment(before)
+            }
+            val payloadStart = open.range.last + 1
+            val close = if (useGemma4) {
+                closeGemma4ToolCallTag.find(text, payloadStart)
+            } else {
+                closeToolCallTag.find(text, payloadStart)
+            }
+            if (close == null) {
+                val rawJson = text.substring(payloadStart)
+                val (salvagedCall, _) = if (useGemma4) {
+                    salvageGemma4Payload(rawJson)
+                } else {
+                    salvageGenericPayload(rawJson)
+                }
+                segments += Segment.ToolCallSegment(
+                    index = toolIndex,
+                    toolCall = salvagedCall,
+                    rawJson = rawJson.trim(),
+                    status = Segment.CompletionStatus.PENDING
+                )
+                cursor = text.length
+                break
+            }
+            val rawJson = text.substring(payloadStart, close.range.first).trim()
+            val parsedCall = if (useGemma4) {
+                parseGemma4CallPayload(rawJson)
+            } else {
+                parseToolCallPayload(rawJson)
+            }
+            segments += Segment.ToolCallSegment(
+                index = toolIndex,
+                toolCall = parsedCall,
+                rawJson = rawJson,
+                status = Segment.CompletionStatus.COMPLETE
+            )
+            toolIndex++
+            cursor = close.range.last + 1
+        }
+        if (cursor < text.length) {
+            val tail = stripToolResponseBlocks(text.substring(cursor))
+            if (tail.isNotEmpty()) {
+                segments += Segment.TextSegment(tail)
+            }
+        }
+        return segments
+    }
+
+    fun parseToolResponseCards(text: String): List<CloudToolResultCard> {
+        if (text.isEmpty()) return emptyList()
+        val text = ToolCallTags.normalizeFullwidthToolTagDelimiters(text)
+        return toolResponseTagPattern.findAll(text).mapNotNull { match ->
+            runCatching {
+                val obj = json.parseToJsonElement(match.groupValues[1].trim()).jsonObject
+                val name = obj["name"]?.jsonPrimitive?.content?.lowercase().orEmpty()
+                if (name.isBlank()) return@runCatching null
+                val content = obj["content"]
+                val payload = when (content) {
+                    is JsonObject -> content.toMap()
+                    null -> emptyMap()
+                    else -> mapOf("value" to content)
+                }
+                val success = payload["success"]?.jsonPrimitive?.booleanOrNull ?: true
+                CloudToolResultCard(
+                    toolName = name,
+                    success = success,
+                    payload = payload
+                )
+            }.getOrNull()
+        }.toList()
+    }
+
+    fun stripToolResponseBlocks(text: String): String {
+        if (text.isEmpty()) return text
+        return toolResponseTagPattern.replace(text, "")
+    }
+
+        fun formatToolResults(results: List<Pair<ParsedToolCall, CloudToolExecutionResult>>): String {
         if (results.isEmpty()) return ""
         return buildString {
             appendLine()

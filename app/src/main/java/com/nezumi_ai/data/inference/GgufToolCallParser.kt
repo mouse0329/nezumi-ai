@@ -107,7 +107,8 @@ object GgufToolCallParser {
      *
      * @param toolCalls 実行対象として確定したツール呼び出し (正常完了 + 閉じタグ忘れ救済分)。
      * @param textBeforeTools 先頭のツールコール開きタグより前の本文。
-     * @param textAfterTools 末尾のツールコールより後の本文 (トークン切れ時は空文字)。
+     * @param textAfterTools 各ツールコールの間の本文と、末尾のツールコールより後の本文を
+     *   連結したもの (トークン切れで末尾が未完タグのときはその未完部分を含む)。
      * @param hadTruncatedToolCall 本文末尾に「JSON が途中で切れた未完タグ」があったかどうか。
      *   true のとき、呼び出し元は失敗ステータスの [ToolResultCard] を合成して閉じタグを補完し、
      *   モデルに `<tool_response>` として実行失敗を返す責務を負う。
@@ -333,6 +334,29 @@ object GgufToolCallParser {
     }
 
     /**
+     * ツールコール区間 [ranges] (昇順) から、先頭より前の本文と
+     * 「コール同士の間 + 末尾より後」の本文を取り出す。
+     * 2 件以上のツールコールがあるとき、間に挟まったナレーションを落とさないため。
+     */
+    private fun textBeforeAndAfterTools(text: String, ranges: List<IntRange>): Pair<String, String> {
+        if (ranges.isEmpty()) return text to ""
+        val textBeforeTools = text.substring(0, ranges.first().first).trimEnd()
+        val textAfterTools = buildString {
+            for (i in ranges.indices) {
+                val gapStart = ranges[i].last + 1
+                val gapEnd = if (i + 1 < ranges.size) ranges[i + 1].first else text.length
+                if (gapStart < gapEnd) {
+                    val piece = text.substring(gapStart, gapEnd).trim()
+                    if (piece.isEmpty()) continue
+                    if (isNotEmpty()) append(' ')
+                    append(piece)
+                }
+            }
+        }
+        return textBeforeTools to textAfterTools
+    }
+
+    /**
      * 汎用 (`<tool_call>...</tool_call>`) 形式のパース。
      * 閉じタグ忘れ (JSON バランス OK) の救済と、トークン切れ (JSON 途中打ち切り) の
      * 失敗マーカー通知に対応する。
@@ -385,12 +409,11 @@ object GgufToolCallParser {
         if (toolCalls.isEmpty() && !hadTruncated) {
             return ParseResult(emptyList(), text, "")
         }
-        val firstStart = ranges.firstOrNull()?.first ?: text.length
-        val lastEnd = ranges.lastOrNull()?.let { it.last + 1 } ?: text.length
+        val (textBeforeTools, textAfterTools) = textBeforeAndAfterTools(text, ranges)
         return ParseResult(
             toolCalls = toolCalls,
-            textBeforeTools = text.substring(0, firstStart).trimEnd(),
-            textAfterTools = if (lastEnd <= text.length) text.substring(lastEnd).trimStart() else "",
+            textBeforeTools = textBeforeTools,
+            textAfterTools = textAfterTools,
             hadTruncatedToolCall = hadTruncated,
             truncatedTagIsGemma4 = false,
             truncatedToolName = truncatedName
@@ -433,12 +456,11 @@ object GgufToolCallParser {
         if (toolCalls.isEmpty() && !hadTruncated) {
             return ParseResult(emptyList(), text, "")
         }
-        val firstStart = ranges.firstOrNull()?.first ?: text.length
-        val lastEnd = ranges.lastOrNull()?.let { it.last + 1 } ?: text.length
+        val (textBeforeTools, textAfterTools) = textBeforeAndAfterTools(text, ranges)
         return ParseResult(
             toolCalls = toolCalls,
-            textBeforeTools = text.substring(0, firstStart).trimEnd(),
-            textAfterTools = if (lastEnd <= text.length) text.substring(lastEnd).trimStart() else "",
+            textBeforeTools = textBeforeTools,
+            textAfterTools = textAfterTools,
             hadTruncatedToolCall = hadTruncated,
             truncatedTagIsGemma4 = true,
             truncatedToolName = truncatedName

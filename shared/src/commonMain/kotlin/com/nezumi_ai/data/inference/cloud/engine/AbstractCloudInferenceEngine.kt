@@ -153,6 +153,13 @@ abstract class AbstractCloudInferenceEngine(
                 }
                 runStreamingInference(this, sessionId, model, conversation.toList(), config) { delta ->
                     if (delta.isNotEmpty()) {
+                        if ('＜' in delta || '<' in delta && ("tool_call" in delta || "tool_response" in delta)) {
+                            CloudLog.d(
+                                TAG,
+                                "delta tag probe round=$toolRound halfLt=${'<' in delta} fullLt=${'＜' in delta} " +
+                                    "preview=\"${delta.take(240)}\""
+                            )
+                        }
                         roundText.append(delta)
                         fullAnswer.append(delta)
                         trySend(delta)
@@ -180,10 +187,13 @@ abstract class AbstractCloudInferenceEngine(
                     toolResultCards.add(CloudToolResultCard(toolCall.name.lowercase(), result.success, anyToJsonElementMap(result.payload)))
                 }
 
+                // toolResponseBlock は conversation (次ラウンド) と fullAnswer (履歴再構築 /
+                // encodeFinal) にだけ載せる。trySend するとマーカー無し本文として
+                // answerBuilder にマージされ、吹き出しに生タグ/JSON が漏れる。
+                // ストリーミング中のカード表示は encodeToolResults に一本化する。
                 val toolResponseBlock = CloudToolCallParser.formatToolResults(toolResults)
                 if (toolResponseBlock.isNotEmpty()) {
                     fullAnswer.append(toolResponseBlock)
-                    trySend(toolResponseBlock)
                 }
                 if (toolResultCards.isNotEmpty()) {
                     trySend(InferenceStreamProtocol.encodeToolResults(CloudToolResultCard.listToJsonArray(toolResultCards)))

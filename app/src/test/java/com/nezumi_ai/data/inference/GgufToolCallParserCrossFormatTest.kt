@@ -65,4 +65,41 @@ class GgufToolCallParserCrossFormatTest {
         assertTrue(GgufToolCallParser.hasToolCalls(genericStyle, isGemma4 = true))
         assertTrue(GgufToolCallParser.hasToolCalls(genericStyle, isGemma4 = false))
     }
+
+    @Test
+    fun parse_gemma4_keepsNarrativeBetweenMultipleToolCalls() {
+        val raw = """
+            天気を調べますね。
+            <|tool_call>call:get_weather{"location":"Tokyo"}<tool_call|>
+            続いてニュースも確認します。
+            <|tool_call>call:get_news{"topic":"tech"}<tool_call|>
+            以上です。
+        """.trimIndent()
+        val parsed = GgufToolCallParser.parse(raw, isGemma4 = true)
+        assertEquals(2, parsed.toolCalls.size)
+        assertEquals("get_weather", parsed.toolCalls[0].name)
+        assertEquals("get_news", parsed.toolCalls[1].name)
+        assertFalse(parsed.fellBackToAlternateFormat)
+        assertTrue(parsed.textBeforeTools.contains("天気を調べますね"))
+        assertTrue(parsed.textAfterTools.contains("続いてニュースも確認します"))
+        assertTrue(parsed.textAfterTools.contains("以上です"))
+    }
+
+    @Test
+    fun parse_genericMode_keepsNarrativeWhenFallingBackFromMixedLooksLikeGenericOnly() {
+        val raw = """
+            先に時間を見ます。
+            <tool_call>
+            {"name":"get_current_time","arguments":{}}
+            </tool_call>
+            次に電池も見ます。
+            <tool_call>
+            {"name":"get_battery_level","arguments":{}}
+            </tool_call>
+        """.trimIndent()
+        val parsed = GgufToolCallParser.parse(raw, isGemma4 = false)
+        assertEquals(2, parsed.toolCalls.size)
+        assertTrue(parsed.textBeforeTools.contains("先に時間を見ます"))
+        assertTrue(parsed.textAfterTools.contains("次に電池も見ます"))
+    }
 }

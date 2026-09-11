@@ -126,4 +126,26 @@ object ToolCallTags {
         TOOL_RESPONSE_OPEN,
         TOOL_RESPONSE_CLOSE
     )
+
+    /**
+     * モデルが全角デリミタ `＜` / `＞` でツール系タグを出力したときに、
+     * タグとして解釈する直前だけ半角 `<>` へ戻す。
+     *
+     * [ToolPayloadSanitizer] はツール結果の *値* を意図的に全角化して不活性化する。
+     * ここでは既知タグリテラルだけを戻すので、値の中の全角括弧一般は触らない。
+     * 呼び出すのはパーサ入口のみ。
+     */
+    fun normalizeFullwidthToolTagDelimiters(text: String): String {
+        if (text.isEmpty()) return text
+        if ('＜' !in text && '＞' !in text) return text
+        var out = text
+        for (tag in STRIP_TOKEN_SEQUENCES) {
+            val fullwidth = tag.replace('<', '＜').replace('>', '＞')
+            if (fullwidth == tag) continue
+            if (fullwidth in out) {
+                out = out.replace(fullwidth, tag)
+            }
+        }
+        return out
+    }
 }
