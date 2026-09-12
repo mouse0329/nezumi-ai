@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.collect
@@ -1195,6 +1196,17 @@ class LiteRtLmEngine(
         audioClips: List<ByteArray>,
         config: InferenceConfig
     ): Flow<String> = callbackFlow {
+        // Bug fix(#LiteRT-stream-drop): ここから外へ流す partial chunk を trySend(...).isSuccess
+        // で送ると、channel 側の瞬間的な backpressure / Binder コールバック競合で
+        // silently drop され得る。answerAccum は並行して成長し続けるため、
+        // FINAL だけは届き「完成文は表示されるが増分ストリーミングだけ出ない」症状になる。
+        fun emitChunkBlocking(chunk: String) {
+            val result = trySendBlocking(chunk)
+            if (!result.isSuccess) {
+                Log.w(TAG, "Failed to emit LiteRT stream chunk to callbackFlow")
+            }
+        }
+
         val normalized = config.normalized()
         val useExtractionConversation = !normalized.enableThinking && sessionId == 0L
 
@@ -1254,7 +1266,7 @@ class LiteRtLmEngine(
                     "Falling back to text-only inference to avoid unnecessary multimodal reload."
             )
             inferenceWithMedia(sessionId, prompt, emptyList(), emptyList(), config).collect { chunk ->
-                trySend(chunk).isSuccess
+                emitChunkBlocking(chunk)
             }
             close()
             return@callbackFlow
@@ -1286,7 +1298,7 @@ class LiteRtLmEngine(
             if (!reloadedWithVision) {
                 Log.w(TAG, "Vision encoder unavailable after reload (3-signature encoder not supported by this LiteRT-LM version). Falling back to text-only inference.")
                 inferenceWithMedia(sessionId, prompt, emptyList(), emptyList(), config).collect { chunk ->
-                    trySend(chunk).isSuccess
+                    emitChunkBlocking(chunk)
                 }
                 close()
                 return@callbackFlow
@@ -1294,7 +1306,7 @@ class LiteRtLmEngine(
 
             Log.i(TAG, "Model reloaded with vision/audio support. Retrying inference...")
             inferenceWithMedia(sessionId, prompt, images, audioClips, config).collect { chunk ->
-                trySend(chunk).isSuccess
+                emitChunkBlocking(chunk)
             }
             close()
             return@callbackFlow
@@ -1426,16 +1438,16 @@ class LiteRtLmEngine(
                                     }
                                 }
                                 answerAccum.append(tagPayload)
-                                trySend(tagPayload).isSuccess
-                                trySend(
+                                emitChunkBlocking(tagPayload)
+                                emitChunkBlocking(
                                     InferenceStreamProtocol.encodeToolCallChunk(
                                         calls.map { it.name }
                                     )
-                                ).isSuccess
+                                )
                             }
                             val thought = message.channels[THOUGHT_CHANNEL]
                             if (!thought.isNullOrEmpty()) {
-                                trySend(InferenceStreamProtocol.encodeThinkChunk(thought)).isSuccess
+                                emitChunkBlocking(InferenceStreamProtocol.encodeThinkChunk(thought))
                             }
                             if (calls.isNotEmpty()) return@collect
                             val text = message.toString()
@@ -1470,7 +1482,7 @@ class LiteRtLmEngine(
                                 roundAccum = text
                                 if (deltaText.isNotEmpty()) {
                                     answerAccum.append(deltaText)
-                                    trySend(deltaText).isSuccess
+                                    emitChunkBlocking(deltaText)
                                 }
                             }
                         }
@@ -1499,12 +1511,12 @@ class LiteRtLmEngine(
                                 try {
                                     val result = toolExecutor.execute(toolCall)
                                     val status = if (result.success) "success" else "error"
-                                    trySend(
+                                    emitChunkBlocking(
                                         InferenceStreamProtocol.encodeToolResultChunk(
                                             toolCall.name,
                                             status
                                         )
-                                    ).isSuccess
+                                    )
                                     // モデルへ送り返すのは payload (フル本文) ではなく payloadForModel。
                                     //   convert_md_to_document のように UI カードには Markdown 全文が必要でも、
                                     //   モデルにはその全文を <tool_response> 経由で再送する必要がない
@@ -1527,12 +1539,12 @@ class LiteRtLmEngine(
                                     )
                                 } catch (e: Exception) {
                                     Log.e(TAG, "Tool execution error: ${toolCall.name}", e)
-                                    trySend(
+                                    emitChunkBlocking(
                                         InferenceStreamProtocol.encodeToolResultChunk(
                                             toolCall.name,
                                             "error"
                                         )
-                                    ).isSuccess
+                                    )
                                 }
                             }
                         }
@@ -1571,7 +1583,7 @@ class LiteRtLmEngine(
                         }
                         if (toolResponseBlock.isNotBlank()) {
                             answerAccum.append(toolResponseBlock)
-                            trySend(toolResponseBlock).isSuccess
+                            emitChunkBlocking(toolResponseBlock)
                         }
 
                         // ライブ persist: ラウンド完了ごとに現時点の toolResultCards を JSON 化して送出し、
@@ -1580,11 +1592,11 @@ class LiteRtLmEngine(
                         //   カードの “result” 行は (モデルへ送信済み) のプレースホルダーのままだった。
                         synchronized(toolResultCards) {
                             if (toolResultCards.isNotEmpty()) {
-                                trySend(
+                                emitChunkBlocking(
                                     InferenceStreamProtocol.encodeToolResults(
                                         ToolResultCard.listToJsonArray(toolResultCards)
                                     )
-                                ).isSuccess
+                                )
                             }
                         }
                     }
@@ -1611,11 +1623,11 @@ class LiteRtLmEngine(
                             )
                             lastInferenceBenchmark = snapshot
                             if (snapshot.decodeTokensPerSecond > 0.0) {
-                                trySend(
+                                emitChunkBlocking(
                                     InferenceStreamProtocol.encodeTps(
                                         snapshot.decodeTokensPerSecond.toFloat()
                                     )
-                                ).isSuccess
+                                )
                             }
                             Log.d(TAG, "Benchmark: prefill=${snapshot.prefillTokens}tok decode=${snapshot.decodeTokens}tok tps=${snapshot.decodeTokensPerSecond} session=$sessionId")
                         }.onFailure {
@@ -1629,25 +1641,25 @@ class LiteRtLmEngine(
                     } else {
                         null
                     }
-                    trySend(
+                    emitChunkBlocking(
                         InferenceStreamProtocol.encodeToolResults(toolResultsJson)
-                    ).isSuccess
+                    )
 
                     // 実行されたツール一覧を送出（UI表示用）
                     val executedToolNames = toolResultCards.map { it.toolName }.distinct()
                     if (executedToolNames.isNotEmpty()) {
-                        trySend(
+                        emitChunkBlocking(
                             InferenceStreamProtocol.encodeExecutedToolsList(executedToolNames)
-                        ).isSuccess
+                        )
                     }
 
                     val finalResult = InferenceStreamProtocol.encodeFinal(answerAccum.toString())
-                    trySend(finalResult).isSuccess
+                    emitChunkBlocking(finalResult)
                     close()
                 } catch (t: Throwable) {
                     if (t is CancellationException) {
                         val finalResult = InferenceStreamProtocol.encodeFinal(answerAccum.toString())
-                        trySend(finalResult).isSuccess
+                        emitChunkBlocking(finalResult)
                         close()
                     } else {
                         Log.e(TAG, "Inference error session=$sessionId", t)

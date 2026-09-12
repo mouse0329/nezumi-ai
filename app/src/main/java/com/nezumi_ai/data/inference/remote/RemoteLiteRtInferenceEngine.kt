@@ -10,6 +10,7 @@ import java.io.File
 import java.io.FileOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withContext
@@ -87,7 +88,16 @@ class RemoteLiteRtInferenceEngine(
 
         val callback = object : IRemoteTokenCallback.Stub() {
             override fun onToken(delta: String?) {
-                if (delta != null) trySend(delta)
+                if (delta != null) {
+                    // Bug fix(#LiteRT-stream-drop): Binder コールバックは非サスペンドなので
+                    // trySend(...) 失敗時に partial chunk が黙って捨てられていた。
+                    // 完了時の FINAL だけは後段で届き得るため、
+                    // 「完成文は表示されるが増分ストリーミングだけ見えない」症状になる。
+                    val result = trySendBlocking(delta)
+                    if (!result.isSuccess) {
+                        Log.w(TAG, "Dropping remote LiteRT token chunk because callbackFlow channel is not ready")
+                    }
+                }
             }
 
             override fun onComplete() {
