@@ -130,10 +130,17 @@ class LiteRtLmEngine(
      *  Binder スレッドがブロックされ、デッドロックする恐れがある)
      */
     fun getConversationTokenCount(): Int? {
+        // Bug fix(#binder-thread-pool-starvation): 推論中は
+        // Conversation.getTokenCount() がネイティブ側で実行中の推論と競合して
+        // Binder スレッドを長時間ブロックするため、キャッシュ値だけを返す。
+        // (推論中の正確な値はメーター表示上の誤差として許容する。完了時に
+        //  実測値で更新される)
+        if (inferenceMutexHeld.get()) return lastKnownConversationTokenCount
         val conv = activeLiteRtConversation ?: return null
         return runCatching { conv.getTokenCount() }
             .onFailure { Log.w(TAG, "getTokenCount failed", it) }
             .getOrNull()?.takeIf { it >= 0 }
+            ?.also { lastKnownConversationTokenCount = it }
     }
 
     /** 直近推論の実測ベンチマーク。未取得時は null。 */
@@ -144,6 +151,16 @@ class LiteRtLmEngine(
     private val modelMutex = Mutex()
     private val inferenceMutex = Mutex()
     private val inferenceMutexHeld = AtomicBoolean(false)
+
+    // Bug fix(#binder-thread-pool-starvation): getEngineStatus (Binder 同期呼び出し)
+    // が推論中に :litert プロセスへ届くと、サービス側の Binder スレッド上で
+    // Conversation.getTokenCount() (ネイティブ) が実行中の推論と競合して
+    // 長時間ブロックされ、Binder スレッドプール (15 本) が枯渇していた
+    // (実機ログ: code 7 が 16 本 × 各 11〜27 秒ブロック, "binder thread pool
+    //  (15 threads) starved for 12159 ms")。
+    // 推論中はネイティブを呼ばず、最後に確定したトークン数を返すための
+    // キャッシュ。推論完了時にネイティブ実測値で更新する。
+    @Volatile private var lastKnownConversationTokenCount: Int? = null
     @Volatile private var npuNativeLibraryDirChecked = false
     @Volatile private var cachedNpuNativeLibraryDir: String? = null
     // Timestamp (ms) of last critical engine init failure. Used to apply short backoff
@@ -283,6 +300,9 @@ class LiteRtLmEngine(
             val c = activeLiteRtConversation ?: return
             activeLiteRtConversation = null
             activeLiteRtConversationKey = null
+            // 会話が無効化されたのでトークン数キャッシュも破棄する。
+            // (新しい Conversation に切り替わった後に古い会話の値を返さないように)
+            lastKnownConversationTokenCount = null
             
             runCatching {
                 Log.d(TAG, "Closing active conversation")
@@ -1622,6 +1642,14 @@ class LiteRtLmEngine(
                                 timeToFirstTokenMs = info.timeToFirstTokenInSecond * 1000.0,
                             )
                             lastInferenceBenchmark = snapshot
+                            // Bug fix(#binder-thread-pool-starvation): 推論完了時点の
+                            // 実測トークン数でキャッシュを更新する。完了直後は
+                            // inferenceMutexHeld がまだ true (finally で解放) なので、
+                            // ここで更新しておけば推論中に返したキャッシュ値と
+                            // 完了後の実測値が必ず一致する。
+                            lastKnownConversationTokenCount =
+                                runCatching { conv.getTokenCount() }
+                                    .getOrNull()?.takeIf { it >= 0 }
                             if (snapshot.decodeTokensPerSecond > 0.0) {
                                 emitChunkBlocking(
                                     InferenceStreamProtocol.encodeTps(

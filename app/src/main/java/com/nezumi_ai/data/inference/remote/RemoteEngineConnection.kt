@@ -226,7 +226,7 @@ class RemoteEngineConnection(
             } catch (t: Throwable) {
                 handleRemoteException(t, "loadModel")
             }
-        }
+        }.also { invalidateEngineStatusCache() }
 
     suspend fun unloadModel(): Result<Unit> = withContext(Dispatchers.IO) {
         val service = requireService()
@@ -247,7 +247,7 @@ class RemoteEngineConnection(
         } catch (t: Throwable) {
             handleRemoteException(t, "unloadModel")
         }
-    }
+    }.also { invalidateEngineStatusCache() }
 
     suspend fun cancelInference() = withContext(Dispatchers.IO) {
         runCatching { requireService().cancelInference() }
@@ -259,8 +259,40 @@ class RemoteEngineConnection(
         runCatching { requireService().isAvailable }.getOrDefault(false)
     }
 
-    fun getEngineStatusSync(): android.os.Bundle = runBlocking(Dispatchers.IO) {
-        runCatching { requireService().engineStatus }.getOrElse { android.os.Bundle() }
+    // Bug fix(#binder-thread-pool-starvation): getEngineStatus (AIDL code 7)
+    // は同期 Binder 呼び出しで、ストリーミング中の _messages 再emit 等から
+    // 集中して呼ばれるとリモートプロセスの Binder スレッドプール (15 本) を
+    // 埋め尽くす。呼び出し側 (ChatViewModel) のスロットリングに加えて、
+    // ここでも直近の結果を短時間キャッシュし、連打を吸収する。
+    // メーター/TPS 表示は目安用途なので数秒程度の遅延は問題にならない。
+    private val engineStatusCacheLock = Any()
+    @Volatile private var cachedEngineStatus: android.os.Bundle? = null
+    @Volatile private var cachedEngineStatusAtMs: Long = 0L
+
+    fun getEngineStatusSync(): android.os.Bundle {
+        val now = System.currentTimeMillis()
+        synchronized(engineStatusCacheLock) {
+            val cached = cachedEngineStatus
+            if (cached != null && now - cachedEngineStatusAtMs < ENGINE_STATUS_CACHE_TTL_MS) {
+                return cached
+            }
+        }
+        val fresh = runBlocking(Dispatchers.IO) {
+            runCatching { requireService().engineStatus }.getOrElse { android.os.Bundle() }
+        }
+        synchronized(engineStatusCacheLock) {
+            cachedEngineStatus = fresh
+            cachedEngineStatusAtMs = System.currentTimeMillis()
+        }
+        return fresh
+    }
+
+    /** モデル状態が変わったタイミングでステータスキャッシュを破棄する。 */
+    private fun invalidateEngineStatusCache() {
+        synchronized(engineStatusCacheLock) {
+            cachedEngineStatus = null
+            cachedEngineStatusAtMs = 0L
+        }
     }
 
     // ─── GGUF 固有 ────────────────────────────────────────────────
@@ -442,6 +474,8 @@ class RemoteEngineConnection(
 
     companion object {
         private const val BIND_TIMEOUT_MS = 15_000L
+        /** getEngineStatus のキャッシュ TTL。連打吸収用の短い窓。 */
+        private const val ENGINE_STATUS_CACHE_TTL_MS = 2_000L
         private const val SELF_KILL_GRACE_MS = 1_500L
         private const val FORCE_KILL_GRACE_MS = 1_500L
         private const val PROCESS_DEATH_POLL_MS = 50L
