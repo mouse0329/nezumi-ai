@@ -193,6 +193,12 @@ class ChatViewModel(
         /** 最初のトークン以降、この時間チャンクが無ければ打ち切り */
         private const val GENERATION_STALL_TIMEOUT_MS = 180_000L
         private const val GENERATION_STALL_CHECK_MS = 5_000L
+        // バグ修正 (#binder-thread-pool-starvation): estimateContextUsageChars の
+        // 最小起動間隔。これより短い間隔で _messages Flow が再emitされても、
+        // 同期 Binder 呼び出し (getEngineStatusSync 等) の連打を避けるため
+        // 起動そのものをスキップする。メーター表示はコンテキスト使用量の目安なので、
+        // 数百ms〜1秒程度の遅延は実用上問題にならない。
+        private const val CONTEXT_USAGE_ESTIMATION_MIN_INTERVAL_MS = 1_000L
         /** 推論開始を拒否するメモリ使用率閾値 */
         private const val MEMORY_BLOCK_INFERENCE_PERCENT = 90
         /** 推論中にキャンセルするメモリ使用率閾値 */
@@ -938,6 +944,29 @@ class ChatViewModel(
     private var generationJob: Job? = null
     private val generationControlMutex = Mutex()
     private var messagesCollectionJob: Job? = null
+
+    // バグ修正 (#binder-thread-pool-starvation):
+    //   estimateContextUsageChars() は LiteRT-LM/GGUF のプロセス分離後、
+    //   内部で RemoteEngineConnection.getEngineStatusSync() という
+    //   runBlocking な同期 Binder 呼び出し (AIDL getEngineStatus()) を伴う。
+    //   Room の _messages Flow はストリーミング中の DB 更新のたびに再emitされ、
+    //   従来はそのたびに新しい viewModelScope コルーチンでこの推定処理を
+    //   起動していた。生成速度が上がるとこの同期 Binder 呼び出しが
+    //   前回の完了を待たずに何重にも積み重なり、:litert / :gguf プロセス側の
+    //   Binder スレッドプール (既定 15 本) を埋め尽くしてしまう。
+    //   埋まっている間は肝心の inference() / onToken コールバックまで
+    //   遅延するため、「推論は継続しているのに UI へのストリーミングが
+    //   数十秒単位で止まり、その後まとめて反映される」症状になっていた
+    //   (プロセス分離前は同一プロセス内の直接呼び出しでコストがほぼ
+    //   ゼロだったため顕在化していなかった)。
+    //   直前の推定ジョブが未完了なら新しいものを起動する前にキャンセルし、
+    //   常に高々 1 つの estimateContextUsageChars しか同時に走らないようにする。
+    private var contextUsageEstimationJob: Job? = null
+    // 直前に estimateContextUsageChars (同期 Binder 呼び出しを含む) を起動した時刻。
+    // ストリーミング中の高頻度な _messages 再emit全てに対して都度呼ばないよう、
+    // 最小間隔でスロットリングするために使う。
+    @Volatile
+    private var lastContextUsageEstimationAtMs: Long = 0L
     private var currentBackendType = "CPU"  // GPU/CPU/NPU を保持する (診断ログ用)
     private val userTurnMarkerRegex = Regex("(?i)(?:^|[\\s\\n\\r])(?:User|ユーザー)\\s*[:：]")
     private val assistantTurnMarkerRegex = Regex("(?i)(?:^|[\\s\\n\\r])(?:Assistant|アシスタント)\\s*[:：]")
@@ -1146,11 +1175,26 @@ class ChatViewModel(
                     //   エミッション内で同期実行していたため、履歴の多いセッションを開くと
                     //   本文が表示されるまで待たされていた。表示を優先し、メーター更新は
                     //   別コルーチンで非同期に後追い実行する (表示より先に終わっても問題ない)。
+                    //
+                    // バグ修正 (#binder-thread-pool-starvation):
+                    //   この関数は内部で :litert / :gguf プロセスへの同期 Binder 呼び出し
+                    //   (getEngineStatusSync 等) を行う。ストリーミング中は _messages Flow が
+                    //   高頻度で再emitされるため、前回のジョブが終わる前に次々と新しい
+                    //   ジョブを起動すると、同期 Binder 呼び出しが積み重なって相手プロセスの
+                    //   Binder スレッドプールを埋め尽くし、肝心の推論ストリーミング自体を
+                    //   遅延させてしまう。常に高々 1 つだけが実行中になるよう、
+                    //   前のジョブが残っていればキャンセルしてから新しいジョブを起動する。
                     val estimationSessionId = sessionId
-                    viewModelScope.launch(Dispatchers.IO) {
-                        val contextUsageChars = estimateContextUsageChars(filtered)
-                        if (activeCollectionSessionId == estimationSessionId) {
-                            _contextUsageChars.value = contextUsageChars
+                    val nowMs = SystemClock.elapsedRealtime()
+                    val sinceLastMs = nowMs - lastContextUsageEstimationAtMs
+                    if (sinceLastMs >= CONTEXT_USAGE_ESTIMATION_MIN_INTERVAL_MS) {
+                        lastContextUsageEstimationAtMs = nowMs
+                        contextUsageEstimationJob?.cancel()
+                        contextUsageEstimationJob = viewModelScope.launch(Dispatchers.IO) {
+                            val contextUsageChars = estimateContextUsageChars(filtered)
+                            if (activeCollectionSessionId == estimationSessionId) {
+                                _contextUsageChars.value = contextUsageChars
+                            }
                         }
                     }
                 }
@@ -2424,18 +2468,48 @@ class ChatViewModel(
                                                 null
                                             }
                                         if (nativeStreamParsed != null) {
-                                            contentForUi =
-                                                sanitizeAssistantOutputForModel(
-                                                    engineModelName = engineModelName,
-                                                    text = Gemma4ThinkingParser.sanitizeVisibleText(
-                                                        nativeStreamParsed.content,
-                                                        preserveToolCallTags = true
-                                                    )
+                                            // バグ修正 (Thinking ON 時、最初の出力が本文に混入する):
+                                            //   llama.cpp のネイティブパーサーは thinking_forced_open な
+                                            //   テンプレート (Gemma4 等) でも、</think> を実際に検出するまでは
+                                            //   partial 解析中の reasoning_content を確定させない実装になっており
+                                            //   (未閉鎖 thinking タグを許容する既知の緩さ、
+                                            //   upstream issue #13812 / #13877 系)、その間に生成された
+                                            //   思考テキストが reasoningContent="" のまま content 側に
+                                            //   一時的に出てしまうケースがある。
+                                            //   完了時 (isPartial=false) 側は reasoningContent が空のとき
+                                            //   Kotlin パーサーで再解析して救済しているのに、ストリーミング中
+                                            //   だけこの救済が無く、Thinking ON の最初の出力がそのまま
+                                            //   本文としてユーザーに見えてしまっていた。ここでも同じ救済を行う。
+                                            val nativeReasoningBlank = nativeStreamParsed.reasoningContent.isBlank()
+                                            if (config.enableThinking && nativeReasoningBlank && nativeStreamParsed.content.isNotBlank()) {
+                                                val salvaged = Gemma4ThinkingParser.parseStreaming(
+                                                    rawInput = nativeStreamParsed.content,
+                                                    treatUnmarkedInputAsThinking = true,
+                                                    preserveToolCallTags = true
                                                 )
-                                            thinkingForUi =
-                                                Gemma4ThinkingParser.sanitizeVisibleText(
-                                                    nativeStreamParsed.reasoningContent
-                                                ).ifBlank { null }
+                                                contentForUi =
+                                                    sanitizeAssistantOutputForModel(
+                                                        engineModelName = engineModelName,
+                                                        text = salvaged.answer
+                                                    )
+                                                thinkingForUi =
+                                                    salvaged.thinking?.let {
+                                                        Gemma4ThinkingParser.sanitizeVisibleText(it)
+                                                    }?.ifBlank { null }
+                                            } else {
+                                                contentForUi =
+                                                    sanitizeAssistantOutputForModel(
+                                                        engineModelName = engineModelName,
+                                                        text = Gemma4ThinkingParser.sanitizeVisibleText(
+                                                            nativeStreamParsed.content,
+                                                            preserveToolCallTags = true
+                                                        )
+                                                    )
+                                                thinkingForUi =
+                                                    Gemma4ThinkingParser.sanitizeVisibleText(
+                                                        nativeStreamParsed.reasoningContent
+                                                    ).ifBlank { null }
+                                            }
                                         } else {
                                         // Phase 4 補完 (計画書 1.2b): LiteRT-LM 経路では文字列推測
                                         // (treatUnmarkedInputAsThinking) を使わない。
@@ -2585,6 +2659,19 @@ class ChatViewModel(
                         withContext(Dispatchers.Main) {
  _uiMessage.emit(appContext.getString(R.string.vm_response_paused_saved))
                         }
+                        // バグ修正 (LiteRT-LM: ストール後も次回送信で再度ハングする):
+                        //   cancelInference()/cancelProcess() は upstream の完全デッドロック状態には
+                        //   効かないことがある (google-ai-edge/LiteRT-LM#2202)。stallWatchJob が
+                        //   検知した時点で :litert プロセスごと強制終了し、次回送信では
+                        //   確実に新しい Conversation で再スタートさせる。GGUF はこの経路の対象外
+                        //   (recoverFromStalledLiteRtInference 内で isLiteRtEngine 相当の判定を行う)。
+                        if (isLiteRtEngine) {
+                            runCatching {
+                                requireModelManager().recoverFromStalledLiteRtInference()
+                            }.onFailure {
+                                Log.w(TAG, "recoverFromStalledLiteRtInference failed after stall", it)
+                            }
+                        }
                     }
                     collectionError is GenerationWallTimeoutException -> {
                         Log.w(TAG, "Generation wall timeout; finalizing partial", collectionError)
@@ -2592,6 +2679,14 @@ class ChatViewModel(
                             appContext.getString(R.string.gen_truncated_time_notice)
                         withContext(Dispatchers.Main) {
  _uiMessage.emit(appContext.getString(R.string.vm_response_gen_time_limit))
+                        }
+                        // 上と同じ理由。壁時計タイムアウト側でも念のため回復させる。
+                        if (isLiteRtEngine) {
+                            runCatching {
+                                requireModelManager().recoverFromStalledLiteRtInference()
+                            }.onFailure {
+                                Log.w(TAG, "recoverFromStalledLiteRtInference failed after wall timeout", it)
+                            }
                         }
                     }
                     collectionError is UserStopCancellationException -> {

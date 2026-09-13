@@ -753,6 +753,43 @@ class ModelManager(
         }
     }
 
+    /**
+     * バグ修正 (LiteRT-LM: ストリーミングが途中で止まり推論だけ続く問題):
+     *
+     * LiteRT-LM ネイティブ側が完全にデッドロックした状態 (upstream 既知バグ、
+     * google-ai-edge/LiteRT-LM#2202 等) に陥ると、cancelInference() /
+     * cancelProcess() が効かず、「その Conversation は生きているように見えるが
+     * 応答が一切来ない」状態になる。さらに悪いことに、次回のユーザー送信でも
+     * 同じセッションキーなら同じ (壊れた) Conversation インスタンスが
+     * ModelManager.isModelLoaded() のスキップ判定によって再利用され続け、
+     * 何度送信しても再度ハングしてしまう。
+     *
+     * ChatViewModel の stallWatchJob / GenerationWallTimeoutException が発火した
+     * ときにこれを呼び、LiteRT-LM が動いている :litert プロセスそのものを
+     * 強制終了させる (cancelProcess より確実 — OS がネイティブスレッドごと回収する)。
+     * 同時に currentModelName をリセットし、次回の initializeModel() が
+     * 「ロード済みだからスキップ」と誤判定せず必ずモデルを再ロードするようにする。
+     *
+     * GGUF (llama.cpp) 側は対象外。GGUF はプロセス分離されておらず、この問題も
+     * 報告されていないため、activeEngine が LiteRT-LM のときのみ実行する。
+     */
+    suspend fun recoverFromStalledLiteRtInference(): Boolean {
+        return loadMutex.withLock {
+            val liteRt = activeEngine as? RemoteLiteRtInferenceEngine
+            if (liteRt == null) {
+                Log.d(TAG, "recoverFromStalledLiteRtInference: active engine is not LiteRT-LM, nothing to do")
+                return@withLock false
+            }
+            Log.w(TAG, "recoverFromStalledLiteRtInference: killing :litert process after stall/timeout")
+            runCatching { liteRt.shutdownProcess() }
+                .onFailure { Log.w(TAG, "recoverFromStalledLiteRtInference: shutdownProcess failed", it) }
+            // 次回 initializeModel() で必ず再ロードさせる
+            currentModelName = null
+            currentConfig = null
+            true
+        }
+    }
+
     suspend fun getLastGenerationTokenCount(): Float? {
         // GGUFエンジンでは内部トークン数を直接取得できないため、
         // PerformanceMonitorの直近完了セッションから補完する。

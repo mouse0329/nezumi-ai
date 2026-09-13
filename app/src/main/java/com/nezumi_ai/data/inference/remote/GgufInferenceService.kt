@@ -104,15 +104,22 @@ class GgufInferenceService : Service() {
             }
             serviceScope.launch {
                 try {
-                    ggufEngine.inference(
-                        sessionId, prompt,
-                        InferenceConfigBundle.fromBundle(config)
-                    ).catch { t ->
-                        if (t !is CancellationException) {
-                            callback.onError(t.message ?: "inference failed")
+                    // Bug fix(#LiteRT-stream-binder-throttle 横展開): GGUF はトークン単位で
+                    // emit されるため LiteRT-LM (1 文字単位) ほど頻度は高くないが、生成速度が
+                    // 一定を超えると同じ oneway Binder トランザクションバッファの詰まりが
+                    // 再現する。時間ウィンドウでまとめて送ることで Binder トランザクション数を
+                    // 生成速度から切り離す。
+                    collectBatchedForBinder(
+                        source = ggufEngine.inference(
+                            sessionId, prompt,
+                            InferenceConfigBundle.fromBundle(config)
+                        ).catch { t ->
+                            if (t !is CancellationException) {
+                                callback.onError(t.message ?: "inference failed")
+                            }
                         }
-                    }.collect { chunk ->
-                        callback.onToken(chunk)
+                    ) { batch ->
+                        callback.onToken(batch)
                     }
                     callback.onComplete()
                 } catch (t: Throwable) {
@@ -148,15 +155,18 @@ class GgufInferenceService : Service() {
                     audioPaths.orEmpty().mapNotNull { path -> readBytesAndDelete(path) }
                 }
                 try {
-                    ggufEngine.inferenceWithMedia(
-                        sessionId, prompt, images, audioClips,
-                        InferenceConfigBundle.fromBundle(config)
-                    ).catch { t ->
-                        if (t !is CancellationException) {
-                            callback.onError(t.message ?: "inferenceWithMedia failed")
+                    // Bug fix(#LiteRT-stream-binder-throttle 横展開): 上の inference() と同じ理由。
+                    collectBatchedForBinder(
+                        source = ggufEngine.inferenceWithMedia(
+                            sessionId, prompt, images, audioClips,
+                            InferenceConfigBundle.fromBundle(config)
+                        ).catch { t ->
+                            if (t !is CancellationException) {
+                                callback.onError(t.message ?: "inferenceWithMedia failed")
+                            }
                         }
-                    }.collect { chunk ->
-                        callback.onToken(chunk)
+                    ) { batch ->
+                        callback.onToken(batch)
                     }
                     callback.onComplete()
                 } catch (t: Throwable) {

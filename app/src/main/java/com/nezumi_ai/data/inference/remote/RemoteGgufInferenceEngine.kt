@@ -12,6 +12,7 @@ import java.io.File
 import java.io.FileOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.runBlocking
@@ -101,7 +102,18 @@ class RemoteGgufInferenceEngine(
 
         val callback = object : IRemoteTokenCallback.Stub() {
             override fun onToken(delta: String?) {
-                if (delta != null) trySend(delta)
+                if (delta != null) {
+                    // Bug fix(#LiteRT-stream-drop 横展開): GGUF 側も RemoteLiteRtInferenceEngine と
+                    // 同じ Binder コールバック構成 (非 suspend の onToken から callbackFlow へ流し込む)
+                    // であり、同じ理由でストリーミング中の chunk が trySend(...) 失敗時に黙って
+                    // 捨てられ得る。生成速度が上がるほど発生しやすく、その間隔分だけ何も表示され
+                    // ないまま、完了時の FINAL で一気に反映されたように見える。
+                    // trySendBlocking で channel に空きができるまで待ってから確実に送る。
+                    val result = trySendBlocking(delta)
+                    if (!result.isSuccess) {
+                        Log.w(TAG, "Dropping remote GGUF token chunk because callbackFlow channel is not ready")
+                    }
+                }
             }
 
             override fun onComplete() {

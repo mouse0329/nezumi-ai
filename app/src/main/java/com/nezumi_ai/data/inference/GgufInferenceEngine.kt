@@ -12,6 +12,7 @@ import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
@@ -759,7 +760,17 @@ class GgufInferenceEngine(
                     prompt = currentPrompt,
                     config = normalized,
                     isFirstRound = isFirstGenerationRound,
-                    emitChunk = { chunk -> trySend(chunk) },
+                    // Bug fix(#LiteRT-stream-drop 横展開): GGUF 側も同じ callbackFlow への
+                    // 非 suspend trySend であり、生成速度が上がるとチャンネルの一時的な
+                    // backpressure で chunk が黙って捨てられ得る (LiteRT 側と同一クラスのバグ、
+                    // 実際に生成速度が速いときに GGUF でも再現する報告と一致)。
+                    // trySendBlocking で確実に送る。
+                    emitChunk = { chunk ->
+                        val result = trySendBlocking(chunk)
+                        if (!result.isSuccess) {
+                            Log.w(TAG, "Dropping GGUF stream chunk because callbackFlow channel is not ready")
+                        }
+                    },
                     images = images,
                     audioClips = audioClips
                 )
@@ -825,7 +836,7 @@ class GgufInferenceEngine(
                 }
 
                 if (parsed.toolCalls.isNotEmpty()) {
-                    trySend(
+                    trySendBlocking(
                         InferenceStreamProtocol.encodeToolCallChunk(parsed.toolCalls.map { it.name })
                     )
                 }
@@ -834,7 +845,7 @@ class GgufInferenceEngine(
                     val result = toolExecutor.execute(toolCall)
                     toolResults.add(toolCall to result)
                     val status = if (result.success) "success" else "error"
-                    trySend(InferenceStreamProtocol.encodeToolResultChunk(toolCall.name, status))
+                    trySendBlocking(InferenceStreamProtocol.encodeToolResultChunk(toolCall.name, status))
                     synchronized(toolResultCards) {
                         toolResultCards.add(
                             ToolResultCard(
@@ -853,7 +864,7 @@ class GgufInferenceEngine(
                 val truncatedResponseBlock = if (truncationDetected) {
                     val card = GgufToolCallParser.buildTruncatedFailureCard(parsed.truncatedToolName)
                     synchronized(toolResultCards) { toolResultCards.add(card) }
-                    trySend(InferenceStreamProtocol.encodeToolResultChunk(card.toolName, "error"))
+                    trySendBlocking(InferenceStreamProtocol.encodeToolResultChunk(card.toolName, "error"))
                     Log.w(
                         TAG,
                         "Tool call truncated (token budget exhausted): name=${parsed.truncatedToolName} " +
@@ -881,8 +892,8 @@ class GgufInferenceEngine(
 
                 if (toolResultCards.isNotEmpty()) {
                     val toolResultsJson = ToolResultCard.listToJsonArray(toolResultCards)
-                    trySend(InferenceStreamProtocol.encodeToolResults(toolResultsJson))
-                    trySend(
+                    trySendBlocking(InferenceStreamProtocol.encodeToolResults(toolResultsJson))
+                    trySendBlocking(
                         InferenceStreamProtocol.encodeExecutedToolsList(
                             toolResultCards.map { it.toolName }.distinct()
                         )
@@ -902,8 +913,8 @@ class GgufInferenceEngine(
 
             if (toolResultCards.isNotEmpty()) {
                 val toolResultsJson = ToolResultCard.listToJsonArray(toolResultCards)
-                trySend(InferenceStreamProtocol.encodeToolResults(toolResultsJson))
-                trySend(
+                trySendBlocking(InferenceStreamProtocol.encodeToolResults(toolResultsJson))
+                trySendBlocking(
                     InferenceStreamProtocol.encodeExecutedToolsList(
                         toolResultCards.map { it.toolName }.distinct()
                     )
@@ -915,11 +926,11 @@ class GgufInferenceEngine(
             // Kotlin 側の概算よりも正確。
             runCatching {
                 ctx.getLastTimings()?.decodeTokensPerSecond?.let { tps ->
-                    if (tps > 0f) trySend(InferenceStreamProtocol.encodeTps(tps))
+                    if (tps > 0f) trySendBlocking(InferenceStreamProtocol.encodeTps(tps))
                 }
             }.onFailure { Log.w(TAG, "emit TPS failed", it) }
 
-            trySend(
+            trySendBlocking(
                 InferenceStreamProtocol.encodeFinal(
                     Gemma4ThinkingParser.sanitizeVisibleText(
                         fullAnswer.toString(),
@@ -933,11 +944,11 @@ class GgufInferenceEngine(
                 // キャンセル時も可能なら timings を送出しておく
                 runCatching {
                     llamaCppCtx?.getLastTimings()?.decodeTokensPerSecond?.let { tps ->
-                        if (tps > 0f) trySend(InferenceStreamProtocol.encodeTps(tps))
+                        if (tps > 0f) trySendBlocking(InferenceStreamProtocol.encodeTps(tps))
                     }
                 }
                 // キャンセル時も final を送出（LiteRT 側と同じ挙動）
-                trySend(InferenceStreamProtocol.encodeFinal(""))
+                trySendBlocking(InferenceStreamProtocol.encodeFinal(""))
                 close()
             } else {
                 Log.e(TAG, "GGUF inference error: session=$sessionId", t)

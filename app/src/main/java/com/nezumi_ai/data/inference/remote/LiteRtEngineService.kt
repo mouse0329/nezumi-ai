@@ -103,15 +103,24 @@ class LiteRtEngineService : Service() {
             }
             serviceScope.launch {
                 try {
-                    liteRtEngine.inference(
-                        sessionId, prompt,
-                        InferenceConfigBundle.fromBundle(config)
-                    ).catch { t ->
-                        if (t !is CancellationException) {
-                            callback.onError(t.message ?: "inference failed")
+                    // Bug fix(#LiteRT-stream-binder-throttle): LiteRT-LM は 1 文字単位で
+                    // Flow が emit されるため、チャンクごとに個別の oneway Binder
+                    // トランザクションを送っていると生成速度が上がった時点で
+                    // 非同期トランザクション用バッファが埋まり、以降のトークンが
+                    // 配送されなくなる (推論自体は継続するため生成完了時に
+                    // まとめて反映されたように見える)。時間ウィンドウでまとめて
+                    // 送ることで Binder トランザクション数を生成速度から切り離す。
+                    collectBatchedForBinder(
+                        source = liteRtEngine.inference(
+                            sessionId, prompt,
+                            InferenceConfigBundle.fromBundle(config)
+                        ).catch { t ->
+                            if (t !is CancellationException) {
+                                callback.onError(t.message ?: "inference failed")
+                            }
                         }
-                    }.collect { chunk ->
-                        callback.onToken(chunk)
+                    ) { batch ->
+                        callback.onToken(batch)
                     }
                     callback.onComplete()
                 } catch (t: Throwable) {
@@ -145,15 +154,18 @@ class LiteRtEngineService : Service() {
                     audioPaths.orEmpty().mapNotNull { path -> readBytesAndDelete(path) }
                 }
                 try {
-                    liteRtEngine.inferenceWithMedia(
-                        sessionId, prompt, images, audioClips,
-                        InferenceConfigBundle.fromBundle(config)
-                    ).catch { t ->
-                        if (t !is CancellationException) {
-                            callback.onError(t.message ?: "inferenceWithMedia failed")
+                    // Bug fix(#LiteRT-stream-binder-throttle): 上の inference() と同じ理由。
+                    collectBatchedForBinder(
+                        source = liteRtEngine.inferenceWithMedia(
+                            sessionId, prompt, images, audioClips,
+                            InferenceConfigBundle.fromBundle(config)
+                        ).catch { t ->
+                            if (t !is CancellationException) {
+                                callback.onError(t.message ?: "inferenceWithMedia failed")
+                            }
                         }
-                    }.collect { chunk ->
-                        callback.onToken(chunk)
+                    ) { batch ->
+                        callback.onToken(batch)
                     }
                     callback.onComplete()
                 } catch (t: Throwable) {
