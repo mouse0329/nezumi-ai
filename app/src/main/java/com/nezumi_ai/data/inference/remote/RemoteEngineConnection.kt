@@ -14,6 +14,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -31,6 +32,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  * - [getEngineStatus] / [isAvailable] 等の同期 getter は [runBlocking] でラップする
  *   (AIInferenceEngine にはない「同期型」アクセサの互換実装のため)
  */
+class RemoteEngineProcessDiedException(message: String) : RuntimeException(message)
+
 class RemoteEngineConnection(
     private val context: Context,
     private val serviceComponent: ComponentName,
@@ -50,6 +53,9 @@ class RemoteEngineConnection(
      */
     @Volatile
     private var boundDeferred: CompletableDeferred<IRemoteInferenceEngine>? = null
+
+    @Volatile
+    private var pendingResult: CompletableDeferred<Result<Unit>>? = null
 
     @Volatile
     private var lastKnownPid: Int = -1
@@ -86,12 +92,14 @@ class RemoteEngineConnection(
                 Log.w(tag, "service disconnected (process died or unbound)")
                 engine = null
                 lastKnownPid = -1
+                failPendingResult("$tag: remote engine process disconnected")
             }
 
             override fun onBindingDied(name: ComponentName?) {
                 Log.w(tag, "binding died; will rebind on next request")
                 engine = null
                 lastKnownPid = -1
+                failPendingResult("$tag: remote engine binding died")
             }
 
             override fun onNullBinding(name: ComponentName?) {
@@ -211,6 +219,7 @@ class RemoteEngineConnection(
         withContext(Dispatchers.IO) {
             val service = requireService()
             val result = CompletableDeferred<Result<Unit>>()
+            pendingResult = result
             try {
                 service.loadModel(modelName, config, object : IRemoteResultCallback.Stub() {
                     override fun onSuccess() {
@@ -223,15 +232,23 @@ class RemoteEngineConnection(
                         )
                     }
                 })
-                result.await()
+                withTimeout(LOAD_TIMEOUT_MS) { result.await() }
+            } catch (t: TimeoutCancellationException) {
+                Log.w(tag, "loadModel timed out; remote process may be unresponsive", t)
+                Result.failure(
+                    IllegalStateException("loadModel timed out; remote process may be unresponsive", t)
+                )
             } catch (t: Throwable) {
                 handleRemoteException(t, "loadModel")
+            } finally {
+                if (pendingResult === result) pendingResult = null
             }
         }.also { invalidateEngineStatusCache() }
 
     suspend fun unloadModel(): Result<Unit> = withContext(Dispatchers.IO) {
         val service = requireService()
         val result = CompletableDeferred<Result<Unit>>()
+        pendingResult = result
         try {
             service.unloadModel(object : IRemoteResultCallback.Stub() {
                 override fun onSuccess() {
@@ -244,9 +261,16 @@ class RemoteEngineConnection(
                     )
                 }
             })
-            result.await()
+            withTimeout(UNLOAD_TIMEOUT_MS) { result.await() }
+        } catch (t: TimeoutCancellationException) {
+            Log.w(tag, "unloadModel timed out; remote process may be unresponsive", t)
+            Result.failure(
+                IllegalStateException("unloadModel timed out; remote process may be unresponsive", t)
+            )
         } catch (t: Throwable) {
             handleRemoteException(t, "unloadModel")
+        } finally {
+            if (pendingResult === result) pendingResult = null
         }
     }.also { invalidateEngineStatusCache() }
 
@@ -464,6 +488,12 @@ class RemoteEngineConnection(
         }
     }
 
+    private fun failPendingResult(message: String) {
+        val result = pendingResult ?: return
+        pendingResult = null
+        result.complete(Result.failure(RemoteEngineProcessDiedException(message)))
+    }
+
     /**
      * DeadObject 検知後に接続状態をクリアし、次回呼び出しで rebind できるようにする。
      */
@@ -482,6 +512,8 @@ class RemoteEngineConnection(
 
     companion object {
         private const val BIND_TIMEOUT_MS = 15_000L
+        private const val LOAD_TIMEOUT_MS = 60_000L
+        private const val UNLOAD_TIMEOUT_MS = 10_000L
         /** getEngineStatus のキャッシュ TTL。連打吸収用の短い窓。 */
         private const val ENGINE_STATUS_CACHE_TTL_MS = 2_000L
         private const val SELF_KILL_GRACE_MS = 1_500L
