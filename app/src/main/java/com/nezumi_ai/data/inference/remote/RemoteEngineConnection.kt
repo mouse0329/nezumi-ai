@@ -249,8 +249,12 @@ class RemoteEngineConnection(
                 withTimeout(LOAD_TIMEOUT_MS) { result.await() }
             } catch (t: TimeoutCancellationException) {
                 Log.w(tag, "loadModel timed out; remote process may be unresponsive", t)
+                val likelyOutOfMemory = wasProcessKilledForLowMemory(lastKnownPid)
                 Result.failure(
-                    IllegalStateException("loadModel timed out; remote process may be unresponsive", t)
+                    RemoteEngineProcessDiedException(
+                        "loadModel timed out; remote process may be unresponsive",
+                        likelyOutOfMemory
+                    )
                 )
             } catch (t: Throwable) {
                 handleRemoteException(t, "loadModel")
@@ -502,6 +506,7 @@ class RemoteEngineConnection(
         }
     }
 
+    // Called from ServiceConnection callbacks; the PID is read from a volatile field.
     private fun wasProcessKilledForLowMemory(pid: Int): Boolean {
         if (pid <= 0 || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
         return runCatching {
