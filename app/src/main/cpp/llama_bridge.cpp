@@ -156,8 +156,8 @@ struct NezumiLlamaCtx
     int n_ctx = 0;
     int n_batch = 512;
     int n_ubatch = 512;
-    int n_past = 0; // KVキャッシュに書き込み済みのトークン数（位置オフセット）
-    int32_t last_prompt_tokens = 0;      // 直近リクエストのプロンプトトークン数 (画像・音声含む)
+    int n_past = 0;                       // KVキャッシュに書き込み済みのトークン数（位置オフセット）
+    int32_t last_prompt_tokens = 0;       // 直近リクエストのプロンプトトークン数 (画像・音声含む)
     int32_t last_prompt_media_tokens = 0; // うち画像・音声のトークン数
     bool context_shift_enabled = true;
 
