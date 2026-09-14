@@ -408,8 +408,35 @@ class GgufInferenceEngine(
                 }
 
                 if (!ctx.isValid) {
+                    val loadError = ctx.lastLoadError.trim()
+                    val normalizedLoadError = loadError.lowercase()
+                    val architectureUnsupported = listOf(
+                        "unsupported model architecture",
+                        "unknown model architecture",
+                        "unknown architecture"
+                    ).any(normalizedLoadError::contains)
+                    val memoryAllocationFailure = listOf(
+                        "out of memory",
+                        "cannot allocate",
+                        "failed to allocate",
+                        "allocation failed"
+                    ).any(normalizedLoadError::contains)
+                    val failureMessage = when {
+                        architectureUnsupported ->
+                            "このモデルのアーキテクチャは現在サポートされていません。"
+                        memoryAllocationFailure ->
+                            "GGUFモデルのロードに失敗しました。メモリ不足の可能性があります。"
+                        loadError.isNotEmpty() ->
+                            "LlamaCppContext failed to initialize — invalid model file or insufficient memory. " +
+                                "llama.cpp: $loadError"
+                        else ->
+                            "LlamaCppContext failed to initialize — invalid model file or insufficient memory"
+                    }
+                    if (loadError.isNotEmpty()) {
+                        Log.e(TAG, "GGUF model load failed: $loadError")
+                    }
                     return@withLock Result.failure(
-                        IllegalStateException("LlamaCppContext failed to initialize — invalid model file or insufficient memory")
+                        IllegalStateException(failureMessage)
                     )
                 }
 

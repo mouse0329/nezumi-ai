@@ -195,6 +195,25 @@ static void nezumi_ggml_log_callback(ggml_log_level level, const char *text, voi
     __android_log_write(prio, LOG_TAG, text);
 }
 
+// llama.cpp のログ状態はグローバルで、llama_log_set() 自体もスレッドセーフではない。
+// GgufInferenceEngine の modelMutex でロードを直列化している前提で、ロードを呼び出した
+// スレッドに直近の ERROR ログを保持する。ログは引き続き logcat にも転送する。
+static thread_local std::string g_last_load_error;
+static thread_local bool g_capture_load_errors = false;
+
+static void nezumi_llama_load_log_callback(ggml_log_level level, const char *text, void *user_data)
+{
+    nezumi_ggml_log_callback(level, text, user_data);
+    if (g_capture_load_errors && level == GGML_LOG_LEVEL_ERROR && text != nullptr)
+    {
+        constexpr size_t max_error_length = 8192;
+        if (g_last_load_error.size() < max_error_length)
+        {
+            g_last_load_error.append(text, std::min(std::strlen(text), max_error_length - g_last_load_error.size()));
+        }
+    }
+}
+
 // UTF-8 → jstring (NewStringUTF は Modified UTF-8 のみ対応のため UTF-16 経由にする)
 static jstring utf8_to_jstring(JNIEnv *env, const char *buf, size_t n)
 {
@@ -579,7 +598,11 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     else
         mparams.load_mode = LLAMA_LOAD_MODE_NONE;
 
+    g_last_load_error.clear();
+    g_capture_load_errors = true;
+    llama_log_set(nezumi_llama_load_log_callback, nullptr);
     llama_model *model = llama_model_load_from_file(model_path, mparams);
+    g_capture_load_errors = false;
     env->ReleaseStringUTFChars(j_model_path, model_path);
     if (gpu_backend_chars)
         env->ReleaseStringUTFChars(j_gpu_backend, gpu_backend_chars);
@@ -685,6 +708,16 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
              nc->chat_templates ? "ok" : "none");
     }
     return reinterpret_cast<jlong>(nc);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeGetLastLoadError(
+    JNIEnv *env,
+    jobject /* this */)
+{
+    if (g_last_load_error.empty())
+        return env->NewStringUTF("");
+    return utf8_to_jstring(env, g_last_load_error.c_str(), g_last_load_error.size());
 }
 
 extern "C" JNIEXPORT void JNICALL

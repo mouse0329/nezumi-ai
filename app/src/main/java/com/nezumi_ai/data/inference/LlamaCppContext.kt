@@ -39,6 +39,12 @@ class LlamaCppContext(
         0L
     }
 
+    val lastLoadError: String = if (ptr == 0L && LlamaBridge.isLibraryLoaded()) {
+        runCatching { LlamaBridge.nativeGetLastLoadError() }.getOrDefault("")
+    } else {
+        ""
+    }
+
     val isValid: Boolean get() = ptr != 0L
 
     /** リクエストしたGPUバックエンドが利用できず、実行時にCPUへフォールバックしたか。 */

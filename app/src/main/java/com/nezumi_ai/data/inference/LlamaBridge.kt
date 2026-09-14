@@ -76,6 +76,9 @@ object LlamaBridge {
         gpuBackend: String
     ): Long
 
+    /** 直近の llamaInit 失敗時に llama.cpp が出力した ERROR ログ。 */
+    external fun nativeGetLastLoadError(): String
+
     /** コンテキスト・モデル・mtmd・チャットテンプレートを解放する。 */
     external fun llamaFree(ctx: Long)
 
