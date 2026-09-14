@@ -1,9 +1,12 @@
 package com.nezumi_ai.data.inference.remote
 
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.os.Build
 import android.os.DeadObjectException
 import android.os.IBinder
 import android.os.Process
@@ -32,7 +35,10 @@ import kotlinx.coroutines.withTimeoutOrNull
  * - [getEngineStatus] / [isAvailable] 等の同期 getter は [runBlocking] でラップする
  *   (AIInferenceEngine にはない「同期型」アクセサの互換実装のため)
  */
-class RemoteEngineProcessDiedException(message: String) : RuntimeException(message)
+class RemoteEngineProcessDiedException(
+    message: String,
+    val likelyOutOfMemory: Boolean = false
+) : RuntimeException(message)
 
 class RemoteEngineConnection(
     private val context: Context,
@@ -90,16 +96,24 @@ class RemoteEngineConnection(
 
             override fun onServiceDisconnected(name: ComponentName?) {
                 Log.w(tag, "service disconnected (process died or unbound)")
+                val likelyOutOfMemory = wasProcessKilledForLowMemory(lastKnownPid)
                 engine = null
                 lastKnownPid = -1
-                failPendingResult("$tag: remote engine process disconnected")
+                failPendingResult(
+                    "$tag: remote engine process disconnected",
+                    likelyOutOfMemory
+                )
             }
 
             override fun onBindingDied(name: ComponentName?) {
                 Log.w(tag, "binding died; will rebind on next request")
+                val likelyOutOfMemory = wasProcessKilledForLowMemory(lastKnownPid)
                 engine = null
                 lastKnownPid = -1
-                failPendingResult("$tag: remote engine binding died")
+                failPendingResult(
+                    "$tag: remote engine binding died",
+                    likelyOutOfMemory
+                )
             }
 
             override fun onNullBinding(name: ComponentName?) {
@@ -488,10 +502,25 @@ class RemoteEngineConnection(
         }
     }
 
-    private fun failPendingResult(message: String) {
+    private fun wasProcessKilledForLowMemory(pid: Int): Boolean {
+        if (pid <= 0 || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
+        return runCatching {
+            val activityManager = context.getSystemService(ActivityManager::class.java)
+                ?: return@runCatching false
+            activityManager.getHistoricalProcessExitReasons(context.packageName, pid, 1)
+                .firstOrNull()
+                ?.reason == ApplicationExitInfo.REASON_LOW_MEMORY
+        }.onFailure {
+            Log.w(tag, "failed to determine remote process exit reason for pid=$pid", it)
+        }.getOrDefault(false)
+    }
+
+    private fun failPendingResult(message: String, likelyOutOfMemory: Boolean = false) {
         val result = pendingResult ?: return
         pendingResult = null
-        result.complete(Result.failure(RemoteEngineProcessDiedException(message)))
+        result.complete(
+            Result.failure(RemoteEngineProcessDiedException(message, likelyOutOfMemory))
+        )
     }
 
     /**

@@ -53,6 +53,7 @@ import com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
 import com.nezumi_ai.data.inference.PromptTemplateStore
 import com.nezumi_ai.data.inference.LiteRtStructuredPrompt
 import com.nezumi_ai.data.inference.LlamaCppGpuBackend
+import com.nezumi_ai.data.inference.remote.RemoteEngineProcessDiedException
 import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import com.nezumi_ai.data.preset.PresetConstants
 import com.nezumi_ai.data.skill.Skill
@@ -223,6 +224,7 @@ class ChatViewModel(
 
         private fun Throwable?.isMemoryLoadFailure(): Boolean {
             if (this == null) return false
+            if (this is RemoteEngineProcessDiedException && likelyOutOfMemory) return true
             if (this is OutOfMemoryError) return true
             val errorMsg = message?.lowercase() ?: ""
             if (errorMsg.contains("llamainit failed") && errorMsg.contains("invalid model file or insufficient memory")) {
@@ -240,6 +242,9 @@ class ChatViewModel(
             }
             return cause?.isMemoryLoadFailure() == true
         }
+
+        private fun Throwable?.isRemoteProcessOutOfMemory(): Boolean =
+            this is RemoteEngineProcessDiedException && likelyOutOfMemory
 
         private fun Throwable?.isModelLoadWarningMarker(): Boolean {
             val errorMsg = this?.message ?: return false
@@ -836,9 +841,17 @@ class ChatViewModel(
         val errorMsg = error?.message?.trim().takeUnless { it.isNullOrBlank() }
         val details = errorMsg?.let { appContext.getString(R.string.model_error_detail_with_model, it, selectedModel) }
             ?: appContext.getString(R.string.model_error_detail_model_only, selectedModel)
+        val displayMessage = if (error.isRemoteProcessOutOfMemory()) {
+            appContext.getString(
+                R.string.model_load_error_low_memory,
+                MemoryObserver.getSystemMemoryInfoSync(appContext).usedPercent
+            )
+        } else {
+            message
+        }
         _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
             title = title,
-            message = message,
+            message = displayMessage,
             details = details
         )
     }
@@ -5000,8 +5013,12 @@ class ChatViewModel(
                 if (error.isMemoryLoadFailure()) {
                     Log.w(TAG, "loadModelWithOverlay: Out of memory detected during initialization")
                     val postLoadMemStatus = MemoryObserver.getMemoryStatus(appContext)
-                    val errorMsg = "メモリが不足しています (${postLoadMemStatus.usedPercent}%)"
-                    _uiMessage.emit(errorMsg)
+                    _uiMessage.emit(
+                        appContext.getString(
+                            R.string.model_load_error_low_memory,
+                            postLoadMemStatus.usedPercent
+                        )
+                    )
 
                     // skipMemoryWarning=false（最初の警告チェック時）はモーダルを表示
                     // skipMemoryWarning=true（ユーザーが続行選択済み）はチャットに留まる

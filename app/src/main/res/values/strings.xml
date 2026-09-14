@@ -1516,6 +1516,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <!-- Model / inference error dialog messages -->
     <string name="model_load_error_title">モデルロードエラー</string>
     <string name="model_load_error_generic">モデルのロードに失敗しました。モデル管理画面で再ダウンロードしてください。</string>
+    <string name="model_load_error_low_memory">モデルのロードに失敗しました。メモリ不足の可能性があります。より小さいモデルか、量子化レベルの低いモデルをお試しください。 (%1$d%%)</string>
     <string name="model_load_error_unreadable">モデルファイルが読み込めません。モデル管理画面で再ダウンロードしてください。</string>
     <string name="model_load_error_short">モデルのロードに失敗しました。</string>
     <string name="model_load_error_preset_missing">プリセットモデルのロードに失敗しました。ファイルが見つかりません。</string>

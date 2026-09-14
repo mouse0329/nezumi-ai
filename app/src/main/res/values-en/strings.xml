@@ -1448,6 +1448,7 @@ When you attach and send it, the contents are automatically converted to Markdow
     <!-- Model / inference error dialog messages -->
     <string name="model_load_error_title">Model load error</string>
     <string name="model_load_error_generic">Failed to load the model. Please re-download it from the model management screen.</string>
+    <string name="model_load_error_low_memory">Failed to load the model. It may be due to insufficient memory. Try a smaller model or a lower quantization level. (%1$d%%)</string>
     <string name="model_load_error_unreadable">Could not read the model file. Please re-download it from the model management screen.</string>
     <string name="model_load_error_short">Failed to load the model.</string>
     <string name="model_load_error_preset_missing">Failed to load the preset model. The file was not found.</string>
