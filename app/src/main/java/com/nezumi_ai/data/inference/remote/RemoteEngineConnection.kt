@@ -16,6 +16,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * 別プロセスの推論サービス (:gguf / :litert) との bind/unbind・強制終了・再接続を
@@ -298,8 +299,15 @@ class RemoteEngineConnection(
     // ─── GGUF 固有 ────────────────────────────────────────────────
 
     fun clearKvCacheIfLoadedSync() = runBlocking(Dispatchers.IO) {
-        runCatching { requireService().clearKvCacheIfLoaded() }
-            .onFailure { Log.w(tag, "clearKvCacheIfLoaded failed", it) }
+        // Bug fix(#session-switch-hang): 前セッションの推論が進行中でサービスがビジーな
+        //   間にこれを呼ぶと、AIDL 越しの呼び出しがサービス側のキューで待たされ、
+        //   runBlocking が長時間〜無期限にブロックして、呼び出し元のセッション切替
+        //   (setCurrentSession) ごとアプリがハングして見えていた。タイムアウトを設け、
+        //   応答が無くても後続処理を継続できるようにする。
+        withTimeoutOrNull(2_000L) {
+            runCatching { requireService().clearKvCacheIfLoaded() }
+                .onFailure { Log.w(tag, "clearKvCacheIfLoaded failed", it) }
+        } ?: Log.w(tag, "clearKvCacheIfLoaded timed out (2000ms); continuing")
         Unit
     }
 

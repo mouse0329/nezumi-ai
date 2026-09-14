@@ -183,9 +183,11 @@ class ChatViewModel(
     companion object {
         private const val TAG = "ChatViewModel"
         private const val RESPONSE_TIMEOUT_MS = 120_000L
-        /** ストリーム中の Room 更新間隔（Gallery レベル：高速更新） */
-        private const val STREAM_PERSIST_INTERVAL_MS = 100L
-        private const val STREAM_PERSIST_INTERVAL_TABLE_MS = 50L
+        /** ストリーム中の Room 更新間隔（デバウンス: トークン毎のフル更新を間引く） */
+        private const val STREAM_PERSIST_INTERVAL_MS = 120L
+        private const val STREAM_PERSIST_INTERVAL_TABLE_MS = 100L
+        /** 定期 persist は本文がこの文字数以上増えたときだけ行う（時間条件の補助） */
+        private const val STREAM_PERSIST_MIN_CHARS = 16
         /** Phase 14: トークン数と文字数の変換比率（1トークン ≈ 3.5～4文字）*/
         private const val TOKEN_TO_CHAR_RATIO = 4
         /** 1 回の生成の上限（ネイティブが onDone を返さない場合の保険） */
@@ -967,6 +969,32 @@ class ChatViewModel(
     // 最小間隔でスロットリングするために使う。
     @Volatile
     private var lastContextUsageEstimationAtMs: Long = 0L
+
+    // Bug fix(#toolcalling-resolve-spam): ストリーミング中は _messages 再emit のたびに
+    //   estimateContextUsageChars → getInferenceConfigForModel が呼ばれ、その都度
+    //   capability ストア読み出し・プリセット DB 参照・enableToolCalling 判定が
+    //   フルで再実行されていた。生成中にモデルや設定は変わらないため、直近の結果を
+    //   短時間キャッシュして使い回す。
+    private var cachedMeterInferenceConfig: com.nezumi_ai.data.inference.InferenceConfig? = null
+    private var cachedMeterInferenceConfigModel: String? = null
+    private var cachedMeterInferenceConfigAtMs: Long = 0L
+
+    private suspend fun getCachedMeterInferenceConfig(
+        model: String
+    ): com.nezumi_ai.data.inference.InferenceConfig {
+        val now = System.currentTimeMillis()
+        val cached = cachedMeterInferenceConfig
+        if (cached != null && cachedMeterInferenceConfigModel == model &&
+            now - cachedMeterInferenceConfigAtMs < 2_000L
+        ) {
+            return cached
+        }
+        val fresh = settingsRepository.getInferenceConfigForModel(model, appContext)
+        cachedMeterInferenceConfig = fresh
+        cachedMeterInferenceConfigModel = model
+        cachedMeterInferenceConfigAtMs = now
+        return fresh
+    }
     private var currentBackendType = "CPU"  // GPU/CPU/NPU を保持する (診断ログ用)
     private val userTurnMarkerRegex = Regex("(?i)(?:^|[\\s\\n\\r])(?:User|ユーザー)\\s*[:：]")
     private val assistantTurnMarkerRegex = Regex("(?i)(?:^|[\\s\\n\\r])(?:Assistant|アシスタント)\\s*[:：]")
@@ -1113,12 +1141,17 @@ class ChatViewModel(
  // Bug fix: セッションを作り直した / 切り替えた際に KV キャッシュをクリアして
         //   前セッションの Thinking コンテキストが残るのを防ぐ。
         //   （「セッションを作り直すと OFF にしても Thinking される」バグの修正）
+        // Bug fix(#session-switch-hang): 以前は clearKvCache → stopGenerationInternal の
+        //   順で呼んでいたため、前セッションの推論がまだ進行中だと clearKvCache 内部の
+        //   runBlocking な AIDL 呼び出しがサービスのビジー解除を待ち続け、
+        //   セッション作成/切替のたびにアプリがハングして見えていた。
+        //   先に生成を停止させてから KV キャッシュをクリアする。
+        stopGenerationInternal()
+
         if (previousSessionId != sessionId) {
             runCatching { ModelManager.getInstance(appContext).clearKvCache() }
                 .onFailure { Log.w(TAG, "clearKvCache on session change failed", it) }
         }
-
-        stopGenerationInternal()
 
  // レースコンディション修正: 即座にメッセージをクリアして、前セッションの
         //   メッセージが一瞬表示される（チャットカードが切れる）現象を防ぐ。
@@ -2584,13 +2617,20 @@ class ChatViewModel(
                                                     now - lastPersistAt >= persistInterval
                                             )
                                         } else {
-                                            // Content が存在すれば通常の persist ロジック
+                                            // Content が存在すれば通常の persist ロジック。
+                                            // Bug fix(#streaming-persist-debounce):
+                                            //   トークン1個ごとに DB 更新・Flow 再発行・再バインドが
+                                            //   走っていたため、定期 persist は「一定時間経過」かつ
+                                            //   「本文が STREAM_PERSIST_MIN_CHARS 以上増えたか
+                                            //   Thinking が変化した」ときだけに間引く。
                                             (contentForUi != lastPersistedContent ||
                                                 thinkingForUi != lastPersistedThinking) &&
                                                 (finalFromModelGlobal != null ||
                                                     isFirstVisibleContent ||
                                                     isFirstThinkingPersist ||
-                                                    now - lastPersistAt >= persistInterval)
+                                                    (now - lastPersistAt >= persistInterval &&
+                                                        (contentForUi.length - lastPersistedContent.length >= STREAM_PERSIST_MIN_CHARS ||
+                                                            thinkingForUi != lastPersistedThinking)))
                                         }
                                     if (shouldPersistToDb) {
                                         messageRepository.updateMessageContent(
@@ -2928,6 +2968,13 @@ class ChatViewModel(
                         }
                     }
                     Log.d(TAG, "Message content update complete")
+                }
+                // Bug fix(#finalization-jank): 以前はタイトル生成・タイトル再読み込み・
+                //   メモリ抽出投入を本文確定と直列で実行しており、推論完了直後の
+                //   全文確定 + 再描画と重なって UI が一瞬固まっていた。メッセージ本文の
+                //   確定 (上の updateMessageContent) だけを同期的に待ち、残りは確定描画の
+                //   後追いとなる別コルーチンへ遅延させる。
+                viewModelScope.launch(Dispatchers.IO) {
                     if (contentToSave.isNotEmpty() && !stoppedWithoutPayload) {
                         Log.d(TAG, "Generating session title")
                         maybeGenerateSessionTitle(sessionId, userMessage, contentToSave)
@@ -2935,10 +2982,10 @@ class ChatViewModel(
                     }
                     syncSessionTitleFromDb(sessionId)
                     Log.d(TAG, "Session title sync complete")
-                }
-                if (!stoppedWithoutPayload) {
-                    enqueueMemoryExtraction(sessionId)
-                    Log.d(TAG, "Memory extraction enqueued")
+                    if (!stoppedWithoutPayload) {
+                        enqueueMemoryExtraction(sessionId)
+                        Log.d(TAG, "Memory extraction enqueued")
+                    }
                 }
                 if (BuildConfig.DEBUG) {
                     // プライバシー保護: AI応答は記憶内容等を含み得るため本文は出力しない
@@ -4486,7 +4533,8 @@ class ChatViewModel(
         val selectedModel = getActiveSelectedModel()
         val engineModelName = toEngineModelName(selectedModel)
         val isGgufEngine = isGgufEngineModel(engineModelName)
-        val config = settingsRepository.getInferenceConfigForModel(selectedModel, appContext)
+        // 生成中はキャッシュ済みの推論設定を使い回す（#toolcalling-resolve-spam 対策）
+        val config = getCachedMeterInferenceConfig(selectedModel)
         val basePrompt = buildPromptFromMessages(
             messages,
             isGgufEngine,
