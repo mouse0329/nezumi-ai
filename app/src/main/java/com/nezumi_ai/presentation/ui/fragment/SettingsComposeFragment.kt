@@ -745,23 +745,25 @@ class SettingsComposeFragment : Fragment() {
         //   1. このスコープ内で初回取得するときも失敗しない
         //   2. すでに ChatFragment 側で作られていれば同一インスタンスを共有する
         // という既存の共有前提を保ちながらクラッシュを回避する。
-        val ctx = requireContext().applicationContext
-        val database = NezumiAiDatabase.getInstance(ctx)
-        val settingsRepo = SettingsRepository.fromDatabase(database)
-        val sessionRepo = ChatSessionRepository(database.chatSessionDao(), settingsRepo)
-        val messageRepo = MessageRepository(database.messageDao())
-        val presetRepo = PresetRepository(database.presetDao(), ctx)
-        val memoryRepo = MemoryRepository(database.memoryDao())
-        val chatViewModelFactory = ChatViewModelFactory(
-            ctx,
-            sessionRepo,
-            messageRepo,
-            settingsRepo,
-            presetRepo,
-            memoryRepo
-        )
-        val chatViewModel = ViewModelProvider(requireActivity(), chatViewModelFactory)
-            .get(com.nezumi_ai.presentation.viewmodel.ChatViewModel::class.java)
+        val ctx = remember { requireContext().applicationContext }
+        val chatViewModel = remember(ctx) {
+            val database = NezumiAiDatabase.getInstance(ctx)
+            val settingsRepo = SettingsRepository.fromDatabase(database)
+            val sessionRepo = ChatSessionRepository(database.chatSessionDao(), settingsRepo)
+            val messageRepo = MessageRepository(database.messageDao())
+            val presetRepo = PresetRepository(database.presetDao(), ctx)
+            val memoryRepo = MemoryRepository(database.memoryDao())
+            val chatViewModelFactory = ChatViewModelFactory(
+                ctx,
+                sessionRepo,
+                messageRepo,
+                settingsRepo,
+                presetRepo,
+                memoryRepo
+            )
+            ViewModelProvider(requireActivity(), chatViewModelFactory)
+                .get(com.nezumi_ai.presentation.viewmodel.ChatViewModel::class.java)
+        }
         val sharedModelErrorMessage by chatViewModel.modelErrorDialogMessage.collectAsState()
 
         // Bug fix (設定のタブ移動が Android の戻る履歴に残らない):
