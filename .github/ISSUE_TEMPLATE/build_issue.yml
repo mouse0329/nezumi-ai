@@ -1,0 +1,60 @@
+name: ビルドの問題 / Build Issue
+description: ソースからのビルドで詰まった場合
+title: "[Build] "
+labels: ["build"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ビルド関連の報告ありがとうございます。
+        まず [docs/ANDROID_NATIVE_BUILD.md](../../docs/ANDROID_NATIVE_BUILD.md) に該当のエラーが載っていないか確認してください。
+
+        よくあるつまずきポイント:
+        - `git submodule update --init --recursive` を忘れると `llama_bridge` が静かにスキップされます
+        - `./gradlew assembleDebug` だけでは画像生成機能（Nezumi Kiln）は含まれません。事前に `scripts/build_mnn_android.ps1` の実行が必要です
+        - Vulkan SDK の `glslc` / `vulkan.hpp` が見つからないと Vulkan バックエンドが無効化されます（ビルド自体は続行してしまいます）
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: ビルド環境の OS
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+
+  - type: input
+    id: ndk-version
+    attributes:
+      label: NDK バージョン
+      placeholder: "例: 30.0.14904198"
+
+  - type: dropdown
+    id: build-target
+    attributes:
+      label: どのビルドで問題が起きたか
+      options:
+        - Android本体（./gradlew assembleDebug / assembleRelease）
+        - mnn-sd-engine（scripts/build_mnn_android.ps1）
+        - デスクトップ版（nezumi-ai-desktop-core）
+        - llama.cpp サブモジュール関連
+        - その他
+    validations:
+      required: true
+
+  - type: textarea
+    id: error
+    attributes:
+      label: エラー内容
+      description: ビルドログの該当箇所を貼ってください
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: 試したこと
+      description: すでに試した対処があれば教えてください

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 質問・雑談
+    url: https://github.com/mouse0329/nezumi-ai/discussions
+    about: バグでも機能提案でもない質問はこちら

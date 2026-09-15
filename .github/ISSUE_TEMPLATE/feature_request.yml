@@ -1,0 +1,26 @@
+name: 機能リクエスト / Feature Request
+description: 新機能や改善の提案
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解決したい課題
+      description: どんな場面で困っているか、何が不便かを教えてください。
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 提案内容
+      description: どう解決したいか、アイデアがあれば教えてください。
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 代替案
+      description: 他に検討した方法があれば教えてください（例: MCPサーバー経由で代用できないか等）。

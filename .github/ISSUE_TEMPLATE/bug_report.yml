@@ -1,0 +1,83 @@
+name: バグ報告 / Bug Report
+description: アプリの不具合を報告する
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        バグ報告ありがとうございます。再現に必要な情報が多いほど早く調査できます。
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 何が起きたか / What happened
+      description: 期待した動作と、実際に起きたことを教えてください。
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順 / Steps to reproduce
+      placeholder: |
+        1. ○○のモデルをロード
+        2. △△と入力
+        3. クラッシュする
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: 端末 / Device
+      placeholder: "例: Pixel 9 Pro (Tensor G4) / Galaxy S24 (Snapdragon 8 Gen 3)"
+    validations:
+      required: true
+
+  - type: input
+    id: android-version
+    attributes:
+      label: Android バージョン
+      placeholder: "例: Android 15"
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: アプリのバージョン
+      description: 設定画面またはリリースノートで確認できます
+      placeholder: "例: v2.4.2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: gpu-backend
+    attributes:
+      label: 使用していた推論バックエンド（分かれば）
+      options:
+        - 不明 / 未確認
+        - GGUF - CPU
+        - GGUF - OpenCL
+        - GGUF - Vulkan
+        - LiteRT-LM
+        - クラウド（Claude / Gemini / OpenAI互換 / LM Studio / Ollama）
+        - 画像生成（Nezumi Kiln）
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ（adb logcat）
+      description: |
+        可能であれば `adb logcat | grep -i nezumi` などで取得したログを貼ってください。
+        GPUバックエンド関連の不具合の場合、`gpuBackendFallbackOccurred` や `nativeProbeGpuBackendAvailable` 周辺のログが手がかりになることがあります。
+      render: shell
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: その他の情報
+      description: 使用していたモデル名、Mini App の有無など
