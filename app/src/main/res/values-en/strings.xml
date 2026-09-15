@@ -1183,6 +1183,14 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="model_settings_mmproj_file_label">mmproj file</string>
     <string name="model_settings_mmproj_unselected">Unselected</string>
     <string name="model_settings_mmproj_loading_candidates">Loading candidates…</string>
+    <string name="gguf_metadata_button">Metadata</string>
+    <string name="gguf_metadata_dialog_title">GGUF Metadata</string>
+    <string name="gguf_metadata_copy_all">Copy all</string>
+    <string name="gguf_metadata_copied_toast">Metadata copied</string>
+    <string name="gguf_metadata_read_error">Failed to read: %1$s</string>
+    <string name="gguf_metadata_version">version</string>
+    <string name="gguf_metadata_tensor_count">tensor_count</string>
+    <string name="gguf_metadata_kv_count">kv_count</string>
     <string name="model_settings_enable_audio_input">Enable audio input</string>
     <string name="model_settings_enable_thinking">Enable inference (Thinking)</string>
     <string name="model_settings_tool_calling_enable">Enable tool calling</string>

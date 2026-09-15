@@ -10,8 +10,20 @@ object GgufMetadataReader {
         val parameterCount: Long,
     )
 
+    /** GGUF ヘッダー全体（表表示用）。 */
+    data class FullMetadata(
+        val version: Long,
+        val tensorCount: Long,
+        val kvCount: Long,
+        /** 表示順を保持した key -> value(表示用文字列) のリスト。配列値は要約表示。 */
+        val entries: List<Pair<String, String>>,
+    )
+
     private data class CacheEntry(val summary: Summary, val lastModified: Long)
     private val cache = ConcurrentHashMap<String, CacheEntry>()
+
+    private data class FullMetadataCacheEntry(val metadata: FullMetadata, val lastModified: Long)
+    private val fullMetadataCache = ConcurrentHashMap<String, FullMetadataCacheEntry>()
 
     private data class ChatTemplateCacheEntry(val template: String?, val lastModified: Long)
     private val chatTemplateCache = ConcurrentHashMap<String, ChatTemplateCacheEntry>()
@@ -45,7 +57,104 @@ object GgufMetadataReader {
 
     fun invalidate(path: String): Boolean {
         chatTemplateCache.remove(path)
+        fullMetadataCache.remove(path)
         return cache.remove(path) != null
+    }
+
+    /**
+     * GGUF ヘッダーの全メタデータ（KV 全件）を表示用に読み出す。
+     * Hugging Face の「Xet Pointer Details」相当の表を作る用途。
+     */
+    fun readFullMetadata(file: File): FullMetadata {
+        require(file.isFile) { "GGUF ファイルが見つかりません" }
+        val lastModified = file.lastModified()
+        fullMetadataCache[file.absolutePath]?.let { entry ->
+            if (entry.lastModified == lastModified) return entry.metadata
+        }
+        val metadata = readFullMetadataFromFile(file)
+        fullMetadataCache[file.absolutePath] = FullMetadataCacheEntry(metadata, lastModified)
+        return metadata
+    }
+
+    private fun readFullMetadataFromFile(file: File): FullMetadata {
+        RandomAccessFile(file, "r").use { raf ->
+            val magic = raf.readLittleInt()
+            require(magic == GGUF_MAGIC) { "GGUF ヘッダーではありません" }
+
+            val version = raf.readLittleUInt32()
+            require(version in 1L..3L) { "未対応の GGUF バージョンです: $version" }
+
+            val tensorCount = raf.readLittleUInt64()
+            val metadataCount = raf.readLittleUInt64()
+
+            val entries = ArrayList<Pair<String, String>>(metadataCount.coerceAtMost(4096L).toInt())
+            var i = 0L
+            while (i < metadataCount) {
+                val key = raf.readGgufString()
+                val valueType = raf.readLittleUInt32().toInt()
+                val display = readValueAsDisplayString(raf, valueType)
+                entries.add(key to display)
+                i++
+            }
+
+            return FullMetadata(
+                version = version,
+                tensorCount = tensorCount,
+                kvCount = metadataCount,
+                entries = entries,
+            )
+        }
+    }
+
+    /** 値を表示用文字列にして返す（配列は要約、巨大な配列は先頭のみ）。位置は必ず読み切って進める。 */
+    private fun readValueAsDisplayString(raf: RandomAccessFile, valueType: Int): String {
+        return when (valueType) {
+            TYPE_STRING -> raf.readGgufString()
+            TYPE_UINT8 -> raf.readUnsignedByte().toString()
+            TYPE_INT8 -> raf.readByte().toString()
+            TYPE_UINT16 -> raf.readLittleUInt16().toString()
+            TYPE_INT16 -> raf.readLittleShort().toString()
+            TYPE_UINT32 -> raf.readLittleUInt32().toString()
+            TYPE_INT32 -> raf.readLittleInt().toString()
+            TYPE_UINT64 -> raf.readLittleUInt64().toString()
+            TYPE_INT64 -> raf.readLittleLong().toString()
+            TYPE_BOOL -> if (raf.readUnsignedByte() != 0) "true" else "false"
+            TYPE_FLOAT32 -> java.lang.Float.intBitsToFloat(raf.readLittleInt()).toString()
+            TYPE_FLOAT64 -> java.lang.Double.longBitsToDouble(raf.readLittleLong()).toString()
+            TYPE_ARRAY -> readArrayAsDisplayString(raf)
+            else -> throw IllegalArgumentException("未対応の GGUF value type: $valueType")
+        }
+    }
+
+    private const val ARRAY_PREVIEW_LIMIT = 8
+
+    private fun readArrayAsDisplayString(raf: RandomAccessFile): String {
+        val elementType = raf.readLittleUInt32().toInt()
+        val count = raf.readLittleUInt64()
+        val preview = ArrayList<String>(minOf(count, ARRAY_PREVIEW_LIMIT.toLong()).toInt())
+        var i = 0L
+        while (i < count) {
+            val value = when (elementType) {
+                TYPE_UINT8 -> raf.readUnsignedByte().toString()
+                TYPE_INT8 -> raf.readByte().toString()
+                TYPE_UINT16 -> raf.readLittleUInt16().toString()
+                TYPE_INT16 -> raf.readLittleShort().toString()
+                TYPE_UINT32 -> raf.readLittleUInt32().toString()
+                TYPE_INT32 -> raf.readLittleInt().toString()
+                TYPE_UINT64 -> raf.readLittleUInt64().toString()
+                TYPE_INT64 -> raf.readLittleLong().toString()
+                TYPE_BOOL -> if (raf.readUnsignedByte() != 0) "true" else "false"
+                TYPE_FLOAT32 -> java.lang.Float.intBitsToFloat(raf.readLittleInt()).toString()
+                TYPE_FLOAT64 -> java.lang.Double.longBitsToDouble(raf.readLittleLong()).toString()
+                TYPE_STRING -> raf.readGgufString()
+                TYPE_ARRAY -> readArrayAsDisplayString(raf) // ネスト配列（稀）
+                else -> throw IllegalArgumentException("未対応の GGUF array type: $elementType")
+            }
+            if (i < ARRAY_PREVIEW_LIMIT) preview.add(value)
+            i++
+        }
+        val suffix = if (count > ARRAY_PREVIEW_LIMIT) ", …(+${count - ARRAY_PREVIEW_LIMIT})" else ""
+        return "[" + preview.joinToString(", ") + suffix + "]"
     }
 
     /**

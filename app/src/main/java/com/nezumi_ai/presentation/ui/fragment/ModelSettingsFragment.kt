@@ -27,11 +27,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.CardDefaults
 import com.nezumi_ai.presentation.ui.composable.SvgSpinner
 import androidx.compose.material3.Divider
@@ -41,6 +43,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.CloudQueue
@@ -80,6 +83,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
@@ -119,6 +123,7 @@ import com.nezumi_ai.data.repository.SettingsRepository
 import com.nezumi_ai.presentation.ui.helper.SettingsHelper
 import com.nezumi_ai.utils.PreferencesHelper
 import com.nezumi_ai.presentation.ui.composable.MarkdownLatexText
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.style.TextDecoration
@@ -213,6 +218,11 @@ open class ModelSettingsFragment : Fragment() {
     private lateinit var presetRepository: PresetRepository
     private var isImportingModel by mutableStateOf(false)
     private var modelSettingsDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
+    // GGUF メタデータ全件表示ダイアログ用の状態。
+    private var metadataDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
+    private var metadataDialogData by mutableStateOf<GgufMetadataReader.FullMetadata?>(null)
+    private var metadataDialogError by mutableStateOf<String?>(null)
+    private var metadataDialogLoading by mutableStateOf(false)
     private var capabilityDialogImageEnabled by mutableStateOf(false)
     private var showToolCallingDisableConfirmDialog by mutableStateOf(false)
     private var toolCallingDisableConfirmModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
@@ -463,6 +473,9 @@ open class ModelSettingsFragment : Fragment() {
         }
         modelSettingsDialogModel?.let { model ->
             ImportedModelSettingsDialog(model)
+        }
+        metadataDialogModel?.let {
+            GgufMetadataDialog()
         }
         if (imageLicensePendingModel != null) {
             ImageModelLicenseConfirmDialog()
@@ -920,6 +933,166 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
+    /**
+     * GGUF ヘッダーの全メタデータを Hugging Face の「Xet Pointer Details」のような
+     * key / value テーブルとして表示するダイアログ。llama.cpp を経由せず、
+     * GgufMetadataReader でヘッダーを直接パースして得た結果を表示する。
+     */
+    @Composable
+    private fun GgufMetadataDialog() {
+        val model = metadataDialogModel ?: return
+        Dialog(onDismissRequest = {
+            metadataDialogModel = null
+            metadataDialogData = null
+            metadataDialogError = null
+        }) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .heightIn(max = 560.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = stringResource(id = R.string.gguf_metadata_dialog_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        IconButton(onClick = {
+                            metadataDialogModel = null
+                            metadataDialogData = null
+                            metadataDialogError = null
+                        }) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = stringResource(id = R.string.common_close),
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                    Text(
+                        text = File(model.path).name,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Divider()
+
+                    val data = metadataDialogData
+                    val error = metadataDialogError
+                    when {
+                        metadataDialogLoading -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator()
+                            }
+                        }
+                        error != null -> {
+                            Text(
+                                text = stringResource(id = R.string.gguf_metadata_read_error, error),
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        data != null -> {
+                            // サマリー行（version / tensor_count / kv_count）。HF の表と同じ並び。
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                MetadataSummaryRow(stringResource(id = R.string.gguf_metadata_version), data.version.toString())
+                                MetadataSummaryRow(stringResource(id = R.string.gguf_metadata_tensor_count), data.tensorCount.toString())
+                                MetadataSummaryRow(stringResource(id = R.string.gguf_metadata_kv_count), data.kvCount.toString())
+                            }
+                            Divider()
+                            val clipboard = LocalClipboardManager.current
+                            LazyColumn(
+                                modifier = Modifier.weight(1f, fill = false),
+                                verticalArrangement = Arrangement.spacedBy(1.dp)
+                            ) {
+                                itemsIndexed(data.entries) { index, (key, value) ->
+                                    val rowColor = if (index % 2 == 0) {
+                                        MaterialTheme.colorScheme.surfaceContainerHigh
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceContainerHighest
+                                    }
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(rowColor)
+                                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = key,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.weight(0.45f)
+                                        )
+                                        Text(
+                                            text = value,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.weight(0.55f)
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            val copiedToastText = stringResource(id = R.string.gguf_metadata_copied_toast)
+                            val versionLabel = stringResource(id = R.string.gguf_metadata_version)
+                            val tensorCountLabel = stringResource(id = R.string.gguf_metadata_tensor_count)
+                            val kvCountLabel = stringResource(id = R.string.gguf_metadata_kv_count)
+                            TextButton(onClick = {
+                                val text = buildString {
+                                    appendLine("$versionLabel\t${data.version}")
+                                    appendLine("$tensorCountLabel\t${data.tensorCount}")
+                                    appendLine("$kvCountLabel\t${data.kvCount}")
+                                    data.entries.forEach { (k, v) -> appendLine("$k\t$v") }
+                                }
+                                clipboard.setText(AnnotatedString(text))
+                                toast(copiedToastText)
+                            }) {
+                                Text(stringResource(id = R.string.gguf_metadata_copy_all))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun MetadataSummaryRow(label: String, value: String) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+    }
+
     @Composable
     private fun ImportedModelSettingsDialog(model: ModelFileManager.ImportedTaskModel) {
         val loweredPath = model.path.lowercase()
@@ -983,28 +1156,61 @@ open class ModelSettingsFragment : Fragment() {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "設定",
+                            text = stringResource(id = R.string.model_settings_dialog_title),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
-                        // 保存ボタンを廃止し、クローズのみの X ボタン。
-                        IconButton(onClick = {
-                            modelSettingsAutoSaveJob?.cancel()
-                            val pendingModel = modelSettingsDialogModel
-                            if (pendingModel != null) {
-                                viewLifecycleOwner.lifecycleScope.launch {
-                                    autoPersistModelSettingsFromDialog()
-                                    refreshImportedTasks()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (isGguf) {
+                                // GGUF ヘッダーの全メタデータを表で確認するボタン。
+                                TextButton(onClick = {
+                                    metadataDialogModel = model
+                                    metadataDialogData = null
+                                    metadataDialogError = null
+                                    metadataDialogLoading = true
+                                    viewLifecycleOwner.lifecycleScope.launch {
+                                        val result = withContext(Dispatchers.IO) {
+                                            runCatching {
+                                                GgufMetadataReader.readFullMetadata(File(model.path))
+                                            }
+                                        }
+                                        result.onSuccess { metadataDialogData = it }
+                                        result.onFailure { e -> metadataDialogError = e.message ?: "" }
+                                        metadataDialogLoading = false
+                                    }
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Info,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        stringResource(id = R.string.gguf_metadata_button),
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
                                 }
                             }
-                            modelSettingsDialogModel = null
-                        }) {
-                            Icon(
-                                imageVector = Icons.Filled.Close,
-                                contentDescription = stringResource(id = R.string.common_close),
-                                tint = MaterialTheme.colorScheme.onSurface
-                            )
+                            // 保存ボタンを廃止し、クローズのみの X ボタン。
+                            IconButton(onClick = {
+                                modelSettingsAutoSaveJob?.cancel()
+                                val pendingModel = modelSettingsDialogModel
+                                if (pendingModel != null) {
+                                    viewLifecycleOwner.lifecycleScope.launch {
+                                        autoPersistModelSettingsFromDialog()
+                                        refreshImportedTasks()
+                                    }
+                                }
+                                modelSettingsDialogModel = null
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = stringResource(id = R.string.common_close),
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
                         }
                     }
                     Text(

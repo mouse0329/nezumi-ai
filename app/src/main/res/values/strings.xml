@@ -1043,6 +1043,14 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="model_settings_mmproj_file_label">mmprojファイル</string>
     <string name="model_settings_mmproj_unselected">未選択</string>
     <string name="model_settings_mmproj_loading_candidates">候補を取得中…</string>
+    <string name="gguf_metadata_button">メタデータ</string>
+    <string name="gguf_metadata_dialog_title">GGUF メタデータ</string>
+    <string name="gguf_metadata_copy_all">全てコピー</string>
+    <string name="gguf_metadata_copied_toast">メタデータをコピーしました</string>
+    <string name="gguf_metadata_read_error">読み取りに失敗しました: %1$s</string>
+    <string name="gguf_metadata_version">version</string>
+    <string name="gguf_metadata_tensor_count">tensor_count</string>
+    <string name="gguf_metadata_kv_count">kv_count</string>
     <string name="model_settings_enable_audio_input">音声入力を有効化</string>
     <string name="model_settings_enable_thinking">推論（Thinking）を有効化</string>
     <string name="model_settings_tool_calling_enable">ツール呼び出しを有効化</string>
