@@ -1119,6 +1119,15 @@ class ChatViewModel(
         // 前回保存した実測値 (DB) があればそれで復元する (アプリ再起動対策)。
         _contextUsageTokens.value = 0
         _contextMediaTokens.value = 0
+        // バグ修正 (#context-meter-stale): 切替前セッションの chars 推定値・生プロンプト・
+        // 推定スロットル時刻が残っていると、新セッションの初回推定が完了するまで
+        // メーターに「前のセッションのコンテキスト量」が表示され続けていた。
+        // ここで関連状態をすべてリセットし、初回推定がスロットル判定で
+        // スキップされないようにする。
+        _contextUsageChars.value = 0
+        _contextRawPrompt.value = ""
+        lastContextUsageEstimationAtMs = 0L
+        contextUsageEstimationJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { sessionRepository.getSessionById(sessionId) }.getOrNull()?.let { session ->
                 if (session.lastKnownContextTokens > 0) {
@@ -1162,8 +1171,14 @@ class ChatViewModel(
         stopGenerationInternal()
 
         if (previousSessionId != sessionId) {
-            runCatching { ModelManager.getInstance(appContext).clearKvCache() }
-                .onFailure { Log.w(TAG, "clearKvCache on session change failed", it) }
+            // ハング対策 (#session-switch-hang 続報): clearKvCache は内部で同期 Binder
+            // 呼び出しを行うため、推論サービスがビジーだと呼び出しスレッドが
+            // ブロックされ、セッション追加/切替がハングしたように見える。
+            // 切替処理の完了を待たせないよう、バックグラウンドに逃がす。
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { ModelManager.getInstance(appContext).clearKvCache() }
+                    .onFailure { Log.w(TAG, "clearKvCache on session change failed", it) }
+            }
         }
 
  // レースコンディション修正: 即座にメッセージをクリアして、前セッションの

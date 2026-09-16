@@ -201,6 +201,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 withContext(Dispatchers.Main) {
                     pendingInitialScrollToBottom = true
                     userScrolledAwayDuringGeneration = false
+                    // セッション切替時は変換キャッシュをクリアする (id は DB 採番で
+                    // セッション間で一意だが、メモリ節約のため明示的に捨てる)。
+                    sanitizedContentCache.clear()
                     // ドロワーの履歴リストは「セッション更新」をきっかけにしか
                     // ハイライトを再評価しない。switchSession 経由の切り替えでは
                     // 履歴の並びが変わらないため通知が来ず、前のセッションの
@@ -244,6 +247,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var wasImeVisible = false
     private var autoScrollPosted = false
     private val autoScrollDebounceMs = 48L
+
+    // ストリーミング高速化 (#streaming-scroll-jank): 生成中は _messages Flow が
+    // トークン単位で再emitされ、毎回全メッセージに stripGemmaTokens 等の文字列変換を
+    // 掛けていたため、履歴が長いセッションほど生成中のスクロールがカクついていた。
+    // 変換は冪等なので message.id -> (元content, 変換後content) でキャッシュし、
+    // 差分（通常はストリーミング中の末尾メッセージ）だけを変換する。
+    private val sanitizedContentCache = HashMap<Long, Pair<String, String>>()
     private val autoFollowMaxFrames = 18
     private val immediateScrollMaxFrames = 10
     private val autoFollowBottomThresholdPx = 120
@@ -1159,12 +1169,25 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 // カードを差し込む目印として使われる。コピー・読み上げなどは
                 // 引き続きタグなしパス (stripGemmaTokens() default = false) を使う。
                 val filteredMessages = displayMessages.map { msg ->
-                    msg.copy(
-                        content = msg.content
+                    val cached = sanitizedContentCache[msg.id]
+                    if (cached != null && cached.first == msg.content) {
+                        // 変換済みキャッシュがあれば再利用 (ストリーミング中は
+                        // 末尾メッセージ以外の content は変わらないのでほぼ全件ヒットする)
+                        msg.copy(content = cached.second)
+                    } else {
+                        val sanitized = msg.content
                             .stripGemmaTokens(preserveToolCallTags = true)
                             .stripTxtFileBlocks()
                             .stripVideoBlocks()
-                    )
+                        sanitizedContentCache[msg.id] = msg.content to sanitized
+                        msg.copy(content = sanitized)
+                    }
+                }
+                // メモリリーク防止: 削除済みメッセージのキャッシュが残り続けないよう、
+                // キャッシュが現在件数より大きく膨らんだら生存エントリだけに間引く。
+                if (sanitizedContentCache.size > displayMessages.size * 2 + 64) {
+                    val liveIds = displayMessages.mapTo(HashSet()) { it.id }
+                    sanitizedContentCache.keys.retainAll(liveIds)
                 }
                 val empty = filteredMessages.isEmpty()
                 messagesIsEmpty = empty
