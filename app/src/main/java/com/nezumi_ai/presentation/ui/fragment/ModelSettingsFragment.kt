@@ -4585,8 +4585,15 @@ open class ModelSettingsFragment : Fragment() {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(text = model.shortDisplayName, fontWeight = FontWeight.SemiBold)
-                        val modelDir = File(model.path)
-                        val dirSize = modelDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                        // ★ パフォーマンス修正: walkTopDown はモデルディレクトリ配下の全ファイルを
+                        //   再帰列挙してサイズ合計する重い I/O で、再コンポーズのたびに
+                        //   メインスレッドで実行されていた（モデル行数分のファイル走査が
+                        //   毎フレーム走り、画面スクロールがカクつく原因になっていた）。
+                        //   model.path 単位で remember し、行が再利用される限り再計算しない。
+                        val modelDir = remember(model.path) { File(model.path) }
+                        val dirSize = remember(model.path) {
+                            modelDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                        }
                         if (dirSize > 0L) {
                             Text(
                                 text = formatBytes(dirSize),
@@ -4596,7 +4603,11 @@ open class ModelSettingsFragment : Fragment() {
                             )
                         }
                         if (!isExpanded) {
-                            val hasMnn = modelDir.listFiles()?.any { it.name.endsWith(".mnn") } == true
+                            // ★ パフォーマンス修正: listFiles もディレクトリ I/O なので remember で
+                            //   キャッシュする（モデル削除直後など、パスが変わったときだけ再評価）。
+                            val hasMnn = remember(model.path) {
+                                modelDir.listFiles()?.any { it.name.endsWith(".mnn") } == true
+                            }
                             val backend = if (hasMnn) "MNN" else "Unknown"
                             Text(
                                 text = backend,
@@ -4617,8 +4628,11 @@ open class ModelSettingsFragment : Fragment() {
                 }
                 if (isExpanded) {
                     Spacer(modifier = Modifier.height(8.dp))
-                    val modelDir = File(model.path)
-                    val hasMnn = modelDir.listFiles()?.any { it.name.endsWith(".mnn") } == true
+                    // ★ パフォーマンス修正: 折りたたみ時と同じく、展開時の backend 判定も
+                    //   毎回 File/listFiles を生成せず remember でキャッシュする。
+                    val hasMnn = remember(model.path) {
+                        File(model.path).listFiles()?.any { it.name.endsWith(".mnn") } == true
+                    }
                     val backend = if (hasMnn) "MNN" else "Unknown"
                     Row(
                         modifier = Modifier

@@ -3788,10 +3788,16 @@ class SettingsComposeFragment : Fragment() {
         val localContext = LocalContext.current
         val scrollState = rememberScrollState()
         val clipboardManager = LocalClipboardManager.current
+        val scope = rememberCoroutineScope()
 
-        fun refreshLogcatViewer() {
-            logcatViewerText = LogcatRecorder.readAllLogs(localContext)
-            val bytes = LogcatRecorder.totalSizeBytes(localContext)
+        // ★ パフォーマンス修正: 自動更新中は 2 秒ごとに全ログファイルを再読込するため、
+        //   メインスレッドで実行するとスクロール中の定期ジャンクになる。
+        //   ファイル I/O は IO ディスパッチャに逃がし、State 更新だけメインで行う。
+        suspend fun refreshLogcatViewer() {
+            val (text, bytes) = withContext(Dispatchers.IO) {
+                LogcatRecorder.readAllLogs(localContext) to LogcatRecorder.totalSizeBytes(localContext)
+            }
+            logcatViewerText = text
             logcatViewerSizeLabel = "%.1f KB".format(bytes / 1024.0)
         }
 
@@ -3830,7 +3836,7 @@ class SettingsComposeFragment : Fragment() {
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
         ) {
-            Button(onClick = { refreshLogcatViewer() }) {
+            Button(onClick = { scope.launch { refreshLogcatViewer() } }) {
                 Text(stringResource(id = R.string.settings_debug_reload_button))
             }
             Button(onClick = { logcatViewerAutoRefresh = !logcatViewerAutoRefresh }) {
@@ -3874,8 +3880,10 @@ class SettingsComposeFragment : Fragment() {
                 Text(stringResource(id = R.string.settings_debug_export_button))
             }
             Button(onClick = {
-                LogcatRecorder.clearAll(localContext)
-                refreshLogcatViewer()
+                scope.launch {
+                    LogcatRecorder.clearAll(localContext)
+                    refreshLogcatViewer()
+                }
             }) {
                 Text(stringResource(id = R.string.settings_debug_clear_log_button))
             }

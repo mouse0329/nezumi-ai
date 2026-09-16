@@ -286,8 +286,10 @@ class PresetSettingsFragment : Fragment() {
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item { Spacer(modifier = Modifier.statusBarsPadding()) }
-            item {
+            // ★ パフォーマンス修正: 固定ヘッダー項目にも安定 key を付け、プリセット行の
+            //   並び替え/増減で index がずれても再コンポーズされないようにする。
+            item(key = "status_bar_spacer") { Spacer(modifier = Modifier.statusBarsPadding()) }
+            item(key = "header") {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -330,7 +332,7 @@ class PresetSettingsFragment : Fragment() {
                 }
             }
 
-            item {
+            item(key = "search") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = presetSearchQuery,
@@ -357,7 +359,12 @@ class PresetSettingsFragment : Fragment() {
 
             itemsIndexed(
                 items = visibleList,
-                key = { _, preset -> preset.id }
+                key = { _, preset -> preset.id },
+                // ★ パフォーマンス修正: contentType を固定し、ドラッグ並び替えや
+                //   検索フィルタでアイテム位置が変わっても既存コンポジションが再利用
+                //   されるようにする。これがないと移動した行が全再コンポーズされ、
+                //   スクロール/ドラッグがカクつく。
+                contentType = { _, _ -> "preset_row" }
             ) { index, preset ->
                 val isDragging = index == dragIndex
                 PresetRow(

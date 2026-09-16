@@ -246,7 +246,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var isUserAtBottom = true
     private var wasImeVisible = false
     private var autoScrollPosted = false
-    private val autoScrollDebounceMs = 48L
+    // ★ パフォーマンス修正 (#streaming-scroll-jank): トークン emit のたびに
+    //   48ms 間隔で最大 autoFollowMaxFrames フレームの postOnAnimation 連鎖が走り、
+    //   長いセッションではユーザーのスクロール操作と競合してカクついていた。
+    //   96ms に緩和しても追従の視覚的遅延はほぼ知覚されず、スクロール負荷は半減する。
+    private val autoScrollDebounceMs = 96L
 
     // ストリーミング高速化 (#streaming-scroll-jank): 生成中は _messages Flow が
     // トークン単位で再emitされ、毎回全メッセージに stripGemmaTokens 等の文字列変換を
@@ -1947,10 +1951,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private fun followBottomAfterLayout() {
         val rv = _binding?.messagesRecyclerView ?: return
-        rv.post {
-            if (_binding == null || !isAdded) return@post
-            followBottomForFrames(rv, autoFollowMaxFrames, rv.computeVerticalScrollRange())
-        }
+        if (_binding == null || !isAdded) return
+        // 呼び出し元は既に postDelayed(autoScrollDebounceMs) でデバウンス済みなので、
+        // ここでさらに rv.post して 1 フレーム遅らせる必要はない。直接実行することで
+        // 追従の追いつきが 1 フレーム速くなり、キューに積まれる Runnable も減る。
+        followBottomForFrames(rv, autoFollowMaxFrames, rv.computeVerticalScrollRange())
     }
 
     private fun followBottomForFrames(rv: RecyclerView, framesRemaining: Int, previousRange: Int) {
