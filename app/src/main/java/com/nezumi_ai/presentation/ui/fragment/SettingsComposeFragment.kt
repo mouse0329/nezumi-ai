@@ -172,6 +172,8 @@ class SettingsComposeFragment : Fragment() {
     private var sdDefaultSeedInput by mutableStateOf("")
     private var braveSearchApiKeyInput by mutableStateOf("")
     private var selectedSection by mutableStateOf(0)
+    // 設定項目検索ボトムシートの表示フラグ。 true になると SettingsSearchSheet が開く。
+    private var settingsSearchSheetVisible by mutableStateOf(false)
  // スマホ版設定画面でリスト表示か詳細表示かを切り替えるフラグ。
     //   true = カテゴリリスト表示、false = 選択中セクションの詳細表示。
     //   タブレット（幅 >= 600dp）では常にサイドバー+コンテンツの2ペイン表示なので使用しない。
@@ -919,8 +921,17 @@ class SettingsComposeFragment : Fragment() {
                     },
                     style = MaterialTheme.typography.headlineSmall,
                     color = colorResource(id = R.color.text_primary),
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
                 )
+                // 設定項目検索: キーワードで項目を探し、タップでそのセクションへジャンプする。
+                IconButton(onClick = { settingsSearchSheetVisible = true }) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_search),
+                        contentDescription = stringResource(id = R.string.settings_search_hint),
+                        tint = colorResource(id = R.color.text_primary)
+                    )
+                }
             }
 
  // タブレット: サイドバー + コンテンツ / スマホ: リスト or コンテンツ
@@ -1547,6 +1558,18 @@ class SettingsComposeFragment : Fragment() {
                 } // if (content) close
             } // Row close
         } // Column close
+
+        // 設定検索ボトムシート: 結果タップで該当セクションへジャンプする。
+        //   スマホでは詳細表示に切り替え、タブレットではサイドバーの選択を変えるだけでよい。
+        if (settingsSearchSheetVisible) {
+            SettingsSearchSheet(
+                onJumpToSection = { section ->
+                    selectedSection = section
+                    if (!isTablet) showSettingsListOnPhone = false
+                },
+                onDismiss = { settingsSearchSheetVisible = false }
+            )
+        }
     }
 
 
@@ -3793,12 +3816,21 @@ class SettingsComposeFragment : Fragment() {
         // ★ パフォーマンス修正: 自動更新中は 2 秒ごとに全ログファイルを再読込するため、
         //   メインスレッドで実行するとスクロール中の定期ジャンクになる。
         //   ファイル I/O は IO ディスパッチャに逃がし、State 更新だけメインで行う。
+        //   さらに readRecentLogs() で末尾だけを読むことで、ローテーション済みの
+        //   古いファイルまで毎回読み直す無駄を省いている。
         suspend fun refreshLogcatViewer() {
             val (text, bytes) = withContext(Dispatchers.IO) {
-                LogcatRecorder.readAllLogs(localContext) to LogcatRecorder.totalSizeBytes(localContext)
+                LogcatRecorder.readRecentLogs(localContext) to LogcatRecorder.totalSizeBytes(localContext)
             }
             logcatViewerText = text
             logcatViewerSizeLabel = "%.1f KB".format(bytes / 1024.0)
+        }
+
+        // ★ パフォーマンス修正: 巨大なログ全文に対する色分け (buildAnnotatedString + 行ごとの正規表現)
+        //   はコストが高く、全文が State に入っていると再コンポーズのたびに走ってしまう。
+        //   derivedStateOf で logcatViewerText が変わったときだけ再計算する。
+        val colorizedLogcatText by remember {
+            derivedStateOf { colorizeLogcatText(logcatViewerText) }
         }
 
         // 画面表示中、自動更新 ON なら 2 秒おきに再読込して末尾へ追従する。
@@ -3907,7 +3939,7 @@ class SettingsComposeFragment : Fragment() {
                     text = if (logcatViewerText.isBlank()) {
                         AnnotatedString(stringResource(id = R.string.settings_logcat_empty))
                     } else {
-                        colorizeLogcatText(logcatViewerText)
+                        colorizedLogcatText
                     },
                     fontFamily = FontFamily.Monospace,
                     fontSize = 10.sp,

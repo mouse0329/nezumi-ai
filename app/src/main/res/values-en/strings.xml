@@ -1692,4 +1692,6 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="miniapp_storage_initialize">Reset Storage</string>
     <string name="miniapp_storage_initialize_confirm">Delete all App Data (settings, cache, user data) for this app and reinitialize? The package itself is not removed.</string>
 
+    <string name="settings_search_hint">Search settings</string>
+    <string name="settings_search_no_results">No matching settings</string>
 </resources>

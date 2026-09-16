@@ -21,6 +21,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.ProgressBar
@@ -3544,6 +3545,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(ctx)
         dialog.setContentView(view)
 
+        // モデルが画像入力に非対応なら「画像」「カメラ」タイルをグレイアウトし、
+        // タップ時はピッカーを開かず非対応トーストだけを出す (見た目で無効と分かるようにする)。
+        applyAttachmentTileEnabled(view.findViewById(R.id.opt_image), imageInputEnabled)
+        applyAttachmentTileEnabled(view.findViewById(R.id.opt_camera), imageInputEnabled)
         view.findViewById<View>(R.id.opt_image).setOnClickListener {
             dialog.dismiss()
             if (!imageInputEnabled) {
@@ -3558,6 +3563,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         }
         view.findViewById<View>(R.id.opt_camera).setOnClickListener {
             dialog.dismiss()
+            // 非対応時は launchCamera() 側がトーストを出して何もしない。
             launchCamera()
         }
         view.findViewById<View>(R.id.opt_file).setOnClickListener {
@@ -3597,6 +3603,28 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         view.findViewById<View>(R.id.opt_cancel).setOnClickListener { dialog.dismiss() }
 
         dialog.show()
+    }
+
+    /**
+     * 添付ボトムシートのタイル (LinearLayout 内に ImageView + TextView) を
+     * 有効/無効で見た目だけ切り替える。無効時は半透明にしてグレイアウトする。
+     * タップ自体は受け付けたままにし、理由をトーストで伝えるのは呼び出し側の役割。
+     */
+    private fun applyAttachmentTileEnabled(tile: View, enabled: Boolean) {
+        tile.alpha = if (enabled) 1.0f else 0.38f
+        (tile as? ViewGroup)?.let { group ->
+            for (i in 0 until group.childCount) {
+                when (val child = group.getChildAt(i)) {
+                    is ImageView -> child.imageAlpha = if (enabled) 255 else 96
+                    is TextView -> child.setTextColor(
+                        ContextCompat.getColor(
+                            tile.context,
+                            if (enabled) R.color.text_primary else R.color.text_secondary
+                        )
+                    )
+                }
+            }
+        }
     }
 
     /**

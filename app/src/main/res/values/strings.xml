@@ -1760,4 +1760,6 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="miniapp_storage_initialize">ストレージを初期化</string>
     <string name="miniapp_storage_initialize_confirm">このアプリの App Data（設定・キャッシュ・ユーザーデータ）をすべて削除して初期化しますか？パッケージ本体は削除されません。</string>
 
+    <string name="settings_search_hint">設定項目を検索</string>
+    <string name="settings_search_no_results">一致する設定項目がありません</string>
 </resources>

@@ -203,9 +203,15 @@ private fun LogcatTab(context: Context) {
     var sizeLabel by remember { mutableStateOf("") }
     var autoRefresh by remember { mutableStateOf(true) }
     val scroll = rememberScrollState()
-    fun refresh() {
-        logText = LogcatRecorder.readAllLogs(context)
-        sizeLabel = "%.1f KB".format(LogcatRecorder.totalSizeBytes(context) / 1024.0)
+    val scope = rememberCoroutineScope()
+    // ★ パフォーマンス修正: 全ファイルの readAllLogs() をメインスレッドで定期実行すると
+    //   表示全体が重くなるため、末尾だけ読む readRecentLogs() + IO ディスパッチャに変更。
+    suspend fun refresh() {
+        val (text, bytes) = withContext(Dispatchers.IO) {
+            LogcatRecorder.readRecentLogs(context) to LogcatRecorder.totalSizeBytes(context)
+        }
+        logText = text
+        sizeLabel = "%.1f KB".format(bytes / 1024.0)
     }
     LaunchedEffect(autoRefresh) {
         refresh()
@@ -226,7 +232,7 @@ private fun LogcatTab(context: Context) {
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
         ) {
-            Button(onClick = { refresh() }) { Text(stringResource(R.string.settings_debug_reload_button)) }
+            Button(onClick = { scope.launch { refresh() } }) { Text(stringResource(R.string.settings_debug_reload_button)) }
             Button(onClick = { autoRefresh = !autoRefresh }) {
                 Text(if (autoRefresh) stringResource(R.string.settings_logcat_auto_on) else stringResource(R.string.settings_logcat_auto_off))
             }
@@ -244,7 +250,7 @@ private fun LogcatTab(context: Context) {
                     context.startActivity(Intent.createChooser(share, context.getString(R.string.settings_logcat_export_title)))
                 }
             }) { Text(stringResource(R.string.settings_debug_export_button)) }
-            Button(onClick = { LogcatRecorder.clearAll(context); refresh() }) {
+            Button(onClick = { scope.launch { LogcatRecorder.clearAll(context); refresh() } }) {
                 Text(stringResource(R.string.settings_debug_clear_log_button))
             }
         }

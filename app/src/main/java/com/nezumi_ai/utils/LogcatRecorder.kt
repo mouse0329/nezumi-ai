@@ -6,6 +6,7 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStreamReader
+import java.io.RandomAccessFile
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -33,6 +34,8 @@ object LogcatRecorder {
     private const val MAX_FILE_SIZE_BYTES = 512L * 1024L // 512KB
     // 保持するファイル数の上限。これを超えたら最古のファイルを削除する。
     private const val MAX_FILE_COUNT = 8
+    // 末尾読み出し (readRecentLogs) で1ファイルから遡って読む最大バイト数。
+    private const val TAIL_READ_CHUNK_BYTES = 256L * 1024L // 256KB
 
     private val isRunning = AtomicBoolean(false)
     private var recorderThread: Thread? = null
@@ -87,6 +90,39 @@ object LogcatRecorder {
                 sb.append(f.readText())
                 if (!sb.endsWith("\n")) sb.append('\n')
             }
+        }
+        return if (sb.length > maxChars) {
+            // 表示は末尾（最新側）を優先する
+            "...(省略)...\n" + sb.substring(sb.length - maxChars)
+        } else {
+            sb.toString()
+        }
+    }
+
+    /**
+     * 保存済みログの末尾 maxChars 文字だけを返す。
+     * [readAllLogs] と違い全ファイルを読み込まず、各ファイルを末尾から必要分だけ
+     * 読む (RandomAccessFile.seek) ので、設定画面のログビュワーのように
+     * 定期的に再読込する用途でも I/O コストが小さい。
+     */
+    fun readRecentLogs(context: Context, maxChars: Int = 60_000): String {
+        val files = sortedLogFiles(logDir(context))
+        if (files.isEmpty()) return ""
+        val sb = StringBuilder()
+        var remaining = maxChars.toLong()
+        // 新しいファイルから遡って、必要量だけ末尾を読む。
+        for (f in files.asReversed()) {
+            if (remaining <= 0) break
+            runCatching {
+                RandomAccessFile(f, "r").use { raf ->
+                    val readLen = minOf(raf.length(), maxOf(remaining * 2, TAIL_READ_CHUNK_BYTES))
+                    raf.seek(raf.length() - readLen)
+                    val buf = ByteArray(readLen.toInt())
+                    raf.readFully(buf)
+                    sb.insert(0, String(buf, Charsets.UTF_8))
+                }
+            }
+            remaining = maxChars.toLong() - sb.length
         }
         return if (sb.length > maxChars) {
             // 表示は末尾（最新側）を優先する
