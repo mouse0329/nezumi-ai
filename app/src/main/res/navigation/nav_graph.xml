@@ -5,23 +5,23 @@
 
     <fragment android:id="@+id/setupWizardFragment" android:name="com.nezumi_ai.presentation.ui.fragment.SetupWizardFragment" android:label="Setup" />
 
-    <fragment android:id="@+id/settingsFragment" android:name="com.nezumi_ai.presentation.ui.fragment.SettingsComposeFragment" android:label="@string/action_settings" tools:layout="@layout/fragment_settings">
+    <fragment android:id="@+id/settingsFragment" android:name="com.nezumi_ai.presentation.ui.fragment.SettingsComposeFragment" android:label="@string/action_settings">
         <action android:id="@+id/action_settingsFragment_to_licenseFragment" app:destination="@id/licenseFragment" />
         <action android:id="@+id/action_settingsFragment_to_helpFragment" app:destination="@id/helpFragment" />
     </fragment>
 
-    <fragment android:id="@+id/sessionListFragment" android:name="com.nezumi_ai.presentation.ui.fragment.SessionListFragment" android:label="@string/app_title_sessions" tools:layout="@layout/fragment_session_list">
+    <fragment android:id="@+id/sessionListFragment" android:name="com.nezumi_ai.presentation.ui.fragment.SessionListFragment" android:label="@string/app_title_sessions">
 
         <action android:id="@+id/action_sessionListFragment_to_chatFragment" app:destination="@id/chatFragment" app:enterAnim="@android:anim/slide_in_left" app:exitAnim="@android:anim/slide_out_right" app:popEnterAnim="@android:anim/slide_in_left" app:popExitAnim="@android:anim/slide_out_right" />
         <action android:id="@+id/action_sessionListFragment_to_settingsFragment" app:destination="@id/settingsFragment" />
     </fragment>
 
 
-    <fragment android:id="@+id/licenseFragment" android:name="com.nezumi_ai.presentation.ui.fragment.LicenseFragment" android:label="@string/license_title" tools:layout="@layout/fragment_license" />
+    <fragment android:id="@+id/licenseFragment" android:name="com.nezumi_ai.presentation.ui.fragment.LicenseFragment" android:label="@string/license_title" />
 
-    <fragment android:id="@+id/helpFragment" android:name="com.nezumi_ai.presentation.ui.fragment.HelpFragment" android:label="@string/help_title" tools:layout="@layout/fragment_settings" />
+    <fragment android:id="@+id/helpFragment" android:name="com.nezumi_ai.presentation.ui.fragment.HelpFragment" android:label="@string/help_title" />
 
-    <fragment android:id="@+id/chatFragment" android:name="com.nezumi_ai.presentation.ui.fragment.ChatFragment" android:label="Chat" tools:layout="@layout/fragment_chat">
+    <fragment android:id="@+id/chatFragment" android:name="com.nezumi_ai.presentation.ui.fragment.ChatFragment" android:label="Chat">
 
         <argument android:name="sessionId" app:argType="long" android:defaultValue="-1L" />
         <argument android:name="isIncognito" app:argType="boolean" android:defaultValue="false" />
@@ -30,31 +30,31 @@
         <action android:id="@+id/action_chatFragment_to_sessionListFragment" app:destination="@id/sessionListFragment" app:popUpTo="@id/sessionListFragment" app:popUpToInclusive="false" app:enterAnim="@android:anim/slide_in_left" app:exitAnim="@android:anim/slide_out_right" app:popEnterAnim="@android:anim/slide_in_left" app:popExitAnim="@android:anim/slide_out_right" />
     </fragment>
 
-    <fragment android:id="@+id/modelSettingsFragment" android:name="com.nezumi_ai.presentation.ui.fragment.ModelSettingsFragment" android:label="@string/model_settings" tools:layout="@layout/fragment_settings">
+    <fragment android:id="@+id/modelSettingsFragment" android:name="com.nezumi_ai.presentation.ui.fragment.ModelSettingsFragment" android:label="@string/model_settings">
         <action android:id="@+id/action_modelSettingsFragment_to_licenseFragment" app:destination="@id/licenseFragment" />
         <action android:id="@+id/action_modelSettingsFragment_to_modelManagementFragment" app:destination="@id/modelManagementFragment" />
     </fragment>
 
-    <fragment android:id="@+id/modelManagementFragment" android:name="com.nezumi_ai.presentation.ui.fragment.ModelManagementFragment" android:label="モデル管理" tools:layout="@layout/fragment_settings" />
+    <fragment android:id="@+id/modelManagementFragment" android:name="com.nezumi_ai.presentation.ui.fragment.ModelManagementFragment" android:label="モデル管理" />
 
     <fragment
         android:id="@+id/presetSettingsFragment"
         android:name="com.nezumi_ai.presentation.ui.fragment.PresetSettingsFragment"
         android:label="プリセット"
-        tools:layout="@layout/fragment_settings" />
+        />
 
     <fragment
         android:id="@+id/imageGenFragment"
         android:name="com.nezumi_ai.presentation.ui.fragment.ImageGenFragment"
         android:label="@string/nav_image_gen"
-        tools:layout="@layout/fragment_settings" />
+        />
 
 
     <fragment
         android:id="@+id/logsFragment"
         android:name="com.nezumi_ai.presentation.ui.fragment.LogsFragment"
         android:label="@string/logs_page_title"
-        tools:layout="@layout/fragment_settings" />
+        />
 
     <!-- Mini App Platform (仕様 v1.1): Mini App Manager が唯一の入口（§35.5.1） -->
     <fragment

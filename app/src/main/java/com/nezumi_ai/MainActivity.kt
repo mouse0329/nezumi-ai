@@ -2,39 +2,75 @@ package com.nezumi_ai
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.GravityCompat
+import androidx.fragment.app.FragmentContainerView
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.findNavController
 import androidx.navigation.navOptions
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
-import android.view.Gravity
-import android.view.View
-import android.graphics.drawable.ColorDrawable
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.text.InputType
-import android.widget.LinearLayout
-import android.widget.PopupWindow
-import android.widget.TextView
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
+import androidx.activity.compose.setContent
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.DrawerValue
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import coil.compose.AsyncImage
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.repository.ChatChunkRepository
+import com.nezumi_ai.presentation.ui.screen.DrawerContent
+import com.nezumi_ai.presentation.ui.screen.DrawerHistoryEntry
 import com.nezumi_ai.presentation.ui.screen.HistorySearchModal
+import com.nezumi_ai.presentation.ui.screen.AuthLockScreen
 import com.nezumi_ai.presentation.viewmodel.ChatSessionListViewModel
 import com.nezumi_ai.presentation.viewmodel.ChatSessionListViewModelFactory
 import com.nezumi_ai.data.database.entity.ChatSessionEntity
 import com.nezumi_ai.data.repository.ChatSessionRepository
 import com.nezumi_ai.data.repository.SettingsRepository
-import com.nezumi_ai.databinding.ActivityMainBinding
-import com.nezumi_ai.presentation.ui.adapter.DrawerHistoryAdapter
-import com.nezumi_ai.presentation.ui.adapter.DrawerHistoryItem
+import com.nezumi_ai.presentation.ui.theme.NezumiComposeTheme
 import com.nezumi_ai.utils.CrashLogDialog
 import com.nezumi_ai.utils.LocaleHelper
 import com.nezumi_ai.data.model.sessionDateLabel
@@ -43,7 +79,6 @@ import com.nezumi_ai.utils.PreferencesHelper
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import android.widget.Toast
-import androidx.recyclerview.widget.LinearLayoutManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -51,7 +86,6 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
-import coil.load
 
 class MainActivity : AppCompatActivity() {
 
@@ -67,10 +101,18 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "MainActivity"
     }
 
-    private lateinit var binding: ActivityMainBinding
+    // Compose ModalNavigationDrawer の状態。onCreate の setContent 内で初期化する。
+    // ドロワー開閉は ChatFragment 等から openDrawer()/closeDrawer() 経由で操作される。
+    private var composeDrawerState: androidx.compose.material3.DrawerState? = null
+    private var composeDrawerScope: kotlinx.coroutines.CoroutineScope? = null
+    // ドロワー履歴リストの Compose State (旧 DrawerHistoryAdapter の submitList 相当)。
+    private var drawerEntries by mutableStateOf<List<DrawerHistoryEntry>>(emptyList())
+    private var drawerCurrentSessionId by mutableStateOf<Long?>(null)
+    private var drawerSessionsEmpty by mutableStateOf(false)
+    // 「・・・」メニュー対象のセッション (非 null で DropdownMenu を表示)
+    private var drawerMenuSession by mutableStateOf<ChatSessionEntity?>(null)
     private lateinit var sessionRepository: ChatSessionRepository
     private lateinit var settingsRepository: SettingsRepository
-    private lateinit var drawerHistoryAdapter: DrawerHistoryAdapter
     private var dbInitialized = false
     private var repositoriesReady = false
     private var screenOffReceiver: BroadcastReceiver? = null
@@ -78,7 +120,6 @@ class MainActivity : AppCompatActivity() {
     private var isFirstResume = true
     private var isIncognitoModeActive = false
     private var biometricPrompt: BiometricPrompt? = null
-    private var authOverlayView: android.view.View? = null
     private var authOverlayDialog: android.app.Dialog? = null
     private var latestDrawerSessions: List<ChatSessionEntity> = emptyList()
     private var drawerDateRefreshJob: Job? = null
@@ -89,15 +130,104 @@ class MainActivity : AppCompatActivity() {
         isIncognitoModeActive = savedInstanceState?.getBoolean("is_incognito_mode_active") ?: false
 
         try {
-            binding = ActivityMainBinding.inflate(layoutInflater)
-            setContentView(binding.root)
+            // XML レイアウト (activity_main.xml) を廃止し、DrawerLayout + NavHost を
+            // Compose の ModalNavigationDrawer + AndroidView(NavHostFragment) で構築する。
+            setContent {
+                val drawerState = rememberDrawerState(DrawerValue.Closed)
+                val scope = rememberCoroutineScope()
+                composeDrawerState = drawerState
+                composeDrawerScope = scope
 
-            // 起動安定性優先: アプリ固有UIではActionBar/FABを使わない
-            binding.toolbar.visibility = android.view.View.GONE
-            binding.fab.hide()
+                NezumiComposeTheme {
+                    ModalNavigationDrawer(
+                        drawerState = drawerState,
+                        drawerContent = {
+                            ModalDrawerSheet(
+                                modifier = Modifier.width(280.dp)
+                            ) {
+                                DrawerContent(
+                                    entries = drawerEntries,
+                                    currentSessionId = drawerCurrentSessionId,
+                                    sessionsEmpty = drawerSessionsEmpty,
+                                    onSessionClick = { session ->
+                                        closeDrawer()
+                                        openChatSession(session.id)
+                                    },
+                                    onSessionMenuClick = { session ->
+                                        drawerMenuSession = session
+                                    },
+                                    onSettingsClick = { navigateFromDrawer(R.id.settingsFragment) },
+                                    onModelSettingsClick = { navigateFromDrawer(R.id.modelSettingsFragment) },
+                                    onPresetSettingsClick = { navigateFromDrawer(R.id.presetSettingsFragment) },
+                                    onMiniAppsClick = { navigateFromDrawer(R.id.miniAppManagerFragment) },
+                                    onNewChatClick = {
+                                        closeDrawer()
+                                        createAndOpenSession()
+                                    },
+                                    onIncognitoClick = {
+                                        closeDrawer()
+                                        createAndOpenIncognitoSession()
+                                    },
+                                    onImageGenClick = { navigateFromDrawer(R.id.imageGenFragment) },
+                                    onSearchClick = {
+                                        closeDrawer()
+                                        showHistorySearchModal()
+                                    }
+                                )
+                                // セッションの「・・・」メニュー (旧 PopupWindow 相当)
+                                val menuTarget = drawerMenuSession
+                                DropdownMenu(
+                                    expanded = menuTarget != null,
+                                    onDismissRequest = { drawerMenuSession = null }
+                                ) {
+                                    if (menuTarget != null) {
+                                        DropdownMenuItem(
+                                            text = { Text(if (menuTarget.isPinned) "固定を解除" else "固定") },
+                                            onClick = {
+                                                drawerMenuSession = null
+                                                togglePinSession(menuTarget)
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("名前を変更") },
+                                            onClick = {
+                                                drawerMenuSession = null
+                                                showRenameSessionDialog(menuTarget)
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("削除") },
+                                            onClick = {
+                                                drawerMenuSession = null
+                                                showDeleteSessionDialog(menuTarget)
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    ) {
+                        // content_main.xml の NavHostFragment 相当
+                        AndroidView(
+                            factory = { ctx ->
+                                androidx.fragment.app.FragmentContainerView(ctx).apply {
+                                    id = R.id.nav_host_fragment_content_main
+                                    post {
+                                        attachNavHostIfNeeded()
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        // ドロワーが開いているときに戻るボタンでドロワーを閉じる
+                        BackHandler(enabled = drawerState.isOpen) {
+                            scope.launch { drawerState.close() }
+                        }
+                    }
+                }
+            }
 
             PreferencesHelper.isFirstLaunch(this)
-
             // DB初期化をIOスレッドで実行してメインスレッドのブロックを防ぐ
             lifecycleScope.launch(Dispatchers.IO) {
                 runCatching {
@@ -125,7 +255,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     withContext(Dispatchers.Main) {
                         val navController = findNavController(R.id.nav_host_fragment_content_main)
-                        setupDrawer(navController)
+                        // ドロワーは Compose 化済み。履歴の購読だけを開始する。
                         observeDrawerHistory()
                         if (!PreferencesHelper.isInitialSetupCompleted(this@MainActivity)) {
                             Log.d(TAG, "Initial setup not completed - navigating to setup wizard")
@@ -148,6 +278,18 @@ class MainActivity : AppCompatActivity() {
             Log.e(TAG, "Fatal error in onCreate", t)
             throw t
         }
+    }
+
+    private fun attachNavHostIfNeeded() {
+        if (isFinishing || isDestroyed) return
+        val fragmentManager = supportFragmentManager
+        if (fragmentManager.findFragmentById(R.id.nav_host_fragment_content_main) != null) return
+
+        val navHost = androidx.navigation.fragment.NavHostFragment.create(R.navigation.nav_graph)
+        fragmentManager.beginTransaction()
+            .replace(R.id.nav_host_fragment_content_main, navHost)
+            .setPrimaryNavigationFragment(navHost)
+            .commitNow()
     }
 
 
@@ -190,74 +332,24 @@ class MainActivity : AppCompatActivity() {
     fun isInIncognitoMode(): Boolean = isIncognitoModeActive
 
     fun openDrawer() {
-        binding.drawerLayout.openDrawer(GravityCompat.START)
+        val state = composeDrawerState ?: return
+        composeDrawerScope?.launch { state.open() }
     }
 
     fun closeDrawer() {
-        binding.drawerLayout.closeDrawer(GravityCompat.START)
+        val state = composeDrawerState ?: return
+        composeDrawerScope?.launch { state.close() }
     }
 
-    private fun setupDrawer(navController: androidx.navigation.NavController) {
-        drawerHistoryAdapter = DrawerHistoryAdapter(
-            onClick = { session ->
-                closeDrawer()
-                openChatSession(session.id)
-            },
-            onMenuClick = { session, anchorView ->
-                showHistoryItemActions(session, anchorView)
-            },
-            onListUpdated = {
-                // リスト更新時に一番上にスクロール
-                binding.drawerHistoryRecycler.smoothScrollToPosition(0)
-            },
-            currentSessionId = getCurrentSessionId()
-        )
-        binding.drawerHistoryRecycler.layoutManager = LinearLayoutManager(this)
-        binding.drawerHistoryRecycler.adapter = drawerHistoryAdapter
-        binding.drawerSettingsButton.setOnClickListener {
-            closeDrawer()
-            if (navController.currentDestination?.id != R.id.settingsFragment) {
-                navController.navigate(R.id.settingsFragment)
-            }
-        }
-        binding.drawerModelButton.setOnClickListener {
-            closeDrawer()
-            if (navController.currentDestination?.id != R.id.modelSettingsFragment) {
-                navController.navigate(R.id.modelSettingsFragment)
-            }
-        }
-        binding.drawerToolsButton.setOnClickListener {
-            closeDrawer()
-            if (navController.currentDestination?.id != R.id.presetSettingsFragment) {
-                navController.navigate(R.id.presetSettingsFragment)
-            }
-        }
-        binding.drawerNewChatButton.setOnClickListener {
-            closeDrawer()
-            createAndOpenSession()
-        }
-        binding.drawerIncognitoButton.setOnClickListener {
-            closeDrawer()
-            createAndOpenIncognitoSession()
-        }
-        binding.drawerImageGenButton.setOnClickListener {
-            closeDrawer()
-            if (navController.currentDestination?.id != R.id.imageGenFragment) {
-                navController.navigate(R.id.imageGenFragment)
-            }
-        }
-        // Mini App Platform (仕様 v1.1 §35.5): Mini App Manager が唯一の入口
-        binding.drawerMiniappsButton.setOnClickListener {
-            closeDrawer()
-            if (navController.currentDestination?.id != R.id.miniAppManagerFragment) {
-                navController.navigate(R.id.miniAppManagerFragment)
-            }
-        }
-        // ログ画面は設定の「ログ」タブへ移動。ドロワーからは設定のログセクションを開く
-        // drawer_logs_button removed
-        binding.drawerSearchButton.setOnClickListener {
-            closeDrawer()
-            showHistorySearchModal()
+    /**
+     * ドロワーのクイックナビからの画面遷移 (旧 setupDrawer の各ボタン)。
+     * 現在のデスティネーションと同じなら二重 navigate を避ける。
+     */
+    private fun navigateFromDrawer(destinationId: Int) {
+        closeDrawer()
+        val navController = findNavController(R.id.nav_host_fragment_content_main)
+        if (navController.currentDestination?.id != destinationId) {
+            navController.navigate(destinationId)
         }
     }
 
@@ -384,8 +476,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onBackPressed() {
-        if (binding.drawerLayout.isDrawerOpen(GravityCompat.START)) {
-            binding.drawerLayout.closeDrawer(GravityCompat.START)
+        // ドロワーは Compose 側の BackHandler (setContent 内) が閉じる。
+        // ここでは開状態だけ確認して消費済みかどうかを判定する。
+        if (composeDrawerState?.isOpen == true) {
+            closeDrawer()
         } else {
             super.onBackPressed()
         }
@@ -553,138 +647,32 @@ class MainActivity : AppCompatActivity() {
         // すでに表示されている場合はスキップ
         if (authOverlayDialog?.isShowing == true) return
 
-        // LinearLayout コンテナを作成
-        val overlayContainer = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setBackgroundColor(android.graphics.Color.BLACK)
-            isClickable = true
-            isFocusable = true
-            // クリックイベントを消費してアプリの操作をブロック
-            setOnTouchListener { _, _ -> true }
-            gravity = android.view.Gravity.CENTER
-        }
+        val hasPin = PreferencesHelper.hasSecretModePin(this)
+        val inIncognito = isIncognitoModeActive
 
-        // 鍵アイコン（外部URLの Material Symbol に置換）
-        val fingerPrintView = android.widget.ImageView(this).apply {
-            layoutParams = android.widget.LinearLayout.LayoutParams(
-                120.dp(),
-                120.dp()
-            ).apply {
-                gravity = android.view.Gravity.CENTER
-            }
-            val colorFilter = android.graphics.PorterDuffColorFilter(
-                android.graphics.Color.WHITE,
-                android.graphics.PorterDuff.Mode.SRC_IN
-            )
-            this.colorFilter = colorFilter
-        }
-        // Material Symbols のレンダーURLから読み込む
-        fingerPrintView.load("https://fonts.gstatic.com/render/v1/Material+Symbols+Outlined/24dp/edit_off.kt?var=opsz,wght,FILL,GRAD,ROND@24,400,0,0,50")
-        overlayContainer.addView(fingerPrintView)
-
-        // 「ロック中」テキスト
-        val lockStatusView = android.widget.TextView(this).apply {
-            text = getString(R.string.secret_mode_waiting)
-            textSize = 20f
-            setTextColor(android.graphics.Color.WHITE)
-            gravity = android.view.Gravity.CENTER
-            layoutParams = android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = 30.dp()
-            }
-        }
-        overlayContainer.addView(lockStatusView)
-
-        // サブテキスト
-        val subTextView = android.widget.TextView(this).apply {
-            text = getString(R.string.secret_mode_biometrics_subtitle)
-            textSize = 14f
-            setTextColor(android.graphics.Color.LTGRAY)
-            gravity = android.view.Gravity.CENTER
-            layoutParams = android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = 10.dp()
-            }
-        }
-        overlayContainer.addView(subTextView)
-
-        // ボタンコンテナ
-        val buttonContainer = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            layoutParams = android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = 60.dp()
-                leftMargin = 50.dp()
-                rightMargin = 50.dp()
-            }
-        }
-
-        // 「もう一度試す」ボタン
-        val retryButton = android.widget.Button(this).apply {
-            text = getString(R.string.secret_mode_retry)
-            textSize = 18f
-            setBackgroundColor(android.graphics.Color.parseColor("#4A90E2"))
-            setTextColor(android.graphics.Color.WHITE)
-            layoutParams = android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                56.dp()
-            ).apply {
-                bottomMargin = 15.dp()
-            }
-            setOnClickListener {
-                Log.d(TAG, "Retry button pressed")
-                showBiometricPrompt()
-            }
-        }
-        buttonContainer.addView(retryButton)
-
-        // 「PINで解除」ボタン
-        if (PreferencesHelper.hasSecretModePin(this)) {
-            val pinUnlockButton = android.widget.Button(this).apply {
-                text = getString(R.string.secret_mode_pin_unlock)
-                textSize = 18f
-                setBackgroundColor(android.graphics.Color.parseColor("#6A5ACD"))
-                setTextColor(android.graphics.Color.WHITE)
-                layoutParams = android.widget.LinearLayout.LayoutParams(
-                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                    56.dp()
-                ).apply {
-                    bottomMargin = 15.dp()
-                }
-                setOnClickListener {
-                    Log.d(TAG, "PIN unlock button pressed")
-                    showPasswordUnlockDialog()
+        // ロック画面を Compose で構築する (旧 LinearLayout 手組みの置き換え)。
+        val composeView = androidx.compose.ui.platform.ComposeView(this).apply {
+            setContent {
+                NezumiComposeTheme {
+                    AuthLockScreen(
+                        hasPin = hasPin,
+                        inIncognito = inIncognito,
+                        onRetry = {
+                            Log.d(TAG, "Retry button pressed")
+                            showBiometricPrompt()
+                        },
+                        onPinUnlock = {
+                            Log.d(TAG, "PIN unlock button pressed")
+                            showPasswordUnlockDialog()
+                        },
+                        onExitIncognito = {
+                            Log.d(TAG, "Exit incognito mode button pressed")
+                            exitIncognitoMode()
+                        }
+                    )
                 }
             }
-            buttonContainer.addView(pinUnlockButton)
         }
-
-        // 「シークレットモードを終了」ボタン（シークレットモード時のみ表示）
-        if (isIncognitoModeActive) {
-            val exitButton = android.widget.Button(this).apply {
-                text = getString(R.string.secret_mode_exit)
-                textSize = 18f
-                setBackgroundColor(android.graphics.Color.parseColor("#E24A4A"))
-                setTextColor(android.graphics.Color.WHITE)
-                layoutParams = android.widget.LinearLayout.LayoutParams(
-                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                    56.dp()
-                )
-                setOnClickListener {
-                    Log.d(TAG, "Exit incognito mode button pressed")
-                    exitIncognitoMode()
-                }
-            }
-            buttonContainer.addView(exitButton)
-        }
-
-        overlayContainer.addView(buttonContainer)
 
         // Activity の通常 View では既存の Dialog/BottomSheet より下に回るため、
         // ロック画面自身を Dialog ウィンドウとして最前面に表示する。
@@ -692,7 +680,7 @@ class MainActivity : AppCompatActivity() {
             setCancelable(false)
             setCanceledOnTouchOutside(false)
             setContentView(
-                overlayContainer,
+                composeView,
                 android.view.ViewGroup.LayoutParams(
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -701,11 +689,9 @@ class MainActivity : AppCompatActivity() {
             setOnDismissListener {
                 if (authOverlayDialog === this) {
                     authOverlayDialog = null
-                    authOverlayView = null
                 }
             }
         }
-        authOverlayView = overlayContainer
         authOverlayDialog = lockDialog
         lockDialog.show()
         lockDialog.window?.setLayout(
@@ -719,7 +705,6 @@ class MainActivity : AppCompatActivity() {
     private fun removeAuthOverlay() {
         authOverlayDialog?.dismiss()
         authOverlayDialog = null
-        authOverlayView = null
         Log.d(TAG, "Auth overlay removed")
     }
 
@@ -864,20 +849,17 @@ class MainActivity : AppCompatActivity() {
             sessionRepository.getAllSessions().collectLatest { sessions ->
                 latestDrawerSessions = sessions
                 val grouped = withContext(Dispatchers.Default) { groupSessionsByDate(sessions) }
-                if (::drawerHistoryAdapter.isInitialized) {
-                    lastRenderedDrawerDayStartMillis = localDayStartMillis()
-                    drawerHistoryAdapter.setCurrentSessionId(getCurrentSessionId())
-                    drawerHistoryAdapter.submitList(grouped)
-                    binding.drawerHistoryEmpty.visibility =
-                        if (sessions.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
-                }
+                lastRenderedDrawerDayStartMillis = localDayStartMillis()
+                drawerCurrentSessionId = getCurrentSessionId()
+                drawerEntries = grouped
+                drawerSessionsEmpty = sessions.isEmpty()
             }
         }
     }
 
     private fun refreshDrawerDateLabels() {
         val currentDayStart = localDayStartMillis()
-        if (::drawerHistoryAdapter.isInitialized && currentDayStart != lastRenderedDrawerDayStartMillis) {
+        if (currentDayStart != lastRenderedDrawerDayStartMillis) {
             renderDrawerHistory(latestDrawerSessions)
         }
     }
@@ -916,23 +898,17 @@ class MainActivity : AppCompatActivity() {
      *  getAllSessions() の Flow に変化が出ないため、ここで明示的に追随させる。)
      */
     fun refreshDrawerSessionHighlight() {
-        if (::drawerHistoryAdapter.isInitialized) {
-            drawerHistoryAdapter.setCurrentSessionId(getCurrentSessionId())
-        }
+        // Compose State を更新するだけで DrawerContent が再構成されハイライトが追随する。
+        drawerCurrentSessionId = getCurrentSessionId()
     }
 
     private fun renderDrawerHistory(sessions: List<ChatSessionEntity>) {
-        if (!::drawerHistoryAdapter.isInitialized) {
-            Log.w(TAG, "renderDrawerHistory called before drawerHistoryAdapter initialization")
-            return
-        }
         lifecycleScope.launch {
             val grouped = withContext(Dispatchers.Default) { groupSessionsByDate(sessions) }
             lastRenderedDrawerDayStartMillis = localDayStartMillis()
-            drawerHistoryAdapter.setCurrentSessionId(getCurrentSessionId())
-            drawerHistoryAdapter.submitList(grouped)
-            binding.drawerHistoryEmpty.visibility =
-                if (sessions.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
+            drawerCurrentSessionId = getCurrentSessionId()
+            drawerEntries = grouped
+            drawerSessionsEmpty = sessions.isEmpty()
         }
     }
 
@@ -945,8 +921,8 @@ class MainActivity : AppCompatActivity() {
         }.timeInMillis
     }
 
-    private fun groupSessionsByDate(sessions: List<ChatSessionEntity>): List<DrawerHistoryItem> {
-        val result = mutableListOf<DrawerHistoryItem>()
+    private fun groupSessionsByDate(sessions: List<ChatSessionEntity>): List<DrawerHistoryEntry> {
+        val result = mutableListOf<DrawerHistoryEntry>()
         val calendar = Calendar.getInstance()
         val today = calendar.apply {
             set(Calendar.HOUR_OF_DAY, 0)
@@ -960,9 +936,9 @@ class MainActivity : AppCompatActivity() {
         val unpinnedSessions = sessions.filter { !it.isPinned }
 
         if (pinnedSessions.isNotEmpty()) {
-            result.add(DrawerHistoryItem.Label(getString(R.string.session_group_pinned)))
+            result.add(DrawerHistoryEntry.Label(getString(R.string.session_group_pinned)))
             pinnedSessions.forEach { session ->
-                result.add(DrawerHistoryItem.Session(session))
+                result.add(DrawerHistoryEntry.Session(session))
             }
         }
 
@@ -977,9 +953,9 @@ class MainActivity : AppCompatActivity() {
 
         for (label in grouped.keys) {
             grouped[label]?.let { sessionList ->
-                result.add(DrawerHistoryItem.Label(label))
+                result.add(DrawerHistoryEntry.Label(label))
                 sessionList.forEach { session ->
-                    result.add(DrawerHistoryItem.Session(session))
+                    result.add(DrawerHistoryEntry.Session(session))
                 }
             }
         }
@@ -1075,74 +1051,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
         Log.d(TAG, "Exited incognito mode for normal chat navigation")
-    }
-
-
-    private fun showHistoryItemActions(session: ChatSessionEntity, anchorView: View) {
-        val pinTitle = if (session.isPinned) "固定を解除" else "固定"
-
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundResource(R.drawable.bg_input_field)
-            elevation = 12f
-            setPadding(0, 4.dp(), 0, 4.dp())
-        }
-
-        lateinit var popupWindow: PopupWindow
-        val dismiss: () -> Unit = { popupWindow.dismiss() }
-
-        fun addActionItem(label: String, onClick: () -> Unit) {
-            val itemView = TextView(this).apply {
-                text = label
-                textSize = 15f
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_primary))
-                setPadding(16.dp(), 10.dp(), 16.dp(), 10.dp())
-                isClickable = true
-                isFocusable = true
-                setOnClickListener {
-                    onClick()
-                    dismiss()
-                }
-            }
-            container.addView(
-                itemView,
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-            )
-        }
-
-        addActionItem(pinTitle) { togglePinSession(session) }
-        addActionItem("名前を変更") { showRenameSessionDialog(session) }
-        addActionItem("削除") { showDeleteSessionDialog(session) }
-
-        popupWindow = PopupWindow(
-            container,
-            LinearLayout.LayoutParams.WRAP_CONTENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT,
-            true
-        ).apply {
-            setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
-            isOutsideTouchable = true
-            elevation = 12f
-        }
-
-        // アンカー位置を固定計算して表示。表示後に追従させない。
-        anchorView.post {
-            container.measure(
-                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-            )
-
-            val popupWidth = container.measuredWidth
-            val location = IntArray(2)
-            anchorView.getLocationOnScreen(location)
-            val x = (location[0] + anchorView.width - popupWidth).coerceAtLeast(8.dp())
-            val y = location[1] + anchorView.height + 4.dp()
-
-            popupWindow.showAtLocation(binding.drawerLayout, Gravity.TOP or Gravity.START, x, y)
-        }
     }
 
 

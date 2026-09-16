@@ -1,4 +1,6 @@
-﻿package com.nezumi_ai.presentation.ui.fragment
+﻿@file:Suppress("unused")
+
+package com.nezumi_ai.presentation.ui.fragment
 
 import com.nezumi_ai.data.inference.cloud.*
 
@@ -99,7 +101,8 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.R
-import com.nezumi_ai.databinding.FragmentChatBinding
+import com.nezumi_ai.presentation.ui.widget.ClipboardAwareEditText
+import com.nezumi_ai.presentation.ui.screen.ChatScreen
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.stripGemmaTokens
@@ -140,7 +143,7 @@ import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
 import com.nezumi_ai.presentation.ui.theme.nezumiSwitchColors
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 
-class ChatFragment : Fragment(R.layout.fragment_chat) {
+class ChatFragment : Fragment() {
 
     companion object {
         private const val TAG = "ChatFragment"
@@ -172,9 +175,30 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             else -> false
         }
 
-    private var _binding: FragmentChatBinding? = null
-    private val binding get() = _binding!!
+    // XML レイアウト (fragment_chat.xml) を廃止し Compose 化。スクロール制御は
+    // 複雑な RecyclerView 追従ロジックを温存するため、一覧のみ AndroidView でホストし、
+    // その参照をここに保持する。テキスト入力も IME 画像コミット対応のため
+    // ClipboardAwareEditText を AndroidView でホストして参照を保持する。
+    private var messagesRv: RecyclerView? = null
+    private var messageInputView: ClipboardAwareEditText? = null
+    private var isViewCreated = false
     private var defaultInputHint: CharSequence? = null
+    // ヘッダー表示用の Compose State (旧 binding.chatTitle / binding.modelName)
+    private var chatTitleText by mutableStateOf("")
+    private var chatTitleContentDesc by mutableStateOf<String?>(null)
+    private var modelNameText by mutableStateOf("")
+    private var headerColorArgb by mutableStateOf<Int?>(null)
+    private var inputEnabledState by mutableStateOf(true)
+    private var inputHintState by mutableStateOf("")
+    private var sendEnabledState by mutableStateOf(false)
+    private var mediaMenuEnabledState by mutableStateOf(true)
+    private var micVisibleState by mutableStateOf(true)
+    private var isRecordingState by mutableStateOf(false)
+    private var recordingElapsedTextState by mutableStateOf("0:00")
+    private var recordingWaveHeightsState by mutableStateOf(listOf(11, 19, 15, 11, 15, 19, 11, 15))
+    private var showMessagesLoadingState by mutableStateOf(false)
+    private var showEmptyStateFlag by mutableStateOf(false)
+    private var toolProgressVisible by mutableStateOf(false)
 
     private lateinit var viewModel: ChatViewModel
     private lateinit var adapter: MessageAdapter
@@ -192,7 +216,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     //   このメソッドを呼んでセッションIDだけ切り替えることでページ遷移の重さを軽減する。
     //   MainActivity.navigateToChatSession から呼ばれる。
     fun switchSession(sessionId: Long) {
-        if (_binding == null || !isAdded) return
+        if (!isViewCreated || !isAdded) return
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 settingsRepository.saveCurrentSessionId(sessionId)
@@ -337,8 +361,6 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     private var recordingAnimationJob: Job? = null
     private var recordingFile: java.io.File? = null
     private var recordingDialog: androidx.appcompat.app.AlertDialog? = null
-    private var recordingStatusTextView: TextView? = null
-    private var recordingWaveBars: List<View> = emptyList()
     // インライン録音バー専用のキャンセルフラグ。
     // cancelAudioRecording() から stopAudioRecording() を呼んだときだけ true になり、
     // 録音ファイルを selectedAudioUri に搭載せずに破棄する。
@@ -814,8 +836,92 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
-        _binding = FragmentChatBinding.inflate(inflater, container, false)
-        return binding.root
+        isViewCreated = true
+        return ComposeView(requireContext()).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+            setContent {
+                this@ChatFragment.NezumiComposeTheme {
+                    ChatScreen(
+                        headerColor = headerColorArgb?.let { Color(it) }
+                            ?: colorResource(R.color.surface_card),
+                        chatTitle = chatTitleText,
+                        chatTitleContentDescription = chatTitleContentDesc,
+                        modelName = modelNameText,
+                        onBackClick = { (activity as? com.nezumi_ai.MainActivity)?.openDrawer() },
+                        onChatTitleClick = {
+                            findNavController().navigate(R.id.presetSettingsFragment)
+                        },
+                        headerActions = { HeaderActionsSection() },
+                        contextMeter = { ContextMeterSection() },
+                        messagesRecyclerFactory = { ctx ->
+                            RecyclerView(ctx)
+                        },
+                        onMessagesRecyclerReady = { rv -> setupMessagesRecyclerView(rv) },
+                        emptyState = { EmptyStateScreen() },
+                        showEmptyState = showEmptyStateFlag,
+                        showMessagesLoading = showMessagesLoadingState,
+                        responseTyping = { ResponseTypingIndicator() },
+                        toolCallProgress = { if (toolProgressVisible) ToolCallProgressSection() },
+                        scrollToBottomButton = { ScrollToBottomSection() },
+                        mediaPreviewBarColor = headerColorArgb?.let { Color(it) }
+                            ?: colorResource(R.color.surface_card),
+                        hasImage = selectedImageUrisList.isNotEmpty(),
+                        hasAudio = selectedAudioUri != null,
+                        imageUris = selectedImageUrisList,
+                        onClearImage = { selectedImageUrisList = emptyList() },
+                        onRemoveImage = { index ->
+                            if (index in selectedImageUrisList.indices) {
+                                selectedImageUrisList = selectedImageUrisList.filterIndexed { i, _ -> i != index }
+                            }
+                        },
+                        audioUri = selectedAudioUri,
+                        onClearAudio = { selectedAudioUri = null },
+                        textFiles = selectedTextFiles,
+                        onRemoveTextFile = { index ->
+                            if (index in selectedTextFiles.indices) {
+                                selectedTextFiles = selectedTextFiles.filterIndexed { i, _ -> i != index }
+                            }
+                        },
+                        onOpenTextFile = { entry ->
+                            com.nezumi_ai.presentation.ui.component.TextFileViewerDialog.show(
+                                requireContext(), entry
+                            )
+                        },
+                        videoUri = selectedVideoUri,
+                        onClearVideo = {
+                            selectedVideoUri = null
+                            selectedVideoDurationMs = 0L
+                            selectedVideoFrameCount = 0
+                            selectedImageUrisList = emptyList()
+                            selectedAudioUri = null
+                        },
+                        isExtractingVideo = isExtractingVideo,
+                        isConvertingDocument = isConvertingDocument,
+                        convertingDocumentName = convertingDocumentName,
+                        onOpenViewer = { selectedKey -> openMediaViewerForPreview(selectedKey) },
+                        inputBarColor = headerColorArgb?.let { Color(it) }
+                            ?: colorResource(R.color.surface_card),
+                        isGenerating = isGenerating,
+                        sendEnabled = sendEnabledState,
+                        inputEnabled = inputEnabledState,
+                        inputHint = inputHintState.ifEmpty { getString(R.string.enter_message) },
+                        mediaMenuEnabled = mediaMenuEnabledState,
+                        micVisible = micVisibleState,
+                        micEnabled = true,
+                        isRecording = isRecordingState,
+                        recordingElapsedText = recordingElapsedTextState,
+                        recordingWaveHeights = recordingWaveHeightsState,
+                        onSendClick = { onSendClicked() },
+                        onMediaMenuClick = { onMediaMenuClicked() },
+                        onMicClick = { onMicClicked() },
+                        onRecordCancel = { cancelAudioRecording() },
+                        onClipboardImagePaste = { pasteFromClipboard() },
+                        onInputViewReady = { view -> messageInputView = view },
+                        modelLoadingOverlay = { ModelLoadingOverlay() }
+                    )
+                }
+            }
+        }
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -827,7 +933,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
  // 初期値として全般タブのコンテキストメーター表示フラグを反映。
         contextMeterVisible = PreferencesHelper.isShowContextMeter(requireContext())
         thinkingToggleText = getString(R.string.chat_thinking_follow_settings)
-        setupComposeIndicators()
+        // 旧 setupComposeIndicators() は廃止。各 Compose セクションは ChatScreen に直接渡す。
 
         // ViewModel初期化: DBアクセスをIOスレッドで実行してメインスレッドのブロックを防ぐ
         val appContext = requireContext().applicationContext
@@ -883,13 +989,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
         }
 
-        binding.chatTitle.setOnClickListener {
-            findNavController().navigate(R.id.presetSettingsFragment)
-        }
+        // ヘッダータイトルのタップは Compose 側 (onChatTitleClick) で presetSettingsFragment へ遷移する。
         setupModelDisplay()
 
         // 保存しておいたデフォルトの入力ヒントを保持（null で上書きしないようにするため）
-        defaultInputHint = binding.messageInput.hint
+        // 入力欄は AndroidView(ClipboardAwareEditText) で、factory 時に enter_message が入る。
+        defaultInputHint = getString(R.string.enter_message)
+        inputHintState = getString(R.string.enter_message)
 
         // RecyclerView設定（adapterの初期化をStateFlowのcollect前に移動）
         adapter = MessageAdapter(
@@ -907,10 +1013,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 val textFiles = TextFileAttachmentEncoding.extract(message.imageUri)
                 val imageUris = imageUrisRaw.filter { !TextFileAttachmentEncoding.isMarker(it) }
 
-                binding.messageInput.setText(
+                messageInputView?.setText(
                     message.content.stripTxtFileBlocks().stripVideoBlocks()
                 )
-                binding.messageInput.setSelection(binding.messageInput.text?.length ?: 0)
+                messageInputView?.setSelection(messageInputView?.text?.length ?: 0)
 
                 selectedImageUrisList = imageUris
                 selectedTextFiles = textFiles
@@ -921,11 +1027,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 selectedVideoFrameCount = if (videoMeta != null) imageUris.size else 0
                 selectedAudioUri = videoMeta?.audioUri ?: message.audioUri
 
-                binding.messageInput.requestFocus()
+                messageInputView?.requestFocus()
                 context?.let { ctx ->
                     val imm = ctx.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
                         as? android.view.inputmethod.InputMethodManager
-                    imm?.showSoftInput(binding.messageInput, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                    messageInputView?.let { v ->
+                        imm?.showSoftInput(v, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                    }
                 }
 
                 viewModel.revokePromptFromMessage(message.id, isEditing = true)
@@ -980,50 +1088,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 }
             }
         )
-        binding.messagesRecyclerView.layoutManager = LinearLayoutManager(requireContext()).apply {
-            stackFromEnd = false
-        }
-        binding.messagesRecyclerView.adapter = adapter
-        binding.messagesRecyclerView.itemAnimator = null
+        // RecyclerView の layoutManager / adapter / スクロール監視は
+        // setupMessagesRecyclerView() に移設 (AndroidView の factory で呼ばれる)。
 
- // バグ修正: RecyclerView のスクロール状態をリアルタイム監視
-        binding.messagesRecyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
-                super.onScrollStateChanged(recyclerView, newState)
-                when (newState) {
-                    RecyclerView.SCROLL_STATE_DRAGGING -> {
-                        userIsDraggingMessages = true
-                    }
-                    RecyclerView.SCROLL_STATE_IDLE -> {
-                        userIsDraggingMessages = false
-                        // ユーザーが下端付近まで戻ったら自動追従を再開する。
-                        if (isGenerating && isNearBottom(recyclerView)) {
-                            autoFollowBottomLocked = true
-                            userScrolledAwayDuringGeneration = false
-                            scheduleAutoScrollToBottom()
-                            Log.d(TAG, "USER_SCROLL_BACK_TO_BOTTOM: Re-enabling auto-follow")
-                        }
-                    }
-                }
-            }
-
-            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
-                super.onScrolled(recyclerView, dx, dy)
-                isUserAtBottom = !recyclerView.canScrollVertically(1)
-                // 生成中に「上へ」ドラッグして下端から離れたときだけ auto-follow を解除する。
-                if (isGenerating && userIsDraggingMessages && dy < 0 && !isNearBottom(recyclerView)) {
-                    autoFollowBottomLocked = false
-                    userScrolledAwayDuringGeneration = true
-                }
-                // 生成完了直後の settle フェーズ中でも、ユーザーが明示的に上へドラッグしたら settle を中断する。
-                if (postGenerationSettleActive && userIsDraggingMessages && dy < 0 && !isNearBottom(recyclerView)) {
-                    postGenerationSettleActive = false
-                    autoFollowBottomLocked = false
-                }
-                updateScrollToBottomButtonVisibility()
-            }
-        })
-
+        // スクロール監視ロジックは setupMessagesRecyclerView() に移設した。
         // AdapterDataObserverを一度だけ登録（毎回登録するとメモリリーク）
         adapter.registerAdapterDataObserver(object : RecyclerView.AdapterDataObserver() {
             private fun maybeScrollToBottom() {
@@ -1120,12 +1188,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         currentToolCallState = null
 
-        binding.backButton.setOnClickListener {
-            (activity as? com.nezumi_ai.MainActivity)?.openDrawer()
-        }
-
+        // backButton のクリックは Compose 側 (onBackClick) で openDrawer() を呼ぶ。
+        // RecyclerView の IME insets アニメーションは setupMessagesRecyclerView() に移設。
+        messagesRv?.let { rv ->
         ViewCompat.setWindowInsetsAnimationCallback(
-            binding.messagesRecyclerView,
+            rv,
             object : androidx.core.view.WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_STOP) {
                 private var wasAtBottom = false
 
@@ -1147,6 +1214,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 }
             }
         )
+        }
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.currentSessionId.collect {
@@ -1197,13 +1265,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 val empty = filteredMessages.isEmpty()
                 messagesIsEmpty = empty
                 // ローディング中はエンプティ表示を出さない (スピナーの背後で一瞬チラつくのを防ぐ)
-                binding.emptyStateCompose.visibility =
-                    if (empty && !viewModel.isMessagesLoading.value) View.VISIBLE else View.GONE
+                showEmptyStateFlag = empty && !viewModel.isMessagesLoading.value
                 adapter.submitList(filteredMessages) {
                     if (pendingInitialScrollToBottom && filteredMessages.isNotEmpty()) {
                         pendingInitialScrollToBottom = false
-                        binding.messagesRecyclerView.post {
-                            if (_binding != null && isAdded) scrollToBottomImmediate()
+                        messagesRv?.post {
+                            if (isViewCreated && isAdded) scrollToBottomImmediate()
                         }
                     } else if (shouldAutoFollowBottom()) {
                         scheduleAutoScrollToBottom()
@@ -1213,26 +1280,106 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
         }
 
-        binding.sendButton.setOnClickListener {
-            if (viewModel.isLoading.value) {
-                viewModel.stopGeneration()
-                return@setOnClickListener
+        continueOnViewCreated()
+    }
+
+    /**
+     * メッセージ一覧 RecyclerView のセットアップ。AndroidView の factory から呼ばれる。
+     * 旧 fragment_chat.xml の RecyclerView + onViewCreated 内の layoutManager/adapter/スクロール監視を集約。
+     */
+    private fun setupMessagesRecyclerView(rv: RecyclerView) {
+        messagesRv = rv
+        rv.layoutManager = LinearLayoutManager(requireContext()).apply {
+            stackFromEnd = false
+        }
+        rv.adapter = adapter
+        rv.itemAnimator = null
+
+        // バグ修正: RecyclerView のスクロール状態をリアルタイム監視
+        rv.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                super.onScrollStateChanged(recyclerView, newState)
+                when (newState) {
+                    RecyclerView.SCROLL_STATE_DRAGGING -> {
+                        userIsDraggingMessages = true
+                    }
+                    RecyclerView.SCROLL_STATE_IDLE -> {
+                        userIsDraggingMessages = false
+                        // ユーザーが下端付近まで戻ったら自動追従を再開する。
+                        if (isGenerating && isNearBottom(recyclerView)) {
+                            autoFollowBottomLocked = true
+                            userScrolledAwayDuringGeneration = false
+                            scheduleAutoScrollToBottom()
+                            Log.d(TAG, "USER_SCROLL_BACK_TO_BOTTOM: Re-enabling auto-follow")
+                        }
+                    }
+                }
             }
-            // isEnabled 制御の取りこぼし対策。動画のフレーム/音声抽出や
-            // ドキュメントの Markdown 変換がまだ終わっていない間は
-            // 送信できる添付物が確定していないため、ここでも明示的にブロックする。
-            if (isExtractingVideo || isConvertingDocument) {
-                return@setOnClickListener
+
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                super.onScrolled(recyclerView, dx, dy)
+                isUserAtBottom = !recyclerView.canScrollVertically(1)
+                // 生成中に「上へ」ドラッグして下端から離れたときだけ auto-follow を解除する。
+                if (isGenerating && userIsDraggingMessages && dy < 0 && !isNearBottom(recyclerView)) {
+                    autoFollowBottomLocked = false
+                    userScrolledAwayDuringGeneration = true
+                }
+                // 生成完了直後の settle フェーズ中でも、ユーザーが明示的に上へドラッグしたら settle を中断する。
+                if (postGenerationSettleActive && userIsDraggingMessages && dy < 0 && !isNearBottom(recyclerView)) {
+                    postGenerationSettleActive = false
+                    autoFollowBottomLocked = false
+                }
+                updateScrollToBottomButtonVisibility()
             }
-            val message = binding.messageInput.text.toString().trim()
-            val hasMediaToSend = (imageInputEnabled && selectedImageUrisList.isNotEmpty()) ||
-                (audioInputEnabled && !selectedAudioUri.isNullOrEmpty()) ||
-                selectedTextFiles.isNotEmpty()
-            // 従来はテキストが空だと送信ボタンが完全に無反応だった。
-            // 画像や音声(動画から抽出した音声を含む)だけを送りたいケース
-            // (「これ何？」すら打たずに音声/画像だけ送る) が弾かれてしまっていたため、
-            // メディアが1つでも添付されていればテキスト空でも送信できるようにする。
-            if (message.isNotEmpty() || hasMediaToSend) {
+        })
+    }
+
+    /** + ボタン押下: 添付アクションシートを開く (IME を閉じてから)。 */
+    private fun onMediaMenuClicked() {
+        val v = view ?: return
+        val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        imm.hideSoftInputFromWindow(v.windowToken, 0)
+        showAttachmentActionSheet()
+    }
+
+    /** マイクボタン押下: 録音中なら停止、そうでなければ録音開始。 */
+    private fun onMicClicked() {
+        if (isRecordingAudio) {
+            stopAudioRecording()
+        } else {
+            launchAudioRecording()
+        }
+    }
+
+    /**
+     * 送信ボタン押下時の実処理。旧 binding.sendButton.setOnClickListener の中身。
+     */
+    private fun onSendClicked() {
+        if (viewModel.isLoading.value) {
+            viewModel.stopGeneration()
+            return
+        }
+        // isEnabled 制御の取りこぼし対策。動画のフレーム/音声抽出や
+        // ドキュメントの Markdown 変換がまだ終わっていない間は
+        // 送信できる添付物が確定していないため、ここでも明示的にブロックする。
+        if (isExtractingVideo || isConvertingDocument) {
+            return
+        }
+        val message = messageInputView?.text?.toString()?.trim() ?: ""
+        val hasMediaToSend = (imageInputEnabled && selectedImageUrisList.isNotEmpty()) ||
+            (audioInputEnabled && !selectedAudioUri.isNullOrEmpty()) ||
+            selectedTextFiles.isNotEmpty()
+        if (message.isNotEmpty() || hasMediaToSend) {
+            handleSendMessage(message, hasMediaToSend)
+        }
+    }
+
+    /**
+     * メッセージ本文とメディアを確定して ViewModel に送信する。
+     * 旧送信リスナー内のコルーチン本体。
+     */
+    private fun handleSendMessage(message: String, hasMediaToSend: Boolean) {
+        if (message.isNotEmpty() || hasMediaToSend) {
                 // ドキュメント添付 (PDF/Word/Excel等) の Markdown 変換が suspend 関数のため、
                 // 送信処理全体をコルーチンで実行する。変換は IO スレッドで行い、
                 // 失敗時のトーストと sendMessageWithMedia は Main に戻して呼ぶ。
@@ -1240,6 +1387,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     // Fragment が変換中に detach される可能性があるため、
                     // コルーチン冒頭で applicationContext をキャプチャして使い回す。
                     val appCtx = requireContext().applicationContext
+                    @Suppress("UNUSED_VARIABLE") val mediaGuard = hasMediaToSend
                     val imagesToSend = if (imageInputEnabled) selectedImageUrisList else emptyList()
                     val audioToSend = if (audioInputEnabled) selectedAudioUri else null
                     val videoUriToSend = selectedVideoUri
@@ -1320,7 +1468,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     autoFollowBottomLocked = true
                     postGenerationSettleActive = false
                     viewModel.sendMessageWithMedia(effectiveMessage, imagesFinal, audioToSend)
-                    binding.messageInput.text?.clear()
+                    messageInputView?.text?.clear()
                     selectedImageUrisList = emptyList()
                     selectedAudioUri = null
                     selectedVideoUri = null
@@ -1332,35 +1480,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
         }
 
-        // OS の「貼り付け」経由で画像が渡ってきた時のフック。
-        // ClipboardAwareEditText 側で URI ペイロードを検知して呼ばれる。
-        binding.messageInput.onClipboardImagePaste = {
-            pasteFromClipboard()
-        }
+    private fun continueOnViewCreated() {
+        // OS の「貼り付け」経由で画像が渡ってきた時のフックは
+        // ChatInputBar の onClipboardImagePaste 経由で ClipboardAwareEditText に設定済み。
 
-        // + ボタン: 画像 / カメラ / ファイル (画像・動画・音声) を選ぶアクションシート
-        binding.mediaMenuButton.setOnClickListener { view ->
-            // テキストファイル添付はモデルのマルチモーダル対応に依らず常に利用可能なため、
-            // 画像/音声が非対応のモデルでもアクションシート自体は開ける。
-            // (個別タイル側でそれぞれ imageInputEnabled / audioInputEnabled を見てガードする)
-            val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-            imm.hideSoftInputFromWindow(view.windowToken, 0)
-            showAttachmentActionSheet()
-        }
-
-        // マイクボタン: 音声録音 (インライン録音バーに切り替え)
-        binding.micButton.setOnClickListener {
-            if (isRecordingAudio) {
-                stopAudioRecording()
-            } else {
-                launchAudioRecording()
-            }
-        }
-
-        // インライン録音バーの「削除」ボタン: 録音を破棄して入力欄に戻す
-        binding.inlineRecordCancel.setOnClickListener {
-            cancelAudioRecording()
-        }
+        // + ボタン / マイクボタン / 録音キャンセルは Compose 側の
+        // onMediaMenuClicked() / onMicClicked() / cancelAudioRecording() に移設。
 
  // バリアント切り替えスクロール要求を受け取るコレクター。
         //   ChatViewModel.selectAssistantVariant() から切り替え先メッセージ id が流れてくるので、
@@ -1388,7 +1513,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         autoFollowBottomLocked = isUserAtBottom || isNearBottom()
                         startResponseTypingAnimation()
                         if (autoFollowBottomLocked) {
-                            binding.messagesRecyclerView.post {
+                            messagesRv?.post {
                                 val lastItem = adapter.itemCount - 1
                                 if (lastItem >= 0) scrollToBottom(lastItem)
                             }
@@ -1410,17 +1535,17 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         //   一番上にジャンプしてしまう。 finishingSettleFrames の間だけ末尾追従を強制する。
                         if (wasGenerating && !userScrolledAwayDuringGeneration && autoFollowBottomLocked) {
                             postGenerationSettleActive = true
-                            binding.messagesRecyclerView.post {
-                                if (_binding != null && isAdded) scrollToBottomImmediate()
+                            messagesRv?.post {
+                                if (isViewCreated && isAdded) scrollToBottomImmediate()
                             }
-                            binding.messagesRecyclerView.postDelayed({
-                                if (_binding != null && isAdded) scrollToBottomImmediate()
+                            messagesRv?.postDelayed({
+                                if (isViewCreated && isAdded) scrollToBottomImmediate()
                             }, 32L)
-                            binding.messagesRecyclerView.postDelayed({
-                                if (_binding != null && isAdded) scrollToBottomImmediate()
+                            messagesRv?.postDelayed({
+                                if (isViewCreated && isAdded) scrollToBottomImmediate()
                             }, 96L)
-                            binding.messagesRecyclerView.postDelayed({
-                                if (_binding != null && isAdded) {
+                            messagesRv?.postDelayed({
+                                if (isViewCreated && isAdded) {
                                     scrollToBottomImmediate()
                                     postGenerationSettleActive = false
                                     updateScrollToBottomButtonVisibility()
@@ -1457,8 +1582,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.isEmbeddingDownloadInProgress.collect { downloading ->
                 // 抽出中・埋め込みダウンロード中は入力を無効化しないが、ダウンロード中は送信を防ぐ
-                binding.messageInput.isEnabled = !downloading
-                binding.sendButton.isEnabled =
+                inputEnabledState = !downloading
+                sendEnabledState =
                     isGenerating || (!downloading && !isModelLoadingNow)
                 renderSendButtonState()
                 if (isGenerating) {
@@ -1477,10 +1602,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 // 入力欄上部に「⟳ 記憶を整理中...」を表示
                 // （既存の compressingHintText または inputHint を流用）
                 if (extracting) {
-                    binding.messageInput.hint = getString(R.string.response_extracting)
+                    inputHintState = getString(R.string.response_extracting)
                 } else {
                     // デフォルトのヒントを復元（null をセットすると完全に消えるため）
-                    binding.messageInput.hint = defaultInputHint
+                    inputHintState = defaultInputHint?.toString() ?: getString(R.string.enter_message)
                 }
             }
         }
@@ -1513,7 +1638,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.sessionTitle.collect { title ->
-                binding.chatTitle.contentDescription = title
+                chatTitleContentDesc = title
                 refreshPresetHeader()
             }
         }
@@ -1571,13 +1696,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         // 読み込み中はエンプティ表示も隠す (読み込み完了後のメッセージ収集側で再評価される)。
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.isMessagesLoading.collect { loading ->
-                if (_binding == null) return@collect
-                binding.messagesLoadingIndicator.visibility =
-                    if (loading) View.VISIBLE else View.GONE
+                if (!isViewCreated) return@collect
+                showMessagesLoadingState = loading
                 if (loading) {
-                    binding.emptyStateCompose.visibility = View.GONE
+                    showEmptyStateFlag = false
                 } else if (messagesIsEmpty) {
-                    binding.emptyStateCompose.visibility = View.VISIBLE
+                    showEmptyStateFlag = true
                 }
             }
         }
@@ -1586,12 +1710,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             viewModel.isModelLoading.collect { loading ->
                 isModelLoadingNow = loading
                 modelLoadingOverlayVisible = loading
-                // 全画面 ComposeView は非表示時もヒットテストに乗るため、GONE でタッチを下層へ通す
-                binding.modelLoadingComposeOverlay.visibility =
-                    if (loading) View.VISIBLE else View.GONE
-                binding.backButton.isEnabled = !loading
                 renderSendButtonState()
-                binding.messageInput.isEnabled = !loading
+                inputEnabledState = !loading
                 if (loading) {
                     requireActivity().window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 } else {
@@ -1604,8 +1724,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             viewModel.toolCallState.collect { state ->
                 currentToolCallState = state
                 // 入力欄上のステータスバーは画像生成ツール専用
-                binding.toolCallProgressCompose.visibility =
-                    if (isImageGenerationToolState(state)) View.VISIBLE else View.GONE
+                toolProgressVisible = isImageGenerationToolState(state)
             }
         }
 
@@ -1663,8 +1782,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.isChatReady.collect { isReady ->
-                binding.messageInput.isEnabled = isReady
-                binding.sendButton.isEnabled = isReady
+                inputEnabledState = isReady
+                sendEnabledState = isReady
                 renderSendButtonState()
             }
         }
@@ -1690,13 +1809,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             }
             PreferencesHelper.applyThemeMode(requireContext())
         }
-        val headerColor = if (isIncognito)
+        // Compose 化後はヘッダー / 入力バー / メディアプレビューバーの背景は
+        // headerColorArgb 経由で ChatScreen に渡され、ここでの View 直接操作は不要。
+        headerColorArgb = if (isIncognito)
             androidx.core.content.ContextCompat.getColor(requireContext(), R.color.incognito_surface)
         else
             androidx.core.content.ContextCompat.getColor(requireContext(), R.color.surface_card)
-        binding.chatHeader.setBackgroundColor(headerColor)
-        binding.inputBar.setBackgroundColor(headerColor)
-        binding.mediaPreviewCompose.setBackgroundColor(headerColor)
         disableKeyboardLearning(isIncognito)
     }
 
@@ -1709,31 +1827,13 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             0
         }
 
-        // Find all EditText views and update IME options
-        updateEditTextImeOptions(binding.root, imeOptions, shouldDisable)
-    }
-
-    private fun updateEditTextImeOptions(view: View, imeOptions: Int, disable: Boolean) {
-        if (view is ViewGroup) {
-            for (i in 0 until view.childCount) {
-                val child = view.getChildAt(i)
-                if (child is EditText) {
-                    if (disable) {
-                        // Add the no personalized learning flag
-                        child.imeOptions = child.imeOptions or imeOptions
-                    } else {
-                        // Remove the flag when disabling incognito mode
-                        child.imeOptions = child.imeOptions and imeOptions.inv()
-                    }
-                } else if (child is ViewGroup) {
-                    updateEditTextImeOptions(child, imeOptions, disable)
-                }
-            }
-        } else if (view is EditText) {
-            if (disable) {
-                view.imeOptions = view.imeOptions or imeOptions
+        // Compose 化後、画面内の EditText は messageInputView (入力欄) のみ。
+        // 再帰走査は不要になったため直接更新する。
+        messageInputView?.let { input ->
+            input.imeOptions = if (shouldDisable) {
+                input.imeOptions or imeOptions
             } else {
-                view.imeOptions = view.imeOptions and imeOptions.inv()
+                input.imeOptions and android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING.inv()
             }
         }
     }
@@ -1762,7 +1862,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             val preset = presetRepository.getCurrentPreset()
 
             withContext(Dispatchers.Main) {
-                if (!isAdded || _binding == null) return@withContext
+                if (!isAdded || !isViewCreated) return@withContext
                 modelOptions = options
                 updateModelNameText(viewModel.selectedModel.value)
                 refreshCurrentBackendType()
@@ -1779,7 +1879,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                     adapter.refreshPerfIndicatorVisibility(newShowTps, newShowTtft)
                 }
 
-                binding.chatTitle.text = if (preset != null) {
+                chatTitleText = if (preset != null) {
                     "${preset.icon} ${preset.name} ▼"
                 } else {
                     getString(R.string.chat_title)
@@ -1801,7 +1901,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private suspend fun refreshPresetHeader() {
         val preset = presetRepository.getCurrentPreset()
-        binding.chatTitle.text = if (preset != null) {
+        chatTitleText = if (preset != null) {
             "${preset.icon} ${preset.name} ▼"
         } else {
             getString(R.string.chat_title)
@@ -1817,9 +1917,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun applyStatusBarInset() {
-        val initialTop = binding.root.paddingTop
-        val initialBottom = binding.root.paddingBottom
-        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { root, insets ->
+        // ルートは ComposeView。ステータスバー / IME / ナビゲーションバーの
+        // インセットをルートのパディングに反映し、IME 表示時は末尾へスクロールする。
+        val rootView = view ?: return
+        val initialTop = rootView.paddingTop
+        val initialBottom = rootView.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { root, insets ->
             val topInset = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
             val imeInset = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
             val navInset = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
@@ -1834,7 +1937,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             wasImeVisible = imeVisible
             insets
         }
-        ViewCompat.requestApplyInsets(binding.root)
+        ViewCompat.requestApplyInsets(rootView)
     }
 
 
@@ -1845,7 +1948,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             val currentList = adapter.currentList
             val position = currentList.indexOfFirst { it.id == messageId }
             if (position >= 0) {
-                val lm = binding.messagesRecyclerView.layoutManager
+                val lm = messagesRv?.layoutManager
                     as? androidx.recyclerview.widget.LinearLayoutManager ?: return@launch
                 lm.scrollToPositionWithOffset(position, 120)
                 Log.d("ChatFragment", "scrollToMessageId: id=$messageId pos=$position")
@@ -1866,7 +1969,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         viewLifecycleOwner.lifecycleScope.launch {
             // submitList で新しいリストが反映されるまでちょっと待つ
             kotlinx.coroutines.delay(48L)
-            val rv = _binding?.messagesRecyclerView ?: return@launch
+            val rv = messagesRv ?: return@launch
             val lm = rv.layoutManager
                 as? androidx.recyclerview.widget.LinearLayoutManager ?: return@launch
             val currentList = adapter.currentList
@@ -1876,7 +1979,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 return@launch
             }
             fun landBottom() {
-                if (_binding == null || !isAdded) return
+                if (!isViewCreated || !isAdded) return
                 val view = lm.findViewByPosition(position)
                 if (view == null) {
                     // まだレイアウトされていないときは、とりあえずその位置を上に見えるようジャンプし、次フレームで再試行。
@@ -1897,7 +2000,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             // フレーム内でビュー内にスクロールしておいてから delta 調整する。
             lm.scrollToPositionWithOffset(position, 0)
             rv.post {
-                if (_binding == null || !isAdded) return@post
+                if (!isViewCreated || !isAdded) return@post
                 landBottom()
                 // Markdown / コードブロックの遅延レイアウトに備えて数フレーム後にも一度確定スクロールする。
                 rv.postDelayed({ landBottom() }, 64L)
@@ -1912,7 +2015,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun scrollToBottomImmediate() {
-        val rv = _binding?.messagesRecyclerView ?: return
+        val rv = messagesRv ?: return
         val lastItem = adapter.itemCount - 1
         if (lastItem < 0) return
         autoFollowBottomLocked = true
@@ -1920,14 +2023,14 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         autoScrollPosted = false
         rv.stopScroll()
         rv.post {
-            if (_binding == null || !isAdded) return@post
+            if (!isViewCreated || !isAdded) return@post
             val lm = rv.layoutManager as? LinearLayoutManager ?: return@post
             lm.scrollToPositionWithOffset(lastItem, 0)
             // Double-post to ensure layout is complete before forcing bottom
             rv.post {
-                if (_binding == null || !isAdded) return@post
+                if (!isViewCreated || !isAdded) return@post
                 rv.post {
-                    if (_binding == null || !isAdded) return@post
+                    if (!isViewCreated || !isAdded) return@post
                     forceBottomForFrames(rv, immediateScrollMaxFrames, rv.computeVerticalScrollRange())
                 }
             }
@@ -1943,7 +2046,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun scheduleAutoScrollToBottom() {
-        val rv = _binding?.messagesRecyclerView ?: return
+        val rv = messagesRv ?: return
         if (autoScrollPosted) return
         autoScrollPosted = true
         rv.removeCallbacks(autoScrollRunnable)
@@ -1951,8 +2054,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun followBottomAfterLayout() {
-        val rv = _binding?.messagesRecyclerView ?: return
-        if (_binding == null || !isAdded) return
+        val rv = messagesRv ?: return
+        if (!isViewCreated || !isAdded) return
         // 呼び出し元は既に postDelayed(autoScrollDebounceMs) でデバウンス済みなので、
         // ここでさらに rv.post して 1 フレーム遅らせる必要はない。直接実行することで
         // 追従の追いつきが 1 フレーム速くなり、キューに積まれる Runnable も減る。
@@ -1960,7 +2063,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun followBottomForFrames(rv: RecyclerView, framesRemaining: Int, previousRange: Int) {
-        if (_binding == null || !isAdded) return
+        if (!isViewCreated || !isAdded) return
         // settle フェーズ中は isGenerating==false でも追従を継続する。
         if ((!isGenerating && !postGenerationSettleActive) || userScrolledAwayDuringGeneration) return
         if (userIsDraggingMessages) {
@@ -1975,7 +2078,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         if (framesRemaining <= 0) return
         rv.postOnAnimation {
-            if (_binding == null || !isAdded) return@postOnAnimation
+            if (!isViewCreated || !isAdded) return@postOnAnimation
             val currentRange = rv.computeVerticalScrollRange()
             val stillNotAtBottom = rv.canScrollVertically(1)
             if (stillNotAtBottom || currentRange != previousRange) {
@@ -1985,7 +2088,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun forceBottomForFrames(rv: RecyclerView, framesRemaining: Int, previousRange: Int) {
-        if (_binding == null || !isAdded) return
+        if (!isViewCreated || !isAdded) return
 
         scrollRemainingDistanceToBottom(rv)
         isUserAtBottom = !rv.canScrollVertically(1)
@@ -1993,7 +2096,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         if (framesRemaining <= 0) return
         rv.postOnAnimation {
-            if (_binding == null || !isAdded) return@postOnAnimation
+            if (!isViewCreated || !isAdded) return@postOnAnimation
             val currentRange = rv.computeVerticalScrollRange()
             val stillNotAtBottom = rv.canScrollVertically(1)
             if (stillNotAtBottom || currentRange != previousRange) {
@@ -2013,7 +2116,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         return true
     }
 
-    private fun isNearBottom(rv: RecyclerView = binding.messagesRecyclerView): Boolean {
+    private fun isNearBottom(rv: RecyclerView? = messagesRv): Boolean {
+        rv ?: return false
         val distanceToBottom = (
             rv.computeVerticalScrollRange() -
                 rv.computeVerticalScrollOffset() -
@@ -2030,12 +2134,12 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun isAtBottom(): Boolean {
-        val rv = _binding?.messagesRecyclerView ?: return true
+        val rv = messagesRv ?: return true
         return !rv.canScrollVertically(1)
     }
 
     private fun updateScrollToBottomButtonVisibility() {
-        if (_binding == null || !isAdded) return
+        if (!isViewCreated || !isAdded) return
  // バグ修正: 生成中に自動スクロールフラグが ON のとき（=末尾追従中）は、
         //   ストリーミングで新トークンが挿入されるたびに一瞬底から離れて下矢印が
         //   チカチカ表示されてしまう。追従が有効な間は、そもそもボタンを出さない。
@@ -2051,7 +2155,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
     private fun captureScrollAnchorIfNeeded(): ScrollAnchor? {
         if (isUserAtBottom) return null
-        val rv = binding.messagesRecyclerView
+        val rv = messagesRv ?: return null
         val lm = rv.layoutManager as? LinearLayoutManager ?: return null
         val firstVisible = lm.findFirstVisibleItemPosition()
         if (firstVisible == RecyclerView.NO_POSITION) return null
@@ -2063,10 +2167,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     private fun restoreScrollAnchor(anchor: ScrollAnchor) {
-        val rv = _binding?.messagesRecyclerView ?: return
+        val rv = messagesRv ?: return
         val lm = rv.layoutManager as? LinearLayoutManager ?: return
         rv.post {
-            if (_binding == null || !isAdded) return@post
+            if (!isViewCreated || !isAdded) return@post
             lm.scrollToPositionWithOffset(anchor.position, anchor.offset)
             updateScrollToBottomButtonVisibility()
         }
@@ -2099,7 +2203,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 modelKey.takeIf { it.isNotBlank() }
             }
             ?: getString(R.string.model_not_downloaded)
-        binding.modelName.text = modelDisplaySuffix(label)
+        modelNameText = modelDisplaySuffix(label)
     }
 
     private fun buildDownloadedModelOptions(): List<ModelOption> {
@@ -2145,16 +2249,11 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     )
 
     private fun renderSendButtonState() {
-        // NPE 修正: processPickedVideo 等のコルーチン完了時に Fragment のビューが
-        // 既に破棄されていると binding (_binding!!) が NPE を投げてクラッシュする。
-        // ビューが無いなら描画すべきボタン自体が存在しないので、安全に何もしない。
-        val b = _binding ?: return
-        b.sendButton.setImageResource(
-            if (isGenerating) R.drawable.ic_stop else R.drawable.ic_send
-        )
+        // Compose 化後は sendEnabledState を更新するだけで ChatInputBar が再構成される。
+        // アイコン (ic_stop/ic_send) は isGenerating をそのまま渡して切り替える。
         // 動画のフレーム/音声抽出中は、まだ送信できる添付物が確定していないため送信不可にする。
         // 生成停止ボタンとしての利用（isGenerating時）は動画抽出中とは独立に常に有効のままにする。
-        b.sendButton.isEnabled =
+        sendEnabledState =
             isGenerating || (!isModelLoadingNow && !isExtractingVideo && !isConvertingDocument)
     }
 
@@ -2176,9 +2275,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             selectedAudioUri = null
         }
         updateMediaPreview()
-        binding.mediaMenuButton.visibility = View.VISIBLE
+        mediaMenuEnabledState = true
         // マイクボタンは入力バーに常設。モデルが音声入力に非対応なら非表示にする。
-        binding.micButton.visibility = if (audioInputEnabled) View.VISIBLE else View.GONE
+        micVisibleState = audioInputEnabled
     }
 
     private fun renderThinkingToggleState() {
@@ -2230,121 +2329,34 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
         responseTypingText = getString(R.string.response_generating)
     }
 
-    private fun setupComposeIndicators() {
-        binding.responseTypingCompose.setViewCompositionStrategy(
-            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+    /**
+     * 旧 setupComposeIndicators()。XML の ComposeView 差し込みをやめ、
+     * ChatScreen (onCreateView) に各セクションを直接渡す構成になったため廃止。
+     * メディアプレビューの viewer 起動だけは Fragment のコンテキストが必要なので残す。
+     */
+    private fun openMediaViewerForPreview(selectedKey: String) {
+        val bundle = com.nezumi_ai.presentation.ui.component.MediaViewerDialog.MediaBundle(
+            imageUris = selectedImageUrisList,
+            videoUri = selectedVideoUri,
+            audioUri = selectedAudioUri,
+            title = if (selectedVideoUri != null) requireContext().getString(R.string.multimodal_video_frame_audio_title) else requireContext().getString(R.string.multimodal_media_preview_title),
+            initialIndex = if (selectedKey.startsWith("image:")) {
+                selectedKey.removePrefix("image:").toIntOrNull() ?: 0
+            } else 0
         )
-        binding.responseTypingCompose.setContent {
-            ResponseTypingIndicator()
-        }
+        com.nezumi_ai.presentation.ui.component.MediaViewerDialog.show(
+            requireContext(),
+            bundle
+        )
+    }
 
-        binding.modelLoadingComposeOverlay.setViewCompositionStrategy(
-            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+    /** ツール進捗バー (旧 toolCallProgressCompose)。画像生成中のみ表示。 */
+    @Composable
+    private fun ToolCallProgressSection() {
+        ToolCallProgressBar(
+            state = currentToolCallState,
+            imageGenProgress = currentImageGenProgress
         )
-        binding.modelLoadingComposeOverlay.setContent {
-            ModelLoadingOverlay()
-        }
-
-        binding.contextMeterCompose.setViewCompositionStrategy(
-            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
-        )
-        binding.contextMeterCompose.setContent {
-            ContextMeterSection()
-            ContextRawDialog()
-            ImageGenConfirmationDialog()
-        }
-
-        binding.scrollToBottomCompose.setViewCompositionStrategy(
-            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
-        )
-        binding.scrollToBottomCompose.setContent {
-            ScrollToBottomSection()
-        }
-
-        binding.headerActionsCompose.setViewCompositionStrategy(
-            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
-        )
-        binding.headerActionsCompose.setContent {
-            HeaderActionsSection()
-        }
-
-        binding.mediaPreviewCompose.setViewCompositionStrategy(
-            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
-        )
-        binding.mediaPreviewCompose.setContent {
-            NezumiComposeTheme {
-                MediaPreviewBar(
-                    hasImage = selectedImageUrisList.isNotEmpty(),
-                    hasAudio = selectedAudioUri != null,
-                    imageUris = selectedImageUrisList,
-                    onClearImage = { selectedImageUrisList = emptyList() },
-                    onRemoveImage = { index ->
-                        if (index in selectedImageUrisList.indices) {
-                            selectedImageUrisList = selectedImageUrisList.filterIndexed { i, _ -> i != index }
-                        }
-                    },
-                    audioUri = selectedAudioUri,
-                    onClearAudio = { selectedAudioUri = null },
-                    textFiles = selectedTextFiles,
-                    onRemoveTextFile = { index ->
-                        if (index in selectedTextFiles.indices) {
-                            selectedTextFiles = selectedTextFiles.filterIndexed { i, _ -> i != index }
-                        }
-                    },
-                    onOpenTextFile = { entry ->
-                        com.nezumi_ai.presentation.ui.component.TextFileViewerDialog.show(
-                            requireContext(), entry
-                        )
-                    },
-                    videoUri = selectedVideoUri,
-                    onClearVideo = {
-                        // 動画を外すときは、動画由来のフレーム・音声も一緒にクリアするのが自然。
-                        selectedVideoUri = null
-                        selectedVideoDurationMs = 0L
-                        selectedVideoFrameCount = 0
-                        selectedImageUrisList = emptyList()
-                        selectedAudioUri = null
-                    },
-                    isExtractingVideo = isExtractingVideo,
-                    isConvertingDocument = isConvertingDocument,
-                    convertingDocumentName = convertingDocumentName,
-                    onOpenViewer = { selectedKey ->
-                        val bundle = com.nezumi_ai.presentation.ui.component.MediaViewerDialog.MediaBundle(
-                            imageUris = selectedImageUrisList,
-                            videoUri = selectedVideoUri,
-                            audioUri = selectedAudioUri,
-                            title = if (selectedVideoUri != null) requireContext().getString(R.string.multimodal_video_frame_audio_title) else requireContext().getString(R.string.multimodal_media_preview_title),
-                            initialIndex = if (selectedKey.startsWith("image:")) {
-                                selectedKey.removePrefix("image:").toIntOrNull() ?: 0
-                            } else 0
-                        )
-                        com.nezumi_ai.presentation.ui.component.MediaViewerDialog.show(
-                            requireContext(),
-                            bundle
-                        )
-                    }
-                )
-            }
-        }
-
-        binding.emptyStateCompose.setViewCompositionStrategy(
-            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
-        )
-        binding.emptyStateCompose.setContent {
-            EmptyStateScreen()
-        }
-
-        binding.toolCallProgressCompose.setViewCompositionStrategy(
-            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
-        )
-        binding.toolCallProgressCompose.setContent {
-            this@ChatFragment.NezumiComposeTheme {
-                ToolCallProgressBar(
-                    state = currentToolCallState,
-                    imageGenProgress = currentImageGenProgress
-                )
-            }
-        }
     }
 
     /**
@@ -3501,7 +3513,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     override fun onDestroyView() {
-        _binding?.messagesRecyclerView?.removeCallbacks(autoScrollRunnable)
+        messagesRv?.removeCallbacks(autoScrollRunnable)
         autoScrollPosted = false
         responseTypingAnimationJob?.cancel()
         responseTypingAnimationJob = null
@@ -3518,7 +3530,9 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
         requireActivity().window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         super.onDestroyView()
-        _binding = null
+        messagesRv = null
+        messageInputView = null
+        isViewCreated = false
     }
 
     /**
@@ -3540,90 +3554,82 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
      */
     private fun showAttachmentActionSheet() {
         val ctx = requireContext()
-        val view = LayoutInflater.from(ctx)
-            .inflate(R.layout.sheet_attachment_options, null, false)
+        // sheet_attachment_options.xml を廃止し、Compose 版 (AttachmentOptionsSheet) を
+        // BottomSheetDialog のコンテンツとして表示する。
         val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(ctx)
-        dialog.setContentView(view)
-
-        // モデルが画像入力に非対応なら「画像」「カメラ」タイルをグレイアウトし、
-        // タップ時はピッカーを開かず非対応トーストだけを出す (見た目で無効と分かるようにする)。
-        applyAttachmentTileEnabled(view.findViewById(R.id.opt_image), imageInputEnabled)
-        applyAttachmentTileEnabled(view.findViewById(R.id.opt_camera), imageInputEnabled)
-        view.findViewById<View>(R.id.opt_image).setOnClickListener {
-            dialog.dismiss()
-            if (!imageInputEnabled) {
-                Toast.makeText(ctx, getString(R.string.multimodal_image_disabled), Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            imagePickerLauncher.launch(
-                androidx.activity.result.PickVisualMediaRequest(
-                    ActivityResultContracts.PickVisualMedia.ImageOnly
-                )
-            )
-        }
-        view.findViewById<View>(R.id.opt_camera).setOnClickListener {
-            dialog.dismiss()
-            // 非対応時は launchCamera() 側がトーストを出して何もしない。
-            launchCamera()
-        }
-        view.findViewById<View>(R.id.opt_file).setOnClickListener {
-            dialog.dismiss()
-            // 画像 / 動画(gemmaのみ) / 音声 を履ける MIME リストを作る。
-            val mimes = mutableListOf<String>()
-            if (imageInputEnabled) mimes += "image/*"
-            if (imageInputEnabled && isGemmaVideoCapableModel()) mimes += "video/*"
-            if (audioInputEnabled) mimes += "audio/*"
-            // テキスト系ファイル (md / js / ts / cs / log / py / txt など)。
-            //   拡張子だけで MIME が application/octet-stream になるものは、後段の
-            //   handlePickedGenericFile() で拡張子フォールバック判定する。
-            mimes += listOf("text/*", "application/json", "application/octet-stream")
-            // ドキュメント (PDF / Word / Excel / PowerPoint)。
-            //   バイナリ本文はモデルに直接渡せないため、送信時に Chaquopy 経由の
-            //   MarkItDown で Markdown 変換し、その本文を <txtfile> としてモデルに渡す。
-            mimes += listOf(
-                "application/pdf",
-                "application/msword",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "application/vnd.ms-excel",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                "application/vnd.ms-powerpoint",
-                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            )
-            if (mimes.isEmpty()) {
-                Toast.makeText(ctx, getString(R.string.multimodal_file_disabled), Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            try {
-                genericFilePickerLauncher.launch(mimes.toTypedArray())
-            } catch (e: Throwable) {
-                Log.e("ChatFragment", "Error launching file picker", e)
-                Toast.makeText(ctx, getString(R.string.file_picker_open_failed), Toast.LENGTH_SHORT).show()
+        val composeView = androidx.compose.ui.platform.ComposeView(ctx).apply {
+            setViewTreeLifecycleOwner(viewLifecycleOwner)
+            setViewTreeViewModelStoreOwner(this@ChatFragment)
+            setViewTreeSavedStateRegistryOwner(this@ChatFragment)
+            setContent {
+                this@ChatFragment.NezumiComposeTheme {
+                    com.nezumi_ai.presentation.ui.screen.AttachmentOptionsSheet(
+                        imageEnabled = imageInputEnabled,
+                        onImageClick = {
+                            dialog.dismiss()
+                            if (!imageInputEnabled) {
+                                Toast.makeText(ctx, getString(R.string.multimodal_image_disabled), Toast.LENGTH_SHORT).show()
+                                return@AttachmentOptionsSheet
+                            }
+                            imagePickerLauncher.launch(
+                                androidx.activity.result.PickVisualMediaRequest(
+                                    ActivityResultContracts.PickVisualMedia.ImageOnly
+                                )
+                            )
+                        },
+                        onCameraClick = {
+                            dialog.dismiss()
+                            // 非対応時は launchCamera() 側がトーストを出して何もしない。
+                            launchCamera()
+                        },
+                        onFileClick = {
+                            dialog.dismiss()
+                            launchGenericFilePicker(ctx)
+                        },
+                        onCancel = { dialog.dismiss() }
+                    )
+                }
             }
         }
-        view.findViewById<View>(R.id.opt_cancel).setOnClickListener { dialog.dismiss() }
-
+        dialog.setContentView(composeView)
         dialog.show()
     }
 
     /**
-     * 添付ボトムシートのタイル (LinearLayout 内に ImageView + TextView) を
-     * 有効/無効で見た目だけ切り替える。無効時は半透明にしてグレイアウトする。
-     * タップ自体は受け付けたままにし、理由をトーストで伝えるのは呼び出し側の役割。
+     * アクションシート「ファイル」の MIME リストを組み立てて汎用ピッカーを開く。
+     * 旧 sheet_attachment_options.xml の opt_file リスナーから切り出し。
      */
-    private fun applyAttachmentTileEnabled(tile: View, enabled: Boolean) {
-        tile.alpha = if (enabled) 1.0f else 0.38f
-        (tile as? ViewGroup)?.let { group ->
-            for (i in 0 until group.childCount) {
-                when (val child = group.getChildAt(i)) {
-                    is ImageView -> child.imageAlpha = if (enabled) 255 else 96
-                    is TextView -> child.setTextColor(
-                        ContextCompat.getColor(
-                            tile.context,
-                            if (enabled) R.color.text_primary else R.color.text_secondary
-                        )
-                    )
-                }
-            }
+    private fun launchGenericFilePicker(ctx: android.content.Context) {
+        // 画像 / 動画(gemmaのみ) / 音声 を履ける MIME リストを作る。
+        val mimes = mutableListOf<String>()
+        if (imageInputEnabled) mimes += "image/*"
+        if (imageInputEnabled && isGemmaVideoCapableModel()) mimes += "video/*"
+        if (audioInputEnabled) mimes += "audio/*"
+        // テキスト系ファイル (md / js / ts / cs / log / py / txt など)。
+        //   拡張子だけで MIME が application/octet-stream になるものは、後段の
+        //   handlePickedGenericFile() で拡張子フォールバック判定する。
+        mimes += listOf("text/*", "application/json", "application/octet-stream")
+        // ドキュメント (PDF / Word / Excel / PowerPoint)。
+        //   バイナリ本文はモデルに直接渡せないため、送信時に Chaquopy 経由の
+        //   MarkItDown で Markdown 変換し、その本文を <txtfile> としてモデルに渡す。
+        mimes += listOf(
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-powerpoint",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        )
+        if (mimes.isEmpty()) {
+            Toast.makeText(ctx, getString(R.string.multimodal_file_disabled), Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            genericFilePickerLauncher.launch(mimes.toTypedArray())
+        } catch (e: Throwable) {
+            Log.e("ChatFragment", "Error launching file picker", e)
+            Toast.makeText(ctx, getString(R.string.file_picker_open_failed), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -3924,7 +3930,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 setOnInfoListener { _, what, _ ->
                     if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED) {
                         // メインスレッドで UI 後処理も含めて停止する。
-                        _binding?.root?.post {
+                        view?.post {
                             if (isRecordingAudio) {
                                 stopAudioRecording()
                                 Toast.makeText(
@@ -3945,8 +3951,8 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
             //  - + ボタンを一時的に隠して誤タップを防ぐ
             //  - マイクボタンは「停止」へ
             showInlineRecordingBar()
-            binding.messageInput.isEnabled = false
-            binding.mediaMenuButton.isEnabled = false
+            inputEnabledState = false
+            mediaMenuEnabledState = false
 
             // 録音アニメーションを開始
             startRecordingAmplitudeAnimation()
@@ -3978,16 +3984,14 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                 recordingAnimationJob = null
 
                 // hintを元に戻す（cancelするとアニメJob内の後処理が走らないため明示的に戻す）
-                _binding?.messageInput?.hint = getString(R.string.chat_input_hint)
+                inputHintState = getString(R.string.chat_input_hint)
 
                 // インライン録音バーを閉じて通常の入力 UI に戻す
                 hideInlineRecordingBar()
 
-                if (_binding != null) {
-                    renderSendButtonState()
-                }
-                _binding?.messageInput?.isEnabled = true
-                _binding?.mediaMenuButton?.isEnabled = true
+                renderSendButtonState()
+                inputEnabledState = true
+                mediaMenuEnabledState = true
 
                 // キャンセル時は録音ファイルを破棄する。
                 if (discardRecordingOnStop) {
@@ -4021,41 +4025,19 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
     }
 
     /**
-     * モーダルの代わりに EditText に重ねて表示させるインライン録音バーを開く。
-     * バーの実体は fragment_chat.xml の @+id/inline_record_bar で、
-     * EditText と同じ FrameLayout に入っているので visibility だけで切り替わる。
+     * モーダルの代わりに入力欄と入れ替わるインライン録音バーを開く。
+     * Compose 化後は isRecordingState / recordingElapsedTextState / recordingWaveHeightsState を
+     * 更新するだけで ChatInputBar 内の InlineRecordingBar に差し替わる。
      */
     private fun showInlineRecordingBar() {
-        val b = _binding ?: return
-        b.messageInput.visibility = View.INVISIBLE
-        b.inlineRecordBar.visibility = View.VISIBLE
-        b.inlineRecordTime.text = "0:00"
-        b.micButton.isSelected = true
-        b.micButton.setImageResource(R.drawable.ic_stop)
-        // 録音中アイコンを白にするため tint をリセット。
-        b.micButton.imageTintList = null
-        b.micButton.contentDescription = requireContext().getString(R.string.audio_stop_and_send)
-        // 録音リストを保持して、アニメの少ないフレームでも参照できるようにする。
-        recordingWaveBars = listOf(
-            b.inlineWave1, b.inlineWave2, b.inlineWave3, b.inlineWave4,
-            b.inlineWave5, b.inlineWave6, b.inlineWave7, b.inlineWave8
-        )
-        recordingStatusTextView = b.inlineRecordTime
+        isRecordingState = true
+        recordingElapsedTextState = "0:00"
+        recordingWaveHeightsState = listOf(11, 19, 15, 11, 15, 19, 11, 15)
     }
 
     private fun hideInlineRecordingBar() {
-        val b = _binding ?: return
-        b.messageInput.visibility = View.VISIBLE
-        b.inlineRecordBar.visibility = View.GONE
-        b.micButton.isSelected = false
-        b.micButton.setImageResource(R.drawable.ic_mic)
-        // 平常時のアイコン色に戻す。
-        b.micButton.imageTintList = ColorStateList.valueOf(
-            requireContext().getColor(R.color.text_secondary)
-        )
-        b.micButton.contentDescription = requireContext().getString(R.string.audio_input)
-        recordingWaveBars = emptyList()
-        recordingStatusTextView = null
+        isRecordingState = false
+        recordingElapsedTextState = "0:00"
     }
 
     /** 録音を破棄して入力に戻す（インラインバーの「削除」ボタン向け） */
@@ -4088,15 +4070,10 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
                         val recSec = ((System.currentTimeMillis() - startedAt) / 1000L).toInt()
                         val mm = recSec / 60
                         val ss = recSec % 60
-                        _binding?.inlineRecordTime?.text = String.format("%d:%02d", mm, ss)
-                        val density = requireContext().resources.displayMetrics.density
-                        recordingWaveBars.forEachIndexed { index, bar ->
-                            // インラインバーは 22dp 高さ。 6dp 〜 21dp の間でバーを揺らす。
-                            val heightDp = 6 + ((dotCount + index) % 6) * 3
-                            bar.layoutParams = bar.layoutParams.apply {
-                                height = (heightDp * density).toInt()
-                            }
-                            bar.requestLayout()
+                        recordingElapsedTextState = String.format("%d:%02d", mm, ss)
+                        // インラインバーは 22dp 高さ。 6dp 〜 21dp の間でバーを揺らす。
+                        recordingWaveHeightsState = List(8) { index ->
+                            6 + ((dotCount + index) % 6) * 3
                         }
                     }
 
@@ -4108,7 +4085,7 @@ class ChatFragment : Fragment(R.layout.fragment_chat) {
 
             // アニメーション終了時にプレースホルダーを元に戻す
             withContext(Dispatchers.Main) {
-                _binding?.messageInput?.hint = getString(R.string.chat_input_hint)
+                inputHintState = getString(R.string.chat_input_hint)
             }
         }
     }
