@@ -2,6 +2,9 @@ package com.nezumi_ai.presentation.ui.fragment
 
 import android.content.Context
 import androidx.annotation.StringRes
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,6 +16,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -24,12 +30,14 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
@@ -38,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.nezumi_ai.BuildConfig
 import com.nezumi_ai.R
+import kotlinx.coroutines.delay
 
 /**
  * 設定画面の検索機能。
@@ -53,7 +62,13 @@ import com.nezumi_ai.R
 private data class SettingsSearchEntry(
     val sectionIndex: Int,
     @StringRes val labelRes: Int,
-    @StringRes val breadcrumbRes: Int
+    @StringRes val breadcrumbRes: Int,
+    /**
+     * 実際の設定行に付与された [Modifier.settingsSearchAnchor] のキー。
+     * 通常は [labelRes] と同じ（行のタイトルTextがそのままアンカーになる）が、
+     * 見出しが動的フォーマット文字列などラベルと異なる場合はここで上書きする。
+     */
+    @StringRes val anchorRes: Int
 )
 
 /**
@@ -62,12 +77,17 @@ private data class SettingsSearchEntry(
  * 項目の文字列キーは各カード Composable 内で実際に使われているものから選んでいる。
  */
 private val SETTINGS_SEARCH_ENTRIES: List<SettingsSearchEntry> = buildList {
-    fun e(section: Int, @StringRes label: Int, @StringRes crumb: Int) =
-        add(SettingsSearchEntry(section, label, crumb))
+    fun e(section: Int, @StringRes label: Int, @StringRes crumb: Int, @StringRes anchor: Int = label) =
+        add(SettingsSearchEntry(section, label, crumb, anchor))
 
     // 0: 全般
-    e(0, R.string.settings_theme_label, R.string.settings_section_general)
-    e(0, R.string.settings_language_label, R.string.settings_section_general)
+    // 注: テーマ/言語の見出しは実際の画面では動的フォーマット文字列
+    // (settings_theme_current_format / settings_language_current_format) で
+    // 描画されており、settings_theme_label / settings_language_label 自体は
+    // 行として表示されない。検索結果のラベル文言はそのまま使うが、
+    // ジャンプ先アンカーとしては実際に画面へ出ている current_format 側を使う。
+    e(0, R.string.settings_theme_label, R.string.settings_section_general, anchor = R.string.settings_theme_current_format)
+    e(0, R.string.settings_language_label, R.string.settings_section_general, anchor = R.string.settings_language_current_format)
     e(0, R.string.settings_secret_mode_title, R.string.settings_section_general)
     e(0, R.string.settings_always_lock_title, R.string.settings_section_general)
     e(0, R.string.settings_stop_kb_learning_title, R.string.settings_section_general)
@@ -114,7 +134,10 @@ private val SETTINGS_SEARCH_ENTRIES: List<SettingsSearchEntry> = buildList {
     // 3: メモリ
     e(3, R.string.settings_memory_management_title, R.string.settings_section_memory)
     e(3, R.string.settings_memory_save_mode_title, R.string.settings_section_memory)
-    e(3, R.string.settings_memory_list_title, R.string.settings_section_memory)
+    // 一覧表示/全削除ともにダイアログのタイトル文言だが、実際に押す行はそれぞれのボタン
+    // (settings_memory_list_show / settings_memory_delete_all_title 自体は
+    // ボタンのラベルにも使われているためそのままアンカーとして使える)。
+    e(3, R.string.settings_memory_list_title, R.string.settings_section_memory, anchor = R.string.settings_memory_list_show)
     e(3, R.string.settings_memory_delete_all_title, R.string.settings_section_memory)
 
     // 4: チャット
@@ -150,8 +173,91 @@ private val SETTINGS_SEARCH_ENTRIES: List<SettingsSearchEntry> = buildList {
 data class SettingsSearchResult(
     val sectionIndex: Int,
     val label: String,
-    val breadcrumb: String
+    val breadcrumb: String,
+    /** この結果が対応する実際の設定行の [labelRes]。行側の [Modifier.settingsSearchAnchor] と紐付けるキー。 */
+    val anchorKey: Int
 )
+
+/**
+ * 検索ジャンプ機能の共有状態。
+ *
+ * これまでは検索結果をタップしても「該当ラベルを複製した偽の行」を
+ * リストの先頭に一時的に挿入して点滅させるだけで、実際の設定行までは
+ * スクロールもハイライトもされていなかった。
+ *
+ * この状態を [SettingsComposeFragment] の SettingsScreen() 直下で1つ remember し、
+ * 各設定行の [Modifier.settingsSearchAnchor] に同じインスタンスを渡すことで、
+ * 「どの行が画面内のどこにいるか」を実行時に登録してもらい、
+ * ジャンプ先が確定した時点でその実際の行へスクロール＆ハイライトできるようにする。
+ */
+class SettingsSearchJumpState {
+    /** labelRes -> その行の BringIntoViewRequester。Composition中に各行が自己登録する。 */
+    private val requesters = mutableMapOf<Int, BringIntoViewRequester>()
+
+    /** labelRes -> 現在ハイライト中かどうか。行側はこれを読んで背景色を変える。 */
+    val highlighted = mutableStateMapOf<Int, Boolean>()
+
+    fun register(labelRes: Int, requester: BringIntoViewRequester) {
+        requesters[labelRes] = requester
+    }
+
+    fun unregister(labelRes: Int) {
+        requesters.remove(labelRes)
+    }
+
+    fun requesterFor(labelRes: Int): BringIntoViewRequester? = requesters[labelRes]
+
+    /**
+     * 指定ラベルの行を実際に画面内へスクロールし、一定時間点滅させる。
+     * 対象行がまだコンポーズされていない（別セクション表示中など）場合は
+     * [maxWaitMillis] の間、登録されるのを待ってからスクロールする。
+     */
+    suspend fun jumpTo(labelRes: Int, maxWaitMillis: Long = 2000) {
+        var waited = 0L
+        val pollInterval = 50L
+        while (requesterFor(labelRes) == null && waited < maxWaitMillis) {
+            delay(pollInterval)
+            waited += pollInterval
+        }
+        val requester = requesterFor(labelRes) ?: return
+        runCatching { requester.bringIntoView() }
+        highlighted[labelRes] = true
+        repeat(6) {
+            delay(300)
+            highlighted[labelRes] = highlighted[labelRes] != true
+        }
+        highlighted[labelRes] = false
+    }
+}
+
+/**
+ * 設定行のタイトル [Text] などに付与する。
+ * 1) [BringIntoViewRequester] を [jumpState] に自己登録し、ジャンプ対象として発見可能にする
+ * 2) [jumpState] のハイライト状態を読み、点滅する背景色を自分自身に描画する
+ *
+ * これにより「検索結果を模した別要素」ではなく、実際にその設定行そのものが
+ * 画面内へスクロールされ、そのままハイライトされる。
+ */
+@Composable
+fun Modifier.settingsSearchAnchor(
+    @StringRes labelRes: Int,
+    jumpState: SettingsSearchJumpState
+): Modifier {
+    val requester = remember(labelRes) { BringIntoViewRequester() }
+    androidx.compose.runtime.DisposableEffect(labelRes) {
+        jumpState.register(labelRes, requester)
+        onDispose { jumpState.unregister(labelRes) }
+    }
+    val isHighlighted = jumpState.highlighted[labelRes] == true
+    val highlightColor by animateColorAsState(
+        targetValue = if (isHighlighted) Color(0xFFFFEB3B) else Color.Transparent,
+        animationSpec = tween(durationMillis = 200),
+        label = "settingsSearchHighlight"
+    )
+    return this
+        .bringIntoViewRequester(requester)
+        .background(highlightColor, RoundedCornerShape(6.dp))
+}
 
 /**
  * ひらがな→カタカナ・小文字化で正規化して部分一致検索する。
@@ -177,7 +283,8 @@ fun searchSettingsEntries(context: Context, query: String): List<SettingsSearchR
         SettingsSearchResult(
             sectionIndex = entry.sectionIndex,
             label = label,
-            breadcrumb = context.getString(entry.breadcrumbRes)
+            breadcrumb = context.getString(entry.breadcrumbRes),
+            anchorKey = entry.anchorRes
         )
     }.distinctBy { it.sectionIndex to it.label }
 }

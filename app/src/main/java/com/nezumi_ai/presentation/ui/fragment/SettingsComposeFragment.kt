@@ -875,19 +875,18 @@ class SettingsComposeFragment : Fragment() {
         // レスポンシブ設定画面: タブレット(幅>=600dp)はサイドバー2ペイン、
         //   スマホはカテゴリリスト→詳細ページ遷移。
         val isTablet = LocalConfiguration.current.screenWidthDp >= 600
-        var searchJumpTarget by remember { mutableStateOf<SettingsSearchResult?>(null) }
-        var searchJumpHighlightOn by remember { mutableStateOf(false) }
+        // 検索結果タップ時のジャンプ先。「どの行がどこにいるか」は各行が settingsSearchAnchor で
+        // このインスタンスに自己登録するので、ここでは労せず本物の行へスクロール・点滅できる。
+        val settingsSearchJumpState = remember { SettingsSearchJumpState() }
+        var pendingSearchJump by remember { mutableStateOf<SettingsSearchResult?>(null) }
         val settingsContentListState = rememberLazyListState()
-        LaunchedEffect(searchJumpTarget) {
-            val target = searchJumpTarget ?: return@LaunchedEffect
-            // セクション切替後も前の位置を保持しないよう、選択項目の表示位置へ戻す。
+        LaunchedEffect(pendingSearchJump) {
+            val target = pendingSearchJump ?: return@LaunchedEffect
+            // セクション切替直後はまだ対象行がコンポーズされていないことがあるため、
+            // まずリストの先頭付近まで戻してから、行が自己登録されるのを待って実座標へスクロールする。
             settingsContentListState.scrollToItem(0)
-            repeat(12) {
-                searchJumpHighlightOn = !searchJumpHighlightOn
-                delay(250)
-            }
-            searchJumpHighlightOn = false
-            if (searchJumpTarget == target) searchJumpTarget = null
+            settingsSearchJumpState.jumpTo(target.anchorKey)
+            if (pendingSearchJump == target) pendingSearchJump = null
         }
         // i18n: セクションタイトルも stringResource にしてロケールごとに切り替わるようにする。
         // [全般, 推論, 画像, メモリ, チャット, ログ, ツール] + (DEBUG時のみデバッグ)
@@ -1059,23 +1058,6 @@ class SettingsComposeFragment : Fragment() {
                         contentPadding = PaddingValues(12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                    searchJumpTarget?.let { target ->
-                        item(key = "search_jump_${target.sectionIndex}_${target.label}") {
-                            Text(
-                                text = target.label,
-                                color = colorResource(id = R.color.text_primary),
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(
-                                        if (searchJumpHighlightOn) Color(0xFFFFEB3B)
-                                        else Color.Transparent,
-                                        RoundedCornerShape(8.dp)
-                                    )
-                                    .padding(12.dp)
-                            )
-                        }
-                    }
                     item(key = selectedSection) {
                         when (selectedSection) {
                     0 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1107,7 +1089,13 @@ class SettingsComposeFragment : Fragment() {
                                 Text(text = stringResource(id = R.string.settings_general_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
 
                                 // テーマ設定セクション
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.settingsSearchAnchor(
+                                        R.string.settings_theme_current_format,
+                                        settingsSearchJumpState
+                                    )
+                                ) {
                                     val themeCurrentLabel = stringResource(
                                         id = R.string.settings_theme_current_format,
                                         when (themeMode) {
@@ -1164,7 +1152,13 @@ class SettingsComposeFragment : Fragment() {
                                 // i18n: 言語切替 (全般タブ内)。値は PreferencesHelper に保存し、
                                 //   実際のリソース選択は attachBaseContext で LocaleHelper.wrap() することで
                                 //   行う。切り替え直後に activity.recreate() して UI を再構築する。
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.settingsSearchAnchor(
+                                        R.string.settings_language_current_format,
+                                        settingsSearchJumpState
+                                    )
+                                ) {
                                     val languageLabel = stringResource(
                                         id = R.string.settings_language_current_format,
                                         when (appLanguage) {
@@ -1230,7 +1224,14 @@ class SettingsComposeFragment : Fragment() {
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .settingsSearchAnchor(
+                                                R.string.settings_always_lock_title,
+                                                settingsSearchJumpState
+                                            )
+                                    ) {
                                         Text(
                                             text = stringResource(id = R.string.settings_always_lock_title),
                                             color = colorResource(id = R.color.text_primary),
@@ -1266,7 +1267,14 @@ class SettingsComposeFragment : Fragment() {
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .settingsSearchAnchor(
+                                                R.string.settings_stop_kb_learning_title,
+                                                settingsSearchJumpState
+                                            )
+                                    ) {
                                         Text(
                                             text = stringResource(id = R.string.settings_stop_kb_learning_title),
                                             color = colorResource(id = R.color.text_primary),
@@ -1296,7 +1304,14 @@ class SettingsComposeFragment : Fragment() {
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .settingsSearchAnchor(
+                                                R.string.settings_show_context_meter_title,
+                                                settingsSearchJumpState
+                                            )
+                                    ) {
                                         Text(
                                             text = stringResource(id = R.string.settings_show_context_meter_title),
                                             color = colorResource(id = R.color.text_primary),
@@ -1326,7 +1341,14 @@ class SettingsComposeFragment : Fragment() {
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .settingsSearchAnchor(
+                                                R.string.settings_miniapp_dev_mode_title,
+                                                settingsSearchJumpState
+                                            )
+                                    ) {
                                         Text(
                                             text = stringResource(id = R.string.settings_miniapp_dev_mode_title),
                                             color = colorResource(id = R.color.text_primary),
@@ -1356,7 +1378,14 @@ class SettingsComposeFragment : Fragment() {
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .settingsSearchAnchor(
+                                                R.string.settings_show_tps_title,
+                                                settingsSearchJumpState
+                                            )
+                                    ) {
                                         Text(
                                             text = stringResource(id = R.string.settings_show_tps_title),
                                             color = colorResource(id = R.color.text_primary),
@@ -1386,7 +1415,14 @@ class SettingsComposeFragment : Fragment() {
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .settingsSearchAnchor(
+                                                R.string.settings_show_ttft_title,
+                                                settingsSearchJumpState
+                                            )
+                                    ) {
                                         Text(
                                             text = stringResource(id = R.string.settings_show_ttft_title),
                                             color = colorResource(id = R.color.text_primary),
@@ -1416,7 +1452,14 @@ class SettingsComposeFragment : Fragment() {
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .settingsSearchAnchor(
+                                                R.string.settings_disable_screenshot_title,
+                                                settingsSearchJumpState
+                                            )
+                                    ) {
                                         Text(
                                             text = stringResource(id = R.string.settings_disable_screenshot_title),
                                             color = colorResource(id = R.color.text_primary),
@@ -1456,7 +1499,11 @@ class SettingsComposeFragment : Fragment() {
                                     text = stringResource(id = R.string.settings_secret_mode_title),
                                     color = colorResource(id = R.color.text_secondary),
                                     style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.SemiBold
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.settingsSearchAnchor(
+                                        R.string.settings_secret_mode_title,
+                                        settingsSearchJumpState
+                                    )
                                 )
                                 Text(
                                     text = if (isSecretModeEnabled) stringResource(id = R.string.settings_secret_mode_enabled) else stringResource(id = R.string.settings_secret_mode_disabled),
@@ -1538,35 +1585,35 @@ class SettingsComposeFragment : Fragment() {
                         TelemetryConsentCard()
                     }
                     1 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        InferenceParamsCard()
-                        GgufLlamaCppSettingsCard()
-                        LiteRtSettingsCard()
+                        InferenceParamsCard(settingsSearchJumpState)
+                        GgufLlamaCppSettingsCard(settingsSearchJumpState)
+                        LiteRtSettingsCard(settingsSearchJumpState)
                     }
                     2 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        ImageGenSettingsCard()
+                        ImageGenSettingsCard(settingsSearchJumpState)
                     }
                     3 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        MemoryManagementCard()
+                        MemoryManagementCard(settingsSearchJumpState)
                     }
                     4 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        ChatHistoryCard()
+                        ChatHistoryCard(settingsSearchJumpState)
                     }
                     // ログタブ（常時・リリースビルドでも表示）: ツール呼出履歴 / logcat をサブタブで表示
                     5 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        LogsSettingsCard()
+                        LogsSettingsCard(settingsSearchJumpState)
                     }
                     // ツールタブ（常時 index 6）: ページ取得のJS実行モード + MCPサーバー管理
                     6 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        ToolsSettingsCard()
+                        ToolsSettingsCard(settingsSearchJumpState)
                     }
-                    7 -> SkillManagementCard(skillScanResult, onImport = { skillImportLauncher.launch(arrayOf("application/zip")) })
+                    7 -> SkillManagementCard(skillScanResult, onImport = { skillImportLauncher.launch(arrayOf("application/zip")) }, settingsSearchJumpState = settingsSearchJumpState)
                     8 -> StorageManagementSection(onOpenSession = { sessionId ->
                         findNavController().navigate(R.id.chatFragment, Bundle().apply { putLong("sessionId", sessionId) })
                     })
                     // デバッグタブは BuildConfig.DEBUG 時のみ index 9
                     9 -> if (BuildConfig.DEBUG) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            DebugSettingsCard()
+                            DebugSettingsCard(settingsSearchJumpState)
                         }
                     } else Unit
                     else -> {}
@@ -1602,7 +1649,7 @@ class SettingsComposeFragment : Fragment() {
             SettingsSearchSheet(
                 onJumpToSection = { result ->
                     selectedSection = result.sectionIndex
-                    searchJumpTarget = result
+                    pendingSearchJump = result
                     if (!isTablet) showSettingsListOnPhone = false
                 },
                 onDismiss = { settingsSearchSheetVisible = false }
@@ -1734,7 +1781,7 @@ class SettingsComposeFragment : Fragment() {
     }
 
     @Composable
-    private fun InferenceParamsCard() {
+    private fun InferenceParamsCard(settingsSearchJumpState: SettingsSearchJumpState) {
  // ユーザー要望: コンテキストウィンドウの上限を 128k まで拡張
         val maxContextWindow = if (selectedModel.equals("Gemma4-2B", ignoreCase = true) ||
                                     selectedModel.equals("Gemma4-4B", ignoreCase = true)) {
@@ -1750,7 +1797,15 @@ class SettingsComposeFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = stringResource(id = R.string.settings_inference_params_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Text(
+                    text = stringResource(id = R.string.settings_inference_params_title),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = MaterialTheme.typography.titleMedium.fontSize,
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_inference_params_title,
+                        settingsSearchJumpState
+                    )
+                )
 
                 // コンテキストサイズと最大トークン数を2列グリッド
                 Row(
@@ -1763,7 +1818,11 @@ class SettingsComposeFragment : Fragment() {
                         label = { Text(stringResource(id = R.string.settings_inference_context_size)) },
                         modifier = Modifier
                             .weight(1f)
-                            .height(64.dp),
+                            .height(64.dp)
+                            .settingsSearchAnchor(
+                                R.string.settings_inference_context_size,
+                                settingsSearchJumpState
+                            ),
                         singleLine = true
                     )
                     OutlinedTextField(
@@ -1772,13 +1831,23 @@ class SettingsComposeFragment : Fragment() {
                         label = { Text(stringResource(id = R.string.settings_inference_max_tokens)) },
                         modifier = Modifier
                             .weight(1f)
-                            .height(64.dp),
+                            .height(64.dp)
+                            .settingsSearchAnchor(
+                                R.string.settings_inference_max_tokens,
+                                settingsSearchJumpState
+                            ),
                         singleLine = true
                     )
                 }
 
                 // Temperature Slider
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_inference_temperature_label,
+                        settingsSearchJumpState
+                    )
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1808,7 +1877,13 @@ class SettingsComposeFragment : Fragment() {
                 }
 
                 // Top-K Slider
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_inference_topk_label,
+                        settingsSearchJumpState
+                    )
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1838,7 +1913,13 @@ class SettingsComposeFragment : Fragment() {
                 }
 
                 // Top-P Slider
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_inference_topp_label,
+                        settingsSearchJumpState
+                    )
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1867,7 +1948,13 @@ class SettingsComposeFragment : Fragment() {
                     )
                 }
 
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_inference_preload_warning_title,
+                        settingsSearchJumpState
+                    )
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1909,14 +1996,25 @@ class SettingsComposeFragment : Fragment() {
     }
 
     @Composable
-    private fun SkillManagementCard(result: SkillScanResult, onImport: () -> Unit) {
+    private fun SkillManagementCard(
+        result: SkillScanResult,
+        onImport: () -> Unit,
+        settingsSearchJumpState: SettingsSearchJumpState
+    ) {
         var creatingSkill by remember { mutableStateOf(false) }
         var browsingSkill by remember { mutableStateOf<com.nezumi_ai.data.skill.Skill?>(null) }
         var deletingSkill by remember { mutableStateOf<com.nezumi_ai.data.skill.Skill?>(null) }
         var renamingSkill by remember { mutableStateOf<com.nezumi_ai.data.skill.Skill?>(null) }
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(stringResource(R.string.skills_settings_title), fontWeight = FontWeight.Bold)
+                Text(
+                    stringResource(R.string.skills_settings_title),
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.skills_settings_title,
+                        settingsSearchJumpState
+                    )
+                )
                 Text(stringResource(R.string.skills_settings_description), style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { creatingSkill = true }) { Text(stringResource(R.string.skills_create)) }
@@ -2182,7 +2280,7 @@ class SettingsComposeFragment : Fragment() {
 
 
     @Composable
-    private fun GgufLlamaCppSettingsCard() {
+    private fun GgufLlamaCppSettingsCard(settingsSearchJumpState: SettingsSearchJumpState) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -2190,7 +2288,15 @@ class SettingsComposeFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = stringResource(id = R.string.settings_gguf_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Text(
+                    text = stringResource(id = R.string.settings_gguf_title),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = MaterialTheme.typography.titleMedium.fontSize,
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_gguf_title,
+                        settingsSearchJumpState
+                    )
+                )
                 Text(
                     text = stringResource(id = R.string.settings_gguf_desc),
                     color = colorResource(id = R.color.text_secondary),
@@ -2231,7 +2337,13 @@ class SettingsComposeFragment : Fragment() {
                                 else -> false
                             }
 
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.settingsSearchAnchor(
+                                    R.string.settings_llamacpp_gpu_backend,
+                                    settingsSearchJumpState
+                                )
+                            ) {
                                 Text(
                                     text = stringResource(id = R.string.settings_llamacpp_gpu_backend),
                                     color = colorResource(id = R.color.text_secondary),
@@ -2288,7 +2400,13 @@ class SettingsComposeFragment : Fragment() {
                                 }
                             }
 
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.settingsSearchAnchor(
+                                    R.string.settings_cpu_threads,
+                                    settingsSearchJumpState
+                                )
+                            ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2317,7 +2435,13 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
 
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.settingsSearchAnchor(
+                                    R.string.settings_gpu_layers,
+                                    settingsSearchJumpState
+                                )
+                            ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2358,7 +2482,13 @@ class SettingsComposeFragment : Fragment() {
                                 }
                             }
 
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.settingsSearchAnchor(
+                                    R.string.settings_batch_size,
+                                    settingsSearchJumpState
+                                )
+                            ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2477,7 +2607,13 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
 
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.settingsSearchAnchor(
+                                    R.string.settings_rope_base,
+                                    settingsSearchJumpState
+                                )
+                            ) {
                                 Text(
                                     text = stringResource(id = R.string.settings_rope_base),
                                     color = colorResource(id = R.color.text_secondary),
@@ -2501,7 +2637,13 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
 
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.settingsSearchAnchor(
+                                    R.string.settings_rope_scale,
+                                    settingsSearchJumpState
+                                )
+                            ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2569,7 +2711,14 @@ class SettingsComposeFragment : Fragment() {
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .settingsSearchAnchor(
+                                            R.string.settings_mtp_title,
+                                            settingsSearchJumpState
+                                        )
+                                ) {
                                     Text(
                                         text = stringResource(id = R.string.settings_mtp_title),
                                         color = colorResource(id = R.color.text_primary),
@@ -2630,7 +2779,14 @@ class SettingsComposeFragment : Fragment() {
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .settingsSearchAnchor(
+                                            R.string.settings_flash_attention,
+                                            settingsSearchJumpState
+                                        )
+                                ) {
                                     Text(
                                         text = stringResource(id = R.string.settings_flash_attention),
                                         color = colorResource(id = R.color.text_primary),
@@ -2655,7 +2811,14 @@ class SettingsComposeFragment : Fragment() {
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .settingsSearchAnchor(
+                                            R.string.settings_dynamic_batch,
+                                            settingsSearchJumpState
+                                        )
+                                ) {
                                     Text(
                                         text = stringResource(id = R.string.settings_dynamic_batch),
                                         color = colorResource(id = R.color.text_primary),
@@ -2705,7 +2868,13 @@ class SettingsComposeFragment : Fragment() {
                                     )
                                 }
 
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.settingsSearchAnchor(
+                                        R.string.settings_inference_generation_batch_title,
+                                        settingsSearchJumpState
+                                    )
+                                ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -2745,7 +2914,14 @@ class SettingsComposeFragment : Fragment() {
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .settingsSearchAnchor(
+                                            R.string.settings_inference_kv_cache_title,
+                                            settingsSearchJumpState
+                                        )
+                                ) {
                                     Text(
                                         text = stringResource(id = R.string.settings_inference_kv_cache_title),
                                         color = colorResource(id = R.color.text_primary),
@@ -2770,7 +2946,14 @@ class SettingsComposeFragment : Fragment() {
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .settingsSearchAnchor(
+                                            R.string.settings_inference_context_shift_title,
+                                            settingsSearchJumpState
+                                        )
+                                ) {
                                     Text(
                                         text = stringResource(id = R.string.settings_inference_context_shift_title),
                                         color = colorResource(id = R.color.text_primary),
@@ -2798,7 +2981,7 @@ class SettingsComposeFragment : Fragment() {
 
 
     @Composable
-    private fun LiteRtSettingsCard() {
+    private fun LiteRtSettingsCard(settingsSearchJumpState: SettingsSearchJumpState) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -2806,8 +2989,22 @@ class SettingsComposeFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = stringResource(id = R.string.settings_inference_literlm_settings_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = stringResource(id = R.string.settings_inference_literlm_settings_title),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = MaterialTheme.typography.titleMedium.fontSize,
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_inference_literlm_settings_title,
+                        settingsSearchJumpState
+                    )
+                )
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_inference_backend_title,
+                        settingsSearchJumpState
+                    )
+                ) {
                     Text(
                         text = stringResource(id = R.string.settings_inference_backend_title),
                         color = colorResource(id = R.color.text_secondary),
@@ -2845,7 +3042,12 @@ class SettingsComposeFragment : Fragment() {
                 }
                 TextButton(
                     onClick = { versionDialogVisible = true },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .settingsSearchAnchor(
+                            R.string.settings_inference_check_engine_version,
+                            settingsSearchJumpState
+                        )
                 ) {
                     Text(stringResource(id = R.string.settings_inference_check_engine_version))
                 }
@@ -2855,7 +3057,14 @@ class SettingsComposeFragment : Fragment() {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .settingsSearchAnchor(
+                                R.string.settings_inference_speculative_decoding_title,
+                                settingsSearchJumpState
+                            )
+                    ) {
                         Text(
                             text = stringResource(id = R.string.settings_inference_speculative_decoding_title),
                             color = colorResource(id = R.color.text_primary),
@@ -2879,7 +3088,14 @@ class SettingsComposeFragment : Fragment() {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .settingsSearchAnchor(
+                                R.string.settings_require_multimodal,
+                                settingsSearchJumpState
+                            )
+                    ) {
                         Text(
                             text = stringResource(id = R.string.settings_require_multimodal),
                             color = colorResource(id = R.color.text_primary),
@@ -2905,7 +3121,7 @@ class SettingsComposeFragment : Fragment() {
 
     @Composable
     @OptIn(ExperimentalMaterial3Api::class)
-    private fun ImageGenSettingsCard() {
+    private fun ImageGenSettingsCard(settingsSearchJumpState: SettingsSearchJumpState) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -2913,7 +3129,15 @@ class SettingsComposeFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = stringResource(id = R.string.settings_image_generation_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Text(
+                    text = stringResource(id = R.string.settings_image_generation_title),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = MaterialTheme.typography.titleMedium.fontSize,
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_image_generation_title,
+                        settingsSearchJumpState
+                    )
+                )
 
                 Text(
                     text = stringResource(id = R.string.settings_image_generation_desc),
@@ -2922,7 +3146,13 @@ class SettingsComposeFragment : Fragment() {
                 )
 
                 // ステップ数 Slider
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_steps_title,
+                        settingsSearchJumpState
+                    )
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -2952,7 +3182,13 @@ class SettingsComposeFragment : Fragment() {
                 }
 
                 // CFG Scale Slider
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_cfg_scale_title,
+                        settingsSearchJumpState
+                    )
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -2984,7 +3220,13 @@ class SettingsComposeFragment : Fragment() {
                 // ---- Scheduler (コンパクトなドロップダウン) ----
                 //   メインページ側の Chip を 8 個並べる UI をそのままコピーすると
                 //   設定画面も縦に弸むため、ここでは 1 行の ExposedDropdownMenu に集約する。
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_scheduler_title,
+                        settingsSearchJumpState
+                    )
+                ) {
                     Text(
                         text = stringResource(id = R.string.settings_scheduler_title),
                         color = colorResource(id = R.color.text_secondary),
@@ -3029,7 +3271,13 @@ class SettingsComposeFragment : Fragment() {
                 //   -1 (空欄) = ランダム。ここでは保存には Preferences を使わず、
                 //   入力値のバリデーションとデフォルト値提示に役割を限定。
                 //   (SD の実際の seed は生成タブ側のフィールドで逐回指定するフローを維持)
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_seed_title,
+                        settingsSearchJumpState
+                    )
+                ) {
                     Text(
                         text = stringResource(id = R.string.settings_seed_title),
                         color = colorResource(id = R.color.text_secondary),
@@ -3061,7 +3309,7 @@ class SettingsComposeFragment : Fragment() {
     }
 
     @Composable
-    private fun MemoryManagementCard() {
+    private fun MemoryManagementCard(settingsSearchJumpState: SettingsSearchJumpState) {
         val localContext = LocalContext.current
         val memories by memoryRepository.observeMemories().collectAsState(initial = emptyList())
         var showMemoryListModal by remember { mutableStateOf(false) }
@@ -3115,7 +3363,12 @@ class SettingsComposeFragment : Fragment() {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(
+                        modifier = Modifier.settingsSearchAnchor(
+                            R.string.settings_memory_management_title,
+                            settingsSearchJumpState
+                        )
+                    ) {
                         Text(text = stringResource(id = R.string.settings_memory_management_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
                         Text(
                             text = stringResource(id = R.string.settings_memory_count_format, memories.size),
@@ -3126,13 +3379,21 @@ class SettingsComposeFragment : Fragment() {
                     Row {
                         TextButton(
                             enabled = memories.isNotEmpty(),
-                            onClick = { showMemoryListModal = true }
+                            onClick = { showMemoryListModal = true },
+                            modifier = Modifier.settingsSearchAnchor(
+                                R.string.settings_memory_list_show,
+                                settingsSearchJumpState
+                            )
                         ) {
                             Text(stringResource(id = R.string.settings_memory_list_show))
                         }
                         TextButton(
                             enabled = memories.isNotEmpty(),
-                            onClick = { confirmDeleteAll = true }
+                            onClick = { confirmDeleteAll = true },
+                            modifier = Modifier.settingsSearchAnchor(
+                                R.string.settings_memory_delete_all_title,
+                                settingsSearchJumpState
+                            )
                         ) {
                             Text(stringResource(id = R.string.settings_memory_delete_all_button2))
                         }
@@ -3143,7 +3404,11 @@ class SettingsComposeFragment : Fragment() {
                     text = stringResource(id = R.string.settings_memory_save_mode_title),
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_memory_save_mode_title,
+                        settingsSearchJumpState
+                    )
                 )
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -3231,7 +3496,7 @@ class SettingsComposeFragment : Fragment() {
      * プリセット編集画面（PresetSettingsFragment）側で行う。
      */
     @Composable
-    private fun ToolsSettingsCard() {
+    private fun ToolsSettingsCard(settingsSearchJumpState: SettingsSearchJumpState) {
         val localContext = LocalContext.current
         val toolPreferences = remember { com.nezumi_ai.data.inference.ToolPreferences(localContext) }
         var webFetchJsRenderEnabled by remember {
@@ -3256,7 +3521,14 @@ class SettingsComposeFragment : Fragment() {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .settingsSearchAnchor(
+                                R.string.tools_web_fetch_js_render,
+                                settingsSearchJumpState
+                            )
+                    ) {
                         Text(
                             text = stringResource(id = R.string.tools_web_fetch_js_render),
                             color = colorResource(id = R.color.text_primary)
@@ -3289,7 +3561,14 @@ class SettingsComposeFragment : Fragment() {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .settingsSearchAnchor(
+                                R.string.preset_edit_mcp_server_label,
+                                settingsSearchJumpState
+                            )
+                    ) {
                         Text(
                             text = stringResource(id = R.string.preset_edit_mcp_server_label),
                             fontWeight = FontWeight.Bold,
@@ -3346,7 +3625,7 @@ class SettingsComposeFragment : Fragment() {
      * リリースビルドでも利用可能。
      */
     @Composable
-    private fun LogsSettingsCard() {
+    private fun LogsSettingsCard(settingsSearchJumpState: SettingsSearchJumpState) {
         var selectedLogSubTab by remember { mutableIntStateOf(0) }
         val logSubTabs = listOf(
             stringResource(id = R.string.logs_tab_tool_history),
@@ -3364,7 +3643,10 @@ class SettingsComposeFragment : Fragment() {
                 ScrollableTabRow(
                     selectedTabIndex = selectedLogSubTab,
                     edgePadding = 0.dp,
-                    containerColor = colorResource(id = R.color.primary_light)
+                    containerColor = colorResource(id = R.color.primary_light),
+                    modifier = Modifier
+                        .settingsSearchAnchor(R.string.logs_tab_tool_history, settingsSearchJumpState)
+                        .settingsSearchAnchor(R.string.logs_tab_logcat, settingsSearchJumpState)
                 ) {
                     logSubTabs.forEachIndexed { index, title ->
                         Tab(
@@ -3377,7 +3659,7 @@ class SettingsComposeFragment : Fragment() {
 
                 when (selectedLogSubTab) {
                     0 -> ToolHistorySection()
-                    else -> LogcatViewerSection()
+                    else -> LogcatViewerSection(settingsSearchJumpState)
                 }
             }
         }
@@ -3482,7 +3764,7 @@ class SettingsComposeFragment : Fragment() {
     }
 
     @Composable
-    private fun DebugSettingsCard() {
+    private fun DebugSettingsCard(settingsSearchJumpState: SettingsSearchJumpState) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -3491,13 +3773,25 @@ class SettingsComposeFragment : Fragment() {
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(text = stringResource(id = R.string.settings_debug_section_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                    Text(
+                        text = stringResource(id = R.string.settings_debug_section_title),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = MaterialTheme.typography.titleMedium.fontSize,
+                        modifier = Modifier.settingsSearchAnchor(
+                            R.string.settings_debug_section_title,
+                            settingsSearchJumpState
+                        )
+                    )
                     SvgSpinner(modifier = Modifier.size(32.dp))
                 }
                 Text(
                     text = stringResource(id = R.string.settings_debug_similarity_title),
                     fontWeight = FontWeight.SemiBold,
-                    style = MaterialTheme.typography.titleSmall
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_debug_similarity_title,
+                        settingsSearchJumpState
+                    )
                 )
                 Text(
                     text = stringResource(id = R.string.settings_debug_similarity_desc),
@@ -3625,7 +3919,11 @@ class SettingsComposeFragment : Fragment() {
                 Text(
                     text = stringResource(id = R.string.settings_debug_nsfw_title),
                     fontWeight = FontWeight.SemiBold,
-                    style = MaterialTheme.typography.titleSmall
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_debug_nsfw_title,
+                        settingsSearchJumpState
+                    )
                 )
                 Text(
                     text = stringResource(id = R.string.settings_debug_nsfw_desc),
@@ -3738,7 +4036,11 @@ class SettingsComposeFragment : Fragment() {
                 Text(
                     text = stringResource(id = R.string.settings_debug_tts_title),
                     fontWeight = FontWeight.SemiBold,
-                    style = MaterialTheme.typography.titleSmall
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_debug_tts_title,
+                        settingsSearchJumpState
+                    )
                 )
                 Text(
                     text = stringResource(id = R.string.settings_debug_tts_desc),
@@ -3813,7 +4115,11 @@ class SettingsComposeFragment : Fragment() {
                     Text(
                         text = stringResource(id = R.string.settings_debug_tts_history_title),
                         fontWeight = FontWeight.SemiBold,
-                        style = MaterialTheme.typography.titleSmall
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.settingsSearchAnchor(
+                            R.string.settings_debug_tts_history_title,
+                            settingsSearchJumpState
+                        )
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         ttsDebugAudioHistory.forEach { audio ->
@@ -3881,7 +4187,7 @@ class SettingsComposeFragment : Fragment() {
      * - テキスト選択・全文コピー・ファイル書き出し（共有）・ログレベル別カラーリングに対応。
      */
     @Composable
-    private fun LogcatViewerSection() {
+    private fun LogcatViewerSection(settingsSearchJumpState: SettingsSearchJumpState) {
         val localContext = LocalContext.current
         val scrollState = rememberScrollState()
         val clipboardManager = LocalClipboardManager.current
@@ -3921,7 +4227,11 @@ class SettingsComposeFragment : Fragment() {
             Text(
                 text = stringResource(id = R.string.settings_logcat_title),
                 fontWeight = FontWeight.SemiBold,
-                style = MaterialTheme.typography.titleSmall
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.settingsSearchAnchor(
+                    R.string.settings_logcat_title,
+                    settingsSearchJumpState
+                )
             )
         }
         Text(
@@ -4055,7 +4365,7 @@ class SettingsComposeFragment : Fragment() {
 
 
     @Composable
-    private fun ChatHistoryCard() {
+    private fun ChatHistoryCard(settingsSearchJumpState: SettingsSearchJumpState) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -4063,13 +4373,25 @@ class SettingsComposeFragment : Fragment() {
             )
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(text = stringResource(id = R.string.settings_chat_history_management_title), fontWeight = FontWeight.Bold, fontSize = MaterialTheme.typography.titleMedium.fontSize)
+                Text(
+                    text = stringResource(id = R.string.settings_chat_history_management_title),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = MaterialTheme.typography.titleMedium.fontSize,
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_chat_history_management_title,
+                        settingsSearchJumpState
+                    )
+                )
 
                 Text(
                     text = stringResource(id = R.string.settings_chat_history_count_title),
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.settingsSearchAnchor(
+                        R.string.settings_chat_history_count_title,
+                        settingsSearchJumpState
+                    )
                 )
 
                 Row(

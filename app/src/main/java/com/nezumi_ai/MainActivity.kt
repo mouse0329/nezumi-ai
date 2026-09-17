@@ -130,7 +130,7 @@ class MainActivity : AppCompatActivity() {
     private var lastRenderedDrawerDayStartMillis: Long = 0L
     private var crashDialogPresentationAttempted = false
     // 現在のナビゲーション画面がサイドバー操作を許可するか (setContent 内で更新)。
-    private var drawerEnabledByNav = true
+    private var drawerEnabledByNav by mutableStateOf(true)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -147,9 +147,7 @@ class MainActivity : AppCompatActivity() {
                 // サイドバーはチャット画面でのみ開けるようにする。
                 // 設定・ミニアプリ・ミニアプリマネージャー・モデル管理などの
                 // チャット以外の画面ではジェスチャー/ボタンの両方で無効化する。
-                val navBackStackEntry by androidx.navigation.compose.currentBackStackEntryAsState()
-                val drawerGesturesEnabled = navBackStackEntry?.destination?.id == R.id.chatFragment
-                drawerEnabledByNav = drawerGesturesEnabled
+                val drawerGesturesEnabled = drawerEnabledByNav
                 if (!drawerGesturesEnabled && drawerState.isOpen) {
                     LaunchedEffect(drawerGesturesEnabled) { drawerState.close() }
                 }
@@ -307,6 +305,11 @@ class MainActivity : AppCompatActivity() {
             .replace(R.id.nav_host_fragment_content_main, navHost)
             .setPrimaryNavigationFragment(navHost)
             .commitNow()
+
+        navHost.navController.addOnDestinationChangedListener { _, destination, _ ->
+            drawerEnabledByNav = destination.id == R.id.chatFragment
+        }
+        drawerEnabledByNav = navHost.navController.currentDestination?.id == R.id.chatFragment
     }
 
 
