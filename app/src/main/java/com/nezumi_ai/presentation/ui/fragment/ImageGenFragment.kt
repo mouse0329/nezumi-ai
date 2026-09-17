@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.PaddingValues
@@ -1113,7 +1114,7 @@ private fun LegacyImageGenScreen(
                         IconButton(
                             onClick = { if (batchCount < 10) batchCount++ },
                             enabled = !loading && batchCount < 10,
-                            modifier = Modifier.size(36.dp)
+                            modifier = Modifier.requiredSize(36.dp)
                         ) {
                             Text("+", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                         }
@@ -1126,7 +1127,7 @@ private fun LegacyImageGenScreen(
                         IconButton(
                             onClick = { if (batchCount > 1) batchCount-- },
                             enabled = !loading && batchCount > 1,
-                            modifier = Modifier.size(36.dp)
+                            modifier = Modifier.requiredSize(36.dp)
                         ) {
                             Text("−", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                         }

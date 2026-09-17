@@ -12,6 +12,9 @@
     <color name="nezumi_on_primary">#082F49</color>
     <color name="nezumi_primary_container">#E6F7FF</color>
     <color name="nezumi_on_primary_container">#0C4A6E</color>
+    <!-- Send button: idle(未入力)時の非活性グレー -->
+    <color name="send_btn_disabled_bg">#3A3D43</color>
+    <color name="send_btn_disabled_icon">#7A808C</color>
 
     <!-- Text Colors -->
     <color name="text_primary">#111827</color>

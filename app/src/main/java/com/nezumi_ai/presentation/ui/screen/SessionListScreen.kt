@@ -331,7 +331,7 @@ private fun SessionCard(
             ) {
                 IconButton(
                     onClick = { showMenu = true },
-                    modifier = Modifier.size(44.dp)
+                    modifier = Modifier.requiredSize(44.dp)
                 ) {
                     Icon(
                         painter = painterResource(id = R.drawable.ic_more_vert),

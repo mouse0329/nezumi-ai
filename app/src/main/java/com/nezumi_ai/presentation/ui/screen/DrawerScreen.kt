@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -14,12 +15,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -60,8 +65,14 @@ fun DrawerContent(
     entries: List<DrawerHistoryEntry>,
     currentSessionId: Long?,
     sessionsEmpty: Boolean,
+    historyLoading: Boolean,
+    menuSessionId: Long?,
     onSessionClick: (ChatSessionEntity) -> Unit,
     onSessionMenuClick: (ChatSessionEntity) -> Unit,
+    onSessionMenuDismiss: () -> Unit,
+    onTogglePin: (ChatSessionEntity) -> Unit,
+    onRenameSession: (ChatSessionEntity) -> Unit,
+    onDeleteSession: (ChatSessionEntity) -> Unit,
     onSettingsClick: () -> Unit,
     onModelSettingsClick: () -> Unit,
     onPresetSettingsClick: () -> Unit,
@@ -99,7 +110,7 @@ fun DrawerContent(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f)
             )
-            IconButton(onClick = onSearchClick, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = onSearchClick, modifier = Modifier.requiredSize(36.dp)) {
                 Icon(
                     painter = painterResource(id = R.drawable.ic_search),
                     contentDescription = "履歴検索",
@@ -208,6 +219,18 @@ fun DrawerContent(
                 .fillMaxWidth(),
             contentPadding = PaddingValues(bottom = 12.dp)
         ) {
+            if (historyLoading && entries.isEmpty()) {
+                item(key = "loading") {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    }
+                }
+            }
             items(entries, key = { entry ->
                 when (entry) {
                     is DrawerHistoryEntry.Label -> "label_${entry.label}"
@@ -220,11 +243,16 @@ fun DrawerContent(
                         session = entry.session,
                         isCurrent = entry.session.id == currentSessionId,
                         onClick = { onSessionClick(entry.session) },
-                        onMenuClick = { onSessionMenuClick(entry.session) }
+                        onMenuClick = { onSessionMenuClick(entry.session) },
+                        menuExpanded = entry.session.id == menuSessionId,
+                        onMenuDismiss = onSessionMenuDismiss,
+                        onTogglePin = { onTogglePin(entry.session) },
+                        onRename = { onRenameSession(entry.session) },
+                        onDelete = { onDeleteSession(entry.session) }
                     )
                 }
             }
-            if (sessionsEmpty) {
+            if (sessionsEmpty && !historyLoading) {
                 item(key = "empty") {
                     Text(
                         text = stringResource(id = R.string.drawer_history_empty),
@@ -295,7 +323,12 @@ fun DrawerSessionRow(
     session: ChatSessionEntity,
     isCurrent: Boolean,
     onClick: () -> Unit,
-    onMenuClick: () -> Unit
+    onMenuClick: () -> Unit,
+    menuExpanded: Boolean,
+    onMenuDismiss: () -> Unit,
+    onTogglePin: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit
 ) {
     val rowShape = if (isCurrent) RoundedCornerShape(8.dp) else RoundedCornerShape(22.dp)
     val backgroundColor = colorResource(
@@ -336,13 +369,26 @@ fun DrawerSessionRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
-            IconButton(onClick = onMenuClick, modifier = Modifier.size(36.dp)) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_more_vert),
-                    contentDescription = "メニュー",
-                    tint = colorResource(id = R.color.text_primary),
-                    modifier = Modifier.size(20.dp)
-                )
+            Box {
+                IconButton(onClick = onMenuClick, modifier = Modifier.requiredSize(36.dp)) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_more_vert),
+                        contentDescription = "メニュー",
+                        tint = colorResource(id = R.color.text_primary),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = onMenuDismiss
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(if (session.isPinned) "固定を解除" else "固定") },
+                        onClick = onTogglePin
+                    )
+                    DropdownMenuItem(text = { Text("名前を変更") }, onClick = onRename)
+                    DropdownMenuItem(text = { Text("削除") }, onClick = onDelete)
+                }
             }
         }
         Text(

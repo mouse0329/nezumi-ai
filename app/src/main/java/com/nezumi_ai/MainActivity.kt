@@ -4,6 +4,8 @@ import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.FragmentContainerView
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.navigation.findNavController
 import androidx.navigation.navOptions
 import android.util.Log
@@ -37,8 +39,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -58,6 +58,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import coil.compose.AsyncImage
 import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.repository.ChatChunkRepository
@@ -109,6 +110,8 @@ class MainActivity : AppCompatActivity() {
     private var drawerEntries by mutableStateOf<List<DrawerHistoryEntry>>(emptyList())
     private var drawerCurrentSessionId by mutableStateOf<Long?>(null)
     private var drawerSessionsEmpty by mutableStateOf(false)
+    // DB と Flow の初回値を待つ間、空の履歴を「履歴なし」と誤認させない。
+    private var drawerHistoryLoading by mutableStateOf(true)
     // 「・・・」メニュー対象のセッション (非 null で DropdownMenu を表示)
     private var drawerMenuSession by mutableStateOf<ChatSessionEntity?>(null)
     private lateinit var sessionRepository: ChatSessionRepository
@@ -124,6 +127,7 @@ class MainActivity : AppCompatActivity() {
     private var latestDrawerSessions: List<ChatSessionEntity> = emptyList()
     private var drawerDateRefreshJob: Job? = null
     private var lastRenderedDrawerDayStartMillis: Long = 0L
+    private var crashDialogPresentationAttempted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -149,12 +153,27 @@ class MainActivity : AppCompatActivity() {
                                     entries = drawerEntries,
                                     currentSessionId = drawerCurrentSessionId,
                                     sessionsEmpty = drawerSessionsEmpty,
+                                    historyLoading = drawerHistoryLoading,
+                                    menuSessionId = drawerMenuSession?.id,
                                     onSessionClick = { session ->
                                         closeDrawer()
                                         openChatSession(session.id)
                                     },
                                     onSessionMenuClick = { session ->
                                         drawerMenuSession = session
+                                    },
+                                    onSessionMenuDismiss = { drawerMenuSession = null },
+                                    onTogglePin = { session ->
+                                        drawerMenuSession = null
+                                        togglePinSession(session)
+                                    },
+                                    onRenameSession = { session ->
+                                        drawerMenuSession = null
+                                        showRenameSessionDialog(session)
+                                    },
+                                    onDeleteSession = { session ->
+                                        drawerMenuSession = null
+                                        showDeleteSessionDialog(session)
                                     },
                                     onSettingsClick = { navigateFromDrawer(R.id.settingsFragment) },
                                     onModelSettingsClick = { navigateFromDrawer(R.id.modelSettingsFragment) },
@@ -174,36 +193,6 @@ class MainActivity : AppCompatActivity() {
                                         showHistorySearchModal()
                                     }
                                 )
-                                // セッションの「・・・」メニュー (旧 PopupWindow 相当)
-                                val menuTarget = drawerMenuSession
-                                DropdownMenu(
-                                    expanded = menuTarget != null,
-                                    onDismissRequest = { drawerMenuSession = null }
-                                ) {
-                                    if (menuTarget != null) {
-                                        DropdownMenuItem(
-                                            text = { Text(if (menuTarget.isPinned) "固定を解除" else "固定") },
-                                            onClick = {
-                                                drawerMenuSession = null
-                                                togglePinSession(menuTarget)
-                                            }
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text("名前を変更") },
-                                            onClick = {
-                                                drawerMenuSession = null
-                                                showRenameSessionDialog(menuTarget)
-                                            }
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text("削除") },
-                                            onClick = {
-                                                drawerMenuSession = null
-                                                showDeleteSessionDialog(menuTarget)
-                                            }
-                                        )
-                                    }
-                                }
                             }
                         }
                     ) {
@@ -239,6 +228,9 @@ class MainActivity : AppCompatActivity() {
                         settingsRepository = sr
                         sessionRepository = cr
                         repositoriesReady = true
+                        // 起動時のシークレット履歴掃除は添付ファイル数に応じて時間がかかる。
+                        // その完了を待つと通常の履歴 Flow の初回取得まで遅れるため、先に購読する。
+                        observeDrawerHistory()
                     }
                     if (!isIncognitoModeActive) {
                         runCatching {
@@ -255,20 +247,12 @@ class MainActivity : AppCompatActivity() {
                     }
                     withContext(Dispatchers.Main) {
                         val navController = findNavController(R.id.nav_host_fragment_content_main)
-                        // ドロワーは Compose 化済み。履歴の購読だけを開始する。
-                        observeDrawerHistory()
                         if (!PreferencesHelper.isInitialSetupCompleted(this@MainActivity)) {
                             Log.d(TAG, "Initial setup not completed - navigating to setup wizard")
                             navController.navigate(R.id.setupWizardFragment)
                         } else {
                             ensureCurrentSessionExists()
                         }
-                        // 前回起動で未捕捉例外によるクラッシュがあれば内容をモーダルで提示する。
-                        //   CrashReporter が filesDir/crash_records/ に保存したログを読み出し、
-                        //   「閉じる」ボタン押下でクリアされる。
-                        //   ここでダイアログ表示の失敗がアプリ本体の初期化を阻害しないよう防御的に包む。
-                        runCatching { CrashLogDialog.showIfPending(this@MainActivity) }
-                            .onFailure { Log.w(TAG, "Failed to show crash log dialog", it) }
                     }
                 }.onFailure { t ->
                     Log.e(TAG, "Fatal error in DB initialization", t)
@@ -277,6 +261,26 @@ class MainActivity : AppCompatActivity() {
         } catch (t: Throwable) {
             Log.e(TAG, "Fatal error in onCreate", t)
             throw t
+        }
+    }
+
+    override fun onPostResume() {
+        super.onPostResume()
+        showPendingCrashDialogAfterFirstFrame()
+    }
+
+    /**
+     * クラッシュ通知は DB やナビゲーションの初期化と無関係に表示する。
+     * 起動初期のクラッシュでそれらの初期化が失敗しても、次回起動時に通知を失わない。
+     */
+    private fun showPendingCrashDialogAfterFirstFrame() {
+        if (crashDialogPresentationAttempted) return
+
+        window.decorView.post {
+            if (isFinishing || isDestroyed || crashDialogPresentationAttempted) return@post
+            runCatching { CrashLogDialog.showIfPending(this@MainActivity) }
+                .onSuccess { crashDialogPresentationAttempted = true }
+                .onFailure { Log.w(TAG, "Failed to show crash log dialog", it) }
         }
     }
 
@@ -652,6 +656,14 @@ class MainActivity : AppCompatActivity() {
 
         // ロック画面を Compose で構築する (旧 LinearLayout 手組みの置き換え)。
         val composeView = androidx.compose.ui.platform.ComposeView(this).apply {
+            // Dialog creates its own window, so it does not inherit the Activity's
+            // ViewTree owners. Compose requires these before it attaches the view.
+            setViewTreeLifecycleOwner(this@MainActivity)
+            setViewTreeViewModelStoreOwner(this@MainActivity)
+            setViewTreeSavedStateRegistryOwner(this@MainActivity)
+            setViewCompositionStrategy(
+                ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+            )
             setContent {
                 NezumiComposeTheme {
                     AuthLockScreen(
@@ -853,6 +865,7 @@ class MainActivity : AppCompatActivity() {
                 drawerCurrentSessionId = getCurrentSessionId()
                 drawerEntries = grouped
                 drawerSessionsEmpty = sessions.isEmpty()
+                drawerHistoryLoading = false
             }
         }
     }

@@ -24,6 +24,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -98,6 +99,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.io.File
@@ -867,9 +869,23 @@ class SettingsComposeFragment : Fragment() {
             )
         }
 
- // レスポンシブ設定画面: タブレット(幅>=600dp)はサイドバー2ペイン、
+        // レスポンシブ設定画面: タブレット(幅>=600dp)はサイドバー2ペイン、
         //   スマホはカテゴリリスト→詳細ページ遷移。
         val isTablet = LocalConfiguration.current.screenWidthDp >= 600
+        var searchJumpTarget by remember { mutableStateOf<SettingsSearchResult?>(null) }
+        var searchJumpHighlightOn by remember { mutableStateOf(false) }
+        val settingsContentListState = rememberLazyListState()
+        LaunchedEffect(searchJumpTarget) {
+            val target = searchJumpTarget ?: return@LaunchedEffect
+            // セクション切替後も前の位置を保持しないよう、選択項目の表示位置へ戻す。
+            settingsContentListState.scrollToItem(0)
+            repeat(12) {
+                searchJumpHighlightOn = !searchJumpHighlightOn
+                delay(250)
+            }
+            searchJumpHighlightOn = false
+            if (searchJumpTarget == target) searchJumpTarget = null
+        }
         // i18n: セクションタイトルも stringResource にしてロケールごとに切り替わるようにする。
         // [全般, 推論, 画像, メモリ, チャット, ログ, ツール] + (DEBUG時のみデバッグ)
         val sectionTitles = listOf(
@@ -1036,9 +1052,27 @@ class SettingsComposeFragment : Fragment() {
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxSize(),
+                        state = settingsContentListState,
                         contentPadding = PaddingValues(12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                    searchJumpTarget?.let { target ->
+                        item(key = "search_jump_${target.sectionIndex}_${target.label}") {
+                            Text(
+                                text = target.label,
+                                color = colorResource(id = R.color.text_primary),
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(
+                                        if (searchJumpHighlightOn) Color(0xFFFFEB3B)
+                                        else Color.Transparent,
+                                        RoundedCornerShape(8.dp)
+                                    )
+                                    .padding(12.dp)
+                            )
+                        }
+                    }
                     item(key = selectedSection) {
                         when (selectedSection) {
                     0 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1563,8 +1597,9 @@ class SettingsComposeFragment : Fragment() {
         //   スマホでは詳細表示に切り替え、タブレットではサイドバーの選択を変えるだけでよい。
         if (settingsSearchSheetVisible) {
             SettingsSearchSheet(
-                onJumpToSection = { section ->
-                    selectedSection = section
+                onJumpToSection = { result ->
+                    selectedSection = result.sectionIndex
+                    searchJumpTarget = result
                     if (!isTablet) showSettingsListOnPhone = false
                 },
                 onDismiss = { settingsSearchSheetVisible = false }

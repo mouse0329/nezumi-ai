@@ -185,12 +185,12 @@ fun searchSettingsEntries(context: Context, query: String): List<SettingsSearchR
 /**
  * 設定検索のボトムシート。
  * テキスト入力のたびに [searchSettingsEntries] で絞り込み、
- * 結果行タップで [onJumpToSection] にセクション index を渡して閉じる。
+ * 結果行タップで [onJumpToSection] に選択結果を渡して閉じる。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsSearchSheet(
-    onJumpToSection: (Int) -> Unit,
+    onJumpToSection: (SettingsSearchResult) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -236,7 +236,7 @@ fun SettingsSearchSheet(
                         SettingsSearchResultRow(
                             result = result,
                             onClick = {
-                                onJumpToSection(result.sectionIndex)
+                                onJumpToSection(result)
                                 onDismiss()
                             }
                         )

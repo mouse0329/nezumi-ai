@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
@@ -645,7 +646,7 @@ fun MediaPreviewBar(
                                 onClick = onClearVideo,
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .size(24.dp)
+                                    .requiredSize(24.dp)
                                     .background(
                                         MaterialTheme.colorScheme.error.copy(alpha = 0.85f),
                                         shape = androidx.compose.foundation.shape.CircleShape
@@ -708,7 +709,7 @@ fun MediaPreviewBar(
                             onClick = { onRemoveTextFile(index) },
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
-                                .size(24.dp)
+                                .requiredSize(24.dp)
                                 .background(
                                     MaterialTheme.colorScheme.error.copy(alpha = 0.85f),
                                     shape = androidx.compose.foundation.shape.CircleShape
@@ -758,7 +759,7 @@ fun MediaPreviewBar(
                                 onClick = onClearAudio,
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .size(24.dp)
+                                    .requiredSize(24.dp)
                                     .background(
                                         MaterialTheme.colorScheme.error.copy(alpha = 0.85f),
                                         shape = androidx.compose.foundation.shape.CircleShape
@@ -832,7 +833,7 @@ private fun AsyncImageWithDelete(
             onClick = onDelete,
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .size(28.dp)
+                .requiredSize(28.dp)
                 .background(
                     MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
                     shape = androidx.compose.foundation.shape.CircleShape

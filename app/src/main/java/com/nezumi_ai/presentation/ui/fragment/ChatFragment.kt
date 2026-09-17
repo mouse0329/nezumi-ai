@@ -919,6 +919,7 @@ class ChatFragment : Fragment() {
                         onInputViewReady = { view -> messageInputView = view },
                         modelLoadingOverlay = { ModelLoadingOverlay() }
                     )
+                    ContextRawDialog()
                 }
             }
         }
@@ -1917,18 +1918,17 @@ class ChatFragment : Fragment() {
     }
 
     private fun applyStatusBarInset() {
-        // ルートは ComposeView。ステータスバー / IME / ナビゲーションバーの
-        // インセットをルートのパディングに反映し、IME 表示時は末尾へスクロールする。
+        // ステータスバーだけを ComposeView の余白に反映する。IME / ナビゲーションバーは
+        // ChatInputBar 側の Compose Insets で処理し、入力欄を画面外へ押し出さない。
         val rootView = view ?: return
         val initialTop = rootView.paddingTop
         val initialBottom = rootView.paddingBottom
         ViewCompat.setOnApplyWindowInsetsListener(rootView) { root, insets ->
             val topInset = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
             val imeInset = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-            val navInset = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
             root.updatePadding(
                 top = initialTop + topInset,
-                bottom = initialBottom + max(imeInset, navInset)
+                bottom = initialBottom
             )
             val imeVisible = insets.isVisible(WindowInsetsCompat.Type.ime()) && imeInset > 0
             if (imeVisible && !wasImeVisible) {

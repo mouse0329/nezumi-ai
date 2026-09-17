@@ -12,7 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -31,6 +31,8 @@ import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.LifecycleOwner
@@ -113,8 +115,16 @@ object CrashLogDialog {
             )
         )
         dialog.show()
+        // Dialog の既定幅は内容から計測されるため、例外名が極端に長い場合に
+        // コンテンツが画面外へ広がってしまう。ウィンドウ幅を先に固定して
+        // Compose 側で安全に折り返し・スクロールさせる。
+        dialog.window?.setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
     }
 
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
     @Composable
     fun CrashLogDialogContent(
         log: CrashReporter.CrashLog,
@@ -123,52 +133,67 @@ object CrashLogDialog {
         onShare: () -> Unit
     ) {
         val shape = RoundedCornerShape(20.dp)
+        val screenHeight = LocalConfiguration.current.screenHeightDp.dp
         Column(
             modifier = Modifier
                 .padding(16.dp)
+                .fillMaxWidth()
+                // 本文を長くしても、操作ボタンが画面外へ押し出されないようにする。
+                .heightIn(max = screenHeight * 0.85f)
                 .clip(shape)
                 .background(MaterialTheme.colorScheme.surface)
                 .border(2.dp, MaterialTheme.colorScheme.error, shape)
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(
-                text = stringResource(R.string.crash_dialog_title),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = stringResource(R.string.crash_dialog_subtitle, log.formattedTimestamp()),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                text = stringResource(
-                    R.string.crash_dialog_summary,
-                    log.exceptionClass.substringAfterLast('.'),
-                    log.message
-                ),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = buildDisplayText(log),
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 320.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .verticalScroll(rememberScrollState())
-                    .padding(8.dp),
-                fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Row(
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.crash_dialog_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = stringResource(R.string.crash_dialog_subtitle, log.formattedTimestamp()),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = stringResource(
+                        R.string.crash_dialog_summary,
+                        log.exceptionClass.substringAfterLast('.'),
+                        log.message
+                    ),
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = buildDisplayText(log),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 320.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .verticalScroll(rememberScrollState())
+                        .padding(8.dp),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.End,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 TextButton(
                     onClick = onShare,

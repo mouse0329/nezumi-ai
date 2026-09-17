@@ -11,13 +11,12 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -46,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.toArgb
@@ -134,7 +134,7 @@ fun UserMessageItem(
         Row(modifier = Modifier.padding(top = 2.dp)) {
             IconButton(
                 onClick = { copyTextToClipboard(context, message.content) },
-                modifier = Modifier.size(32.dp)
+                modifier = Modifier.requiredSize(32.dp)
             ) {
                 Icon(
                     painter = painterResource(R.drawable.content_copy_24),
@@ -144,7 +144,7 @@ fun UserMessageItem(
                 )
             }
             if (!isGenerating) {
-                IconButton(onClick = { onEdit(message) }, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = { onEdit(message) }, modifier = Modifier.requiredSize(32.dp)) {
                     Icon(
                         painter = painterResource(R.drawable.ic_edit),
                         contentDescription = stringResource(R.string.edit_prompt),
@@ -287,27 +287,24 @@ fun AiMessageItem(
                         )
                     }
                     if (thinkingExpanded) {
-                        Row(
+                        val thinkingRuleColor = colorResource(R.color.text_secondary)
+                            .copy(alpha = 0.35f)
+                        // LazyColumn is based on SubcomposeLayout and cannot answer intrinsic
+                        // size queries. Draw the leading rule in the content container instead
+                        // of using Row.height(IntrinsicSize.Min) + fillMaxHeight().
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(top = 4.dp)
-                                .height(IntrinsicSize.Min)
-                        ) {
-                            // 縦線 (旧 ai_thinking_body の 2dp バー相当)
-                            Box(
-                                modifier = Modifier
-                                    .width(2.dp)
-                                    .fillMaxHeight()
-                                    .padding(end = 0.dp)
-                                    .background(
-                                        colorResource(R.color.text_secondary)
-                                            .copy(alpha = 0.35f)
+                                .drawBehind {
+                                    drawRect(
+                                        color = thinkingRuleColor,
+                                        size = size.copy(width = 2.dp.toPx())
                                     )
-                            )
-                            Spacer8()
-                            Box(modifier = Modifier.weight(1f)) {
-                                MessageThinkingBody(thinking)
-                            }
+                                }
+                                .padding(start = 10.dp)
+                        ) {
+                            MessageThinkingBody(thinking)
                         }
                     }
                 }
@@ -389,7 +386,7 @@ fun AiMessageItem(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(top = 4.dp)
         ) {
-            IconButton(onClick = { onCopy(message) }, modifier = Modifier.size(32.dp)) {
+            IconButton(onClick = { onCopy(message) }, modifier = Modifier.requiredSize(32.dp)) {
                 Icon(
                     painter = painterResource(R.drawable.content_copy_24),
                     contentDescription = stringResource(R.string.copy_all),
@@ -403,7 +400,7 @@ fun AiMessageItem(
                         val text = message.content.stripGemmaTokens().trim()
                         onSpeak(message, text)
                     },
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier.requiredSize(32.dp)
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.ic_select_to_speak_24),
@@ -431,7 +428,7 @@ fun AiMessageItem(
                     IconButton(
                         onClick = { if (canPrev) onVariantSelect(variantIndex - 1) },
                         enabled = canPrev,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.requiredSize(28.dp)
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.ic_chevron_left_24),
@@ -451,7 +448,7 @@ fun AiMessageItem(
                     IconButton(
                         onClick = { if (canNext) onVariantSelect(variantIndex + 1) },
                         enabled = canNext,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.requiredSize(28.dp)
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.ic_chevron_right_24),
@@ -469,7 +466,7 @@ fun AiMessageItem(
                     onClick = { onRegenerate(message) },
                     modifier = Modifier
                         .padding(start = 2.dp)
-                        .size(32.dp)
+                        .requiredSize(32.dp)
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.ic_refresh_24),

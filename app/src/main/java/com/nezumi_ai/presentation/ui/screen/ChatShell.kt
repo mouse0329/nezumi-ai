@@ -11,7 +11,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -65,7 +68,7 @@ fun ChatHeader(
         IconButton(
             onClick = onBackClick,
             modifier = Modifier
-                .size(36.dp)
+                .requiredSize(36.dp)
                 .background(colorResource(R.color.primary_light), CircleShape)
                 .border(1.dp, colorResource(R.color.border), CircleShape)
         ) {
@@ -148,6 +151,9 @@ fun ChatInputBar(
         modifier = modifier
             .fillMaxWidth()
             .background(barColor)
+            // ジェスチャーナビゲーション領域と IME の上に入力欄を配置する。
+            .navigationBarsPadding()
+            .imePadding()
             .padding(10.dp)
     ) {
         // bg_input_bar_card.xml (surface_card + border + 20dp 角) 相当
@@ -166,16 +172,22 @@ fun ChatInputBar(
                     onMediaMenuClick()
                 },
                 enabled = mediaMenuEnabled,
-                modifier = Modifier
-                    .size(36.dp)
-                    .background(colorResource(R.color.nezumi_primary_container), CircleShape)
+                // 当たり判定は36dpのまま、丸い表示部分だけ6dp小さくする。
+                modifier = Modifier.requiredSize(36.dp)
             ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_add),
-                    contentDescription = stringResource(R.string.add_media_menu),
-                    tint = colorResource(R.color.nezumi_primary),
-                    modifier = Modifier.size(20.dp)
-                )
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .background(colorResource(R.color.nezumi_primary_container), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_add),
+                        contentDescription = stringResource(R.string.add_media_menu),
+                        tint = colorResource(R.color.nezumi_primary),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
 
             Box(
@@ -224,7 +236,7 @@ fun ChatInputBar(
                     onClick = onMicClick,
                     enabled = micEnabled,
                     modifier = Modifier
-                        .size(36.dp)
+                        .requiredSize(36.dp)
                         .background(
                             if (isRecording) colorResource(R.color.recording_red) else Color.Transparent,
                             CircleShape
@@ -245,22 +257,34 @@ fun ChatInputBar(
             }
 
             // bg_send_btn_circle.xml (nezumi_primary の円) 相当
+            // 未入力時(sendEnabled=false)はグレー、入力時/送信中はブルーに切り替える
             IconButton(
                 onClick = onSendClick,
                 enabled = sendEnabled,
                 modifier = Modifier
                     .padding(start = 4.dp)
-                    .size(36.dp)
-                    .background(colorResource(R.color.nezumi_primary), CircleShape)
+                    .requiredSize(36.dp)
             ) {
-                Icon(
-                    painter = painterResource(
-                        if (isGenerating) R.drawable.ic_stop else R.drawable.ic_send
-                    ),
-                    contentDescription = stringResource(R.string.send_icon),
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .background(
+                            if (sendEnabled) colorResource(R.color.nezumi_primary)
+                            else colorResource(R.color.send_btn_disabled_bg),
+                            CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(
+                            if (isGenerating) R.drawable.ic_stop else R.drawable.ic_send
+                        ),
+                        contentDescription = stringResource(R.string.send_icon),
+                        tint = if (sendEnabled) Color.White
+                            else colorResource(R.color.send_btn_disabled_icon),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
     }

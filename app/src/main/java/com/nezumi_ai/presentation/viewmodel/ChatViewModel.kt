@@ -1130,7 +1130,9 @@ class ChatViewModel(
         contextUsageEstimationJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { sessionRepository.getSessionById(sessionId) }.getOrNull()?.let { session ->
-                if (session.lastKnownContextTokens > 0) {
+                // DB 読み出し中に別セッションへ切り替わることがある。古い読み出し結果を
+                // 現在のメーターへ反映すると、空の新規セッションに前セッションの値が残る。
+                if (isDisplayedSession(sessionId) && session.lastKnownContextTokens > 0) {
                     _contextUsageTokens.value = session.lastKnownContextTokens
                     _contextMediaTokens.value = session.lastKnownMediaTokens
                     Log.d(TAG, "CONTEXT_METER: restored persisted tokens=${session.lastKnownContextTokens} (media=${session.lastKnownMediaTokens}) session=$sessionId")
@@ -1252,8 +1254,8 @@ class ChatViewModel(
                         lastContextUsageEstimationAtMs = nowMs
                         contextUsageEstimationJob?.cancel()
                         contextUsageEstimationJob = viewModelScope.launch(Dispatchers.IO) {
-                            val contextUsageChars = estimateContextUsageChars(filtered)
-                            if (activeCollectionSessionId == estimationSessionId) {
+                            val contextUsageChars = estimateContextUsageChars(filtered, estimationSessionId)
+                            if (isCurrentContextSession(estimationSessionId)) {
                                 _contextUsageChars.value = contextUsageChars
                             }
                         }
@@ -2954,8 +2956,10 @@ class ChatViewModel(
                 val exactContextTokens = manager.getCurrentContextTokenCountSync()
                 if (exactContextTokens != null && exactContextTokens > 0) {
                     val mediaTokens = manager.getLastPromptTokenInfoSync()?.second ?: 0
-                    _contextUsageTokens.value = exactContextTokens
-                    _contextMediaTokens.value = mediaTokens
+                    if (isCurrentContextSession(sessionId)) {
+                        _contextUsageTokens.value = exactContextTokens
+                        _contextMediaTokens.value = mediaTokens
+                    }
                     // シークレットセッションは DB に残さない (既存のプライバシー方針に合わせる)
                     if (!_isCurrentSessionIncognito.value) {
                         sessionRepository.updateLastKnownContextTokens(sessionId, exactContextTokens, mediaTokens)
@@ -4555,7 +4559,18 @@ class ChatViewModel(
     private fun buildMemorySearchQuery(messages: List<MessageEntity>): String =
         promptBuilding.buildMemorySearchQuery(messages)
 
-    private suspend fun estimateContextUsageChars(messages: List<MessageEntity>): Int {
+    /** True only while [sessionId] is still the session shown by the UI. */
+    private fun isDisplayedSession(sessionId: Long): Boolean =
+        _currentSessionId.value == sessionId
+
+    /** True only while [sessionId] is shown and owns the active message collection. */
+    private fun isCurrentContextSession(sessionId: Long): Boolean =
+        isDisplayedSession(sessionId) && activeCollectionSessionId == sessionId
+
+    private suspend fun estimateContextUsageChars(
+        messages: List<MessageEntity>,
+        sessionId: Long
+    ): Int {
  // バグ修正: メーター計算を実際の推論ロジック（buildPromptWithSessionContext）と統一
         // Phase 14: プロンプトの現在の文字数を推定（実際の制限は config.contextWindow（トークン数）に依存）
         val selectedModel = getActiveSelectedModel()
@@ -4576,7 +4591,9 @@ class ChatViewModel(
         val trimmedBase = trimPromptToWindow(basePrompt, config.contextWindow)
         val basePromptSize = trimmedBase.length
         // モーダル表示用に、現時点で組み立てられている生のプロンプト全文を保持しておく
-        _contextRawPrompt.value = trimmedBase
+        if (isCurrentContextSession(sessionId)) {
+            _contextRawPrompt.value = trimmedBase
+        }
 
         // コンテキストメーター正確化 (GGUF):
         //   chars→トークン換算 (÷4) は粗いため、モデルロード済みなら実トークナイザで
@@ -4586,7 +4603,7 @@ class ChatViewModel(
         if (isGgufEngine) {
             runCatching { manager.countPromptTokensSync(trimmedBase) }
                 .getOrNull()?.let { exactTokens ->
-                    if (exactTokens > 0) {
+                    if (exactTokens > 0 && isCurrentContextSession(sessionId)) {
                         _contextUsageTokens.value = exactTokens
                         Log.d(TAG, "CONTEXT_METER: GGUF exact tokenized tokens=$exactTokens (chars=$basePromptSize)")
                     }
@@ -4596,7 +4613,7 @@ class ChatViewModel(
             //   Conversation.getTokenCount() は prefill + decode の実測トークン数を返す。
             runCatching { manager.getCurrentContextTokenCountSync() }
                 .getOrNull()?.let { exactTokens ->
-                    if (exactTokens > 0) {
+                    if (exactTokens > 0 && isCurrentContextSession(sessionId)) {
                         _contextUsageTokens.value = exactTokens
                         Log.d(TAG, "CONTEXT_METER: LiteRT exact KV tokens=$exactTokens (chars=$basePromptSize)")
                     }
