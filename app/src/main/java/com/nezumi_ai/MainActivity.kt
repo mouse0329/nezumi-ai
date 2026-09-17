@@ -45,6 +45,7 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.DrawerValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -128,6 +129,8 @@ class MainActivity : AppCompatActivity() {
     private var drawerDateRefreshJob: Job? = null
     private var lastRenderedDrawerDayStartMillis: Long = 0L
     private var crashDialogPresentationAttempted = false
+    // 現在のナビゲーション画面がサイドバー操作を許可するか (setContent 内で更新)。
+    private var drawerEnabledByNav = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -141,10 +144,20 @@ class MainActivity : AppCompatActivity() {
                 val scope = rememberCoroutineScope()
                 composeDrawerState = drawerState
                 composeDrawerScope = scope
+                // サイドバーはチャット画面でのみ開けるようにする。
+                // 設定・ミニアプリ・ミニアプリマネージャー・モデル管理などの
+                // チャット以外の画面ではジェスチャー/ボタンの両方で無効化する。
+                val navBackStackEntry by androidx.navigation.compose.currentBackStackEntryAsState()
+                val drawerGesturesEnabled = navBackStackEntry?.destination?.id == R.id.chatFragment
+                drawerEnabledByNav = drawerGesturesEnabled
+                if (!drawerGesturesEnabled && drawerState.isOpen) {
+                    LaunchedEffect(drawerGesturesEnabled) { drawerState.close() }
+                }
 
                 NezumiComposeTheme {
                     ModalNavigationDrawer(
                         drawerState = drawerState,
+                        gesturesEnabled = drawerGesturesEnabled,
                         drawerContent = {
                             ModalDrawerSheet(
                                 modifier = Modifier.width(280.dp)
@@ -336,6 +349,7 @@ class MainActivity : AppCompatActivity() {
     fun isInIncognitoMode(): Boolean = isIncognitoModeActive
 
     fun openDrawer() {
+        if (!drawerEnabledByNav) return
         val state = composeDrawerState ?: return
         composeDrawerScope?.launch { state.open() }
     }
@@ -482,7 +496,7 @@ class MainActivity : AppCompatActivity() {
     override fun onBackPressed() {
         // ドロワーは Compose 側の BackHandler (setContent 内) が閉じる。
         // ここでは開状態だけ確認して消費済みかどうかを判定する。
-        if (composeDrawerState?.isOpen == true) {
+        if (drawerEnabledByNav && composeDrawerState?.isOpen == true) {
             closeDrawer()
         } else {
             super.onBackPressed()

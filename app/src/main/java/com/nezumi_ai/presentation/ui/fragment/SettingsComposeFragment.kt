@@ -156,6 +156,8 @@ class SettingsComposeFragment : Fragment() {
         setOf(LlamaCppGpuBackend.OPENCL, LlamaCppGpuBackend.VULKAN)
     private var llamaCppBatchSize by mutableStateOf(512)
     private var llamaCppUBatchSize by mutableStateOf(512)
+    // マルチモーダル (mtmd) の画像最大トークン数。0 = デフォルト (256)。
+    private var llamaCppImageMaxTokens by mutableStateOf(0)
     private var llamaCppKvUnified by mutableStateOf(true)
     private var llamaCppNKeep by mutableStateOf(0)
     private var llamaCppRopeFreqBase by mutableStateOf(0.0f)
@@ -803,6 +805,7 @@ class SettingsComposeFragment : Fragment() {
                     append(llamaCppGpuLayers); append('|')
                     append(llamaCppBatchSize); append('|')
                     append(llamaCppUBatchSize); append('|')
+                    append(llamaCppImageMaxTokens); append('|')
                     append(llamaCppKvUnified); append('|')
                     append(llamaCppNKeep); append('|')
                     append(llamaCppRopeFreqBase); append('|')
@@ -2410,6 +2413,42 @@ class SettingsComposeFragment : Fragment() {
                                     valueRange = 32f..2048f,
                                     steps = 2016/32 - 1,
                                     modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            // マルチモーダル (mtmd): --image-max-tokens 相当。
+                            // 0 = デフォルト (256。従来動作と同じ)。
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = stringResource(id = R.string.settings_image_max_tokens),
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = if (llamaCppImageMaxTokens <= 0) stringResource(id = R.string.settings_image_max_tokens_default) else llamaCppImageMaxTokens.toString(),
+                                        color = colorResource(id = R.color.primary),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                    )
+                                }
+                                Slider(
+                                    value = llamaCppImageMaxTokens.toFloat(),
+                                    onValueChange = { llamaCppImageMaxTokens = it.roundToInt().coerceIn(0, 8192) },
+                                    valueRange = 0f..8192f,
+                                    steps = 8192/256 - 1,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Text(
+                                    text = stringResource(id = R.string.settings_image_max_tokens_desc),
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.bodySmall
                                 )
                             }
 
@@ -4103,6 +4142,7 @@ class SettingsComposeFragment : Fragment() {
             llamaCppGpuLayers = gpuLayers
             llamaCppBatchSize = batchSize
             llamaCppUBatchSize = uBatchSize
+            llamaCppImageMaxTokens = PreferencesHelper.getLlamaCppImageMaxTokens(requireContext())
             llamaCppKvUnified = settingsRepository.getLlamaCppKvUnified()
             llamaCppNKeep = nKeep
             llamaCppRopeFreqBase = ropeFreqBase
@@ -4193,6 +4233,7 @@ class SettingsComposeFragment : Fragment() {
         settingsRepository.updateLlamaCppGpuLayers(llamaCppGpuLayers)
         settingsRepository.updateLlamaCppBatchSize(llamaCppBatchSize)
         settingsRepository.updateLlamaCppUBatchSize(llamaCppUBatchSize)
+        PreferencesHelper.setLlamaCppImageMaxTokens(requireContext(), llamaCppImageMaxTokens)
         settingsRepository.updateLlamaCppKvUnified(llamaCppKvUnified)
         settingsRepository.updateLlamaCppNKeep(llamaCppNKeep)
         settingsRepository.updateLlamaCppRopeFreqBase(llamaCppRopeFreqBase)

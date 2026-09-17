@@ -565,7 +565,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     jboolean context_shift_enabled,
     jboolean kv_unified,
     jint seed,
-    jstring j_gpu_backend)
+    jstring j_gpu_backend,
+    jint image_max_tokens)
 {
     std::call_once(g_backend_init_once, []()
                    {
@@ -662,8 +663,10 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
                                           ? cparams.flash_attn_type
                                           : LLAMA_FLASH_ATTN_TYPE_DISABLED;
         mctx_params.warmup = false; // 起動時間短縮のため warmup は行わない
-        // モバイルでは 1472^2 級の ViT は遅すぎて不安定。256 token 程度に抑える。
-        mctx_params.image_max_tokens = 256;
+        // --image-max-tokens 相当: 動的解像度ビジョンモデルで 1 画像が使える
+        // 最大トークン数。デフォルト 256 (モバイルでは 1472^2 級の ViT は遅すぎて
+        // 不安定なため)。<= 0 のときは従来動作と同じ 256 にフォールバックする。
+        mctx_params.image_max_tokens = image_max_tokens > 0 ? image_max_tokens : 256;
 
         nc->mtmd_ctx = mtmd_init_from_file(mmproj_path, model, mctx_params);
         env->ReleaseStringUTFChars(j_mmproj_path, mmproj_path);
@@ -674,8 +677,9 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
         }
         else
         {
-            LOGI("llamaInit: mtmd loaded (vision=%d audio=%d)",
-                 mtmd_support_vision(nc->mtmd_ctx), mtmd_support_audio(nc->mtmd_ctx));
+            LOGI("llamaInit: mtmd loaded (vision=%d audio=%d) image_max_tokens=%d",
+                 mtmd_support_vision(nc->mtmd_ctx), mtmd_support_audio(nc->mtmd_ctx),
+                 mctx_params.image_max_tokens);
         }
     }
 

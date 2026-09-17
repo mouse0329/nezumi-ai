@@ -14,7 +14,8 @@ class LlamaCppContext(
     kvUnified: Boolean = true,
     ropeFreqBase: Float = 0f,
     ropeFreqScale: Float = 1f,
-    gpuBackend: String = LlamaCppGpuBackend.CPU
+    gpuBackend: String = LlamaCppGpuBackend.CPU,
+    imageMaxTokens: Int = 0
 ) {
     private var ptr: Long = if (LlamaBridge.isLibraryLoaded()) {
         LlamaBridge.llamaInit(
@@ -33,7 +34,8 @@ class LlamaCppContext(
             contextShiftEnabled,
             kvUnified,
             -1,
-            gpuBackend
+            gpuBackend,
+            imageMaxTokens
         )
     } else {
         0L

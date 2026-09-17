@@ -55,6 +55,7 @@ object LlamaBridge {
      * @param kvUnified llama.cpp kv_unified（Qwen3.5 / IM-RoPE の位置レイアウト用）
      * @param seed 乱数シード（-1 でランダム）
      * @param gpuBackend llama.cpp GPU バックエンド (CPU / OPENCL / VULKAN)
+     * @param imageMaxTokens 1 画像が使える最大トークン数 (--image-max-tokens 相当。0 以下でデフォルト 256)
      * @return ネイティブコンテキストポインタ（0 = 失敗）
      */
     external fun llamaInit(
@@ -73,7 +74,8 @@ object LlamaBridge {
         contextShiftEnabled: Boolean,
         kvUnified: Boolean,
         seed: Int,
-        gpuBackend: String
+        gpuBackend: String,
+        imageMaxTokens: Int
     ): Long
 
     /** 直近の llamaInit 失敗時に llama.cpp が出力した ERROR ログ。 */

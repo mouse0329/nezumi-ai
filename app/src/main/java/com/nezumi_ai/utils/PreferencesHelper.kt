@@ -22,6 +22,7 @@ object PreferencesHelper {
     private const val KEY_BRAVE_SEARCH_API_KEY = "brave_search_api_key"
     private const val KEY_ENABLE_THINKING = "enable_thinking"
     private const val KEY_REQUIRE_MULTIMODAL = "require_multimodal"
+    private const val KEY_LLAMACPP_IMAGE_MAX_TOKENS = "llamacpp_image_max_tokens"
     private const val KEY_SECRET_MODE_PIN_HASH = "secret_mode_pin_hash"
     private const val KEY_SECRET_MODE_ENABLED = "secret_mode_enabled"
     private const val KEY_ALWAYS_LOCK_ENABLED = "always_lock_enabled"
@@ -237,6 +238,19 @@ object PreferencesHelper {
 
     fun setRequireMultimodal(context: Context, enabled: Boolean) {
         getSharedPreferences(context).edit().putBoolean(KEY_REQUIRE_MULTIMODAL, enabled).apply()
+    }
+
+    /**
+     * llama.cpp (mtmd) の 1 画像あたり最大トークン数 (--image-max-tokens 相当)。
+     * 動的解像度ビジョンモデルでのみ使われる。0 = デフォルト (256 トークン)。
+     */
+    fun getLlamaCppImageMaxTokens(context: Context): Int {
+        return getSharedPreferences(context).getInt(KEY_LLAMACPP_IMAGE_MAX_TOKENS, 0)
+    }
+
+    fun setLlamaCppImageMaxTokens(context: Context, tokens: Int) {
+        getSharedPreferences(context).edit()
+            .putInt(KEY_LLAMACPP_IMAGE_MAX_TOKENS, tokens.coerceIn(0, 8192)).apply()
     }
 
     fun isSecretModeEnabled(context: Context): Boolean {

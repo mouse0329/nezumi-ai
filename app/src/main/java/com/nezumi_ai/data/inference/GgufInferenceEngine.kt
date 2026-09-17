@@ -404,6 +404,10 @@ class GgufInferenceEngine(
                         ropeFreqScale = normalized.llamaCppRopeFreqScale,
                         kvUnified = normalized.llamaCppKvUnified,
                         gpuBackend = gpuBackend,
+                        // マルチモーダル (mtmd) の 1 画像あたり最大トークン数。
+                        // ユーザー設定 (0 = デフォルトの 256) をそのままネイティブへ渡す。
+                        imageMaxTokens = com.nezumi_ai.utils.PreferencesHelper
+                            .getLlamaCppImageMaxTokens(appContext),
                     )
                 }
 
