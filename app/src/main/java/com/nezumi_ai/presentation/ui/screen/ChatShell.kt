@@ -235,24 +235,32 @@ fun ChatInputBar(
                 IconButton(
                     onClick = onMicClick,
                     enabled = micEnabled,
-                    modifier = Modifier
-                        .requiredSize(36.dp)
-                        .background(
-                            if (isRecording) colorResource(R.color.recording_red) else Color.Transparent,
-                            CircleShape
-                        )
+                    // 操作領域は36dpに保ち、背景は内側の円だけに描画する。
+                    // IconButton全体に背景を付けると、録音中だけタッチ領域の
+                    // 計測サイズが見た目の円に反映されて大きくなることがある。
+                    modifier = Modifier.requiredSize(36.dp)
                 ) {
-                    Icon(
-                        painter = painterResource(
-                            if (isRecording) R.drawable.ic_stop else R.drawable.ic_mic
-                        ),
-                        contentDescription = stringResource(
-                            if (isRecording) R.string.audio_stop_and_send else R.string.audio_input
-                        ),
-                        // 録音中の停止アイコンは白、平常時はテキスト副色
-                        tint = if (isRecording) Color.White else colorResource(R.color.text_secondary),
-                        modifier = Modifier.size(20.dp)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .background(
+                                if (isRecording) colorResource(R.color.recording_red) else Color.Transparent,
+                                CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            painter = painterResource(
+                                if (isRecording) R.drawable.ic_stop else R.drawable.ic_mic
+                            ),
+                            contentDescription = stringResource(
+                                if (isRecording) R.string.audio_stop_and_send else R.string.audio_input
+                            ),
+                            // 録音中の停止アイコンは白、平常時はテキスト副色
+                            tint = if (isRecording) Color.White else colorResource(R.color.text_secondary),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
 

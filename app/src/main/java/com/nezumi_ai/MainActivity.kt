@@ -6,7 +6,7 @@ import androidx.fragment.app.FragmentContainerView
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
-import androidx.navigation.findNavController
+import androidx.navigation.NavController
 import androidx.navigation.navOptions
 import android.util.Log
 import android.view.Menu
@@ -257,12 +257,13 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     withContext(Dispatchers.Main) {
-                        val navController = findNavController(R.id.nav_host_fragment_content_main)
-                        if (!PreferencesHelper.isInitialSetupCompleted(this@MainActivity)) {
-                            Log.d(TAG, "Initial setup not completed - navigating to setup wizard")
-                            navController.navigate(R.id.setupWizardFragment)
-                        } else {
-                            ensureCurrentSessionExists()
+                        withNavController { navController ->
+                            if (!PreferencesHelper.isInitialSetupCompleted(this@MainActivity)) {
+                                Log.d(TAG, "Initial setup not completed - navigating to setup wizard")
+                                navController.navigate(R.id.setupWizardFragment)
+                            } else {
+                                ensureCurrentSessionExists()
+                            }
                         }
                     }
                 }.onFailure { t ->
@@ -312,6 +313,38 @@ class MainActivity : AppCompatActivity() {
         drawerEnabledByNav = navHost.navController.currentDestination?.id == R.id.chatFragment
     }
 
+    /**
+     * The NavHost is mounted into a Compose AndroidView, so the Activity view
+     * hierarchy is not guaranteed to have Navigation's view tag yet. Resolve
+     * the controller from the NavHostFragment instead of Activity.findNavController,
+     * and retry once on the next frame during the initial composition.
+     */
+    private fun withNavController(action: (NavController) -> Unit) {
+        if (isFinishing || isDestroyed) return
+
+        val navController = (supportFragmentManager
+            .findFragmentById(R.id.nav_host_fragment_content_main)
+                as? androidx.navigation.fragment.NavHostFragment)
+            ?.navController
+
+        if (navController != null) {
+            action(navController)
+        } else {
+            window.decorView.post {
+                if (isFinishing || isDestroyed) return@post
+                val retryController = (supportFragmentManager
+                    .findFragmentById(R.id.nav_host_fragment_content_main)
+                        as? androidx.navigation.fragment.NavHostFragment)
+                    ?.navController
+                if (retryController != null) {
+                    action(retryController)
+                } else {
+                    Log.w(TAG, "NavHost is not ready; navigation request was skipped")
+                }
+            }
+        }
+    }
+
 
     private fun showHistorySearchModal() {
         val database = NezumiAiDatabase.getInstance(applicationContext)
@@ -331,8 +364,9 @@ class MainActivity : AppCompatActivity() {
                                 putLong("sessionId", sessionId)
                                 putLong("scrollToMessageId", messageId)
                             }
-                            findNavController(R.id.nav_host_fragment_content_main)
-                                .navigate(R.id.chatFragment, bundle)
+                            withNavController { navController ->
+                                navController.navigate(R.id.chatFragment, bundle)
+                            }
                             (window.decorView as? android.view.ViewGroup)?.removeView(this)
                         },
                         onDismiss = {
@@ -368,9 +402,10 @@ class MainActivity : AppCompatActivity() {
      */
     private fun navigateFromDrawer(destinationId: Int) {
         closeDrawer()
-        val navController = findNavController(R.id.nav_host_fragment_content_main)
-        if (navController.currentDestination?.id != destinationId) {
-            navController.navigate(destinationId)
+        withNavController { navController ->
+            if (navController.currentDestination?.id != destinationId) {
+                navController.navigate(destinationId)
+            }
         }
     }
 
@@ -463,7 +498,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun navigateToChatSession(sessionId: Long, forceNewFragment: Boolean = false) {
-        val navController = findNavController(R.id.nav_host_fragment_content_main)
+        withNavController { navController ->
  // セッション遷移最適化: すでに ChatFragment が表示されている場合は、
         //   フラグメントを再生成（popBackStack + navigate）する代わりに、
         //   既存の ChatFragment の switchSession() を呼んでセッションIDだけ切り替える。
@@ -477,7 +512,7 @@ class MainActivity : AppCompatActivity() {
                 ?.firstOrNull { it is com.nezumi_ai.presentation.ui.fragment.ChatFragment } as? com.nezumi_ai.presentation.ui.fragment.ChatFragment
             if (chatFragment != null && chatFragment.isAdded) {
                 chatFragment.switchSession(sessionId)
-                return
+                return@withNavController
             }
         }
         // ChatFragment が表示されていない場合は通常通りナビゲートする
@@ -494,6 +529,7 @@ class MainActivity : AppCompatActivity() {
                 launchSingleTop = true
             }
         )
+        }
     }
 
     override fun onBackPressed() {
@@ -1030,18 +1066,19 @@ class MainActivity : AppCompatActivity() {
                 window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
                 Log.d(TAG, "Entered incognito mode - FLAG_SECURE set")
 
-                val navController = findNavController(R.id.nav_host_fragment_content_main)
-                if (navController.currentDestination?.id == R.id.chatFragment) {
-                    navController.popBackStack(R.id.chatFragment, true)
+                withNavController { navController ->
+                    if (navController.currentDestination?.id == R.id.chatFragment) {
+                        navController.popBackStack(R.id.chatFragment, true)
+                    }
+                    navController.navigate(
+                        R.id.chatFragment,
+                        Bundle().apply {
+                            putLong("sessionId", sessionId)
+                            putBoolean("isIncognito", true)
+                        },
+                        navOptions { launchSingleTop = true }
+                    )
                 }
-                navController.navigate(
-                    R.id.chatFragment,
-                    Bundle().apply {
-                        putLong("sessionId", sessionId)
-                        putBoolean("isIncognito", true)
-                    },
-                    navOptions { launchSingleTop = true }
-                )
             }.onFailure {
                 Log.e(TAG, "Failed to create incognito session", it)
             }
@@ -1056,9 +1093,10 @@ class MainActivity : AppCompatActivity() {
             .setMessage("シークレットモードを使用するには 4 桁の PIN を設定する必要があります。設定画面で PIN を登録してください。")
             .setNegativeButton("キャンセル", null)
             .setPositiveButton("設定画面へ") { _, _ ->
-                val navController = findNavController(R.id.nav_host_fragment_content_main)
-                if (navController.currentDestination?.id != R.id.settingsFragment) {
-                    navController.navigate(R.id.settingsFragment)
+                withNavController { navController ->
+                    if (navController.currentDestination?.id != R.id.settingsFragment) {
+                        navController.navigate(R.id.settingsFragment)
+                    }
                 }
             }
             .show()
@@ -1180,8 +1218,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onSupportNavigateUp(): Boolean {
         return runCatching {
-            val navController = findNavController(R.id.nav_host_fragment_content_main)
-            navController.navigateUp() || super.onSupportNavigateUp()
+            var navigatedUp = false
+            withNavController { navController ->
+                navigatedUp = navController.navigateUp()
+            }
+            navigatedUp || super.onSupportNavigateUp()
         }.getOrElse {
             Log.e(TAG, "navigateUp failed", it)
             super.onSupportNavigateUp()
