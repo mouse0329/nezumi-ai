@@ -1861,6 +1861,12 @@ class ChatViewModel(
         var streamingMessageId: Long? = null
         var currentHasMediaInput = false
         var currentEngineModelName: String? = null
+        // Bug fix: 正常完了パス (isStreaming=false を明示的に書き込んだ) と、
+        //   finally の safety fallback (異常収束時のみ ThinkingLeakSalvage を走らせたい)
+        //   を区別するためのフラグ。DB の isStreaming 再読み込みだけに頼ると、
+        //   正常完了直後の一瞬のタイミングで誤って salvage が発火し、正しく分離済みの
+        //   thinking が再度 content 側へ漏れて表示される不具合があった。
+        var normalCompletionPersisted = false
         // Bug fix(#5): 過去ターンの media を LiteRT に再添付する際に生成する Bitmap を保持し、
         // finally で確実に recycle するため try の外側にスコープを出しておく。
         val pastHistoryBitmapsToRecycle = mutableListOf<Bitmap>()
@@ -2971,6 +2977,7 @@ class ChatViewModel(
                         generationTimeMs = generationTimeMs,
                         ttftMs = ttftMs
                     )
+                    normalCompletionPersisted = true
                     if (!finalToolResultsJson.isNullOrBlank() && finalToolResultsJson != "[]") {
                         runCatching {
                             val db = NezumiAiDatabase.getInstance(appContext)
@@ -3035,6 +3042,7 @@ class ChatViewModel(
                         isStreaming = false,
                         thinkingContent = null
                     )
+                    normalCompletionPersisted = true
                     Log.d(TAG, "Empty payload message saved to DB")
                     syncSessionTitleFromDb(sessionId)
                     Log.d(TAG, "Session title sync complete (empty payload)")
@@ -3050,6 +3058,7 @@ class ChatViewModel(
                         isStreaming = false,
                         thinkingContent = null
                     )
+                    normalCompletionPersisted = true
                 }
                 withContext(Dispatchers.Main) {
  _uiMessage.emit(appContext.getString(R.string.vm_response_timeout))
@@ -3108,6 +3117,7 @@ class ChatViewModel(
                             thinkingContent = finalThinking,
                             toolResultsJson = updatedToolResultsJson
                         )
+                        normalCompletionPersisted = true
                     }
                 }
  // 停止直後はネイティブ KV に途中トークンが残っているため、
@@ -3158,6 +3168,7 @@ class ChatViewModel(
                 if (id != null) {
                     runCatching { messageRepository.deleteMessageById(id) }
                         .onFailure { Log.w(TAG, "Failed to delete streaming error placeholder id=$id", it) }
+                    normalCompletionPersisted = true
                 }
                 withContext(Dispatchers.Main) {
                     _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
@@ -3174,6 +3185,7 @@ class ChatViewModel(
                         isStreaming = false,
                         thinkingContent = null
                     )
+                    normalCompletionPersisted = true
                 } else {
                     messageRepository.addMessage(
                         sessionId = sessionId,
@@ -3193,7 +3205,14 @@ class ChatViewModel(
                 streamingAssistantMessageIdForTools = null
                 // Safety fallback: if the streaming message still exists and is still marked as streaming,
                 // clear the flag so the UI does not stay stuck in "生成中".
-                if (streamingMessageId != null) {
+                // Bug fix: 上記の各正常完了/エラー/キャンセルパスは既に isStreaming=false を
+                //   明示的に persist 済みなので、ここでの DB 再読み込みベースの判定を通す必要が
+                //   ない。normalCompletionPersisted が立っている場合はこの safety fallback を
+                //   完全にスキップする。これにより、正常完了直後の DB 反映タイミングのズレで
+                //   誤って ThinkingLeakSalvage が発火し、分離済みの thinking が本文へ
+                //   再混入する不具合を防ぐ。この fallback はあくまで「どの完了パスも通らずに
+                //   コルーチンが終わった」真の異常系だけを対象にする。
+                if (!normalCompletionPersisted && streamingMessageId != null) {
                     try {
                         withContext(Dispatchers.IO) {
                             val current = messageRepository.getMessageById(streamingMessageId)
