@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(MNN_SD_BUILD_SHARED "Build shared library" ON)
 option(MNN_SD_BUILD_PROBE_CLI "Build mnn_sd_probe host CLI" ON)
 option(MNN_SD_BUILD_HTTP_SERVER "Build optional HTTP adapter" OFF)
+option(MNN_SD_BUILD_WASM "Build browser WASM module" OFF)
 
 set(MNN_SD_PUBLIC_HEADERS
     include/mnn_sd/export.h
@@ -59,7 +60,11 @@ if(EXISTS "${MNN_ROOT}/include/MNN/Interpreter.hpp")
             message(WARNING "libMNN.so not found — probe will stub. Run scripts/build_mnn_android.ps1")
         endif()
     else()
-        find_library(MNN_LIB MNN PATHS "${MNN_ROOT}/build" NO_DEFAULT_PATH)
+        if(MNN_LIBRARY AND EXISTS "${MNN_LIBRARY}")
+            set(MNN_LIB "${MNN_LIBRARY}")
+        else()
+            find_library(MNN_LIB MNN PATHS "${MNN_ROOT}/build" NO_DEFAULT_PATH)
+        endif()
         if(MNN_LIB)
             set(MNN_SD_MNN_LIBS "${MNN_LIB}")
         else()
@@ -100,6 +105,29 @@ endif()
 
 if(MNN_SD_MNN_LIBS)
     target_link_libraries(mnn_sd_engine PRIVATE ${MNN_SD_MNN_LIBS})
+endif()
+
+# --- Browser WASM / Emscripten ---
+if(MNN_SD_BUILD_WASM)
+    if(NOT EMSCRIPTEN)
+        message(FATAL_ERROR "MNN_SD_BUILD_WASM requires an Emscripten toolchain")
+    endif()
+    add_executable(mnn_sd_wasm wasm/mnn_sd_wasm.cpp)
+    target_link_libraries(mnn_sd_wasm PRIVATE mnn_sd_engine ${MNN_SD_MNN_LIBS})
+    target_include_directories(mnn_sd_wasm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_options(mnn_sd_wasm PRIVATE
+        "--bind"
+        "-sMODULARIZE=1"
+        "-sEXPORT_ES6=1"
+        "-sENVIRONMENT=web,worker"
+        "-sALLOW_MEMORY_GROWTH=1"
+        "-sFILESYSTEM=1"
+        "-sEXPORTED_RUNTIME_METHODS=['FS']"
+        "-sASSERTIONS=0"
+    )
 endif()
 
 # --- Host probe CLI (shape discovery) ---

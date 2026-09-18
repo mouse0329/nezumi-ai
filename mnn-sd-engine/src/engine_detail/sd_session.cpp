@@ -66,9 +66,19 @@ namespace mnn_sd_detail
         else
         {
             schedule.type = MNN_FORWARD_CPU;
+#if defined(__EMSCRIPTEN__)
+            // Browser WASM has no native FP16/low-memory CPU path.  The low
+            // memory schedule can trigger an MNN abort while creating CLIP
+            // sessions for FP16 SD models. Use the portable normal allocator
+            // for every stage; Memory_Low can corrupt quantized UNet weights.
+            schedule.numThread = 1;
+            backend_config.precision = MNN::BackendConfig::Precision_Normal;
+            backend_config.memory = MNN::BackendConfig::Memory_Normal;
+#else
             schedule.numThread = 4;
             backend_config.precision = MNN::BackendConfig::Precision_Low;
             backend_config.memory = MNN::BackendConfig::Memory_Low;
+#endif
         }
         schedule.backendConfig = &backend_config;
     }

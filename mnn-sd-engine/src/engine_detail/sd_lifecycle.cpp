@@ -6,6 +6,7 @@
 #include "mnn_sd/model_config.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <climits>

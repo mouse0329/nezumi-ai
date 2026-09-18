@@ -10,6 +10,7 @@
 // ClipTokenizer::load/bpe/encode_single と一緒にここへ集約した。
 
 #include <string>
+#include <cstdint>
 #include <unordered_map>
 #include <utility>
 #include <vector>

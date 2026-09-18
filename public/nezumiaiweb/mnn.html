@@ -1,0 +1,42 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Nezumi Kiln — MNN WASM</title>
+<style>
+body{font:16px system-ui;max-width:760px;margin:2rem auto;padding:0 1rem;background:#171923;color:#eee}label{display:block;margin:1rem 0}button{padding:.7rem 1rem;border:0;border-radius:.5rem;background:#8b5cf6;color:#fff;font-weight:700}input,textarea{width:100%;box-sizing:border-box;padding:.6rem;background:#242938;color:#fff;border:1px solid #4b5563;border-radius:.4rem}textarea{min-height:5rem}canvas{max-width:100%;margin-top:1rem;background:#000}#status{white-space:pre-wrap;color:#c4b5fd;margin:1rem 0}
+</style>
+<h1>Nezumi Kiln / MNN WASM</h1>
+<p>SD1.5 の MNN モデルファイルを選択して、ブラウザ内 CPU で実行します。</p>
+<label>モデルファイル（clip.mnn / unet.mnn / vae_decoder.mnn / tokenizer.json 等）<input id="files" type="file" multiple></label>
+<label>Prompt<textarea id="prompt">a small mouse in a watercolor forest</textarea></label>
+<label>Negative prompt<textarea id="negative"></textarea></label>
+<label>Steps <input id="steps" type="number" value="20" min="1" max="100"></label>
+<button id="load">モデルを読み込む</button> <button id="generate" disabled>生成</button>
+<div id="status">待機中</div><canvas id="canvas"></canvas>
+<script type="module">
+const status = document.querySelector('#status');
+const worker = new Worker('./mnn-worker.js', {type:'module'});
+let loaded = false;
+const setStatus = s => status.textContent = s;
+worker.onmessage = ({data}) => {
+  if (data.type === 'ready') setStatus('WASM 準備完了。モデルを読み込んでください。');
+  if (data.type === 'loaded') { loaded = true; document.querySelector('#generate').disabled = false; setStatus('モデル読み込み完了: ' + JSON.stringify(data.capabilities)); }
+  if (data.type === 'status') setStatus(data.message);
+  if (data.type === 'error') setStatus('エラー: ' + data.message);
+  if (data.type === 'result') {
+    const canvas = document.querySelector('#canvas'); canvas.width = data.width; canvas.height = data.height;
+    const src = new Uint8Array(data.pixels); const rgba = new Uint8ClampedArray(data.width * data.height * 4);
+    for (let i=0,j=0;i<src.length;i+=3,j+=4) { rgba[j]=src[i]; rgba[j+1]=src[i+1]; rgba[j+2]=src[i+2]; rgba[j+3]=255; }
+    canvas.getContext('2d').putImageData(new ImageData(rgba, data.width, data.height), 0, 0); setStatus('生成完了');
+  }
+};
+worker.postMessage({type:'init'});
+document.querySelector('#load').onclick = async () => {
+  const files = [...document.querySelector('#files').files]; if (!files.length) return setStatus('モデルファイルを選択してください');
+  setStatus('モデルを仮想ファイルシステムへ展開中...');
+  worker.postMessage({type:'load', backend:'cpu', files: await Promise.all(files.map(async f => ({name:f.name, bytes:(await f.arrayBuffer())})))});
+};
+document.querySelector('#generate').onclick = () => {
+  if (!loaded) return; setStatus('生成中...');
+worker.postMessage({type:'generate', prompt:document.querySelector('#prompt').value, negativePrompt:document.querySelector('#negative').value, width:256, height:256, steps:+document.querySelector('#steps').value, cfg:7.5, seed:-1, scheduler:0});
+};
+</script>
