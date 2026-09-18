@@ -310,7 +310,7 @@ else()
 endif()
 
 if(TARGET llama)
-    add_library(llama_bridge SHARED llama_bridge.cpp)
+    add_library(llama_bridge SHARED llama_bridge.cpp memory_estimator.cpp)
 
     # chat.h は common_chat_msg の to_json_oaicompat 等で C++17 を要求する
     target_compile_features(llama_bridge PRIVATE cxx_std_17)

@@ -273,6 +273,27 @@ object LlamaBridge {
      */
     external fun nativeGetLastTimings(ctx: Long): FloatArray?
 
+    // ─── ロード前メモリ見積もり ──────────────────────────────────
+
+    /**
+     * モデルをロードせずに、GGUF ファイルのヘッダー/テンソルメタ情報だけを読んで
+     * 必要メモリ量を見積もる（gguf_init_from_file を no_alloc=true で使用）。
+     *
+     * @param modelPath gguf ファイルの絶対パス
+     * @param nCtx コンテキストウィンドウサイズ（0 以下でモデルの context_length を使用）
+     * @param nGpuLayers GPU オフロード層数（負値で全層オフロード扱い）
+     * @param nBatch 論理バッチサイズ（0 以下で 512 を使用、計算バッファ見積もりに使用）
+     * @param kvCacheType KV キャッシュの型 ("f16" / "f32" / "q8_0" / "q4_0")
+     * @return 見積もり結果の JSON 文字列。失敗時は {"ok":false,"error":"..."}
+     */
+    external fun nativeEstimateMemoryUsage(
+        modelPath: String,
+        nCtx: Int,
+        nGpuLayers: Int,
+        nBatch: Int,
+        kvCacheType: String
+    ): String
+
     // ─── ユーティリティ ──────────────────────────────────────────
 
     /** llama.cpp バージョン・システム情報文字列を返す。 */
