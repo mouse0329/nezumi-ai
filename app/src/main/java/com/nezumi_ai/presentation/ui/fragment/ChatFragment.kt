@@ -15,6 +15,8 @@ import android.os.Build
 import android.content.ClipData
 import android.net.Uri
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.provider.MediaStore
 import android.util.Log
 import android.view.LayoutInflater
@@ -209,6 +211,18 @@ class ChatFragment : Fragment() {
     private lateinit var presetRepository: PresetRepository
     private var isGenerating = false
     private var isModelLoadingNow = false
+    private var isEmbeddingDownloading = false
+
+    // 入力欄のテキスト変化を監視して送信ボタンの有効/無効 (青/グレー) を即時反映する。
+    // Bug fix (何も入力されていないのに送信ボタンが青い):
+    //   旧実装はテキストの有無を監視していなかったため、空欄でも有効 (青) のままだった。
+    private val inputTextWatcher = object : TextWatcher {
+        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+        override fun afterTextChanged(s: Editable?) {
+            renderSendButtonState()
+        }
+    }
     private var currentBackendType = "CPU"
     private var currentModelKey = "E2B"
 
@@ -916,7 +930,13 @@ class ChatFragment : Fragment() {
                         onMicClick = { onMicClicked() },
                         onRecordCancel = { cancelAudioRecording() },
                         onClipboardImagePaste = { pasteFromClipboard() },
-                        onInputViewReady = { view -> messageInputView = view },
+                        onInputViewReady = { view ->
+                            // AndroidView は再構成で EditText を作り直すことがあるため、
+                            // 旧ビューからウォッチャーを外してから付け直す。
+                            messageInputView?.removeTextChangedListener(inputTextWatcher)
+                            messageInputView = view
+                            view.addTextChangedListener(inputTextWatcher)
+                        },
                         modelLoadingOverlay = { ModelLoadingOverlay() }
                     )
                     ContextRawDialog()
@@ -1581,12 +1601,12 @@ class ChatFragment : Fragment() {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.isEmbeddingDownloadInProgress.collect { downloading ->
-                // 抽出中・埋め込みダウンロード中は入力を無効化しないが、ダウンロード中は送信を防ぐ
-                inputEnabledState = !downloading
-                sendEnabledState =
-                    isGenerating || (!downloading && !isModelLoadingNow)
-                renderSendButtonState()
+                viewModel.isEmbeddingDownloadInProgress.collect { downloading ->
+                    // 抽出中・埋め込みダウンロード中は入力を無効化しないが、ダウンロード中は送信を防ぐ
+                    inputEnabledState = !downloading
+                    // sendEnabledState は renderSendButtonState() が入力有無を含めて再計算する。
+                    isEmbeddingDownloading = downloading
+                    renderSendButtonState()
                 if (isGenerating) {
                     responseTypingText = when {
                         downloading -> getString(R.string.embedding_download_progress_message)
@@ -1784,8 +1804,24 @@ class ChatFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.isChatReady.collect { isReady ->
                 inputEnabledState = isReady
-                sendEnabledState = isReady
+                // sendEnabledState は renderSendButtonState() が入力有無を含めて再計算する。
                 renderSendButtonState()
+            }
+        }
+
+        // Bug fix (何も入力されていないのに送信ボタンが青い):
+        //   ViewModel 側で入力テキストがクリアされた経路 (送信完了時など) でも
+        //   EditText 表示とボタン色を同期させる。
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.inputText.collect { text ->
+                    val input = messageInputView ?: return@collect
+                    if (input.text?.toString() != text) {
+                        input.setText(text)
+                        input.setSelection(text.length)
+                    }
+                    renderSendButtonState()
+                }
             }
         }
 
@@ -2253,8 +2289,17 @@ class ChatFragment : Fragment() {
         // アイコン (ic_stop/ic_send) は isGenerating をそのまま渡して切り替える。
         // 動画のフレーム/音声抽出中は、まだ送信できる添付物が確定していないため送信不可にする。
         // 生成停止ボタンとしての利用（isGenerating時）は動画抽出中とは独立に常に有効のままにする。
+        // 未入力かつメディア未添付のときは送信できないためグレー (無効) にする。
+        // Bug fix (何も入力されていないのに送信ボタンが青い):
+        //   旧実装はテキストの有無を見ていなかったため、空欄でも青いままだった。
+        val hasTextInput = !messageInputView?.text.isNullOrBlank()
+        val hasMediaInput = selectedImageUrisList.isNotEmpty() ||
+            !selectedAudioUri.isNullOrEmpty() ||
+            !selectedVideoUri.isNullOrEmpty() ||
+            selectedTextFiles.isNotEmpty()
         sendEnabledState =
-            isGenerating || (!isModelLoadingNow && !isExtractingVideo && !isConvertingDocument)
+            isGenerating || (!isModelLoadingNow && !isExtractingVideo && !isConvertingDocument &&
+                !isEmbeddingDownloading && (hasTextInput || hasMediaInput))
     }
 
     private fun updateMediaAvailability(modelKey: String) {

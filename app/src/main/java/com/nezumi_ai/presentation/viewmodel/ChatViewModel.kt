@@ -2262,6 +2262,16 @@ class ChatViewModel(
                         val stallWatchJob = launch {
                             while (isActive) {
                                 delay(GENERATION_STALL_CHECK_MS)
+                                // Bug fix (応答終了後もボタンが生成中状態のまま):
+                                //   壁時計タイムアウトはこれまで chunk 到着時にしか評価されず、
+                                //   ツール実行中等にエンジンの Flow が黙って止まると
+                                //   (toolCallInProgress=true で停滞検知もスキップされるため)
+                                //   collect が永久に返らず _isLoading が true のまま残っていた。
+                                //   ウォッチドッグ側でも壁時計を評価し、どんな停滞パターンでも
+                                //   必ず収束するようにする。
+                                if (SystemClock.elapsedRealtime() > wallEndAt) {
+                                    throw GenerationWallTimeoutException()
+                                }
                                 if (!firstTokenSeen.get()) continue
                                 if (toolCallInProgress.get()) continue
                                 val idle = SystemClock.elapsedRealtime() - lastChunkAt.get()
@@ -2629,6 +2639,16 @@ class ChatViewModel(
                                     // Thinking フェーズのみで content が空の場合は persist を遅延させる
                                     // （content が来た時、または最終確定時のみ persist する）
                                     val isThinkingOnlyPhase = contentForUi.isEmpty() && !thinkingForUi.isNullOrBlank()
+                                    // Bug fix (開始タグを出さないモデルで Thinking 欄と本文欄が高速で入れ替わる):
+                                    //   Qwen 3.5 系は開始タグを省略して思考本文だけを吐くため、終端タグ到達までは
+                                    //   チャンクが全て content 側として persist される。終端タグ到達後にパーサーが
+                                    //   全文を thinking 側へ移し替えると contentForUi は空に戻るが、そのまま
+                                    //   空 content を persist すると、Room Flow が「思考=本文」「思考=Thinking欄」の
+                                    //   スナップショットを交互に再配信し、カードの高さが伸び縮みを繰り返して見える。
+                                    //   Thinking のみのフェーズでは空 content への置き換えを DB へ書かず、
+                                    //   最終的な退避は finally の ThinkingLeakSalvage 経路に任せる。
+                                    val suppressThinkingOnlyEmptyContentPersist =
+                                        isThinkingOnlyPhase && lastPersistedContent.isNotEmpty()
  // Bug fix(#Thinking-Realtime-1):
                                     //   旧実装は Thinking のみのフェーズ中は shouldPersistToDb=false で in-memory 更新のみ
                                     //   行っていたが、その直後に Room の messagesCollectionJob 側の Flow が古い
@@ -2639,7 +2659,9 @@ class ChatViewModel(
                                     val thinkingChangedSinceLastPersist =
                                         thinkingForUi != lastPersistedThinking
                                     val shouldPersistToDb =
-                                        if (isThinkingOnlyPhase) {
+                                        if (suppressThinkingOnlyEmptyContentPersist) {
+                                            false
+                                        } else if (isThinkingOnlyPhase) {
                                             // Thinking のみでも、初回、または一定間隔経過、または最終確定時は persist する。
                                             thinkingChangedSinceLastPersist && (
                                                 finalFromModelGlobal != null ||
@@ -3215,16 +3237,32 @@ class ChatViewModel(
                                     TAG,
                                     "generateAIResponse finally: message $streamingMessageId still streaming after completion, clearing flag"
                                 )
+                                // Bug fix (開始タグを出さないモデルの思考が本文に残る):
+                                //   Qwen 3.5 系は開始タグを省略するため、ストリーミング中は
+                                //   思考本文が content 側に persist される。終端タグ未到達のまま
+                                //   収束した場合は content に思考が残ったままになるので、
+                                //   ThinkingLeakSalvage で思考ブロックを thinkingContent 側へ退避する。
+                                val salvaged = ThinkingLeakSalvage.extractThinkingFromPartialContent(
+                                    current.content
+                                )
+                                val salvagedContent = salvaged.first
+                                val salvagedThinking = salvaged.second
                                 messageRepository.updateMessageContent(
                                     messageId = streamingMessageId,
-                                    content = current.content.ifBlank {
-                                        messageForEmptyInferencePayload(
-                                            currentHasMediaInput,
-                                            currentEngineModelName ?: ""
-                                        )
+                                    content = salvagedContent.ifBlank {
+                                        // 本文が空で思考だけがある場合はプレースホルダーに置き換えず、
+                                        // 表示されていた内容を維持する (生成結果が消えるのを防ぐ)。
+                                        if (salvagedThinking.isNullOrBlank()) {
+                                            messageForEmptyInferencePayload(
+                                                currentHasMediaInput,
+                                                currentEngineModelName ?: ""
+                                            )
+                                        } else {
+                                            salvagedContent
+                                        }
                                     },
                                     isStreaming = false,
-                                    thinkingContent = current.thinkingContent
+                                    thinkingContent = salvagedThinking ?: current.thinkingContent
                                 )
                             }
                         }
