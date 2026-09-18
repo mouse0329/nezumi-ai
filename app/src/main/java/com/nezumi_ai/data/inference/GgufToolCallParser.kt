@@ -64,6 +64,15 @@ object GgufToolCallParser {
     //   - 開きタグ: `<|tool_call>` (通常のタグ文字とは別トークン)
     //   - 中身: `call:` プレフィックス → ツール名 → `{` から始まる JSON 引数
     //   - 閉じタグ: `<tool_call|>` (Gemma 4 は稀に閉じタグを吐かずに終端することがある)
+    // ---- Granite 4 系 (IBM) の <function=name>…</function> 形式のパターン ----
+    // 公式 chat_template が要求する XML 形式 (<tool_call> タグ内に入れ子で現れる)。
+    private val graniteFunctionBlockPattern = Regex(
+        "(?is)<function\\s*=\\s*([A-Za-z_][A-Za-z0-9_\\-]*)\\s*>\\s*(.*?)\\s*</function>"
+    )
+    private val graniteParameterPattern = Regex(
+        "(?is)<parameter\\s*=\\s*([^>]+?)\\s*>\\s*(.*?)\\s*</parameter>"
+    )
+
     private val openGemma4ToolCallTag = Regex("(?is)<\\|tool_call>")
     private val closeGemma4ToolCallTag = Regex("(?is)<tool_call\\|>")
 
@@ -238,7 +247,8 @@ object GgufToolCallParser {
                 val (salvagedCall, _) = if (useGemma4) {
                     salvageGemma4Payload(rawJson)
                 } else {
-                    salvageGenericPayload(rawJson)
+                    salvageGenericPayload(rawJson).takeIf { it.first != null }
+                        ?: salvageGranitePayload(rawJson)
                 }
                 segments += Segment.ToolCallSegment(
                     index = toolIndex,
@@ -257,7 +267,7 @@ object GgufToolCallParser {
             val parsedCall = if (useGemma4) {
                 parseGemma4CallPayload(rawJson)
             } else {
-                parseToolCallPayload(rawJson)
+                parseToolCallPayload(rawJson) ?: parseGraniteFunctionPayload(rawJson)
             }
             segments += Segment.ToolCallSegment(
                 index = toolIndex,
@@ -374,7 +384,9 @@ object GgufToolCallParser {
             val close = closeToolCallTag.find(text, payloadStart)
             if (close != null) {
                 val payload = text.substring(payloadStart, close.range.first).trim()
-                parseToolCallPayload(payload)?.let {
+                // 汎用 JSON 形式に加え、Granite 4 系の <function=name>…</function> 形式も受理する
+                // (同一の <tool_call> ラッパーを共有するため、ここでフォールバックする)。
+                (parseToolCallPayload(payload) ?: parseGraniteFunctionPayload(payload))?.let {
                     toolCalls += it
                     ranges += open.range.first..close.range.last
                 }
@@ -383,13 +395,17 @@ object GgufToolCallParser {
                 // 閉じタグ無し。JSON バランスが取れていれば救済、そうでなければトークン切れとして通知。
                 val payload = text.substring(payloadStart)
                 val (salvaged, isComplete) = salvageGenericPayload(payload)
+                val graniteSalvaged = if (salvaged == null) salvageGranitePayload(payload).first else null
                 if (salvaged != null && isComplete) {
                     toolCalls += salvaged
+                    ranges += open.range.first..(text.length - 1)
+                } else if (graniteSalvaged != null) {
+                    toolCalls += graniteSalvaged
                     ranges += open.range.first..(text.length - 1)
                 } else {
                     // JSON が途中で切れている = トークン切れの実行失敗マーカー。
                     hadTruncated = true
-                    truncatedName = extractGenericToolName(payload)
+                    truncatedName = extractGenericToolName(payload) ?: extractGraniteToolName(payload)
                 }
                 break
             }
@@ -584,6 +600,35 @@ object GgufToolCallParser {
         else -> "\"${
             ToolPayloadSanitizer.sanitizeValue(value.toString()).replace("\"", "\\\"")
         }\""
+    }
+
+    /**
+     * Granite 4 系 (IBM) の `<function=name><parameter=k>v</parameter>…</function>` 形式を
+     * [ToolCall] に変換する。公式 chat_template が `<tool_call>` 内に要求する XML 形式。
+     * パラメータ値はすべて文字列として受け取る (数値/真偽値の型付けはツール実行側に委ねる)。
+     */
+    private fun parseGraniteFunctionPayload(payload: String): ToolCall? {
+        val match = graniteFunctionBlockPattern.find(payload) ?: return null
+        val name = match.groupValues[1].trim()
+        if (name.isBlank()) return null
+        val args = graniteParameterPattern.findAll(match.groupValues[2])
+            .associate { it.groupValues[1].trim() to (it.groupValues[2].trim() as Any?) }
+        return ToolCall(name = name, arguments = args)
+    }
+
+    /**
+     * Granite 4 形式で `</tool_call>` が来ていない未完ペイロードの救済。
+     * `<function=name>…</function>` が完結していれば確定扱いにする。
+     */
+    private fun salvageGranitePayload(payload: String): Pair<ToolCall?, Boolean> {
+        val call = parseGraniteFunctionPayload(payload.trim()) ?: return null to false
+        return call to true
+    }
+
+    /** トークン切れした Granite 4 形式ペイロードから `<function=name>` の name を読み取る。 */
+    private fun extractGraniteToolName(payload: String): String? {
+        val m = Regex("(?is)<function\\s*=\\s*([A-Za-z_][A-Za-z0-9_\\-]*)").find(payload) ?: return null
+        return m.groupValues[1].trim().takeIf { it.isNotEmpty() }
     }
 
     private fun parseToolCallPayload(payload: String): ToolCall? {

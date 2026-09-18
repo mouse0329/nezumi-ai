@@ -186,6 +186,58 @@ object ModelNameHeuristics {
         return Regex("(^|[^a-z0-9])lfm([0-9]|[_\\-.]|$)").containsMatchIn(loweredName)
     }
 
+    /**
+     * ツールコールの出力タグ形式。モデルファミリではなく「出力形式」の分類。
+     * 解決の最優先は GGUF 内蔵 chat_template (app 側 `GgufFormatResolver.resolveToolCallFormat`)、
+     * ここのモデル名推定はテンプレートが読めない場合のフォールバック。
+     */
+    enum class ToolCallFormat {
+        /** `<tool_call>{"name":..,"arguments":..}</tool_call>` (Qwen / Hermes 等)。 */
+        GENERIC,
+
+        /** `<|tool_call>call:NAME{...}<tool_call|>` (Gemma 4 Google 公式)。 */
+        GEMMA4,
+
+        /**
+         * `<tool_call><function=name><parameter=k>v</parameter></function></tool_call>`
+         * (IBM Granite 4.x 公式 chat_template が要求する XML 形式)。
+         */
+        GRANITE
+    }
+
+    /**
+     * IBM Granite 4.x 以降のモデル名かどうかを判定する。
+     * Granite 3.x までは汎用 `<tool_call>{json}</tool_call>` 形式、4.0 以降は公式
+     * chat_template が `<function=name>` 形式を要求するため判定を分ける。
+     * バージョンが読めない "granite" 単独表記は従来どおり GENERIC 扱い (誤爆防止)。
+     */
+    fun isGranite4OrLaterModelName(loweredName: String): Boolean {
+        if ("granite" !in loweredName) return false
+        val match = Regex("granite[\\-_ .]?(\\d+)").find(loweredName) ?: return false
+        return (match.groupValues[1].toIntOrNull() ?: 0) >= 4
+    }
+
+    /**
+     * モデル名からツールコール出力形式を推定する (テンプレート非読取時のフォールバック)。
+     * ユーザーが手動でツールを ON にしただけのモデルは GENERIC (デフォルト) になる。
+     */
+    fun guessToolCallFormat(loweredName: String): ToolCallFormat = when {
+        isGemma4ModelName(loweredName) -> ToolCallFormat.GEMMA4
+        isGranite4OrLaterModelName(loweredName) -> ToolCallFormat.GRANITE
+        else -> ToolCallFormat.GENERIC
+    }
+
+    /**
+     * chat_template 文字列がツールコールを宣言しているかを判定する。
+     * GGUF メタデータ (`tokenizer.chat_template`) から読んだテンプレートに対して使う。
+     */
+    fun templateDeclaresToolSupport(template: String): Boolean =
+        template.contains("tools is defined") ||
+            template.contains("tool_calls") ||
+            template.contains("<tool_call>") ||
+            template.contains("<function=") ||
+            template.contains("<tools>")
+
     /** GPT-2 系のモデル名かどうかを判定する (ファイル実体の検査は含まない)。 */
     fun isGpt2ModelName(loweredName: String): Boolean {
         return Regex("(^|[^a-z0-9])gpt[\\-_ ]?2([^a-z0-9]|$)").containsMatchIn(loweredName)

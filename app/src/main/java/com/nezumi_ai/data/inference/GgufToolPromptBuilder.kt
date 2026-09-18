@@ -2,6 +2,7 @@ package com.nezumi_ai.data.inference
 
 import android.content.Context
 import android.util.Log
+import com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
 import com.nezumi_ai.data.skill.Skill
 import com.nezumi_ai.data.skill.SkillPromptSpec
 
@@ -178,7 +179,8 @@ object GgufToolPromptBuilder {
         context: Context,
         systemPrompt: String,
         isGemma4: Boolean = false,
-        skills: List<Skill> = emptyList()
+        skills: List<Skill> = emptyList(),
+        toolFormat: ModelNameHeuristics.ToolCallFormat = ModelNameHeuristics.ToolCallFormat.GENERIC
     ): String {
         val toolsJson = collectEnabledToolsJson(context, skills)
         // Bug fix: 組み込みツールが 1 つも有効でなくても、MCP サーバーが接続されていれば
@@ -189,10 +191,19 @@ object GgufToolPromptBuilder {
             return systemPrompt
         }
 
-        // isGemma4 のときは Gemma 4 公式形式 (<|tool_call>call:NAME{...}<tool_call|>) を、
-        // それ以外は汎用 <tool_call>{json}</tool_call> 形式を注入する。
-        // GgufToolCallParser.parse(text, isGemma4) 側の期待形式と一致させる必要がある。
-        val toolBlock = if (isGemma4) buildGemma4ToolBlock(toolsJson) else buildGenericToolBlock(toolsJson)
+        // ツールコール形式は GgufFormatResolver.resolveToolCallFormat (GGUF 内蔵 chat_template
+        // 優先、モデル名はフォールバック) の解決結果に従う。
+        //   - GRANITE: IBM Granite 4.x 公式の <function=name>…</function> 形式
+        //   - GEMMA4 : Gemma 4 公式形式 (<|tool_call>call:NAME{...}<tool_call|>)
+        //   - GENERIC: 汎用 <tool_call>{json}</tool_call> 形式 (テンプレート非対応モデルで
+        //     ユーザーが手動 ON にした場合のデフォルト)
+        // GgufToolCallParser 側の期待形式と一致させる必要がある。
+        val toolBlock = when {
+            toolFormat == ModelNameHeuristics.ToolCallFormat.GRANITE -> buildGraniteToolBlock(toolsJson)
+            isGemma4 || toolFormat == ModelNameHeuristics.ToolCallFormat.GEMMA4 ->
+                buildGemma4ToolBlock(toolsJson)
+            else -> buildGenericToolBlock(toolsJson)
+        }
 
         val withTools = if (systemPrompt.isBlank()) toolBlock.trim() else systemPrompt + toolBlock
         return if (skills.isEmpty()) withTools else "$withTools\n\n${SkillPromptSpec.catalog(skills)}"
@@ -214,19 +225,27 @@ object GgufToolPromptBuilder {
         context: Context,
         systemPrompt: String,
         isGemma4: Boolean = false,
-        skills: List<Skill> = emptyList()
+        skills: List<Skill> = emptyList(),
+        toolFormat: ModelNameHeuristics.ToolCallFormat = ModelNameHeuristics.ToolCallFormat.GENERIC
     ): String {
         val toolsJson = collectEnabledToolsJson(context, skills)
         if (toolsJson.isBlank()) {
             Log.d(TAG, "appendForLiteRt: no builtin schema and no MCP tool - skipping")
             return systemPrompt
         }
-        val toolBlock = if (isGemma4) {
-            Log.i(TAG, "appendForLiteRt: injected Gemma4 <|tool_call> block")
-            buildGemma4ToolBlock(toolsJson)
-        } else {
-            Log.i(TAG, "appendForLiteRt: injected generic <tool_call> block")
-            buildGenericToolBlock(toolsJson)
+        val toolBlock = when {
+            toolFormat == ModelNameHeuristics.ToolCallFormat.GRANITE -> {
+                Log.i(TAG, "appendForLiteRt: injected Granite <function=...> block")
+                buildGraniteToolBlock(toolsJson)
+            }
+            isGemma4 || toolFormat == ModelNameHeuristics.ToolCallFormat.GEMMA4 -> {
+                Log.i(TAG, "appendForLiteRt: injected Gemma4 <|tool_call> block")
+                buildGemma4ToolBlock(toolsJson)
+            }
+            else -> {
+                Log.i(TAG, "appendForLiteRt: injected generic <tool_call> block")
+                buildGenericToolBlock(toolsJson)
+            }
         }
         val withTools = if (systemPrompt.isBlank()) toolBlock.trim() else systemPrompt + toolBlock
         return if (skills.isEmpty()) withTools else "$withTools\n\n${SkillPromptSpec.catalog(skills)}"
@@ -248,6 +267,46 @@ object GgufToolPromptBuilder {
         append(toolsJson)
         appendLine()
         append(ToolCallTags.TOOLS_CLOSE)
+    }
+
+    /**
+     * IBM Granite 4.x 公式 chat_template と同一の
+     * `<tool_call><function=name><parameter=k>v</parameter></function></tool_call>` 形式を
+     * 教える指示ブロック。
+     *
+     * モデルが学習済みの表現でツールコールを出力できるよう、指示文の骨格は公式
+     * chat_template (chat_template.jinja 内の tools ブロック) の文言に揃えてある。
+     * GgufToolCallParser.parseGraniteFunctionPayload() がこの形式をパースする。
+     * ツール実行結果は汎用形式と同じく <tool_response>{"name":...,"content":...}</tool_response>
+     * で返す (formatToolResults() 参照)。
+     */
+    private fun buildGraniteToolBlock(toolsJson: String): String = buildString {
+        appendLine()
+        appendLine()
+        appendLine("# Tools")
+        appendLine()
+        appendLine("You have access to the following functions:")
+        appendLine()
+        appendLine(ToolCallTags.TOOLS_OPEN)
+        append(toolsJson)
+        appendLine()
+        appendLine(ToolCallTags.TOOLS_CLOSE)
+        appendLine()
+        appendLine("If you choose to call a function ONLY reply in the following format with NO suffix:")
+        appendLine()
+        appendLine(ToolCallTags.TOOL_CALL_OPEN)
+        appendLine("<function=example_function_name>")
+        appendLine("<parameter=example_parameter_1>")
+        appendLine("value_1")
+        appendLine("</parameter>")
+        appendLine("</function>")
+        appendLine(ToolCallTags.TOOL_CALL_CLOSE)
+        appendLine()
+        appendLine("Reminder:")
+        appendLine("- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags")
+        appendLine("- Required parameters MUST be specified")
+        appendLine("- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after")
+        appendLine("- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls")
     }
 
     /**

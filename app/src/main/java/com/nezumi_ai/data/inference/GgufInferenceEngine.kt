@@ -457,7 +457,7 @@ class GgufInferenceEngine(
                 } else {
                     Log.i(TAG, "GGUF model loaded: $modelPath using direct llama.cpp backend (${ctx.actualGpuBackend})")
                 }
-                maybeAutoEnableThinkingFromChatTemplate(modelPath)
+                maybeAutoEnableCapabilitiesFromChatTemplate(modelPath)
                 Result.success(Unit)
             } catch (t: Throwable) {
                 Log.e(TAG, "loadModel failed", t)
@@ -593,32 +593,46 @@ class GgufInferenceEngine(
     }
 
     /**
-     * モデルロード時の thinking 自動有効化 (要望D 関連)。
+     * モデルロード時の thinking / ツールコール自動有効化 (要望D 関連)。
      *
      * GGUF の `tokenizer.chat_template` を読み、テンプレート内で `enable_thinking`
      * (または `<|think|>` 制御トークン) を参照していれば thinking 対応モデルとみなし、
      * capability ストアの thinkingEnabled を自動で ON にする。
-     * ユーザーが既に設定を保存済みのモデルは尊重して上書きしない。
+     * あわせて、テンプレートがツール宣言 (`tools` 変数 / `<tool_call>` / `<function=...>` 指示)
+     * を含む場合は toolCallingEnabled も自動で ON にする (Granite 4.x 等で「テンプレートは
+     * ツール対応なのにツールが有効化されない」事態を防ぐ)。
+     * ユーザーが既に ON にしている設定はそのまま維持する (OFF には戻さない)。
      */
-    private fun maybeAutoEnableThinkingFromChatTemplate(modelPath: String) {
+    private fun maybeAutoEnableCapabilitiesFromChatTemplate(modelPath: String) {
         runCatching {
             val modelFile = File(modelPath)
             if (!modelFile.isFile) return@runCatching
             val template = GgufMetadataReader.readChatTemplate(modelFile) ?: return@runCatching
             val supportsThinking = template.contains("enable_thinking") ||
                 template.contains("<|think|>")
-            if (!supportsThinking) return@runCatching
+            val supportsTools =
+                com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.templateDeclaresToolSupport(template)
+            if (!supportsThinking && !supportsTools) return@runCatching
             val current = ImportedModelCapabilityStore.get(appContext, modelPath)
-            if (!current.thinkingEnabled) {
+            val nextThinking = current.thinkingEnabled || supportsThinking
+            val nextToolCalling = current.toolCallingEnabled || supportsTools
+            if (nextThinking != current.thinkingEnabled || nextToolCalling != current.toolCallingEnabled) {
                 ImportedModelCapabilityStore.set(
                     appContext,
                     modelPath,
-                    current.copy(thinkingEnabled = true)
+                    current.copy(
+                        thinkingEnabled = nextThinking,
+                        toolCallingEnabled = nextToolCalling
+                    )
                 )
-                Log.i(TAG, "Auto-enabled thinking for GGUF model (chat_template references enable_thinking): $modelPath")
+                Log.i(
+                    TAG,
+                    "Auto-enabled capabilities from chat_template " +
+                        "(thinking=$supportsThinking, tools=$supportsTools): $modelPath"
+                )
             }
         }.onFailure { t ->
-            Log.w(TAG, "maybeAutoEnableThinkingFromChatTemplate failed for $modelPath", t)
+            Log.w(TAG, "maybeAutoEnableCapabilitiesFromChatTemplate failed for $modelPath", t)
         }
     }
 

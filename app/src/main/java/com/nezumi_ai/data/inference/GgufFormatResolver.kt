@@ -54,6 +54,39 @@ object GgufFormatResolver {
     }
 
     /**
+     * ツールコールの出力形式を解決する。
+     *
+     * プロンプトテンプレートはハードコードせず GGUF から読む方針に合わせ、解決順序は:
+     *   1. GGUF 内蔵 `tokenizer.chat_template` の内容から検出
+     *      (Granite 4 系の `<function=` 指示、Gemma 4 系の `<|tool_call>` など)
+     *   2. テンプレートが読めない / ツール非対応ならモデル名ヒューリスティック
+     *      ([ModelNameHeuristics.guessToolCallFormat]) にフォールバック
+     * ユーザーがツールを手動で ON にしただけでテンプレート非対応のモデルは
+     * GENERIC (デフォルト) になる。
+     */
+    fun resolveToolCallFormat(modelPath: String): ModelNameHeuristics.ToolCallFormat {
+        val lowered = modelPath.lowercase()
+        if (lowered.endsWith(".gguf")) {
+            val file = File(modelPath)
+            if (file.isFile) {
+                val template = runCatching { GgufMetadataReader.readChatTemplate(file) }.getOrNull()
+                if (template != null && ModelNameHeuristics.templateDeclaresToolSupport(template)) {
+                    return when {
+                        // Granite 4.x 公式テンプレート固有の <function=name> 指示。
+                        template.contains("<function=") -> ModelNameHeuristics.ToolCallFormat.GRANITE
+                        // Gemma 4 公式テンプレート固有の非対称タグ。
+                        template.contains("<|tool_call>") -> ModelNameHeuristics.ToolCallFormat.GEMMA4
+                        else -> ModelNameHeuristics.ToolCallFormat.GENERIC
+                    }
+                }
+            }
+        }
+        return ModelNameHeuristics.guessToolCallFormat(
+            ModelNameHeuristics.resolveModelNameForCheck(modelPath).lowercase()
+        )
+    }
+
+    /**
      * thinking 制御スタイルを解決する (旧 `PromptBuilder.resolveThinkingPromptStyle` の移行先)。
      */
     fun resolveThinkingStyle(

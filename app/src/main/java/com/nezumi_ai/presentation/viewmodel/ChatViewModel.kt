@@ -4753,8 +4753,18 @@ class ChatViewModel(
 
         val filteredMessages = messages.filterNot { shouldExcludeFromModelContext(it) }
         var systemPrompt = appendMemoryBlockToSystemPrompt(getActiveSystemPrompt(), memoryBlock)
-        // ツール形式はモデル名でソフトが判定（Gemma4 のみ公式形式、他は汎用 tool_call）。
+        // ツール形式は GGUF 内蔵 chat_template を最優先で解決し、読めない場合のみモデル名推定に
+        // フォールバックする (旧: モデル名のみの判定で Gemma4 / 汎用に二分していたため、
+        // Granite 4 系の <function=...> 形式をモデルに教えられなかった)。
         val isGemma4Model = ModelNameHeuristics.isGemma4Model(engineModelName)
+        val toolCallFormat = if (isGgufEngine) {
+            com.nezumi_ai.data.inference.GgufFormatResolver.resolveToolCallFormat(engineModelName)
+        } else {
+            // LiteRT / クラウドは GGUF メタデータを持たないためモデル名推定のみ。
+            ModelNameHeuristics.guessToolCallFormat(
+                ModelNameHeuristics.resolveModelNameForCheck(engineModelName).lowercase()
+            )
+        }
         val availableSkills = availableSkillsForCurrentPreset(enableToolCalling)
         if (enableToolCalling) {
             Log.d(
@@ -4765,10 +4775,22 @@ class ChatViewModel(
             runCatching { McpToolRegistry.get(appContext).ensureFresh() }
                 .onFailure { Log.w(TAG, "MCP tool registry refresh failed", it) }
             systemPrompt = if (isGgufEngine) {
-                GgufToolPromptBuilder.appendToolDefinitions(appContext, systemPrompt, isGemma4 = isGemma4Model, skills = availableSkills)
+                GgufToolPromptBuilder.appendToolDefinitions(
+                    appContext,
+                    systemPrompt,
+                    isGemma4 = isGemma4Model,
+                    skills = availableSkills,
+                    toolFormat = toolCallFormat
+                )
             } else {
-                // クラウド (Ollama/LM Studio 等) もここに来る。isGemma4=false なら汎用形式のみ。
-                GgufToolPromptBuilder.appendForLiteRt(appContext, systemPrompt, isGemma4 = isGemma4Model, skills = availableSkills)
+                // クラウド (Ollama/LM Studio 等) もここに来る。
+                GgufToolPromptBuilder.appendForLiteRt(
+                    appContext,
+                    systemPrompt,
+                    isGemma4 = isGemma4Model,
+                    skills = availableSkills,
+                    toolFormat = toolCallFormat
+                )
             }
         }
 
