@@ -92,12 +92,22 @@ namespace mnn_sd_detail
         const char *stage = "clip";
         switch (kind)
         {
-        case SdModelKind::UNET:        stage = "unet"; break;
-        case SdModelKind::VAE:         stage = "vae"; break;
-        case SdModelKind::VAE_ENCODER: stage = "vae_enc"; break;
-        case SdModelKind::CLIP2:       stage = "clip2"; break;
+        case SdModelKind::UNET:
+            stage = "unet";
+            break;
+        case SdModelKind::VAE:
+            stage = "vae";
+            break;
+        case SdModelKind::VAE_ENCODER:
+            stage = "vae_enc";
+            break;
+        case SdModelKind::CLIP2:
+            stage = "clip2";
+            break;
         case SdModelKind::CLIP:
-        default:                       stage = "clip"; break;
+        default:
+            stage = "clip";
+            break;
         }
         std::string subdir = dir + "/cache";
         {
