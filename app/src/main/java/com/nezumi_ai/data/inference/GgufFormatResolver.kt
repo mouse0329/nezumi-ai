@@ -2,7 +2,6 @@ package com.nezumi_ai.data.inference
 
 import android.content.Context
 import com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
-import com.nezumi_ai.data.inference.prompt.PromptFormat
 import com.nezumi_ai.utils.GgufMetadataReader
 import java.io.File
 
@@ -41,49 +40,19 @@ object GgufFormatResolver {
     }
 
     /**
-     * 手組みフォールバック形式を解決する (旧 `PromptBuilder.detectGgufFormat` の移行先)。
-     * ネイティブ minja (ユーザー指定 / GGUF 内蔵テンプレート) が使えない場合の推定結果を返す。
-     */
-    fun resolveGgufFormat(modelPath: String, appContext: Context?): PromptFormat {
-        val userOverride = hasExplicitUserTemplate(appContext, modelPath)
-        return ModelNameHeuristics.guessGgufFormat(
-            modelPathOrName = modelPath,
-            hasExplicitUserTemplate = userOverride,
-            isGpt2ArchitectureHint = isGpt2Architecture(modelPath),
-        )
-    }
-
-    /**
-     * ツールコールの出力形式を解決する。
+     * GPT-2 系 (プレーン completion) モデルかどうかを判定する。
      *
-     * プロンプトテンプレートはハードコードせず GGUF から読む方針に合わせ、解決順序は:
-     *   1. GGUF 内蔵 `tokenizer.chat_template` の内容から検出
-     *      (Granite 4 系の `<function=` 指示、Gemma 4 系の `<|tool_call>` など)
-     *   2. テンプレートが読めない / ツール非対応ならモデル名ヒューリスティック
-     *      ([ModelNameHeuristics.guessToolCallFormat]) にフォールバック
-     * ユーザーがツールを手動で ON にしただけでテンプレート非対応のモデルは
-     * GENERIC (デフォルト) になる。
+     * 旧 `resolveGgufFormat` はモデル名推定による手組みフォールバック形式 (Gemma/ChatML/Llama3)
+     * も返していたが、プロンプト生成のネイティブ (minja) 一本化に伴い推定フォールバックは
+     * 廃止された。現状の実用上の意味は「GPT-2 かどうか」(保守的ネイティブ生成設定の適用判定)
+     * だけなので、残存呼び出し側に合わせてブール判定へ簡素化する。
      */
-    fun resolveToolCallFormat(modelPath: String): ModelNameHeuristics.ToolCallFormat {
-        val lowered = modelPath.lowercase()
-        if (lowered.endsWith(".gguf")) {
-            val file = File(modelPath)
-            if (file.isFile) {
-                val template = runCatching { GgufMetadataReader.readChatTemplate(file) }.getOrNull()
-                if (template != null && ModelNameHeuristics.templateDeclaresToolSupport(template)) {
-                    return when {
-                        // Granite 4.x 公式テンプレート固有の <function=name> 指示。
-                        template.contains("<function=") -> ModelNameHeuristics.ToolCallFormat.GRANITE
-                        // Gemma 4 公式テンプレート固有の非対称タグ。
-                        template.contains("<|tool_call>") -> ModelNameHeuristics.ToolCallFormat.GEMMA4
-                        else -> ModelNameHeuristics.ToolCallFormat.GENERIC
-                    }
-                }
-            }
-        }
-        return ModelNameHeuristics.guessToolCallFormat(
-            ModelNameHeuristics.resolveModelNameForCheck(modelPath).lowercase()
-        )
+    fun isPlainCompletionModel(modelPath: String, appContext: Context?): Boolean {
+        if (hasExplicitUserTemplate(appContext, modelPath)) return false
+        return isGpt2Architecture(modelPath) ||
+            ModelNameHeuristics.isGpt2ModelName(
+                ModelNameHeuristics.resolveModelNameForCheck(modelPath).lowercase()
+            )
     }
 
     /**

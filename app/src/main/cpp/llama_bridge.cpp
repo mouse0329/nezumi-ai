@@ -152,6 +152,10 @@ struct NezumiLlamaCtx
     // content / reasoning_content 分離に再利用する。
     common_chat_params chat_params;
     bool chat_params_valid = false;
+    // 直近にテンプレート適用でレンダリングした生プロンプト全体 (ツール定義を含む)。
+    // 「raw コンテキストが実際にモデルへ渡した全文ではない」問題への対応として、
+    // 適用のたびにここへ記録し、常に最新の真の全文を参照可能にする。
+    std::string last_applied_prompt;
 
     int n_ctx = 0;
     int n_batch = 512;
@@ -199,6 +203,12 @@ static void nezumi_ggml_log_callback(ggml_log_level level, const char *text, voi
 // GgufInferenceEngine の modelMutex でロードを直列化している前提で、ロードを呼び出した
 // スレッドに直近の ERROR ログを保持する。ログは引き続き logcat にも転送する。
 static thread_local std::string g_last_load_error;
+
+// モデルロード・解放・推論開始で古い生プロンプトが残らないようにするリセット用。
+static void nezumi_reset_raw_prompt_storage(NezumiLlamaCtx *nc)
+{
+    if (nc) nc->last_applied_prompt.clear();
+}
 static thread_local bool g_capture_load_errors = false;
 
 static void nezumi_llama_load_log_callback(ggml_log_level level, const char *text, void *user_data)
@@ -544,6 +554,25 @@ static std::vector<common_chat_msg> parse_messages_json(const std::string &messa
     return msgs;
 }
 
+// OpenAI 互換の tools 配列 JSON 文字列を common_chat_tool 列に変換する。
+// 空文字 / null / パース失敗時は空配列 (ツールなし = 従来動作) にフォールバックする
+// 後方互換を維持する。
+static std::vector<common_chat_tool> parse_tools_json(const std::string &tools_json)
+{
+    if (tools_json.empty())
+        return {};
+    try
+    {
+        auto arr = common_json::parse(tools_json);
+        return common_chat_tools_parse_oaicompat(arr);
+    }
+    catch (const std::exception &e)
+    {
+        LOGE("parse_tools_json: %s", e.what());
+        return {};
+    }
+}
+
 // ─── ライフサイクル ───────────────────────────────────────────────
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -780,6 +809,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaTokenize(
     jboolean add_bos)
 {
     auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
+    nezumi_reset_raw_prompt_storage(nc); // llamaFree
     const char *text = env->GetStringUTFChars(j_text, nullptr);
     size_t text_len = strlen(text);
 
@@ -1011,6 +1041,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
     jobjectArray j_stop_words)
 {
     auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
+    nezumi_reset_raw_prompt_storage(nc); // 推論開始時に前回分をクリア
     if (!nc || !nc->ctx)
         return env->NewStringUTF("");
 
@@ -1248,6 +1279,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyGgufChatTemplate(
     jobject /* obj */,
     jlong j_ctx,
     jstring j_messages_json,
+    jstring j_tools_json,
     jboolean enable_thinking,
     jboolean add_generation_prompt)
 {
@@ -1261,9 +1293,18 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyGgufChatTemplate(
     const char *json = env->GetStringUTFChars(j_messages_json, nullptr);
     std::string messages_json(json);
     env->ReleaseStringUTFChars(j_messages_json, json);
+    const char *tools = j_tools_json ? env->GetStringUTFChars(j_tools_json, nullptr) : nullptr;
+    std::string tools_json = tools ? tools : "";
+    if (tools)
+        env->ReleaseStringUTFChars(j_tools_json, tools);
 
     common_chat_templates_inputs inputs;
     inputs.messages = parse_messages_json(messages_json);
+    // tools を jinja に渡すと、GGUF 内蔵テンプレートがツール指示文を自前で
+    // レンダリングする (Kotlin 側のハードコード指示文は不要になる)。
+    // tool_choice / parallel_tool_calls は struct のデフォルト
+    // (AUTO / false) のまま使う。
+    inputs.tools = parse_tools_json(tools_json);
     inputs.add_generation_prompt = add_generation_prompt;
     inputs.use_jinja = true;
     inputs.enable_thinking = enable_thinking;
@@ -1275,6 +1316,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyGgufChatTemplate(
         // パース用に params 全体をキャッシュ (旧 rnllama の gguf_chat_params と同等)
         nc->chat_params = params;
         nc->chat_params_valid = true;
+        nc->last_applied_prompt = params.prompt;
         return utf8_to_jstring(env, params.prompt);
     }
     catch (const std::exception &e)
@@ -1291,6 +1333,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyJinjaChatTemplate(
     jlong j_ctx,
     jstring j_messages_json,
     jstring j_chat_template,
+    jstring j_tools_json,
     jboolean enable_thinking,
     jboolean add_generation_prompt)
 {
@@ -1304,9 +1347,16 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyJinjaChatTemplate(
     const char *tmpl = env->GetStringUTFChars(j_chat_template, nullptr);
     std::string chat_template(tmpl);
     env->ReleaseStringUTFChars(j_chat_template, tmpl);
+    const char *tools = j_tools_json ? env->GetStringUTFChars(j_tools_json, nullptr) : nullptr;
+    std::string tools_json = tools ? tools : "";
+    if (tools)
+        env->ReleaseStringUTFChars(j_tools_json, tools);
 
     common_chat_templates_inputs inputs;
     inputs.messages = parse_messages_json(messages_json);
+    // GGUF 内蔵テンプレート経路 (nativeApplyGgufChatTemplate) と同様に
+    // tools を jinja へ委譲する。空なら従来通りツールなしでレンダリング。
+    inputs.tools = parse_tools_json(tools_json);
     inputs.add_generation_prompt = add_generation_prompt;
     inputs.use_jinja = true;
     inputs.enable_thinking = enable_thinking;
@@ -1325,6 +1375,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyJinjaChatTemplate(
         // 明示テンプレートでも同様にキャッシュし、対応パーサーで分離できるようにする
         nc->chat_params = params;
         nc->chat_params_valid = true;
+        nc->last_applied_prompt = params.prompt;
         return utf8_to_jstring(env, params.prompt);
     }
     catch (const std::exception &e)
@@ -1378,12 +1429,26 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeParseGgufChatOutput(
             common_chat_msg msg = common_chat_parse(output_str, is_partial, parser_params);
             result["content"] = msg.content;
             result["reasoning_content"] = msg.reasoning_content;
+            // テンプレートから自動選択されたパーサーが検出したツールコールも返す。
+            // Kotlin 側の手書き正規表現パーサーが拾えないテンプレート固有形式の救済に使う。
+            {
+                nlohmann::ordered_json calls = nlohmann::ordered_json::array();
+                for (const auto &tc : msg.tool_calls)
+                {
+                    nlohmann::ordered_json c;
+                    c["name"] = tc.name;
+                    c["arguments"] = tc.arguments;
+                    calls.push_back(c);
+                }
+                result["tool_calls"] = calls;
+            }
         }
         else
         {
             // テンプレート無し: そのまま content として返す
             result["content"] = output_str;
             result["reasoning_content"] = "";
+            result["tool_calls"] = nlohmann::ordered_json::array();
         }
     }
     catch (const std::exception &e)
@@ -1909,4 +1974,28 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
     json += ",\"frames\":" + std::to_string(nFrames);
     json += "}";
     return env->NewStringUTF(json.c_str());
+}
+
+// ─── デバッグ: 生プロンプト全文 ──────────────────────────────────
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeGetLastAppliedPrompt(
+    JNIEnv *env,
+    jobject /* obj */,
+    jlong j_ctx)
+{
+    auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
+    if (!nc)
+        return env->NewStringUTF("");
+    // 直近のテンプレート適用で実際にレンダリングされた全文 (ツール定義含む) を返す。
+    return utf8_to_jstring(env, nc->last_applied_prompt);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeClearLastAppliedPrompt(
+    JNIEnv * /* env */,
+    jobject /* obj */,
+    jlong j_ctx)
+{
+    nezumi_reset_raw_prompt_storage(reinterpret_cast<NezumiLlamaCtx *>(j_ctx));
 }

@@ -283,27 +283,6 @@ object ModelNameHeuristics {
         }
     }
 
-    /**
-     * GGUF モデルの手組みフォールバック形式を推定する (FormatResolver の推定経路で使用)。
-     *
-     * Bug fix(#42): ユーザーが明示的にテンプレを選んでいる場合は GPT-2 でも
-     * PLAIN_COMPLETION を強制しない (ChatML / Gemma 等の選択を尊重する)。
-     * Bug fix(#45): Gemma 4 は GEMMA_CHAT を返し、Gemma4 固有の Thinking 制御は
-     * レンダラー内の GEMMA4_CHANNEL 分岐に任せる (CHATML に振ると Thinking が発火しない)。
-     */
-    fun guessGgufFormat(
-        modelPathOrName: String,
-        hasExplicitUserTemplate: Boolean = false,
-        isGpt2ArchitectureHint: Boolean = false,
-    ): PromptFormat {
-        val name = modelPathOrName.lowercase()
-        return when {
-            !hasExplicitUserTemplate && isGpt2Model(name, isGpt2ArchitectureHint) ->
-                PromptFormat.PlainCompletion
-            "gemma" in name -> PromptFormat.GemmaChat
-            else -> PromptFormat.ChatMl
-        }
-    }
 
     // ---- 派生ヘルパー (旧 usesAssistantThinkingPrefill / usesQwenStyleThinking) ----
 

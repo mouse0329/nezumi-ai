@@ -207,6 +207,7 @@ class LiteRtEngineService : Service() {
         override fun formatWithGgufChatTemplate(
             messagesJson: String?,
             enableThinking: Boolean,
+            toolsJson: String?,
             callback: IRemoteStringCallback?
         ) {
             callback?.onResult("")
@@ -216,6 +217,7 @@ class LiteRtEngineService : Service() {
             messagesJson: String?,
             chatTemplate: String?,
             enableThinking: Boolean,
+            toolsJson: String?,
             callback: IRemoteStringCallback?
         ) {
             callback?.onResult("")

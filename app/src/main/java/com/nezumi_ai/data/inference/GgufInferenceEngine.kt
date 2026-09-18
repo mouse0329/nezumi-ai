@@ -152,8 +152,7 @@ class GgufInferenceEngine(
         ): NativeGenerationSettings {
             // Bug fix(#42): ユーザーがテンプレートを明示選択している場合は GPT-2 専用の
             // 保守的ネイティブ設定 (batch=32 / flashAttn=off) を抑制する。
-            val isGpt2Model = GgufFormatResolver.resolveGgufFormat(modelPath, appContext) ==
-                com.nezumi_ai.data.inference.prompt.PromptFormat.PlainCompletion
+            val isGpt2Model = GgufFormatResolver.isPlainCompletionModel(modelPath, appContext)
             return if (isGpt2Model) {
                 NativeGenerationSettings(
                     batchSize = 32,
@@ -352,9 +351,7 @@ class GgufInferenceEngine(
                     )
                 }
 
-                if (GgufFormatResolver.resolveGgufFormat(modelPath, appContext) ==
-                    com.nezumi_ai.data.inference.prompt.PromptFormat.PlainCompletion
-                ) {
+                if (GgufFormatResolver.isPlainCompletionModel(modelPath, appContext)) {
                     Log.w(TAG, "Using conservative native settings for GPT-2 model: batch=${nativeSettings.batchSize}, ubatch=${nativeSettings.ubatchSize}, flashAttention=${nativeSettings.flashAttentionEnabled}, ctxShift=${nativeSettings.contextShiftEnabled}")
                 }
                 Log.i(
@@ -636,15 +633,28 @@ class GgufInferenceEngine(
         }
     }
 
+    /** ネイティブパーサーが検出したツールコール (arguments は JSON 文字列)。 */
+    data class NativeParsedToolCall(
+        val name: String,
+        val arguments: String
+    )
+
     data class GgufChatParseResult(
         val content: String,
-        val reasoningContent: String
+        val reasoningContent: String,
+        val toolCalls: List<NativeParsedToolCall> = emptyList()
     )
 
     /** Whether a GGUF chat template has been successfully applied to the current context. */
     fun hasGgufChatTemplate(): Boolean {
         val context = llamaCppCtx ?: return false
         return runCatching { context.hasGgufChatTemplate() }.getOrDefault(false)
+    }
+
+    /** 直近にネイティブがレンダリングした生プロンプト全文 (ツール定義含む・常に最新)。 */
+    fun getLastAppliedPrompt(): String {
+        val context = llamaCppCtx ?: return ""
+        return runCatching { context.getLastAppliedPrompt() }.getOrDefault("")
     }
 
     /** Parse output using the parser selected by the loaded GGUF chat template. */
@@ -655,21 +665,41 @@ class GgufInferenceEngine(
         val context = llamaCppCtx ?: return null
         return runCatching {
             val json = org.json.JSONObject(context.parseGgufChatOutput(output, isPartial))
+            val toolCallsJson = json.optJSONArray("tool_calls")
+            val toolCalls = buildList {
+                if (toolCallsJson != null) {
+                    for (i in 0 until toolCallsJson.length()) {
+                        val call = toolCallsJson.optJSONObject(i) ?: continue
+                        val name = call.optString("name", "")
+                        if (name.isNotBlank()) {
+                            add(NativeParsedToolCall(name, call.optString("arguments", "{}")))
+                        }
+                    }
+                }
+            }
             GgufChatParseResult(
                 content = json.optString("content", ""),
-                reasoningContent = json.optString("reasoning_content", "")
+                reasoningContent = json.optString("reasoning_content", ""),
+                toolCalls = toolCalls
             )
         }.getOrNull()
     }
 
-    /** Render OpenAI-compatible messages with the loaded GGUF chat template. */
+    /**
+     * Render OpenAI-compatible messages with the loaded GGUF chat template.
+     * toolsJson (OpenAI 互換 tools 配列 JSON) を渡すと、ツール指示文のレンダリングを
+     * GGUF 内蔵テンプレート (ネイティブ llama.cpp) に委譲する。空なら従来通り。
+     */
+    @Suppress("UNUSED")
     suspend fun formatWithGgufChatTemplate(
         messagesJson: String,
-        enableThinking: Boolean = false
+        enableThinking: Boolean = false,
+        toolsJson: String = ""
     ): String = withContext(Dispatchers.IO) {
         val context = llamaCppCtx ?: return@withContext ""
         normalizeAssistantGenerationPrompt(context.applyGgufChatTemplate(
             messagesJson = messagesJson,
+            toolsJson = toolsJson,
             enableThinking = enableThinking,
             addGenerationPrompt = true
         ))
@@ -683,12 +713,14 @@ class GgufInferenceEngine(
     suspend fun formatWithJinjaChatTemplate(
         messagesJson: String,
         chatTemplate: String,
-        enableThinking: Boolean
+        enableThinking: Boolean,
+        toolsJson: String = ""
     ): String = withContext(Dispatchers.IO) {
         val context = llamaCppCtx ?: return@withContext ""
         normalizeAssistantGenerationPrompt(context.applyJinjaChatTemplate(
             messagesJson = messagesJson,
             chatTemplate = chatTemplate,
+            toolsJson = toolsJson,
             enableThinking = enableThinking,
             addGenerationPrompt = true
         ))
@@ -784,6 +816,12 @@ class GgufInferenceEngine(
             }
 
             Log.d(TAG, "GGUF inference start: session=$sessionId promptLen=${prompt.length} images=${images.size}")
+            // 実際にモデルへ渡す生プロンプト全文 (ツール定義を含むネイティブレンダリング結果) を
+            // 毎ターン記録する。「raw コンテキストが本当の全てではない」「常に最新にならない」
+            // 問題への対応。全文は getLastAppliedPrompt() でも取得可能。
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "GGUF raw prompt (full, tools included):\n$prompt")
+            }
 
             val fullAnswer = StringBuilder()
             var currentPrompt = prompt
@@ -833,7 +871,30 @@ class GgufInferenceEngine(
                     break
                 }
 
-                val parsed = GgufToolCallParser.parse(roundText, isGemma4 = isGemma4)
+                var roundOutputText = roundText
+                var parsed = GgufToolCallParser.parse(roundOutputText, isGemma4 = isGemma4)
+
+                // バグ修正 (テンプレート固有形式のツールコールが「応答なし」として処理される):
+                //   Kotlin 正規表現パーサーは Generic / Gemma4 / Granite を手書きで網羅しているが、
+                //   GGUF 内蔵テンプレートが要求する厳密な形式を取りこぼすと toolCalls が空になり、
+                //   ツール呼び出しが通常本文 (= 実質「応答なし」) として扱われていた。
+                //   Kotlin 側で拾えない場合に限り、ネイティブ (llama.cpp common_chat_parse — GGUF
+                //   内蔵テンプレートから自動選択されたパーサー) の結果で救済し、汎用 <tool_call>
+                //   形式へ正規化して既存の実行フローに載せる。
+                if (parsed.toolCalls.isEmpty() && !parsed.hadTruncatedToolCall) {
+                    val nativeParsed = parseWithGgufChatTemplate(roundText, isPartial = false)
+                    val nativeCalls = nativeParsed?.toolCalls.orEmpty()
+                    if (nativeCalls.isNotEmpty()) {
+                        val synthesized = nativeCalls.joinToString("\n") { call ->
+                            "<tool_call>{\"name\":${org.json.JSONObject.quote(call.name)},\"arguments\":${call.arguments}}</tool_call>"
+                        }
+                        roundOutputText = listOf(nativeParsed?.content.orEmpty().trim(), synthesized)
+                            .filter { it.isNotBlank() }
+                            .joinToString("\n")
+                        parsed = GgufToolCallParser.parse(roundOutputText, isGemma4 = false)
+                        Log.i(TAG, "Tool call rescued by native template parser: ${nativeCalls.map { it.name }}")
+                    }
+                }
 
                 // トークン切れ検知:
                 //   モデルが <tool_call> を開いたのに JSON 引数の途中でトークン予算切れ/停止シーケンス
@@ -849,8 +910,8 @@ class GgufInferenceEngine(
                     // 本文末尾に閉じタグを補完して、DB / 履歴プロンプトのタグ整合を保つ。
                     // 行末の閉じタグの前後に改行を入れて、后続の <tool_response> と行境を分ける。
                     buildString {
-                        append(roundText)
-                        if (!roundText.endsWith("\n")) append("\n")
+                        append(roundOutputText)
+                        if (!roundOutputText.endsWith("\n")) append("\n")
                         append(closingTag)
                         append("\n")
                     }
@@ -928,7 +989,12 @@ class GgufInferenceEngine(
                 //   タグごと保存され・UI の InlineToolCallCard は依然として展開時に `card.payload` を見て
                 //   result を描画できるので見た目は変わらない。
                 val toolResponseBlock = buildString {
-                    append(GgufToolCallParser.formatToolResults(toolResults, isGemma4 = isGemma4))
+                    // すでに roundText / roundOutputText に <tool_response> が含まれている場合は
+                    // 二重化を避けるため追加しない (ログで確認された重複バグへの対応)。
+                    val alreadyHasResponse = ToolCallTags.TOOL_RESPONSE_OPEN in roundOutputText
+                    if (!alreadyHasResponse) {
+                        append(GgufToolCallParser.formatToolResults(toolResults, isGemma4 = isGemma4))
+                    }
                     append(truncatedResponseBlock)
                 }
                 if (toolResponseBlock.isNotEmpty()) {

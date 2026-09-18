@@ -66,6 +66,40 @@ class RemoteEngineConnection(
     @Volatile
     private var lastKnownPid: Int = -1
 
+    /**
+     * loop recovery 用に直近死亡した pid を保持する。onServiceDisconnected /
+     * onBindingDied で lastKnownPid が -1 に戻された後も、kill 対象を
+     * 特定できるようにするため。
+     */
+    @Volatile
+    private var lastDeadPid: Int = -1
+
+    // ─── クラッシュループ検知 ────────────────────────────────────
+    // 短時間に bind 失敗/切断が連続する場合、mem-pressure 等で OS が
+    // プロセス起動→即kill を繰り返している「クラッシュループ」とみなし、
+    // 一度明示的にプロセスを叩き切ってから re-bind することで復帰を試みる。
+    private val failureTimestampsMs = java.util.concurrent.CopyOnWriteArrayList<Long>()
+
+    private fun recordConnectionFailureAndCheckLoop(): Boolean {
+        val now = System.currentTimeMillis()
+        failureTimestampsMs.add(now)
+        // ウィンドウ外の古い記録は掃除する
+        failureTimestampsMs.removeAll { now - it > LOOP_DETECTION_WINDOW_MS }
+        val isLooping = failureTimestampsMs.size >= LOOP_DETECTION_THRESHOLD_COUNT
+        if (isLooping) {
+            Log.w(
+                tag,
+                "detected crash loop: ${failureTimestampsMs.size} connection failures " +
+                    "within ${LOOP_DETECTION_WINDOW_MS}ms"
+            )
+        }
+        return isLooping
+    }
+
+    private fun resetLoopDetection() {
+        failureTimestampsMs.clear()
+    }
+
     val isBound: Boolean
         get() = engine != null
 
@@ -73,10 +107,21 @@ class RemoteEngineConnection(
      * サービスへ bind し、[IRemoteInferenceEngine] を返す。
      * 既に接続済みなら既存の engine をそのまま返す。
      *
+     * クラッシュループ (短時間に bind 失敗/切断が連続) を検知した場合は、
+     * bind の前に一度 :gguf/:litert プロセスを強制終了してから bind し直す。
+     * ハングしたプロセスや、OS の restart backoff に阻まれた半端な状態から
+     * 抜け出すための保険。
+     *
      * @throws DeadObjectException サービス側プロセスが死亡していて bind に失敗した場合
      */
     suspend fun getService(): IRemoteInferenceEngine = bindMutex.withLock {
         engine?.let { return it }
+
+        if (recordConnectionFailureAndCheckLoop()) {
+            Log.w(tag, "attempting recovery from crash loop: killing stale process before rebind")
+            killStaleProcessForLoopRecovery()
+            resetLoopDetection()
+        }
 
         val deferred = CompletableDeferred<IRemoteInferenceEngine>()
         val conn = object : ServiceConnection {
@@ -91,14 +136,17 @@ class RemoteEngineConnection(
                 engine = e
                 lastKnownPid = runCatching { e.remotePid }.getOrDefault(-1)
                 Log.i(tag, "service connected: pid=$lastKnownPid")
+                resetLoopDetection()
                 deferred.complete(e)
             }
 
             override fun onServiceDisconnected(name: ComponentName?) {
                 Log.w(tag, "service disconnected (process died or unbound)")
                 val likelyOutOfMemory = wasProcessKilledForLowMemory(lastKnownPid)
+                if (lastKnownPid > 0) lastDeadPid = lastKnownPid
                 engine = null
                 lastKnownPid = -1
+                recordConnectionFailureAndCheckLoop()
                 failPendingResult(
                     "$tag: remote engine process disconnected",
                     likelyOutOfMemory
@@ -108,8 +156,10 @@ class RemoteEngineConnection(
             override fun onBindingDied(name: ComponentName?) {
                 Log.w(tag, "binding died; will rebind on next request")
                 val likelyOutOfMemory = wasProcessKilledForLowMemory(lastKnownPid)
+                if (lastKnownPid > 0) lastDeadPid = lastKnownPid
                 engine = null
                 lastKnownPid = -1
+                recordConnectionFailureAndCheckLoop()
                 failPendingResult(
                     "$tag: remote engine binding died",
                     likelyOutOfMemory
@@ -127,6 +177,7 @@ class RemoteEngineConnection(
         val ok = context.bindService(intent, conn, Context.BIND_AUTO_CREATE)
         if (!ok) {
             context.unbindService(conn)
+            recordConnectionFailureAndCheckLoop()
             throw IllegalStateException("$tag: bindService returned false for $serviceComponent")
         }
 
@@ -140,6 +191,7 @@ class RemoteEngineConnection(
             runCatching { context.unbindService(conn) }
             connection = null
             boundDeferred = null
+            recordConnectionFailureAndCheckLoop()
             throw t
         }
     }
@@ -208,6 +260,40 @@ class RemoteEngineConnection(
 
         disconnect()
         Log.i(tag, "shutdownProcess: completed for pid=$pid (selfExited=$exited)")
+    }
+
+    /**
+     * クラッシュループ検知後のリカバリ処理。
+     * 直近の pid が生存していればそれを強制 kill し、bind の残骸 (connection) も
+     * 明示的に破棄しておく。OS 側の再起動バックオフ ("Rescheduling restart of
+     * crashed service ... for mem-pressure-event") に阻まれて半端な状態が続く
+     * ケースの解消を狙う。
+     */
+    private suspend fun killStaleProcessForLoopRecovery() {
+        val pid = if (lastKnownPid > 0) lastKnownPid else lastDeadPid
+        if (pid > 0 && isProcessAlive(pid)) {
+            Log.w(tag, "loop recovery: killing stale process pid=$pid")
+            runCatching { Process.killProcess(pid) }
+                .onFailure { Log.w(tag, "loop recovery: killProcess($pid) failed", it) }
+            waitForProcessDeath(pid, FORCE_KILL_GRACE_MS)
+        }
+        lastDeadPid = -1
+
+        // bind の残骸が残っていれば剥がしておく。次の bindService 呼び出しで
+        // クリーンな状態から onServiceConnected を待てるようにする。
+        val staleConnection = connection
+        if (staleConnection != null) {
+            runCatching { context.unbindService(staleConnection) }
+                .onFailure { Log.w(tag, "loop recovery: unbindService failed", it) }
+        }
+        engine = null
+        connection = null
+        boundDeferred = null
+        lastKnownPid = -1
+
+        // OS 側の "Rescheduling restart ... in 0ms" バックオフの連打とかち合わないよう、
+        // 一呼吸だけ空けてから呼び出し元の bindService に進む。
+        delay(LOOP_RECOVERY_SETTLE_MS)
     }
 
     private suspend fun waitForProcessDeath(pid: Int, timeoutMs: Long): Boolean {
@@ -359,17 +445,21 @@ class RemoteEngineConnection(
         Unit
     }
 
-    suspend fun formatWithGgufChatTemplate(messagesJson: String, enableThinking: Boolean): String =
-        awaitString("formatWithGgufChatTemplate") { service, cb ->
-            service.formatWithGgufChatTemplate(messagesJson, enableThinking, cb)
-        }
+    suspend fun formatWithGgufChatTemplate(
+        messagesJson: String,
+        enableThinking: Boolean,
+        toolsJson: String = ""
+    ): String = awaitString("formatWithGgufChatTemplate") { service, cb ->
+        service.formatWithGgufChatTemplate(messagesJson, enableThinking, toolsJson, cb)
+    }
 
     suspend fun formatWithJinjaChatTemplate(
         messagesJson: String,
         chatTemplate: String,
-        enableThinking: Boolean
+        enableThinking: Boolean,
+        toolsJson: String = ""
     ): String = awaitString("formatWithJinjaChatTemplate") { service, cb ->
-        service.formatWithJinjaChatTemplate(messagesJson, chatTemplate, enableThinking, cb)
+        service.formatWithJinjaChatTemplate(messagesJson, chatTemplate, enableThinking, toolsJson, cb)
     }
 
     /**
@@ -553,5 +643,13 @@ class RemoteEngineConnection(
         private const val SELF_KILL_GRACE_MS = 1_500L
         private const val FORCE_KILL_GRACE_MS = 1_500L
         private const val PROCESS_DEATH_POLL_MS = 50L
+
+        // ─── クラッシュループ検知の閾値 ──────────────────────────
+        /** この時間内の接続失敗をループ判定の対象とする。 */
+        private const val LOOP_DETECTION_WINDOW_MS = 10_000L
+        /** ウィンドウ内でこの回数以上失敗したらループとみなす。 */
+        private const val LOOP_DETECTION_THRESHOLD_COUNT = 3
+        /** ループ復帰処理 (kill + unbind) の後、再 bind までの小休止。 */
+        private const val LOOP_RECOVERY_SETTLE_MS = 500L
     }
 }

@@ -55,10 +55,12 @@ interface IRemoteInferenceEngine {
 
     void clearKvCacheIfLoaded();
     void requestForceClearBeforeNextInference();
+    // toolsJson: OpenAI 互換 tools 配列 JSON。空文字ならツールなし (従来動作)。
     void formatWithGgufChatTemplate(String messagesJson, boolean enableThinking,
-                                    IRemoteStringCallback callback);
+                                    String toolsJson, IRemoteStringCallback callback);
     void formatWithJinjaChatTemplate(String messagesJson, String chatTemplate,
-                                     boolean enableThinking, IRemoteStringCallback callback);
+                                     boolean enableThinking, String toolsJson,
+                                     IRemoteStringCallback callback);
     /** parseGgufChatOutput の結果を {"content":..., "reasoning_content":...} JSON で返す。 */
     void parseWithGgufChatTemplate(String output, boolean isPartial,
                                    IRemoteStringCallback callback);

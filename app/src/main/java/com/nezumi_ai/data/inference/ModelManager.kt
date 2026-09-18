@@ -258,9 +258,16 @@ class ModelManager(
     }
 
     /**
- * バグ修正: 指定モデル・設定が既にロード済みかチェック
+     * バグ修正: 指定モデル・設定が既にロード済みかチェック
      * ChatViewModel.generateAIResponse で毎回ロード処理を呼ぶが、
      * 既にロード済みなら不要なメモリ警告を避ける目的
+     *
+     * Bug fix(#background-resume-stale-binding): 状態変数だけでなく、実際に
+     * リモートプロセス (:gguf / :litert) が生きているかも確認する。
+     * バックグラウンド復帰直後は、アプリが frozen の間に裏でリモートプロセスが
+     * 死んでいても currentModelName / currentConfig は古い値のまま残るため、
+     * これだけを見ると「ロード済み」と誤判定してしまい、その後の推論が
+     * "モデルのロードに失敗しました" で失敗する原因になっていた。
      *
      * @return true: 既にロード済み / false: 再ロード必要
      */
@@ -280,17 +287,39 @@ class ModelManager(
         return true
     }
 
-    fun isModelLoaded(modelName: String, config: InferenceConfig): Boolean {
+    suspend fun isModelLoaded(modelName: String, config: InferenceConfig): Boolean {
         val normalizedConfig = config.normalized()
         val isSameModel = currentModelName == modelName
         val isCompatible = currentConfig?.isCompatibleWithRequest(normalizedConfig) == true
-        val isLoaded = isSameModel && isCompatible
-        
+        val stateLooksLoaded = isSameModel && isCompatible
+
+        if (!stateLooksLoaded) {
+            Log.d(
+                TAG,
+                "isModelLoaded: model=$modelName | same=$isSameModel compatible=$isCompatible → result=false"
+            )
+            return false
+        }
+
+        // 状態上はロード済みに見えても、リモートプロセスが実際に生きているかを確認する。
+        // バックグラウンド復帰直後にここが死んでいることがあるため軽量に検証する。
+        val remoteAlive = runCatching { activeEngine.isAvailable() }.getOrDefault(false)
+        if (!remoteAlive) {
+            Log.w(
+                TAG,
+                "isModelLoaded: model=$modelName state says loaded but remote engine process " +
+                    "is not available (likely died while backgrounded) → invalidating stale state"
+            )
+            currentModelName = null
+            currentConfig = null
+            return false
+        }
+
         Log.d(
             TAG,
-            "isModelLoaded: model=$modelName | same=$isSameModel compatible=$isCompatible → result=$isLoaded"
+            "isModelLoaded: model=$modelName | same=$isSameModel compatible=$isCompatible remoteAlive=true → result=true"
         )
-        return isLoaded
+        return true
     }
 
     /**
@@ -319,9 +348,11 @@ class ModelManager(
                 val normalizedConfig = config.normalized()
                 
                 // 既に同じモデルがロードされていて、要求されたロード設定に対して互換性がある場合はスキップ
+                // isModelLoaded() 内でリモートプロセスの生死も確認済み (#background-resume-stale-binding)
                 val shouldSkip = currentModelName == modelName &&
                     currentConfig?.isCompatibleWithRequest(normalizedConfig) == true &&
-                    activeEngine === engineForModel(modelName)
+                    activeEngine === engineForModel(modelName) &&
+                    isModelLoaded(modelName, config)
 
                 if (shouldSkip) {
                     Log.d(TAG, "Model $modelName is already loaded and compatible with requested load config: ${normalizedConfig.backendType}")
@@ -467,10 +498,11 @@ class ModelManager(
      */
     suspend fun formatGgufChatTemplate(
         messagesJson: String,
-        enableThinking: Boolean = false
+        enableThinking: Boolean = false,
+        toolsJson: String = ""
     ): String? {
         val engine = activeEngine as? RemoteGgufInferenceEngine ?: return null
-        return engine.formatWithGgufChatTemplate(messagesJson, enableThinking)
+        return engine.formatWithGgufChatTemplate(messagesJson, enableThinking, toolsJson)
             .takeIf { it.isNotBlank() }
     }
 
@@ -481,10 +513,11 @@ class ModelManager(
     suspend fun formatGgufChatTemplateWithJinja(
         messagesJson: String,
         chatTemplate: String,
-        enableThinking: Boolean = false
+        enableThinking: Boolean = false,
+        toolsJson: String = ""
     ): String? {
         val engine = activeEngine as? RemoteGgufInferenceEngine ?: return null
-        return engine.formatWithJinjaChatTemplate(messagesJson, chatTemplate, enableThinking)
+        return engine.formatWithJinjaChatTemplate(messagesJson, chatTemplate, enableThinking, toolsJson)
             .takeIf { it.isNotBlank() }
     }
 

@@ -628,6 +628,12 @@ class ChatViewModel(
     private val _contextRawPrompt = MutableStateFlow("")
     val contextRawPrompt: StateFlow<String> = _contextRawPrompt
 
+    // raw コンテキスト表示をアプリ再起動後も保持するための永続化。
+    // 「raw コンテキスト内容がアプリ再起動すると吹き飛ぶ」問題への対応。
+    private val rawPromptPrefs by lazy {
+        appContext.getSharedPreferences("nezumi_ai_raw_prompt", Context.MODE_PRIVATE)
+    }
+
     private val _contextWindowCapacityChars = MutableStateFlow(4096 * 4)
     val contextWindowCapacityChars: StateFlow<Int> = _contextWindowCapacityChars
 
@@ -1125,7 +1131,8 @@ class ChatViewModel(
         // ここで関連状態をすべてリセットし、初回推定がスロットル判定で
         // スキップされないようにする。
         _contextUsageChars.value = 0
-        _contextRawPrompt.value = ""
+        // セッション切替時は永続化済みの raw プロンプトを復元し、無ければ空にする。
+        _contextRawPrompt.value = rawPromptPrefs.getString(rawPromptKey(sessionId), "") ?: ""
         lastContextUsageEstimationAtMs = 0L
         contextUsageEstimationJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
@@ -2228,6 +2235,10 @@ class ChatViewModel(
             }
             var lastPersistedContent = ""
             var lastPersistedThinking: String? = null
+            // 確定時の一括パーサーがストリーミング中の分離結果を壊さないよう、
+            // UIへ最後に提示した本文/Thinkingのペアを保持する。
+            var lastStreamContentForFinal = ""
+            var lastStreamThinkingForFinal: String? = null
             var lastPersistAt = 0L
             var toolResultsJson: String? = null
             var firstOutputAtMs: Long? = null
@@ -2249,6 +2260,9 @@ class ChatViewModel(
             val toolCallInProgress = AtomicBoolean(false)
             var streamAbortNote: String? = null
             var collectionCancelledByUser = false
+            // FINAL は生成ラウンドの終端。Binder のバッチ化で FINAL と後続の
+            // stale chunk が同じ配信に含まれても、終了後の文字列を本文/Thinkingへ混ぜない。
+            var finalReceived = false
             try {
                 withContext(Dispatchers.IO) {
                     coroutineScope {
@@ -2317,6 +2331,7 @@ class ChatViewModel(
                                 var finalFromModelGlobal: String? = null
                                 val segments = InferenceStreamProtocol.splitStreamChunks(chunk)
                                 for (seg in segments) {
+                                    if (finalReceived) continue
                                     val finalFromModel = InferenceStreamProtocol.decodeFinal(seg)
                                     val thinkDelta = InferenceStreamProtocol.decodeThinkChunk(seg)
                                     val toolCallChunk = InferenceStreamProtocol.decodeToolCallChunk(seg)
@@ -2326,6 +2341,7 @@ class ChatViewModel(
 
                                     when {
                                         finalFromModel != null -> {
+                                            finalReceived = true
                                             Log.d(TAG, "FINAL received: length=${finalFromModel.length}")
                                             val sanitizedFinal =
                                                 Gemma4ThinkingParser.sanitizeVisibleText(
@@ -2508,8 +2524,8 @@ class ChatViewModel(
                                 }
                                 val messageIdToUpdate = streamingMessageId ?: activeStreamingMessageId
                                 messageIdToUpdate?.let { id ->
-                                    val contentForUi: String
-                                    val thinkingForUi: String?
+                                    var contentForUi: String
+                                    var thinkingForUi: String?
                                     if (nativeThinkingStream) {
                                         contentForUi =
                                             sanitizeAssistantOutputForModel(
@@ -2553,10 +2569,13 @@ class ChatViewModel(
                                             //   Kotlin パーサーで再解析して救済しているのに、ストリーミング中
                                             //   だけこの救済が無く、Thinking ON の最初の出力がそのまま
                                             //   本文としてユーザーに見えてしまっていた。ここでも同じ救済を行う。
+                                            // thinking の救済は「生の累積テキスト」に対して行う。ネイティブ partial 解析
+                                            // が返す content には <think> が閉じる前の時点で既に思考冒頭が混入している
+                                            // 場合があり、content だけ再解析しても取りこぼすため。
                                             val nativeReasoningBlank = nativeStreamParsed.reasoningContent.isBlank()
-                                            if (config.enableThinking && nativeReasoningBlank && nativeStreamParsed.content.isNotBlank()) {
+                                            if (config.enableThinking && nativeReasoningBlank && answerBuilder.isNotEmpty()) {
                                                 val salvaged = Gemma4ThinkingParser.parseStreaming(
-                                                    rawInput = nativeStreamParsed.content,
+                                                    rawInput = answerBuilder.toString(),
                                                     treatUnmarkedInputAsThinking = true,
                                                     preserveToolCallTags = true
                                                 )
@@ -2626,6 +2645,36 @@ class ChatViewModel(
                                         }
                                         }
                                     }
+                                    // バグ修正 (ストリーミング中に UI へ何も表示されない):
+                                    //   ネイティブ partial パーサーはツールコール形式の出力に対して
+                                    //   content="" を返し続け、完了後の本文ラウンドでも contentForUi が
+                                    //   空のままになるケースがあった (Qwen3.5 + ツール有効のログで
+                                    //   STREAM_INMEMORY_UPDATE contentLen=0 thinkingLen=0 が継続)。
+                                    //   contentForUi / thinkingForUi が両方空なのに生テキストに表示可能な
+                                    //   本文がある場合は、閉じたツールブロックを除いた生テキストで表示を埋める。
+                                    //   ツールコール生成途中 (未完の <tool_call> のみ) は従来どおり空を維持し、
+                                    //   インラインのツールカード表示に任せる。
+                                    //   (タグリテラルは ToolCallTags.TOOL_CALL_OPEN 等と同一)
+                                    if (contentForUi.isEmpty() && thinkingForUi.isNullOrBlank()) {
+                                        val rawAccumulated = Gemma4ThinkingParser.sanitizeVisibleText(
+                                            stripThinkSectionsForDisplay(answerBuilder.toString()),
+                                            preserveToolCallTags = true
+                                        )
+                                        if (rawAccumulated.isNotBlank()) {
+                                            val visibleOutsideToolBlocks = rawAccumulated
+                                                .replace(Regex("(?s)<tool_call>.*?</tool_call>"), "")
+                                                .replace(Regex("(?s)<tool_response>.*?</tool_response>"), "")
+                                                .substringBefore("<tool_call>")
+                                                .trim()
+                                            if (visibleOutsideToolBlocks.isNotEmpty()) {
+                                                contentForUi = rawAccumulated
+                                            }
+                                        }
+                                    }
+
+                                    lastStreamContentForFinal = contentForUi
+                                    lastStreamThinkingForFinal = thinkingForUi
+
                                     val now = SystemClock.elapsedRealtime()
                                     val persistInterval = if (isLikelyMarkdownTable(contentForUi)) {
                                         STREAM_PERSIST_INTERVAL_TABLE_MS
@@ -2792,115 +2841,27 @@ class ChatViewModel(
                 }
             }
 
-            // GGUF かつネイティブ chat_template 適用済みのときは llama.cpp 側のパーサーを既定で使う。
-            // テンプレ未適用時は engine 側が null を返すため Kotlin パーサーにフォールバックする。
-            val nativeGgufParsed = if (isGgufEngineModel(engineModelName)) {
-                manager.parseGgufChatOutput(answerBuilder.toString(), isPartial = false)
-            } else {
-                null
-            }
             val completeResponse: String
             val finalThinking: String?
-            if (nativeGgufParsed != null) {
-                val unmarkedThinking = if (
-                    config.enableThinking && nativeGgufParsed.reasoningContent.isBlank()
-                ) {
-                    Gemma4ThinkingParser.parse(
-                        rawInput = answerBuilder.toString(),
-                        treatUnmarkedInputAsThinking = true,
-                        preserveToolCallTags = true
-                    )
-                } else {
-                    null
-                }
-                completeResponse = sanitizeAssistantOutputForModel(
-                    engineModelName = engineModelName,
-                    text = Gemma4ThinkingParser.sanitizeVisibleText(
-                        unmarkedThinking?.answer ?: nativeGgufParsed.content,
-                        preserveToolCallTags = true
-                    )
-                )
-                finalThinking = Gemma4ThinkingParser.sanitizeVisibleText(
-                    unmarkedThinking?.thinking ?: nativeGgufParsed.reasoningContent
-                ).ifBlank { null }
-            } else if (nativeThinkingStream) {
-                val rawAnswer = if (config.enableThinking) {
-                    answerBuilder.toString()
-                } else {
-                    // Thinking OFF 中も本文には visible answer だけを残す。
-                    stripThinkSectionsForDisplay(answerBuilder.toString())
-                }
-                completeResponse =
-                    sanitizeAssistantOutputForModel(
-                        engineModelName = engineModelName,
-                        text = Gemma4ThinkingParser.sanitizeVisibleText(
-                            rawAnswer,
-                            preserveToolCallTags = true
-                        )
-                    )
-                finalThinking =
-                    Gemma4ThinkingParser.sanitizeVisibleText(thinkingBuilder.toString()).ifBlank { null }
+            // 完了時に別の一括パーサーを走らせると、生成中に分離できていた
+            // Thinking と本文が再結合する。確定値はストリーミング中の結果だけを使う。
+            val streamedThinking = lastStreamThinkingForFinal
+                ?.let { Gemma4ThinkingParser.sanitizeVisibleText(it) }
+                ?.ifBlank { null }
+            val streamedContent = if (!streamedThinking.isNullOrBlank()) {
+                lastStreamContentForFinal
             } else {
-                val sanitizedAnswer =
-                    Gemma4ThinkingParser.sanitizeVisibleText(
-                        answerBuilder.toString(),
-                        preserveToolCallTags = true
-                    )
-                // See the comment near answerBuilder initialization: with the `<think>` prefill
-                // applied, raw text without tags is always a real answer, never thinking.
-                // Phase 4 補完 (計画書 1.2b): LiteRT-LM 経路では文字列推測を使わない
-                // (think チャンネルを出さない/出し始めが遅いモデルで本文が thinking と
-                //  誤認され表示されなくなるバグの根絶)。GGUF 経路のみ従来の推測を残す。
-                val finalParsed = Gemma4ThinkingParser.parse(
-                    rawInput = answerBuilder.toString(),
-                    treatUnmarkedInputAsThinking = false,
-                    preserveToolCallTags = true
-                )
-                if (!config.enableThinking) {
-                    // Instant / Thinking OFF 中でも、漏れ出た <think> は本文へ混ぜずに別表示する。
-                    val visibleOnly = stripThinkSectionsForDisplay(answerBuilder.toString())
-                    completeResponse =
-                        sanitizeAssistantOutputForModel(
-                            engineModelName = engineModelName,
-                            text = Gemma4ThinkingParser.sanitizeVisibleText(
-                                visibleOnly,
-                                preserveToolCallTags = true
-                            )
-                                .ifBlank { sanitizedAnswer.ifBlank { finalParsed.answer } }
-                                .ifBlank { lastPersistedContent }
-                        )
-                    val parsedThinkingSanitized = finalParsed.thinking?.let {
-                        Gemma4ThinkingParser.sanitizeVisibleText(it)
-                    }
-                    finalThinking = when {
-                        parsedThinkingSanitized.isNullOrBlank() -> null
-                        parsedThinkingSanitized == completeResponse -> null
-                        else -> parsedThinkingSanitized
-                    }
-                } else {
-                    completeResponse =
-                        sanitizeAssistantOutputForModel(
-                            engineModelName = engineModelName,
-                            text = sanitizedAnswer.ifBlank { finalParsed.answer }
-                                .ifBlank { lastPersistedContent }
-                        )
-                    // Guard against the duplicate-payload bug: when the model never emitted `</think>`
-                    // but produced a real answer, the parser may return both `thinking` and `answer`
-                    // pointing to the same text (because the prefilled `<think>` was never closed).
-                    // In that case we treat the model as having skipped thinking and keep only the
-                    // visible answer, otherwise the UI shows the answer twice (once in the Thinking
-                    // disclosure and once as the final message).
-                    val parsedThinking = finalParsed.thinking
-                    val parsedThinkingSanitized = parsedThinking?.let {
-                        Gemma4ThinkingParser.sanitizeVisibleText(it)
-                    }
-                    finalThinking = when {
-                        parsedThinkingSanitized.isNullOrBlank() -> null
-                        parsedThinkingSanitized == completeResponse -> null
-                        else -> parsedThinkingSanitized
-                    }
-                }
+                answerBuilder.toString()
             }
+            completeResponse = sanitizeAssistantOutputForModel(
+                engineModelName = engineModelName,
+                text = Gemma4ThinkingParser.sanitizeVisibleText(
+                    if (config.enableThinking) streamedContent
+                    else stripThinkSectionsForDisplay(streamedContent),
+                    preserveToolCallTags = true
+                ).ifBlank { lastPersistedContent }
+            )
+            finalThinking = streamedThinking
             val note = streamAbortNote
             val stoppedWithoutPayload =
                 collectionCancelledByUser && completeResponse.isEmpty() && finalThinking.isNullOrEmpty()
@@ -2998,7 +2959,11 @@ class ChatViewModel(
                     Log.d(TAG, "Updating message content with final response")
                     messageRepository.updateMessageContent(
                         messageId = activeStreamingMessageId,
-                        content = contentToSave,
+                        content = (contentToSave).ifBlank {
+                        // バグ修正 (完了時に本文が空で「応答なし」が保存される): 最終手段として
+                        // 生の answerBuilder からタグを除去したテキストで埋める。
+                        stripThinkSectionsForDisplay(answerBuilder.toString()).trim()
+                    },
                         isStreaming = false,
                         thinkingContent = finalThinking,
                         toolResultsJson = finalToolResultsJson,
@@ -4605,6 +4570,9 @@ class ChatViewModel(
     private fun isCurrentContextSession(sessionId: Long): Boolean =
         isDisplayedSession(sessionId) && activeCollectionSessionId == sessionId
 
+    /** raw コンテキスト永続化用のキー。 */
+    private fun rawPromptKey(sessionId: Long): String = "raw_prompt_session_$sessionId"
+
     private suspend fun estimateContextUsageChars(
         messages: List<MessageEntity>,
         sessionId: Long
@@ -4628,9 +4596,11 @@ class ChatViewModel(
         val maxChars = config.contextWindow * TOKEN_TO_CHAR_RATIO
         val trimmedBase = trimPromptToWindow(basePrompt, config.contextWindow)
         val basePromptSize = trimmedBase.length
-        // モーダル表示用に、現時点で組み立てられている生のプロンプト全文を保持しておく
+        // モーダル表示用に、現時点で組み立てられている生のプロンプト全文を保持しておく。
+        // あわせて SharedPreferences にも書き込み、アプリ再起動後も同じ内容を復元できるようにする。
         if (isCurrentContextSession(sessionId)) {
             _contextRawPrompt.value = trimmedBase
+            rawPromptPrefs.edit().putString(rawPromptKey(sessionId), trimmedBase).apply()
         }
 
         // コンテキストメーター正確化 (GGUF):
@@ -4685,8 +4655,23 @@ class ChatViewModel(
         systemPrompt: String,
         enableThinking: Boolean,
         sanitizer: (MessageEntity) -> String,
-        modelPath: String = ""
+        modelPath: String = "",
+        enableToolCalling: Boolean = false,
+        availableSkills: List<Skill> = emptyList()
     ): String? {
+        // ツール有効時はツール定義を OpenAI 互換の tools 配列 JSON として構築し、
+        // system prompt への手動連結 (GgufToolPromptBuilder.appendToolDefinitions) ではなく
+        // ネイティブ側 (GGUF 内蔵チャットテンプレート) のレンダリングに委譲する。
+        val toolsJson = if (enableToolCalling) {
+            runCatching {
+                GgufToolPromptBuilder.collectEnabledToolsJsonArray(appContext, availableSkills)
+            }.getOrDefault("")
+        } else {
+            ""
+        }
+        if (toolsJson.isNotBlank()) {
+            Log.i(TAG, "TOOL_FORMAT: delegating ${toolsJson.length} chars of tools JSON to native GGUF chat template")
+        }
         val payload = JSONArray()
         val finalSystem = systemPrompt.trim()
         if (finalSystem.isNotBlank()) {
@@ -4704,7 +4689,7 @@ class ChatViewModel(
         //   1. ユーザーが明示的に選択したカスタム / ビルトイン Jinja テンプレート
         //      (ネイティブ llama.cpp minja でレンダリング)
         //   2. GGUF 内蔵の chat_template (既存動作)
-        //   3. null → 呼び出し元でモデル名判定のヒューリスティックへフォールバック
+        //   3. null → 呼び出し元で最小限の生テキスト結合に縮退 (手組み推定は廃止)
         if (modelPath.isNotBlank()) {
             val userTemplate = runCatching {
                 PromptTemplateStore.resolveTemplate(appContext, modelPath)
@@ -4714,18 +4699,37 @@ class ChatViewModel(
                     requireModelManager().formatGgufChatTemplateWithJinja(
                         messagesJson = payloadJson,
                         chatTemplate = userTemplate,
-                        enableThinking = enableThinking
+                        enableThinking = enableThinking,
+                        toolsJson = toolsJson
                     )
                 }.getOrNull()
-                if (renderedWithUserTemplate != null) return renderedWithUserTemplate
+                if (renderedWithUserTemplate != null) {
+                    _contextRawPrompt.value = renderedWithUserTemplate
+                    _currentSessionId.value?.let { sessionId ->
+                        rawPromptPrefs.edit().putString(rawPromptKey(sessionId), renderedWithUserTemplate).apply()
+                    }
+                    return renderedWithUserTemplate
+                }
                 // レンダリング失敗 (旧 Ollama 形式の残存データ等) は内蔵テンプレートへフォールバック
                 Log.w(TAG, "buildGgufPromptFromMessages: user Jinja template render failed, falling back to GGUF template")
             }
         }
-        return requireModelManager().formatGgufChatTemplate(
+        val rendered = requireModelManager().formatGgufChatTemplate(
             messagesJson = payloadJson,
-            enableThinking = enableThinking
+            enableThinking = enableThinking,
+            toolsJson = toolsJson
         )
+        // formatGgufChatTemplate の戻り値はネイティブがレンダリングし、実際にエンジンへ渡す
+        // 生プロンプト全文 (ツール定義込み) そのもの。raw コンテキスト表示にはこの値を使い、
+        // SharedPreferences にも書き込んでアプリ再起動後も復元できるようにする。
+        // (旧来はメーター推定用の文字列を表示していたため「raw なのに raw じゃない」状態だった)
+        if (rendered != null) {
+            _contextRawPrompt.value = rendered
+            _currentSessionId.value?.let { sessionId ->
+                rawPromptPrefs.edit().putString(rawPromptKey(sessionId), rendered).apply()
+            }
+        }
+        return rendered
     }
 
     private suspend fun buildPromptFromMessages(
@@ -4757,14 +4761,6 @@ class ChatViewModel(
         // フォールバックする (旧: モデル名のみの判定で Gemma4 / 汎用に二分していたため、
         // Granite 4 系の <function=...> 形式をモデルに教えられなかった)。
         val isGemma4Model = ModelNameHeuristics.isGemma4Model(engineModelName)
-        val toolCallFormat = if (isGgufEngine) {
-            com.nezumi_ai.data.inference.GgufFormatResolver.resolveToolCallFormat(engineModelName)
-        } else {
-            // LiteRT / クラウドは GGUF メタデータを持たないためモデル名推定のみ。
-            ModelNameHeuristics.guessToolCallFormat(
-                ModelNameHeuristics.resolveModelNameForCheck(engineModelName).lowercase()
-            )
-        }
         val availableSkills = availableSkillsForCurrentPreset(enableToolCalling)
         if (enableToolCalling) {
             Log.d(
@@ -4774,14 +4770,17 @@ class ChatViewModel(
             )
             runCatching { McpToolRegistry.get(appContext).ensureFresh() }
                 .onFailure { Log.w(TAG, "MCP tool registry refresh failed", it) }
+            // GGUF エンジン経路のツール形式はネイティブ (llama.cpp) が GGUF 内蔵テンプレートから
+            // 自動選択するため、Kotlin 側の事前判定 (resolveToolCallFormat) は使わない。
+            // LiteRT / クラウド経路のみモデル名推定で形式を決める。
+            val toolCallFormat = ModelNameHeuristics.guessToolCallFormat(
+                ModelNameHeuristics.resolveModelNameForCheck(engineModelName).lowercase()
+            )
             systemPrompt = if (isGgufEngine) {
-                GgufToolPromptBuilder.appendToolDefinitions(
-                    appContext,
-                    systemPrompt,
-                    isGemma4 = isGemma4Model,
-                    skills = availableSkills,
-                    toolFormat = toolCallFormat
-                )
+                // GGUF エンジン経路ではツール定義の指示文を system prompt に連結しない。
+                // buildGgufPromptFromMessages が OpenAI 互換の tools JSON としてネイティブ
+                // (GGUF 内蔵チャットテンプレート) に渡すため、ここではスキルカタログのみ残す。
+                GgufToolPromptBuilder.appendSkillCatalog(systemPrompt, availableSkills)
             } else {
                 // クラウド (Ollama/LM Studio 等) もここに来る。
                 GgufToolPromptBuilder.appendForLiteRt(
@@ -4795,8 +4794,8 @@ class ChatViewModel(
         }
 
         // Phase 6: ConversationInput 構築 → エンジン判定 → 各 Renderer 呼び出しの一本道。
-        // GGUF のみ FormatResolver (ユーザー指定 → 内蔵 → 推定) の優先順位で書式を解決し、
-        // 推定フォールバック時のみ GgufRenderer で手組みする。
+        // GGUF の書式解決 (ユーザー指定 → 内蔵) はネイティブ llama.cpp (minja) に委譲し、
+        // Kotlin 側でテンプレートを自作する経路は持たない。
         // LiteRT / クラウドはモデル名推定を行わず、旧 PromptBuilder.buildForLiteRt
         // (Gemma 固定) への誤ったフォールバックをここで根絶する (計画書 1.1 / 1.2)。
         val conversationInput = promptBuilding.buildConversationInput(
@@ -4814,20 +4813,16 @@ class ChatViewModel(
                 systemPrompt = systemPrompt,
                 enableThinking = enableThinking,
                 sanitizer = makeSanitizer(isGgufEngine, currentTurnMessageId),
-                modelPath = engineModelName
+                modelPath = engineModelName,
+                enableToolCalling = enableToolCalling,
+                availableSkills = availableSkills
             )?.let { promptBuilding.normalizeGgufPromptRoleMarkers(it) }
-                ?: run {
-                    // 3. 推定フォールバック: GgufRenderer (手組み)
-                    val format = com.nezumi_ai.data.inference.GgufFormatResolver.resolveGgufFormat(engineModelName, appContext)
-                    promptBuilding.normalizeGgufPromptRoleMarkers(
-                        com.nezumi_ai.data.inference.prompt.GgufRenderer.render(
-                            input = conversationInput,
-                            format = format,
-                            modelPathOrName = engineModelName,
-                            hasExplicitUserTemplate = com.nezumi_ai.data.inference.GgufFormatResolver.hasExplicitUserTemplate(appContext, engineModelName),
-                        )
-                    )
-                }
+                ?: promptBuilding.normalizeGgufPromptRoleMarkers(
+                    // 手組み推定フォールバック (GgufRenderer) は廃止: ネイティブ経路はテンプレート
+                    // 非所持モデルでも既定テンプレートにフォールバックするため実質到達不能だった。
+                    // ネイティブレンダリング自体が失敗した場合のみ最小限の生テキスト結合に縮退する。
+                    conversationInput.history.joinToString("\n") { it.content }
+                )
         } else if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)) {
             // クラウド: CloudChatMessage 配列に構造化 (テンプレートタグは一切書かない)。
             // 呼び出し元はエンジンに構造化経路で渡すため、ここでは診断用に1行要約のみ返す。

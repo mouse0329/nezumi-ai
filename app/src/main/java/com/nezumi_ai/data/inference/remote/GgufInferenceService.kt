@@ -219,13 +219,14 @@ class GgufInferenceService : Service() {
         override fun formatWithGgufChatTemplate(
             messagesJson: String?,
             enableThinking: Boolean,
+            toolsJson: String?,
             callback: IRemoteStringCallback?
         ) {
             if (callback == null) return
             serviceScope.launch {
                 try {
                     val result = ggufEngine.formatWithGgufChatTemplate(
-                        messagesJson ?: "", enableThinking
+                        messagesJson ?: "", enableThinking, toolsJson ?: ""
                     )
                     callback.onResult(result)
                 } catch (t: Throwable) {
@@ -239,13 +240,14 @@ class GgufInferenceService : Service() {
             messagesJson: String?,
             chatTemplate: String?,
             enableThinking: Boolean,
+            toolsJson: String?,
             callback: IRemoteStringCallback?
         ) {
             if (callback == null) return
             serviceScope.launch {
                 try {
                     val result = ggufEngine.formatWithJinjaChatTemplate(
-                        messagesJson ?: "", chatTemplate ?: "", enableThinking
+                        messagesJson ?: "", chatTemplate ?: "", enableThinking, toolsJson ?: ""
                     )
                     callback.onResult(result)
                 } catch (t: Throwable) {

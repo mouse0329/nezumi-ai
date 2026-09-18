@@ -199,10 +199,16 @@ object LlamaBridge {
 
     // ─── チャットテンプレート ────────────────────────────────────
 
-    /** GGUF 埋め込みチャットテンプレートを OpenAI 互換メッセージ JSON に適用する。 */
+    /**
+     * GGUF 埋め込みチャットテンプレートを OpenAI 互換メッセージ JSON に適用する。
+     * @param toolsJson OpenAI 互換の tools 配列 JSON 文字列。空文字ならツールなし
+     *   (従来動作)。非空なら GGUF 内蔵テンプレートがツール指示文をネイティブ側で
+     *   レンダリングする。
+     */
     external fun nativeApplyGgufChatTemplate(
         ctx: Long,
         messagesJson: String,
+        toolsJson: String = "",
         enableThinking: Boolean,
         addGenerationPrompt: Boolean
     ): String
@@ -212,6 +218,7 @@ object LlamaBridge {
         ctx: Long,
         messagesJson: String,
         chatTemplate: String,
+        toolsJson: String = "",
         enableThinking: Boolean,
         addGenerationPrompt: Boolean
     ): String
@@ -298,6 +305,12 @@ object LlamaBridge {
 
     /** llama.cpp バージョン・システム情報文字列を返す。 */
     external fun llamaVersion(): String
+
+    /** 直近にネイティブテンプレートがレンダリングした生プロンプト全文 (ツール定義含む)。 */
+    external fun nativeGetLastAppliedPrompt(ctx: Long): String
+
+    /** ネイティブ側の生プロンプト記録をクリアする (セッション切替・モデル切替時に呼ぶ)。 */
+    external fun nativeClearLastAppliedPrompt(ctx: Long)
 
     /** ビルドに含まれている llama.cpp GPU バックエンド (OPENCL / VULKAN)。 */
     external fun nativeCompiledGpuBackends(): Array<String>

@@ -77,20 +77,29 @@ class LlamaCppContext(
         LlamaBridge.nativeSetTokenCallback(ptr, bridgeCallback)
     }
 
-    fun applyGgufChatTemplate(messagesJson: String, enableThinking: Boolean, addGenerationPrompt: Boolean): String {
+    fun applyGgufChatTemplate(messagesJson: String, toolsJson: String = "", enableThinking: Boolean, addGenerationPrompt: Boolean): String {
         if (ptr == 0L || messagesJson.isBlank()) return ""
-        return LlamaBridge.nativeApplyGgufChatTemplate(ptr, messagesJson, enableThinking, addGenerationPrompt)
+        return LlamaBridge.nativeApplyGgufChatTemplate(ptr, messagesJson, toolsJson, enableThinking, addGenerationPrompt)
     }
 
-    fun applyJinjaChatTemplate(messagesJson: String, chatTemplate: String, enableThinking: Boolean, addGenerationPrompt: Boolean): String {
+    fun applyJinjaChatTemplate(messagesJson: String, chatTemplate: String, toolsJson: String = "", enableThinking: Boolean, addGenerationPrompt: Boolean): String {
         if (ptr == 0L || messagesJson.isBlank() || chatTemplate.isBlank()) return ""
-        return LlamaBridge.nativeApplyJinjaChatTemplate(ptr, messagesJson, chatTemplate, enableThinking, addGenerationPrompt)
+        return LlamaBridge.nativeApplyJinjaChatTemplate(ptr, messagesJson, chatTemplate, toolsJson, enableThinking, addGenerationPrompt)
     }
 
     fun hasGgufChatTemplate(): Boolean = ptr != 0L && LlamaBridge.nativeHasGgufChatTemplate(ptr)
 
     fun parseGgufChatOutput(output: String, isPartial: Boolean): String =
         if (ptr == 0L) "{}" else LlamaBridge.nativeParseGgufChatOutput(ptr, output, isPartial)
+
+    /** 直近にネイティブがレンダリングした生プロンプト全文 (デバッグ・検証用)。 */
+    fun getLastAppliedPrompt(): String =
+        if (ptr == 0L) "" else LlamaBridge.nativeGetLastAppliedPrompt(ptr)
+
+    /** ネイティブ側の生プロンプト記録をクリアする (再起動相当の状態リセット用)。 */
+    fun clearLastAppliedPrompt() {
+        if (ptr != 0L) LlamaBridge.nativeClearLastAppliedPrompt(ptr)
+    }
 
     fun complete(prompt: String, nPredict: Int, temperature: Float, topP: Float, topK: Int, repeatPenalty: Float, stopWords: Array<String>): String {
         if (ptr == 0L) return ""

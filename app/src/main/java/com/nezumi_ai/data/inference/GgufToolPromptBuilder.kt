@@ -3,6 +3,9 @@ package com.nezumi_ai.data.inference
 import android.content.Context
 import android.util.Log
 import com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
+import org.json.JSONArray
+import org.json.JSONException
+import org.json.JSONObject
 import com.nezumi_ai.data.skill.Skill
 import com.nezumi_ai.data.skill.SkillPromptSpec
 
@@ -142,6 +145,7 @@ object GgufToolPromptBuilder {
     /**
      * 有効化されたビルトインツールと MCP ツールを列挙した JSON を返す。
      * (改行区切り。空文字なら有効ツールなし)
+     * LiteRT-LM / クラウド経路のプロンプト注入 ([appendForLiteRt]) 専用。
      */
     private fun collectEnabledToolsJson(context: Context, skills: List<Skill>): String {
         val enabled = ToolPreferences(context).getEnabledTools()
@@ -175,39 +179,73 @@ object GgufToolPromptBuilder {
         return toolsJson
     }
 
-    fun appendToolDefinitions(
-        context: Context,
-        systemPrompt: String,
-        isGemma4: Boolean = false,
-        skills: List<Skill> = emptyList(),
-        toolFormat: ModelNameHeuristics.ToolCallFormat = ModelNameHeuristics.ToolCallFormat.GENERIC
-    ): String {
-        val toolsJson = collectEnabledToolsJson(context, skills)
-        // Bug fix: 組み込みツールが 1 つも有効でなくても、MCP サーバーが接続されていれば
-        // MCP ツールだけを列挙する。以前はここで早期 return していたため、
-        //「MCP だけ使いたい」プリセットでは MCP ツールが一切見えなかった。
-        if (toolsJson.isBlank()) {
-            Log.d(TAG, "GgufToolPromptBuilder: Skipped. Reason: no builtin schema and no MCP tool.")
-            return systemPrompt
+    /**
+     * 有効ツール一覧を OpenAI 互換の tools 配列 JSON (`[{"type":"function",...}]`)
+     * として返す。GGUF エンジン経路でネイティブ (llama.cpp) のチャットテンプレートへ
+     * ツール定義を渡すために使う。有効ツールが 0 件なら空文字。
+     */
+    fun collectEnabledToolsJsonArray(context: Context, skills: List<Skill>): String {
+        val enabled = ToolPreferences(context).getEnabledTools()
+        val enabledNames = buildSet {
+            enabled.forEach { tool -> schemaByTool[tool]?.let { add(it) } }
+            if (NezumiTool.LIST_ALARMS in enabled &&
+                (NezumiTool.SET_ALARM in enabled || NezumiTool.DISMISS_ALARM in enabled)
+            ) {
+                add("list_alarms")
+            }
+            if (NezumiTool.LIST_TIMERS in enabled &&
+                (NezumiTool.START_TIMER in enabled || NezumiTool.STOP_TIMER in enabled)
+            ) {
+                add("list_timers")
+            }
+            if (NezumiTool.GENERATE_IMAGE in enabled) {
+                add("list_sd_models")
+            }
         }
-
-        // ツールコール形式は GgufFormatResolver.resolveToolCallFormat (GGUF 内蔵 chat_template
-        // 優先、モデル名はフォールバック) の解決結果に従う。
-        //   - GRANITE: IBM Granite 4.x 公式の <function=name>…</function> 形式
-        //   - GEMMA4 : Gemma 4 公式形式 (<|tool_call>call:NAME{...}<tool_call|>)
-        //   - GENERIC: 汎用 <tool_call>{json}</tool_call> 形式 (テンプレート非対応モデルで
-        //     ユーザーが手動 ON にした場合のデフォルト)
-        // GgufToolCallParser 側の期待形式と一致させる必要がある。
-        val toolBlock = when {
-            toolFormat == ModelNameHeuristics.ToolCallFormat.GRANITE -> buildGraniteToolBlock(toolsJson)
-            isGemma4 || toolFormat == ModelNameHeuristics.ToolCallFormat.GEMMA4 ->
-                buildGemma4ToolBlock(toolsJson)
-            else -> buildGenericToolBlock(toolsJson)
+        val schemas = allSchemas.filter { it.name in enabledNames || (it.name == SkillPromptSpec.TOOL_NAME && skills.isNotEmpty()) }
+        val array = JSONArray()
+        schemas.forEach { schema ->
+            array.put(
+                JSONObject()
+                    .put("type", "function")
+                    .put(
+                        "function",
+                        JSONObject()
+                            .put("name", schema.name)
+                            .put("description", schema.description)
+                            .put("parameters", JSONObject(schema.parametersJson))
+                    )
+            )
         }
-
-        val withTools = if (systemPrompt.isBlank()) toolBlock.trim() else systemPrompt + toolBlock
-        return if (skills.isEmpty()) withTools else "$withTools\n\n${SkillPromptSpec.catalog(skills)}"
+        // MCP ツールは [McpToolPromptBuilder.currentToolsJson] が改行区切りで返すため、
+        // 1 行 = 1 ツール定義として配列に詰め直す。
+        val mcpJson = McpToolPromptBuilder.currentToolsJson(context)
+        mcpJson.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .forEach { line ->
+                try {
+                    array.put(JSONObject(line))
+                } catch (e: JSONException) {
+                    Log.w(TAG, "collectEnabledToolsJsonArray: skipping invalid MCP tool json", e)
+                }
+            }
+        Log.d(
+            TAG,
+            "collectEnabledToolsJsonArray: enabled=${enabled.map { it.name }} " +
+                "builtinSchemas=${schemas.size} tools=${array.length()}"
+        )
+        return if (array.length() == 0) "" else array.toString()
     }
+
+    /**
+     * スキルカタログのみを system prompt に連結する。
+     * GGUF エンジン経路ではツール定義ブロックの注入がネイティブ側 (GGUF 内蔵
+     * テンプレート) に移譲されたため、残るスキルカタログ部分だけをここで処理する。
+     */
+    fun appendSkillCatalog(systemPrompt: String, skills: List<Skill>): String =
+        if (skills.isEmpty()) systemPrompt else "$systemPrompt\n\n${SkillPromptSpec.catalog(skills)}"
+
 
     /**
      * v2.1+: LiteRT-LM 経路向けのツールブロック注入。
