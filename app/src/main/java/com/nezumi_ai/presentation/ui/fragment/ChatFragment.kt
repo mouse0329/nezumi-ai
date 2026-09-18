@@ -2335,17 +2335,38 @@ class ChatFragment : Fragment() {
      * メディアプレビューの viewer 起動だけは Fragment のコンテキストが必要なので残す。
      */
     private fun openMediaViewerForPreview(selectedKey: String) {
-        val bundle = com.nezumi_ai.presentation.ui.component.MediaViewerDialog.MediaBundle(
-            imageUris = selectedImageUrisList,
-            videoUri = selectedVideoUri,
-            audioUri = selectedAudioUri,
-            title = if (selectedVideoUri != null) requireContext().getString(R.string.multimodal_video_frame_audio_title) else requireContext().getString(R.string.multimodal_media_preview_title),
-            initialIndex = if (selectedKey.startsWith("image:")) {
-                selectedKey.removePrefix("image:").toIntOrNull() ?: 0
-            } else 0
-        )
+        // バグ修正 (プレビュー混在): 旧実装はどのチップをタップしても
+        //   「全画像 + 動画 + 音声」を詰めた MediaBundle を作っていたため、
+        //   音声チップを開くと画像まで同じビュワーに出る (逆も同じ) 混在が起きていた。
+        //   タップされたメディア種別だけをバンドルに入れて個別プレビューにする。
+        //   動画だけは例外で、抽出フレーム (imageUris) と音声トラックを一体として
+        //   扱う従来通りのバンドルを維持する。
+        val context = requireContext()
+        val bundle = when {
+            selectedKey == "audio" ->
+                com.nezumi_ai.presentation.ui.component.MediaViewerDialog.MediaBundle(
+                    audioUri = selectedAudioUri,
+                    title = context.getString(R.string.multimodal_media_preview_title)
+                )
+            selectedKey == "video" ->
+                com.nezumi_ai.presentation.ui.component.MediaViewerDialog.MediaBundle(
+                    imageUris = selectedImageUrisList,
+                    videoUri = selectedVideoUri,
+                    audioUri = selectedAudioUri,
+                    title = context.getString(R.string.multimodal_video_frame_audio_title),
+                    initialIndex = 0
+                )
+            else ->
+                com.nezumi_ai.presentation.ui.component.MediaViewerDialog.MediaBundle(
+                    imageUris = selectedImageUrisList,
+                    title = context.getString(R.string.multimodal_media_preview_title),
+                    initialIndex = if (selectedKey.startsWith("image:")) {
+                        selectedKey.removePrefix("image:").toIntOrNull() ?: 0
+                    } else 0
+                )
+        }
         com.nezumi_ai.presentation.ui.component.MediaViewerDialog.show(
-            requireContext(),
+            context,
             bundle
         )
     }

@@ -580,12 +580,16 @@ private fun MessageMediaPreview(
             ) {
                 imageUris.forEachIndexed { idx, uri ->
                     ImageThumbCard(uri = uri) {
+                        // バグ修正 (プレビュー混在): 画像サムネから開くビュワーに
+                        // audioUri まで同梱すると「画像を開いたのに音声プレイヤーも
+                        // 出る」混在になる。音声はバブル内の AudioPlayerCard が
+                        // 個別に担うため、画像ビュワーには画像だけを渡す。
+                        // (動画は例外: hasVideo 時は上の VideoThumbnailCard 分岐が
+                        //  フレーム + 音声トラック一体のバンドルを作る)
                         MediaViewerDialog.show(
                             context,
                             MediaViewerDialog.MediaBundle(
                                 imageUris = imageUris,
-                                videoUri = videoUri,
-                                audioUri = audioUri,
                                 initialIndex = idx
                             )
                         )
@@ -605,12 +609,11 @@ private fun MessageMediaPreview(
             SingleImageCard(
                 uri = imageUris.first(),
                 onClick = {
+                    // 上記 ImageThumbCard と同じ混在対策。画像ビュワーには画像のみ。
                     MediaViewerDialog.show(
                         context,
                         MediaViewerDialog.MediaBundle(
-                            imageUris = imageUris,
-                            videoUri = videoUri,
-                            audioUri = audioUri
+                            imageUris = imageUris
                         )
                     )
                 }
