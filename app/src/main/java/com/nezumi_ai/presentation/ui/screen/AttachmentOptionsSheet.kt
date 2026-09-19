@@ -1,6 +1,7 @@
 package com.nezumi_ai.presentation.ui.screen
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,12 +13,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
@@ -26,11 +30,24 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nezumi_ai.R
+import com.nezumi_ai.presentation.ui.theme.nezumiSwitchColors
+import com.nezumi_ai.utils.PreferencesHelper
+
+/**
+ * Thinking OFF 時のエフォートセグメントの不透明度。
+ * モック (chat-recreation-reference.html の .segmented.disabled) に倣い、
+ * OFF でもセグメントは非表示にせず「薄くして押せない」状態にする。
+ */
+internal fun effortSegmentsAlpha(thinkingOn: Boolean): Float = if (thinkingOn) 1.0f else 0.4f
 
 /**
  * 旧 sheet_attachment_options.xml の Compose 置き換え。
- * 「画像」「カメラ」「ファイル」の 3 タイルと「キャンセル」を縦に並べる。
+ * 「シンキング」セクション (トグル + Low/Medium/High セグメント) を先頭に置き、
+ * 区切り線の下に「画像」「カメラ」「ファイル」の 3 タイルと「キャンセル」を並べる。
  * BottomSheetDialog のコンテンツ、または Compose の ModalBottomSheet から使う。
+ *
+ * [thinkingOn] が null のときはシンキングセクション自体を表示しない
+ * (モデルがシンキング非対応の場合など、従来どおり添付のみのシートになる)。
  */
 @Composable
 fun AttachmentOptionsSheet(
@@ -39,7 +56,11 @@ fun AttachmentOptionsSheet(
     onCameraClick: () -> Unit,
     onFileClick: () -> Unit,
     onCancel: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    thinkingOn: Boolean? = null,
+    thinkingEffort: String = PreferencesHelper.THINKING_EFFORT_LOW,
+    onThinkingChange: (Boolean) -> Unit = {},
+    onEffortChange: (String) -> Unit = {}
 ) {
     Column(
         modifier = modifier
@@ -63,6 +84,41 @@ fun AttachmentOptionsSheet(
             fontSize = 13.sp,
             modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 10.dp)
         )
+
+        // シンキングセクション: ラベル + トグル + エフォートセグメントを同一行に並べる。
+        // OFF のときセグメントは薄くして押せなくするが、非表示にはしない
+        // (最後に選んだ値は thinkingEffort 側に残る)。
+        if (thinkingOn != null) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 4.dp, end = 4.dp, bottom = 14.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.chat_thinking_label),
+                    color = colorResource(R.color.text_primary),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Switch(
+                    checked = thinkingOn,
+                    onCheckedChange = onThinkingChange,
+                    colors = nezumiSwitchColors(),
+                    modifier = Modifier.padding(start = 12.dp)
+                )
+                ThinkingEffortSegments(
+                    selected = thinkingEffort,
+                    enabled = thinkingOn,
+                    onSelect = onEffortChange,
+                    modifier = Modifier.padding(start = 12.dp)
+                )
+            }
+            HorizontalDivider(
+                color = colorResource(R.color.border),
+                modifier = Modifier.padding(bottom = 14.dp)
+            )
+        }
 
         Row(modifier = Modifier.fillMaxWidth()) {
             AttachmentOptionTile(
@@ -114,6 +170,58 @@ fun AttachmentOptionsSheet(
                 .clickable(onClick = onCancel)
                 .padding(vertical = 14.dp)
         )
+    }
+}
+
+/**
+ * Low / Medium / High の 3 択セグメントコントロール。
+ * [enabled] = false (Thinking OFF) のときは半透明になり操作を受け付けないが、
+ * 選択値 [selected] の表示は維持する。
+ */
+@Composable
+private fun ThinkingEffortSegments(
+    selected: String,
+    enabled: Boolean,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val levels = listOf(
+        PreferencesHelper.THINKING_EFFORT_LOW to stringResource(R.string.thinking_effort_low),
+        PreferencesHelper.THINKING_EFFORT_MEDIUM to stringResource(R.string.thinking_effort_medium),
+        PreferencesHelper.THINKING_EFFORT_HIGH to stringResource(R.string.thinking_effort_high)
+    )
+    Row(
+        modifier = modifier
+            .alpha(effortSegmentsAlpha(enabled))
+            .border(1.dp, colorResource(R.color.border), RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(10.dp))
+    ) {
+        levels.forEachIndexed { index, (level, label) ->
+            val isSelected = level == selected
+            Text(
+                text = label,
+                color = colorResource(
+                    if (isSelected) R.color.text_primary else R.color.text_secondary
+                ),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .background(
+                        if (isSelected) colorResource(R.color.bg_chat) else Color.Transparent
+                    )
+                    .clickable(enabled = enabled) { onSelect(level) }
+                    .padding(horizontal = 14.dp, vertical = 7.dp)
+            )
+            if (index < levels.lastIndex) {
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(32.dp)
+                        .align(Alignment.CenterVertically)
+                        .background(colorResource(R.color.border))
+                )
+            }
+        }
     }
 }
 

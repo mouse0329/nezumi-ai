@@ -598,6 +598,10 @@ class ChatViewModel(
 
     /** true のとき、このチャットでは Thinking を強制ONする */
     private val _chatSessionThinkingEnabledOverride = MutableStateFlow(false)
+
+    /** シンキングの推論エフォート (low / medium / high)。アプリ全体で 1 つに永続化する */
+    private val _chatSessionThinkingEffort = MutableStateFlow(PreferencesHelper.DEFAULT_THINKING_EFFORT)
+    val chatSessionThinkingEffort: StateFlow<String> = _chatSessionThinkingEffort.asStateFlow()
     private val chatSessionThinkingEnabledOverride: StateFlow<Boolean> = _chatSessionThinkingEnabledOverride.asStateFlow()
 
     private var hasUserToggledThinking = false
@@ -1316,6 +1320,14 @@ class ChatViewModel(
         viewModelScope.launch {
             _uiMessage.emit(if (disabled) appContext.getString(R.string.chat_thinking_off_toast) else appContext.getString(R.string.chat_thinking_on_toast))
         }
+    }
+
+    fun setChatSessionThinkingEffort(effort: String) {
+        // エフォートはプロンプト構築時に参照されるだけなので、切り替えのみで
+        // モデルリロード / KV クリアは不要 (ON/OFF トグルと違いテンプレ構造を変えない)。
+        if (effort == _chatSessionThinkingEffort.value) return
+        _chatSessionThinkingEffort.value = effort
+        PreferencesHelper.setThinkingEffort(appContext, effort)
     }
 
     fun switchModel(model: String) {
@@ -4239,7 +4251,16 @@ class ChatViewModel(
         // コンテキスト圧縮は廃止済み (旧実装はバグ多発のため Phase 1 で削除)。
         //   代わりにここでは trimPromptToWindow のみで contextWindow に収める。
         //   将来的な圧縮再実装は Phase 外 (別途リファクタ) とする。
-        return trimPromptToWindow(fullPrompt, config.contextWindow)
+        // Thinking エフォート (low / medium / high) の注入点。
+        //   現時点の applyReasoningEffort はエンジン未配線のため pass-through で、
+        //   最終プロンプトは変化しない (選択値は PreferencesHelper に永続化済み)。
+        //   エンジン / チャットテンプレート側が reasoning_effort を解釈できるように
+        //   なったら PromptBuildingUseCase.applyReasoningEffort 側を実装する。
+        val effortAppliedPrompt = promptBuilding.applyReasoningEffort(
+            fullPrompt,
+            _chatSessionThinkingEffort.value
+        )
+        return trimPromptToWindow(effortAppliedPrompt, config.contextWindow)
     }
 
     /**

@@ -21,6 +21,7 @@ object PreferencesHelper {
     private const val KEY_CURRENT_PRESET_ID = "current_preset_id"
     private const val KEY_BRAVE_SEARCH_API_KEY = "brave_search_api_key"
     private const val KEY_ENABLE_THINKING = "enable_thinking"
+    private const val KEY_THINKING_EFFORT = "thinking_effort"
     private const val KEY_REQUIRE_MULTIMODAL = "require_multimodal"
     private const val KEY_LLAMACPP_IMAGE_MAX_TOKENS = "llamacpp_image_max_tokens"
     private const val KEY_SECRET_MODE_PIN_HASH = "secret_mode_pin_hash"
@@ -48,6 +49,14 @@ object PreferencesHelper {
     const val LANG_SYSTEM = "SYSTEM"
     const val LANG_JA = "JA"
     const val LANG_EN = "EN"
+
+    // シンキングの推論エフォート (添付シートの Low / Medium / High セグメント)。
+    //   値はチャットテンプレ系エンジンの `reasoning_effort` に合わせて小文字で保持する。
+    const val THINKING_EFFORT_LOW = "low"
+    const val THINKING_EFFORT_MEDIUM = "medium"
+    const val THINKING_EFFORT_HIGH = "high"
+    // 初回起動時の既定値 (モック仕様: Thinking ON / effort Low)。
+    const val DEFAULT_THINKING_EFFORT = THINKING_EFFORT_LOW
 
     private fun getSharedPreferences(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -230,6 +239,15 @@ object PreferencesHelper {
 
     fun setEnableThinking(context: Context, enabled: Boolean) {
         getSharedPreferences(context).edit().putBoolean(KEY_ENABLE_THINKING, enabled).apply()
+    }
+
+    fun getThinkingEffort(context: Context): String {
+        return getSharedPreferences(context).getString(KEY_THINKING_EFFORT, DEFAULT_THINKING_EFFORT)
+            ?: DEFAULT_THINKING_EFFORT
+    }
+
+    fun setThinkingEffort(context: Context, effort: String) {
+        getSharedPreferences(context).edit().putString(KEY_THINKING_EFFORT, effort).apply()
     }
 
     fun isRequireMultimodal(context: Context): Boolean {

@@ -35,6 +35,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
@@ -277,6 +278,8 @@ class ChatFragment : Fragment() {
     private var thinkingToggleEnabled by mutableStateOf(false)
     private var thinkingToggleChecked by mutableStateOf(false)
     private var thinkingToggleText by mutableStateOf("")
+    // 添付シートのエフォートセグメント (low / medium / high)。PreferencesHelper に永続化。
+    private var thinkingEffort by mutableStateOf(PreferencesHelper.THINKING_EFFORT_LOW)
     private var currentToolCallState by mutableStateOf<ToolCallState?>(null)
     private var currentImageGenProgress by mutableStateOf<Pair<Int, Int>?>(null)
     private var messagesIsEmpty by mutableStateOf(true)
@@ -983,6 +986,11 @@ class ChatFragment : Fragment() {
             memoryRepository
         )
         viewModel = ViewModelProvider(requireActivity(), factory).get(ChatViewModel::class.java)
+        // エフォートは永続化値を復元し、ViewModel 側の Flow にも同期する。
+        //   viewModel 代入より前に呼ぶと lateinit 未初期化でクラッシュするため、
+        //   必ずこの直後に置くこと (Fix: UninitializedPropertyAccessException)。
+        thinkingEffort = PreferencesHelper.getThinkingEffort(requireContext())
+        viewModel.setChatSessionThinkingEffort(thinkingEffort)
 
         // デフォルトプリセット「ネズミAI」が指すモデル (Gemma4-2B) が未ダウンロードの
         // ときだけ、モデル選択モーダルを出す。利用可能なモデルが 1 つも無い場合は
@@ -1598,6 +1606,12 @@ class ChatFragment : Fragment() {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.chatSessionThinkingEffort.collect { effort ->
+                thinkingEffort = effort
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
                 viewModel.isEmbeddingDownloadInProgress.collect { downloading ->
                     // 抽出中・埋め込みダウンロード中は入力を無効化しないが、ダウンロード中は送信を防ぐ
                     inputEnabledState = !downloading
@@ -1902,6 +1916,8 @@ class ChatFragment : Fragment() {
                 refreshCurrentBackendType()
                 updateMediaAvailability(currentModelKey)
                 updateThinkingToggleVisibility()
+                // 設定画面などで変更された可能性のあるエフォート値を復元する。
+                thinkingEffort = PreferencesHelper.getThinkingEffort(ctx)
 
                 if (newContextMeterVisible != contextMeterVisible) {
                     contextMeterVisible = newContextMeterVisible
@@ -3480,31 +3496,44 @@ class ChatFragment : Fragment() {
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             if (thinkingToggleVisible) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                // ヘッダーのシンキング切替は添付 (+) シートへ移設済み。
+                //   ここには現在の状態を示す読み取り専用のステータスピルを表示する
+                //   (1 行目: 思考ON / 思考OFF、2 行目: ON のときだけ effort の小文字表記)。
+                //   ピル自体はタップ不可で、シートは従来どおり「+」ボタンから開く。
+                val thinkingOn = !thinkingToggleChecked
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .background(
+                            colorResource(id = R.color.bg_chat),
+                            RoundedCornerShape(14.dp)
+                        )
+                        .border(
+                            1.dp,
+                            colorResource(id = R.color.border),
+                            RoundedCornerShape(14.dp)
+                        )
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
                 ) {
                     Text(
-                        text = stringResource(id = R.string.chat_thinking_label),
-                        color = colorResource(id = R.color.text_secondary),
-                        style = MaterialTheme.typography.bodySmall
+                        text = stringResource(
+                            id = if (thinkingOn) {
+                                R.string.chat_thinking_status_on
+                            } else {
+                                R.string.chat_thinking_status_off
+                            }
+                        ),
+                        color = colorResource(id = R.color.text_primary),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
                     )
-                    Switch(
-                        checked = !thinkingToggleChecked,
-                        onCheckedChange = { checked ->
-                            viewModel.setChatSessionDisableThinking(!checked)
-                        },
-                        // Bug fix(#46):
-                        //   旧実装は `enabled = thinkingToggleEnabled && !isGenerating` だったため、
-                        //   生成停止直後に isGenerating フラグの更新順序次第で Switch が
-                        //   触れない状態にロックされるケースがあった。
-                        //   さらに ViewModel 側の setChatSessionDisableThinking は
-                        //   「設定値のみ更新、次回送信時から反映」の設計なので、生成中でも
-                        //   切り替えを受け付けて問題ない。ここでは !isGenerating を外し、
-                        //   モデルロード中でない限り常時切り替え可能にする。
-                        enabled = thinkingToggleEnabled,
-                        colors = nezumiSwitchColors()
-                    )
+                    if (thinkingOn) {
+                        Text(
+                            text = thinkingEffort,
+                            color = colorResource(id = R.color.text_secondary),
+                            fontSize = 11.sp
+                        )
+                    }
                 }
             }
         }
@@ -3563,6 +3592,15 @@ class ChatFragment : Fragment() {
                 this@ChatFragment.NezumiComposeTheme {
                     com.nezumi_ai.presentation.ui.screen.AttachmentOptionsSheet(
                         imageEnabled = imageInputEnabled,
+                        // シンキング非対応モデルではセクション自体を出さない (従来どおり添付のみ)。
+                        thinkingOn = if (thinkingToggleVisible) !thinkingToggleChecked else null,
+                        thinkingEffort = thinkingEffort,
+                        onThinkingChange = { checked ->
+                            viewModel.setChatSessionDisableThinking(!checked)
+                        },
+                        onEffortChange = { effort ->
+                            viewModel.setChatSessionThinkingEffort(effort)
+                        },
                         onImageClick = {
                             dialog.dismiss()
                             if (!imageInputEnabled) {

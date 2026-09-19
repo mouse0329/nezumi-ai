@@ -390,6 +390,26 @@ class PromptBuildingUseCase {
         )
     }
 
+    /**
+     * シンキングの推論エフォート (low / medium / high) をプロンプトへ反映するフック。
+     *
+     * 現時点ではエンジン / チャットテンプレート層に effort を受け渡す経路が存在しない
+     * (`enable_thinking` の ON/OFF のみが配線済み)。そのためここではプロンプトを
+     * そのまま返す (pass-through) 実装に留め、UI 側で選択された値は
+     * PreferencesHelper に永続化されるだけで推論結果には影響しない。
+     *
+     * TODO(thinking-effort): エンジン側が reasoning_effort を解釈できるようになったら、
+     *   chat-template 系の `{reasoning effort: low}` を最後の user メッセージに追記する
+     *   パターンに倣ってここに実装し、呼び出し元 (buildPromptWithSessionContext 等)
+     *   から選択値を渡す。実装時は最終プロンプト文字列にマーカーが実際に現れることを
+     *   実機ログで検証してから「end-to-end で動作」と扱うこと。
+     */
+    fun applyReasoningEffort(prompt: String, effortLevel: String): String {
+        if (effortLevel.isBlank()) return prompt
+        // 未配線: エンジンが effort を解釈しないため、プロンプトは変更しない。
+        return prompt
+    }
+
     // ---- モデル名判定 (ModelNameHeuristics への委譲。旧 PromptBuilder 呼び出しの移行先) ----
 
     fun isGemma4Model(engineModelName: String): Boolean =

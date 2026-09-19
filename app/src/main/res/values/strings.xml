@@ -69,6 +69,11 @@
     <string name="response_extracting">⟳ 記憶を整理中...</string>
     <string name="chat_thinking_follow_settings">シンキング:ON</string>
     <string name="chat_thinking_off_for_session">シンキング:OFF</string>
+    <string name="chat_thinking_status_on">思考ON</string>
+    <string name="chat_thinking_status_off">思考OFF</string>
+    <string name="thinking_effort_low">低</string>
+    <string name="thinking_effort_medium">中</string>
+    <string name="thinking_effort_high">高</string>
     <string name="scroll_to_bottom">一番下へ</string>
     <string name="scroll_to_bottom_icon"></string>
     <string name="revoke_prompt">取り消し</string>

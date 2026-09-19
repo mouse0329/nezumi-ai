@@ -74,6 +74,11 @@ Enjoy chatting with your AI!</string>
     <string name="response_extracting">⟳ Organizing memory…</string>
     <string name="chat_thinking_follow_settings">Thinking: ON</string>
     <string name="chat_thinking_off_for_session">Thinking: OFF</string>
+    <string name="chat_thinking_status_on">Thinking On</string>
+    <string name="chat_thinking_status_off">Thinking Off</string>
+    <string name="thinking_effort_low">Low</string>
+    <string name="thinking_effort_medium">Medium</string>
+    <string name="thinking_effort_high">High</string>
     <string name="scroll_to_bottom">Scroll to bottom</string>
     <string name="scroll_to_bottom_icon"></string>
     <string name="revoke_prompt">Undo</string>
