@@ -534,6 +534,32 @@ object GgufToolCallParser {
         if (isGemma4) GEMMA4_TOOL_CALL_CLOSE else TOOL_CALL_CLOSE
 
     /**
+     * 2ラウンド目以降の継続プロンプト用に、モデルが生成したツールコールの出力を
+     * 「チャットテンプレート上の正しいターン区切り」へ整形する。
+     *
+     * バグ修正 (ツールの返り値がモデルに届かない / モデルが <tool_response> を再生成する):
+     *   従来は <tool_call> の生テキストに <tool_response> を素結合していたため、
+     *   Qwen 系では <|im_end|> 等の assistant ターン終端が存在せず、
+     *   モデルがツール結果ブロックを「自分の出力の続き」としてエコー再生し始め、
+     *   本物のツール結果より先に空の / 捏造の <tool_response> が生成されていた。
+     *
+     * @param strippedRoundText 思考タグ除去済みのモデル生出力 (<tool_call> タグを含む)
+     */
+    fun toolCallTurnText(strippedRoundText: String, isGemma4: Boolean): String {
+        val body = strippedRoundText.trimEnd()
+        return buildString {
+            append(body)
+            if (isGemma4) {
+                // Gemma 4 テンプレート: assistant ターンを閉じ、ツール結果は user ターンで始める
+                append("\n<end_of_turn>\n<start_of_turn>user")
+            } else {
+                // Qwen / ChatML 系テンプレート: <|im_end|> で assistant ターンを閉じる
+                append("<|im_end|>\n")
+            }
+        }
+    }
+
+    /**
      * トークン切れした未完タグ用の実行失敗 [ToolResultCard] を合成する。
      * `<tool_response>` としてモデルに戻すことで、モデルが「今のツールコールは失敗した」と
      * 認識して自然に立て直せるようにする。

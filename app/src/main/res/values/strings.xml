@@ -1200,12 +1200,6 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="image_gen_tab_library">ライブラリ</string>
 
     <!-- Raw コンテキストダイアログ -->
-    <string name="raw_context_title">現在の raw コンテキスト</string>
-    <string name="raw_context_open_hint">タップで raw コンテキストを表示（メーターは参考値）</string>
-    <string name="raw_context_empty">まだプロンプトが構築されていません。一度メッセージを送信するか、新しい内容を入力するとここに反映されます。</string>
-    <string name="raw_context_copy">コピー</string>
-    <string name="raw_context_close">閉じる</string>
-    <string name="raw_context_copied">コピーしました</string>
 
     <!-- Fragments for navigation -->
     <string name="first_fragment_label">First Fragment</string>

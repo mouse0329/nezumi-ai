@@ -48,8 +48,6 @@
     <color name="viewer_seekbar_track">#374151</color>
 
     <!-- Raw context dialog -->
-    <color name="raw_context_dialog_bg">#1F2937</color>
-    <color name="raw_context_dialog_text">#F3F4F6</color>
 
     <!--
         Inline tool-call card palette (dark).

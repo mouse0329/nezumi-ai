@@ -849,9 +849,17 @@ class GgufInferenceEngine(
                     // 実際に生成速度が速いときに GGUF でも再現する報告と一致)。
                     // trySendBlocking で確実に送る。
                     emitChunk = { chunk ->
-                        val result = trySendBlocking(chunk)
-                        if (!result.isSuccess) {
-                            Log.w(TAG, "Dropping GGUF stream chunk because callbackFlow channel is not ready")
+                        // バグ修正 (GGUF でツール呼び出し時にストリーミングされてしまう):
+                        //   ツール有効時の初回ラウンドは、出力がツールコールか本文か確定するまで
+                        //   生チャンクを UI に流さない。ツールコールのみの出力はインライン
+                        //   ツールカードが描画を担うため、生テキストのストリーミングは行わない。
+                        //   本文を含んでいた場合はパース後に整形済みテキストとして一括送出する
+                        //   (下の deferredVisible 参照)。
+                        if (!(toolCallingEnabled && isFirstGenerationRound)) {
+                            val result = trySendBlocking(chunk)
+                            if (!result.isSuccess) {
+                                Log.w(TAG, "Dropping GGUF stream chunk because callbackFlow channel is not ready")
+                            }
                         }
                     },
                     images = images,
@@ -896,6 +904,26 @@ class GgufInferenceEngine(
                     }
                 }
 
+                // バグ修正 (モデルによる <tool_response> の代行生成):
+                //   ツール結果はアプリ側が既に本物を送っている。2ラウンド目以降にモデルが
+                //   自分で <tool_response> を生成した場合、それは重複かつ内容が空/捏造になる
+                //   (Qwen3.5 で <tool_response> のみを生成し続けるログと一致)。
+                //   モデル生成分の <tool_response> ブロックを除去し、ツール呼び出しのない
+                //   通常ラウンドとして処理し直す。
+                if (toolRound > 1 && parsed.toolCalls.isEmpty() && !parsed.hadTruncatedToolCall &&
+                    (ToolCallTags.TOOL_RESPONSE_OPEN in roundOutputText ||
+                        Regex("(?s)<\\|tool_response>").containsMatchIn(roundOutputText))
+                ) {
+                    Log.w(TAG, "Stripping model-authored <tool_response> (round=$toolRound session=$sessionId)")
+                    roundOutputText = roundOutputText
+                        .replace(Regex("(?s)<tool_response>.*?</tool_response>"), "")
+                        .replace(Regex("(?s)<\\|tool_response>.*?<tool_response\\|>"), "")
+                        .replace(Regex("(?s)<tool_response>.*$"), "")
+                        .replace(Regex("(?s)<\\|tool_response>.*$"), "")
+                        .trim()
+                    parsed = GgufToolCallParser.parse(roundOutputText, isGemma4 = isGemma4)
+                }
+
                 // トークン切れ検知:
                 //   モデルが <tool_call> を開いたのに JSON 引数の途中でトークン予算切れ/停止シーケンス
                 //   にかかってしまったケース。以前はここで黙って break していたため、UI の
@@ -928,6 +956,19 @@ class GgufInferenceEngine(
                         preserveToolCallTags = true
                     )
                 )
+
+                // 初回ラウンドはツールコール判定まで生チャンク送出を保留しているため、
+                // ここで可視テキストを一括送出して埋め合わせる。ツールコールのみの場合は
+                // 何も送らず、インラインツールカードの表示に委ねる。
+                if (toolRound == 1 && toolCallingEnabled) {
+                    val deferredVisible = Gemma4ThinkingParser.sanitizeVisibleText(
+                        normalizedRoundText,
+                        preserveToolCallTags = true
+                    ).replace(Regex("(?s)<tool_call>.*?</tool_call>"), "").trim()
+                    if (deferredVisible.isNotEmpty()) {
+                        trySendBlocking(deferredVisible + "\n")
+                    }
+                }
 
                 // 実行対象のツールもなく、トークン切れもなければ通常の回答としてループを抜ける。
                 if (parsed.toolCalls.isEmpty() && !truncationDetected) {
@@ -1011,9 +1052,19 @@ class GgufInferenceEngine(
                     )
                 }
 
+                // バグ修正 (ツールの返り値がモデルに届かず応答が壊れる):
+                //   <tool_call> 生テキストへの素結合ではチャットテンプレートのターン区切りが
+                //   無く、モデルが <tool_response> を自分で再生成して本物の結果を無視していた。
+                //   toolCallTurnText() で assistant ターン終端 (+ Gemma4 では user ターン開始) を
+                //   明示してから <tool_response> を連結する。
                 currentPrompt = buildString {
                     append(prompt)
-                    append(Gemma4ThinkingParser.stripThinkingForModelPrompt(normalizedRoundText))
+                    append(
+                        GgufToolCallParser.toolCallTurnText(
+                            Gemma4ThinkingParser.stripThinkingForModelPrompt(normalizedRoundText),
+                            isGemma4 = isGemma4
+                        )
+                    )
                     append(toolResponseBlock)
                 }
                 withContext(Dispatchers.IO) {

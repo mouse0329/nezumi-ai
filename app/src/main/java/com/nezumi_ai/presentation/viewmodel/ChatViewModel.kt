@@ -623,16 +623,6 @@ class ChatViewModel(
     private val _contextWindowSize = MutableStateFlow(4096)
     val contextWindowSize: StateFlow<Int> = _contextWindowSize
 
-    // メーターをタップしたときに表示する「実際に組み立てられたプロンプト文字列」。
-    // estimateContextUsageChars でメーター用に組み立てたプロンプトをそのまま保持する。
-    private val _contextRawPrompt = MutableStateFlow("")
-    val contextRawPrompt: StateFlow<String> = _contextRawPrompt
-
-    // raw コンテキスト表示をアプリ再起動後も保持するための永続化。
-    // 「raw コンテキスト内容がアプリ再起動すると吹き飛ぶ」問題への対応。
-    private val rawPromptPrefs by lazy {
-        appContext.getSharedPreferences("nezumi_ai_raw_prompt", Context.MODE_PRIVATE)
-    }
 
     private val _contextWindowCapacityChars = MutableStateFlow(4096 * 4)
     val contextWindowCapacityChars: StateFlow<Int> = _contextWindowCapacityChars
@@ -1131,8 +1121,6 @@ class ChatViewModel(
         // ここで関連状態をすべてリセットし、初回推定がスロットル判定で
         // スキップされないようにする。
         _contextUsageChars.value = 0
-        // セッション切替時は永続化済みの raw プロンプトを復元し、無ければ空にする。
-        _contextRawPrompt.value = rawPromptPrefs.getString(rawPromptKey(sessionId), "") ?: ""
         lastContextUsageEstimationAtMs = 0L
         contextUsageEstimationJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
@@ -2965,13 +2953,20 @@ class ChatViewModel(
                 val exactContextTokens = manager.getCurrentContextTokenCountSync()
                 if (exactContextTokens != null && exactContextTokens > 0) {
                     val mediaTokens = manager.getLastPromptTokenInfoSync()?.second ?: 0
+                    // バグ修正 (Thinking がコンテキストメーターに含まれない):
+                    //   KV 実測値には Thinking チャンネルのデコード分が含まれないため、
+                    //   最終 thinkingContent を推定トークン化して加算し、実際のセッション
+                    //   コンテキスト量に近づける。
+                    val thinkingTokens =
+                        TextTokenEstimator.estimateOutputTokens(finalThinking ?: "").toInt().coerceAtLeast(0)
+                    val totalTokens = exactContextTokens + thinkingTokens
                     if (isCurrentContextSession(sessionId)) {
-                        _contextUsageTokens.value = exactContextTokens
+                        _contextUsageTokens.value = totalTokens
                         _contextMediaTokens.value = mediaTokens
                     }
                     // シークレットセッションは DB に残さない (既存のプライバシー方針に合わせる)
                     if (!_isCurrentSessionIncognito.value) {
-                        sessionRepository.updateLastKnownContextTokens(sessionId, exactContextTokens, mediaTokens)
+                        sessionRepository.updateLastKnownContextTokens(sessionId, totalTokens, mediaTokens)
                     }
                     Log.d(TAG, "CONTEXT_METER: exact context tokens=$exactContextTokens (media=$mediaTokens) session=$sessionId")
                 }
@@ -4609,9 +4604,6 @@ class ChatViewModel(
     private fun isCurrentContextSession(sessionId: Long): Boolean =
         isDisplayedSession(sessionId) && activeCollectionSessionId == sessionId
 
-    /** raw コンテキスト永続化用のキー。 */
-    private fun rawPromptKey(sessionId: Long): String = "raw_prompt_session_$sessionId"
-
     private suspend fun estimateContextUsageChars(
         messages: List<MessageEntity>,
         sessionId: Long
@@ -4644,12 +4636,6 @@ class ChatViewModel(
         val maxChars = config.contextWindow * TOKEN_TO_CHAR_RATIO
         val trimmedBase = trimPromptToWindow(basePrompt, config.contextWindow)
         val basePromptSize = trimmedBase.length
-        // モーダル表示用に、現時点で組み立てられている生のプロンプト全文を保持しておく。
-        // あわせて SharedPreferences にも書き込み、アプリ再起動後も同じ内容を復元できるようにする。
-        if (isCurrentContextSession(sessionId)) {
-            _contextRawPrompt.value = trimmedBase
-            rawPromptPrefs.edit().putString(rawPromptKey(sessionId), trimmedBase).apply()
-        }
 
         // コンテキストメーター正確化 (GGUF):
         //   chars→トークン換算 (÷4) は粗いため、モデルロード済みなら実トークナイザで
@@ -4752,10 +4738,6 @@ class ChatViewModel(
                     )
                 }.getOrNull()
                 if (renderedWithUserTemplate != null) {
-                    _contextRawPrompt.value = renderedWithUserTemplate
-                    _currentSessionId.value?.let { sessionId ->
-                        rawPromptPrefs.edit().putString(rawPromptKey(sessionId), renderedWithUserTemplate).apply()
-                    }
                     return renderedWithUserTemplate
                 }
                 // レンダリング失敗 (旧 Ollama 形式の残存データ等) は内蔵テンプレートへフォールバック
@@ -4768,15 +4750,7 @@ class ChatViewModel(
             toolsJson = toolsJson
         )
         // formatGgufChatTemplate の戻り値はネイティブがレンダリングし、実際にエンジンへ渡す
-        // 生プロンプト全文 (ツール定義込み) そのもの。raw コンテキスト表示にはこの値を使い、
-        // SharedPreferences にも書き込んでアプリ再起動後も復元できるようにする。
-        // (旧来はメーター推定用の文字列を表示していたため「raw なのに raw じゃない」状態だった)
-        if (rendered != null) {
-            _contextRawPrompt.value = rendered
-            _currentSessionId.value?.let { sessionId ->
-                rawPromptPrefs.edit().putString(rawPromptKey(sessionId), rendered).apply()
-            }
-        }
+        // 生プロンプト全文 (ツール定義込み) そのもの。
         return rendered
     }
 

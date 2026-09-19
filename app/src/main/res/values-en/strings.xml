@@ -1320,12 +1320,6 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="image_gen_tab_library">Library</string>
 
     <!-- Raw context dialog -->
-    <string name="raw_context_title">Current raw context</string>
-    <string name="raw_context_open_hint">Tap to view raw context (meter is approximate)</string>
-    <string name="raw_context_empty">No prompt has been built yet. Send a message or type new content and it will appear here.</string>
-    <string name="raw_context_copy">Copy</string>
-    <string name="raw_context_close">Close</string>
-    <string name="raw_context_copied">Copied</string>
 
     <!-- Attachment options sheet -->
     <string name="attachment_options_title">Choose what to attach</string>

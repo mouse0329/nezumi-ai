@@ -6,13 +6,13 @@ import com.nezumi_ai.data.inference.cloud.*
 
 import android.Manifest
 import android.animation.ValueAnimator
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
 import android.os.Build
-import android.content.ClipData
 import android.net.Uri
 import android.os.Bundle
 import android.text.Editable
@@ -266,8 +266,6 @@ class ChatFragment : Fragment() {
  // 新: コンテキストメーターの表示可否。全般タブで切り替えられる。既定は表示しない。
     private var contextMeterVisible by mutableStateOf(false)
     // メーターをタップしたときに表示する raw コンテキストモーダルの可視フラグと中身。
-    private var contextRawDialogVisible by mutableStateOf(false)
-    private var contextRawText by mutableStateOf("")
 
     // Bug fix(#43): t/s ・ TTFT トグルの値をフラグメント側でも保持し、onResume で変化を検知して
     // MessageAdapter に強制リバインドを依頼する。これにより、設定タブでトグルした直後に
@@ -939,7 +937,6 @@ class ChatFragment : Fragment() {
                         },
                         modelLoadingOverlay = { ModelLoadingOverlay() }
                     )
-                    ContextRawDialog()
                 }
             }
         }
@@ -3151,13 +3148,6 @@ class ChatFragment : Fragment() {
             modifier = Modifier
                 .fillMaxWidth()
                 .background(colorResource(id = R.color.surface_card))
-                .clickable {
-                    // メーターをタップしたら raw コンテキストをモーダルで表示する。
-                    // メーターの値は完全に正確ではないため、実際に何が入っているのかを
-                    // ユーザーが確認できるようにする。
-                    contextRawText = viewModel.contextRawPrompt.value
-                    contextRawDialogVisible = true
-                }
                 .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
@@ -3172,65 +3162,7 @@ class ChatFragment : Fragment() {
                 color = colorResource(id = R.color.primary),
                 trackColor = colorResource(id = R.color.context_meter_track)
             )
-            Text(
-                text = stringResource(id = R.string.raw_context_open_hint),
-                color = colorResource(id = R.color.text_secondary),
-                style = MaterialTheme.typography.labelSmall
-            )
         }
-    }
-
-    @Composable
-    private fun ContextRawDialog() {
-        if (!contextRawDialogVisible) return
-        // バグ修正 (ライトモード対応):
-        //   AlertDialog の containerColor / 各 contentColor を明示指定していなかったため、
-        //   ライトモードで背景が白のまま、テキストも白で同化して見えなくなるケースがあった。
-        //   raw_context_dialog_bg / raw_context_dialog_text リソースで
-        //   ライト: 白背景 + 黒文字 / ダーク: 紺背景 + 白文字 を保証する。
-        val dialogBg = colorResource(id = R.color.raw_context_dialog_bg)
-        val dialogText = colorResource(id = R.color.raw_context_dialog_text)
-        val buttonText = colorResource(id = R.color.primary)
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { contextRawDialogVisible = false },
-            containerColor = dialogBg,
-            titleContentColor = dialogText,
-            textContentColor = dialogText,
-            confirmButton = {
-                TextButton(onClick = { contextRawDialogVisible = false }) {
-                    Text(stringResource(id = R.string.raw_context_close), color = buttonText)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    val clip = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                    clip?.setPrimaryClip(ClipData.newPlainText("raw_context", contextRawText))
-                    Toast.makeText(requireContext(), getString(R.string.raw_context_copied), Toast.LENGTH_SHORT).show()
-                }) {
-                    Text(stringResource(id = R.string.raw_context_copy), color = buttonText)
-                }
-            },
-            title = { Text(stringResource(id = R.string.raw_context_title), color = dialogText) },
-            text = {
-                val scrollState = androidx.compose.foundation.rememberScrollState()
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 480.dp)
-                        .verticalScroll(scrollState)
-                ) {
-                    Text(
-                        text = if (contextRawText.isBlank())
-                            stringResource(id = R.string.raw_context_empty)
-                        else contextRawText,
-                        style = MaterialTheme.typography.bodySmall,
-                        // バグ修正: ダイアログ専用のテキスト色を直接適用して
-                        //   背景とのコントラストを保証する。
-                        color = dialogText
-                    )
-                }
-            }
-        )
     }
 
     /**

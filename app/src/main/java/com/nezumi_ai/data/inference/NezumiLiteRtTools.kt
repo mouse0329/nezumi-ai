@@ -201,14 +201,14 @@ internal fun buildEnabledToolProviders(context: Context, alarmDao: AlarmDao): Li
 // ─────────────────────────────────────────────
 
 private class GetTimeSchema : ToolSet {
-    @Tool(description = "Returns current device datetime.")
+    @Tool(description = "Returns the current device date, time, timezone and Unix timestamp in milliseconds. Call this whenever the user asks about the current date or time; do not answer from memory.")
     fun getCurrentTime(
         @ToolParam(description = "IANA timezone. e.g. Asia/Tokyo") timezone: String?
     ): Map<String, String> = emptyMap()
 }
 
 private class GetBatterySchema : ToolSet {
-    @Tool(description = "Returns current device battery level and status.")
+    @Tool(description = "Returns the current device battery level and charging status. Call this when the user asks about battery; do not answer from memory.")
     fun getBatteryLevel(): Map<String, Any?> = emptyMap()
 }
 
@@ -230,7 +230,7 @@ private class DismissAlarmSchema : ToolSet {
 }
 
 private class ListAlarmsSchema : ToolSet {
-    @Tool(description = "Returns alarms managed by nezumi-ai.")
+    @Tool(description = "Returns the alarms managed by this app. Call this when the user asks about their alarms; do not answer from memory.")
     fun listAlarms(): Map<String, Any?> = emptyMap()
 }
 
@@ -257,7 +257,7 @@ private class StopTimerSchema : ToolSet {
 }
 
 private class ListTimersSchema : ToolSet {
-    @Tool(description = "Lists all currently running timers.")
+    @Tool(description = "Lists all currently running timers. Call this when the user asks about their timers; do not answer from memory.")
     fun listTimers(): Map<String, Any?> = emptyMap()
 }
 
@@ -273,7 +273,7 @@ private class GenerateImageSchema : ToolSet {
 }
 
 private class ListSdModelsSchema : ToolSet {
-    @Tool(description = "List available Stable Diffusion image generation models on this device")
+    @Tool(description = "List the Stable Diffusion image generation models available on this device. Call this when the user asks which image models exist or before choosing a model; do not answer from memory.")
     fun listSdModels(): Map<String, Any?> = emptyMap()
 }
 
