@@ -1068,6 +1068,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="model_settings_chat_template_description">モデルごとのチャットテンプレートを選択します。「自動検出」では GGUF 内蔵の chat_template を読み込んで適用し、読み取れない場合はモデル名からの推定にフォールバックします。</string>
     <string name="model_settings_template_auto_detect">自動検出</string>
     <string name="model_settings_template_custom">カスタム...</string>
+    <string name="model_settings_template_gguf_metadata">GGUF メタデータのテンプレート</string>
     <string name="model_settings_chat_template_label">チャットテンプレート</string>
     <string name="model_settings_custom_template_label">Jinja テンプレート（開発者向け）</string>
     <string name="model_settings_template_variables">利用可能な変数: messages / add_generation_prompt / enable_thinking（Jinja 構文）</string>

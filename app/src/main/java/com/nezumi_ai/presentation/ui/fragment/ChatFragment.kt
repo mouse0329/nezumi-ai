@@ -280,6 +280,9 @@ class ChatFragment : Fragment() {
     private var thinkingToggleText by mutableStateOf("")
     // 添付シートのエフォートセグメント (low / medium / high)。PreferencesHelper に永続化。
     private var thinkingEffort by mutableStateOf(PreferencesHelper.THINKING_EFFORT_LOW)
+    // 要望: 思考強度 UI はテンプレートが reasoning_effort を解釈するモデルのみ表示。
+    // 初期値 true は未評価時のちらつき防止で、updateThinkingToggleVisibility() が即時補正する。
+    private var thinkingEffortVisible by mutableStateOf(true)
     private var currentToolCallState by mutableStateOf<ToolCallState?>(null)
     private var currentImageGenProgress by mutableStateOf<Pair<Int, Int>?>(null)
     private var messagesIsEmpty by mutableStateOf(true)
@@ -2353,6 +2356,9 @@ class ChatFragment : Fragment() {
     private fun updateThinkingToggleVisibility() {
         val modelSupportsThinking = settingsRepository.modelSupportsGemmaThinking(currentModelKey, requireContext())
         thinkingToggleVisible = modelSupportsThinking
+        // 要望: 思考強度 (low / medium / high) はテンプレートが reasoning_effort を
+        // 解釈するモデルのみ表示する。非対応モデルでは UI から消す。
+        thinkingEffortVisible = viewModel.isThinkingEffortSupportedForModel(currentModelKey)
         renderThinkingToggleState()
     }
 
@@ -3527,7 +3533,7 @@ class ChatFragment : Fragment() {
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold
                     )
-                    if (thinkingOn) {
+                    if (thinkingOn && thinkingEffortVisible) {
                         Text(
                             text = thinkingEffort,
                             color = colorResource(id = R.color.text_secondary),
@@ -3595,6 +3601,7 @@ class ChatFragment : Fragment() {
                         // シンキング非対応モデルではセクション自体を出さない (従来どおり添付のみ)。
                         thinkingOn = if (thinkingToggleVisible) !thinkingToggleChecked else null,
                         thinkingEffort = thinkingEffort,
+                        thinkingEffortVisible = thinkingEffortVisible,
                         onThinkingChange = { checked ->
                             viewModel.setChatSessionDisableThinking(!checked)
                         },

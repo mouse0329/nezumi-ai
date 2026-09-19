@@ -1410,19 +1410,19 @@ open class ModelSettingsFragment : Fragment() {
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        val autoDetectLabel = stringResource(id = R.string.model_settings_template_auto_detect)
+                        // 要望対応: テンプレート選択は「GGUF メタデータのテンプレート」か
+                        // 「手動入力」の二択に絞る。旧ビルトイン選択 (llama3 / chatml 等) は
+                        // ダイアログを開いた時点で MODE_AUTO (= GGUF メタデータ) に読み替える。
+                        val ggufTemplateLabel = stringResource(id = R.string.model_settings_template_gguf_metadata)
                         val customLabel = stringResource(id = R.string.model_settings_template_custom)
-                        val templateOptions = remember(autoDetectLabel, customLabel) {
-                            buildList {
-                                add(PromptTemplateStore.MODE_AUTO to autoDetectLabel)
-                                PromptTemplateStore.BUILTIN_TEMPLATES.forEach { b ->
-                                    add(b.id to b.displayName)
-                                }
-                                add(PromptTemplateStore.MODE_CUSTOM to customLabel)
-                            }
+                        val templateOptions = remember(ggufTemplateLabel, customLabel) {
+                            listOf(
+                                PromptTemplateStore.MODE_AUTO to ggufTemplateLabel,
+                                PromptTemplateStore.MODE_CUSTOM to customLabel
+                            )
                         }
                         val currentLabel = templateOptions.firstOrNull { it.first == capabilityDialogTemplateMode }?.second
-                            ?: "自動検出"
+                            ?: ggufTemplateLabel
                         ExposedDropdownMenuBox(
                             expanded = capabilityDialogTemplateExpanded,
                             onExpandedChange = { capabilityDialogTemplateExpanded = it }
@@ -1451,14 +1451,29 @@ open class ModelSettingsFragment : Fragment() {
                                             capabilityDialogTemplateMode = id
                                             capabilityDialogTemplateExpanded = false
                                             capabilityDialogTemplateError = null
-                                            // 初めてカスタムを選んだとき、ビルトインを雛型としてコピー
-                                            if (id == PromptTemplateStore.MODE_CUSTOM && capabilityDialogTemplateCustom.isBlank()) {
-                                                val seed = PromptTemplateStore.BUILTIN_TEMPLATES.firstOrNull {
-                                                    it.id == previousMode
-                                                }?.template
-                                                    ?: PromptTemplateStore.BUILTIN_TEMPLATES.firstOrNull { it.id == "chatml" }?.template
-                                                    ?: ""
-                                                capabilityDialogTemplateCustom = seed
+                                            when {
+                                                // 要望: 手動に切り替えたときは GGUF メタデータの
+                                                // テンプレートを自動入力する (編集の出発点)。
+                                                id == PromptTemplateStore.MODE_CUSTOM &&
+                                                    previousMode != PromptTemplateStore.MODE_CUSTOM -> {
+                                                    val ggufTemplate = runCatching {
+                                                        GgufMetadataReader.readChatTemplate(
+                                                            File(modelSettingsDialogModel?.path.orEmpty())
+                                                        )
+                                                    }.getOrNull()
+                                                    if (!ggufTemplate.isNullOrBlank()) {
+                                                        capabilityDialogTemplateCustom = ggufTemplate
+                                                    } else if (capabilityDialogTemplateCustom.isBlank()) {
+                                                        capabilityDialogTemplateCustom =
+                                                            PromptTemplateStore.BUILTIN_TEMPLATES
+                                                                .firstOrNull { it.id == previousMode }?.template
+                                                                ?: ""
+                                                    }
+                                                }
+                                                // 要望: GGUF メタデータへ戻したら手動テンプレートは削除する。
+                                                id == PromptTemplateStore.MODE_AUTO -> {
+                                                    capabilityDialogTemplateCustom = ""
+                                                }
                                             }
                                         }
                                     )
@@ -4977,7 +4992,12 @@ open class ModelSettingsFragment : Fragment() {
         capabilityDialogRepoMmprojCandidates = emptyList()
         // プロンプトテンプレート選択をロード
         val tplSel = PromptTemplateStore.getSelection(requireContext(), model.path)
-        capabilityDialogTemplateMode = tplSel.mode
+        // 二択化に伴う移行: 旧ビルトイン id (llama3 / chatml 等) が残っていても
+        // MODE_AUTO (= GGUF メタデータのテンプレート) に読み替えて表示・保存する。
+        capabilityDialogTemplateMode = when (tplSel.mode) {
+            PromptTemplateStore.MODE_CUSTOM -> PromptTemplateStore.MODE_CUSTOM
+            else -> PromptTemplateStore.MODE_AUTO
+        }
         capabilityDialogTemplateCustom = tplSel.customTemplate
         capabilityDialogTemplateError = null
         capabilityDialogTemplateExpanded = tplSel.mode != PromptTemplateStore.MODE_AUTO

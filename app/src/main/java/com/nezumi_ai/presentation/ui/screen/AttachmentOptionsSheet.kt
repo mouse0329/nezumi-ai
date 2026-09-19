@@ -34,11 +34,13 @@ import com.nezumi_ai.presentation.ui.theme.nezumiSwitchColors
 import com.nezumi_ai.utils.PreferencesHelper
 
 /**
- * Thinking OFF 時のエフォートセグメントの不透明度。
- * モック (chat-recreation-reference.html の .segmented.disabled) に倣い、
- * OFF でもセグメントは非表示にせず「薄くして押せない」状態にする。
+ * エフォートセグメントの不透明度。
+ *
+ * 要望変更: 思考強度は Thinking OFF でも切り替え可能にするため、
+ * 旧来の「OFF 時は薄くして押せない」dim 表現は廃止し常に 1.0f を返す
+ * (引数は呼び出し側シグネチャ互換のために残す)。
  */
-internal fun effortSegmentsAlpha(thinkingOn: Boolean): Float = if (thinkingOn) 1.0f else 0.4f
+internal fun effortSegmentsAlpha(thinkingOn: Boolean): Float = 1.0f
 
 /**
  * 旧 sheet_attachment_options.xml の Compose 置き換え。
@@ -59,6 +61,9 @@ fun AttachmentOptionsSheet(
     modifier: Modifier = Modifier,
     thinkingOn: Boolean? = null,
     thinkingEffort: String = PreferencesHelper.THINKING_EFFORT_LOW,
+    // テンプレートが reasoning_effort を解釈しないモデルでは false を渡し、
+    // 思考強度セグメント自体を UI から消す (要望対応)。
+    thinkingEffortVisible: Boolean = true,
     onThinkingChange: (Boolean) -> Unit = {},
     onEffortChange: (String) -> Unit = {}
 ) {
@@ -107,12 +112,17 @@ fun AttachmentOptionsSheet(
                     colors = nezumiSwitchColors(),
                     modifier = Modifier.padding(start = 12.dp)
                 )
-                ThinkingEffortSegments(
-                    selected = thinkingEffort,
-                    enabled = thinkingOn,
-                    onSelect = onEffortChange,
-                    modifier = Modifier.padding(start = 12.dp)
-                )
+                // 要望: 思考強度は Thinking OFF でも切り替え可能 (常に enabled)。
+                // ただしテンプレートが reasoning_effort を解釈しないモデルでは
+                // セグメント自体を表示しない (UI から消す)。
+                if (thinkingEffortVisible) {
+                    ThinkingEffortSegments(
+                        selected = thinkingEffort,
+                        enabled = true,
+                        onSelect = onEffortChange,
+                        modifier = Modifier.padding(start = 12.dp)
+                    )
+                }
             }
             HorizontalDivider(
                 color = colorResource(R.color.border),

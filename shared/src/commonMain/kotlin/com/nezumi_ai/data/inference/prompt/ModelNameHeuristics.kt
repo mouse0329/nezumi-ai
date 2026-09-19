@@ -238,6 +238,25 @@ object ModelNameHeuristics {
             template.contains("<function=") ||
             template.contains("<tools>")
 
+    /**
+     * チャットテンプレートが `reasoning_effort` 変数を解釈するかどうか。
+     * (Qwen3.5 / gpt-oss 系など、思考強度をテンプレート経由で制御するモデル。)
+     * 要望: 思考強度 (low / medium / high) の UI 表示とプロンプト注入は、
+     * この判定が true のモデルのみで行う。
+     */
+    fun templateSupportsThinkingEffort(template: String): Boolean =
+        template.contains("reasoning_effort")
+
+    /**
+     * モデル名が `reasoning_effort` 前提の公式テンプレートを持つ既知ファミリかどうか。
+     * GGUF メタデータが読めない状況 (ロード前 / クラウド) でのフォールバック判定。
+     */
+    fun usesThinkingEffortVariable(modelPathOrName: String): Boolean {
+        val name = modelPathOrName.lowercase()
+        return "gpt-oss" in name || "gpt_oss" in name ||
+            isQwen35OrLaterModelName(name)
+    }
+
     /** GPT-2 系のモデル名かどうかを判定する (ファイル実体の検査は含まない)。 */
     fun isGpt2ModelName(loweredName: String): Boolean {
         return Regex("(^|[^a-z0-9])gpt[\\-_ ]?2([^a-z0-9]|$)").containsMatchIn(loweredName)

@@ -77,6 +77,19 @@ object PromptTemplateStore {
         }
     }
 
+    /**
+     * 選択中テンプレートが `reasoning_effort` 変数を解釈するかどうか。
+     *
+     * 手動 (MODE_CUSTOM) / ビルトイン選択時のみここで判定できる。
+     * MODE_AUTO (GGUF メタデータ) の場合はテンプレート文字列がここには無いため、
+     * 呼び出し側で GgufMetadataReader / ImportedModelCapabilityStore の
+     * isThinkingEffortSupported を参照すること。
+     */
+    fun templateSupportsThinkingEffort(context: Context, modelPath: String): Boolean {
+        val template = resolveTemplate(context, modelPath) ?: return false
+        return template.contains("reasoning_effort")
+    }
+
     const val MODE_AUTO = "auto"
     const val MODE_CUSTOM = "custom"
 

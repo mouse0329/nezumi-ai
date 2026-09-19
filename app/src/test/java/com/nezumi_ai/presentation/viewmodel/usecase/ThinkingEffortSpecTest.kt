@@ -9,9 +9,9 @@ import org.junit.Test
  * 添付シートのシンキング トグル / エフォートセグメントに関する仕様テスト。
  *
  * - 既定値は Thinking ON / effort Low (モック仕様)。
- * - Thinking OFF 時にセグメントは非表示にせず薄くする (alpha 0.4)。
- * - applyReasoningEffort はエンジン側未配線のため pass-through
- *   (プロンプトを変更しない) であることを固定する。
+ * - 思考強度は Thinking OFF でも切り替え可能 (セグメントは常に不透過)。
+ * - applyReasoningEffort はテンプレート非対応 (supportsEffort=false) では pass-through、
+ *   対応時は最後の user ターン末尾に `{reasoning effort: <level>}` を追記する。
  */
 class ThinkingEffortSpecTest {
 
@@ -29,19 +29,31 @@ class ThinkingEffortSpecTest {
     }
 
     @Test
-    fun effortSegmentsAlpha_offDimsButDoesNotHide() {
-        // OFF でも 0 ではない (非表示にしない) ことを保証する。
-        assertEquals(0.4f, effortSegmentsAlpha(thinkingOn = false))
+    fun effortSegmentsAlpha_offKeepsFullOpacity() {
+        // 要望変更: OFF でも切り替え可能になったため常に不透過。
+        assertEquals(1.0f, effortSegmentsAlpha(thinkingOn = false))
         assertEquals(1.0f, effortSegmentsAlpha(thinkingOn = true))
     }
 
     @Test
-    fun applyReasoningEffort_isPassThroughUntilEngineWiring() {
+    fun applyReasoningEffort_appendsMarkerToLastUserTurn() {
+        val useCase = PromptBuildingUseCase()
+        val prompt = "<|im_start|>user\nこんにちは<|im_end|>\n<|im_start|>assistant\n"
+        val result = useCase.applyReasoningEffort(prompt, "low", supportsEffort = true)
+        // 最後の user ターンの閉じタグ手前にマーカーが入る。
+        assertEquals(
+            "<|im_start|>user\nこんにちは\n{reasoning effort: low}\n<|im_end|>\n<|im_start|>assistant\n",
+            result
+        )
+    }
+
+    @Test
+    fun applyReasoningEffort_noopWhenTemplateUnsupported() {
+        // テンプレート非対応 (supportsEffort=false) ではプロンプトを一切変更しない。
         val useCase = PromptBuildingUseCase()
         val prompt = "user: hello"
         listOf("low", "medium", "high", "").forEach { level ->
-            // エンジン未配線の間はプロンプトを一切変更しない。
-            assertEquals(prompt, useCase.applyReasoningEffort(prompt, level))
+            assertEquals(prompt, useCase.applyReasoningEffort(prompt, level, supportsEffort = false))
         }
     }
 }

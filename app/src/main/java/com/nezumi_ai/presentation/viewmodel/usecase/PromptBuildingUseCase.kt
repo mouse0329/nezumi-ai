@@ -391,23 +391,55 @@ class PromptBuildingUseCase {
     }
 
     /**
-     * シンキングの推論エフォート (low / medium / high) をプロンプトへ反映するフック。
+     * シンキングの推論エフォート (low / medium / high) をプロンプトへ反映する。
      *
-     * 現時点ではエンジン / チャットテンプレート層に effort を受け渡す経路が存在しない
-     * (`enable_thinking` の ON/OFF のみが配線済み)。そのためここではプロンプトを
-     * そのまま返す (pass-through) 実装に留め、UI 側で選択された値は
-     * PreferencesHelper に永続化されるだけで推論結果には影響しない。
+     * 現行の vendored llama.cpp は `reasoning_effort` をテンプレート変数として
+     * 渡す経路を持たないため、Qwen3.5 / gpt-oss 系テンプレートが定義する
+     * `{reasoning effort: <level>}` マーカーを最後の user メッセージ末尾に追記する
+     * 方式で注入する (llama.cpp サーバーの chat-template-kwargs 指定と同等の効果)。
      *
-     * TODO(thinking-effort): エンジン側が reasoning_effort を解釈できるようになったら、
-     *   chat-template 系の `{reasoning effort: low}` を最後の user メッセージに追記する
-     *   パターンに倣ってここに実装し、呼び出し元 (buildPromptWithSessionContext 等)
-     *   から選択値を渡す。実装時は最終プロンプト文字列にマーカーが実際に現れることを
-     *   実機ログで検証してから「end-to-end で動作」と扱うこと。
+     * 要望: テンプレートが reasoning_effort を解釈しないモデルでは呼び出し元が
+     * [supportsEffort] = false を渡し、ここでは何もしない (UI 自体も非表示)。
+     * また Thinking OFF でも選択だけは可能 (UI 仕様) だが、OFF 時の注入は
+     * enable_thinking=false と矛盾するため呼び出し元で抑制する。
      */
-    fun applyReasoningEffort(prompt: String, effortLevel: String): String {
-        if (effortLevel.isBlank()) return prompt
-        // 未配線: エンジンが effort を解釈しないため、プロンプトは変更しない。
-        return prompt
+    fun applyReasoningEffort(
+        prompt: String,
+        effortLevel: String,
+        supportsEffort: Boolean = false,
+    ): String {
+        // 要望: テンプレートが reasoning_effort を解釈しないモデルでは何もしない
+        // (UI 側でもセグメント自体が非表示になる)。
+        if (!supportsEffort) return prompt
+        val level = effortLevel.trim().lowercase()
+        if (level.isEmpty()) return prompt
+        val marker = "{reasoning effort: $level}"
+        // 直近の user ターンの閉じタグ手前に差し込む。ターン区切りが見つからない
+        // completion 系プロンプトでは末尾に付ける。
+        val userTurnMarkers = listOf(
+            "<|im_start|>user",
+            "<start_of_turn>user",
+            "<|start_header_id|>user<|end_header_id|>"
+        )
+        val userIdx = userTurnMarkers
+            .map { prompt.lastIndexOf(it) }
+            .filter { it >= 0 }
+            .maxOrNull() ?: -1
+        if (userIdx < 0) {
+            return if (prompt.isBlank()) prompt else prompt.trimEnd() + "\n" + marker + "\n"
+        }
+        val closeTags = listOf("<|im_end|>", "<end_of_turn>", "<|eot_id|>")
+        val closeIdx = closeTags
+            .map { prompt.indexOf(it, userIdx) }
+            .filter { it >= 0 }
+            .minOrNull()
+        return if (closeIdx == null) {
+            prompt.trimEnd() + "\n" + marker + "\n"
+        } else {
+            val before = prompt.substring(0, closeIdx).trimEnd()
+            val after = prompt.substring(closeIdx)
+            before + "\n" + marker + "\n" + after
+        }
     }
 
     // ---- モデル名判定 (ModelNameHeuristics への委譲。旧 PromptBuilder 呼び出しの移行先) ----

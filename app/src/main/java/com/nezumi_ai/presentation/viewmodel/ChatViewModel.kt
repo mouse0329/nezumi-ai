@@ -1330,6 +1330,86 @@ class ChatViewModel(
         PreferencesHelper.setThinkingEffort(appContext, effort)
     }
 
+    /**
+     * 現在のモデルのテンプレートが `reasoning_effort` を解釈するかどうか。
+     *
+     * 要望: 思考強度 (low / medium / high) の UI はテンプレート対応モデルのみ表示する
+     * ための判定入口 (ChatFragment からモデル切替 / 画面更新のたびに呼ばれる)。
+     *
+     * 判定順:
+     *   1. ユーザーが手動テンプレート / ビルトインを明示選択済み → その文字列を直接検査
+     *   2. GGUF (MODE_AUTO) → ロード時にメタデータから記録された capability を参照
+     *      (未ロードで未記録ならモデル名ヒューリスティックにフォールバック)
+     *   3. クラウド等テンプレート無関係のモデル → モデル名ヒューリスティック
+     */
+    fun isThinkingEffortSupportedForModel(modelKey: String): Boolean {
+        return runCatching {
+            if (modelKey.lowercase().endsWith(".gguf") && File(modelKey).isAbsolute) {
+                val sel = PromptTemplateStore.getSelection(appContext, modelKey)
+                if (sel.mode != PromptTemplateStore.MODE_AUTO) {
+                    return@runCatching PromptTemplateStore
+                        .templateSupportsThinkingEffort(appContext, modelKey)
+                }
+                val stored = com.nezumi_ai.utils.ImportedModelCapabilityStore
+                    .isThinkingEffortSupported(appContext, modelKey)
+                if (stored) return@runCatching true
+                // 未ロード等で capability 未記録の場合はファイルから直接読む
+                com.nezumi_ai.utils.GgufMetadataReader.readChatTemplate(File(modelKey))
+                    ?.let { com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.templateSupportsThinkingEffort(it) }
+                    ?: com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.usesThinkingEffortVariable(modelKey)
+            } else {
+                com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.usesThinkingEffortVariable(modelKey)
+            }
+        }.getOrDefault(false)
+    }
+
+    /** 同一モデルパスに対して chat_template 由来の自動有効化を一度だけ走らせるための記録。 */
+    private val modelAddedCapabilityChecked = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+    /**
+     * モデル追加(選択・送信開始)と同時に、GGUF の chat_template が
+     * Thinking / ツール呼び出しを宣言していれば各設定を自動で ON にする (要望対応)。
+     *
+     * ロード済み GGUF にはエンジン側 (GgufInferenceEngine.maybeAutoEnableCapabilitiesFromChatTemplate)
+     * が同様の処理を持つが、ツール ON 時のクラウド経路や LiteRT 経路ではエンジンが
+     * 違うため / ロード前に UI へ反映したいため、ここでも冪等に実行する。
+     * ユーザーが既に ON にしている値は維持し、OFF には戻さない。
+     */
+    fun ensureModelAddedCapabilities(modelKey: String) {
+        if (!modelKey.lowercase().endsWith(".gguf")) return
+        if (!File(modelKey).isAbsolute) return
+        if (!modelAddedCapabilityChecked.add(modelKey)) return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val template = com.nezumi_ai.utils.GgufMetadataReader.readChatTemplate(File(modelKey))
+                    ?: return@runCatching
+                val heuristics = com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
+                val supportsThinking = template.contains("enable_thinking") ||
+                    template.contains("<|think|>")
+                val supportsTools = heuristics.templateDeclaresToolSupport(template)
+                // 思考強度 UI 表示判定用の capability もここで記録しておく。
+                com.nezumi_ai.utils.ImportedModelCapabilityStore.setThinkingEffortSupported(
+                    appContext, modelKey, heuristics.templateSupportsThinkingEffort(template)
+                )
+                if (!supportsThinking && !supportsTools) return@runCatching
+                val current = com.nezumi_ai.utils.ImportedModelCapabilityStore.get(appContext, modelKey)
+                val next = current.copy(
+                    thinkingEnabled = current.thinkingEnabled || supportsThinking,
+                    toolCallingEnabled = current.toolCallingEnabled || supportsTools
+                )
+                if (next != current) {
+                    com.nezumi_ai.utils.ImportedModelCapabilityStore.set(appContext, modelKey, next)
+                    Log.i(TAG, "ensureModelAddedCapabilities: auto-enabled from chat_template " +
+                        "(thinking=$supportsThinking, tools=$supportsTools): $modelKey")
+                }
+            }.onFailure { t ->
+                Log.w(TAG, "ensureModelAddedCapabilities failed for $modelKey", t)
+                // 失敗時は再試行できるよう記録を取り消す
+                modelAddedCapabilityChecked.remove(modelKey)
+            }
+        }
+    }
+
     fun switchModel(model: String) {
         if (_isLoading.value || _isModelLoading.value) {
             viewModelScope.launch {
@@ -1481,6 +1561,10 @@ class ChatViewModel(
 
         viewModelScope.launch {
             val thisJob = coroutineContext[Job] ?: return@launch
+
+            // 要望: モデル追加(送信開始)と同時にテンプレート由来の
+            // Thinking / ツール capability を自動有効化する (冪等・1回のみ)。
+            ensureModelAddedCapabilities(_selectedModel.value)
 
             generationControlMutex.withLock {
                 generationJob?.cancel(UserStopCancellationException())
@@ -4252,13 +4336,15 @@ class ChatViewModel(
         //   代わりにここでは trimPromptToWindow のみで contextWindow に収める。
         //   将来的な圧縮再実装は Phase 外 (別途リファクタ) とする。
         // Thinking エフォート (low / medium / high) の注入点。
-        //   現時点の applyReasoningEffort はエンジン未配線のため pass-through で、
-        //   最終プロンプトは変化しない (選択値は PreferencesHelper に永続化済み)。
-        //   エンジン / チャットテンプレート側が reasoning_effort を解釈できるように
-        //   なったら PromptBuildingUseCase.applyReasoningEffort 側を実装する。
+        //   テンプレートが reasoning_effort を解釈するモデル (UI 表示と同じ判定) かつ
+        //   Thinking ON のときだけ `{reasoning effort: <level>}` を最後の user ターンに注入する。
+        //   非対応モデル / Thinking OFF ではプロンプトを一切変更しない (pass-through)。
+        val effortSupported = config.enableThinking &&
+            isThinkingEffortSupportedForModel(engineModelName)
         val effortAppliedPrompt = promptBuilding.applyReasoningEffort(
             fullPrompt,
-            _chatSessionThinkingEffort.value
+            _chatSessionThinkingEffort.value,
+            supportsEffort = effortSupported
         )
         return trimPromptToWindow(effortAppliedPrompt, config.contextWindow)
     }
@@ -5190,6 +5276,10 @@ class ChatViewModel(
         // 計算集約的な処理はDefault（CPU 集約的タスク用）で実行
         viewModelScope.launch(Dispatchers.Default) {
             val thisJob = coroutineContext[Job]  // このJobインスタンスを保存
+
+            // 要望: モデル追加(送信開始)と同時にテンプレート由来の
+            // Thinking / ツール capability を自動有効化する (冪等・1回のみ)。
+            ensureModelAddedCapabilities(_selectedModel.value)
             generationControlMutex.withLock {
                 generationJob?.cancel(UserStopCancellationException())
                 generationJob = thisJob

@@ -34,6 +34,7 @@ object ImportedModelCapabilityStore {
     private fun thinkingKey(path: String) = "${normalizeKey(path)}#thinking"
     private fun displayNameKey(path: String) = "${normalizeKey(path)}#displayName"
     private fun toolCallingKey(path: String) = "${normalizeKey(path)}#toolCalling"
+    private fun thinkingEffortSupportedKey(path: String) = "${normalizeKey(path)}#thinkingEffortSupported"
 
     fun get(context: Context, modelPath: String): ImportedModelCapabilities {
         val p = prefs(context)
@@ -67,6 +68,20 @@ object ImportedModelCapabilityStore {
             .commit()
     }
 
+    /**
+     * チャットテンプレートが `reasoning_effort` 変数を解釈するかどうか。
+     *
+     * GGUF モデルのロード時 (GgufInferenceEngine.maybeAutoEnableCapabilitiesFromChatTemplate)
+     * にメタデータから自動記録される。要望: 思考強度 (low / medium / high) の UI は
+     * テンプレート対応モデルのみ表示するための判定ソース。
+     */
+    fun isThinkingEffortSupported(context: Context, modelPath: String): Boolean =
+        prefs(context).getBoolean(thinkingEffortSupportedKey(modelPath), false)
+
+    fun setThinkingEffortSupported(context: Context, modelPath: String, supported: Boolean) {
+        prefs(context).edit().putBoolean(thinkingEffortSupportedKey(modelPath), supported).apply()
+    }
+
     fun clear(context: Context, modelPath: String) {
         prefs(context).edit()
             .remove(imageKey(modelPath))
@@ -75,6 +90,7 @@ object ImportedModelCapabilityStore {
             .remove(thinkingKey(modelPath))
             .remove(displayNameKey(modelPath))
             .remove(toolCallingKey(modelPath))
+            .remove(thinkingEffortSupportedKey(modelPath))
             .commit()
     }
 

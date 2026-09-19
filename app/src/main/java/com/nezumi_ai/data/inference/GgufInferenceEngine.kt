@@ -605,6 +605,15 @@ class GgufInferenceEngine(
             val modelFile = File(modelPath)
             if (!modelFile.isFile) return@runCatching
             val template = GgufMetadataReader.readChatTemplate(modelFile) ?: return@runCatching
+            // reasoning_effort 対応可否はテンプレートが読めた時点で必ず記録する
+            // (要望: 思考強度 UI はテンプレート対応時のみ出す。非対応なら false を
+            //  保存して UI から消す必要があるため、早期 return より先に記録する)。
+            ImportedModelCapabilityStore.setThinkingEffortSupported(
+                appContext,
+                modelPath,
+                com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
+                    .templateSupportsThinkingEffort(template)
+            )
             val supportsThinking = template.contains("enable_thinking") ||
                 template.contains("<|think|>")
             val supportsTools =
@@ -829,6 +838,9 @@ class GgufInferenceEngine(
             val maxToolRounds = if (toolCallingEnabled) 5 else 1
             var toolRound = 0
             var isFirstGenerationRound = true
+            // 初回ラウンドのストリーミング用バッファ (下記 emitChunk 参照)。
+            // ツールコールタグの確定待ちで保留した生出力を一時的に溜める。
+            val firstRoundBuffer = StringBuilder()
             // Gemma 4 判定: モデルパスから 1 回だけ決定してツールループ内で使い回す。
             // GgufToolCallParser.parse / formatToolResults を Gemma 4 形式
             // (<|tool_call>call:NAME{...}<tool_call|>) に切り替えるためのフラグ。
@@ -849,14 +861,21 @@ class GgufInferenceEngine(
                     // 実際に生成速度が速いときに GGUF でも再現する報告と一致)。
                     // trySendBlocking で確実に送る。
                     emitChunk = { chunk ->
-                        // バグ修正 (GGUF でツール呼び出し時にストリーミングされてしまう):
-                        //   ツール有効時の初回ラウンドは、出力がツールコールか本文か確定するまで
-                        //   生チャンクを UI に流さない。ツールコールのみの出力はインライン
-                        //   ツールカードが描画を担うため、生テキストのストリーミングは行わない。
-                        //   本文を含んでいた場合はパース後に整形済みテキストとして一括送出する
-                        //   (下の deferredVisible 参照)。
-                        if (!(toolCallingEnabled && isFirstGenerationRound)) {
-                            val result = trySendBlocking(chunk)
+                        // バグ修正 (ツール ON 時にストリーミングがリアルタイムで出ない /
+                        //   生成開始まで時間がかかる):
+                        //   初回ラウンドの生チャンク送出を丸ごと止めて完了後に一括送出していた
+                        //   旧実装が原因で、ストリーミング消失と体感遅延の両方を招いていた。
+                        //   本文は従来通りリアルタイムに流し、ツールコールの生テキストだけが
+                        //   UI に混ざらないよう、確定したツールコールタグ区間のみ逐次除去する
+                        //   (drainFirstRoundVisible 参照)。
+                        val visible = if (toolCallingEnabled && isFirstGenerationRound) {
+                            firstRoundBuffer.append(chunk)
+                            firstRoundBuffer.drainFirstRoundVisible()
+                        } else {
+                            chunk
+                        }
+                        if (visible.isNotEmpty()) {
+                            val result = trySendBlocking(visible)
                             if (!result.isSuccess) {
                                 Log.w(TAG, "Dropping GGUF stream chunk because callbackFlow channel is not ready")
                             }
@@ -896,7 +915,16 @@ class GgufInferenceEngine(
                         val synthesized = nativeCalls.joinToString("\n") { call ->
                             "<tool_call>{\"name\":${org.json.JSONObject.quote(call.name)},\"arguments\":${call.arguments}}</tool_call>"
                         }
-                        roundOutputText = listOf(nativeParsed?.content.orEmpty().trim(), synthesized)
+                        // ネイティブパーサーが分離した reasoning_content は思考ブロックとして
+                        // 本文先頭に戻す (下流の表示パイプラインが <think> を処理する)。
+                        // これが無いと、ツールコール救済時に思考が表示から欠落する。
+                        val nativeReasoning = nativeParsed?.reasoningContent.orEmpty().trim()
+                        val contentWithReasoning = if (nativeReasoning.isNotEmpty()) {
+                            "<think>\n$nativeReasoning\n</think>\n" + nativeParsed?.content.orEmpty().trim()
+                        } else {
+                            nativeParsed?.content.orEmpty().trim()
+                        }
+                        roundOutputText = listOf(contentWithReasoning, synthesized)
                             .filter { it.isNotBlank() }
                             .joinToString("\n")
                         parsed = GgufToolCallParser.parse(roundOutputText, isGemma4 = false)
@@ -957,16 +985,17 @@ class GgufInferenceEngine(
                     )
                 )
 
-                // 初回ラウンドはツールコール判定まで生チャンク送出を保留しているため、
-                // ここで可視テキストを一括送出して埋め合わせる。ツールコールのみの場合は
-                // 何も送らず、インラインツールカードの表示に委ねる。
-                if (toolRound == 1 && toolCallingEnabled) {
-                    val deferredVisible = Gemma4ThinkingParser.sanitizeVisibleText(
-                        normalizedRoundText,
-                        preserveToolCallTags = true
-                    ).replace(Regex("(?s)<tool_call>.*?</tool_call>"), "").trim()
-                    if (deferredVisible.isNotEmpty()) {
-                        trySendBlocking(deferredVisible + "\n")
+                // 初回ラウンド終了時: ストリーミング中にツールタグ確定待ちで保留した
+                // バッファの残りを吐き出す。残りはツールコールタグの断片のはずなので、
+                // 可視テキストのみ整形して追補する (大抵は空。不完全タグ時の本文救済)。
+                if (toolRound == 1 && toolCallingEnabled && firstRoundBuffer.isNotEmpty()) {
+                    val remainder = Gemma4ThinkingParser.sanitizeVisibleText(
+                        firstRoundBuffer.toString(),
+                        preserveToolCallTags = false
+                    )
+                    firstRoundBuffer.setLength(0)
+                    if (remainder.isNotEmpty()) {
+                        trySendBlocking(remainder)
                     }
                 }
 
@@ -1146,6 +1175,77 @@ class GgufInferenceEngine(
     // ─── ユーティリティ ──────────────────────────────────────────
 
     override suspend fun isAvailable(): Boolean = llamaCppCtx?.isValid == true
+
+    // ---- 初回ラウンド ストリーミング補助 (ツールタグのリアルタイム除去) ----
+
+    /**
+     * 初回ラウンドの生出力バッファから「確定して UI に流せる本文」を取り出す。
+     *
+     * ツールコールタグ (`<tool_call>` / `<|tool_call>`) が確定した区間だけを除去し、
+     * タグの途中かもしれない末尾接頭辞は確定するまでバッファに保留する。
+     * これによりツールコールの生テキストは UI に一切出さず、前後の本文だけが
+     * リアルタイムにストリーミングされる。2ラウンド目以降 (最終回答) では使わない。
+     */
+    private fun StringBuilder.drainFirstRoundVisible(): String {
+        val text = toString()
+        val tagOpenIdx = indexOfToolCallTagStart(text)
+        if (tagOpenIdx >= 0) {
+            // タグより前の本文は即座に流す。タグ本体は閉じタグが来るまで保留し、
+            // 閉じたらバッファから除去する (UI には出さない)。
+            val region = text.substring(0, tagOpenIdx)
+            val tagCloseIdx = indexOfToolCallTagEnd(text, tagOpenIdx)
+            if (tagCloseIdx >= 0) {
+                delete(0, tagCloseIdx)
+            } else {
+                delete(0, tagOpenIdx)
+            }
+            return region
+        }
+        // タグ未出現: 末尾がタグの接頭辞途中なら、その分だけ保留して残りを流す。
+        val holdback = holdbackPartialTagPrefix(text)
+        delete(0, text.length - holdback)
+        return text.dropLast(holdback)
+    }
+
+    /** バッファ内の先頭に最も近いツールコール開始タグ位置。無ければ -1。 */
+    private fun indexOfToolCallTagStart(text: String): Int {
+        val generic = text.indexOf(ToolCallTags.TOOL_CALL_OPEN)
+        val gemma4 = text.indexOf(ToolCallTags.GEMMA4_TOOL_CALL_OPEN)
+        return when {
+            generic < 0 -> gemma4
+            gemma4 < 0 -> generic
+            else -> minOf(generic, gemma4)
+        }
+    }
+
+    /** startIdx 以降で最初に完結するツールコール閉じタグの「直後」位置。未完なら -1。 */
+    private fun indexOfToolCallTagEnd(text: String, startIdx: Int): Int {
+        val genericClose = text.indexOf(ToolCallTags.TOOL_CALL_CLOSE, startIdx)
+        val gemma4Close = text.indexOf(ToolCallTags.GEMMA4_TOOL_CALL_CLOSE, startIdx)
+        return when {
+            genericClose < 0 && gemma4Close < 0 -> -1
+            genericClose < 0 -> gemma4Close + ToolCallTags.GEMMA4_TOOL_CALL_CLOSE.length
+            gemma4Close < 0 -> genericClose + ToolCallTags.TOOL_CALL_CLOSE.length
+            genericClose < gemma4Close -> genericClose + ToolCallTags.TOOL_CALL_CLOSE.length
+            else -> gemma4Close + ToolCallTags.GEMMA4_TOOL_CALL_CLOSE.length
+        }
+    }
+
+    /** 末尾が `<tool_call>` / `<|tool_call>` の接頭辞の途中で終わっている場合の保留文字数。 */
+    private fun holdbackPartialTagPrefix(text: String): Int {
+        val tags = listOf(ToolCallTags.TOOL_CALL_OPEN, ToolCallTags.GEMMA4_TOOL_CALL_OPEN)
+        var hold = 0
+        for (tag in tags) {
+            val max = minOf(tag.length - 1, text.length)
+            for (k in max downTo 1) {
+                if (text.endsWith(tag.substring(0, k))) {
+                    if (k > hold) hold = k
+                    break
+                }
+            }
+        }
+        return hold
+    }
 
     private suspend fun generateRound(
         ctx: LlamaCppContext,
