@@ -2381,6 +2381,17 @@ class ChatViewModel(
                                                 if (mergedT != curT && mergedT.length >= curT.length) {
                                                     thinkingBuilder.clear()
                                                     thinkingBuilder.append(mergedT)
+                                                    // 修正: Thinking の差分も生成トークンとして計上する。
+                                                    //   (旧: 本文のみ計上していたため、Thinking が長いと
+                                                    //    TPS が実態より大幅に低く表示されていた)
+                                                    val thinkDeltaText = mergedT.substring(curT.length)
+                                                    tokenCount += TextTokenEstimator.estimateOutputTokens(thinkDeltaText)
+                                                    // ライブ TPS は最初の出力 (Thinking 含む) からの経過で算出
+                                                    if (tokenCount >= 10f && firstOutputAtMs != null) {
+                                                        val elapsedThink = (SystemClock.elapsedRealtime() - firstOutputAtMs!!)
+                                                            .coerceAtLeast(1L)
+                                                        _currentTps.value = (tokenCount * 1000f) / elapsedThink
+                                                    }
                                                 } else if (mergedT.length < curT.length) {
                                                     Log.w(
                                                         TAG,
@@ -2498,8 +2509,10 @@ class ChatViewModel(
                                                             thinkingStartedAtMs = null
                                                         }
                                                     }
-                                                    if (tokenCount >= 10f && firstAnswerAtMs != null) {
-                                                        val elapsed = (SystemClock.elapsedRealtime() - firstAnswerAtMs!!)
+                                                    // 修正: ライブ TPS は Thinking を含む全デコード区間
+                                                    //   (最初の出力トークンからの経過) で算出する。
+                                                    if (tokenCount >= 10f && firstOutputAtMs != null) {
+                                                        val elapsed = (SystemClock.elapsedRealtime() - firstOutputAtMs!!)
                                                             .coerceAtLeast(1L)
                                                         _currentTps.value = (tokenCount * 1000f) / elapsed
                                                     }
@@ -2900,14 +2913,14 @@ class ChatViewModel(
                 val start = streamStartedAtMs
                 if (start != null && first >= start) (first - start).coerceAtLeast(0L) else null
             }
- // 修正: 本文生成時間 = (終了 - 最初の本文トークン) − (シンキング中の経過時間)。
-            //   これによりシンキングに長い時間を使っても TPS が不当に小さくならない。
-            //   firstAnswerAtMs がない (本文を一切出さなかった) 場合は従来通り firstOutputAtMs を使う。
+ // 修正: Thinking も生成トークンとして計上する方針に統一したため、
+            //   分母の生成時間も Thinking を含む全デコード区間
+            //   (最初の出力トークン → 終了) とする。
+            //   (旧: Thinking 時間を差し引いていたが、分子のトークン数に Thinking が
+            //    含まれていなかったため分子分母が不一致で TPS が不正確だった)
             val generationTimeMs = firstOutputAtMs?.let { first ->
                 val end = generationEndAtMs ?: SystemClock.elapsedRealtime()
-                val baseStart = firstAnswerAtMs ?: first
-                val raw = end - baseStart
-                (raw - thinkingElapsedMs.coerceAtLeast(0L)).coerceAtLeast(0L)
+                (end - first).coerceAtLeast(0L)
             }
             // トークン速度正確化:
             //   LiteRT-LM は getBenchmarkInfo() の実測デコード TPS / トークン数を優先する。
@@ -2920,11 +2933,18 @@ class ChatViewModel(
                 val tokensAfterFirst = if (isGgufEngineModel(engineModelName)) {
                     val nativeTokens = manager.getLastGenerationTokenCount()
                     (nativeTokens?.minus(1f))?.coerceAtLeast(0f)
-                        ?: (TextTokenEstimator.estimateOutputTokens(completeResponse) - 1f).coerceAtLeast(0f)
+                        ?: (tokenCount - 1f).coerceAtLeast(0f).takeIf { tokenCount > 0f }
+                        ?: (TextTokenEstimator.estimateOutputTokens(
+                            completeResponse + (finalThinking ?: "")
+                        ) - 1f).coerceAtLeast(0f)
                 } else {
-                    // LiteRT-LM: 実測デコードトークン数を優先、なければ従来の文字数推定
+                    // LiteRT-LM: 実測デコードトークン数 (Thinking 含む) を優先、
+                    //   なければストリーム計上値 (Thinking 含む)、最後に文字数推定
                     litertExactDecodeTokens?.let { (it - 1).toFloat().coerceAtLeast(0f) }
-                        ?: (TextTokenEstimator.estimateOutputTokens(completeResponse) - 1f).coerceAtLeast(0f)
+                        ?: (tokenCount - 1f).coerceAtLeast(0f).takeIf { tokenCount > 0f }
+                        ?: (TextTokenEstimator.estimateOutputTokens(
+                            completeResponse + (finalThinking ?: "")
+                        ) - 1f).coerceAtLeast(0f)
                 }
                 if (tokensAfterFirst > 0f) {
                     tokensAfterFirst * 1000f / generationTimeMs
@@ -4603,11 +4623,20 @@ class ChatViewModel(
         val isGgufEngine = isGgufEngineModel(engineModelName)
         // 生成中はキャッシュ済みの推論設定を使い回す（#toolcalling-resolve-spam 対策）
         val config = getCachedMeterInferenceConfig(selectedModel)
+        // 修正: メーター/raw コンテキストのプロンプト構築にも、実際の生成時と同じ
+        //   セッション単位の Thinking オーバーライド (4010-4020 行) を反映させる。
+        //   (旧: 設定値をそのまま使っていたため、スイッチで Thinking を切った場合に
+        //    メーター・raw 表示が実際の生成プロンプトと不一致になっていた)
+        val effectiveEnableThinking = when {
+            _chatSessionThinkingEnabledOverride.value -> true
+            _chatSessionDisableThinking.value -> false
+            else -> config.enableThinking
+        }
         val basePrompt = buildPromptFromMessages(
             messages,
             isGgufEngine,
             engineModelName,
-            config.enableThinking,
+            effectiveEnableThinking,
             enableToolCalling = config.enableToolCalling
         )
 
