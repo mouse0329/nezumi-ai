@@ -136,6 +136,26 @@ object ModelNameHeuristics {
     }
 
     /**
+     * Qwen 3.8 以降のモデルを判定する (reasoning_effort 変数を実際に解釈する世代)。
+     *
+     * 実測によると Qwen3.5 / 3.6 の公式 chat_template は `reasoning_effort` に
+     * 一切言及せず `enable_thinking` の ON/OFF のみで、Qwen3.8 系で初めて
+     * `reasoning_effort ∈ {low, medium, xhigh}` の比較 (未知値は raise_exception)
+     * が導入された。[isQwen35OrLaterModelName] は QWEN_ASSISTANT_PREFILL など
+     * 別用途の判定であり、reasoning_effort 対応の判定には使わないこと。
+     */
+    fun isQwen38OrLaterModelName(loweredName: String): Boolean {
+        if (!Regex("(^|[^a-z])qwen(?![a-z])").containsMatchIn(loweredName)) return false
+        val version = parseQwenVersion(loweredName) ?: return false
+        val (major, minor) = version
+        return when {
+            major >= 4 -> true
+            major == 3 && minor != null && minor >= 8 -> true
+            else -> false
+        }
+    }
+
+    /**
      * Qwen 系モデルのうち、`/think` および `/no_think` ソフトスイッチが有効な世代かを判定する。
      *
      * サポート対象:
@@ -250,11 +270,16 @@ object ModelNameHeuristics {
     /**
      * モデル名が `reasoning_effort` 前提の公式テンプレートを持つ既知ファミリかどうか。
      * GGUF メタデータが読めない状況 (ロード前 / クラウド) でのフォールバック判定。
+     *
+     * 修正: Qwen は 3.5 / 3.6 では reasoning_effort 非対応と実測で判明したため、
+     * [isQwen35OrLaterModelName] ではなく [isQwen38OrLaterModelName] を使う。
+     * テンプレートが読める場合は [templateSupportsThinkingEffort] による実測判定が
+     * 常に優先され、ここは読めない場合のみのフォールバックである点に注意。
      */
     fun usesThinkingEffortVariable(modelPathOrName: String): Boolean {
         val name = modelPathOrName.lowercase()
         return "gpt-oss" in name || "gpt_oss" in name ||
-            isQwen35OrLaterModelName(name)
+            isQwen38OrLaterModelName(name)
     }
 
     // ---- 思考強度 (reasoning_effort) のテンプレート解析 ----
@@ -275,11 +300,24 @@ object ModelNameHeuristics {
     }
 
     /** UI 選択肢の表示順 (既知レベル優先、その後に未知レベルを名前順で並べる)。 */
-    private val KNOWN_EFFORT_ORDER = listOf("minimal", "low", "medium", "high", "max")
+    private val KNOWN_EFFORT_ORDER = listOf("minimal", "low", "medium", "high", "xhigh", "max")
 
     /** `reasoning_effort == "xxx"` / `'xxx'` 形式の比較パターンを抽出する正規表現。 */
     private val REASONING_EFFORT_COMPARISON_REGEX =
         Regex("""reasoning_effort\s*==\s*["']([A-Za-z0-9_\-]+)["']""")
+
+    /**
+     * `(resolved_)?reasoning_effort (not )?in ('xhigh', 'medium', 'low')` のような
+     * タプル所属チェック (Python/Jinja の `in` 演算子) から候補集合を抽出する正規表現。
+     * 変数名が `reasoning_effort` そのものではなく、`resolved_reasoning_effort` のように
+     * 一度 `reasoning_effort|default(...)` 等で束ね直された別名になっているケースがある
+     * (prism-ml/Ternary-Bonsai-2-27B-gguf 系で確認) ため、変数名は限定せず
+     * 直前の `in` 演算子とタプルの並びのみを見る。
+     */
+    private val REASONING_EFFORT_IN_TUPLE_REGEX =
+        Regex("""reasoning_effort\b[^\n(){}]*?\bin\s*\(([^)]+)\)""")
+
+    private val QUOTED_TOKEN_REGEX = Regex("""["']([A-Za-z0-9_\-]+)["']""")
 
     /**
      * chat_template 文字列を静的にスキャンし、`reasoning_effort` がどの値と
@@ -291,14 +329,22 @@ object ModelNameHeuristics {
      *  - 比較対象が "low" の 1 種類のみ → Binary
      *    (Granite 4.2 系の `reasoning_effort == "low"` 二値解釈が該当)
      *  - 複数レベルが個別比較されている → Graded(levels)
+     *    (`==` 比較の列挙、および `in (...)` タプル所属チェックの両方から集める。
+     *    後者は prism-ml/Ternary-Bonsai-2-27B-gguf のように
+     *    `resolved_reasoning_effort not in ('xhigh', 'medium', 'low')` の形で
+     *    未知値を `raise_exception` するテンプレートで使われている)
      *  - 言及はあるが比較パターンを読み取れない → 従来互換の 3 値 Graded
      */
     fun parseReasoningEffortGranularity(template: String): ReasoningEffortGranularity {
         if (template.isBlank()) return ReasoningEffortGranularity.None
         if (!template.contains("reasoning_effort")) return ReasoningEffortGranularity.None
-        val levels = REASONING_EFFORT_COMPARISON_REGEX.findAll(template)
+        val equalityLevels = REASONING_EFFORT_COMPARISON_REGEX.findAll(template)
             .map { it.groupValues[1].lowercase() }
-            .toSet()
+        val tupleLevels = REASONING_EFFORT_IN_TUPLE_REGEX.findAll(template)
+            .flatMap { match ->
+                QUOTED_TOKEN_REGEX.findAll(match.groupValues[1]).map { it.groupValues[1].lowercase() }
+            }
+        val levels = (equalityLevels + tupleLevels).toSet()
         return when {
             levels.isEmpty() -> ReasoningEffortGranularity.Graded(setOf("low", "medium", "high"))
             levels.size == 1 && "low" in levels -> ReasoningEffortGranularity.Binary
@@ -308,12 +354,20 @@ object ModelNameHeuristics {
 
     /**
      * 粒度に応じた有効エフォートレベル一覧を返す。
-     * None → 空リスト (effort 選択肢なし)、Binary → ["low"]。
+     * None → 空リスト (effort 選択肢なし)、Binary → ["default", "low"]。
+     *
+     * Binary に "default" (未指定) を含めるのは、Thinking ON 時に "low" しか
+     * 選べないと、テンプレート本来のフル思考 (デフォルト) に戻す手段が UI から
+     * 失われてしまうため。IBM Granite 4.x 系の公式ドキュメントも
+     * full thinking (default) / non-thinking / low-effort の 3 モードを
+     * 明示しており、UI 側もこれに合わせる。
+     * "default" 選択時は applyReasoningEffort が何も挿入しない
+     * (= 指定なしと同じ) 前提。
      */
     fun supportedEffortLevels(granularity: ReasoningEffortGranularity): List<String> =
         when (granularity) {
             ReasoningEffortGranularity.None -> emptyList()
-            ReasoningEffortGranularity.Binary -> listOf("low")
+            ReasoningEffortGranularity.Binary -> listOf("default", "low")
             is ReasoningEffortGranularity.Graded ->
                 KNOWN_EFFORT_ORDER.filter { it in granularity.levels } +
                     granularity.levels.filter { it !in KNOWN_EFFORT_ORDER }.sorted()

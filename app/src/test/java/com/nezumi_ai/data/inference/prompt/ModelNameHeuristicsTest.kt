@@ -164,6 +164,36 @@ class ModelNameHeuristicsTest {
         assertFalse(ModelNameHeuristics.isQwen35OrLaterModelName("qwen3.5b-instruct"))
     }
 
+    // ---- isQwen38OrLaterModelName ----
+
+    @Test
+    fun isQwen38OrLater_matchesQwen38AndNewer() {
+        listOf(
+            "qwen3.8-27b",
+            "qwen-3.8-2.4t-a95b",
+            "qwen3.9-0.6b",
+            "qwen4-8b",
+            "qwen4.1-3b",
+        ).forEach { name ->
+            assertTrue("$name should be Qwen 3.8+", ModelNameHeuristics.isQwen38OrLaterModelName(name))
+        }
+    }
+
+    @Test
+    fun isQwen38OrLater_rejectsQwen35And36AndOlder() {
+        // 実測により reasoning_effort 非対応と判明した 3.5 / 3.6 はここでは対象外
+        // (isQwen35OrLaterModelName とは判定範囲が異なる点に注意)。
+        listOf(
+            "qwen3.5-2b",
+            "qwen-3.6-27b-dwq46",
+            "qwen3.7-4b",
+            "qwen3-14b",
+            "qwen2.5-7b-instruct",
+        ).forEach { name ->
+            assertFalse("$name should NOT be Qwen 3.8+", ModelNameHeuristics.isQwen38OrLaterModelName(name))
+        }
+    }
+
     // ---- isQwenSoftSwitchCompatibleModelName ----
 
     @Test

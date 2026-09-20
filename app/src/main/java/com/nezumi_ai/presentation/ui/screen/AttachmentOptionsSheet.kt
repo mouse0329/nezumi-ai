@@ -46,7 +46,8 @@ internal fun effortSegmentsAlpha(thinkingOn: Boolean): Float = 1.0f
 /**
  * chat_template の [ModelNameHeuristics.ReasoningEffortGranularity] に応じた
  * エフォート選択肢を返す。
- *  - Binary → ["low"] (Granite 4.x 系: "low" かそれ以外かの二値のみ解釈)
+ *  - Binary → ["default", "low"] (Granite 4.x 系: "low" かそれ以外かの二値のみ解釈。
+ *    "default" は未指定 = テンプレート本来のフル思考に戻す選択肢)
  *  - Graded → 検出されたレベル集合 (3 値とは限らない)
  *  - None   → 空 (テンプレートに effort 概念なし。セグメント自体を表示しない)
  */
