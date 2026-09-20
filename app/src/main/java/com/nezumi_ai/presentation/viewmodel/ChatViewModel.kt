@@ -1325,16 +1325,9 @@ class ChatViewModel(
     fun setChatSessionThinkingEffort(effort: String) {
         // エフォートはプロンプト構築時に参照されるだけなので、切り替えのみで
         // モデルリロード / KV クリアは不要 (ON/OFF トグルと違いテンプレ構造を変えない)。
-        // ロード中モデルの chat_template が解釈できる粒度にここで丸める
-        // (BINARY モデルへの "medium" / "high" 選択は "low" にフォールバック)。
-        val supported = PreferencesHelper.resolveSupportedThinkingEffortLevels(
-            appContext,
-            selectedModel.value.orEmpty()
-        )
-        val normalized = PreferencesHelper.normalizeThinkingEffortForLevels(effort, supported)
-        if (normalized == _chatSessionThinkingEffort.value) return
-        _chatSessionThinkingEffort.value = normalized
-        PreferencesHelper.setThinkingEffort(appContext, normalized)
+        if (effort == _chatSessionThinkingEffort.value) return
+        _chatSessionThinkingEffort.value = effort
+        PreferencesHelper.setThinkingEffort(appContext, effort)
     }
 
     /**
@@ -2449,15 +2442,8 @@ class ChatViewModel(
                                                 lastPersistedContent.ifBlank { finalFromModel }
                                             }
                                             finalFromModelGlobal = resolvedFinal
-                                            // LiteRT の thought チャンネル経路では FINAL は本文のみなので
-                                            // answerBuilder を差し替えてよい。
-                                            // GGUF の FINAL は sanitizeVisibleText(全文) で <think> が剥がれて
-                                            // 思考+本文が連結される。それを answerBuilder に入れると、直後の
-                                            // treatUnmarkedInputAsThinking 再解析が全文を Thinking 欄へ流し込む。
-                                            if (nativeThinkingStream && resolvedFinal.isNotBlank()) {
-                                                answerBuilder.clear()
-                                                answerBuilder.append(resolvedFinal)
-                                            }
+                                            answerBuilder.clear()
+                                            answerBuilder.append(resolvedFinal)
                                         }
                                         thinkDelta != null -> {
  // シンキングフェーズ開始を記録 (未開始のときだけ)
@@ -2789,16 +2775,6 @@ class ChatViewModel(
                                         }
                                     }
 
-                                    if (finalFromModelGlobal != null) {
-                                        val restored = ThinkingLeakSalvage.restoreSeparatedThinkingIfFinalMerged(
-                                            previousThinking = lastStreamThinkingForFinal,
-                                            previousContent = lastStreamContentForFinal,
-                                            newThinking = thinkingForUi,
-                                            newContent = contentForUi
-                                        )
-                                        thinkingForUi = restored.first
-                                        contentForUi = restored.second
-                                    }
                                     lastStreamContentForFinal = contentForUi
                                     lastStreamThinkingForFinal = thinkingForUi
 
@@ -4340,14 +4316,6 @@ class ChatViewModel(
         val memoryBlock = buildRelevantMemoryBlock(messages, sessionId, config.contextWindow)
         // Tool calling should not suppress GGUF thinking directives such as Qwen /think.
         val enableThinkingForPrompt = config.enableThinking
-        // ユーザー選択のエフォートを、ロード中モデルの chat_template が解釈できる
-        // 粒度 (ModelNameHeuristics.ReasoningEffortGranularity) に正規化する。
-        // これにより BINARY モデル (Granite 4.x 等) に "medium" / "high" が
-        // 渡らないことを保証する (テンプレート未読取時は従来互換の 3 値粒度)。
-        val effectiveEffort = PreferencesHelper.normalizeThinkingEffortForLevels(
-            _chatSessionThinkingEffort.value,
-            PreferencesHelper.resolveSupportedThinkingEffortLevels(appContext, engineModelName)
-        )
         val fullPrompt = buildPromptFromMessages(
             messages = messages,
             isGgufEngine = isGgufEngine,
@@ -4355,8 +4323,7 @@ class ChatViewModel(
             enableThinking = enableThinkingForPrompt,
             enableToolCalling = config.enableToolCalling,
             currentTurnMessageId = currentTurnMessageId,
-            memoryBlock = memoryBlock,
-            reasoningEffort = effectiveEffort
+            memoryBlock = memoryBlock
         )
 
         // Phase 12: thinkingContent が誤ってプロンプトに混入していないか検証
@@ -4368,15 +4335,16 @@ class ChatViewModel(
         // コンテキスト圧縮は廃止済み (旧実装はバグ多発のため Phase 1 で削除)。
         //   代わりにここでは trimPromptToWindow のみで contextWindow に収める。
         //   将来的な圧縮再実装は Phase 外 (別途リファクタ) とする。
-        // Thinking エフォートの注入点 (実配線済み)。
-        //   - ネイティブレンダラ (GGUF 内蔵 / ユーザー Jinja) には reasoning_effort 変数として
-        //     effectiveEffort が渡され、テンプレート (例: Granite 4.x の
-        //     `{reasoning effort: low}` 追記) が自前で解釈する。
-        //   - applyReasoningEffort は同パターンのマーカーが未挿入の場合のみ末尾に補う
-        //     (二重挿入はマーカー検出で防止)。
+        // Thinking エフォート (low / medium / high) の注入点。
+        //   テンプレートが reasoning_effort を解釈するモデル (UI 表示と同じ判定) かつ
+        //   Thinking ON のときだけ `{reasoning effort: <level>}` を最後の user ターンに注入する。
+        //   非対応モデル / Thinking OFF ではプロンプトを一切変更しない (pass-through)。
+        val effortSupported = config.enableThinking &&
+            isThinkingEffortSupportedForModel(engineModelName)
         val effortAppliedPrompt = promptBuilding.applyReasoningEffort(
             fullPrompt,
-            effectiveEffort
+            _chatSessionThinkingEffort.value,
+            supportsEffort = effortSupported
         )
         return trimPromptToWindow(effortAppliedPrompt, config.contextWindow)
     }
@@ -4830,8 +4798,7 @@ class ChatViewModel(
         sanitizer: (MessageEntity) -> String,
         modelPath: String = "",
         enableToolCalling: Boolean = false,
-        availableSkills: List<Skill> = emptyList(),
-        reasoningEffort: String = ""
+        availableSkills: List<Skill> = emptyList()
     ): String? {
         // ツール有効時はツール定義を OpenAI 互換の tools 配列 JSON として構築し、
         // system prompt への手動連結 (GgufToolPromptBuilder.appendToolDefinitions) ではなく
@@ -4874,8 +4841,7 @@ class ChatViewModel(
                         messagesJson = payloadJson,
                         chatTemplate = userTemplate,
                         enableThinking = enableThinking,
-                        toolsJson = toolsJson,
-                        reasoningEffort = reasoningEffort
+                        toolsJson = toolsJson
                     )
                 }.getOrNull()
                 if (renderedWithUserTemplate != null) {
@@ -4888,8 +4854,7 @@ class ChatViewModel(
         val rendered = requireModelManager().formatGgufChatTemplate(
             messagesJson = payloadJson,
             enableThinking = enableThinking,
-            toolsJson = toolsJson,
-            reasoningEffort = reasoningEffort
+            toolsJson = toolsJson
         )
         // formatGgufChatTemplate の戻り値はネイティブがレンダリングし、実際にエンジンへ渡す
         // 生プロンプト全文 (ツール定義込み) そのもの。
@@ -4903,8 +4868,7 @@ class ChatViewModel(
         enableThinking: Boolean = false,
         enableToolCalling: Boolean = false,
         currentTurnMessageId: Long? = null,
-        memoryBlock: String? = null,
-        reasoningEffort: String = ""
+        memoryBlock: String? = null
     ): String {
         if (messages.isEmpty()) return ""
 
@@ -4980,8 +4944,7 @@ class ChatViewModel(
                 sanitizer = makeSanitizer(isGgufEngine, currentTurnMessageId),
                 modelPath = engineModelName,
                 enableToolCalling = enableToolCalling,
-                availableSkills = availableSkills,
-                reasoningEffort = reasoningEffort
+                availableSkills = availableSkills
             )?.let { promptBuilding.normalizeGgufPromptRoleMarkers(it) }
                 ?: promptBuilding.normalizeGgufPromptRoleMarkers(
                     // 手組み推定フォールバック (GgufRenderer) は廃止: ネイティブ経路はテンプレート

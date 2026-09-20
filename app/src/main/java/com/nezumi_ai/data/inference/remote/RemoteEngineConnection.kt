@@ -350,6 +350,10 @@ class RemoteEngineConnection(
         }.also { invalidateEngineStatusCache() }
 
     suspend fun unloadModel(): Result<Unit> = withContext(Dispatchers.IO) {
+        // 起動最適化 (#litert-lazy-start): 一度も bind されていない (＝一度も
+        //   ロードされていない) プロセスに対する unload は no-op でよい。
+        //   requireService() を呼ぶと不要な bindService が走ってしまう。
+        if (!isBound) return@withContext Result.success(Unit)
         val service = requireService()
         val result = CompletableDeferred<Result<Unit>>()
         pendingResult = result
@@ -379,13 +383,35 @@ class RemoteEngineConnection(
     }.also { invalidateEngineStatusCache() }
 
     suspend fun cancelInference() = withContext(Dispatchers.IO) {
-        runCatching { requireService().cancelInference() }
-            .onFailure { Log.w(tag, "cancelInference failed", it) }
+        // 起動最適化 (#litert-lazy-start): このプロセスがまだ一度も bind されて
+        //   いない (=一度もモデルロードされていない) なら、cancelInference は
+        //   本質的に no-op のはず。にもかかわらず requireService() を呼ぶと
+        //   bindService が走り、:litert プロセスを「使ってもいないのに」
+        //   起動させてしまう (GGUF は getOrCreateGgufEngine() で遅延生成される
+        //   ため同じ問題が起きない非対称があった)。未接続なら何もせず返す。
+        if (!isBound) return@withContext
+
+        // Bug fix(#session-switch-hang): cancelInference は AIDL 越しの同期 Binder
+        //   呼び出し。LiteRT-LM がネイティブデッドロック (google-ai-edge/LiteRT-LM#2202
+        //   等の既知バグ) に陥っていると、この呼び出し自体が無期限に返らず、
+        //   呼び出し元の stopGenerationInternal() / setCurrentSession() ごと
+        //   新規セッション作成やセッション切替がハングして見えていた。
+        //   clearKvCacheIfLoadedSync と同様にタイムアウトを設け、応答が無くても
+        //   後続処理 (セッション切替・画面遷移) を継続できるようにする。
+        withTimeoutOrNull(2_000L) {
+            runCatching { requireService().cancelInference() }
+                .onFailure { Log.w(tag, "cancelInference failed", it) }
+        } ?: Log.w(tag, "cancelInference timed out (2000ms); continuing")
         Unit
     }
 
-    fun isAvailableSync(): Boolean = runBlocking(Dispatchers.IO) {
-        runCatching { requireService().isAvailable }.getOrDefault(false)
+    fun isAvailableSync(): Boolean {
+        // 起動最適化 (#litert-lazy-start): 未接続なら bind せず false を返す。
+        //   「使われていないエンジンは利用不可」で意味論的にも正しい。
+        if (!isBound) return false
+        return runBlocking(Dispatchers.IO) {
+            runCatching { requireService().isAvailable }.getOrDefault(false)
+        }
     }
 
     // Bug fix(#binder-thread-pool-starvation): getEngineStatus (AIDL code 7)
@@ -399,6 +425,11 @@ class RemoteEngineConnection(
     @Volatile private var cachedEngineStatusAtMs: Long = 0L
 
     fun getEngineStatusSync(): android.os.Bundle {
+        // 起動最適化 (#litert-lazy-start): 未接続 (一度もロードされていない)
+        //   エンジンに対する状態問い合わせは、bind を引き起こさず空の Bundle を
+        //   返す。TPS/コンテキストメーター等の表示系がロード前に一瞬走っても
+        //   :gguf / :litert プロセスを無駄に起動させないため。
+        if (!isBound) return android.os.Bundle()
         val now = System.currentTimeMillis()
         synchronized(engineStatusCacheLock) {
             val cached = cachedEngineStatus

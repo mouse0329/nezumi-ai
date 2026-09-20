@@ -60,6 +60,69 @@ class MessageAdapter(
     }
 
     /**
+     * パフォーマンス修正 (#scroll-jank): sanitizeVisibleText / stripGemmaTokens /
+     * listFromJsonArray はいずれも文字列処理・正規表現・JSON パースを伴い、
+     * ViewHolder がスクロールでリサイクルされて再 bind されるたびに毎回
+     * 再計算されるとスクロールがカクつく。ストリーミング完了済み(確定)の
+     * メッセージは内容が不変なので、message.id をキーに一度だけ計算して
+     * キャッシュする。ストリーミング中のメッセージは content が頻繁に変わる
+     * ためキャッシュしない。
+     */
+    private data class AiBindCache(
+        val contentHash: Int,
+        val visibleContent: String,
+        val persistedToolCards: List<ToolResultCard>,
+        val speakText: String
+    )
+    private val aiBindCache = HashMap<Long, AiBindCache>()
+
+    private fun aiBindDataFor(message: MessageEntity): AiBindCache {
+        if (message.isStreaming) {
+            // ストリーミング中は毎回計算し、キャッシュには入れない。
+            return computeAiBindData(message)
+        }
+        val cached = aiBindCache[message.id]
+        val contentHash = message.content.hashCode()
+        if (cached != null && cached.contentHash == contentHash) {
+            return cached
+        }
+        val fresh = computeAiBindData(message)
+        aiBindCache[message.id] = fresh
+        return fresh
+    }
+
+    override fun onCurrentListChanged(
+        previousList: MutableList<MessageEntity>,
+        currentList: MutableList<MessageEntity>
+    ) {
+        super.onCurrentListChanged(previousList, currentList)
+        // リストから外れた (削除 / セッション切替された) メッセージの
+        // キャッシュを掃除し、aiBindCache が無限に肥大化しないようにする。
+        if (aiBindCache.isEmpty()) return
+        val liveIds = currentList.mapTo(HashSet()) { it.id }
+        aiBindCache.keys.retainAll(liveIds)
+    }
+
+    private fun computeAiBindData(message: MessageEntity): AiBindCache {
+        val visibleContent = Gemma4ThinkingParser.sanitizeVisibleText(
+            message.content,
+            preserveToolCallTags = true
+        )
+        val persistedToolCards = if (!message.toolResultsJson.isNullOrBlank()) {
+            ToolResultCard.listFromJsonArray(message.toolResultsJson)
+        } else {
+            emptyList()
+        }
+        val speakText = message.content.stripGemmaTokens().trim()
+        return AiBindCache(
+            contentHash = message.content.hashCode(),
+            visibleContent = visibleContent,
+            persistedToolCards = persistedToolCards,
+            speakText = speakText
+        )
+    }
+
+    /**
      * 生成中フラグ。true の間はユーザーメッセージの「編集ボタン」を非表示にする。
      * Bug fix: 生成中に取り消しボタンが表示されると、推論中の KV キャッシュと
      * メッセージストアの整合が崩れるため、UI 上で一切押させないようにする。
@@ -225,16 +288,11 @@ class MessageAdapter(
         // インライン tool-call カード表示のため、表示用テキストのみ <tool_call> タグを
         // 保持したまま sanitize する。コピー・読み上げ用の他の stripGemmaTokens() 呼び出しは、
         // タグを含めない従来通りの挙動のまま。
-        val visibleContent = Gemma4ThinkingParser.sanitizeVisibleText(
-            message.content,
-            preserveToolCallTags = true
-        )
-
-        val persistedToolCards = if (!message.toolResultsJson.isNullOrBlank()) {
-            ToolResultCard.listFromJsonArray(message.toolResultsJson)
-        } else {
-            emptyList()
-        }
+        // (#scroll-jank): 確定済みメッセージは aiBindDataFor 内でキャッシュされ、
+        //   同じ内容の再 bind では再計算されない。
+        val bindData = aiBindDataFor(message)
+        val visibleContent = bindData.visibleContent
+        val persistedToolCards = bindData.persistedToolCards
 
         // 画像生成中のプレースホルダー (旧 aiImagePreview の generate_image 分岐)。
         val streamingToolName = if (message.isStreaming && message.id == streamingMessageId) {
@@ -253,7 +311,7 @@ class MessageAdapter(
         val showTtft = cachedShowTtft
             ?: PreferencesHelper.isShowTtft(ctx).also { cachedShowTtft = it }
 
-        val speakText = message.content.stripGemmaTokens().trim()
+        val speakText = bindData.speakText
         val canSpeak = !message.isStreaming && speakText.isNotBlank() &&
             com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED
 
