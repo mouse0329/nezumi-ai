@@ -70,6 +70,30 @@ class ThinkingLeakSalvageTest {
     }
 
     @Test
+    fun `restore keeps stream split when final parse swallows answer into thinking`() {
+        val restored = ThinkingLeakSalvage.restoreSeparatedThinkingIfFinalMerged(
+            previousThinking = "User said hello. Respond friendly.",
+            previousContent = "こんにちは！何かお手伝いできることがありますか？",
+            newThinking = "User said hello. Respond friendly.\nこんにちは！何かお手伝いできることがありますか？",
+            newContent = ""
+        )
+        assertEquals("User said hello. Respond friendly.", restored.first)
+        assertEquals("こんにちは！何かお手伝いできることがありますか？", restored.second)
+    }
+
+    @Test
+    fun `restore keeps new split when final parse did not merge`() {
+        val restored = ThinkingLeakSalvage.restoreSeparatedThinkingIfFinalMerged(
+            previousThinking = "thinking",
+            previousContent = "hello",
+            newThinking = "thinking",
+            newContent = "hello world"
+        )
+        assertEquals("thinking", restored.first)
+        assertEquals("hello world", restored.second)
+    }
+
+    @Test
     fun `merge prefers existing when it already contains salvaged`() {
         val merged = ThinkingLeakSalvage.mergeThinkingSalvage(
             existing = "既存の思考 ここに追加あり",

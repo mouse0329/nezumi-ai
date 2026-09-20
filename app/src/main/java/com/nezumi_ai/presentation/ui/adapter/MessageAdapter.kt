@@ -66,10 +66,12 @@ class MessageAdapter(
      */
     private var isGenerating: Boolean = false
 
-    // Thinking 表示仕様 (バグ修正後の新仕様)：
+    // Thinking 表示仕様：
     //   - モデルが思考を出したら常にブロックを表示する (設定に依存しない)。
-    //   - 【生成中】：強制的に展開し、トグル行は一切表示しない (閉じるバタンを消す)。
-    //   - 【生成後】：一律に自動で閉じ、トグルボタンを表示してユーザーが開閉できるようにする。
+    //   - 見た目 (Hide/Show reasoning ヘッダー + 左ルール) は生成中/完了後で共通。
+    //   - 【思考中】：強制展開。トグルは無効 (閉じられない)。
+    //   - 【思考終了〜生成完了前】：自動で閉じる。生成中はまだ開閉できない。
+    //   - 【生成後】：閉じた状態から、トグルで開閉できる。
     //     開閉状態は thinkingExpandedByMessageId に保持し、重複バインドにも耐える。
     private val thinkingExpandedByMessageId = mutableSetOf<Long>()
     private var speakingMessageId: Long? = null

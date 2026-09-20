@@ -245,10 +245,15 @@ fun AiMessageItem(
         }
 
         // Thinking ブロック (280dp 固定・bg_message_ai 相当)
-        //   - 生成中: 強制展開・トグル行なし
-        //   - 生成後: トグル行を表示し、thinkingExpanded で開閉
+        //   - 見た目は生成中/完了後で共通 (ヘッダー + 左ルール)
+        //   - 思考中: 強制展開・閉じられない
+        //   - 思考終了 (本文が出始めた時点) または生成完了: 自動で閉じる
+        //   - 生成完了後のみトグルで開閉できる
         val thinking = message.thinkingContent?.stripGemmaTokens()
         if (!thinking.isNullOrBlank()) {
+            val thinkingPhaseActive = message.isStreaming && visibleContent.isBlank()
+            val expanded = if (message.isStreaming) thinkingPhaseActive else thinkingExpanded
+            val toggleEnabled = !message.isStreaming
             Column(
                 modifier = Modifier
                     .padding(bottom = 6.dp)
@@ -257,55 +262,54 @@ fun AiMessageItem(
                     .border(1.dp, colorResource(R.color.border), RoundedCornerShape(18.dp))
                     .padding(horizontal = 10.dp, vertical = 8.dp)
             ) {
-                if (message.isStreaming) {
-                    MessageThinkingBody(thinking)
-                } else {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (toggleEnabled) Modifier.clickable(onClick = onThinkingToggle)
+                            else Modifier
+                        )
+                        .padding(vertical = 4.dp)
+                ) {
+                    Text(
+                        text = stringResource(
+                            if (expanded) R.string.gemma_hide_thinking
+                            else R.string.gemma_show_thinking
+                        ),
+                        color = colorResource(R.color.text_secondary),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = if (expanded) "▲" else "▼",
+                        color = colorResource(R.color.text_secondary),
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                }
+                if (expanded) {
+                    val thinkingRuleColor = colorResource(R.color.text_secondary)
+                        .copy(alpha = 0.35f)
+                    // LazyColumn is based on SubcomposeLayout and cannot answer intrinsic
+                    // size queries. Draw the leading rule in the content container instead
+                    // of using Row.height(IntrinsicSize.Min) + fillMaxHeight().
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable(onClick = onThinkingToggle)
-                            .padding(vertical = 4.dp)
+                            .padding(top = 4.dp)
+                            .drawBehind {
+                                drawRect(
+                                    color = thinkingRuleColor,
+                                    size = size.copy(width = 2.dp.toPx())
+                                )
+                            }
+                            .padding(start = 10.dp)
                     ) {
-                        Text(
-                            text = stringResource(
-                                if (thinkingExpanded) R.string.gemma_hide_thinking
-                                else R.string.gemma_show_thinking
-                            ),
-                            color = colorResource(R.color.text_secondary),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            text = if (thinkingExpanded) "▲" else "▼",
-                            color = colorResource(R.color.text_secondary),
-                            fontSize = 14.sp,
-                            modifier = Modifier.padding(start = 4.dp)
-                        )
-                    }
-                    if (thinkingExpanded) {
-                        val thinkingRuleColor = colorResource(R.color.text_secondary)
-                            .copy(alpha = 0.35f)
-                        // LazyColumn is based on SubcomposeLayout and cannot answer intrinsic
-                        // size queries. Draw the leading rule in the content container instead
-                        // of using Row.height(IntrinsicSize.Min) + fillMaxHeight().
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp)
-                                .drawBehind {
-                                    drawRect(
-                                        color = thinkingRuleColor,
-                                        size = size.copy(width = 2.dp.toPx())
-                                    )
-                                }
-                                .padding(start = 10.dp)
-                        ) {
-                            MessageThinkingBody(thinking)
-                        }
+                        MessageThinkingBody(thinking)
                     }
                 }
             }

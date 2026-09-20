@@ -81,6 +81,35 @@ object ThinkingLeakSalvage {
     }
 
     /**
+     * 完了 FINAL の再解析で、ストリーミング中に分離できていた本文が
+     * Thinking 欄へ混入した場合は、分離済みペアを優先して戻す。
+     */
+    fun restoreSeparatedThinkingIfFinalMerged(
+        previousThinking: String?,
+        previousContent: String,
+        newThinking: String?,
+        newContent: String
+    ): Pair<String?, String> {
+        val prevT = previousThinking?.trim().orEmpty()
+        val prevC = previousContent.trim()
+        val newT = newThinking?.trim().orEmpty()
+        if (prevT.isEmpty()) return newThinking to newContent
+
+        val answerSwallowedIntoThinking =
+            prevC.isNotEmpty() && newContent.trim().isEmpty() && newT.contains(prevC)
+        val thinkingGrewByAnswer =
+            prevC.isNotEmpty() &&
+                newT.contains(prevT) &&
+                newT.contains(prevC) &&
+                newT.length > prevT.length
+        return if (answerSwallowedIntoThinking || thinkingGrewByAnswer) {
+            previousThinking to previousContent
+        } else {
+            newThinking to newContent
+        }
+    }
+
+    /**
      * 既存 thinkingContent と content から救出した思考本文をマージする。
      * 重複している場合は既存側を優先する。
      */

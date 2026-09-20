@@ -2449,8 +2449,15 @@ class ChatViewModel(
                                                 lastPersistedContent.ifBlank { finalFromModel }
                                             }
                                             finalFromModelGlobal = resolvedFinal
-                                            answerBuilder.clear()
-                                            answerBuilder.append(resolvedFinal)
+                                            // LiteRT の thought チャンネル経路では FINAL は本文のみなので
+                                            // answerBuilder を差し替えてよい。
+                                            // GGUF の FINAL は sanitizeVisibleText(全文) で <think> が剥がれて
+                                            // 思考+本文が連結される。それを answerBuilder に入れると、直後の
+                                            // treatUnmarkedInputAsThinking 再解析が全文を Thinking 欄へ流し込む。
+                                            if (nativeThinkingStream && resolvedFinal.isNotBlank()) {
+                                                answerBuilder.clear()
+                                                answerBuilder.append(resolvedFinal)
+                                            }
                                         }
                                         thinkDelta != null -> {
  // シンキングフェーズ開始を記録 (未開始のときだけ)
@@ -2782,6 +2789,16 @@ class ChatViewModel(
                                         }
                                     }
 
+                                    if (finalFromModelGlobal != null) {
+                                        val restored = ThinkingLeakSalvage.restoreSeparatedThinkingIfFinalMerged(
+                                            previousThinking = lastStreamThinkingForFinal,
+                                            previousContent = lastStreamContentForFinal,
+                                            newThinking = thinkingForUi,
+                                            newContent = contentForUi
+                                        )
+                                        thinkingForUi = restored.first
+                                        contentForUi = restored.second
+                                    }
                                     lastStreamContentForFinal = contentForUi
                                     lastStreamThinkingForFinal = thinkingForUi
 
