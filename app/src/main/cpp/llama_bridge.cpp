@@ -207,7 +207,8 @@ static thread_local std::string g_last_load_error;
 // モデルロード・解放・推論開始で古い生プロンプトが残らないようにするリセット用。
 static void nezumi_reset_raw_prompt_storage(NezumiLlamaCtx *nc)
 {
-    if (nc) nc->last_applied_prompt.clear();
+    if (nc)
+        nc->last_applied_prompt.clear();
 }
 static thread_local bool g_capture_load_errors = false;
 
