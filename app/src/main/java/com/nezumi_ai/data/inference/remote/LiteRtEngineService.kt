@@ -208,6 +208,7 @@ class LiteRtEngineService : Service() {
             messagesJson: String?,
             enableThinking: Boolean,
             toolsJson: String?,
+            reasoningEffort: String?,
             callback: IRemoteStringCallback?
         ) {
             callback?.onResult("")
@@ -218,6 +219,7 @@ class LiteRtEngineService : Service() {
             chatTemplate: String?,
             enableThinking: Boolean,
             toolsJson: String?,
+            reasoningEffort: String?,
             callback: IRemoteStringCallback?
         ) {
             callback?.onResult("")

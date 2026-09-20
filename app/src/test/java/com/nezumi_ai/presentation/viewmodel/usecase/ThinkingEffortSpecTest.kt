@@ -10,8 +10,8 @@ import org.junit.Test
  *
  * - 既定値は Thinking ON / effort Low (モック仕様)。
  * - 思考強度は Thinking OFF でも切り替え可能 (セグメントは常に不透過)。
- * - applyReasoningEffort はテンプレート非対応 (supportsEffort=false) では pass-through、
- *   対応時は最後の user ターン末尾に `{reasoning effort: <level>}` を追記する。
+ * - applyReasoningEffort は実配線済みで、テンプレートの
+ *   `{reasoning effort: low}` パターンを effort=low のときのみ挿入する。
  */
 class ThinkingEffortSpecTest {
 
@@ -36,24 +36,58 @@ class ThinkingEffortSpecTest {
     }
 
     @Test
-    fun applyReasoningEffort_appendsMarkerToLastUserTurn() {
+    fun applyReasoningEffort_appendsLowEffortMarkerOnlyForLow() {
         val useCase = PromptBuildingUseCase()
-        val prompt = "<|im_start|>user\nこんにちは<|im_end|>\n<|im_start|>assistant\n"
-        val result = useCase.applyReasoningEffort(prompt, "low", supportsEffort = true)
-        // 最後の user ターンの閉じタグ手前にマーカーが入る。
+        val prompt = "user: hello"
+        // low: テンプレートの `{reasoning effort: low}` パターンが末尾に挿入される。
         assertEquals(
-            "<|im_start|>user\nこんにちは\n{reasoning effort: low}\n<|im_end|>\n<|im_start|>assistant\n",
-            result
+            "user: hello\n\n{reasoning effort: low}",
+            useCase.applyReasoningEffort(prompt, "low")
         )
+        // 大文字や空白混じりでも low と解釈される (保存値の揺れに対する後方互換)。
+        assertEquals(
+            "user: hello\n\n{reasoning effort: low}",
+            useCase.applyReasoningEffort(prompt, " LOW ")
+        )
+        // 既にマーカーが挿入済み (ネイティブレンダラが処理済み) の場合は二重挿入しない。
+        val alreadyMarked = "user: hello\n\n{reasoning effort: low}"
+        assertEquals(alreadyMarked, useCase.applyReasoningEffort(alreadyMarked, "low"))
     }
 
     @Test
-    fun applyReasoningEffort_noopWhenTemplateUnsupported() {
-        // テンプレート非対応 (supportsEffort=false) ではプロンプトを一切変更しない。
+    fun applyReasoningEffort_nonLowEffortLeavesPromptUnchanged() {
         val useCase = PromptBuildingUseCase()
         val prompt = "user: hello"
-        listOf("low", "medium", "high", "").forEach { level ->
-            assertEquals(prompt, useCase.applyReasoningEffort(prompt, level, supportsEffort = false))
+        // medium / high / 空はマーカーを挿入しない (BINARY モデルでは
+        // テンプレート上「指定なし」と同一に扱われるため)。
+        listOf("medium", "high", "").forEach { level ->
+            assertEquals(prompt, useCase.applyReasoningEffort(prompt, level))
         }
+    }
+
+    @Test
+    fun normalizeThinkingEffort_clampsUnsupportedLevels() {
+        // BINARY (low のみ有効) なモデルに対する保存済み medium / high は low に丸める。
+        assertEquals(
+            PreferencesHelper.THINKING_EFFORT_LOW,
+            PreferencesHelper.normalizeThinkingEffortForLevels("medium", listOf("low"))
+        )
+        assertEquals(
+            PreferencesHelper.THINKING_EFFORT_LOW,
+            PreferencesHelper.normalizeThinkingEffortForLevels("high", listOf("low"))
+        )
+        // GRADED で有効な値はそのまま通す。
+        assertEquals(
+            PreferencesHelper.THINKING_EFFORT_HIGH,
+            PreferencesHelper.normalizeThinkingEffortForLevels(
+                "high",
+                listOf("low", "medium", "high")
+            )
+        )
+        // 空リスト (テンプレートが effort を解釈しない) でもクラッシュせず既定値に。
+        assertEquals(
+            PreferencesHelper.DEFAULT_THINKING_EFFORT,
+            PreferencesHelper.normalizeThinkingEffortForLevels("medium", emptyList())
+        )
     }
 }

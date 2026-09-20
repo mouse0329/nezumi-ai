@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nezumi_ai.R
+import com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
 import com.nezumi_ai.presentation.ui.theme.nezumiSwitchColors
 import com.nezumi_ai.utils.PreferencesHelper
 
@@ -43,6 +44,17 @@ import com.nezumi_ai.utils.PreferencesHelper
 internal fun effortSegmentsAlpha(thinkingOn: Boolean): Float = 1.0f
 
 /**
+ * chat_template の [ModelNameHeuristics.ReasoningEffortGranularity] に応じた
+ * エフォート選択肢を返す。
+ *  - Binary → ["low"] (Granite 4.x 系: "low" かそれ以外かの二値のみ解釈)
+ *  - Graded → 検出されたレベル集合 (3 値とは限らない)
+ *  - None   → 空 (テンプレートに effort 概念なし。セグメント自体を表示しない)
+ */
+internal fun availableEffortLevels(
+    granularity: ModelNameHeuristics.ReasoningEffortGranularity
+): List<String> = ModelNameHeuristics.supportedEffortLevels(granularity)
+
+/**
  * 旧 sheet_attachment_options.xml の Compose 置き換え。
  * 「シンキング」セクション (トグル + Low/Medium/High セグメント) を先頭に置き、
  * 区切り線の下に「画像」「カメラ」「ファイル」の 3 タイルと「キャンセル」を並べる。
@@ -50,6 +62,9 @@ internal fun effortSegmentsAlpha(thinkingOn: Boolean): Float = 1.0f
  *
  * [thinkingOn] が null のときはシンキングセクション自体を表示しない
  * (モデルがシンキング非対応の場合など、従来どおり添付のみのシートになる)。
+ * [effortLevels] はロード中モデルの chat_template が解釈できる思考強度レベル
+ * (PreferencesHelper.resolveSupportedThinkingEffortLevels の結果)。空のときは
+ * エフォートセグメントを表示せず ON/OFF トグルのみとする。
  */
 @Composable
 fun AttachmentOptionsSheet(
@@ -61,9 +76,7 @@ fun AttachmentOptionsSheet(
     modifier: Modifier = Modifier,
     thinkingOn: Boolean? = null,
     thinkingEffort: String = PreferencesHelper.THINKING_EFFORT_LOW,
-    // テンプレートが reasoning_effort を解釈しないモデルでは false を渡し、
-    // 思考強度セグメント自体を UI から消す (要望対応)。
-    thinkingEffortVisible: Boolean = true,
+    effortLevels: List<String> = PreferencesHelper.ALL_THINKING_EFFORTS,
     onThinkingChange: (Boolean) -> Unit = {},
     onEffortChange: (String) -> Unit = {}
 ) {
@@ -115,11 +128,12 @@ fun AttachmentOptionsSheet(
                 // 要望: 思考強度は Thinking OFF でも切り替え可能 (常に enabled)。
                 // ただしテンプレートが reasoning_effort を解釈しないモデルでは
                 // セグメント自体を表示しない (UI から消す)。
-                if (thinkingEffortVisible) {
+                if (effortLevels.isNotEmpty()) {
                     ThinkingEffortSegments(
                         selected = thinkingEffort,
                         enabled = true,
                         onSelect = onEffortChange,
+                        levels = effortLevels,
                         modifier = Modifier.padding(start = 12.dp)
                     )
                 }
@@ -184,7 +198,8 @@ fun AttachmentOptionsSheet(
 }
 
 /**
- * Low / Medium / High の 3 択セグメントコントロール。
+ * エフォート選択セグメントコントロール。
+ * 表示するレベルは [levels] (chat_template 解析結果) に従う。
  * [enabled] = false (Thinking OFF) のときは半透明になり操作を受け付けないが、
  * 選択値 [selected] の表示は維持する。
  */
@@ -193,21 +208,30 @@ private fun ThinkingEffortSegments(
     selected: String,
     enabled: Boolean,
     onSelect: (String) -> Unit,
+    levels: List<String>,
     modifier: Modifier = Modifier
 ) {
-    val levels = listOf(
-        PreferencesHelper.THINKING_EFFORT_LOW to stringResource(R.string.thinking_effort_low),
-        PreferencesHelper.THINKING_EFFORT_MEDIUM to stringResource(R.string.thinking_effort_medium),
-        PreferencesHelper.THINKING_EFFORT_HIGH to stringResource(R.string.thinking_effort_high)
-    )
+    // 保存済み値が非対応レベル (BINARY モデルへの medium/high 等) の場合は
+    // 先頭レベルの選択表示にフォールバックする (後方互換ガード)。
+    val effectiveSelected = if (selected in levels) selected else levels.firstOrNull()
+    val entries = levels.map { level ->
+        val label = when (level.trim().lowercase()) {
+            PreferencesHelper.THINKING_EFFORT_LOW -> stringResource(R.string.thinking_effort_low)
+            PreferencesHelper.THINKING_EFFORT_MEDIUM -> stringResource(R.string.thinking_effort_medium)
+            PreferencesHelper.THINKING_EFFORT_HIGH -> stringResource(R.string.thinking_effort_high)
+            // 未知のレベル (minimal 等) はリソースがないため生の値をそのまま表示する。
+            else -> level
+        }
+        level to label
+    }
     Row(
         modifier = modifier
             .alpha(effortSegmentsAlpha(enabled))
             .border(1.dp, colorResource(R.color.border), RoundedCornerShape(10.dp))
             .clip(RoundedCornerShape(10.dp))
     ) {
-        levels.forEachIndexed { index, (level, label) ->
-            val isSelected = level == selected
+        entries.forEachIndexed { index, (level, label) ->
+            val isSelected = level == effectiveSelected
             Text(
                 text = label,
                 color = colorResource(
@@ -222,7 +246,7 @@ private fun ThinkingEffortSegments(
                     .clickable(enabled = enabled) { onSelect(level) }
                     .padding(horizontal = 14.dp, vertical = 7.dp)
             )
-            if (index < levels.lastIndex) {
+            if (index < entries.lastIndex) {
                 Box(
                     modifier = Modifier
                         .width(1.dp)

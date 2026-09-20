@@ -618,6 +618,15 @@ class GgufInferenceEngine(
                 template.contains("<|think|>")
             val supportsTools =
                 com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.templateDeclaresToolSupport(template)
+            // 思考強度 (reasoning_effort) のテンプレート解釈粒度もここで検出してログに残す。
+            // 例: Granite 4.2 系は "low" 二値 (BINARY) で、medium / high は「指定なし」と同一。
+            // UI の選択肢動的化は PreferencesHelper.resolveSupportedThinkingEffortLevels が
+            // 同一の解析 (ModelNameHeuristics.parseReasoningEffortGranularity) を使う。
+            val effortGranularity =
+                com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.parseReasoningEffortGranularity(template)
+            if (effortGranularity !is com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.ReasoningEffortGranularity.None) {
+                Log.i(TAG, "reasoning effort granularity from chat_template: $effortGranularity ($modelPath)")
+            }
             if (!supportsThinking && !supportsTools) return@runCatching
             val current = ImportedModelCapabilityStore.get(appContext, modelPath)
             val nextThinking = current.thinkingEnabled || supportsThinking
@@ -703,13 +712,15 @@ class GgufInferenceEngine(
     suspend fun formatWithGgufChatTemplate(
         messagesJson: String,
         enableThinking: Boolean = false,
-        toolsJson: String = ""
+        toolsJson: String = "",
+        reasoningEffort: String = ""
     ): String = withContext(Dispatchers.IO) {
         val context = llamaCppCtx ?: return@withContext ""
         normalizeAssistantGenerationPrompt(context.applyGgufChatTemplate(
             messagesJson = messagesJson,
             toolsJson = toolsJson,
             enableThinking = enableThinking,
+            reasoningEffort = reasoningEffort,
             addGenerationPrompt = true
         ))
     }
@@ -723,7 +734,8 @@ class GgufInferenceEngine(
         messagesJson: String,
         chatTemplate: String,
         enableThinking: Boolean,
-        toolsJson: String = ""
+        toolsJson: String = "",
+        reasoningEffort: String = ""
     ): String = withContext(Dispatchers.IO) {
         val context = llamaCppCtx ?: return@withContext ""
         normalizeAssistantGenerationPrompt(context.applyJinjaChatTemplate(
@@ -731,6 +743,7 @@ class GgufInferenceEngine(
             chatTemplate = chatTemplate,
             toolsJson = toolsJson,
             enableThinking = enableThinking,
+            reasoningEffort = reasoningEffort,
             addGenerationPrompt = true
         ))
     }

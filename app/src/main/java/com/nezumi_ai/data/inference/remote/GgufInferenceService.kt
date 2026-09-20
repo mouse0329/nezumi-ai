@@ -220,13 +220,14 @@ class GgufInferenceService : Service() {
             messagesJson: String?,
             enableThinking: Boolean,
             toolsJson: String?,
+            reasoningEffort: String?,
             callback: IRemoteStringCallback?
         ) {
             if (callback == null) return
             serviceScope.launch {
                 try {
                     val result = ggufEngine.formatWithGgufChatTemplate(
-                        messagesJson ?: "", enableThinking, toolsJson ?: ""
+                        messagesJson ?: "", enableThinking, toolsJson ?: "", reasoningEffort ?: ""
                     )
                     callback.onResult(result)
                 } catch (t: Throwable) {
@@ -241,13 +242,15 @@ class GgufInferenceService : Service() {
             chatTemplate: String?,
             enableThinking: Boolean,
             toolsJson: String?,
+            reasoningEffort: String?,
             callback: IRemoteStringCallback?
         ) {
             if (callback == null) return
             serviceScope.launch {
                 try {
                     val result = ggufEngine.formatWithJinjaChatTemplate(
-                        messagesJson ?: "", chatTemplate ?: "", enableThinking, toolsJson ?: ""
+                        messagesJson ?: "", chatTemplate ?: "", enableThinking, toolsJson ?: "",
+                        reasoningEffort ?: ""
                     )
                     callback.onResult(result)
                 } catch (t: Throwable) {

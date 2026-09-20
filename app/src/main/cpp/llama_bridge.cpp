@@ -1281,6 +1281,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyGgufChatTemplate(
     jstring j_messages_json,
     jstring j_tools_json,
     jboolean enable_thinking,
+    jstring j_reasoning_effort,
     jboolean add_generation_prompt)
 {
     auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
@@ -1308,6 +1309,15 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyGgufChatTemplate(
     inputs.add_generation_prompt = add_generation_prompt;
     inputs.use_jinja = true;
     inputs.enable_thinking = enable_thinking;
+    // reasoning_effort (low / medium / high 等) を jinja テンプレート変数として渡す。
+    // Kotlin 側でモデルのテンプレート解釈粒度に正規化済みの値だけが届く。
+    // 空文字 (未指定) のときはテンプレートのデフォルト分岐に委ねる。
+    const char *effort = j_reasoning_effort ? env->GetStringUTFChars(j_reasoning_effort, nullptr) : nullptr;
+    std::string reasoning_effort = effort ? effort : "";
+    if (effort)
+        env->ReleaseStringUTFChars(j_reasoning_effort, effort);
+    if (!reasoning_effort.empty())
+        inputs.chat_template_kwargs["reasoning_effort"] = nlohmann::json(reasoning_effort).dump();
     inputs.now = std::chrono::system_clock::now();
 
     try
@@ -1335,6 +1345,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyJinjaChatTemplate(
     jstring j_chat_template,
     jstring j_tools_json,
     jboolean enable_thinking,
+    jstring j_reasoning_effort,
     jboolean add_generation_prompt)
 {
     auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
@@ -1360,6 +1371,15 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeApplyJinjaChatTemplate(
     inputs.add_generation_prompt = add_generation_prompt;
     inputs.use_jinja = true;
     inputs.enable_thinking = enable_thinking;
+    // reasoning_effort (low / medium / high 等) を jinja テンプレート変数として渡す。
+    // Kotlin 側でモデルのテンプレート解釈粒度に正規化済みの値だけが届く。
+    // 空文字 (未指定) のときはテンプレートのデフォルト分岐に委ねる。
+    const char *effort = j_reasoning_effort ? env->GetStringUTFChars(j_reasoning_effort, nullptr) : nullptr;
+    std::string reasoning_effort = effort ? effort : "";
+    if (effort)
+        env->ReleaseStringUTFChars(j_reasoning_effort, effort);
+    if (!reasoning_effort.empty())
+        inputs.chat_template_kwargs["reasoning_effort"] = nlohmann::json(reasoning_effort).dump();
     inputs.now = std::chrono::system_clock::now();
 
     try

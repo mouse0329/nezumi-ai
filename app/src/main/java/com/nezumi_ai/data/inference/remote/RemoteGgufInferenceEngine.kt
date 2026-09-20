@@ -193,15 +193,17 @@ class RemoteGgufInferenceEngine(
     suspend fun formatWithGgufChatTemplate(
         messagesJson: String,
         enableThinking: Boolean,
-        toolsJson: String = ""
-    ): String = connection.formatWithGgufChatTemplate(messagesJson, enableThinking, toolsJson)
+        toolsJson: String = "",
+        reasoningEffort: String = ""
+    ): String = connection.formatWithGgufChatTemplate(messagesJson, enableThinking, toolsJson, reasoningEffort)
 
     suspend fun formatWithJinjaChatTemplate(
         messagesJson: String,
         chatTemplate: String,
         enableThinking: Boolean,
-        toolsJson: String = ""
-    ): String = connection.formatWithJinjaChatTemplate(messagesJson, chatTemplate, enableThinking, toolsJson)
+        toolsJson: String = "",
+        reasoningEffort: String = ""
+    ): String = connection.formatWithJinjaChatTemplate(messagesJson, chatTemplate, enableThinking, toolsJson, reasoningEffort)
 
     fun parseWithGgufChatTemplate(
         output: String,

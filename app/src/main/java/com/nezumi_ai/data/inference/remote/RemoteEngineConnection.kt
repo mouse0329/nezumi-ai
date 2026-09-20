@@ -448,18 +448,20 @@ class RemoteEngineConnection(
     suspend fun formatWithGgufChatTemplate(
         messagesJson: String,
         enableThinking: Boolean,
-        toolsJson: String = ""
+        toolsJson: String = "",
+        reasoningEffort: String = ""
     ): String = awaitString("formatWithGgufChatTemplate") { service, cb ->
-        service.formatWithGgufChatTemplate(messagesJson, enableThinking, toolsJson, cb)
+        service.formatWithGgufChatTemplate(messagesJson, enableThinking, toolsJson, reasoningEffort, cb)
     }
 
     suspend fun formatWithJinjaChatTemplate(
         messagesJson: String,
         chatTemplate: String,
         enableThinking: Boolean,
-        toolsJson: String = ""
+        toolsJson: String = "",
+        reasoningEffort: String = ""
     ): String = awaitString("formatWithJinjaChatTemplate") { service, cb ->
-        service.formatWithJinjaChatTemplate(messagesJson, chatTemplate, enableThinking, toolsJson, cb)
+        service.formatWithJinjaChatTemplate(messagesJson, chatTemplate, enableThinking, toolsJson, reasoningEffort, cb)
     }
 
     /**

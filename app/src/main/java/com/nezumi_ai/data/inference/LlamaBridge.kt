@@ -210,6 +210,7 @@ object LlamaBridge {
         messagesJson: String,
         toolsJson: String = "",
         enableThinking: Boolean,
+        reasoningEffort: String = "",
         addGenerationPrompt: Boolean
     ): String
 
@@ -220,6 +221,7 @@ object LlamaBridge {
         chatTemplate: String,
         toolsJson: String = "",
         enableThinking: Boolean,
+        reasoningEffort: String = "",
         addGenerationPrompt: Boolean
     ): String
 

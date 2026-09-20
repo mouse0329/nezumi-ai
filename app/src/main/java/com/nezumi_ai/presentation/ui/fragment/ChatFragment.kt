@@ -3601,7 +3601,12 @@ class ChatFragment : Fragment() {
                         // シンキング非対応モデルではセクション自体を出さない (従来どおり添付のみ)。
                         thinkingOn = if (thinkingToggleVisible) !thinkingToggleChecked else null,
                         thinkingEffort = thinkingEffort,
-                        thinkingEffortVisible = thinkingEffortVisible,
+                        // 選択肢はロード中モデルの chat_template 解析結果で動的化する
+                        // (Granite 4.x 等の BINARY なら Low 1 択、effort 非対応なら空=非表示)。
+                        effortLevels = PreferencesHelper.resolveSupportedThinkingEffortLevels(
+                            ctx,
+                            viewModel.selectedModel.value.orEmpty()
+                        ),
                         onThinkingChange = { checked ->
                             viewModel.setChatSessionDisableThinking(!checked)
                         },

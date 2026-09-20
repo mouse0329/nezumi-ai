@@ -391,55 +391,24 @@ class PromptBuildingUseCase {
     }
 
     /**
-     * シンキングの推論エフォート (low / medium / high) をプロンプトへ反映する。
+     * シンキングの推論エフォート (low / medium / high) をプロンプトへ反映する (実配線済み)。
      *
-     * 現行の vendored llama.cpp は `reasoning_effort` をテンプレート変数として
-     * 渡す経路を持たないため、Qwen3.5 / gpt-oss 系テンプレートが定義する
-     * `{reasoning effort: <level>}` マーカーを最後の user メッセージ末尾に追記する
-     * 方式で注入する (llama.cpp サーバーの chat-template-kwargs 指定と同等の効果)。
+     * IBM Granite 4 系の chat_template が採用する `{reasoning effort: low}` パターンを、
+     * テンプレートの解釈条件 (`reasoning_effort == "low"` のときのみ) と同等に
+     * 最終プロンプトへ挿入する。ネイティブレンダラ (llama.cpp minja) への
+     * `reasoning_effort` 変数受け渡し経路は別途配線済みで、テンプレートが自前で
+     * マーカーを挿入した場合はここでは二重挿入しない (マーカー検出で判定)。
      *
-     * 要望: テンプレートが reasoning_effort を解釈しないモデルでは呼び出し元が
-     * [supportsEffort] = false を渡し、ここでは何もしない (UI 自体も非表示)。
-     * また Thinking OFF でも選択だけは可能 (UI 仕様) だが、OFF 時の注入は
-     * enable_thinking=false と矛盾するため呼び出し元で抑制する。
+     * 値のガード: BINARY 粒度のモデルでは "low" 以外 (medium / high 等) は
+     * テンプレート上「指定なし」と同一のため何も挿入しない。保存済み設定値が
+     * モデル非対応のレベルでもクラッシュや不正プロンプトにはならない。
      */
-    fun applyReasoningEffort(
-        prompt: String,
-        effortLevel: String,
-        supportsEffort: Boolean = false,
-    ): String {
-        // 要望: テンプレートが reasoning_effort を解釈しないモデルでは何もしない
-        // (UI 側でもセグメント自体が非表示になる)。
-        if (!supportsEffort) return prompt
-        val level = effortLevel.trim().lowercase()
-        if (level.isEmpty()) return prompt
-        val marker = "{reasoning effort: $level}"
-        // 直近の user ターンの閉じタグ手前に差し込む。ターン区切りが見つからない
-        // completion 系プロンプトでは末尾に付ける。
-        val userTurnMarkers = listOf(
-            "<|im_start|>user",
-            "<start_of_turn>user",
-            "<|start_header_id|>user<|end_header_id|>"
-        )
-        val userIdx = userTurnMarkers
-            .map { prompt.lastIndexOf(it) }
-            .filter { it >= 0 }
-            .maxOrNull() ?: -1
-        if (userIdx < 0) {
-            return if (prompt.isBlank()) prompt else prompt.trimEnd() + "\n" + marker + "\n"
-        }
-        val closeTags = listOf("<|im_end|>", "<end_of_turn>", "<|eot_id|>")
-        val closeIdx = closeTags
-            .map { prompt.indexOf(it, userIdx) }
-            .filter { it >= 0 }
-            .minOrNull()
-        return if (closeIdx == null) {
-            prompt.trimEnd() + "\n" + marker + "\n"
-        } else {
-            val before = prompt.substring(0, closeIdx).trimEnd()
-            val after = prompt.substring(closeIdx)
-            before + "\n" + marker + "\n" + after
-        }
+    fun applyReasoningEffort(prompt: String, effortLevel: String): String {
+        if (effortLevel.isBlank()) return prompt
+        // Granite 系テンプレートの解釈に倣い "low" のときのみマーカーを挿入する。
+        if (effortLevel.trim().lowercase() != "low") return prompt
+        if (prompt.contains(REASONING_EFFORT_LOW_MARKER)) return prompt
+        return prompt.trimEnd() + "\n\n" + REASONING_EFFORT_LOW_MARKER
     }
 
     // ---- モデル名判定 (ModelNameHeuristics への委譲。旧 PromptBuilder 呼び出しの移行先) ----
@@ -456,5 +425,8 @@ class PromptBuildingUseCase {
     companion object {
         private const val TAG = "PromptBuildingUseCase"
         private const val TOKEN_TO_CHAR_RATIO = 4
+
+        /** Granite 系 chat_template が low effort 時に追記するマーカー文字列。 */
+        private const val REASONING_EFFORT_LOW_MARKER = "{reasoning effort: low}"
     }
 }

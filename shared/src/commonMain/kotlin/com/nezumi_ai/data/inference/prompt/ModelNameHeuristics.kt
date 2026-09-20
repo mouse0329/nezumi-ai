@@ -257,6 +257,68 @@ object ModelNameHeuristics {
             isQwen35OrLaterModelName(name)
     }
 
+    // ---- 思考強度 (reasoning_effort) のテンプレート解析 ----
+
+    /**
+     * chat_template が `reasoning_effort` 変数を解釈する粒度。
+     * [parseReasoningEffortGranularity] の解析結果として使う。
+     */
+    sealed interface ReasoningEffortGranularity {
+        /** テンプレートに `reasoning_effort` の言及がない (effort 概念なし)。 */
+        data object None : ReasoningEffortGranularity
+
+        /** "low" のみが比較対象 (low / それ以外の 2 値。例: IBM Granite 4.x)。 */
+        data object Binary : ReasoningEffortGranularity
+
+        /** 複数レベルが個別に比較されている (例 {"low","medium","high"})。 */
+        data class Graded(val levels: Set<String>) : ReasoningEffortGranularity
+    }
+
+    /** UI 選択肢の表示順 (既知レベル優先、その後に未知レベルを名前順で並べる)。 */
+    private val KNOWN_EFFORT_ORDER = listOf("minimal", "low", "medium", "high", "max")
+
+    /** `reasoning_effort == "xxx"` / `'xxx'` 形式の比較パターンを抽出する正規表現。 */
+    private val REASONING_EFFORT_COMPARISON_REGEX =
+        Regex("""reasoning_effort\s*==\s*["']([A-Za-z0-9_\-]+)["']""")
+
+    /**
+     * chat_template 文字列を静的にスキャンし、`reasoning_effort` がどの値と
+     * 比較されているかを検出する (GGUF メタデータ `tokenizer.chat_template`
+     * やユーザー選択の Jinja テンプレートに対して使う)。
+     *
+     * 判定規則:
+     *  - テンプレートに `reasoning_effort` の言及自体がない → None
+     *  - 比較対象が "low" の 1 種類のみ → Binary
+     *    (Granite 4.2 系の `reasoning_effort == "low"` 二値解釈が該当)
+     *  - 複数レベルが個別比較されている → Graded(levels)
+     *  - 言及はあるが比較パターンを読み取れない → 従来互換の 3 値 Graded
+     */
+    fun parseReasoningEffortGranularity(template: String): ReasoningEffortGranularity {
+        if (template.isBlank()) return ReasoningEffortGranularity.None
+        if (!template.contains("reasoning_effort")) return ReasoningEffortGranularity.None
+        val levels = REASONING_EFFORT_COMPARISON_REGEX.findAll(template)
+            .map { it.groupValues[1].lowercase() }
+            .toSet()
+        return when {
+            levels.isEmpty() -> ReasoningEffortGranularity.Graded(setOf("low", "medium", "high"))
+            levels.size == 1 && "low" in levels -> ReasoningEffortGranularity.Binary
+            else -> ReasoningEffortGranularity.Graded(levels)
+        }
+    }
+
+    /**
+     * 粒度に応じた有効エフォートレベル一覧を返す。
+     * None → 空リスト (effort 選択肢なし)、Binary → ["low"]。
+     */
+    fun supportedEffortLevels(granularity: ReasoningEffortGranularity): List<String> =
+        when (granularity) {
+            ReasoningEffortGranularity.None -> emptyList()
+            ReasoningEffortGranularity.Binary -> listOf("low")
+            is ReasoningEffortGranularity.Graded ->
+                KNOWN_EFFORT_ORDER.filter { it in granularity.levels } +
+                    granularity.levels.filter { it !in KNOWN_EFFORT_ORDER }.sorted()
+        }
+
     /** GPT-2 系のモデル名かどうかを判定する (ファイル実体の検査は含まない)。 */
     fun isGpt2ModelName(loweredName: String): Boolean {
         return Regex("(^|[^a-z0-9])gpt[\\-_ ]?2([^a-z0-9]|$)").containsMatchIn(loweredName)

@@ -499,10 +499,11 @@ class ModelManager(
     suspend fun formatGgufChatTemplate(
         messagesJson: String,
         enableThinking: Boolean = false,
-        toolsJson: String = ""
+        toolsJson: String = "",
+        reasoningEffort: String = ""
     ): String? {
         val engine = activeEngine as? RemoteGgufInferenceEngine ?: return null
-        return engine.formatWithGgufChatTemplate(messagesJson, enableThinking, toolsJson)
+        return engine.formatWithGgufChatTemplate(messagesJson, enableThinking, toolsJson, reasoningEffort)
             .takeIf { it.isNotBlank() }
     }
 
@@ -514,10 +515,11 @@ class ModelManager(
         messagesJson: String,
         chatTemplate: String,
         enableThinking: Boolean = false,
-        toolsJson: String = ""
+        toolsJson: String = "",
+        reasoningEffort: String = ""
     ): String? {
         val engine = activeEngine as? RemoteGgufInferenceEngine ?: return null
-        return engine.formatWithJinjaChatTemplate(messagesJson, chatTemplate, enableThinking, toolsJson)
+        return engine.formatWithJinjaChatTemplate(messagesJson, chatTemplate, enableThinking, toolsJson, reasoningEffort)
             .takeIf { it.isNotBlank() }
     }
 

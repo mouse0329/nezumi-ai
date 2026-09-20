@@ -3,6 +3,7 @@ package com.nezumi_ai.utils
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.appcompat.app.AppCompatDelegate
+import com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
 import com.nezumi_ai.sd.SdScheduler
 import java.security.MessageDigest
 
@@ -57,6 +58,8 @@ object PreferencesHelper {
     const val THINKING_EFFORT_HIGH = "high"
     // 初回起動時の既定値 (モック仕様: Thinking ON / effort Low)。
     const val DEFAULT_THINKING_EFFORT = THINKING_EFFORT_LOW
+    // 従来互換の全レベル (テンプレート非対応モデルへのフォールバック用)。
+    val ALL_THINKING_EFFORTS = listOf(THINKING_EFFORT_LOW, THINKING_EFFORT_MEDIUM, THINKING_EFFORT_HIGH)
 
     private fun getSharedPreferences(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -248,6 +251,49 @@ object PreferencesHelper {
 
     fun setThinkingEffort(context: Context, effort: String) {
         getSharedPreferences(context).edit().putString(KEY_THINKING_EFFORT, effort).apply()
+    }
+
+    /**
+     * 保存済み / 選択中のエフォート値を、モデルが解釈可能なレベル集合 [supportedLevels]
+     * に収まるよう正規化する (後方互換ガード)。
+     * 範囲外の値 (例: BINARY モデルに対する "medium") は先頭レベルにフォールバックし、
+     * [supportedLevels] が空なら既定値を返す。非対応モデル切り替え時のクラッシュや
+     * 不正なプロンプト生成を防ぐ。
+     */
+    fun normalizeThinkingEffortForLevels(effort: String, supportedLevels: List<String>): String {
+        if (supportedLevels.isEmpty()) return DEFAULT_THINKING_EFFORT
+        val normalized = effort.trim().lowercase()
+        return if (normalized in supportedLevels) normalized else supportedLevels.first()
+    }
+
+    /**
+     * ロード対象モデルの chat_template が解釈できる思考強度レベル一覧を返す。
+     *
+     * ユーザーが明示テンプレート (カスタム / ビルトイン) を選んでいればそれを、
+     * 未選択 (auto) なら GGUF メタデータの `tokenizer.chat_template` を解析する
+     * (解析自体は [ModelNameHeuristics.parseReasoningEffortGranularity])。
+     *
+     * 戻り値の意味:
+     *  - 空リスト: テンプレートが effort を解釈しない (UI は選択肢を出さない)
+     *  - 1 要素  : BINARY (例: Granite 4.x の "low" のみ)
+     *  - 複数    : GRADED (検出レベル集合。3 値とは限らない)
+     * GGUF 以外のモデルやテンプレート読み取り失敗時は従来互換の 3 値
+     * [ALL_THINKING_EFFORTS] にフォールバックする。
+     */
+    fun resolveSupportedThinkingEffortLevels(context: Context, modelPathOrName: String): List<String> {
+        if (modelPathOrName.isBlank()) return ALL_THINKING_EFFORTS
+        val isLocalGguf = modelPathOrName.endsWith(".gguf", ignoreCase = true) &&
+            java.io.File(modelPathOrName).isAbsolute
+        if (!isLocalGguf) return ALL_THINKING_EFFORTS
+        return runCatching {
+            val template = com.nezumi_ai.data.inference.PromptTemplateStore
+                .resolveTemplate(context, modelPathOrName)
+                ?: GgufMetadataReader.readChatTemplate(java.io.File(modelPathOrName))
+                ?: return ALL_THINKING_EFFORTS
+            ModelNameHeuristics.supportedEffortLevels(
+                ModelNameHeuristics.parseReasoningEffortGranularity(template)
+            )
+        }.getOrDefault(ALL_THINKING_EFFORTS)
     }
 
     fun isRequireMultimodal(context: Context): Boolean {

@@ -77,14 +77,14 @@ class LlamaCppContext(
         LlamaBridge.nativeSetTokenCallback(ptr, bridgeCallback)
     }
 
-    fun applyGgufChatTemplate(messagesJson: String, toolsJson: String = "", enableThinking: Boolean, addGenerationPrompt: Boolean): String {
+    fun applyGgufChatTemplate(messagesJson: String, toolsJson: String = "", enableThinking: Boolean, reasoningEffort: String = "", addGenerationPrompt: Boolean): String {
         if (ptr == 0L || messagesJson.isBlank()) return ""
-        return LlamaBridge.nativeApplyGgufChatTemplate(ptr, messagesJson, toolsJson, enableThinking, addGenerationPrompt)
+        return LlamaBridge.nativeApplyGgufChatTemplate(ptr, messagesJson, toolsJson, enableThinking, reasoningEffort, addGenerationPrompt)
     }
 
-    fun applyJinjaChatTemplate(messagesJson: String, chatTemplate: String, toolsJson: String = "", enableThinking: Boolean, addGenerationPrompt: Boolean): String {
+    fun applyJinjaChatTemplate(messagesJson: String, chatTemplate: String, toolsJson: String = "", enableThinking: Boolean, reasoningEffort: String = "", addGenerationPrompt: Boolean): String {
         if (ptr == 0L || messagesJson.isBlank() || chatTemplate.isBlank()) return ""
-        return LlamaBridge.nativeApplyJinjaChatTemplate(ptr, messagesJson, chatTemplate, toolsJson, enableThinking, addGenerationPrompt)
+        return LlamaBridge.nativeApplyJinjaChatTemplate(ptr, messagesJson, chatTemplate, toolsJson, enableThinking, reasoningEffort, addGenerationPrompt)
     }
 
     fun hasGgufChatTemplate(): Boolean = ptr != 0L && LlamaBridge.nativeHasGgufChatTemplate(ptr)

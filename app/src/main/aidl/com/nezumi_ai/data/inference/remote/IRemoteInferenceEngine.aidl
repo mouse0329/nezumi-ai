@@ -56,10 +56,15 @@ interface IRemoteInferenceEngine {
     void clearKvCacheIfLoaded();
     void requestForceClearBeforeNextInference();
     // toolsJson: OpenAI 互換 tools 配列 JSON。空文字ならツールなし (従来動作)。
+    // reasoningEffort: chat_template が解釈する思考強度 (low / medium / high 等)。
+    // 空文字なら未指定 (テンプレートのデフォルト分岐)。Kotlin 側でモデルの
+    // テンプレート粒度に正規化済みの値のみが渡る。
     void formatWithGgufChatTemplate(String messagesJson, boolean enableThinking,
-                                    String toolsJson, IRemoteStringCallback callback);
+                                    String toolsJson, String reasoningEffort,
+                                    IRemoteStringCallback callback);
     void formatWithJinjaChatTemplate(String messagesJson, String chatTemplate,
                                      boolean enableThinking, String toolsJson,
+                                     String reasoningEffort,
                                      IRemoteStringCallback callback);
     /** parseGgufChatOutput の結果を {"content":..., "reasoning_content":...} JSON で返す。 */
     void parseWithGgufChatTemplate(String output, boolean isPartial,
