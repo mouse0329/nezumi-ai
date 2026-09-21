@@ -102,4 +102,33 @@ class GgufToolCallParserCrossFormatTest {
         assertTrue(parsed.textBeforeTools.contains("先に時間を見ます"))
         assertTrue(parsed.textAfterTools.contains("次に電池も見ます"))
     }
+
+    @Test
+    fun parse_genericMode_handlesMiniCpm5XmlFunctionCall() {
+        val raw = """
+            <think>
+            ツールを呼び出す必要があります。
+            </think>
+            <function name="get_weather">
+              <param name="location">東京</param>
+              <param name="unit"><![CDATA[摂氏 & °C]]></param>
+            </function>
+        """.trimIndent()
+        val parsed = GgufToolCallParser.parse(raw, isGemma4 = false)
+        assertEquals(1, parsed.toolCalls.size)
+        assertEquals("get_weather", parsed.toolCalls[0].name)
+        assertEquals("東京", parsed.toolCalls[0].arguments["location"])
+        assertEquals("摂氏 & °C", parsed.toolCalls[0].arguments["unit"])
+        assertTrue(parsed.textBeforeTools.contains("<think>"))
+        assertTrue(parsed.textAfterTools.isEmpty())
+    }
+
+    @Test
+    fun hasToolCalls_detectsMiniCpm5XmlFunctionCall() {
+        assertTrue(
+            GgufToolCallParser.hasToolCalls(
+                "<function name=\"get_weather\"><param name=\"location\">東京</param></function>"
+            )
+        )
+    }
 }

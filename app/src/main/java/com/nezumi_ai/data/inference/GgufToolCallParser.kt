@@ -73,6 +73,16 @@ object GgufToolCallParser {
         "(?is)<parameter\\s*=\\s*([^>]+?)\\s*>\\s*(.*?)\\s*</parameter>"
     )
 
+    // ---- MiniCPM 5 系 (OpenBMB) の XML 形式 ----
+    // 公式 chat_template は <function name="foo"><param name="x">…</param></function>
+    // を <tool_call> で包まずに生成する。
+    private val miniCpmFunctionBlockPattern = Regex(
+        "(?is)<function\\s+name\\s*=\\s*['\"]([^'\"]+)['\"]\\s*>(.*?)\\s*</function>"
+    )
+    private val miniCpmParameterPattern = Regex(
+        "(?is)<param\\s+name\\s*=\\s*['\"]([^'\"]+)['\"]\\s*>(.*?)\\s*</param>"
+    )
+
     private val openGemma4ToolCallTag = Regex("(?is)<\\|tool_call>")
     private val closeGemma4ToolCallTag = Regex("(?is)<tool_call\\|>")
 
@@ -410,6 +420,15 @@ object GgufToolCallParser {
                 break
             }
         }
+        // MiniCPM5 は <tool_call> ラッパーを使わず、裸の XML function block を出力する。
+        if (toolCalls.isEmpty() && !hadTruncated) {
+            miniCpmFunctionBlockPattern.findAll(text).forEach { match ->
+                parseMiniCpmFunctionPayload(match.value)?.let {
+                    toolCalls += it
+                    ranges += match.range
+                }
+            }
+        }
         // Step 2: <tool_call> タグが 1 件もなく、かつ裸 JSON があれば従来通り拾う。
         if (toolCalls.isEmpty() && !hadTruncated) {
             val bareMatches = bareToolCallJsonPattern.findAll(text).toList()
@@ -490,7 +509,8 @@ object GgufToolCallParser {
     fun hasToolCalls(text: String, isGemma4: Boolean = false): Boolean {
         val generic = toolCallTagPattern.containsMatchIn(text) ||
             bareToolCallJsonPattern.containsMatchIn(text) ||
-            openToolCallTag.containsMatchIn(text)
+            openToolCallTag.containsMatchIn(text) ||
+            miniCpmFunctionBlockPattern.containsMatchIn(text)
         if (generic) return true
         // モデルが判定と逆の形式を出すケース (クロスフォーマット) でも検知できるよう、
         // Gemma 4 開きタグはモデル種別に関係なく判定対象に含める。
@@ -641,6 +661,19 @@ object GgufToolCallParser {
             .associate { it.groupValues[1].trim() to (it.groupValues[2].trim() as Any?) }
         return ToolCall(name = name, arguments = args)
     }
+
+    /** MiniCPM5 の <function name="…"><param name="…">…</param></function> を変換する。 */
+    private fun parseMiniCpmFunctionPayload(payload: String): ToolCall? {
+        val match = miniCpmFunctionBlockPattern.find(payload) ?: return null
+        val name = match.groupValues[1].trim()
+        if (name.isBlank()) return null
+        val args = miniCpmParameterPattern.findAll(match.groupValues[2])
+            .associate { it.groupValues[1].trim() to stripCData(it.groupValues[2].trim()) }
+        return ToolCall(name = name, arguments = args)
+    }
+
+    private fun stripCData(value: String): String =
+        value.removePrefix("<![CDATA[").removeSuffix("]]>")
 
     /**
      * Granite 4 形式で `</tool_call>` が来ていない未完ペイロードの救済。
