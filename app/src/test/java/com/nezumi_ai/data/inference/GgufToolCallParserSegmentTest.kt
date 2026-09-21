@@ -119,6 +119,46 @@ class GgufToolCallParserSegmentTest {
     }
 
     @Test
+    fun parseSegments_readsGraniteFunctionNameWhileStillPending() {
+        val raw = "<tool_call>\n<function=get_current_time>"
+
+        val segments = GgufToolCallParser.parseSegments(raw)
+        val call = segments.filterIsInstance<GgufToolCallParser.Segment.ToolCallSegment>().single()
+
+        assertFalse(call.isComplete)
+        assertEquals(GgufToolCallParser.Segment.CompletionStatus.PENDING, call.status)
+        assertEquals("get_current_time", call.toolCall?.name)
+    }
+
+    @Test
+    fun parseSegments_readsJsonNameWhileArgumentsStillOpen() {
+        val raw = "<tool_call>\n{\"name\":\"get_battery_level\",\"arguments\":{"
+
+        val segments = GgufToolCallParser.parseSegments(raw)
+        val call = segments.filterIsInstance<GgufToolCallParser.Segment.ToolCallSegment>().single()
+
+        assertFalse(call.isComplete)
+        assertEquals("get_battery_level", call.toolCall?.name)
+    }
+
+    @Test
+    fun parseSegments_hidesUnclosedToolResponseFromVisibleText() {
+        val raw = buildString {
+            append("<tool_call>\n{\"name\":\"get_current_time\",\"arguments\":{}}\n</tool_call>\n")
+            append("<tool_response>\n{\"datetime\":\"2026-09-21\"")
+        }
+
+        val segments = GgufToolCallParser.parseSegments(raw)
+        val visibleText = segments
+            .filterIsInstance<GgufToolCallParser.Segment.TextSegment>()
+            .joinToString(separator = "") { it.text }
+
+        assertFalse(visibleText.contains("tool_response"))
+        assertFalse(visibleText.contains("datetime"))
+        assertEquals(1, segments.filterIsInstance<GgufToolCallParser.Segment.ToolCallSegment>().size)
+    }
+
+    @Test
     fun parseToolResponseCards_parsesMultipleResponsesInOrder() {
         val raw = buildString {
             append("<tool_response>\n{\"name\":\"get_current_time\",\"content\":{\"time\":\"10:00\"}}\n</tool_response>\n")

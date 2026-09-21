@@ -517,9 +517,29 @@ object GgufToolCallParser {
         return openGemma4ToolCallTag.containsMatchIn(text)
     }
 
+    /** 閉じタグまで揃った `<tool_response>` だけを除去する。未閉じは残す。 */
+    fun stripCompleteToolResponseBlocks(text: String): String {
+        if (text.isEmpty()) return text
+        var out = toolResponseTagPattern.replace(text, "")
+        out = Regex("(?s)<\\|tool_response>.*?<tool_response\\|>").replace(out, "")
+        return out
+    }
+
     fun stripToolResponseBlocks(text: String): String {
         if (text.isEmpty()) return text
-        return toolResponseTagPattern.replace(text, "")
+        var out = stripCompleteToolResponseBlocks(text)
+        // ストリーミング中の未閉じブロックも UI に JSON が漏れないよう切り落とす。
+        val genericOpen = out.indexOf(TOOL_RESPONSE_OPEN, ignoreCase = true)
+        val gemmaOpen = out.indexOf("<|tool_response>", ignoreCase = true)
+        val openIdx = when {
+            genericOpen < 0 -> gemmaOpen
+            gemmaOpen < 0 -> genericOpen
+            else -> minOf(genericOpen, gemmaOpen)
+        }
+        if (openIdx >= 0) {
+            out = out.substring(0, openIdx)
+        }
+        return out
     }
 
     /**
@@ -678,10 +698,13 @@ object GgufToolCallParser {
     /**
      * Granite 4 形式で `</tool_call>` が来ていない未完ペイロードの救済。
      * `<function=name>…</function>` が完結していれば確定扱いにする。
+     * 名前だけ読めた未完タグは UI の Running カード用に name だけ埋める。
      */
     private fun salvageGranitePayload(payload: String): Pair<ToolCall?, Boolean> {
-        val call = parseGraniteFunctionPayload(payload.trim()) ?: return null to false
-        return call to true
+        val call = parseGraniteFunctionPayload(payload.trim())
+        if (call != null) return call to true
+        val name = extractGraniteToolName(payload) ?: return null to false
+        return ToolCall(name = name, arguments = emptyMap()) to false
     }
 
     /** トークン切れした Granite 4 形式ペイロードから `<function=name>` の name を読み取る。 */
@@ -750,9 +773,12 @@ object GgufToolCallParser {
         val startIdx = trimmed.indexOf('{')
         if (startIdx < 0) return null to false
         val jsonPart = trimmed.substring(startIdx)
-        if (!bracesBalanced(jsonPart)) return null to false
-        val call = parseToolCallPayload(jsonPart) ?: return null to false
-        return call to true
+        if (bracesBalanced(jsonPart)) {
+            val call = parseToolCallPayload(jsonPart)
+            if (call != null) return call to true
+        }
+        val name = extractGenericToolName(trimmed) ?: return null to false
+        return ToolCall(name = name, arguments = emptyMap()) to false
     }
 
     /**
@@ -764,20 +790,21 @@ object GgufToolCallParser {
     private fun salvageGemma4Payload(payload: String): Pair<ToolCall?, Boolean> {
         val trimmed = payload.trim()
         if (trimmed.isEmpty()) return null to false
-        val match = gemma4CallBodyPattern.find(trimmed) ?: return null to false
-        val name = match.groupValues[1]
-        // ブレースのバランス判定は <|"|> 変換前の生テキストで行う (トークンは { } を含まないため
-        // 判定結果は変わらないが、変換処理そのものが正規表現ベースで文字列境界を前提にしており、
-        // 波括弧が閉じていない = 文字列トークンも閉じていない可能性があるため生テキストが安全)。
-        if (!bracesBalanced(match.groupValues[2])) return null to false
-        val jsonPart = normalizeGemma4Json(match.groupValues[2])
-        if (name.isBlank()) return null to false
-        val args = runCatching {
-            json.parseToJsonElement(jsonPart).jsonObject.entries.associate { (k, v) ->
-                k to parseJsonValue(v)
+        val match = gemma4CallBodyPattern.find(trimmed)
+        if (match != null) {
+            val name = match.groupValues[1]
+            if (name.isNotBlank() && bracesBalanced(match.groupValues[2])) {
+                val jsonPart = normalizeGemma4Json(match.groupValues[2])
+                val args = runCatching {
+                    json.parseToJsonElement(jsonPart).jsonObject.entries.associate { (k, v) ->
+                        k to parseJsonValue(v)
+                    }
+                }.getOrDefault(emptyMap())
+                return ToolCall(name = name, arguments = args) to true
             }
-        }.getOrDefault(emptyMap())
-        return ToolCall(name = name, arguments = args) to true
+        }
+        val name = extractGemma4ToolName(trimmed) ?: return null to false
+        return ToolCall(name = name, arguments = emptyMap()) to false
     }
 
     /**

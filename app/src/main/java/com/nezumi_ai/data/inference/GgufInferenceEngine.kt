@@ -854,6 +854,7 @@ class GgufInferenceEngine(
             // 初回ラウンドのストリーミング用バッファ (下記 emitChunk 参照)。
             // ツールコールタグの確定待ちで保留した生出力を一時的に溜める。
             val firstRoundBuffer = StringBuilder()
+            val laterRoundBuffer = StringBuilder()
             // Gemma 4 判定: モデルパスから 1 回だけ決定してツールループ内で使い回す。
             // GgufToolCallParser.parse / formatToolResults を Gemma 4 形式
             // (<|tool_call>call:NAME{...}<tool_call|>) に切り替えるためのフラグ。
@@ -874,18 +875,19 @@ class GgufInferenceEngine(
                     // 実際に生成速度が速いときに GGUF でも再現する報告と一致)。
                     // trySendBlocking で確実に送る。
                     emitChunk = { chunk ->
-                        // バグ修正 (ツール ON 時にストリーミングがリアルタイムで出ない /
-                        //   生成開始まで時間がかかる):
-                        //   初回ラウンドの生チャンク送出を丸ごと止めて完了後に一括送出していた
-                        //   旧実装が原因で、ストリーミング消失と体感遅延の両方を招いていた。
-                        //   本文は従来通りリアルタイムに流し、ツールコールの生テキストだけが
-                        //   UI に混ざらないよう、確定したツールコールタグ区間のみ逐次除去する
-                        //   (drainFirstRoundVisible 参照)。
-                        val visible = if (toolCallingEnabled && isFirstGenerationRound) {
-                            firstRoundBuffer.append(chunk)
-                            firstRoundBuffer.drainFirstRoundVisible()
-                        } else {
-                            chunk
+                        // 初回: ツール開始タグは即時に流し、UI が PENDING カードを出せるようにする。
+                        // 2 ラウンド目以降: モデルがエコーした <tool_response> は UI に出さず捨てる
+                        // (本物の結果はアプリ側が既に formatToolResults で埋め込んでいる)。
+                        val visible = when {
+                            !toolCallingEnabled -> chunk
+                            isFirstGenerationRound -> {
+                                firstRoundBuffer.append(chunk)
+                                firstRoundBuffer.drainFirstRoundVisible()
+                            }
+                            else -> {
+                                laterRoundBuffer.append(chunk)
+                                laterRoundBuffer.drainLaterRoundVisible()
+                            }
                         }
                         if (visible.isNotEmpty()) {
                             val result = trySendBlocking(visible)
@@ -985,31 +987,39 @@ class GgufInferenceEngine(
                         append("\n")
                     }
                 } else {
-                    roundText
+                    // ストリップ済みの roundOutputText を使う。roundText (生出力) だと
+                    // 2 ラウンド目のモデル代行 <tool_response> が最終本文に残る。
+                    roundOutputText
                 }
 
                 // インライン表示対応: <tool_call> タグは本文に保持したまま
                 // sanitize する。UI 側で GgufToolCallParser.parseSegments() を使って
                 // セグメント化し、タグの位置でカードをインライン描画するため。
-                fullAnswer.append(
-                    Gemma4ThinkingParser.sanitizeVisibleText(
-                        normalizedRoundText,
-                        preserveToolCallTags = true
+                if (normalizedRoundText.isNotBlank()) {
+                    fullAnswer.append(
+                        Gemma4ThinkingParser.sanitizeVisibleText(
+                            normalizedRoundText,
+                            preserveToolCallTags = true
+                        )
                     )
-                )
+                }
 
                 // 初回ラウンド終了時: ストリーミング中にツールタグ確定待ちで保留した
                 // バッファの残りを吐き出す。残りはツールコールタグの断片のはずなので、
-                // 可視テキストのみ整形して追補する (大抵は空。不完全タグ時の本文救済)。
+                // タグを保持したまま追補する (大抵は空。不完全タグ時の本文救済)。
                 if (toolRound == 1 && toolCallingEnabled && firstRoundBuffer.isNotEmpty()) {
                     val remainder = Gemma4ThinkingParser.sanitizeVisibleText(
                         firstRoundBuffer.toString(),
-                        preserveToolCallTags = false
+                        preserveToolCallTags = true
                     )
                     firstRoundBuffer.setLength(0)
                     if (remainder.isNotEmpty()) {
                         trySendBlocking(remainder)
                     }
+                }
+                if (toolRound > 1 && laterRoundBuffer.isNotEmpty()) {
+                    // 未閉じのモデル代行 <tool_response> は捨てる。
+                    laterRoundBuffer.setLength(0)
                 }
 
                 // 実行対象のツールもなく、トークン切れもなければ通常の回答としてループを抜ける。
@@ -1192,32 +1202,67 @@ class GgufInferenceEngine(
     // ---- 初回ラウンド ストリーミング補助 (ツールタグのリアルタイム除去) ----
 
     /**
-     * 初回ラウンドの生出力バッファから「確定して UI に流せる本文」を取り出す。
+     * 初回ラウンドの生出力バッファから、UI に流せるテキストを取り出す。
      *
-     * ツールコールタグ (`<tool_call>` / `<|tool_call>`) が確定した区間だけを除去し、
-     * タグの途中かもしれない末尾接頭辞は確定するまでバッファに保留する。
-     * これによりツールコールの生テキストは UI に一切出さず、前後の本文だけが
-     * リアルタイムにストリーミングされる。2ラウンド目以降 (最終回答) では使わない。
+     * ツールコールはモデルが開始タグを生成した時点から UI に渡す。UI 側の
+     * `parseSegments()` が未完タグを PENDING としてカード化するため、ツール名や
+     * 引数がまだ揃っていない段階でも生成中カードを表示できる。タグの接頭辞だけは
+     * ツールタグではない本文として表示しないよう、完全一致まで保留する。
      */
     private fun StringBuilder.drainFirstRoundVisible(): String {
         val text = toString()
         val tagOpenIdx = indexOfToolCallTagStart(text)
         if (tagOpenIdx >= 0) {
-            // タグより前の本文は即座に流す。タグ本体は閉じタグが来るまで保留し、
-            // 閉じたらバッファから除去する (UI には出さない)。
-            val region = text.substring(0, tagOpenIdx)
-            val tagCloseIdx = indexOfToolCallTagEnd(text, tagOpenIdx)
-            if (tagCloseIdx >= 0) {
-                delete(0, tagCloseIdx)
-            } else {
-                delete(0, tagOpenIdx)
-            }
-            return region
+            // 開始タグ以降も流して、UI の PENDING カードを即時表示する。
+            // 送出済みの本文を残さないよう、バッファ全体を一度だけ消費する。
+            delete(0, text.length)
+            return text
         }
         // タグ未出現: 末尾がタグの接頭辞途中なら、その分だけ保留して残りを流す。
-        val holdback = holdbackPartialTagPrefix(text)
+        val holdback = holdbackPartialTagPrefix(
+            text,
+            listOf(ToolCallTags.TOOL_CALL_OPEN, ToolCallTags.GEMMA4_TOOL_CALL_OPEN)
+        )
         delete(0, text.length - holdback)
         return text.dropLast(holdback)
+    }
+
+    /**
+     * 2 ラウンド目以降: 完了した `<tool_response>` は捨て、未閉じブロックはバッファに残す。
+     * プレフィックス途中 (`<tool_res…`) も保留し、本文だけを UI へ流す。
+     */
+    private fun StringBuilder.drainLaterRoundVisible(): String {
+        val afterComplete = GgufToolCallParser.stripCompleteToolResponseBlocks(toString())
+        val openIdx = indexOfToolResponseTagStart(afterComplete)
+        val beforeOpen: String
+        val unclosed: String
+        if (openIdx >= 0) {
+            beforeOpen = afterComplete.substring(0, openIdx)
+            unclosed = afterComplete.substring(openIdx)
+        } else {
+            beforeOpen = afterComplete
+            unclosed = ""
+        }
+        val holdback = holdbackPartialTagPrefix(
+            beforeOpen,
+            listOf(ToolCallTags.TOOL_RESPONSE_OPEN, "<|tool_response>")
+        )
+        val visible = beforeOpen.dropLast(holdback)
+        val keepPrefix = beforeOpen.takeLast(holdback)
+        setLength(0)
+        append(keepPrefix)
+        append(unclosed)
+        return visible
+    }
+
+    private fun indexOfToolResponseTagStart(text: String): Int {
+        val generic = text.indexOf(ToolCallTags.TOOL_RESPONSE_OPEN)
+        val gemma4 = text.indexOf("<|tool_response>")
+        return when {
+            generic < 0 -> gemma4
+            gemma4 < 0 -> generic
+            else -> minOf(generic, gemma4)
+        }
     }
 
     /** バッファ内の先頭に最も近いツールコール開始タグ位置。無ければ -1。 */
@@ -1244,9 +1289,8 @@ class GgufInferenceEngine(
         }
     }
 
-    /** 末尾が `<tool_call>` / `<|tool_call>` の接頭辞の途中で終わっている場合の保留文字数。 */
-    private fun holdbackPartialTagPrefix(text: String): Int {
-        val tags = listOf(ToolCallTags.TOOL_CALL_OPEN, ToolCallTags.GEMMA4_TOOL_CALL_OPEN)
+    /** 末尾が指定タグの接頭辞の途中で終わっている場合の保留文字数。 */
+    private fun holdbackPartialTagPrefix(text: String, tags: List<String>): Int {
         var hold = 0
         for (tag in tags) {
             val max = minOf(tag.length - 1, text.length)

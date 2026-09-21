@@ -32,6 +32,7 @@ import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
+import com.nezumi_ai.data.inference.ToolCallTags
 import com.nezumi_ai.data.inference.ThinkingLeakSalvage
 import com.nezumi_ai.data.inference.GgufToolPromptBuilder
 import com.nezumi_ai.data.mcp.McpToolRegistry
@@ -2752,31 +2753,18 @@ class ChatViewModel(
                                         }
                                         }
                                     }
-                                    // バグ修正 (ストリーミング中に UI へ何も表示されない):
-                                    //   ネイティブ partial パーサーはツールコール形式の出力に対して
-                                    //   content="" を返し続け、完了後の本文ラウンドでも contentForUi が
-                                    //   空のままになるケースがあった (Qwen3.5 + ツール有効のログで
-                                    //   STREAM_INMEMORY_UPDATE contentLen=0 thinkingLen=0 が継続)。
-                                    //   contentForUi / thinkingForUi が両方空なのに生テキストに表示可能な
-                                    //   本文がある場合は、閉じたツールブロックを除いた生テキストで表示を埋める。
-                                    //   ツールコール生成途中 (未完の <tool_call> のみ) は従来どおり空を維持し、
-                                    //   インラインのツールカード表示に任せる。
-                                    //   (タグリテラルは ToolCallTags.TOOL_CALL_OPEN 等と同一)
-                                    if (contentForUi.isEmpty() && thinkingForUi.isNullOrBlank()) {
-                                        val rawAccumulated = Gemma4ThinkingParser.sanitizeVisibleText(
-                                            stripThinkSectionsForDisplay(answerBuilder.toString()),
-                                            preserveToolCallTags = true
+                                    // バグ修正 (ツールカードが応答完了まで出ない):
+                                    //   ネイティブ partial パーサーはツールコール専用出力に対して
+                                    //   content="" を返し続ける (Qwen3.5 GGUF のログで
+                                    //   STREAM_INMEMORY_UPDATE contentLen=0 が <tool_call> 生成中ずっと継続)。
+                                    //   インラインカードは message.content のタグを parseSegments して描くため、
+                                    //   未完の <tool_call> も contentForUi に残す。タグ開始時点で Running、
+                                    //   ツール名が読めた時点でタイトルが埋まる。
+                                    if (contentForUi.isEmpty()) {
+                                        contentForUi = restoreStreamingContentForToolCards(
+                                            engineModelName = engineModelName,
+                                            rawAnswer = answerBuilder.toString()
                                         )
-                                        if (rawAccumulated.isNotBlank()) {
-                                            val visibleOutsideToolBlocks = rawAccumulated
-                                                .replace(Regex("(?s)<tool_call>.*?</tool_call>"), "")
-                                                .replace(Regex("(?s)<tool_response>.*?</tool_response>"), "")
-                                                .substringBefore("<tool_call>")
-                                                .trim()
-                                            if (visibleOutsideToolBlocks.isNotEmpty()) {
-                                                contentForUi = rawAccumulated
-                                            }
-                                        }
                                     }
 
                                     lastStreamContentForFinal = contentForUi
@@ -4255,6 +4243,42 @@ class ChatViewModel(
 
     private fun sanitizeAssistantOutputForModel(engineModelName: String, text: String): String =
         promptBuilding.sanitizeAssistantOutputForModel(engineModelName, text)
+
+    /**
+     * ネイティブ partial パーサーが content="" を返したとき、生の累積テキストから
+     * インラインツールカード用の本文を復元する。思考ブロックは除き、未完の
+     * `<tool_call>` は残す。
+     */
+    private fun restoreStreamingContentForToolCards(
+        engineModelName: String,
+        rawAnswer: String
+    ): String {
+        val rawAccumulated = Gemma4ThinkingParser.sanitizeVisibleText(
+            stripThinkSectionsForDisplay(rawAnswer),
+            preserveToolCallTags = true
+        )
+        if (rawAccumulated.isBlank()) return ""
+        if (hasStreamingToolCallMarkup(rawAccumulated)) {
+            return sanitizeAssistantOutputForModel(engineModelName, rawAccumulated)
+        }
+        val visibleOutsideToolBlocks = rawAccumulated
+            .replace(Regex("(?s)<tool_call>.*?</tool_call>"), "")
+            .replace(Regex("(?s)<tool_response>.*?</tool_response>"), "")
+            .substringBefore("<tool_call>")
+            .trim()
+        return if (visibleOutsideToolBlocks.isNotEmpty()) {
+            sanitizeAssistantOutputForModel(engineModelName, rawAccumulated)
+        } else {
+            ""
+        }
+    }
+
+    private fun hasStreamingToolCallMarkup(text: String): Boolean {
+        val n = ToolCallTags.normalizeFullwidthToolTagDelimiters(text)
+        return ToolCallTags.TOOL_CALL_OPEN in n ||
+            ToolCallTags.GEMMA4_TOOL_CALL_OPEN in n ||
+            n.contains("<function", ignoreCase = true)
+    }
 
     /**
      * @param isCurrentTurn when true (= current-turn user message), GGUF embeds <image> token in prompt.

@@ -1940,7 +1940,14 @@ class ChatFragment : Fragment() {
 
                 if (lastObservedPresetId != null && currentPresetId != lastObservedPresetId) {
                     lastObservedPresetId = currentPresetId
-                    viewModel.preloadActivePresetModel()
+                    // 画面復帰直後の最初のフレームを描画してからモデルを事前ロードする。
+                    // ネイティブモデル初期化は IO 上でも CPU/メモリ負荷が高く、直ちに
+                    // 開始すると「プリセット選択から戻る」操作の表示を遅らせる。
+                    view?.postOnAnimation {
+                        if (isAdded && isResumed) {
+                            viewModel.preloadActivePresetModel()
+                        }
+                    }
                 } else {
                     lastObservedPresetId = currentPresetId
                 }
@@ -2354,12 +2361,20 @@ class ChatFragment : Fragment() {
     }
 
     private fun updateThinkingToggleVisibility() {
-        val modelSupportsThinking = settingsRepository.modelSupportsGemmaThinking(currentModelKey, requireContext())
-        thinkingToggleVisible = modelSupportsThinking
-        // 要望: 思考強度 (low / medium / high) はテンプレートが reasoning_effort を
-        // 解釈するモデルのみ表示する。非対応モデルでは UI から消す。
-        thinkingEffortVisible = viewModel.isThinkingEffortSupportedForModel(currentModelKey)
-        renderThinkingToggleState()
+        val modelKey = currentModelKey
+        val ctx = requireContext().applicationContext
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val modelSupportsThinking = settingsRepository.modelSupportsGemmaThinking(modelKey, ctx)
+            // 要望: 思考強度 (low / medium / high) はテンプレートが reasoning_effort を
+            // 解釈するモデルのみ表示する。非対応モデルでは UI から消す。
+            val thinkingEffortSupported = viewModel.isThinkingEffortSupportedForModel(modelKey)
+            withContext(Dispatchers.Main) {
+                if (!isAdded || !isViewCreated || currentModelKey != modelKey) return@withContext
+                thinkingToggleVisible = modelSupportsThinking
+                thinkingEffortVisible = thinkingEffortSupported
+                renderThinkingToggleState()
+            }
+        }
     }
 
     private fun refreshCurrentBackendType() {

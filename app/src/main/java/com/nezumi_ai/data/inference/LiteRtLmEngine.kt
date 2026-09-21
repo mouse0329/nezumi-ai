@@ -1432,6 +1432,7 @@ class LiteRtLmEngine(
                         //   ラウンド単位の累積 roundAccum を使い、ラウンド内の差分だけを
                         //   answerAccum / trySend に流すことで修正する。
                         var roundAccum = ""
+                        var emittedInlineToolCallTags = false
                         val messageFlow = if (firstRequest) {
                             firstRequest = false
                             conv.sendMessageAsync(Contents.of(contents))
@@ -1450,20 +1451,24 @@ class LiteRtLmEngine(
                                 //   <tool_call> タグが含まれない。UI 側 (GgufToolCallParser.parseSegments) が本文中の
                                 //   出現位置でカードを差し込めるよう、タグを answerAccum に合成挿入して
                                 //   同じ内容を trySend もする (ストリーミング UI でもタグを見えるように)。
-                                val tagPayload = buildString {
-                                    for (call in calls) {
-                                        append("\n<tool_call>\n")
-                                        append(buildToolCallJson(call))
-                                        append("\n</tool_call>\n")
+                                //   同一ラウンドで toolCalls が毎メッセージ再送されてもタグは一度だけ出す。
+                                if (!emittedInlineToolCallTags) {
+                                    emittedInlineToolCallTags = true
+                                    val tagPayload = buildString {
+                                        for (call in calls) {
+                                            append("\n<tool_call>\n")
+                                            append(buildToolCallJson(call))
+                                            append("\n</tool_call>\n")
+                                        }
                                     }
-                                }
-                                answerAccum.append(tagPayload)
-                                emitChunkBlocking(tagPayload)
-                                emitChunkBlocking(
-                                    InferenceStreamProtocol.encodeToolCallChunk(
-                                        calls.map { it.name }
+                                    answerAccum.append(tagPayload)
+                                    emitChunkBlocking(tagPayload)
+                                    emitChunkBlocking(
+                                        InferenceStreamProtocol.encodeToolCallChunk(
+                                            calls.map { it.name }
+                                        )
                                     )
-                                )
+                                }
                             }
                             val thought = message.channels[THOUGHT_CHANNEL]
                             if (!thought.isNullOrEmpty()) {
@@ -1483,6 +1488,7 @@ class LiteRtLmEngine(
                                 // ラウンド内で逐次伸びる全文なので、text.startsWith(roundAccum) は常に true
                                 // (モデルが既存トークンを上書きしない場合) 。万一 startsWith が false なら
                                 // ささい上書き修正と見なして text 全体をデルタとする (安全側に倒す)。
+                                val previousRaw = roundAccum
                                 val deltaText = if (text.startsWith(roundAccum)) {
                                     text.substring(roundAccum.length)
                                 } else {
@@ -1501,8 +1507,23 @@ class LiteRtLmEngine(
 
                                 roundAccum = text
                                 if (deltaText.isNotEmpty()) {
-                                    answerAccum.append(deltaText)
-                                    emitChunkBlocking(deltaText)
+                                    // 2 ラウンド目以降にモデルがエコーした <tool_response> は
+                                    // アプリが既に合成挿入済みなので、UI / 履歴には載せない。
+                                    val visibleDelta = if (toolRound > 1) {
+                                        val visibleFull = GgufToolCallParser.stripToolResponseBlocks(text)
+                                        val beforeVisible = GgufToolCallParser.stripToolResponseBlocks(previousRaw)
+                                        if (visibleFull.startsWith(beforeVisible)) {
+                                            visibleFull.substring(beforeVisible.length)
+                                        } else {
+                                            visibleFull
+                                        }
+                                    } else {
+                                        deltaText
+                                    }
+                                    if (visibleDelta.isNotEmpty()) {
+                                        answerAccum.append(visibleDelta)
+                                        emitChunkBlocking(visibleDelta)
+                                    }
                                 }
                             }
                         }

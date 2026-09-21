@@ -438,8 +438,14 @@ private fun subtitleForToolCall(toolCall: ToolCall?, rawJson: String): String {
 }
 
 private val toolNameFromJsonPattern = Regex("\"name\"\\s*:\\s*\"([^\"]+)\"")
+private val toolNameFromFunctionTagPattern =
+    Regex("(?is)<function\\s*=\\s*([A-Za-z_][A-Za-z0-9_\\-]*)")
+private val toolNameFromGemma4Pattern =
+    Regex("""(?is)call\s*:\s*([A-Za-z_][A-Za-z0-9_\-]*)""")
 
 private fun extractToolNameFromRawJson(rawJson: String): String? {
     if (rawJson.isBlank()) return null
     return toolNameFromJsonPattern.find(rawJson)?.groupValues?.getOrNull(1)
+        ?: toolNameFromFunctionTagPattern.find(rawJson)?.groupValues?.getOrNull(1)
+        ?: toolNameFromGemma4Pattern.find(rawJson)?.groupValues?.getOrNull(1)
 }
