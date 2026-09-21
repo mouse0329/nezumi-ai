@@ -13,6 +13,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -109,6 +110,17 @@ class RemoteLiteRtInferenceEngine(
             }
         }
 
+        // Bug fix(#generation-hang-on-process-death): :litert プロセスが生成中に
+        // 死ぬと onToken/onComplete/onError のいずれも呼ばれず、この
+        // callbackFlow が永久に完了しないまま「生成中」表示が固まっていた。
+        // RemoteEngineConnection のプロセス死亡通知を購読し、来たら即 close する。
+        val processDiedJob = launch {
+            connection.processDied.collect { ex ->
+                Log.w(TAG, "remote process died during generation; closing stream", ex)
+                close(ex)
+            }
+        }
+
         try {
             if (imagePaths.isEmpty() && audioPaths.isEmpty()) {
                 service.inference(sessionId, prompt, InferenceConfigBundle.toBundle(config), callback)
@@ -125,6 +137,7 @@ class RemoteLiteRtInferenceEngine(
         }
 
         awaitClose {
+            processDiedJob.cancel()
             runCatching { service.cancelInference() }
         }
     }

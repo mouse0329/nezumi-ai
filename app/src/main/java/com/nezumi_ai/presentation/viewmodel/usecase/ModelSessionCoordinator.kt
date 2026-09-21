@@ -21,6 +21,38 @@ object ModelSessionCoordinator {
             errorMessage.contains("invalid", ignoreCase = true)
     }
 
+    /**
+     * Bug fix(#redownload-prompt-on-process-death):
+     *   [shouldDeleteLocalModelFileOnLoadError] はエラーメッセージの部分文字列だけで
+     *   判定しており、子プロセス (:gguf / :litert) が OOM kill 等で切断された場合の
+     *   [com.nezumi_ai.data.inference.remote.RemoteEngineProcessDiedException] や
+     *   bind タイムアウトのメッセージが偶然 "invalid" / "not found" 等を含むと、
+     *   ファイルは何も壊れていないのに「モデルファイルが読み込めません。
+     *   再ダウンロードしてください」の削除フローに誤って倒れてしまっていた。
+     *
+     *   これは例外の「型」を見ずにメッセージの内容だけで判定していたのが原因のため、
+     *   ここでは先に型で「プロセス切断由来かどうか」を判定し、そうであれば
+     *   メッセージ内容に関わらずファイル破損とはみなさない (false を返す) ようにする。
+     *
+     * @param error 呼び出し元で保持している例外そのもの (message の抽出前)。
+     *   null の場合はメッセージのみでの判定にフォールバックする。
+     */
+    fun shouldDeleteLocalModelFileOnLoadError(errorMessage: String, error: Throwable?): Boolean {
+        if (isRemoteProcessDisconnectionError(error)) return false
+        return shouldDeleteLocalModelFileOnLoadError(errorMessage)
+    }
+
+    /**
+     * [error] またはその cause チェーンのどこかに
+     * [com.nezumi_ai.data.inference.remote.RemoteEngineProcessDiedException] が
+     * 含まれているか (＝モデルファイルではなく子プロセスの切断が原因か)。
+     */
+    private tailrec fun isRemoteProcessDisconnectionError(error: Throwable?, depth: Int = 0): Boolean {
+        if (error == null || depth > 8) return false
+        if (error is com.nezumi_ai.data.inference.remote.RemoteEngineProcessDiedException) return true
+        return isRemoteProcessDisconnectionError(error.cause, depth + 1)
+    }
+
     fun Throwable?.isMemoryLoadFailure(): Boolean {
         if (this == null) return false
         if (this is OutOfMemoryError) return true

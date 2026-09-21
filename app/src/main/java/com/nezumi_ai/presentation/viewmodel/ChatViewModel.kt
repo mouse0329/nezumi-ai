@@ -218,9 +218,13 @@ class ChatViewModel(
         /**
          * ローカル .litertlm を「破損・欠落」とみなして削除してよいときだけ true。
          * [TF_LITE_AUX not found] など TFLite/NPU ランタイムのエラーはファイル破損ではない。
+         *
+         * Bug fix(#redownload-prompt-on-process-death): 子プロセス切断
+         * ([RemoteEngineProcessDiedException]) はファイル破損ではないため、
+         * error (例外そのもの) を渡して型ベースで先に除外する。
          */
-        private fun shouldDeleteLocalModelFileOnLoadError(errorMessage: String): Boolean =
-            ModelSessionCoordinator.shouldDeleteLocalModelFileOnLoadError(errorMessage)
+        private fun shouldDeleteLocalModelFileOnLoadError(errorMessage: String, error: Throwable?): Boolean =
+            ModelSessionCoordinator.shouldDeleteLocalModelFileOnLoadError(errorMessage, error)
 
         private fun Throwable?.isMemoryLoadFailure(): Boolean {
             if (this == null) return false
@@ -1436,7 +1440,7 @@ class ChatViewModel(
  // 修正: ファイル読み込みエラーを先に検出（PATH NOT FOUND など）
                 // これをメモリエラーより先にチェックすることで、ファイルロード失敗が正規のエラーモーダルで表示される
                 val errorMsg = error?.message ?: ""
-                if (shouldDeleteLocalModelFileOnLoadError(errorMsg) &&
+                if (shouldDeleteLocalModelFileOnLoadError(errorMsg, error) &&
                     !com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(normalizedModel)
                 ) {
                     Log.w(TAG, "モデルファイルの読み込みエラー: $normalizedModel")
@@ -1522,7 +1526,7 @@ class ChatViewModel(
                 Log.e(TAG, "Failed to preload preset model: $selectedModel", error)
 
                 val errorMsg = error?.message ?: ""
-                if (shouldDeleteLocalModelFileOnLoadError(errorMsg)) {
+                if (shouldDeleteLocalModelFileOnLoadError(errorMsg, error)) {
                     _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
                         title = appContext.getString(R.string.model_load_error_title),
                         message = appContext.getString(R.string.model_load_error_preset_missing),
@@ -2060,7 +2064,7 @@ class ChatViewModel(
                 }
 
                 // ファイル読み込みエラーを検出
-                if (shouldDeleteLocalModelFileOnLoadError(errorMsg)) {
+                if (shouldDeleteLocalModelFileOnLoadError(errorMsg, error)) {
 
                     Log.w(TAG, "モデルファイルの読み込みエラー: $selectedModel")
                     // モーダルダイアログ用に詳細をセット

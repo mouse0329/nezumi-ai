@@ -14,6 +14,9 @@ import android.util.Log
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -62,6 +65,21 @@ class RemoteEngineConnection(
 
     @Volatile
     private var pendingResult: CompletableDeferred<Result<Unit>>? = null
+
+    // Bug fix(#generation-hang-on-process-death): onServiceDisconnected /
+    //   onBindingDied は従来 pendingResult (loadModel/unloadModel 専用) にしか
+    //   通知していなかった。generate 中の callbackFlow (Remote*InferenceEngine の
+    //   inferenceInternal) はリモートからの onToken/onComplete/onError だけを
+    //   頼りに完了を待っており、子プロセス (:gguf / :litert) が死ぬと
+    //   これらのコールバックが一切来ないため close() されずハングしたまま
+    //   「生成中」表示が固まっていた。プロセス切断イベントを SharedFlow で
+    //   ブロードキャストし、進行中の callbackFlow がそれを購読して自ら
+    //   close() できるようにする。
+    private val _processDied = MutableSharedFlow<RemoteEngineProcessDiedException>(
+        replay = 0,
+        extraBufferCapacity = 8
+    )
+    val processDied: SharedFlow<RemoteEngineProcessDiedException> = _processDied.asSharedFlow()
 
     @Volatile
     private var lastKnownPid: Int = -1
@@ -147,10 +165,12 @@ class RemoteEngineConnection(
                 engine = null
                 lastKnownPid = -1
                 recordConnectionFailureAndCheckLoop()
-                failPendingResult(
+                val ex = RemoteEngineProcessDiedException(
                     "$tag: remote engine process disconnected",
                     likelyOutOfMemory
                 )
+                failPendingResult(ex)
+                _processDied.tryEmit(ex)
             }
 
             override fun onBindingDied(name: ComponentName?) {
@@ -160,10 +180,12 @@ class RemoteEngineConnection(
                 engine = null
                 lastKnownPid = -1
                 recordConnectionFailureAndCheckLoop()
-                failPendingResult(
+                val ex = RemoteEngineProcessDiedException(
                     "$tag: remote engine binding died",
                     likelyOutOfMemory
                 )
+                failPendingResult(ex)
+                _processDied.tryEmit(ex)
             }
 
             override fun onNullBinding(name: ComponentName?) {
@@ -643,12 +665,10 @@ class RemoteEngineConnection(
         }.getOrDefault(false)
     }
 
-    private fun failPendingResult(message: String, likelyOutOfMemory: Boolean = false) {
+    private fun failPendingResult(ex: RemoteEngineProcessDiedException) {
         val result = pendingResult ?: return
         pendingResult = null
-        result.complete(
-            Result.failure(RemoteEngineProcessDiedException(message, likelyOutOfMemory))
-        )
+        result.complete(Result.failure(ex))
     }
 
     /**
