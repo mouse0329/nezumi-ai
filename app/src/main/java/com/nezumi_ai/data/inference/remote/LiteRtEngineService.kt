@@ -198,6 +198,11 @@ class LiteRtEngineService : Service() {
             putInt(RemoteEngineStatusKeys.KEY_LAST_DECODE_TOKENS, bench?.decodeTokens ?: -1)
             putDouble(RemoteEngineStatusKeys.KEY_LAST_DECODE_TPS, bench?.decodeTokensPerSecond ?: -1.0)
             putDouble(RemoteEngineStatusKeys.KEY_LAST_TTFT_MS, bench?.timeToFirstTokenMs ?: -1.0)
+            // ツール認識不具合の切り分け用: Conversation へ渡した ToolProvider 数を公開する。
+            putInt(
+                RemoteEngineStatusKeys.KEY_TOOL_PROVIDER_COUNT,
+                liteRtEngine.currentToolProviderCount()
+            )
         }
 
         // ─── GGUF 固有 (LiteRT 側は no-op) ────────────────────────

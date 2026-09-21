@@ -107,6 +107,14 @@ class LiteRtLmEngine(
      */
     fun currentLoadedBackend(): String? = loadedBackend
 
+    /**
+     * 最後に作成した Conversation へ渡した ToolProvider の個数を返す (未作成時は -1)。
+     * 0 = ツール無しで作成された。ツールがモデルに届かない不具合の切り分け用に
+     * LiteRtEngineService の getEngineStatus() から公開する。
+     */
+    @Volatile private var lastToolProviderCount: Int = -1
+    fun currentToolProviderCount(): Int = lastToolProviderCount
+
     /** 直近の推論完了時点でのネイティブ実測ベンチマーク (getBenchmarkInfo の抜粋)。 */
     data class InferenceBenchmarkSnapshot(
         val prefillTokens: Int,
@@ -303,6 +311,8 @@ class LiteRtLmEngine(
             // 会話が無効化されたのでトークン数キャッシュも破棄する。
             // (新しい Conversation に切り替わった後に古い会話の値を返さないように)
             lastKnownConversationTokenCount = null
+            // ツール認識不具合の切り分け用カウンタもリセットする。
+            lastToolProviderCount = -1
             
             runCatching {
                 Log.d(TAG, "Closing active conversation")
@@ -528,6 +538,8 @@ class LiteRtLmEngine(
                         }
                         activeLiteRtConversation = conv
                         activeLiteRtConversationKey = requestKey
+                        // ツール認識不具合の切り分け用: 渡した ToolProvider 数を記録する。
+                        lastToolProviderCount = tools.size
                         convToAttach = conv
                         Log.d(TAG, "New conversation created for key=$requestKey, KVCache initialized")
                         created = true

@@ -28,4 +28,11 @@ object RemoteEngineStatusKeys {
     const val KEY_LAST_DECODE_TOKENS = "lastDecodeTokens"
     const val KEY_LAST_DECODE_TPS = "lastDecodeTokensPerSecond"
     const val KEY_LAST_TTFT_MS = "lastTtftMs"
+
+    /**
+     * LiteRT-LM: 最後に Conversation へ渡した ToolProvider の個数。
+     * 0 = ツール無しで Conversation が作られた (ツールが認識されない不具合の切り分け用)。
+     * 未作成時は -1。
+     */
+    const val KEY_TOOL_PROVIDER_COUNT = "toolProviderCount"
 }

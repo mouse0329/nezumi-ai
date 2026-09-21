@@ -203,8 +203,19 @@ class SettingsRepository(
         //      両者の AND を最終値とする (プリセット未選択時はモデル側可否のみで判定)。
         val modelSupportsToolCall = when {
             isGemma4 -> true
-            appContext != null && (isGguf || isLiteRtImported) ->
+            appContext != null && isGguf ->
                 ImportedModelCapabilityStore.get(appContext, model).toolCallingEnabled
+            appContext != null && isLiteRtImported ->
+                ImportedModelCapabilityStore.get(appContext, model).toolCallingEnabled ||
+                    // バグ修正 (litertlm でツールが認識されない):
+                    //   .litertlm (Gemma 3 / 3n / 4 形式) はツール呼び出しがフォーマットに
+                    //   組み込まれており、GGUF のようなチャットテンプレートからの capability
+                    //   自動検出経路 (maybeAutoEnableCapabilitiesFromChatTemplate) が存在しない。
+                    //   capability 未設定 (既定 false) のままだとプリセットでツールを ON に
+                    //   しても enableToolCalling=false となり、LiteRT-LM の Conversation に
+                    //   ツールが一切渡らないため、.litertlm は既定でツール対応扱いにする
+                    //   (.task は従来通り capability 設定に従う)。
+                    model.endsWith(".litertlm", ignoreCase = true)
             // プレインストール LiteRT-LM (Gemma3n など): モデル側は対応可能、プリセット側で制御。
             else -> true
         }

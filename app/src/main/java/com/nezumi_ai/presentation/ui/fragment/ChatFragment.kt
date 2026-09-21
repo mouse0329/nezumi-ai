@@ -266,6 +266,9 @@ class ChatFragment : Fragment() {
     private var contextMeterMediaTokens by mutableStateOf(0)
  // 新: コンテキストメーターの表示可否。全般タブで切り替えられる。既定は表示しない。
     private var contextMeterVisible by mutableStateOf(false)
+    // クラウドモデル選択中はコンテキストメーターを表示しない。
+    //   (ローカル推定文字数は API 側の実コンテキスト消費と一致しないため非表示方針)
+    private var isCloudModelSelected by mutableStateOf(false)
     // メーターをタップしたときに表示する raw コンテキストモーダルの可視フラグと中身。
 
     // Bug fix(#43): t/s ・ TTFT トグルの値をフラグメント側でも保持し、onResume で変化を検知して
@@ -1664,6 +1667,7 @@ class ChatFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.selectedModel.collect { model ->
                 currentModelKey = model
+                isCloudModelSelected = CloudModelId.isCloud(model)
                 refreshCurrentBackendType()
                 updateMediaAvailability(model)
                 updateThinkingToggleVisibility()
@@ -3180,7 +3184,8 @@ class ChatFragment : Fragment() {
     @Composable
     private fun ContextMeterSection() {
  // 全般タブの「コンテキストメーターを表示」フラグが OFF のときは何も描画しない。
-        if (!contextMeterVisible) return
+        // クラウドモデル選択中も描画しない (ローカル推定値が実態と一致しないため)。
+        if (!contextMeterVisible || isCloudModelSelected) return
         Column(
             modifier = Modifier
                 .fillMaxWidth()

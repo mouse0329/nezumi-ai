@@ -2423,6 +2423,10 @@ class ChatViewModel(
                                 // markers like \u0000__TPS__\u0000 or \u0000__FINAL__\u0000
                                 // are handled separately even if they arrive inside a single
                                 // delivered chunk.
+                                // クラウドモデルではライブ TPS を更新しない
+                                //   (メーター同様、ネットワーク込みの見かけ速度は表示しない方針)。
+                                val isCloudStreamModel =
+                                    com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)
                                 var finalFromModelGlobal: String? = null
                                 val segments = InferenceStreamProtocol.splitStreamChunks(chunk)
                                 for (seg in segments) {
@@ -2476,7 +2480,7 @@ class ChatViewModel(
                                                     val thinkDeltaText = mergedT.substring(curT.length)
                                                     tokenCount += TextTokenEstimator.estimateOutputTokens(thinkDeltaText)
                                                     // ライブ TPS は最初の出力 (Thinking 含む) からの経過で算出
-                                                    if (tokenCount >= 10f && firstOutputAtMs != null) {
+                                                    if (tokenCount >= 10f && firstOutputAtMs != null && !isCloudStreamModel) {
                                                         val elapsedThink = (SystemClock.elapsedRealtime() - firstOutputAtMs!!)
                                                             .coerceAtLeast(1L)
                                                         _currentTps.value = (tokenCount * 1000f) / elapsedThink
@@ -2560,7 +2564,10 @@ class ChatViewModel(
                                             Log.d(TAG, "Tool results JSON received: length=${toolResults.length}")
                                         }
                                         tpsValue != null -> {
-                                            _currentTps.value = tpsValue
+                                            // エンジン送りの TPS マーカーもクラウドでは無視する
+                                            if (!isCloudStreamModel) {
+                                                _currentTps.value = tpsValue
+                                            }
                                         }
                                         else -> {
                                             val executedToolsList = InferenceStreamProtocol.decodeExecutedToolsList(seg)
@@ -2600,7 +2607,7 @@ class ChatViewModel(
                                                     }
                                                     // 修正: ライブ TPS は Thinking を含む全デコード区間
                                                     //   (最初の出力トークンからの経過) で算出する。
-                                                    if (tokenCount >= 10f && firstOutputAtMs != null) {
+                                                    if (tokenCount >= 10f && firstOutputAtMs != null && !isCloudStreamModel) {
                                                         val elapsed = (SystemClock.elapsedRealtime() - firstOutputAtMs!!)
                                                             .coerceAtLeast(1L)
                                                         _currentTps.value = (tokenCount * 1000f) / elapsed
@@ -3002,7 +3009,12 @@ class ChatViewModel(
             //   LiteRT-LM は getBenchmarkInfo() の実測デコード TPS / トークン数を優先する。
             //   (enableBenchmark=true で初期化済み。推論完了時にエンジン側が記録する)
             //   文字数ヒューリスティック (TextTokenEstimator) より正確。
-            val isLiteRtEngineHere = !isGgufEngineModel(engineModelName)
+            // クラウドモデルは LiteRT-LM ではないため、実測ベンチマーク問い合わせの対象外。
+            // (以前はクラウドも「非 GGUF = LiteRT」と誤判定され、Binder 経由で LiteRT 側の
+            //  前回ベンチマーク値をクラウド応答の TPS として拾う可能性があった)
+            val isCloudModelHere =
+                com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)
+            val isLiteRtEngineHere = !isGgufEngineModel(engineModelName) && !isCloudModelHere
             val litertExactTps = if (isLiteRtEngineHere) manager.getLastDecodeTpsSync() else null
             val litertExactDecodeTokens = if (isLiteRtEngineHere) manager.getLastDecodeTokenCountSync() else null
             val tps = if (generationTimeMs != null && generationTimeMs > 0L) {
@@ -3031,13 +3043,20 @@ class ChatViewModel(
                 null
             }
             // LiteRT-LM: ネイティブ実測 TPS が取れた場合はそちらを優先する
-            val finalTps = litertExactTps ?: tps
+            // クラウドモデルでは TPS を表示しない。ネットワーク往復・レート制限待ちを含む
+            // 見かけ速度はオンデバイスの tok/s と意味が異なり誤解を招くため null を保存する。
+            val finalTps = if (isCloudModelHere) null else (litertExactTps ?: tps)
 
             Log.d(TAG, "Inference collection completed: hasPayload=$hasPayload, completeResponse.length=${completeResponse.length}, finalThinking=${!finalThinking.isNullOrEmpty()}, generationTimeMs=$generationTimeMs, tps=$tps finalTps=$finalTps")
 
             // コンテキストメーター正確化: 推論完了時点の KV 実測値 (画像・音声含む) で更新し、
             // セッションに永続化する (アプリ再起動後の復元用)。
-            runCatching {
+            // クラウドモデルではローカル KV の実測値は存在しない。前回ローカル推論の
+            // 残り値をクラウドセッションへ誤って保存すると、セッション移動時に
+            // 別セッションのコンテキスト量がメーターへ表示される原因になるため保存しない。
+            val isCloudCompletion =
+                com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)
+            if (!isCloudCompletion) runCatching {
                 val exactContextTokens = manager.getCurrentContextTokenCountSync()
                 if (exactContextTokens != null && exactContextTokens > 0) {
                     val mediaTokens = manager.getLastPromptTokenInfoSync()?.second ?: 0
@@ -4747,6 +4766,12 @@ class ChatViewModel(
         // Phase 14: プロンプトの現在の文字数を推定（実際の制限は config.contextWindow（トークン数）に依存）
         val selectedModel = getActiveSelectedModel()
         val engineModelName = toEngineModelName(selectedModel)
+        // クラウドモデルはコンテキストメーターを表示しない方針のため推定自体をスキップする。
+        // ローカル組み立てのプロンプト文字数は API 側の実コンテキスト消費と一致せず、
+        // 実トークン数を取得する手段もないため、正確なメーターを構成できない。
+        if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)) {
+            return 0
+        }
         val isGgufEngine = isGgufEngineModel(engineModelName)
         // 生成中はキャッシュ済みの推論設定を使い回す（#toolcalling-resolve-spam 対策）
         val config = getCachedMeterInferenceConfig(selectedModel)

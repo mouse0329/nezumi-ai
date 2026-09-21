@@ -80,6 +80,22 @@ class PresetRepository(
                 updatedAt = System.currentTimeMillis()
             )
         )
+        // バグ修正 (litertlm でツールが認識されない):
+        //   ツール関連フィールド (toolCallingEnabled / enabledTools / mcpServerIds) の
+        //   変更は SharedPreferences を経由しないため ToolPreferences の revision が
+        //   上がらず、LiteRT-LM 側で ConversationKey が変わらないまま古いツール集合の
+        //   Conversation が再利用され続けていた。編集対象がアクティブなプリセットの
+        //   場合は revision を明示的に bump して Conversation の再作成を促す。
+        if (current.toolCallingEnabled != preset.toolCallingEnabled ||
+            current.enabledTools != preset.enabledTools ||
+            current.mcpServerIds != preset.mcpServerIds
+        ) {
+            val activeId = PreferencesHelper.getCurrentPresetId(context)
+            if (activeId.isNotBlank() && activeId == preset.id) {
+                applyPresetTools(preset)
+            }
+            ToolPreferences.notifyConfigurationChanged()
+        }
         return true
     }
 

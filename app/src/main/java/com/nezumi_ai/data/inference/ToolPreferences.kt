@@ -64,6 +64,17 @@ class ToolPreferences(private val context: Context) {
             Log.d("ToolPreferences", "revision bumped -> $v")
         }
 
+        /**
+         * 外部から「ツール構成が変わった」ことを明示的に通知する。
+         *
+         * ツール ON/OFF・プリセット適用など既存経路は各 setter が自動で bump するが、
+         * プリセットの編集保存 (PresetEntity 更新) など SharedPreferences を経由しない
+         * 変更では revision が上がらず、LiteRT-LM 側の ConversationKey が変わらないため
+         * 古いツール集合の Conversation が再利用され続けることがあった。
+         * そのような変更箇所からはこの関数を呼んで Conversation 再作成を促す。
+         */
+        fun notifyConfigurationChanged() = bumpRevision()
+
         fun resetToDefaults(context: Context) {
             val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs.edit().clear().commit()
