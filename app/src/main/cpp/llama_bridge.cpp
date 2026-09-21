@@ -172,6 +172,7 @@ struct NezumiLlamaCtx
 
     // 生成中断フラグ（nativeInterrupt / nativeClearInterrupt）
     std::atomic<bool> interrupted{false};
+    int repeat_last_n = 64;
 
     // トークンストリーミングコールバック
     JavaVM *jvm = nullptr;
@@ -352,7 +353,7 @@ static void rebuild_sampler(NezumiLlamaCtx *nc, float temperature, float top_p, 
     llama_sampler_chain_add(nc->sampler,
                             llama_sampler_init_penalties(
                                 /* n_vocab */ llama_vocab_n_tokens(llama_model_get_vocab(nc->model)),
-                                /* last_n */ 64,
+                                /* last_n */ nc->repeat_last_n,
                                 /* repeat_penalty */ repeat_penalty,
                                 /* frequency_penalty */ 0.0f,
                                 /* presence_penalty */ 0.0f));
@@ -585,6 +586,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     jint n_batch,
     jint n_ubatch,
     jint n_threads,
+    jint n_threads_batch,
     jint n_gpu_layers,
     jboolean use_mmap,
     jboolean use_mlock,
@@ -595,6 +597,10 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     jboolean context_shift_enabled,
     jboolean kv_unified,
     jint seed,
+    jint repeat_last_n,
+    jboolean offload_kqv,
+    jstring j_cache_type_k,
+    jstring j_cache_type_v,
     jstring j_gpu_backend,
     jint image_max_tokens)
 {
@@ -605,6 +611,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
 
     const char *model_path = env->GetStringUTFChars(j_model_path, nullptr);
     const char *gpu_backend_chars = j_gpu_backend ? env->GetStringUTFChars(j_gpu_backend, nullptr) : nullptr;
+    const char *cache_type_k_chars = j_cache_type_k ? env->GetStringUTFChars(j_cache_type_k, nullptr) : nullptr;
+    const char *cache_type_v_chars = j_cache_type_v ? env->GetStringUTFChars(j_cache_type_v, nullptr) : nullptr;
     const std::string requested_gpu_backend = gpu_backend_chars ? gpu_backend_chars : "CPU";
     int gpu_layers = n_gpu_layers;
     bool gpu_backend_fallback_occurred = false;
@@ -637,6 +645,10 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     env->ReleaseStringUTFChars(j_model_path, model_path);
     if (gpu_backend_chars)
         env->ReleaseStringUTFChars(j_gpu_backend, gpu_backend_chars);
+    if (cache_type_k_chars)
+        env->ReleaseStringUTFChars(j_cache_type_k, cache_type_k_chars);
+    if (cache_type_v_chars)
+        env->ReleaseStringUTFChars(j_cache_type_v, cache_type_v_chars);
 
     if (!model)
     {
@@ -649,7 +661,19 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     cparams.n_batch = static_cast<uint32_t>(n_batch > 0 ? n_batch : 512);
     cparams.n_ubatch = static_cast<uint32_t>(n_ubatch > 0 ? n_ubatch : cparams.n_batch);
     cparams.n_threads = static_cast<int32_t>(n_threads);
-    cparams.n_threads_batch = static_cast<int32_t>(n_threads);
+    cparams.n_threads_batch = static_cast<int32_t>(n_threads_batch > 0 ? n_threads_batch : n_threads);
+    cparams.offload_kqv = offload_kqv == JNI_TRUE;
+    auto cache_type_from_name = [](const char *name) {
+        if (!name) return GGML_TYPE_F16;
+        if (nezumi_iequals(name, "f32")) return GGML_TYPE_F32;
+        if (nezumi_iequals(name, "bf16")) return GGML_TYPE_BF16;
+        if (nezumi_iequals(name, "q8_0")) return GGML_TYPE_Q8_0;
+        if (nezumi_iequals(name, "q4_0")) return GGML_TYPE_Q4_0;
+        if (nezumi_iequals(name, "q5_0")) return GGML_TYPE_Q5_0;
+        return GGML_TYPE_F16;
+    };
+    cparams.type_k = cache_type_from_name(cache_type_k_chars);
+    cparams.type_v = cache_type_from_name(cache_type_v_chars);
     cparams.rope_freq_base = rope_freq_base;   // 0 = モデルのデフォルト
     cparams.rope_freq_scale = rope_freq_scale; // 0 = モデルのデフォルト
     cparams.flash_attn_type = flash_attn_enabled ? LLAMA_FLASH_ATTN_TYPE_ENABLED
@@ -672,6 +696,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     nc->n_ubatch = static_cast<int>(cparams.n_ubatch);
     nc->context_shift_enabled = context_shift_enabled;
     nc->seed = seed;
+    nc->repeat_last_n = std::max(0, static_cast<int>(repeat_last_n));
     nc->requested_gpu_backend = requested_gpu_backend;
     nc->actual_gpu_backend = actual_gpu_backend;
     nc->gpu_backend_fallback_occurred = gpu_backend_fallback_occurred;

@@ -793,6 +793,8 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="settings_rope_base_hint">0 = 自動設定</string>
     <string name="settings_rope_scale">RoPE周波数スケール</string>
     <string name="settings_rope_scale_hint">1.0 = デフォルト</string>
+    <string name="settings_llamacpp_advanced_title">上級者向け llama.cpp 設定</string>
+    <string name="settings_llamacpp_advanced_desc">モデルを再ロードすると反映されます。互換性のない値はロードに失敗する場合があります。</string>
     <string name="settings_performance_optimization">パフォーマンス最適化</string>
     <string name="settings_mtp_title">MTP (投機的デコーディング)</string>
     <string name="settings_mtp_desc">複数トークンを並列生成して高速化（2-3倍）</string>

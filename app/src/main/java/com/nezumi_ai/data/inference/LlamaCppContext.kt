@@ -7,6 +7,7 @@ class LlamaCppContext(
     nBatch: Int,
     nUbatch: Int,
     nThreads: Int,
+    nThreadsBatch: Int,
     nGpuLayers: Int,
     mmprojPath: String? = null,
     flashAttentionEnabled: Boolean = true,
@@ -15,7 +16,14 @@ class LlamaCppContext(
     ropeFreqBase: Float = 0f,
     ropeFreqScale: Float = 1f,
     gpuBackend: String = LlamaCppGpuBackend.CPU,
-    imageMaxTokens: Int = 0
+    imageMaxTokens: Int = 0,
+    seed: Int = -1,
+    repeatLastN: Int = 64,
+    offloadKqv: Boolean = true,
+    cacheTypeK: String = "f16",
+    cacheTypeV: String = "f16",
+    useMmap: Boolean = true,
+    useMlock: Boolean = false
 ) {
     private var ptr: Long = if (LlamaBridge.isLibraryLoaded()) {
         LlamaBridge.llamaInit(
@@ -24,16 +32,21 @@ class LlamaCppContext(
             nBatch,
             nUbatch,
             nThreads,
+            nThreadsBatch,
             nGpuLayers,
-            true,
-            false,
+            useMmap,
+            useMlock,
             ropeFreqBase,
             ropeFreqScale,
             mmprojPath,
             flashAttentionEnabled,
             contextShiftEnabled,
             kvUnified,
-            -1,
+            seed,
+            repeatLastN,
+            offloadKqv,
+            cacheTypeK,
+            cacheTypeV,
             gpuBackend,
             imageMaxTokens
         )

@@ -25,6 +25,15 @@ object PreferencesHelper {
     private const val KEY_THINKING_EFFORT = "thinking_effort"
     private const val KEY_REQUIRE_MULTIMODAL = "require_multimodal"
     private const val KEY_LLAMACPP_IMAGE_MAX_TOKENS = "llamacpp_image_max_tokens"
+    private const val KEY_LLAMACPP_THREADS_BATCH = "llamacpp_threads_batch"
+    private const val KEY_LLAMACPP_REPEAT_PENALTY = "llamacpp_repeat_penalty"
+    private const val KEY_LLAMACPP_REPEAT_LAST_N = "llamacpp_repeat_last_n"
+    private const val KEY_LLAMACPP_SEED = "llamacpp_seed"
+    private const val KEY_LLAMACPP_USE_MMAP = "llamacpp_use_mmap"
+    private const val KEY_LLAMACPP_USE_MLOCK = "llamacpp_use_mlock"
+    private const val KEY_LLAMACPP_OFFLOAD_KQV = "llamacpp_offload_kqv"
+    private const val KEY_LLAMACPP_CACHE_TYPE_K = "llamacpp_cache_type_k"
+    private const val KEY_LLAMACPP_CACHE_TYPE_V = "llamacpp_cache_type_v"
     private const val KEY_SECRET_MODE_PIN_HASH = "secret_mode_pin_hash"
     private const val KEY_SECRET_MODE_ENABLED = "secret_mode_enabled"
     private const val KEY_ALWAYS_LOCK_ENABLED = "always_lock_enabled"
@@ -315,6 +324,52 @@ object PreferencesHelper {
     fun setLlamaCppImageMaxTokens(context: Context, tokens: Int) {
         getSharedPreferences(context).edit()
             .putInt(KEY_LLAMACPP_IMAGE_MAX_TOKENS, tokens.coerceIn(0, 8192)).apply()
+    }
+
+    fun getLlamaCppThreadsBatch(context: Context): Int =
+        getSharedPreferences(context).getInt(KEY_LLAMACPP_THREADS_BATCH, 0)
+    fun setLlamaCppThreadsBatch(context: Context, value: Int) {
+        getSharedPreferences(context).edit().putInt(KEY_LLAMACPP_THREADS_BATCH, value.coerceAtLeast(0)).apply()
+    }
+    fun getLlamaCppRepeatPenalty(context: Context): Float =
+        getSharedPreferences(context).getFloat(KEY_LLAMACPP_REPEAT_PENALTY, 1.1f)
+    fun setLlamaCppRepeatPenalty(context: Context, value: Float) {
+        getSharedPreferences(context).edit().putFloat(KEY_LLAMACPP_REPEAT_PENALTY, value.coerceIn(0.0f, 2.0f)).apply()
+    }
+    fun getLlamaCppRepeatLastN(context: Context): Int =
+        getSharedPreferences(context).getInt(KEY_LLAMACPP_REPEAT_LAST_N, 64)
+    fun setLlamaCppRepeatLastN(context: Context, value: Int) {
+        getSharedPreferences(context).edit().putInt(KEY_LLAMACPP_REPEAT_LAST_N, value.coerceIn(0, 4096)).apply()
+    }
+    fun getLlamaCppSeed(context: Context): Int =
+        getSharedPreferences(context).getInt(KEY_LLAMACPP_SEED, -1)
+    fun setLlamaCppSeed(context: Context, value: Int) {
+        getSharedPreferences(context).edit().putInt(KEY_LLAMACPP_SEED, value).apply()
+    }
+    fun getLlamaCppUseMmap(context: Context): Boolean =
+        getSharedPreferences(context).getBoolean(KEY_LLAMACPP_USE_MMAP, true)
+    fun setLlamaCppUseMmap(context: Context, value: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_LLAMACPP_USE_MMAP, value).apply()
+    }
+    fun getLlamaCppUseMlock(context: Context): Boolean =
+        getSharedPreferences(context).getBoolean(KEY_LLAMACPP_USE_MLOCK, false)
+    fun setLlamaCppUseMlock(context: Context, value: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_LLAMACPP_USE_MLOCK, value).apply()
+    }
+    fun getLlamaCppOffloadKqv(context: Context): Boolean =
+        getSharedPreferences(context).getBoolean(KEY_LLAMACPP_OFFLOAD_KQV, true)
+    fun setLlamaCppOffloadKqv(context: Context, value: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_LLAMACPP_OFFLOAD_KQV, value).apply()
+    }
+    fun getLlamaCppCacheTypeK(context: Context): String =
+        getSharedPreferences(context).getString(KEY_LLAMACPP_CACHE_TYPE_K, "f16") ?: "f16"
+    fun setLlamaCppCacheTypeK(context: Context, value: String) {
+        getSharedPreferences(context).edit().putString(KEY_LLAMACPP_CACHE_TYPE_K, value.lowercase()).apply()
+    }
+    fun getLlamaCppCacheTypeV(context: Context): String =
+        getSharedPreferences(context).getString(KEY_LLAMACPP_CACHE_TYPE_V, "f16") ?: "f16"
+    fun setLlamaCppCacheTypeV(context: Context, value: String) {
+        getSharedPreferences(context).edit().putString(KEY_LLAMACPP_CACHE_TYPE_V, value.lowercase()).apply()
     }
 
     fun isSecretModeEnabled(context: Context): Boolean {

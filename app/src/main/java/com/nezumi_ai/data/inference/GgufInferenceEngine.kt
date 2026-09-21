@@ -9,6 +9,7 @@ import com.nezumi_ai.data.memory.MemoryTextEmbedder
 import com.nezumi_ai.data.repository.MemoryRepository
 import com.nezumi_ai.utils.GgufMetadataReader
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
+import com.nezumi_ai.utils.PreferencesHelper
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -341,6 +342,15 @@ class GgufInferenceEngine(
                     else -> 0
                 }
                 val nativeSettings = resolveNativeGenerationSettings(modelPath, normalized, appContext)
+                val llamaPrefs = appContext
+                val threadsBatch = PreferencesHelper.getLlamaCppThreadsBatch(llamaPrefs).let { if (it > 0) it else optimalThreads }
+                val seed = PreferencesHelper.getLlamaCppSeed(llamaPrefs)
+                val repeatLastN = PreferencesHelper.getLlamaCppRepeatLastN(llamaPrefs)
+                val useMmap = PreferencesHelper.getLlamaCppUseMmap(llamaPrefs)
+                val useMlock = PreferencesHelper.getLlamaCppUseMlock(llamaPrefs)
+                val offloadKqv = PreferencesHelper.getLlamaCppOffloadKqv(llamaPrefs)
+                val cacheTypeK = PreferencesHelper.getLlamaCppCacheTypeK(llamaPrefs)
+                val cacheTypeV = PreferencesHelper.getLlamaCppCacheTypeV(llamaPrefs)
                 if (nativeSettings.batchSize <= 0 || nativeSettings.ubatchSize <= 0) {
                     return@withLock Result.failure(IllegalStateException("Invalid GGUF batch size configuration"))
                 }
@@ -390,6 +400,7 @@ class GgufInferenceEngine(
                         nBatch = nativeSettings.batchSize,
                         nUbatch = nativeSettings.ubatchSize,
                         nThreads = optimalThreads,
+                        nThreadsBatch = threadsBatch,
                         nGpuLayers = gpuLayers,
                         mmprojPath = mmprojPath,
                         flashAttentionEnabled = nativeSettings.flashAttentionEnabled,
@@ -405,6 +416,13 @@ class GgufInferenceEngine(
                         // ユーザー設定 (0 = デフォルトの 256) をそのままネイティブへ渡す。
                         imageMaxTokens = com.nezumi_ai.utils.PreferencesHelper
                             .getLlamaCppImageMaxTokens(appContext),
+                        seed = seed,
+                        repeatLastN = repeatLastN,
+                        offloadKqv = offloadKqv,
+                        cacheTypeK = cacheTypeK,
+                        cacheTypeV = cacheTypeV,
+                        useMmap = useMmap,
+                        useMlock = useMlock,
                     )
                 }
 
@@ -1429,7 +1447,7 @@ class GgufInferenceEngine(
                         temperature = config.temperature,
                         topP = config.topP,
                         topK = config.maxTopK,
-                        repeatPenalty = DEFAULT_REPEAT_PENALTY,
+                        repeatPenalty = PreferencesHelper.getLlamaCppRepeatPenalty(appContext),
                         stopWords = stopSequences.toTypedArray(),
                         mediaPaths = mediaPaths
                     )
@@ -1445,7 +1463,7 @@ class GgufInferenceEngine(
                         temperature = config.temperature,
                         topP = config.topP,
                         topK = config.maxTopK,
-                        repeatPenalty = DEFAULT_REPEAT_PENALTY,
+                        repeatPenalty = PreferencesHelper.getLlamaCppRepeatPenalty(appContext),
                         stopWords = stopSequences.toTypedArray()
                     )
                 } finally {

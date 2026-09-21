@@ -194,6 +194,15 @@ class SettingsComposeFragment : Fragment() {
     private var generationBatchSize by mutableStateOf(128)
     private var kvCacheOptimizationEnabled by mutableStateOf(true)
     private var contextShiftEnabled by mutableStateOf(true)
+    private var llamaCppThreadsBatch by mutableStateOf(0)
+    private var repeatPenaltyInput by mutableStateOf("1.1")
+    private var repeatLastNInput by mutableStateOf("64")
+    private var llamaCppSeedInput by mutableStateOf("-1")
+    private var llamaCppUseMmap by mutableStateOf(true)
+    private var llamaCppUseMlock by mutableStateOf(false)
+    private var llamaCppOffloadKqv by mutableStateOf(true)
+    private var llamaCppCacheTypeK by mutableStateOf("f16")
+    private var llamaCppCacheTypeV by mutableStateOf("f16")
 
     // NSFW チェッカー用のデバッグ UI 状態。ノン UI スレッドに入らないよう collectAsState でバインドする。
     private var nsfwDebugBitmap by mutableStateOf<Bitmap?>(null)
@@ -2972,6 +2981,84 @@ class SettingsComposeFragment : Fragment() {
                                     colors = nezumiSwitchColors()
                                 )
                             }
+                            Text(
+                                text = "上級者向け llama.cpp 設定",
+                                color = colorResource(id = R.color.text_primary),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(top = 12.dp)
+                            )
+                            Text(
+                                text = "モデルを再ロードすると反映されます。互換性のない値はロードに失敗する場合があります。",
+                                color = colorResource(id = R.color.text_secondary),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                OutlinedTextField(
+                                    value = repeatPenaltyInput,
+                                    onValueChange = { repeatPenaltyInput = it },
+                                    label = { Text("Repeat penalty") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                OutlinedTextField(
+                                    value = repeatLastNInput,
+                                    onValueChange = { repeatLastNInput = it },
+                                    label = { Text("Repeat last N") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                OutlinedTextField(
+                                    value = llamaCppSeedInput,
+                                    onValueChange = { llamaCppSeedInput = it },
+                                    label = { Text("Seed (-1 = random)") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                OutlinedTextField(
+                                    value = llamaCppThreadsBatch.toString(),
+                                    onValueChange = { llamaCppThreadsBatch = it.toIntOrNull()?.coerceIn(0, maxThreads) ?: llamaCppThreadsBatch },
+                                    label = { Text("Batch threads (0 = auto)") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                OutlinedTextField(
+                                    value = llamaCppCacheTypeK,
+                                    onValueChange = { llamaCppCacheTypeK = it.lowercase() },
+                                    label = { Text("KV cache K (f16/q8_0)") },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                OutlinedTextField(
+                                    value = llamaCppCacheTypeV,
+                                    onValueChange = { llamaCppCacheTypeV = it.lowercase() },
+                                    label = { Text("KV cache V (f16/q8_0)") },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            listOf(
+                                Triple("mmap", llamaCppUseMmap) { v: Boolean -> llamaCppUseMmap = v },
+                                Triple("mlock (RAM固定)", llamaCppUseMlock) { v: Boolean -> llamaCppUseMlock = v },
+                                Triple("KVをGPUへオフロード", llamaCppOffloadKqv) { v: Boolean -> llamaCppOffloadKqv = v }
+                            ).forEach { (label, checked, onChange) ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(label, color = colorResource(id = R.color.text_secondary), style = MaterialTheme.typography.bodySmall)
+                                    Switch(checked = checked, onCheckedChange = onChange, colors = nezumiSwitchColors())
+                                }
+                            }
                         }
                     }
                 }
@@ -4482,6 +4569,16 @@ class SettingsComposeFragment : Fragment() {
             generationBatchSize = settingsRepository.getGenerationBatchSize()
             kvCacheOptimizationEnabled = settingsRepository.isKvCacheOptimizationEnabled()
             contextShiftEnabled = settingsRepository.isContextShiftEnabled()
+            val prefsContext = requireContext()
+            llamaCppThreadsBatch = PreferencesHelper.getLlamaCppThreadsBatch(prefsContext)
+            repeatPenaltyInput = PreferencesHelper.getLlamaCppRepeatPenalty(prefsContext).toString()
+            repeatLastNInput = PreferencesHelper.getLlamaCppRepeatLastN(prefsContext).toString()
+            llamaCppSeedInput = PreferencesHelper.getLlamaCppSeed(prefsContext).toString()
+            llamaCppUseMmap = PreferencesHelper.getLlamaCppUseMmap(prefsContext)
+            llamaCppUseMlock = PreferencesHelper.getLlamaCppUseMlock(prefsContext)
+            llamaCppOffloadKqv = PreferencesHelper.getLlamaCppOffloadKqv(prefsContext)
+            llamaCppCacheTypeK = PreferencesHelper.getLlamaCppCacheTypeK(prefsContext)
+            llamaCppCacheTypeV = PreferencesHelper.getLlamaCppCacheTypeV(prefsContext)
             // 初期値適用後に自動保存を解除。
             settingsAutoSaveSuspended = false
         }
@@ -4573,6 +4670,16 @@ class SettingsComposeFragment : Fragment() {
         settingsRepository.updateGenerationBatchSize(generationBatchSize)
         settingsRepository.updateKvCacheOptimizationEnabled(kvCacheOptimizationEnabled)
         settingsRepository.updateContextShiftEnabled(contextShiftEnabled)
+        val prefsContext = requireContext()
+        PreferencesHelper.setLlamaCppThreadsBatch(prefsContext, llamaCppThreadsBatch)
+        PreferencesHelper.setLlamaCppRepeatPenalty(prefsContext, repeatPenaltyInput.toFloatOrNull() ?: 1.1f)
+        PreferencesHelper.setLlamaCppRepeatLastN(prefsContext, repeatLastNInput.toIntOrNull() ?: 64)
+        PreferencesHelper.setLlamaCppSeed(prefsContext, llamaCppSeedInput.toIntOrNull() ?: -1)
+        PreferencesHelper.setLlamaCppUseMmap(prefsContext, llamaCppUseMmap)
+        PreferencesHelper.setLlamaCppUseMlock(prefsContext, llamaCppUseMlock)
+        PreferencesHelper.setLlamaCppOffloadKqv(prefsContext, llamaCppOffloadKqv)
+        PreferencesHelper.setLlamaCppCacheTypeK(prefsContext, llamaCppCacheTypeK)
+        PreferencesHelper.setLlamaCppCacheTypeV(prefsContext, llamaCppCacheTypeV)
     }
 
     @Composable

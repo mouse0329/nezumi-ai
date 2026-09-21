@@ -64,6 +64,7 @@ object LlamaBridge {
         nBatch: Int,
         nUbatch: Int,
         nThreads: Int,
+        nThreadsBatch: Int,
         nGpuLayers: Int,
         useMmap: Boolean,
         useMlock: Boolean,
@@ -74,6 +75,10 @@ object LlamaBridge {
         contextShiftEnabled: Boolean,
         kvUnified: Boolean,
         seed: Int,
+        repeatLastN: Int,
+        offloadKqv: Boolean,
+        cacheTypeK: String,
+        cacheTypeV: String,
         gpuBackend: String,
         imageMaxTokens: Int
     ): Long
