@@ -855,6 +855,7 @@ class GgufInferenceEngine(
             // ツールコールタグの確定待ちで保留した生出力を一時的に溜める。
             val firstRoundBuffer = StringBuilder()
             val laterRoundBuffer = StringBuilder()
+            var emptyModelEchoDetected = false
             // Gemma 4 判定: モデルパスから 1 回だけ決定してツールループ内で使い回す。
             // GgufToolCallParser.parse / formatToolResults を Gemma 4 形式
             // (<|tool_call>call:NAME{...}<tool_call|>) に切り替えるためのフラグ。
@@ -953,18 +954,22 @@ class GgufInferenceEngine(
                 //   (Qwen3.5 で <tool_response> のみを生成し続けるログと一致)。
                 //   モデル生成分の <tool_response> ブロックを除去し、ツール呼び出しのない
                 //   通常ラウンドとして処理し直す。
-                if (toolRound > 1 && parsed.toolCalls.isEmpty() && !parsed.hadTruncatedToolCall &&
+                if (toolRound > 1 && !parsed.hadTruncatedToolCall &&
                     (ToolCallTags.TOOL_RESPONSE_OPEN in roundOutputText ||
                         Regex("(?s)<\\|tool_response>").containsMatchIn(roundOutputText))
                 ) {
-                    Log.w(TAG, "Stripping model-authored <tool_response> (round=$toolRound session=$sessionId)")
+                    Log.w(TAG, "Stripping model-authored <tool_call>/<tool_response> echo (round=$toolRound session=$sessionId)")
                     roundOutputText = roundOutputText
+                        .replace(Regex("(?s)<tool_call>.*?</tool_call>"), "")
                         .replace(Regex("(?s)<tool_response>.*?</tool_response>"), "")
                         .replace(Regex("(?s)<\\|tool_response>.*?<tool_response\\|>"), "")
                         .replace(Regex("(?s)<tool_response>.*$"), "")
                         .replace(Regex("(?s)<\\|tool_response>.*$"), "")
                         .trim()
                     parsed = GgufToolCallParser.parse(roundOutputText, isGemma4 = isGemma4)
+                    if (roundOutputText.isBlank()) {
+                        emptyModelEchoDetected = true
+                    }
                 }
 
                 // トークン切れ検知:
@@ -1024,6 +1029,14 @@ class GgufInferenceEngine(
 
                 // 実行対象のツールもなく、トークン切れもなければ通常の回答としてループを抜ける。
                 if (parsed.toolCalls.isEmpty() && !truncationDetected) {
+                    if (emptyModelEchoDetected && toolResultCards.isNotEmpty()) {
+                        if (toolRound < maxToolRounds) {
+                            Log.w(TAG, "Empty model echo after tool response; retrying final answer " +
+                                "(round=$toolRound session=$sessionId)")
+                            continue
+                        }
+                        fullAnswer.append(buildToolResultFallback(toolResultCards))
+                    }
                     break
                 }
                 if (cancelFlag.get()) {
@@ -1148,7 +1161,7 @@ class GgufInferenceEngine(
                 InferenceStreamProtocol.encodeFinal(
                     Gemma4ThinkingParser.sanitizeVisibleText(
                         fullAnswer.toString(),
-                        preserveToolCallTags = toolCallingEnabled
+                        preserveToolCallTags = false
                     )
                 )
             )
@@ -1448,6 +1461,17 @@ class GgufInferenceEngine(
         Log.d(TAG, "generateRound: Inference completed, result.length=${result.length}")
 
         result
+    }
+
+    private fun buildToolResultFallback(cards: List<ToolResultCard>): String {
+        val details = cards.joinToString("\n") { card ->
+            val payload = card.payload.entries.joinToString(", ") { (key, value) ->
+                "$key=$value"
+            }
+            val status = if (card.success) "success" else "error"
+            "${card.toolName} ($status): $payload"
+        }
+        return "Tool result:\n$details"
     }
 
     private fun anyToJsonElementMap(values: Map<String, Any?>): Map<String, JsonElement> {
