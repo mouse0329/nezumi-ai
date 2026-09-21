@@ -1161,7 +1161,7 @@ class GgufInferenceEngine(
                 InferenceStreamProtocol.encodeFinal(
                     Gemma4ThinkingParser.sanitizeVisibleText(
                         fullAnswer.toString(),
-                        preserveToolCallTags = false
+                        preserveToolCallTags = toolCallingEnabled
                     )
                 )
             )
