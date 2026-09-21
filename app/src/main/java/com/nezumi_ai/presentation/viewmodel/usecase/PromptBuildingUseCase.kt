@@ -403,7 +403,12 @@ class PromptBuildingUseCase {
      * テンプレート上「指定なし」と同一のため何も挿入しない。保存済み設定値が
      * モデル非対応のレベルでもクラッシュや不正プロンプトにはならない。
      */
-    fun applyReasoningEffort(prompt: String, effortLevel: String): String {
+    fun applyReasoningEffort(
+        prompt: String,
+        effortLevel: String,
+        supportsEffort: Boolean = true,
+    ): String {
+        if (!supportsEffort) return prompt
         if (effortLevel.isBlank()) return prompt
         // Granite 系テンプレートの解釈に倣い "low" のときのみマーカーを挿入する。
         if (effortLevel.trim().lowercase() != "low") return prompt

@@ -66,6 +66,18 @@ class ThinkingEffortSpecTest {
     }
 
     @Test
+    fun applyReasoningEffort_supportsEffortFalseLeavesPromptUnchanged() {
+        val useCase = PromptBuildingUseCase()
+        val prompt = "user: hello"
+        // テンプレートが reasoning_effort を解釈しないモデル (supportsEffort=false) では、
+        // effort が "low" であってもマーカーを一切挿入しない (pass-through)。
+        assertEquals(
+            prompt,
+            useCase.applyReasoningEffort(prompt, "low", supportsEffort = false)
+        )
+    }
+
+    @Test
     fun normalizeThinkingEffort_clampsUnsupportedLevels() {
         // BINARY (low のみ有効) なモデルに対する保存済み medium / high は low に丸める。
         assertEquals(
