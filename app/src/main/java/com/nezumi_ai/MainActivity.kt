@@ -9,6 +9,7 @@ import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.navigation.NavController
 import androidx.navigation.navOptions
 import android.util.Log
+import android.view.View
 import android.view.Menu
 import android.view.MenuItem
 import android.content.BroadcastReceiver
@@ -212,12 +213,19 @@ class MainActivity : AppCompatActivity() {
                             factory = { ctx ->
                                 androidx.fragment.app.FragmentContainerView(ctx).apply {
                                     id = R.id.nav_host_fragment_content_main
-                                    post {
-                                        attachNavHostIfNeeded()
-                                    }
+                                    // factory 時点ではまだ Activity 階層に載っていない。
+                                    // ここで commitNow すると NavHost クラッシュになる。
+                                    addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                                        override fun onViewAttachedToWindow(v: View) {
+                                            v.post { attachNavHostIfNeeded() }
+                                        }
+                                        override fun onViewDetachedFromWindow(v: View) = Unit
+                                    })
                                 }
                             },
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(colorResource(R.color.bg_chat))
                         )
                         // ドロワーが開いているときに戻るボタンでドロワーを閉じる
                         BackHandler(enabled = drawerState.isOpen) {
@@ -298,19 +306,26 @@ class MainActivity : AppCompatActivity() {
 
     private fun attachNavHostIfNeeded() {
         if (isFinishing || isDestroyed) return
+        val container = findViewById<View>(R.id.nav_host_fragment_content_main) ?: return
+        if (!container.isAttachedToWindow) return
         val fragmentManager = supportFragmentManager
         if (fragmentManager.findFragmentById(R.id.nav_host_fragment_content_main) != null) return
+        if (fragmentManager.isStateSaved) return
 
-        val navHost = androidx.navigation.fragment.NavHostFragment.create(R.navigation.nav_graph)
-        fragmentManager.beginTransaction()
-            .replace(R.id.nav_host_fragment_content_main, navHost)
-            .setPrimaryNavigationFragment(navHost)
-            .commitNow()
+        runCatching {
+            val navHost = androidx.navigation.fragment.NavHostFragment.create(R.navigation.nav_graph)
+            fragmentManager.beginTransaction()
+                .replace(R.id.nav_host_fragment_content_main, navHost)
+                .setPrimaryNavigationFragment(navHost)
+                .commitNow()
 
-        navHost.navController.addOnDestinationChangedListener { _, destination, _ ->
-            drawerEnabledByNav = destination.id == R.id.chatFragment
+            navHost.navController.addOnDestinationChangedListener { _, destination, _ ->
+                drawerEnabledByNav = destination.id == R.id.chatFragment
+            }
+            drawerEnabledByNav = navHost.navController.currentDestination?.id == R.id.chatFragment
+        }.onFailure { t ->
+            Log.e(TAG, "Failed to attach NavHost", t)
         }
-        drawerEnabledByNav = navHost.navController.currentDestination?.id == R.id.chatFragment
     }
 
     /**
@@ -321,28 +336,27 @@ class MainActivity : AppCompatActivity() {
      */
     private fun withNavController(action: (NavController) -> Unit) {
         if (isFinishing || isDestroyed) return
+        retryNavController(action, attempt = 0)
+    }
 
+    private fun retryNavController(action: (NavController) -> Unit, attempt: Int) {
+        if (isFinishing || isDestroyed) return
         val navController = (supportFragmentManager
             .findFragmentById(R.id.nav_host_fragment_content_main)
                 as? androidx.navigation.fragment.NavHostFragment)
             ?.navController
-
         if (navController != null) {
             action(navController)
-        } else {
-            window.decorView.post {
-                if (isFinishing || isDestroyed) return@post
-                val retryController = (supportFragmentManager
-                    .findFragmentById(R.id.nav_host_fragment_content_main)
-                        as? androidx.navigation.fragment.NavHostFragment)
-                    ?.navController
-                if (retryController != null) {
-                    action(retryController)
-                } else {
-                    Log.w(TAG, "NavHost is not ready; navigation request was skipped")
-                }
-            }
+            return
         }
+        val delays = longArrayOf(16L, 50L, 100L, 250L, 500L)
+        if (attempt >= delays.size) {
+            Log.w(TAG, "NavHost is not ready; navigation request was skipped")
+            return
+        }
+        window.decorView.postDelayed({
+            retryNavController(action, attempt + 1)
+        }, delays[attempt])
     }
 
 
@@ -403,9 +417,27 @@ class MainActivity : AppCompatActivity() {
     private fun navigateFromDrawer(destinationId: Int) {
         closeDrawer()
         withNavController { navController ->
-            if (navController.currentDestination?.id != destinationId) {
-                navController.navigate(destinationId)
+            if (destinationId == 0) {
+                Log.w(TAG, "Drawer navigation skipped: empty destination id")
+                return@withNavController
             }
+            if (navController.currentDestination?.id == destinationId) return@withNavController
+            if (navController.graph.findNode(destinationId) == null) {
+                Log.w(TAG, "Drawer navigation skipped: destination $destinationId is not present in the current nav graph")
+                return@withNavController
+            }
+            navController.navigate(
+                destinationId,
+                null,
+                navOptions {
+                    launchSingleTop = true
+                    restoreState = true
+                    popUpTo(R.id.chatFragment) {
+                        saveState = true
+                        inclusive = false
+                    }
+                }
+            )
         }
     }
 

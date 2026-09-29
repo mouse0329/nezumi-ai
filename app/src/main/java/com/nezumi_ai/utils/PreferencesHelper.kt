@@ -362,12 +362,14 @@ object PreferencesHelper {
         getSharedPreferences(context).edit().putBoolean(KEY_LLAMACPP_OFFLOAD_KQV, value).apply()
     }
     fun getLlamaCppCacheTypeK(context: Context): String =
-        getSharedPreferences(context).getString(KEY_LLAMACPP_CACHE_TYPE_K, "f16") ?: "f16"
+        getSharedPreferences(context).getString(KEY_LLAMACPP_CACHE_TYPE_K, "f16")
+            ?.lowercase()?.takeIf { it in setOf("f32", "f16", "bf16", "q8_0", "q4_0", "q5_0") } ?: "f16"
     fun setLlamaCppCacheTypeK(context: Context, value: String) {
         getSharedPreferences(context).edit().putString(KEY_LLAMACPP_CACHE_TYPE_K, value.lowercase()).apply()
     }
     fun getLlamaCppCacheTypeV(context: Context): String =
-        getSharedPreferences(context).getString(KEY_LLAMACPP_CACHE_TYPE_V, "f16") ?: "f16"
+        getSharedPreferences(context).getString(KEY_LLAMACPP_CACHE_TYPE_V, "f16")
+            ?.lowercase()?.takeIf { it in setOf("f32", "f16", "bf16", "q8_0", "q4_0", "q5_0") } ?: "f16"
     fun setLlamaCppCacheTypeV(context: Context, value: String) {
         getSharedPreferences(context).edit().putString(KEY_LLAMACPP_CACHE_TYPE_V, value.lowercase()).apply()
     }

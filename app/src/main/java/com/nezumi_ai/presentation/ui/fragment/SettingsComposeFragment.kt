@@ -62,6 +62,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.fragment.app.Fragment
 import com.nezumi_ai.data.memory.MemoryTextEmbedder
@@ -203,6 +204,8 @@ class SettingsComposeFragment : Fragment() {
     private var llamaCppOffloadKqv by mutableStateOf(true)
     private var llamaCppCacheTypeK by mutableStateOf("f16")
     private var llamaCppCacheTypeV by mutableStateOf("f16")
+    private var llamaCppCacheTypeKMenuExpanded by mutableStateOf(false)
+    private var llamaCppCacheTypeVMenuExpanded by mutableStateOf(false)
 
     // NSFW チェッカー用のデバッグ UI 状態。ノン UI スレッドに入らないよう collectAsState でバインドする。
     private var nsfwDebugBitmap by mutableStateOf<Bitmap?>(null)
@@ -3030,20 +3033,51 @@ class SettingsComposeFragment : Fragment() {
                                 )
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                OutlinedTextField(
-                                    value = llamaCppCacheTypeK,
-                                    onValueChange = { llamaCppCacheTypeK = it.lowercase() },
-                                    label = { Text("KV cache K (f16/q8_0)") },
-                                    singleLine = true,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                OutlinedTextField(
-                                    value = llamaCppCacheTypeV,
-                                    onValueChange = { llamaCppCacheTypeV = it.lowercase() },
-                                    label = { Text("KV cache V (f16/q8_0)") },
-                                    singleLine = true,
-                                    modifier = Modifier.weight(1f)
-                                )
+                                val kvCacheTypes = listOf("f32", "f16", "bf16", "q8_0", "q4_0", "q5_0")
+                                Box(modifier = Modifier.weight(1f)) {
+                                    OutlinedButton(
+                                        onClick = { llamaCppCacheTypeKMenuExpanded = true },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("KV cache K: $llamaCppCacheTypeK")
+                                    }
+                                    DropdownMenu(
+                                        expanded = llamaCppCacheTypeKMenuExpanded,
+                                        onDismissRequest = { llamaCppCacheTypeKMenuExpanded = false }
+                                    ) {
+                                        kvCacheTypes.forEach { type ->
+                                            DropdownMenuItem(
+                                                text = { Text(type) },
+                                                onClick = {
+                                                    llamaCppCacheTypeK = type
+                                                    llamaCppCacheTypeKMenuExpanded = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                                Box(modifier = Modifier.weight(1f)) {
+                                    OutlinedButton(
+                                        onClick = { llamaCppCacheTypeVMenuExpanded = true },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("KV cache V: $llamaCppCacheTypeV")
+                                    }
+                                    DropdownMenu(
+                                        expanded = llamaCppCacheTypeVMenuExpanded,
+                                        onDismissRequest = { llamaCppCacheTypeVMenuExpanded = false }
+                                    ) {
+                                        kvCacheTypes.forEach { type ->
+                                            DropdownMenuItem(
+                                                text = { Text(type) },
+                                                onClick = {
+                                                    llamaCppCacheTypeV = type
+                                                    llamaCppCacheTypeVMenuExpanded = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
                             }
                             listOf(
                                 Triple("mmap", llamaCppUseMmap) { v: Boolean -> llamaCppUseMmap = v },

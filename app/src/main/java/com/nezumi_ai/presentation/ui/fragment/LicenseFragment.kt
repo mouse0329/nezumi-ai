@@ -337,13 +337,10 @@ class LicenseFragment : Fragment() {
                     color = colorResource(id = R.color.text_secondary),
                     style = MaterialTheme.typography.bodyMedium
                 )
-                Button(onClick = {
-                    val url = getString(item.urlRes)
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                    if (intent.resolveActivity(requireContext().packageManager) != null) {
-                        startActivity(intent)
-                    }
-                }) {
+                Button(                    onClick = {
+                        val url = getString(item.urlRes)
+                        com.nezumi_ai.utils.ExternalLinkOpener.openUrl(requireContext(), url)
+                    }) {
                     Text(text = stringResource(id = R.string.license_open_url))
                 }
             }

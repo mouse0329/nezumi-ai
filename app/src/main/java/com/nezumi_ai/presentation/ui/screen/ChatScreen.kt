@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.recyclerview.widget.RecyclerView
@@ -87,7 +88,7 @@ fun ChatScreen(
     modelLoadingOverlay: @Composable () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Box(modifier = modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize().background(colorResource(com.nezumi_ai.R.color.bg_chat))) {
         Column(modifier = Modifier.fillMaxSize()) {
             ChatHeader(
                 title = chatTitle,

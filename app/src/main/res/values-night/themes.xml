@@ -13,5 +13,6 @@
         <item name="colorSurface">@color/surface_card</item>
         <item name="colorOnSurface">@color/text_primary</item>
         <item name="materialButtonStyle">@style/Widget.Nezumiai.Button</item>
+        <item name="android:windowBackground">@color/bg_chat</item>
     </style>
 </resources>

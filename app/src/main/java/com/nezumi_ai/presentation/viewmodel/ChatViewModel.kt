@@ -227,26 +227,8 @@ class ChatViewModel(
         private fun shouldDeleteLocalModelFileOnLoadError(errorMessage: String, error: Throwable?): Boolean =
             ModelSessionCoordinator.shouldDeleteLocalModelFileOnLoadError(errorMessage, error)
 
-        private fun Throwable?.isMemoryLoadFailure(): Boolean {
-            if (this == null) return false
-            if (this is RemoteEngineProcessDiedException && likelyOutOfMemory) return true
-            if (this is OutOfMemoryError) return true
-            val errorMsg = message?.lowercase() ?: ""
-            if (errorMsg.contains("llamainit failed") && errorMsg.contains("invalid model file or insufficient memory")) {
-                return false
-            }
-            if (errorMsg.contains("out of memory") ||
-                errorMsg.contains("failed to allocate memory") ||
-                errorMsg.contains("memory allocation failed") ||
-                errorMsg.contains("memory usage is too high") ||
-                errorMsg.contains("memory pressure") ||
-                errorMsg.contains("memory limit") ||
-                errorMsg.contains("insufficient memory")
-            ) {
-                return true
-            }
-            return cause?.isMemoryLoadFailure() == true
-        }
+        private fun Throwable?.isMemoryLoadFailure(): Boolean =
+            ModelSessionCoordinator.isMemoryLoadFailure(this)
 
         private fun Throwable?.isRemoteProcessOutOfMemory(): Boolean =
             this is RemoteEngineProcessDiedException && likelyOutOfMemory
@@ -1136,10 +1118,20 @@ class ChatViewModel(
             runCatching { sessionRepository.getSessionById(sessionId) }.getOrNull()?.let { session ->
                 // DB 読み出し中に別セッションへ切り替わることがある。古い読み出し結果を
                 // 現在のメーターへ反映すると、空の新規セッションに前セッションの値が残る。
-                if (isDisplayedSession(sessionId) && session.lastKnownContextTokens > 0) {
+                val hasConversation = runCatching {
+                    messageRepository.getMessagesForSessionOnce(sessionId)
+                }.getOrNull()?.any { msg ->
+                    msg.role.equals("user", ignoreCase = true) ||
+                        msg.role.equals("assistant", ignoreCase = true) ||
+                        msg.role.equals("model", ignoreCase = true)
+                } == true
+                if (isDisplayedSession(sessionId) && hasConversation && session.lastKnownContextTokens > 0) {
                     _contextUsageTokens.value = session.lastKnownContextTokens
                     _contextMediaTokens.value = session.lastKnownMediaTokens
                     Log.d(TAG, "CONTEXT_METER: restored persisted tokens=${session.lastKnownContextTokens} (media=${session.lastKnownMediaTokens}) session=$sessionId")
+                } else if (isDisplayedSession(sessionId) && !hasConversation) {
+                    _contextUsageTokens.value = 0
+                    _contextMediaTokens.value = 0
                 }
             }
         }
@@ -4764,6 +4756,18 @@ class ChatViewModel(
     ): Int {
  // バグ修正: メーター計算を実際の推論ロジック（buildPromptWithSessionContext）と統一
         // Phase 14: プロンプトの現在の文字数を推定（実際の制限は config.contextWindow（トークン数）に依存）
+        if (messages.none { msg ->
+                msg.role.equals("user", ignoreCase = true) ||
+                    msg.role.equals("assistant", ignoreCase = true) ||
+                    msg.role.equals("model", ignoreCase = true)
+            }
+        ) {
+            if (isCurrentContextSession(sessionId)) {
+                _contextUsageTokens.value = 0
+                _contextMediaTokens.value = 0
+            }
+            return 0
+        }
         val selectedModel = getActiveSelectedModel()
         val engineModelName = toEngineModelName(selectedModel)
         // クラウドモデルはコンテキストメーターを表示しない方針のため推定自体をスキップする。

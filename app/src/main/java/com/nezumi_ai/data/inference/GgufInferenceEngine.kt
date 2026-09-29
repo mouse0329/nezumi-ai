@@ -350,7 +350,14 @@ class GgufInferenceEngine(
                 val useMlock = PreferencesHelper.getLlamaCppUseMlock(llamaPrefs)
                 val offloadKqv = PreferencesHelper.getLlamaCppOffloadKqv(llamaPrefs)
                 val cacheTypeK = PreferencesHelper.getLlamaCppCacheTypeK(llamaPrefs)
-                val cacheTypeV = PreferencesHelper.getLlamaCppCacheTypeV(llamaPrefs)
+                val requestedCacheTypeV = PreferencesHelper.getLlamaCppCacheTypeV(llamaPrefs)
+                val quantizedV = requestedCacheTypeV.lowercase() in setOf("q8_0", "q4_0", "q5_0")
+                val cacheTypeV = if (!nativeSettings.flashAttentionEnabled && quantizedV) {
+                    Log.w(TAG, "Disabling quantized V cache ($requestedCacheTypeV) because flash attention is off")
+                    "f16"
+                } else {
+                    requestedCacheTypeV
+                }
                 if (nativeSettings.batchSize <= 0 || nativeSettings.ubatchSize <= 0) {
                     return@withLock Result.failure(IllegalStateException("Invalid GGUF batch size configuration"))
                 }
@@ -434,6 +441,8 @@ class GgufInferenceEngine(
                         "unknown model architecture",
                         "unknown architecture"
                     ).any(normalizedLoadError::contains)
+                    val flashAttnRequired = normalizedLoadError.contains("flash_attn") ||
+                        normalizedLoadError.contains("flash attention")
                     val memoryAllocationFailure = listOf(
                         "out of memory",
                         "cannot allocate",
@@ -442,14 +451,18 @@ class GgufInferenceEngine(
                     ).any(normalizedLoadError::contains)
                     val failureMessage = when {
                         architectureUnsupported ->
-                            "このモデルのアーキテクチャは現在サポートされていません。"
+                            "このモデルのアーキテクチャは現在サポートされていません。" +
+                                if (loadError.isNotEmpty()) " ($loadError)" else ""
+                        flashAttnRequired ->
+                            "このモデル設定ではコンテキストを初期化できません。" +
+                                " KV キャッシュの量子化には Flash Attention が必要です。" +
+                                if (loadError.isNotEmpty()) " ($loadError)" else ""
                         memoryAllocationFailure ->
                             "GGUFモデルのロードに失敗しました。メモリ不足の可能性があります。"
                         loadError.isNotEmpty() ->
-                            "LlamaCppContext failed to initialize — invalid model file or insufficient memory. " +
-                                "llama.cpp: $loadError"
+                            "モデルの初期化に失敗しました。llama.cpp: $loadError"
                         else ->
-                            "LlamaCppContext failed to initialize — invalid model file or insufficient memory"
+                            "モデルの初期化に失敗しました。ファイルが壊れているか、設定がこのモデルと互換性がありません。"
                     }
                     if (loadError.isNotEmpty()) {
                         Log.e(TAG, "GGUF model load failed: $loadError")

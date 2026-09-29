@@ -94,7 +94,7 @@ class HelpFragment : Fragment() {
                         }
                     } else {
                         runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)))
+                            com.nezumi_ai.utils.ExternalLinkOpener.openUrl(context, uri)
                         }
                     }
                 }

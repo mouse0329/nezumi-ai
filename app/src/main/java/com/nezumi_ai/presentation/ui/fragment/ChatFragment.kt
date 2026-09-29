@@ -232,6 +232,9 @@ class ChatFragment : Fragment() {
     //   MainActivity.navigateToChatSession から呼ばれる。
     fun switchSession(sessionId: Long) {
         if (!isViewCreated || !isAdded) return
+        contextMeterText = getString(R.string.context_meter_format, 0, 0)
+        contextMeterProgress = 0f
+        contextMeterMediaTokens = 0
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
                 settingsRepository.saveCurrentSessionId(sessionId)

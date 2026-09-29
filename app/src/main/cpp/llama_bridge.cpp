@@ -201,9 +201,11 @@ static void nezumi_ggml_log_callback(ggml_log_level level, const char *text, voi
 }
 
 // llama.cpp のログ状態はグローバルで、llama_log_set() 自体もスレッドセーフではない。
-// GgufInferenceEngine の modelMutex でロードを直列化している前提で、ロードを呼び出した
-// スレッドに直近の ERROR ログを保持する。ログは引き続き logcat にも転送する。
-static thread_local std::string g_last_load_error;
+// GgufInferenceEngine の modelMutex でロードを直列化している前提。ERROR はワーカースレッド
+// から来ることもあるので thread_local ではなく mutex 付きグローバルに保持する。
+static std::mutex g_load_error_mutex;
+static std::string g_last_load_error;
+static std::atomic<bool> g_capture_load_errors{false};
 
 // モデルロード・解放・推論開始で古い生プロンプトが残らないようにするリセット用。
 static void nezumi_reset_raw_prompt_storage(NezumiLlamaCtx *nc)
@@ -211,14 +213,14 @@ static void nezumi_reset_raw_prompt_storage(NezumiLlamaCtx *nc)
     if (nc)
         nc->last_applied_prompt.clear();
 }
-static thread_local bool g_capture_load_errors = false;
 
 static void nezumi_llama_load_log_callback(ggml_log_level level, const char *text, void *user_data)
 {
     nezumi_ggml_log_callback(level, text, user_data);
-    if (g_capture_load_errors && level == GGML_LOG_LEVEL_ERROR && text != nullptr)
+    if (g_capture_load_errors.load() && level == GGML_LOG_LEVEL_ERROR && text != nullptr)
     {
         constexpr size_t max_error_length = 8192;
+        std::lock_guard<std::mutex> lock(g_load_error_mutex);
         if (g_last_load_error.size() < max_error_length)
         {
             g_last_load_error.append(text, std::min(std::strlen(text), max_error_length - g_last_load_error.size()));
@@ -613,6 +615,10 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     const char *gpu_backend_chars = j_gpu_backend ? env->GetStringUTFChars(j_gpu_backend, nullptr) : nullptr;
     const char *cache_type_k_chars = j_cache_type_k ? env->GetStringUTFChars(j_cache_type_k, nullptr) : nullptr;
     const char *cache_type_v_chars = j_cache_type_v ? env->GetStringUTFChars(j_cache_type_v, nullptr) : nullptr;
+    // ReleaseStringUTFChars の前にコピーする。解放後のポインタを cache_type_from_name に
+    // 渡すと use-after-free になり、量子化 KV 種別として誤解釈されることがあった。
+    const std::string cache_type_k_str = cache_type_k_chars ? cache_type_k_chars : "";
+    const std::string cache_type_v_str = cache_type_v_chars ? cache_type_v_chars : "";
     const std::string requested_gpu_backend = gpu_backend_chars ? gpu_backend_chars : "CPU";
     int gpu_layers = n_gpu_layers;
     bool gpu_backend_fallback_occurred = false;
@@ -637,11 +643,13 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     else
         mparams.load_mode = LLAMA_LOAD_MODE_NONE;
 
-    g_last_load_error.clear();
-    g_capture_load_errors = true;
+    {
+        std::lock_guard<std::mutex> lock(g_load_error_mutex);
+        g_last_load_error.clear();
+    }
+    g_capture_load_errors.store(true);
     llama_log_set(nezumi_llama_load_log_callback, nullptr);
     llama_model *model = llama_model_load_from_file(model_path, mparams);
-    g_capture_load_errors = false;
     env->ReleaseStringUTFChars(j_model_path, model_path);
     if (gpu_backend_chars)
         env->ReleaseStringUTFChars(j_gpu_backend, gpu_backend_chars);
@@ -652,6 +660,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
 
     if (!model)
     {
+        g_capture_load_errors.store(false);
         LOGE("llamaInit: failed to load model");
         return 0L;
     }
@@ -663,24 +672,34 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     cparams.n_threads = static_cast<int32_t>(n_threads);
     cparams.n_threads_batch = static_cast<int32_t>(n_threads_batch > 0 ? n_threads_batch : n_threads);
     cparams.offload_kqv = offload_kqv == JNI_TRUE;
-    auto cache_type_from_name = [](const char *name) {
-        if (!name) return GGML_TYPE_F16;
-        if (nezumi_iequals(name, "f32")) return GGML_TYPE_F32;
-        if (nezumi_iequals(name, "bf16")) return GGML_TYPE_BF16;
-        if (nezumi_iequals(name, "q8_0")) return GGML_TYPE_Q8_0;
-        if (nezumi_iequals(name, "q4_0")) return GGML_TYPE_Q4_0;
-        if (nezumi_iequals(name, "q5_0")) return GGML_TYPE_Q5_0;
+    auto cache_type_from_name = [](const std::string &name) {
+        if (name.empty()) return GGML_TYPE_F16;
+        if (nezumi_iequals(name.c_str(), "f32")) return GGML_TYPE_F32;
+        if (nezumi_iequals(name.c_str(), "bf16")) return GGML_TYPE_BF16;
+        if (nezumi_iequals(name.c_str(), "q8_0")) return GGML_TYPE_Q8_0;
+        if (nezumi_iequals(name.c_str(), "q4_0")) return GGML_TYPE_Q4_0;
+        if (nezumi_iequals(name.c_str(), "q5_0")) return GGML_TYPE_Q5_0;
         return GGML_TYPE_F16;
     };
-    cparams.type_k = cache_type_from_name(cache_type_k_chars);
-    cparams.type_v = cache_type_from_name(cache_type_v_chars);
+    cparams.type_k = cache_type_from_name(cache_type_k_str);
+    cparams.type_v = cache_type_from_name(cache_type_v_str);
     cparams.rope_freq_base = rope_freq_base;   // 0 = モデルのデフォルト
     cparams.rope_freq_scale = rope_freq_scale; // 0 = モデルのデフォルト
     cparams.flash_attn_type = flash_attn_enabled ? LLAMA_FLASH_ATTN_TYPE_ENABLED
                                                  : LLAMA_FLASH_ATTN_TYPE_DISABLED;
     cparams.kv_unified = kv_unified ? true : false;
+    // Quantized V cache requires flash attention. GPT-2 conservative settings disable FA,
+    // so fall back to F16 instead of failing with a misleading init error.
+    if (ggml_is_quantized(cparams.type_v) &&
+        cparams.flash_attn_type != LLAMA_FLASH_ATTN_TYPE_ENABLED)
+    {
+        LOGW("llamaInit: quantized V cache (%s) requires flash_attn; falling back type_v to F16",
+             cache_type_v_str.c_str());
+        cparams.type_v = GGML_TYPE_F16;
+    }
 
     llama_context *ctx = llama_init_from_model(model, cparams);
+    g_capture_load_errors.store(false);
     if (!ctx)
     {
         LOGE("llamaInit: failed to create context");
@@ -774,9 +793,14 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeGetLastLoadError(
     JNIEnv *env,
     jobject /* this */)
 {
-    if (g_last_load_error.empty())
+    std::string copy;
+    {
+        std::lock_guard<std::mutex> lock(g_load_error_mutex);
+        copy = g_last_load_error;
+    }
+    if (copy.empty())
         return env->NewStringUTF("");
-    return utf8_to_jstring(env, g_last_load_error.c_str(), g_last_load_error.size());
+    return utf8_to_jstring(env, copy.c_str(), copy.size());
 }
 
 extern "C" JNIEXPORT void JNICALL

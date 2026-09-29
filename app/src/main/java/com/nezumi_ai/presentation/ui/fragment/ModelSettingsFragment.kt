@@ -407,7 +407,6 @@ open class ModelSettingsFragment : Fragment() {
         val db = NezumiAiDatabase.getInstance(requireContext())
         settingsRepository = SettingsRepository.fromDatabase(db)
         presetRepository = PresetRepository(db.presetDao(), requireContext().applicationContext)
-        authService = AuthorizationService(requireContext())
         ModelFileManager.LocalModel.entries.forEach { modelStates[it] = ModelUiState(titleFor(it)) }
         RecommendedModelCatalog.recommended()
             .filter { it.engine == RecommendedModelCatalog.Engine.GGUF }
@@ -1934,14 +1933,13 @@ open class ModelSettingsFragment : Fragment() {
                 }
                 TextButton(
                     onClick = {
-                        runCatching {
-                            startActivity(
-                                android.content.Intent(
-                                    android.content.Intent.ACTION_VIEW,
-                                    android.net.Uri.parse(state.licenseUrl)
-                                )
+                        if (!com.nezumi_ai.utils.ExternalLinkOpener.openUrl(
+                                requireContext(),
+                                state.licenseUrl
                             )
-                        }.onFailure { toast("利用規約を開けませんでした") }
+                        ) {
+                            toast("利用規約を開けませんでした")
+                        }
                     }
                 ) {
                     Text("利用規約を開く")
@@ -3489,13 +3487,11 @@ open class ModelSettingsFragment : Fragment() {
                                             Text("ファイル選択")
                                         }
                                         TextButton(onClick = {
-                                            val intent = Intent(
-                                                Intent.ACTION_VIEW,
-                                                Uri.parse("https://huggingface.co/${result.id}")
-                                            )
-                                            if (intent.resolveActivity(requireContext().packageManager) != null) {
-                                                startActivity(intent)
-                                            } else {
+                                            if (!com.nezumi_ai.utils.ExternalLinkOpener.openUrl(
+                                                    requireContext(),
+                                                    "https://huggingface.co/${result.id}"
+                                                )
+                                            ) {
                                                 toast("ブラウザを起動できませんでした")
                                             }
                                         }) {
@@ -5952,13 +5948,13 @@ open class ModelSettingsFragment : Fragment() {
             return
         }
         val request = HfOAuthManager.buildAuthorizationRequest()
-        val intent = authService?.getAuthorizationRequestIntent(request) ?: return
+        val intent = requireAuthService().getAuthorizationRequestIntent(request)
         authLauncher.launch(intent)
     }
 
     private fun exchangeToken(response: AuthorizationResponse) {
         val tokenRequest = HfOAuthManager.buildTokenRequest(response)
-        val service = authService ?: return
+        val service = requireAuthService()
         HfOAuthManager.performTokenRequest(service, tokenRequest) { accessToken, error ->
             // Fragment が detach 済みの場合もトークンは必ず保存する。
             //   UI 反映は isAdded チェック後に行うことでクラッシュを避ける。
@@ -5982,12 +5978,15 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
+    private fun requireAuthService(): net.openid.appauth.AuthorizationService {
+        // AppAuth のコンストラクタは https を扱える全アプリを列挙する。
+        // モデル管理画面を開いただけで走らせないよう、HF ログイン時だけ作る。
+        return authService ?: AuthorizationService(requireContext()).also { authService = it }
+    }
+
     private fun openHfModelAccessPage(model: ModelFileManager.LocalModel) {
         val url = ModelFileManager.previewTreeUrl(model)
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-        if (intent.resolveActivity(requireContext().packageManager) != null) {
-            startActivity(intent)
-        } else {
+        if (!com.nezumi_ai.utils.ExternalLinkOpener.openUrl(requireContext(), url)) {
             toast("ブラウザを起動できませんでした")
         }
     }
