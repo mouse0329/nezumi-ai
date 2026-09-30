@@ -145,4 +145,89 @@ class ThinkingLeakSalvageTest {
         assertEquals("plan", restored.first)
         assertEquals("answer", restored.second)
     }
+
+    @Test
+    fun restoreUnmarkedAnswerIfNoThinkBoundary_keepsThinkingWhenToggleOn() {
+        val spec = ChatMarkupSpec.NONE
+        val restored = ThinkingLeakSalvage.restoreUnmarkedAnswerIfNoThinkBoundary(
+            thinking = "User asks what a cat is.",
+            content = "",
+            raw = "User asks what a cat is.",
+            spec = spec,
+            implicitPrefill = false,
+            keepUnmarkedAsThinking = true,
+        )
+        assertEquals("User asks what a cat is.", restored.first)
+        assertEquals("", restored.second)
+    }
+
+    @Test
+    fun stripDuplicateThinkingFromContent_clearsIdenticalAnswer() {
+        val text = "User asks in Japanese. 猫とは哺乳類です。"
+        val restored = ThinkingLeakSalvage.stripDuplicateThinkingFromContent(
+            thinking = text,
+            content = text,
+        )
+        assertEquals(text, restored.first)
+        assertEquals("", restored.second)
+    }
+
+    @Test
+    fun stripDuplicateThinkingFromContent_keepsAnswerSuffix() {
+        val restored = ThinkingLeakSalvage.stripDuplicateThinkingFromContent(
+            thinking = "first thought",
+            content = "first thought\n\nvisible answer",
+        )
+        assertEquals("first thought", restored.first)
+        assertEquals("visible answer", restored.second)
+    }
+
+    @Test
+    fun restoreSeparatedThinkingIfFinalMerged_doesNotRestoreDuplicateContent() {
+        val text = "User asks in Japanese. 猫とは哺乳類です。"
+        val restored = ThinkingLeakSalvage.restoreSeparatedThinkingIfFinalMerged(
+            previousThinking = text,
+            previousContent = text,
+            newThinking = text,
+            newContent = "",
+        )
+        assertEquals(text, restored.first)
+        assertEquals("", restored.second)
+    }
+
+    @Test
+    fun resolveStopWithoutThinkTags_movesLeakedContentWhenThinkingEmpty() {
+        val restored = ThinkingLeakSalvage.resolveStopWithoutThinkTags(
+            persistedContent = "User asks in Japanese",
+            persistedThinking = null,
+            enableThinking = true,
+            spec = ChatMarkupSpec.NONE,
+        )
+        assertEquals("", restored.first)
+        assertEquals("User asks in Japanese", restored.second)
+    }
+
+    @Test
+    fun resolveStopWithoutThinkTags_doesNotDuplicateIntoThinking() {
+        val restored = ThinkingLeakSalvage.resolveStopWithoutThinkTags(
+            persistedContent = "猫とは哺乳類です。",
+            persistedThinking = "User asks.\n猫とは哺乳類です。",
+            enableThinking = true,
+            spec = ChatMarkupSpec.NONE,
+        )
+        assertEquals("", restored.first)
+        assertEquals("User asks.\n猫とは哺乳類です。", restored.second)
+    }
+
+    @Test
+    fun resolveStopWithoutThinkTags_keepsDistinctAnswerOutOfThinking() {
+        val restored = ThinkingLeakSalvage.resolveStopWithoutThinkTags(
+            persistedContent = "本文です",
+            persistedThinking = "思考だけ",
+            enableThinking = true,
+            spec = ChatMarkupSpec.NONE,
+        )
+        assertEquals("本文です", restored.first)
+        assertEquals("思考だけ", restored.second)
+    }
 }

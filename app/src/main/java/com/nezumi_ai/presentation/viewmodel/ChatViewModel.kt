@@ -2333,20 +2333,32 @@ class ChatViewModel(
                 resolvedThinkStyle == ModelNameHeuristics.ThinkingPromptStyle.ASSISTANT_TAG ||
                     resolvedThinkStyle == ModelNameHeuristics.ThinkingPromptStyle.GEMMA4_CHANNEL ||
                     resolvedThinkStyle == ModelNameHeuristics.ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL
+            val chatTemplateText = GgufFormatResolver.resolveChatTemplateText(appContext, engineModelName)
+            // Granite 4.2 公式 jinja は add_generation_prompt で
+            // `<|im_start|>assistant\n<think>\n` をプロンプト末尾に置く。
+            // 開きタグは出力に出ず、閉じタグ `</think>` だけが生成される。
+            val promptOpenedThink =
+                config.enableThinking &&
+                    isGgufEngineModel(engineModelName) &&
+                    ModelNameHeuristics.templatePrefillsOpenThink(chatTemplateText.orEmpty())
             val implicitThinkPrefill =
                 config.enableThinking &&
                     isGgufEngineModel(engineModelName) &&
                     usesThinkPrefill &&
-                    !nativeGgufTemplateActive
+                    !nativeGgufTemplateActive &&
+                    !promptOpenedThink
             if (implicitThinkPrefill) {
                 answerBuilder.append("<think>\n")
+            }
+            fun rawForThinkParse(raw: String): String {
+                if (!promptOpenedThink) return raw
+                if (markupSpec.containsThinkingOpen(raw)) return raw
+                return "<think>\n$raw"
             }
             fun treatUnmarkedAsThinking(raw: String, streaming: Boolean): Boolean {
                 if (!config.enableThinking || !isGgufStream) return false
                 if (markupSpec.containsThinkingClose(raw)) return false
-                if (markupSpec.containsThinkingOpen(raw) || implicitThinkPrefill) return true
-                // ストリーミング中だけ: 開始タグなし・閉じタグ待ちのモデルを Thinking 側へ先流しする。
-                // 最終パースではタグなし短答を本文に戻す。
+                if (markupSpec.containsThinkingOpen(raw) || implicitThinkPrefill || promptOpenedThink) return true
                 return streaming && markupSpec.supportsThinking
             }
             var lastPersistedContent = ""
@@ -2355,6 +2367,11 @@ class ChatViewModel(
             // UIへ最後に提示した本文/Thinkingのペアを保持する。
             var lastStreamContentForFinal = ""
             var lastStreamThinkingForFinal: String? = null
+            // 生成中に一度でも「思考と本文が別物として分かれた」状態を残す。
+            // FINAL チャンクがタグ無し全文だと、最後の UI 更新が本文を Thinking へ
+            // 戻して lastStreamContent を空にしてしまう。
+            var lastGoodStreamContent = ""
+            var lastGoodStreamThinking: String? = null
             var lastPersistAt = 0L
             var toolResultsJson: String? = null
             var firstOutputAtMs: Long? = null
@@ -2465,10 +2482,19 @@ class ChatViewModel(
                                             Log.d(TAG, "FINAL received: length=${finalFromModel.length}")
                                             // タグを sanitize してからバッファへ戻すと、完了後に
                                             // Thinking / 本文を再分離できなくなる。raw のまま積む。
+                                            val liveSplitExists =
+                                                (thinkingBuilder.isNotBlank() && answerBuilder.isNotBlank()) ||
+                                                    (lastGoodStreamContent.isNotBlank() &&
+                                                        !lastGoodStreamThinking.isNullOrBlank() &&
+                                                        lastGoodStreamContent != lastGoodStreamThinking)
+                                            val finalHasThinkBoundary =
+                                                markupSpec.containsThinkingOpen(finalFromModel) ||
+                                                    markupSpec.containsThinkingClose(finalFromModel)
                                             val resolvedFinal = when {
+                                                liveSplitExists && !finalHasThinkBoundary ->
+                                                    answerBuilder.toString()
                                                 finalFromModel.isNotBlank() &&
-                                                    (markupSpec.containsThinkingOpen(finalFromModel) ||
-                                                        markupSpec.containsThinkingClose(finalFromModel) ||
+                                                    (finalHasThinkBoundary ||
                                                         finalFromModel.length >= answerBuilder.length) ->
                                                     finalFromModel
                                                 answerBuilder.isNotEmpty() -> answerBuilder.toString()
@@ -2690,7 +2716,7 @@ class ChatViewModel(
                                             if (isGgufEngineModel(engineModelName)) {
                                                 runCatching {
                                                     manager.parseGgufChatOutput(
-                                                        answerBuilder.toString(),
+                                                        rawForThinkParse(answerBuilder.toString()),
                                                         isPartial = true
                                                     )
                                                 }.getOrNull()
@@ -2714,11 +2740,20 @@ class ChatViewModel(
                                             // が返す content には <think> が閉じる前の時点で既に思考冒頭が混入している
                                             // 場合があり、content だけ再解析しても取りこぼすため。
                                             val nativeReasoningBlank = nativeStreamParsed.reasoningContent.isBlank()
-                                            if (config.enableThinking && nativeReasoningBlank && answerBuilder.isNotEmpty()) {
+                                            val rawForNative = answerBuilder.toString()
+                                            val unmarkedThinkingPhase =
+                                                config.enableThinking &&
+                                                    !markupSpec.containsThinkingClose(rawForNative)
+                                            // 閉じタグがまだ無いあいだは llama.cpp の content を信じない。
+                                            // Granite はタグを出さず reasoningContent="" / content=全文 になる。
+                                            if (config.enableThinking &&
+                                                answerBuilder.isNotEmpty() &&
+                                                (nativeReasoningBlank || unmarkedThinkingPhase)
+                                            ) {
                                                 val salvaged = Gemma4ThinkingParser.parseStreaming(
-                                                    rawInput = answerBuilder.toString(),
+                                                    rawInput = rawForThinkParse(answerBuilder.toString()),
                                                     treatUnmarkedInputAsThinking = treatUnmarkedAsThinking(
-                                                        answerBuilder.toString(),
+                                                        rawForThinkParse(answerBuilder.toString()),
                                                         streaming = true
                                                     ),
                                                     preserveToolCallTags = true,
@@ -2750,7 +2785,7 @@ class ChatViewModel(
                                         } else {
                                         // LiteRT-LM の channel 推測は nativeThinkingStream 分岐に任せる。
                                         // GGUF かつ Thinking ON のときだけ、開始タグなしでも閉じタグまで thinking へ先流しする。
-                                        val rawAccum = answerBuilder.toString()
+                                        val rawAccum = rawForThinkParse(answerBuilder.toString())
                                         val parsedStream =
                                             Gemma4ThinkingParser.parseStreaming(
                                                 rawInput = rawAccum,
@@ -2796,15 +2831,41 @@ class ChatViewModel(
                                     //   インラインカードは message.content のタグを parseSegments して描くため、
                                     //   未完の <tool_call> も contentForUi に残す。タグ開始時点で Running、
                                     //   ツール名が読めた時点でタイトルが埋まる。
-                                    if (contentForUi.isEmpty()) {
+                                    val rawForCards = answerBuilder.toString()
+                                    val thinkingOnlyNoClose =
+                                        config.enableThinking &&
+                                            contentForUi.isEmpty() &&
+                                            !thinkingForUi.isNullOrBlank() &&
+                                            !markupSpec.containsThinkingClose(rawForCards)
+                                    // 思考中（閉じタグなし）の本文埋め戻しはしない。
+                                    // ツールカード用の復元は実際に tool マークアップがあるときだけ。
+                                    if (contentForUi.isEmpty() &&
+                                        !thinkingOnlyNoClose &&
+                                        hasStreamingToolCallMarkup(rawForCards)
+                                    ) {
                                         contentForUi = restoreStreamingContentForToolCards(
                                             engineModelName = engineModelName,
-                                            rawAnswer = answerBuilder.toString()
+                                            rawAnswer = rawForCards
                                         )
+                                    }
+                                    if (config.enableThinking) {
+                                        val dedupedLive = ThinkingLeakSalvage.stripDuplicateThinkingFromContent(
+                                            thinking = thinkingForUi,
+                                            content = contentForUi,
+                                        )
+                                        thinkingForUi = dedupedLive.first
+                                        contentForUi = dedupedLive.second
                                     }
 
                                     lastStreamContentForFinal = contentForUi
                                     lastStreamThinkingForFinal = thinkingForUi
+                                    if (contentForUi.isNotBlank() &&
+                                        !thinkingForUi.isNullOrBlank() &&
+                                        contentForUi.trim() != thinkingForUi.trim()
+                                    ) {
+                                        lastGoodStreamContent = contentForUi
+                                        lastGoodStreamThinking = thinkingForUi
+                                    }
 
                                     val now = SystemClock.elapsedRealtime()
                                     val persistInterval = if (isLikelyMarkdownTable(contentForUi)) {
@@ -2976,38 +3037,54 @@ class ChatViewModel(
             val finalThinking: String?
             // 生成中と同じ splitter で raw を再分割する。sanitize は分割後にだけかける。
             val finalParsed = Gemma4ThinkingParser.parse(
-                rawInput = answerBuilder.toString(),
+                rawInput = rawForThinkParse(answerBuilder.toString()),
                 treatUnmarkedInputAsThinking = treatUnmarkedAsThinking(
-                    answerBuilder.toString(),
+                    rawForThinkParse(answerBuilder.toString()),
                     streaming = false
                 ),
                 preserveToolCallTags = true,
                 spec = markupSpec,
             )
+            val previousThinkingForFinal =
+                lastGoodStreamThinking?.takeIf { lastGoodStreamContent.isNotBlank() }
+                    ?: lastStreamThinkingForFinal
+            val previousContentForFinal =
+                lastGoodStreamContent.takeIf { it.isNotBlank() }
+                    ?: lastStreamContentForFinal
             val restoredMerged = ThinkingLeakSalvage.restoreSeparatedThinkingIfFinalMerged(
-                previousThinking = lastStreamThinkingForFinal,
-                previousContent = lastStreamContentForFinal,
+                previousThinking = previousThinkingForFinal,
+                previousContent = previousContentForFinal,
                 newThinking = finalParsed.thinking,
                 newContent = finalParsed.answer,
             )
             val restored = ThinkingLeakSalvage.restoreUnmarkedAnswerIfNoThinkBoundary(
                 thinking = restoredMerged.first,
                 content = restoredMerged.second,
-                raw = answerBuilder.toString(),
+                raw = rawForThinkParse(answerBuilder.toString()),
                 spec = markupSpec,
-                implicitPrefill = implicitThinkPrefill,
+                implicitPrefill = implicitThinkPrefill || promptOpenedThink,
+                keepUnmarkedAsThinking = config.enableThinking,
             )
-            val streamedThinking = restored.first
+            val deduped = ThinkingLeakSalvage.stripDuplicateThinkingFromContent(
+                thinking = restored.first,
+                content = restored.second,
+            )
+            val streamedThinking = deduped.first
                 ?.let { Gemma4ThinkingParser.sanitizeVisibleText(it) }
                 ?.ifBlank { null }
-            val streamedContent = restored.second
+            val streamedContent = deduped.second
             completeResponse = sanitizeAssistantOutputForModel(
                 engineModelName = engineModelName,
                 text = Gemma4ThinkingParser.sanitizeVisibleText(
                     if (config.enableThinking) streamedContent
                     else stripThinkSectionsForDisplay(streamedContent),
                     preserveToolCallTags = true
-                ).ifBlank { lastPersistedContent }
+                ).ifBlank {
+                    // Thinking ON で思考側に本文相当が既にあるなら、空の本文へ
+                    // lastPersistedContent を埋め戻して重複表示しない。
+                    if (config.enableThinking && !streamedThinking.isNullOrBlank()) ""
+                    else lastPersistedContent
+                }
             )
             finalThinking = streamedThinking
             val note = streamAbortNote
@@ -3134,9 +3211,14 @@ class ChatViewModel(
                     messageRepository.updateMessageContent(
                         messageId = activeStreamingMessageId,
                         content = (contentToSave).ifBlank {
-                        // バグ修正 (完了時に本文が空で「応答なし」が保存される): 最終手段として
-                        // 生の answerBuilder からタグを除去したテキストで埋める。
-                        stripThinkSectionsForDisplay(answerBuilder.toString()).trim()
+                        // Thinking ON で思考だけ出た場合は raw を本文へ埋め戻さない。
+                        // Granite 等はタグが無いので stripThink しても全文が本文になり、
+                        // thinkingContent と二重表示される。
+                        if (config.enableThinking && !finalThinking.isNullOrBlank()) {
+                            ""
+                        } else {
+                            stripThinkSectionsForDisplay(answerBuilder.toString()).trim()
+                        }
                     },
                         isStreaming = false,
                         thinkingContent = finalThinking,
@@ -3240,22 +3322,26 @@ class ChatViewModel(
  // 既存の内容を取得して保存（上書きしない）
                         val current = messageRepository.getMessageById(id)
                         val existingContent = current?.content?.trim() ?: ""
-                        // Bug fix(#47):
-                        //   Thinking 途中に停止すると、DB 上の `content` に未閉鎖の `<think>...` が
-                        //   そのまま残っており、次回 UI 再バインドで stripGemmaTokens() /
-                        //   sanitizeVisibleText() が「閉じタグの無い <think>」を除去しきれず、
-                        //   思考本文が本文欄にそのまま漏れて表示される不具合があった。
-                        //   ここで停止時に一度、content から <think> ブロック (未閉鎖含む) を
-                        //   剥がして、剥がしたテキストは thinkingContent 側へ退避する。
+                        // Bug fix(#47) + Granite タグ無し:
+                        //   閉じタグがある場合は従来どおり content から <think> を剥がす。
+                        //   タグが無い場合は content を Thinking へ移し、すでに Thinking に
+                        //   ある本文は二重に足さない。
+                        val stopSpec = runCatching {
+                            GgufFormatResolver.resolveMarkupSpec(
+                                currentEngineModelName.orEmpty(),
+                                appContext
+                            )
+                        }.getOrDefault(ChatMarkupSpec.DEFAULT)
+                        val stopEnableThinking =
+                            !current?.thinkingContent.isNullOrBlank() || stopSpec.supportsThinking
                         val (contentAfterThinkStrip, salvagedThinking) =
-                            ThinkingLeakSalvage.extractThinkingFromPartialContent(existingContent)
-
-                        // 既存 thinkingContent と、content から救出した思考本文をマージし、
-                        // 未閉鎖なら閉じタグを補う。Thinking フェーズは普段通り表示する。
-                        val mergedThinkingRaw = ThinkingLeakSalvage.mergeThinkingSalvage(
-                            current?.thinkingContent,
-                            salvagedThinking
-                        )
+                            ThinkingLeakSalvage.resolveStopWithoutThinkTags(
+                                persistedContent = existingContent,
+                                persistedThinking = current?.thinkingContent,
+                                enableThinking = stopEnableThinking,
+                                spec = stopSpec,
+                            )
+                        val mergedThinkingRaw = salvagedThinking
                         val finalThinking = closePartialThinking(mergedThinkingRaw)
 
                         // Bug fix(#47) 仕様変更:
@@ -3394,27 +3480,36 @@ class ChatViewModel(
                                 //   思考本文が content 側に persist される。終端タグ未到達のまま
                                 //   収束した場合は content に思考が残ったままになるので、
                                 //   ThinkingLeakSalvage で思考ブロックを thinkingContent 側へ退避する。
-                                val salvaged = ThinkingLeakSalvage.extractThinkingFromPartialContent(
-                                    current.content
+                                val stopSpec = runCatching {
+                                    GgufFormatResolver.resolveMarkupSpec(
+                                        currentEngineModelName.orEmpty(),
+                                        appContext
+                                    )
+                                }.getOrDefault(ChatMarkupSpec.DEFAULT)
+                                val stopEnableThinking =
+                                    !current.thinkingContent.isNullOrBlank() || stopSpec.supportsThinking
+                                val salvaged = ThinkingLeakSalvage.resolveStopWithoutThinkTags(
+                                    persistedContent = current.content,
+                                    persistedThinking = current.thinkingContent,
+                                    enableThinking = stopEnableThinking,
+                                    spec = stopSpec,
                                 )
                                 val salvagedContent = salvaged.first
                                 val salvagedThinking = salvaged.second
                                 messageRepository.updateMessageContent(
                                     messageId = streamingMessageId,
                                     content = salvagedContent.ifBlank {
-                                        // 本文が空で思考だけがある場合はプレースホルダーに置き換えず、
-                                        // 表示されていた内容を維持する (生成結果が消えるのを防ぐ)。
                                         if (salvagedThinking.isNullOrBlank()) {
                                             messageForEmptyInferencePayload(
                                                 currentHasMediaInput,
                                                 currentEngineModelName ?: ""
                                             )
                                         } else {
-                                            salvagedContent
+                                            ""
                                         }
                                     },
                                     isStreaming = false,
-                                    thinkingContent = salvagedThinking ?: current.thinkingContent
+                                    thinkingContent = closePartialThinking(salvagedThinking)
                                 )
                             }
                         }

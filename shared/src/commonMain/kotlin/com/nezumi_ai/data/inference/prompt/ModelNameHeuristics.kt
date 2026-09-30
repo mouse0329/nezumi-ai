@@ -281,11 +281,34 @@ object ModelNameHeuristics {
     fun templateDeclaresThinking(template: String): Boolean {
         if (template.isBlank()) return false
         return template.contains("enable_thinking") ||
+            template.contains("reasoning_effort") ||
             ToolCallTags.THINK_OPEN in template ||
             ToolCallTags.GEMMA_THINK_TRIGGER in template ||
             ToolCallTags.QWEN_NO_THINK_COMMAND in template ||
             containsStandaloneQwenThinkCommand(template) ||
             (ToolCallTags.CHANNEL_OPEN in template && ToolCallTags.CHANNEL_CLOSE in template)
+    }
+
+    /**
+     * add_generation_prompt 時に `<think>\n` を開いたまま生成を始めるテンプレか。
+     * IBM Granite 4.2 / Qwen 3.5+ 公式 jinja が該当する。
+     * 開きタグはプロンプト側にあり、モデル出力の先頭には出ない。
+     * 閉じタグ `</think>` は生成トークン側に出る。
+     */
+    fun templatePrefillsOpenThink(template: String): Boolean {
+        if (template.isBlank()) return false
+        if ("add_generation_prompt" !in template) return false
+        if ("<think>" !in template) return false
+        return "enable_thinking" in template || "reasoning_effort" in template
+    }
+
+    /**
+     * 生成プロンプト末尾が未閉鎖の `<think>` なら、出力は思考本文から始まる。
+     */
+    fun promptEndsWithOpenThink(prompt: String): Boolean {
+        val t = prompt.trimEnd()
+        if (t.isEmpty()) return false
+        return t.endsWith("<think>") || t.endsWith("<|think|>")
     }
 
     /**

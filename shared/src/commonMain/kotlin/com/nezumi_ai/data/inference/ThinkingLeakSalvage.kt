@@ -95,6 +95,12 @@ object ThinkingLeakSalvage {
         val newT = newThinking?.trim().orEmpty()
         if (prevT.isEmpty()) return newThinking to newContent
 
+        // ストリーミング中にツール用フォールバックで思考全文が content に
+        // 入っていた場合、prevC == prevT になる。これを「本文が思考へ飲み込まれた」
+        // とみなして previousContent を戻すと、停止・完了時に本文が Thinking へ残る。
+        if (prevC.isNotEmpty() && prevC == prevT) {
+            return newThinking to newContent
+        }
         val answerSwallowedIntoThinking =
             prevC.isNotEmpty() && newContent.trim().isEmpty() && newT.contains(prevC)
         val thinkingGrewByAnswer =
@@ -111,7 +117,11 @@ object ThinkingLeakSalvage {
 
     /**
      * 閉じタグも開きタグもない最終出力を thinking に入れたままにしない。
-     * Thinking ON のストリーミング先流しで短答が thinking 側に残った場合の保険。
+     * Thinking OFF、またはタグ無し短答を本文へ戻したい場合の保険。
+     *
+     * [keepUnmarkedAsThinking] が true（Thinking トグル ON）のときは、
+     * タグが無くても先頭出力を思考として残す。Granite など閉じタグを
+     * 吐かないモデルで本文へ丸ごと再注入されると、思考と本文が同一になる。
      */
     fun restoreUnmarkedAnswerIfNoThinkBoundary(
         thinking: String?,
@@ -119,12 +129,68 @@ object ThinkingLeakSalvage {
         raw: String,
         spec: ChatMarkupSpec,
         implicitPrefill: Boolean,
+        keepUnmarkedAsThinking: Boolean = false,
     ): Pair<String?, String> {
         if (content.isNotBlank() || thinking.isNullOrBlank()) return thinking to content
-        if (implicitPrefill || spec.containsThinkingOpen(raw) || spec.containsThinkingClose(raw)) {
+        if (keepUnmarkedAsThinking ||
+            implicitPrefill ||
+            spec.containsThinkingOpen(raw) ||
+            spec.containsThinkingClose(raw)
+        ) {
             return thinking to content
         }
         return null to thinking
+    }
+
+    /**
+     * 思考本文と可視本文の重複を取り除く。
+     *
+     * Granite 等は閉じタグを出さず、ネイティブパーサーや完了時の raw 埋め戻しが
+     * 同じ全文を content と thinking の両方へ載せることがある。
+     */
+    fun stripDuplicateThinkingFromContent(
+        thinking: String?,
+        content: String,
+    ): Pair<String?, String> {
+        val t = thinking?.trim().orEmpty()
+        val c = content.trim()
+        if (t.isEmpty() || c.isEmpty()) return thinking to content
+        if (c == t) return thinking to ""
+        if (c.startsWith(t)) return thinking to c.removePrefix(t).trim()
+        if (t.contains(c) && t.length > c.length) return thinking to ""
+        return thinking to content
+    }
+
+    /**
+     * 停止時: タグ無しで content に残った思考漏れを Thinking 側へ一度だけ移す。
+     * すでに Thinking にある本文は二重に足さない。
+     *
+     * @return Pair(content に残すテキスト, thinking)
+     */
+    fun resolveStopWithoutThinkTags(
+        persistedContent: String,
+        persistedThinking: String?,
+        enableThinking: Boolean,
+        spec: ChatMarkupSpec,
+    ): Pair<String, String?> {
+        val content = persistedContent.trim()
+        val thinking = persistedThinking?.trim().orEmpty()
+        if (!enableThinking) return content to persistedThinking
+        if (spec.containsThinkingOpen(content) || spec.containsThinkingClose(content)) {
+            return extractThinkingFromPartialContent(persistedContent).let { (c, s) ->
+                c to mergeThinkingSalvage(persistedThinking, s)
+            }
+        }
+        if (content.isEmpty()) return "" to persistedThinking
+        if (thinking.isEmpty()) {
+            return "" to content
+        }
+        if (content == thinking || thinking.contains(content) || content.contains(thinking)) {
+            val keptThinking = if (content.contains(thinking) && content.length > thinking.length) content else thinking
+            return "" to keptThinking
+        }
+        // 思考と本文が明確に別物なら混ぜない
+        return content to persistedThinking
     }
 
     /**
