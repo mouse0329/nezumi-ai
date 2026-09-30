@@ -116,4 +116,33 @@ class ThinkingLeakSalvageTest {
         assertNull(ThinkingLeakSalvage.mergeThinkingSalvage(null, null))
         assertNull(ThinkingLeakSalvage.mergeThinkingSalvage("", "   "))
     }
+
+    @Test
+    fun restoreUnmarkedAnswerIfNoThinkBoundary_promotesThinkingToAnswer() {
+        val spec = ChatMarkupSpec.NONE
+        val restored = ThinkingLeakSalvage.restoreUnmarkedAnswerIfNoThinkBoundary(
+            thinking = "短い回答",
+            content = "",
+            raw = "短い回答",
+            spec = spec,
+            implicitPrefill = false,
+        )
+        assertNull(restored.first)
+        assertEquals("短い回答", restored.second)
+    }
+
+    @Test
+    fun restoreUnmarkedAnswerIfNoThinkBoundary_keepsThinkingWhenCloseTagPresent() {
+        val spec = ChatMarkupSpec.DEFAULT
+        val raw = "plan</think>answer"
+        val restored = ThinkingLeakSalvage.restoreUnmarkedAnswerIfNoThinkBoundary(
+            thinking = "plan",
+            content = "answer",
+            raw = raw,
+            spec = spec,
+            implicitPrefill = false,
+        )
+        assertEquals("plan", restored.first)
+        assertEquals("answer", restored.second)
+    }
 }

@@ -88,6 +88,29 @@ class ChatMarkupSpecTest {
     }
 
     @Test
+    fun fromChatTemplate_blank_isPlainNone_notGemma4Default() {
+        val empty = ChatMarkupSpec.fromChatTemplate("")
+        val missing = ChatMarkupSpec.fromChatTemplate(null)
+        assertEquals(ThinkingPromptStyle.PLAIN_COMPLETION, empty.thinkingStyle)
+        assertEquals(ThinkingPromptStyle.PLAIN_COMPLETION, missing.thinkingStyle)
+        assertFalse(empty.supportsThinking)
+        assertFalse(missing.supportsThinking)
+        assertTrue(empty.thinkingPairs.isEmpty())
+        assertTrue(missing.channelOpen == null)
+    }
+
+    @Test
+    fun templateDeclaresThinking_requiresTemplateTokens() {
+        assertFalse(ModelNameHeuristics.templateDeclaresThinking(""))
+        assertFalse(ModelNameHeuristics.templateDeclaresThinking("user: {{ content }}"))
+        assertTrue(ModelNameHeuristics.templateDeclaresThinking("{% if enable_thinking %}<think>{% endif %}"))
+        assertTrue(ModelNameHeuristics.templateDeclaresThinking("<|think|>"))
+        assertFalse(ModelNameHeuristics.templateDeclaresThinking("history: </think> stripped"))
+        assertTrue(ModelNameHeuristics.templateDeclaresThinking("{{ content }} /think"))
+        assertTrue(ModelNameHeuristics.templateDeclaresThinking("/no_think"))
+    }
+
+    @Test
     fun resolveThinkingPromptStyle_prefers_template_over_model_name() {
         val qwenNamed = "Qwen3-8B-Q4_K_M.gguf"
         val gemmaTemplate = "{% if enable_thinking %}<|think|>{% endif %}<|channel>thought\n<channel|>"

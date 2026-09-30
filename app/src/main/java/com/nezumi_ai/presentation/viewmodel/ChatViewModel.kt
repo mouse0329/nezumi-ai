@@ -1383,8 +1383,7 @@ class ChatViewModel(
                 val template = com.nezumi_ai.utils.GgufMetadataReader.readChatTemplate(File(modelKey))
                     ?: return@runCatching
                 val heuristics = com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
-                val supportsThinking = template.contains("enable_thinking") ||
-                    template.contains("<|think|>")
+                val supportsThinking = heuristics.templateDeclaresThinking(template)
                 val supportsTools = heuristics.templateDeclaresToolSupport(template)
                 // 思考強度 UI 表示判定用の capability もここで記録しておく。
                 com.nezumi_ai.utils.ImportedModelCapabilityStore.setThinkingEffortSupported(
@@ -1392,12 +1391,19 @@ class ChatViewModel(
                 )
                 if (!supportsThinking && !supportsTools) return@runCatching
                 val current = com.nezumi_ai.utils.ImportedModelCapabilityStore.get(appContext, modelKey)
+                val hadThinkingSetting = com.nezumi_ai.utils.ImportedModelCapabilityStore
+                    .hasThinkingSetting(appContext, modelKey)
+                val nextThinking = if (hadThinkingSetting) current.thinkingEnabled else supportsThinking
                 val next = current.copy(
-                    thinkingEnabled = current.thinkingEnabled || supportsThinking,
+                    thinkingEnabled = nextThinking,
                     toolCallingEnabled = current.toolCallingEnabled || supportsTools
                 )
                 if (next != current) {
-                    com.nezumi_ai.utils.ImportedModelCapabilityStore.set(appContext, modelKey, next)
+                    com.nezumi_ai.utils.ImportedModelCapabilityStore.set(
+                        appContext, modelKey, next,
+                        // Thinking 非対応テンプレートで false を明示保存しない (未設定 → 標準 ON を保つ)。
+                        persistThinking = hadThinkingSetting || supportsThinking
+                    )
                     Log.i(TAG, "ensureModelAddedCapabilities: auto-enabled from chat_template " +
                         "(thinking=$supportsThinking, tools=$supportsTools): $modelKey")
                 }
@@ -2317,6 +2323,7 @@ class ChatViewModel(
             val markupSpec = runCatching {
                 GgufFormatResolver.resolveMarkupSpec(engineModelName, appContext)
             }.getOrDefault(ChatMarkupSpec.DEFAULT)
+            val isGgufStream = isGgufEngineModel(engineModelName)
             val resolvedThinkStyle = markupSpec.thinkingStyle
                 ?: ModelNameHeuristics.resolveThinkingPromptStyle(
                     modelPathOrName = engineModelName,
@@ -2333,6 +2340,14 @@ class ChatViewModel(
                     !nativeGgufTemplateActive
             if (implicitThinkPrefill) {
                 answerBuilder.append("<think>\n")
+            }
+            fun treatUnmarkedAsThinking(raw: String, streaming: Boolean): Boolean {
+                if (!config.enableThinking || !isGgufStream) return false
+                if (markupSpec.containsThinkingClose(raw)) return false
+                if (markupSpec.containsThinkingOpen(raw) || implicitThinkPrefill) return true
+                // ストリーミング中だけ: 開始タグなし・閉じタグ待ちのモデルを Thinking 側へ先流しする。
+                // 最終パースではタグなし短答を本文に戻す。
+                return streaming && markupSpec.supportsThinking
             }
             var lastPersistedContent = ""
             var lastPersistedThinking: String? = null
@@ -2702,7 +2717,10 @@ class ChatViewModel(
                                             if (config.enableThinking && nativeReasoningBlank && answerBuilder.isNotEmpty()) {
                                                 val salvaged = Gemma4ThinkingParser.parseStreaming(
                                                     rawInput = answerBuilder.toString(),
-                                                    treatUnmarkedInputAsThinking = !markupSpec.containsThinkingClose(answerBuilder.toString()),
+                                                    treatUnmarkedInputAsThinking = treatUnmarkedAsThinking(
+                                                        answerBuilder.toString(),
+                                                        streaming = true
+                                                    ),
                                                     preserveToolCallTags = true,
                                                     spec = markupSpec,
                                                 )
@@ -2730,22 +2748,16 @@ class ChatViewModel(
                                                     ).ifBlank { null }
                                             }
                                         } else {
-                                        // Phase 4 補完 (計画書 1.2b): LiteRT-LM 経路では文字列推測
-                                        // (treatUnmarkedInputAsThinking) を使わない。
-                                        // thinking 判定はエンジンの message.channels[THOUGHT_CHANNEL]
-                                        // (nativeThinkingStream=true 分岐) に委ね、チャンネル未送出の間は
-                                        // answerBuilder の内容は本文として扱う。GGUF 経路のみ、
-                                        // thinking ON 時に開始タグを省略するモデルの救済として従来の推測を残す。
+                                        // LiteRT-LM の channel 推測は nativeThinkingStream 分岐に任せる。
+                                        // GGUF かつ Thinking ON のときだけ、開始タグなしでも閉じタグまで thinking へ先流しする。
                                         val rawAccum = answerBuilder.toString()
-                                        val guessUnmarkedAsThinking =
-                                            config.enableThinking &&
-                                                isGgufEngineModel(engineModelName) &&
-                                                !markupSpec.containsThinkingClose(rawAccum) &&
-                                                (markupSpec.containsThinkingOpen(rawAccum) || implicitThinkPrefill)
                                         val parsedStream =
                                             Gemma4ThinkingParser.parseStreaming(
                                                 rawInput = rawAccum,
-                                                treatUnmarkedInputAsThinking = guessUnmarkedAsThinking,
+                                                treatUnmarkedInputAsThinking = treatUnmarkedAsThinking(
+                                                    rawAccum,
+                                                    streaming = true
+                                                ),
                                                 preserveToolCallTags = true,
                                                 spec = markupSpec,
                                             )
@@ -2965,18 +2977,25 @@ class ChatViewModel(
             // 生成中と同じ splitter で raw を再分割する。sanitize は分割後にだけかける。
             val finalParsed = Gemma4ThinkingParser.parse(
                 rawInput = answerBuilder.toString(),
-                treatUnmarkedInputAsThinking = config.enableThinking &&
-                    isGgufEngineModel(engineModelName) &&
-                    !markupSpec.containsThinkingClose(answerBuilder.toString()) &&
-                    (markupSpec.containsThinkingOpen(answerBuilder.toString()) || implicitThinkPrefill),
+                treatUnmarkedInputAsThinking = treatUnmarkedAsThinking(
+                    answerBuilder.toString(),
+                    streaming = false
+                ),
                 preserveToolCallTags = true,
                 spec = markupSpec,
             )
-            val restored = ThinkingLeakSalvage.restoreSeparatedThinkingIfFinalMerged(
+            val restoredMerged = ThinkingLeakSalvage.restoreSeparatedThinkingIfFinalMerged(
                 previousThinking = lastStreamThinkingForFinal,
                 previousContent = lastStreamContentForFinal,
                 newThinking = finalParsed.thinking,
                 newContent = finalParsed.answer,
+            )
+            val restored = ThinkingLeakSalvage.restoreUnmarkedAnswerIfNoThinkBoundary(
+                thinking = restoredMerged.first,
+                content = restoredMerged.second,
+                raw = answerBuilder.toString(),
+                spec = markupSpec,
+                implicitPrefill = implicitThinkPrefill,
             )
             val streamedThinking = restored.first
                 ?.let { Gemma4ThinkingParser.sanitizeVisibleText(it) }

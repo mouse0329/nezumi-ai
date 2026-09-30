@@ -645,8 +645,8 @@ class GgufInferenceEngine(
                 com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
                     .templateSupportsThinkingEffort(template)
             )
-            val supportsThinking = template.contains("enable_thinking") ||
-                template.contains("<|think|>")
+            val supportsThinking =
+                com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.templateDeclaresThinking(template)
             val supportsTools =
                 com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.templateDeclaresToolSupport(template)
             // 思考強度 (reasoning_effort) のテンプレート解釈粒度もここで検出してログに残す。
@@ -660,7 +660,10 @@ class GgufInferenceEngine(
             }
             if (!supportsThinking && !supportsTools) return@runCatching
             val current = ImportedModelCapabilityStore.get(appContext, modelPath)
-            val nextThinking = current.thinkingEnabled || supportsThinking
+            // テンプレートが Thinking を定義していれば、未設定時のみ標準 ON。
+            // ユーザーが明示的に OFF した値は上書きしない。
+            val hadThinkingSetting = ImportedModelCapabilityStore.hasThinkingSetting(appContext, modelPath)
+            val nextThinking = if (hadThinkingSetting) current.thinkingEnabled else supportsThinking
             val nextToolCalling = current.toolCallingEnabled || supportsTools
             if (nextThinking != current.thinkingEnabled || nextToolCalling != current.toolCallingEnabled) {
                 ImportedModelCapabilityStore.set(
@@ -669,7 +672,9 @@ class GgufInferenceEngine(
                     current.copy(
                         thinkingEnabled = nextThinking,
                         toolCallingEnabled = nextToolCalling
-                    )
+                    ),
+                    // Thinking 非対応テンプレートで false を明示保存すると「未設定 → 標準 ON」が失われる。
+                    persistThinking = hadThinkingSetting || supportsThinking
                 )
                 Log.i(
                     TAG,

@@ -50,7 +50,7 @@ abstract class AbstractCloudInferenceEngine(
     private val inferenceMutex = Mutex()
     @Volatile protected var currentModelName: String? = null
     @Volatile protected var currentModelId: String? = null
-    private val inflightLock = Any()
+    private val inflightMutex = Mutex()
     private var inflightResponse: HttpResponse? = null
 
     open suspend fun loadModelWithId(modelId: String, modelName: String, config: CloudInferenceParams): Result<Unit> {
@@ -248,8 +248,8 @@ abstract class AbstractCloudInferenceEngine(
         onDelta: (String) -> Unit
     )
 
-    protected fun registerResponse(response: HttpResponse) {
-        synchronized(inflightLock) { inflightResponse = response }
+    protected suspend fun registerResponse(response: HttpResponse) = inflightMutex.withLock {
+        inflightResponse = response
     }
 
     /** A new HTTP response gets a new ByteReadChannel. Never cache it across tool rounds. */
@@ -268,7 +268,7 @@ abstract class AbstractCloudInferenceEngine(
     }
 
     private suspend fun cancelInflight() {
-        synchronized(inflightLock) {
+        inflightMutex.withLock {
             inflightResponse = null
         }
     }

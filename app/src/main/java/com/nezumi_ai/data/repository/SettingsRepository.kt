@@ -160,12 +160,17 @@ class SettingsRepository(
         val isGguf = isGgufModel(model)
         val enableThinkingPref = appContext?.let { PreferencesHelper.isEnableThinking(it) } ?: false
         val requireMultimodalPref = appContext?.let { PreferencesHelper.isRequireMultimodal(it) } ?: false
-        // GGUF インポートモデルでもファイル名から Gemma4 とわかるものは、
-        // capability ストアで thinkingEnabled が未設定でも thinking をサポート扱いにする。
-        val isGemma4Gguf = isGguf &&
-            com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.isGemma4Model(model)
-        val ggufThinking = isGguf && appContext != null &&
-            (isGemma4Gguf || ImportedModelCapabilityStore.get(appContext, model).thinkingEnabled)
+        // Thinking はプロンプトテンプレートが Thinking を定義しているときだけ有効化できる。
+        // 定義済みなら capability 未設定でも ON 扱い (標準 ON)。空テンプレは不可。
+        val templateDeclaresThinking = appContext != null &&
+            com.nezumi_ai.data.inference.ChatMarkupSpec.fromChatTemplate(
+                com.nezumi_ai.data.inference.GgufFormatResolver.resolveChatTemplateText(appContext, model)
+            ).supportsThinking
+        val ggufThinking = isGguf && appContext != null && templateDeclaresThinking &&
+            (
+                !ImportedModelCapabilityStore.hasThinkingSetting(appContext, model) ||
+                    ImportedModelCapabilityStore.get(appContext, model).thinkingEnabled
+            )
         // 外部インポート LiteRT-LM (.task / .litertlm) も、モデル設定で Thinking を ON にしていれば
         // enable_thinking を SamplerConfig 経由でモデルに渡す。
         val isLiteRtImportedEarly = isLiteRtImportedModel(model)
@@ -521,11 +526,11 @@ class SettingsRepository(
         if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(model)) return true
         val ctx = appContext ?: return false
         if (isGgufModel(model)) {
-            // ファイル名から Gemma4 と判定されるインポートモデルは、
-            // ユーザーが capability ストアで手動設定をしていなくても Thinking をサポート扱いにする。
-            // (例: gemma-4-12b-it-Q4_K_M.gguf / gemma-4-26B-A4B-it-Q4_K_M.gguf など)
-            if (com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.isGemma4Model(model)) return true
-            return ImportedModelCapabilityStore.get(ctx, model).thinkingEnabled
+            val templateDeclaresThinking =
+                com.nezumi_ai.data.inference.ChatMarkupSpec.fromChatTemplate(
+                    com.nezumi_ai.data.inference.GgufFormatResolver.resolveChatTemplateText(ctx, model)
+                ).supportsThinking
+            return templateDeclaresThinking
         }
         // 外部インポート LiteRT-LM (.task / .litertlm) はモデル設定で Thinking を ON にしたときのみ表示する。
         if (isLiteRtImportedModel(model)) {

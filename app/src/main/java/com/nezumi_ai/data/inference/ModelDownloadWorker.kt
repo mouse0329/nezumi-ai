@@ -388,7 +388,9 @@ class ModelDownloadWorker(
                                 audioEnabled = false,
                                 mmprojPath = mmprojFile?.absolutePath,
                                 thinkingEnabled = false
-                            )
+                            ),
+                            // Thinking は未設定のままにして、テンプレートが定義していれば標準 ON にする。
+                            persistThinking = false
                         )
                     }
                     registerDownloadedModels() // ダウンロード完了 = 追加完了（素の状態プリセットを即時作成）

@@ -124,8 +124,9 @@ class ReasoningEffortGranularityTest {
             availableEffortLevels(ReasoningEffortGranularity.Graded(setOf("high", "low", "medium")))
         )
         // 3 値とは限らない (例: minimal / low のみ比較するテンプレート)。
+        // 既知レベルは KNOWN_EFFORT_ORDER (minimal < low < medium < high) の順で並ぶ。
         assertEquals(
-            listOf("low", "minimal"),
+            listOf("minimal", "low"),
             availableEffortLevels(ReasoningEffortGranularity.Graded(setOf("low", "minimal")))
         )
     }

@@ -1,6 +1,7 @@
 package com.nezumi_ai.data.inference.prompt
 
 import com.nezumi_ai.data.inference.ChatMarkupSpecExtractor
+import com.nezumi_ai.data.inference.ToolCallTags
 
 /**
  * モデル名 / パスからモデルファミリを推定するヒューリスティックの単一の真実源 (計画書 2.4)。
@@ -269,7 +270,41 @@ object ModelNameHeuristics {
             template.contains("tool_calls") ||
             template.contains("<tool_call>") ||
             template.contains("<function=") ||
-            template.contains("<tools>")
+            template.contains("<tools>") ||
+            ToolCallTags.GEMMA4_TOOL_CALL_OPEN in template ||
+            ToolCallTags.GEMMA4_TOOL_CALL_CLOSE in template
+
+    /**
+     * chat_template が Thinking 制御を宣言しているか。
+     * モデル設定の Thinking トグルは、これが true のときだけ有効化する。
+     */
+    fun templateDeclaresThinking(template: String): Boolean {
+        if (template.isBlank()) return false
+        return template.contains("enable_thinking") ||
+            ToolCallTags.THINK_OPEN in template ||
+            ToolCallTags.GEMMA_THINK_TRIGGER in template ||
+            ToolCallTags.QWEN_NO_THINK_COMMAND in template ||
+            containsStandaloneQwenThinkCommand(template) ||
+            (ToolCallTags.CHANNEL_OPEN in template && ToolCallTags.CHANNEL_CLOSE in template)
+    }
+
+    /**
+     * Qwen の `/think` ソフトスイッチだけを見る。
+     * `</think>` や `<|/think|>` に含まれる `/think` 部分文字列は除外する。
+     */
+    private fun containsStandaloneQwenThinkCommand(template: String): Boolean {
+        val cmd = ToolCallTags.QWEN_THINK_COMMAND
+        var searchFrom = 0
+        while (true) {
+            val idx = template.indexOf(cmd, searchFrom)
+            if (idx < 0) return false
+            val before = template.substring(0, idx)
+            val isCloseTagFragment =
+                before.endsWith("<") || before.endsWith("</") || before.endsWith("<|")
+            if (!isCloseTagFragment) return true
+            searchFrom = idx + cmd.length
+        }
+    }
 
     /**
      * チャットテンプレートが `reasoning_effort` 変数を解釈するかどうか。

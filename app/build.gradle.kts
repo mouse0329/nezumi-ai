@@ -190,6 +190,13 @@ android {
         }
     }
 
+    testOptions {
+        unitTests {
+            // android.util.Log などのスタブが「not mocked」で例外を投げるのを防ぐ。
+            isReturnDefaultValues = true
+        }
+    }
+
     buildFeatures {
         compose = true
         viewBinding = true
@@ -361,6 +368,9 @@ dependencies {
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.16.1")
+    // android.jar の org.json はスタブ (not mocked) なので、JVM 単体テスト用に実装を入れる。
+    testImplementation("org.json:json:20240303")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
     debugImplementation("androidx.compose.ui:ui-tooling")

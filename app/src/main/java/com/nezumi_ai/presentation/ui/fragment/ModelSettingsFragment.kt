@@ -128,6 +128,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.platform.LocalUriHandler
+import com.nezumi_ai.data.inference.GgufFormatResolver
 import com.nezumi_ai.data.inference.PromptTemplateStore
 import com.nezumi_ai.utils.GgufMetadataReader
 import com.nezumi_ai.utils.ImportedModelCapabilities
@@ -231,6 +232,8 @@ open class ModelSettingsFragment : Fragment() {
     private var toolCallingDisableConflictCount by mutableStateOf(0)
     private var capabilityDialogAudioEnabled by mutableStateOf(false)
     private var capabilityDialogThinkingEnabled by mutableStateOf(false)
+    private var capabilityDialogThinkingDefined by mutableStateOf(false)
+    private var capabilityDialogCachedAutoTemplate by mutableStateOf<String?>(null)
     private var capabilityDialogToolCallingEnabled by mutableStateOf(false)
     private var capabilityDialogMmprojPath by mutableStateOf("")
     private var capabilityDialogCurrentCapabilities by mutableStateOf<ImportedModelCapabilities?>(null)
@@ -1116,6 +1119,26 @@ open class ModelSettingsFragment : Fragment() {
             }
             modelSettingsDialogModel = null
         }) {
+            LaunchedEffect(
+                modelSettingsDialogModel,
+                capabilityDialogTemplateMode,
+                capabilityDialogTemplateCustom,
+                capabilityDialogCachedAutoTemplate
+            ) {
+                val path = modelSettingsDialogModel?.path ?: return@LaunchedEffect
+                val defined = dialogTemplateDeclaresThinking()
+                capabilityDialogThinkingDefined = defined
+                if (!defined) {
+                    // 非対応の間は UI 上だけ OFF。ストアは書き換えない (persistThinking = false)。
+                    capabilityDialogThinkingEnabled = false
+                } else if (ImportedModelCapabilityStore.hasThinkingSetting(requireContext(), path)) {
+                    // 保存済みの ON/OFF を復元する (非対応 → 対応に戻したとき UI が OFF のまま残るのを防ぐ)。
+                    capabilityDialogThinkingEnabled =
+                        ImportedModelCapabilityStore.get(requireContext(), path).thinkingEnabled
+                } else if (!capabilityDialogThinkingEnabled) {
+                    capabilityDialogThinkingEnabled = true
+                }
+            }
             @OptIn(FlowPreview::class)
             LaunchedEffect(modelSettingsDialogModel) {
                 // ダイアログ内の全値を snapshotFlow で監視し、350ms でデバウンスして自動保存する。
@@ -1343,20 +1366,20 @@ open class ModelSettingsFragment : Fragment() {
                             colors = nezumiSwitchColors()
                         )
                     }
-                    // Thinking トグルは GGUF/LiteRT-LM 両方（外部インポート .task / .litertlm 含む）で表示する。
-                    // LiteRT-LM 側でも SamplerConfig の enable_thinking を通してモデルに伝達されるため、
-                    // 対応モデル (Gemma3n / Qwen3 系 など) を外部から取り込んだ場合にも Thinking を有効化できる。
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(stringResource(id = R.string.model_settings_enable_thinking), color = MaterialTheme.colorScheme.onSurface)
-                        Switch(
-                            checked = capabilityDialogThinkingEnabled,
-                            onCheckedChange = { capabilityDialogThinkingEnabled = it },
-                            colors = nezumiSwitchColors()
-                        )
+                    // Thinking トグルはプロンプトテンプレートが Thinking を定義しているときだけ出す。
+                    if (capabilityDialogThinkingDefined) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(stringResource(id = R.string.model_settings_enable_thinking), color = MaterialTheme.colorScheme.onSurface)
+                            Switch(
+                                checked = capabilityDialogThinkingEnabled,
+                                onCheckedChange = { capabilityDialogThinkingEnabled = it },
+                                colors = nezumiSwitchColors()
+                            )
+                        }
                     }
                     if (supportsToolCalling) {
                         Row(
@@ -4970,6 +4993,15 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
+    private fun dialogTemplateDeclaresThinking(): Boolean {
+        val template = when (capabilityDialogTemplateMode) {
+            PromptTemplateStore.MODE_CUSTOM -> capabilityDialogTemplateCustom
+            else -> capabilityDialogCachedAutoTemplate
+        }
+        return com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
+            .templateDeclaresThinking(template.orEmpty())
+    }
+
     private fun openModelSettingsDialog(model: ModelFileManager.ImportedTaskModel) {
         // 初期値ロード中は自動保存を流さない (state の初期化自体で保存されるのを防ぐ)。
         modelSettingsAutoSaveSuspended = true
@@ -4979,7 +5011,8 @@ open class ModelSettingsFragment : Fragment() {
         val caps = ImportedModelCapabilityStore.get(requireContext(), model.path)
         capabilityDialogImageEnabled = caps.imageEnabled
         capabilityDialogAudioEnabled = caps.audioEnabled
-        capabilityDialogThinkingEnabled = caps.thinkingEnabled
+        capabilityDialogThinkingDefined = false
+        capabilityDialogCachedAutoTemplate = null
         capabilityDialogToolCallingEnabled = caps.toolCallingEnabled
         capabilityDialogMmprojPath = caps.mmprojPath ?: ""
         capabilityDialogCurrentCapabilities = caps
@@ -4998,6 +5031,20 @@ open class ModelSettingsFragment : Fragment() {
         capabilityDialogTemplateError = null
         capabilityDialogTemplateExpanded = tplSel.mode != PromptTemplateStore.MODE_AUTO
         viewLifecycleOwner.lifecycleScope.launch {
+            val autoTemplate = withContext(Dispatchers.IO) {
+                runCatching {
+                    GgufFormatResolver.resolveChatTemplateText(requireContext(), model.path)
+                }.getOrNull()
+            }
+            capabilityDialogCachedAutoTemplate = autoTemplate
+            val thinkingDefined = dialogTemplateDeclaresThinking()
+            capabilityDialogThinkingDefined = thinkingDefined
+            capabilityDialogThinkingEnabled = when {
+                !thinkingDefined -> false
+                ImportedModelCapabilityStore.hasThinkingSetting(requireContext(), model.path) ->
+                    caps.thinkingEnabled
+                else -> true
+            }
             settingsDialogStopTokens = withContext(Dispatchers.IO) {
                 if (model.path.lowercase().endsWith(".gguf")) {
                     settingsRepository.getStopTokensForModel(model.path).joinToString(", ")
@@ -5050,7 +5097,7 @@ open class ModelSettingsFragment : Fragment() {
             imageEnabled = capabilityDialogImageEnabled,
             audioEnabled = capabilityDialogAudioEnabled,
             mmprojPath = capabilityDialogMmprojPath.ifBlank { null },
-            thinkingEnabled = capabilityDialogThinkingEnabled,
+            thinkingEnabled = capabilityDialogThinkingDefined && capabilityDialogThinkingEnabled,
             displayName = displayName.trim().ifBlank { null },
             toolCallingEnabled = capabilityDialogToolCallingEnabled
         )
@@ -5075,7 +5122,8 @@ open class ModelSettingsFragment : Fragment() {
                 ImportedModelCapabilityStore.set(
                     requireContext(),
                     model.path,
-                    newCapabilities
+                    newCapabilities,
+                    persistThinking = capabilityDialogThinkingDefined
                 )
                 if (isGguf) {
                     settingsRepository.updateStopTokensForModel(model.path, tokens)
@@ -5109,7 +5157,8 @@ open class ModelSettingsFragment : Fragment() {
             ImportedModelCapabilityStore.set(
                 requireContext(),
                 model.path,
-                newCapabilities
+                newCapabilities,
+                persistThinking = capabilityDialogThinkingDefined
             )
             if (isGguf) {
                 settingsRepository.updateStopTokensForModel(model.path, stopTokens)
@@ -5236,7 +5285,9 @@ open class ModelSettingsFragment : Fragment() {
                                 if (existing.mmprojPath == null || !File(existing.mmprojPath).exists()) {
                                     ImportedModelCapabilityStore.set(
                                         ctx, mainModel.absolutePath,
-                                        existing.copy(imageEnabled = true, mmprojPath = outPath)
+                                        existing.copy(imageEnabled = true, mmprojPath = outPath),
+                                        persistThinking = ImportedModelCapabilityStore
+                                            .hasThinkingSetting(ctx, mainModel.absolutePath)
                                     )
                                 }
                             }

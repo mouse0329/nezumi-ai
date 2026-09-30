@@ -63,11 +63,17 @@ object GgufFormatResolver {
         appContext: Context?,
     ): ModelNameHeuristics.ThinkingPromptStyle {
         val userOverride = hasExplicitUserTemplate(appContext, modelPath)
+        val chatTemplate = resolveChatTemplateText(appContext, modelPath)
+        // テンプレートが空ならモデル名から Gemma4 スタイルを推定せず、
+        // GPT-2 相当のプレーン completion (制御タグなし) にする。
+        if (chatTemplate.isNullOrBlank() && !userOverride) {
+            return ModelNameHeuristics.ThinkingPromptStyle.PLAIN_COMPLETION
+        }
         return ModelNameHeuristics.resolveThinkingPromptStyle(
             modelPathOrName = modelPath,
             hasExplicitUserTemplate = userOverride,
             isGpt2ArchitectureHint = isGpt2Architecture(modelPath),
-            chatTemplate = resolveChatTemplateText(appContext, modelPath),
+            chatTemplate = chatTemplate,
         )
     }
 
@@ -103,6 +109,17 @@ object GgufFormatResolver {
         }
         val file = File(modelPath)
         if (!file.isFile) return null
-        return runCatching { GgufMetadataReader.readChatTemplate(file) }.getOrNull()
+        // supportsThinking() などが UI / 生成のたびに呼ぶため、GGUF ヘッダーの読み込みは
+        // (パス, 更新日時, サイズ) をキーにキャッシュする。null (テンプレなし) もキャッシュする。
+        val key = "$modelPath|${file.lastModified()}|${file.length()}"
+        embeddedTemplateCache[key]?.let { return it.value }
+        val read = runCatching { GgufMetadataReader.readChatTemplate(file) }.getOrNull()
+        embeddedTemplateCache[key] = CachedTemplate(read)
+        return read
     }
+
+    private class CachedTemplate(val value: String?)
+
+    private val embeddedTemplateCache =
+        java.util.concurrent.ConcurrentHashMap<String, CachedTemplate>()
 }

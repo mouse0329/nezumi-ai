@@ -9,7 +9,8 @@ import com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.ToolCallFormat
  * Thinking / Tool-call の区切り仕様。
  *
  * モデル名ハードコードの代わりに、テンプレートに実際に書かれているタグと制御変数を使う。
- * テンプレートが読めないときだけ [DEFAULT]（既知タグの和集合）へフォールバックする。
+ * テンプレートが空 / 未設定のときは Gemma 4 用 [DEFAULT] ではなく
+ * [NONE]（GPT-2 相当のプレーン completion、thinking 制御なし）を使う。
  */
 data class ChatMarkupSpec(
     val thinkingPairs: List<Pair<String, String>>,
@@ -54,12 +55,27 @@ data class ChatMarkupSpec(
         )
 
         /**
+         * テンプレート未設定 / 空文字用。chat / thinking 制御タグを一切仮定しない
+         * (GPT-2 completion と同じ扱い)。
+         */
+        val NONE: ChatMarkupSpec = ChatMarkupSpec(
+            thinkingPairs = emptyList(),
+            toolCallPairs = emptyList(),
+            channelOpen = null,
+            channelClose = null,
+            thoughtLabel = null,
+            thinkingStyle = ThinkingPromptStyle.PLAIN_COMPLETION,
+            toolCallFormat = null,
+            supportsThinking = false,
+            supportsTools = false,
+        )
+
+        /**
          * Jinja / chat_template 文字列を静的スキャンして仕様を組み立てる。
-         * テンプレートに無いタグはパーサのフォールバック用に [DEFAULT] の和集合へ足す
-         * （モデルがテンプレと違うタグを吐いても分離できるようにする）。
+         * 空テンプレートは Gemma 4 用 [DEFAULT] ではなく [NONE] を返す。
          */
         fun fromChatTemplate(template: String?): ChatMarkupSpec {
-            if (template.isNullOrBlank()) return DEFAULT
+            if (template.isNullOrBlank()) return NONE
             return ChatMarkupSpecExtractor.extract(template)
         }
     }
@@ -104,12 +120,7 @@ object ChatMarkupSpecExtractor {
         val hasChannel =
             ToolCallTags.CHANNEL_OPEN in template && ToolCallTags.CHANNEL_CLOSE in template
 
-        val supportsThinking =
-            template.contains("enable_thinking") ||
-                ToolCallTags.THINK_OPEN in template ||
-                ToolCallTags.GEMMA_THINK_TRIGGER in template ||
-                ToolCallTags.QWEN_THINK_COMMAND in template ||
-                hasChannel
+        val supportsThinking = ModelNameHeuristics.templateDeclaresThinking(template)
 
         val supportsTools = ModelNameHeuristics.templateDeclaresToolSupport(template)
 

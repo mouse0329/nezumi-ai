@@ -52,11 +52,18 @@ object ImportedModelCapabilityStore {
         )
     }
 
-    fun set(context: Context, modelPath: String, capabilities: ImportedModelCapabilities) {
+    fun set(
+        context: Context,
+        modelPath: String,
+        capabilities: ImportedModelCapabilities,
+        persistThinking: Boolean = true,
+    ) {
         prefs(context).edit()
             .putBoolean(imageKey(modelPath), capabilities.imageEnabled)
             .putBoolean(audioKey(modelPath), capabilities.audioEnabled)
-            .putBoolean(thinkingKey(modelPath), capabilities.thinkingEnabled)
+            .apply {
+                if (persistThinking) putBoolean(thinkingKey(modelPath), capabilities.thinkingEnabled)
+            }
             .putBoolean(toolCallingKey(modelPath), capabilities.toolCallingEnabled)
             .apply {
                 if (capabilities.mmprojPath != null) putString(mmprojKey(modelPath), capabilities.mmprojPath)
@@ -67,6 +74,10 @@ object ImportedModelCapabilityStore {
             }
             .commit()
     }
+
+    /** Thinking フラグが一度でも保存されているか (未設定と明示 OFF を区別する)。 */
+    fun hasThinkingSetting(context: Context, modelPath: String): Boolean =
+        prefs(context).contains(thinkingKey(modelPath))
 
     /**
      * チャットテンプレートが `reasoning_effort` 変数を解釈するかどうか。

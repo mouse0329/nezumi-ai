@@ -15,6 +15,33 @@ class Gemma4ThinkingParserTest {
     }
 
     @Test
+    fun parse_doesNotTreatUnmarkedShortAnswerAsThinkingByDefault() {
+        val result = Gemma4ThinkingParser.parse(
+            rawInput = "短い回答です",
+            treatUnmarkedInputAsThinking = false
+        )
+        assertNull(result.thinking)
+        assertEquals("短い回答です", result.answer)
+    }
+
+    @Test
+    fun parseStreaming_splitsWhenCloseTagArrivesAfterUnmarkedThinking() {
+        val mid = Gemma4ThinkingParser.parseStreaming(
+            rawInput = "まだ思考中",
+            treatUnmarkedInputAsThinking = true
+        )
+        assertEquals("まだ思考中", mid.thinking)
+        assertEquals("", mid.answer)
+
+        val done = Gemma4ThinkingParser.parseStreaming(
+            rawInput = "まだ思考中</think>本文",
+            treatUnmarkedInputAsThinking = true
+        )
+        assertEquals("まだ思考中", done.thinking)
+        assertEquals("本文", done.answer)
+    }
+
+    @Test
     fun parseStreaming_treatsUnmarkedTextAsThinkingWhenRequested() {
         val result = Gemma4ThinkingParser.parseStreaming(
             rawInput = "first thought",

@@ -1844,7 +1844,9 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
                 com.nezumi_ai.utils.ImportedModelCapabilityStore.set(
                     context,
                     modelFile.absolutePath,
-                    caps.copy(mmprojPath = mmprojFile.absolutePath, imageEnabled = true)
+                    caps.copy(mmprojPath = mmprojFile.absolutePath, imageEnabled = true),
+                    persistThinking = com.nezumi_ai.utils.ImportedModelCapabilityStore
+                        .hasThinkingSetting(context, modelFile.absolutePath)
                 )
                 Log.d(TAG, "Linked mmproj ${mmprojFile.name} to model ${modelFile.name}")
             }

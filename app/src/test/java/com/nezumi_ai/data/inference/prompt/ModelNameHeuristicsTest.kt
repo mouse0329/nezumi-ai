@@ -357,30 +357,6 @@ class ModelNameHeuristicsTest {
         )
     }
 
-    // ---- guessGgufFormat ----
-
-    @Test
-    fun guessGgufFormat_routesEachFamily() {
-        assertEquals(PromptFormat.PlainCompletion, ModelNameHeuristics.guessGgufFormat("gpt2-medium.gguf"))
-        assertEquals(PromptFormat.GemmaChat, ModelNameHeuristics.guessGgufFormat("gemma-3-4b-it.gguf"))
-        // Bug fix(#45): Gemma 4 も GEMMA_CHAT (CHATML に振ると Thinking が発火しない)
-        assertEquals(PromptFormat.GemmaChat, ModelNameHeuristics.guessGgufFormat("gemma-4-e4b-it.gguf"))
-        assertEquals(PromptFormat.ChatMl, ModelNameHeuristics.guessGgufFormat("qwen3-14b.gguf"))
-        assertEquals(PromptFormat.ChatMl, ModelNameHeuristics.guessGgufFormat("llama-3.2-3b-instruct.gguf"))
-    }
-
-    @Test
-    fun guessGgufFormat_userTemplateOverrideDisablesGpt2PlainCompletion() {
-        assertEquals(
-            PromptFormat.PlainCompletion,
-            ModelNameHeuristics.guessGgufFormat("gpt2.gguf", hasExplicitUserTemplate = false)
-        )
-        assertEquals(
-            PromptFormat.ChatMl,
-            ModelNameHeuristics.guessGgufFormat("gpt2.gguf", hasExplicitUserTemplate = true)
-        )
-    }
-
     // ---- 派生ヘルパー ----
 
     @Test

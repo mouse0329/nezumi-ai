@@ -110,6 +110,24 @@ object ThinkingLeakSalvage {
     }
 
     /**
+     * 閉じタグも開きタグもない最終出力を thinking に入れたままにしない。
+     * Thinking ON のストリーミング先流しで短答が thinking 側に残った場合の保険。
+     */
+    fun restoreUnmarkedAnswerIfNoThinkBoundary(
+        thinking: String?,
+        content: String,
+        raw: String,
+        spec: ChatMarkupSpec,
+        implicitPrefill: Boolean,
+    ): Pair<String?, String> {
+        if (content.isNotBlank() || thinking.isNullOrBlank()) return thinking to content
+        if (implicitPrefill || spec.containsThinkingOpen(raw) || spec.containsThinkingClose(raw)) {
+            return thinking to content
+        }
+        return null to thinking
+    }
+
+    /**
      * 既存 thinkingContent と content から救出した思考本文をマージする。
      * 重複している場合は既存側を優先する。
      */
