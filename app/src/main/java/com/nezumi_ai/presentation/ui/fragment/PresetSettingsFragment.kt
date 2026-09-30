@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -49,6 +48,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -159,7 +159,11 @@ class PresetSettingsFragment : Fragment() {
     @Composable
     private fun PresetScreen() {
         val scope = rememberCoroutineScope()
-        val presets by presetRepository.observePresets().collectAsState(initial = emptyList())
+        // ★ パフォーマンス修正: observePresets() は呼ぶたびに新しい Flow を返す。remember せずに
+        //   collectAsState へ渡すと、検索入力・ドラッグの入れ替え・選択などで PresetScreen が
+        //   再コンポーズされるたびに購読が張り直され、Room の再クエリが走っていた。
+        val presetsFlow = remember { presetRepository.observePresets() }
+        val presets by presetsFlow.collectAsState(initial = emptyList())
         var currentPresetId by remember {
             mutableStateOf(PreferencesHelper.getCurrentPresetId(requireContext()))
         }
@@ -238,6 +242,10 @@ class PresetSettingsFragment : Fragment() {
 
         // ドラッグ中は draggingList を使い、それ以外は sortedDisplayed を使う
         val visibleList = draggingList ?: sortedDisplayed
+        // ★ パフォーマンス修正: 行のコールバックが visibleList / index を直接捕まえていると、
+        //   ドラッグの入れ替えのたびに全行のラムダが作り直され、全行が再コンポーズされる。
+        //   State 経由で最新値を呼び出し時に読むことで、ラムダの中身を安定させる。
+        val visibleListState = rememberUpdatedState(visibleList)
 
         if (showCreateDialog) {
             PresetEditDialog(
@@ -374,11 +382,17 @@ class PresetSettingsFragment : Fragment() {
                     canMoveUp = index > 0,
                     canMoveDown = index < visibleList.lastIndex,
                     isDragging = isDragging,
-                    dragOffsetY = if (isDragging) dragOffsetY else 0f,
+                    // ★ State を composition で読まず、graphicsLayer 内(描画フェーズ)で読ませる。
+                    //   これでドラッグ中に毎フレーム行が再コンポーズされなくなる。
+                    dragOffsetYProvider = { if (isDragging) dragOffsetY else 0f },
                     onDragStart = {
-                        dragIndex = index
-                        dragOffsetY = 0f
-                        draggingList = visibleList.toMutableList()
+                        val list = visibleListState.value
+                        val currentIndex = list.indexOfFirst { it.id == preset.id }
+                        if (currentIndex >= 0) {
+                            dragIndex = currentIndex
+                            dragOffsetY = 0f
+                            draggingList = list.toMutableList()
+                        }
                     },
                     onDrag = { dy, pointerYInViewport, threshold ->
                         // threshold はカード高さのみなので、spacedBy 分を加えて
@@ -491,16 +505,22 @@ class PresetSettingsFragment : Fragment() {
                     },
                     onMoveUp = {
                         scope.launch {
-                            val ids = visibleList.toMutableList()
-                            val tmp = ids[index - 1]; ids[index - 1] = ids[index]; ids[index] = tmp
-                            presetRepository.reorder(ids.map { it.id })
+                            val ids = visibleListState.value.toMutableList()
+                            val i = ids.indexOfFirst { it.id == preset.id }
+                            if (i > 0) {
+                                val tmp = ids[i - 1]; ids[i - 1] = ids[i]; ids[i] = tmp
+                                presetRepository.reorder(ids.map { it.id })
+                            }
                         }
                     },
                     onMoveDown = {
                         scope.launch {
-                            val ids = visibleList.toMutableList()
-                            val tmp = ids[index + 1]; ids[index + 1] = ids[index]; ids[index] = tmp
-                            presetRepository.reorder(ids.map { it.id })
+                            val ids = visibleListState.value.toMutableList()
+                            val i = ids.indexOfFirst { it.id == preset.id }
+                            if (i >= 0 && i < ids.lastIndex) {
+                                val tmp = ids[i + 1]; ids[i + 1] = ids[i]; ids[i] = tmp
+                                presetRepository.reorder(ids.map { it.id })
+                            }
                         }
                     },
                     onSelect = {
@@ -543,7 +563,7 @@ class PresetSettingsFragment : Fragment() {
         canMoveUp: Boolean,
         canMoveDown: Boolean,
         isDragging: Boolean,
-        dragOffsetY: Float,
+        dragOffsetYProvider: () -> Float,
         onDragStart: () -> Unit,
         onDrag: (Float, Float, Float) -> Unit,
         onDragEnd: () -> Unit,
@@ -553,8 +573,16 @@ class PresetSettingsFragment : Fragment() {
         onEdit: () -> Unit,
         onDelete: () -> Unit
     ) {
-        var itemHeightPx by remember { mutableFloatStateOf(0f) }
-        val thresholdPx = if (itemHeightPx > 0f) itemHeightPx else 120f
+        // ★ パフォーマンス/バグ修正:
+        //   ・以前は onGloballyPositioned で高さを state に書き込んでいたため、行が画面に入るたびに
+        //     追加の再コンポーズが走っていた。PointerInputScope の size から直接読めば state は不要。
+        //   ・pointerInput(Unit) のブロックは最初の composition で捕まえたラムダ / 値を使い続ける。
+        //     (旧実装では thresholdPx が初回値の 120f に固定され、index を捕まえた onDragStart も
+        //      並び替え・検索後に古い index を指していた。)
+        //     rememberUpdatedState 経由で常に最新のコールバックを呼ぶ。
+        val currentOnDragStart by rememberUpdatedState(onDragStart)
+        val currentOnDrag by rememberUpdatedState(onDrag)
+        val currentOnDragEnd by rememberUpdatedState(onDragEnd)
 
         // 選択中のプリセットはチェックマークだけだと見落としやすいので、
         // 背景色 + ボーダー + 左のアクセントバーで強くハイライトする。
@@ -562,16 +590,16 @@ class PresetSettingsFragment : Fragment() {
             modifier = Modifier
                 .fillMaxWidth()
                 .zIndex(if (isDragging) 1f else 0f)
-                .graphicsLayer { translationY = dragOffsetY }
-                .onGloballyPositioned { coordinates ->
-                    itemHeightPx = coordinates.size.height.toFloat()
-                }
+                .graphicsLayer { translationY = dragOffsetYProvider() }
                 .pointerInput(Unit) {
                     detectDragGesturesAfterLongPress(
-                        onDragStart = { onDragStart() },
-                        onDrag = { change, dragAmount -> onDrag(dragAmount.y, change.position.y, thresholdPx) },
-                        onDragEnd = { onDragEnd() },
-                        onDragCancel = { onDragEnd() }
+                        onDragStart = { currentOnDragStart() },
+                        onDrag = { change, dragAmount ->
+                            val thresholdPx = if (size.height > 0) size.height.toFloat() else 120f
+                            currentOnDrag(dragAmount.y, change.position.y, thresholdPx)
+                        },
+                        onDragEnd = { currentOnDragEnd() },
+                        onDragCancel = { currentOnDragEnd() }
                     )
                 }
                 .clickable(onClick = onSelect)
@@ -678,6 +706,37 @@ class PresetSettingsFragment : Fragment() {
         }
     }
 
+    /**
+     * ★ パフォーマンス修正: ツール / スキル / MCP サーバーのチェック行を独立した Composable に切り出す。
+     *   これらは 1 つの LazyColumn item の中に forEach で並んでおり、以前は 1 行をトグルするたびに
+     *   全行の Row / Checkbox が再コンポーズされていた。引数を Boolean / String / 安定ラムダにして、
+     *   状態が変わった行だけが再コンポーズされる (それ以外は skip される) ようにする。
+     */
+    @Composable
+    private fun PresetCheckRow(
+        title: String,
+        subtitle: String?,
+        checked: Boolean,
+        onToggle: () -> Unit
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onToggle),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(checked = checked, onCheckedChange = { onToggle() })
+            if (subtitle == null) {
+                Text(title)
+            } else {
+                Column {
+                    Text(title)
+                    Text(subtitle, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+
     @Composable
     private fun PresetEditDialog(
         initialPreset: PresetEntity?,
@@ -740,6 +799,24 @@ class PresetSettingsFragment : Fragment() {
             mutableStateOf(McpPreferences.decodeServerIds(initialPreset?.mcpServerIds))
         }
         var showMcpManager by remember { mutableStateOf(false) }
+
+        // ツール行のトグル処理。enabledTools を呼び出し時に読む (State 経由) ため remember で安定化でき、
+        // トグルのたびに全行のラムダが作り直されて全行が再コンポーズされるのを防ぐ。
+        val onToolToggle: (String) -> Unit = remember {
+            { toolId: String ->
+                val willEnable = toolId !in enabledTools
+                // フラッシュライトを有効化するときはカメラ権限を先に確保する。
+                if (toolId == PresetConstants.TOOL_FLASHLIGHT && willEnable) {
+                    ensureCameraPermissionForFlashlight { granted ->
+                        if (granted) {
+                            enabledTools = toggleTool(enabledTools, toolId)
+                        }
+                    }
+                } else {
+                    enabledTools = toggleTool(enabledTools, toolId)
+                }
+            }
+        }
 
         val selectedModelToolCallingAllowed by remember(modelId) {
             derivedStateOf {
@@ -881,17 +958,14 @@ class PresetSettingsFragment : Fragment() {
                         if (skillsEnabled) item {
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 installedSkills.forEach { skill ->
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().clickable {
+                                    PresetCheckRow(
+                                        title = skill.name,
+                                        subtitle = skill.description,
+                                        checked = skill.name !in hiddenSkillNames,
+                                        onToggle = {
                                             hiddenSkillNames = toggleId(hiddenSkillNames, skill.name)
-                                        },
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Checkbox(checked = skill.name !in hiddenSkillNames, onCheckedChange = {
-                                            hiddenSkillNames = toggleId(hiddenSkillNames, skill.name)
-                                        })
-                                        Column { Text(skill.name); Text(skill.description, style = MaterialTheme.typography.bodySmall) }
-                                    }
+                                        }
+                                    )
                                 }
                                 if (installedSkills.isEmpty()) Text(stringResource(R.string.preset_edit_skills_empty), style = MaterialTheme.typography.bodySmall)
                             }
@@ -900,31 +974,12 @@ class PresetSettingsFragment : Fragment() {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(stringResource(id = R.string.preset_edit_tools_label), fontWeight = FontWeight.Bold)
                                 toolOptions.forEach { option ->
-                                    // フラッシュライトを有効化するときはカメラ権限を先に確保する。
-                                    val handleToggle: () -> Unit = {
-                                        val willEnable = option.id !in enabledTools
-                                        if (option.id == PresetConstants.TOOL_FLASHLIGHT && willEnable) {
-                                            ensureCameraPermissionForFlashlight { granted ->
-                                                if (granted) {
-                                                    enabledTools = toggleTool(enabledTools, option.id)
-                                                }
-                                            }
-                                        } else {
-                                            enabledTools = toggleTool(enabledTools, option.id)
-                                        }
-                                    }
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable { handleToggle() },
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Checkbox(
-                                            checked = option.id in enabledTools,
-                                            onCheckedChange = { handleToggle() }
-                                        )
-                                        Text(option.label)
-                                    }
+                                    PresetCheckRow(
+                                        title = option.label,
+                                        subtitle = null,
+                                        checked = option.id in enabledTools,
+                                        onToggle = { onToolToggle(option.id) }
+                                    )
                                 }
                                 Divider(modifier = Modifier.padding(vertical = 4.dp))
                                 // MCP: プリセットのツール一覧の直下に配置
@@ -952,28 +1007,14 @@ class PresetSettingsFragment : Fragment() {
                                 }
                                 if (mcpServers.isNotEmpty()) {
                                     mcpServers.forEach { server ->
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable {
-                                                    selectedMcpServerIds = toggleId(selectedMcpServerIds, server.id)
-                                                },
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Checkbox(
-                                                checked = server.id in selectedMcpServerIds,
-                                                onCheckedChange = {
-                                                    selectedMcpServerIds = toggleId(selectedMcpServerIds, server.id)
-                                                }
-                                            )
-                                            Column {
-                                                Text(server.name)
-                                                Text(
-                                                    text = "${server.transport.label} • ${server.url}",
-                                                    style = MaterialTheme.typography.bodySmall
-                                                )
+                                        PresetCheckRow(
+                                            title = server.name,
+                                            subtitle = "${server.transport.label} • ${server.url}",
+                                            checked = server.id in selectedMcpServerIds,
+                                            onToggle = {
+                                                selectedMcpServerIds = toggleId(selectedMcpServerIds, server.id)
                                             }
-                                        }
+                                        )
                                     }
                                 }
                             }

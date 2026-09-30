@@ -21,17 +21,19 @@ import com.nezumi_ai.R
 /**
  * Noto Sans JP loaded from app assets (`assets/fonts/static/`).
  * Used for the whole Compose UI and kept in sync with PDF export fonts.
+ *
+ * パフォーマンス修正: 各 TTF は約 5.3MB あり、Font(path, assets) は既定で同期ロードされる。
+ * 実際に UI で使われるのは Normal / Medium / SemiBold / Bold のみ (Thin / ExtraLight / Light /
+ * ExtraBold / Black は合計 5 箇所) のため、この 4 ウェイトだけを登録する。
+ * 未登録のウェイトは Compose が最も近い登録済みウェイトへ自動フォールバックする
+ * (Thin/ExtraLight/Light -> Normal, ExtraBold/Black -> Bold)。
+ * 使われなくなった TTF は assets から削除してよい (Regular / Bold は PDF 出力も使う)。
  */
 fun createNotoSansJpFontFamily(assets: AssetManager): FontFamily = FontFamily(
-    Font("fonts/static/NotoSansJP-Thin.ttf", assets, FontWeight.Thin),
-    Font("fonts/static/NotoSansJP-ExtraLight.ttf", assets, FontWeight.ExtraLight),
-    Font("fonts/static/NotoSansJP-Light.ttf", assets, FontWeight.Light),
     Font("fonts/static/NotoSansJP-Regular.ttf", assets, FontWeight.Normal),
     Font("fonts/static/NotoSansJP-Medium.ttf", assets, FontWeight.Medium),
     Font("fonts/static/NotoSansJP-SemiBold.ttf", assets, FontWeight.SemiBold),
     Font("fonts/static/NotoSansJP-Bold.ttf", assets, FontWeight.Bold),
-    Font("fonts/static/NotoSansJP-ExtraBold.ttf", assets, FontWeight.ExtraBold),
-    Font("fonts/static/NotoSansJP-Black.ttf", assets, FontWeight.Black),
 )
 
 /**

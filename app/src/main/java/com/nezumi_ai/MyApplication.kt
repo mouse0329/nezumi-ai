@@ -10,6 +10,7 @@ import android.app.ActivityManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import androidx.compose.ui.text.font.createFontFamilyResolver
 import androidx.work.Configuration
 import androidx.work.WorkManager
 import com.nezumi_ai.data.database.NezumiAiDatabase
@@ -126,6 +127,7 @@ class MyApplication : Application() {
         //   ディスク読み込みが UI スレッドを止めるのを防止する。
         //   fire-and-forget: 失敗しても既存の遅延初期化パスで復旧できる。
         warmupStorageAsync()
+        warmupFontsAsync()
         
         // Initialize VOICEVOX (フラグが false の場合はスタブが返るだけで何もしない)
         voicevoxManager = VoicevoxManager(this)
@@ -267,6 +269,26 @@ class MyApplication : Application() {
      * Room DB と SharedPreferences を IO スレッドで事前 warmup する。
      * これにより UI スレッドから初めて触る際のブロッキングを回避する。
      */
+    /**
+     * パフォーマンス修正: Noto Sans JP の各 TTF (約 5.3MB) は Compose の既定 (Blocking) では
+     * 「そのウェイトが初めて描画される瞬間」にメインスレッドで読み込まれ、初回の画面遷移や
+     * スクロールがカクつく原因になる。FontFamily.Resolver.preload はグローバルの
+     * TypefaceRequestCache を事前に温めるため、バックグラウンドで先に読み込んでおく。
+     * (AndroidAssetFont は path 等で equals 判定されるので、UI 側で別インスタンスの
+     *  FontFamily を作ってもキャッシュに当たる。)
+     * fire-and-forget: 失敗しても通常の遅延ロードに戻るだけ。
+     */
+    private fun warmupFontsAsync() {
+        applicationScope.launch(Dispatchers.Default) {
+            runCatching {
+                createFontFamilyResolver(this@MyApplication)
+                    .preload(
+                        com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily(assets)
+                    )
+            }.onFailure { Log.w(TAG, "warmupFontsAsync failed", it) }
+        }
+    }
+
     private fun warmupStorageAsync() {
         applicationScope.launch(Dispatchers.IO) {
             try {
