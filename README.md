@@ -55,9 +55,8 @@ nezumi-aiは、インターネット接続なしでも動作するプライベ�
 git clone https://github.com/mouse0329/nezumi-ai.git
 cd nezumi-ai
 
-# 2. サブモジュールを初期化
-# （app/src/main/vendor/llama.cpp: llama_bridge (JNI) がリンクする本家 llama.cpp）
-git submodule update --init --recursive
+# 2. llama.cpp サブモジュールを初期化
+git submodule update --init --recursive app/src/main/vendor/llama.cpp
 
 # 3. local.properties を設定
 # (SDK, NDK, 署名情報を設定 - 詳細は下記参照)
@@ -67,11 +66,19 @@ git submodule update --init --recursive
 ./gradlew assembleRelease    # Release APK (署名設定必須)
 ```
 
-> **既にクローン済みでサブモジュールだけ後から取得したい場合**
+> **既にクローン済みでllama.cppだけ後から取得したい場合**
 > ```bash
-> git submodule update --init --recursive
+> git submodule update --init --recursive app/src/main/vendor/llama.cpp
 > ```
 > を忘れると `app/src/main/vendor/llama.cpp` が空のままとなり、`llama_bridge` ターゲットのビルドがスキップされます（CMake側で警告を出しつつ他のターゲットは継続します）。
+
+### 画像生成（MNN）を開発する場合
+
+MNN本体は大きいため、通常のアプリビルドでは取得されません。Nezumi KilnやMNNのネイティブビルドを行う場合にだけ初期化してください。
+
+```bash
+git submodule update --init --recursive third_party/MNN
+```
 
 ### local.properties の設定
 
