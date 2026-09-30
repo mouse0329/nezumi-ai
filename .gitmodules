@@ -1,3 +1,7 @@
 [submodule "app/src/main/vendor/llama.cpp"]
 	path = app/src/main/vendor/llama.cpp
 	url = https://github.com/ggml-org/llama.cpp.git
+[submodule "third_party/MNN"]
+	path = third_party/MNN
+	url = https://github.com/mouse0329/MNN.git
+	branch = mouse0329-custom
