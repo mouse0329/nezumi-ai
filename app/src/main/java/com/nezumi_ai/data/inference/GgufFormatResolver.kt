@@ -67,6 +67,42 @@ object GgufFormatResolver {
             modelPathOrName = modelPath,
             hasExplicitUserTemplate = userOverride,
             isGpt2ArchitectureHint = isGpt2Architecture(modelPath),
+            chatTemplate = resolveChatTemplateText(appContext, modelPath),
         )
+    }
+
+    fun resolveToolCallFormat(
+        modelPath: String,
+        appContext: Context?,
+    ): ModelNameHeuristics.ToolCallFormat {
+        return ModelNameHeuristics.resolveToolCallFormat(
+            modelPathOrName = modelPath,
+            chatTemplate = resolveChatTemplateText(appContext, modelPath),
+        )
+    }
+
+    fun resolveMarkupSpec(
+        modelPath: String,
+        appContext: Context?,
+    ): com.nezumi_ai.data.inference.ChatMarkupSpec {
+        return com.nezumi_ai.data.inference.ChatMarkupSpec.fromChatTemplate(
+            resolveChatTemplateText(appContext, modelPath)
+        )
+    }
+
+    /**
+     * ユーザー選択テンプレートがあればそれ、なければ GGUF 内蔵 `tokenizer.chat_template`。
+     */
+    fun resolveChatTemplateText(appContext: Context?, modelPath: String): String? {
+        if (modelPath.isBlank()) return null
+        if (appContext != null) {
+            val selected = runCatching {
+                PromptTemplateStore.resolveTemplate(appContext, modelPath)
+            }.getOrNull()
+            if (!selected.isNullOrBlank()) return selected
+        }
+        val file = File(modelPath)
+        if (!file.isFile) return null
+        return runCatching { GgufMetadataReader.readChatTemplate(file) }.getOrNull()
     }
 }

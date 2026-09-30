@@ -887,10 +887,11 @@ class GgufInferenceEngine(
             val firstRoundBuffer = StringBuilder()
             val laterRoundBuffer = StringBuilder()
             var emptyModelEchoDetected = false
-            // Gemma 4 判定: モデルパスから 1 回だけ決定してツールループ内で使い回す。
-            // GgufToolCallParser.parse / formatToolResults を Gemma 4 形式
-            // (<|tool_call>call:NAME{...}<tool_call|>) に切り替えるためのフラグ。
-            val isGemma4 = com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.isGemma4Model(ctx.modelPath)
+            // ツール呼び出し形式は GGUF chat_template のタグを優先し、
+            // 読めないときだけモデル名ヒューリスティックへ落とす。
+            val toolCallFormat = GgufFormatResolver.resolveToolCallFormat(ctx.modelPath, appContext)
+            val isGemma4 = toolCallFormat ==
+                com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.ToolCallFormat.GEMMA4
 
             val toolResultCards = mutableListOf<ToolResultCard>()
             while (isActive && toolRound < maxToolRounds) {

@@ -1,5 +1,7 @@
 package com.nezumi_ai.data.inference.prompt
 
+import com.nezumi_ai.data.inference.ChatMarkupSpecExtractor
+
 /**
  * モデル名 / パスからモデルファミリを推定するヒューリスティックの単一の真実源 (計画書 2.4)。
  *
@@ -248,6 +250,17 @@ object ModelNameHeuristics {
     }
 
     /**
+     * chat_template に書かれたタグを優先し、読めないときだけモデル名推定へ落とす。
+     */
+    fun resolveToolCallFormat(
+        modelPathOrName: String,
+        chatTemplate: String? = null,
+    ): ToolCallFormat {
+        ChatMarkupSpecExtractor.inferToolCallFormat(chatTemplate.orEmpty())?.let { return it }
+        return guessToolCallFormat(resolveModelNameForCheck(modelPathOrName).lowercase())
+    }
+
+    /**
      * chat_template 文字列がツールコールを宣言しているかを判定する。
      * GGUF メタデータ (`tokenizer.chat_template`) から読んだテンプレートに対して使う。
      */
@@ -401,7 +414,10 @@ object ModelNameHeuristics {
         modelPathOrName: String,
         hasExplicitUserTemplate: Boolean = false,
         isGpt2ArchitectureHint: Boolean = false,
+        chatTemplate: String? = null,
     ): ThinkingPromptStyle {
+        val fromTemplate = ChatMarkupSpecExtractor.inferThinkingStyle(chatTemplate.orEmpty())
+        if (fromTemplate != null) return fromTemplate
         val name = modelPathOrName.lowercase()
         return when {
             !hasExplicitUserTemplate && isGpt2Model(name, isGpt2ArchitectureHint) ->
@@ -430,8 +446,14 @@ object ModelNameHeuristics {
         modelPathOrName: String,
         hasExplicitUserTemplate: Boolean = false,
         isGpt2ArchitectureHint: Boolean = false,
+        chatTemplate: String? = null,
     ): Boolean {
-        val style = resolveThinkingPromptStyle(modelPathOrName, hasExplicitUserTemplate, isGpt2ArchitectureHint)
+        val style = resolveThinkingPromptStyle(
+            modelPathOrName,
+            hasExplicitUserTemplate,
+            isGpt2ArchitectureHint,
+            chatTemplate,
+        )
         return style == ThinkingPromptStyle.ASSISTANT_TAG ||
             style == ThinkingPromptStyle.GEMMA4_CHANNEL ||
             style == ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL
@@ -445,8 +467,14 @@ object ModelNameHeuristics {
         modelPathOrName: String,
         hasExplicitUserTemplate: Boolean = false,
         isGpt2ArchitectureHint: Boolean = false,
+        chatTemplate: String? = null,
     ): Boolean {
-        val style = resolveThinkingPromptStyle(modelPathOrName, hasExplicitUserTemplate, isGpt2ArchitectureHint)
+        val style = resolveThinkingPromptStyle(
+            modelPathOrName,
+            hasExplicitUserTemplate,
+            isGpt2ArchitectureHint,
+            chatTemplate,
+        )
         return style == ThinkingPromptStyle.QWEN_COMMAND ||
             style == ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL
     }

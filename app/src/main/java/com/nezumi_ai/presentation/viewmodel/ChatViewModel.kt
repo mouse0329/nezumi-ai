@@ -31,7 +31,9 @@ import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.data.inference.MemoryObserver
+import com.nezumi_ai.data.inference.ChatMarkupSpec
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
+import com.nezumi_ai.data.inference.GgufFormatResolver
 import com.nezumi_ai.data.inference.ToolCallTags
 import com.nezumi_ai.data.inference.ThinkingLeakSalvage
 import com.nezumi_ai.data.inference.GgufToolPromptBuilder
@@ -2312,10 +2314,22 @@ class ChatViewModel(
             // Kotlin 側の `<think>` seed は二重適用になるので抑制する。
             val nativeGgufTemplateActive =
                 isGgufEngineModel(engineModelName) && manager.hasGgufChatTemplate()
+            val markupSpec = runCatching {
+                GgufFormatResolver.resolveMarkupSpec(engineModelName, appContext)
+            }.getOrDefault(ChatMarkupSpec.DEFAULT)
+            val resolvedThinkStyle = markupSpec.thinkingStyle
+                ?: ModelNameHeuristics.resolveThinkingPromptStyle(
+                    modelPathOrName = engineModelName,
+                    chatTemplate = GgufFormatResolver.resolveChatTemplateText(appContext, engineModelName),
+                )
+            val usesThinkPrefill =
+                resolvedThinkStyle == ModelNameHeuristics.ThinkingPromptStyle.ASSISTANT_TAG ||
+                    resolvedThinkStyle == ModelNameHeuristics.ThinkingPromptStyle.GEMMA4_CHANNEL ||
+                    resolvedThinkStyle == ModelNameHeuristics.ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL
             val implicitThinkPrefill =
                 config.enableThinking &&
                     isGgufEngineModel(engineModelName) &&
-                    ModelNameHeuristics.usesAssistantThinkingPrefill(engineModelName) &&
+                    usesThinkPrefill &&
                     !nativeGgufTemplateActive
             if (implicitThinkPrefill) {
                 answerBuilder.append("<think>\n")
@@ -2434,17 +2448,22 @@ class ChatViewModel(
                                         finalFromModel != null -> {
                                             finalReceived = true
                                             Log.d(TAG, "FINAL received: length=${finalFromModel.length}")
-                                            val sanitizedFinal =
-                                                Gemma4ThinkingParser.sanitizeVisibleText(
-                                                    finalFromModel,
-                                                    preserveToolCallTags = true
-                                                )
-                                            val resolvedFinal = sanitizedFinal.ifBlank {
-                                                lastPersistedContent.ifBlank { finalFromModel }
+                                            // タグを sanitize してからバッファへ戻すと、完了後に
+                                            // Thinking / 本文を再分離できなくなる。raw のまま積む。
+                                            val resolvedFinal = when {
+                                                finalFromModel.isNotBlank() &&
+                                                    (markupSpec.containsThinkingOpen(finalFromModel) ||
+                                                        markupSpec.containsThinkingClose(finalFromModel) ||
+                                                        finalFromModel.length >= answerBuilder.length) ->
+                                                    finalFromModel
+                                                answerBuilder.isNotEmpty() -> answerBuilder.toString()
+                                                else -> finalFromModel
                                             }
                                             finalFromModelGlobal = resolvedFinal
-                                            answerBuilder.clear()
-                                            answerBuilder.append(resolvedFinal)
+                                            if (resolvedFinal != answerBuilder.toString()) {
+                                                answerBuilder.clear()
+                                                answerBuilder.append(resolvedFinal)
+                                            }
                                         }
                                         thinkDelta != null -> {
  // シンキングフェーズ開始を記録 (未開始のときだけ)
@@ -2683,8 +2702,9 @@ class ChatViewModel(
                                             if (config.enableThinking && nativeReasoningBlank && answerBuilder.isNotEmpty()) {
                                                 val salvaged = Gemma4ThinkingParser.parseStreaming(
                                                     rawInput = answerBuilder.toString(),
-                                                    treatUnmarkedInputAsThinking = true,
-                                                    preserveToolCallTags = true
+                                                    treatUnmarkedInputAsThinking = !markupSpec.containsThinkingClose(answerBuilder.toString()),
+                                                    preserveToolCallTags = true,
+                                                    spec = markupSpec,
                                                 )
                                                 contentForUi =
                                                     sanitizeAssistantOutputForModel(
@@ -2716,13 +2736,18 @@ class ChatViewModel(
                                         // (nativeThinkingStream=true 分岐) に委ね、チャンネル未送出の間は
                                         // answerBuilder の内容は本文として扱う。GGUF 経路のみ、
                                         // thinking ON 時に開始タグを省略するモデルの救済として従来の推測を残す。
+                                        val rawAccum = answerBuilder.toString()
                                         val guessUnmarkedAsThinking =
-                                            config.enableThinking && isGgufEngineModel(engineModelName)
+                                            config.enableThinking &&
+                                                isGgufEngineModel(engineModelName) &&
+                                                !markupSpec.containsThinkingClose(rawAccum) &&
+                                                (markupSpec.containsThinkingOpen(rawAccum) || implicitThinkPrefill)
                                         val parsedStream =
                                             Gemma4ThinkingParser.parseStreaming(
-                                                rawInput = answerBuilder.toString(),
+                                                rawInput = rawAccum,
                                                 treatUnmarkedInputAsThinking = guessUnmarkedAsThinking,
-                                                preserveToolCallTags = true
+                                                preserveToolCallTags = true,
+                                                spec = markupSpec,
                                             )
                                         // Instant / Thinking OFF 中でも、モデルが実際に <think> を吐いた場合は
                                         // それを捨てずに UI へ表示する。本文側は従来どおり visible answer のみを使う。
@@ -2937,16 +2962,26 @@ class ChatViewModel(
 
             val completeResponse: String
             val finalThinking: String?
-            // 完了時に別の一括パーサーを走らせると、生成中に分離できていた
-            // Thinking と本文が再結合する。確定値はストリーミング中の結果だけを使う。
-            val streamedThinking = lastStreamThinkingForFinal
+            // 生成中と同じ splitter で raw を再分割する。sanitize は分割後にだけかける。
+            val finalParsed = Gemma4ThinkingParser.parse(
+                rawInput = answerBuilder.toString(),
+                treatUnmarkedInputAsThinking = config.enableThinking &&
+                    isGgufEngineModel(engineModelName) &&
+                    !markupSpec.containsThinkingClose(answerBuilder.toString()) &&
+                    (markupSpec.containsThinkingOpen(answerBuilder.toString()) || implicitThinkPrefill),
+                preserveToolCallTags = true,
+                spec = markupSpec,
+            )
+            val restored = ThinkingLeakSalvage.restoreSeparatedThinkingIfFinalMerged(
+                previousThinking = lastStreamThinkingForFinal,
+                previousContent = lastStreamContentForFinal,
+                newThinking = finalParsed.thinking,
+                newContent = finalParsed.answer,
+            )
+            val streamedThinking = restored.first
                 ?.let { Gemma4ThinkingParser.sanitizeVisibleText(it) }
                 ?.ifBlank { null }
-            val streamedContent = if (!streamedThinking.isNullOrBlank()) {
-                lastStreamContentForFinal
-            } else {
-                answerBuilder.toString()
-            }
+            val streamedContent = restored.second
             completeResponse = sanitizeAssistantOutputForModel(
                 engineModelName = engineModelName,
                 text = Gemma4ThinkingParser.sanitizeVisibleText(

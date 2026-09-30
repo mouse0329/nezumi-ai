@@ -37,26 +37,16 @@ object Gemma4ThinkingParser {
     fun parse(
         rawInput: String,
         treatUnmarkedInputAsThinking: Boolean = false,
-        preserveToolCallTags: Boolean = false
+        preserveToolCallTags: Boolean = false,
+        spec: ChatMarkupSpec = ChatMarkupSpec.DEFAULT,
     ): Gemma4ThinkingParseResult {
-        val raw = rawInput.trim()
-        if (raw.isEmpty()) return Gemma4ThinkingParseResult(null, "")
-
-        // GGUF (<think>...</think>) 形式を優先チェック
-        splitAtThinkTags(raw, streaming = false, preserveToolCallTags)?.let { return it }
-
-        val deduped = dedupeDoubledFullText(raw)
-
-        // Gemma 4 (<|channel>thought ... <channel|>) 形式
-        splitAtChannelTags(deduped, streaming = false, preserveToolCallTags)?.let { return it }
-
-        var answer = stripThoughtLabel(deduped)
-        answer = sanitizeVisibleText(answer, preserveToolCallTags)
-        return if (treatUnmarkedInputAsThinking) {
-            Gemma4ThinkingParseResult(answer.ifBlank { null }, "")
-        } else {
-            Gemma4ThinkingParseResult(null, answer)
-        }
+        return splitReasoning(
+            rawInput = rawInput.trim(),
+            streaming = false,
+            treatUnmarkedInputAsThinking = treatUnmarkedInputAsThinking,
+            preserveToolCallTags = preserveToolCallTags,
+            spec = spec,
+        )
     }
 
     /**
@@ -68,17 +58,42 @@ object Gemma4ThinkingParser {
     fun parseStreaming(
         rawInput: String,
         treatUnmarkedInputAsThinking: Boolean = false,
-        preserveToolCallTags: Boolean = false
+        preserveToolCallTags: Boolean = false,
+        spec: ChatMarkupSpec = ChatMarkupSpec.DEFAULT,
+    ): Gemma4ThinkingParseResult {
+        return splitReasoning(
+            rawInput = rawInput,
+            streaming = true,
+            treatUnmarkedInputAsThinking = treatUnmarkedInputAsThinking,
+            preserveToolCallTags = preserveToolCallTags,
+            spec = spec,
+        )
+    }
+
+    /**
+     * 生成中 / 生成完了後で同じ規則で Thinking と本文を分ける。
+     *
+     * 以前は parse() と parseStreaming() が閉じタグの探し方や未閉鎖時の扱いを別実装にしており、
+     * 完了時にタグを sanitize してから再パースすると Thinking と本文が同一内容になることがあった。
+     * 呼び出し側は raw（タグ付き）を渡し、sanitize は分割後の各チャンネルにだけかける。
+     */
+    private fun splitReasoning(
+        rawInput: String,
+        streaming: Boolean,
+        treatUnmarkedInputAsThinking: Boolean,
+        preserveToolCallTags: Boolean,
+        spec: ChatMarkupSpec,
     ): Gemma4ThinkingParseResult {
         if (rawInput.isEmpty()) return Gemma4ThinkingParseResult(null, "")
+        val raw = if (streaming) rawInput else rawInput.trim()
+        if (raw.isEmpty()) return Gemma4ThinkingParseResult(null, "")
 
-        // GGUF (<think>...</think>) 形式を優先チェック
-        splitAtThinkTags(rawInput, streaming = true, preserveToolCallTags)?.let { return it }
+        splitAtThinkTags(raw, streaming = streaming, preserveToolCallTags, spec)?.let { return it }
 
-        // Gemma 4 (<|channel>thought ... <channel|>) 形式
-        splitAtChannelTags(rawInput, streaming = true, preserveToolCallTags)?.let { return it }
+        val channelSource = if (streaming) raw else dedupeDoubledFullText(raw)
+        splitAtChannelTags(channelSource, streaming = streaming, preserveToolCallTags, spec)?.let { return it }
 
-        val visible = sanitizeVisibleText(stripThoughtLabel(rawInput), preserveToolCallTags)
+        val visible = sanitizeVisibleText(stripThoughtLabel(channelSource), preserveToolCallTags)
         return if (treatUnmarkedInputAsThinking) {
             Gemma4ThinkingParseResult(visible.ifBlank { null }, "")
         } else {
@@ -96,61 +111,52 @@ object Gemma4ThinkingParser {
     private fun splitAtThinkTags(
         raw: String,
         streaming: Boolean,
-        preserveToolCallTags: Boolean
+        preserveToolCallTags: Boolean,
+        spec: ChatMarkupSpec = ChatMarkupSpec.DEFAULT,
     ): Gemma4ThinkingParseResult? {
         val trimmed = if (streaming) raw else raw.trim()
-        if (THINK_END in trimmed) {
-            return if (streaming) {
-                val idx = trimmed.indexOf(THINK_END)
-                val thinking = trimmed.substring(0, idx).removePrefix(THINK_START).trim()
-                val answer = sanitizeVisibleText(
-                    trimmed.substring(idx + THINK_END.length),
-                    preserveToolCallTags
-                )
-                Gemma4ThinkingParseResult(thinking.ifBlank { null }, answer)
-            } else {
-                val parts = trimmed.split(THINK_END, limit = 2)
-                val thinkingRaw = parts[0].removePrefix(THINK_START).trim()
-                val (thinking, remainder) = splitThinkingBySpecialToken(thinkingRaw)
-                val answer = sanitizeVisibleText(
-                    (remainder + (parts.getOrNull(1) ?: "")).trim(),
-                    preserveToolCallTags
-                )
-                Gemma4ThinkingParseResult(thinking.ifBlank { null }, answer)
+        val pairs = (spec.thinkingPairs + listOf(
+            THINK_START to THINK_END,
+            THINK_START_ALT to THINK_END_ALT,
+        )).distinct()
+
+        val closeHit = pairs
+            .mapNotNull { pair ->
+                val idx = trimmed.indexOf(pair.second)
+                if (idx >= 0) Triple(pair.first, pair.second, idx) else null
             }
-        }
-        // Qwen 3.5+ の非対称閉じタグ `<|/think|>` で終わるブロック。
-        // seeded `<think>\n...` (標準 prefill)、`<|think|>` (alt open)、および
-        // prefill 自体が欠落したストリーミング中間状態 (`\n思考<|/think|>本文`) の全てを吸収するため、
-        // 標準 open タグのチェックより先に、閉じタグの存在だけで判定する
-        // (このタグが現れる = 未閉鎖シンキングが必ず先行する。本文側への取り込み漏れを防ぐ)。
-        if (THINK_END_ALT in trimmed) {
-            val idx = trimmed.indexOf(THINK_END_ALT)
-            val thinking = trimmed.substring(0, idx)
+            .minByOrNull { it.third }
+
+        if (closeHit != null) {
+            val (openTag, closeTag, idx) = closeHit
+            val before = trimmed.substring(0, idx)
+            val after = trimmed.substring(idx + closeTag.length)
+            val thinkingRaw = before
+                .removePrefix(openTag)
                 .removePrefix(THINK_START)
                 .removePrefix(THINK_START_ALT)
                 .trim()
+            val (thinking, remainder) = if (streaming) {
+                thinkingRaw to ""
+            } else {
+                splitThinkingBySpecialToken(thinkingRaw)
+            }
             val answer = sanitizeVisibleText(
-                trimmed.substring(idx + THINK_END_ALT.length),
+                (remainder + after).let { if (streaming) it else it.trim() },
                 preserveToolCallTags
             )
             return Gemma4ThinkingParseResult(thinking.ifBlank { null }, answer)
         }
-        if (trimmed.startsWith(THINK_START)) {
-            val body = trimmed.removePrefix(THINK_START).trim()
-            return if (streaming) {
-                Gemma4ThinkingParseResult(body.ifBlank { null }, "")
-            } else {
-                val (thinking, remainder) = splitThinkingBySpecialToken(body)
-                Gemma4ThinkingParseResult(
-                    thinking = thinking.ifBlank { null },
-                    answer = sanitizeVisibleText(remainder, preserveToolCallTags)
-                )
+        val openTags = (pairs.map { it.first } + listOf(THINK_START, THINK_START_ALT)).distinct()
+        val openHit = openTags
+            .mapNotNull { tag ->
+                val idx = trimmed.indexOf(tag)
+                if (idx >= 0) tag to idx else null
             }
-        }
-        // Qwen 3.5+ の alt 開きタグのみ (閉じタグ未到達)。思考本文のみの場合。
-        if (trimmed.startsWith(THINK_START_ALT)) {
-            val body = trimmed.removePrefix(THINK_START_ALT).trim()
+            .minByOrNull { it.second }
+        if (openHit != null) {
+            val (openTag, idx) = openHit
+            val body = trimmed.substring(idx + openTag.length).trim()
             return if (streaming) {
                 Gemma4ThinkingParseResult(body.ifBlank { null }, "")
             } else {
@@ -174,14 +180,22 @@ object Gemma4ThinkingParser {
     private fun splitAtChannelTags(
         raw: String,
         streaming: Boolean,
-        preserveToolCallTags: Boolean
+        preserveToolCallTags: Boolean,
+        spec: ChatMarkupSpec = ChatMarkupSpec.DEFAULT,
     ): Gemma4ThinkingParseResult? {
-        if (THINKING_END in raw) {
-            val idx = raw.indexOf(THINKING_END)
+        val channelClose = spec.channelClose ?: THINKING_END
+        val channelOpen = spec.channelOpen ?: THINKING_START
+        if (spec.channelOpen == null && spec.channelClose == null &&
+            THINKING_START !in raw && THINKING_END !in raw
+        ) {
+            return null
+        }
+        if (channelClose in raw) {
+            val idx = raw.indexOf(channelClose)
             val thinkingBlock = raw.substring(0, idx)
-            val afterEnd = raw.substring(idx + THINKING_END.length)
-            var thinking = if (THINKING_START in thinkingBlock) {
-                thinkingBlock.substringAfter(THINKING_START, "")
+            val afterEnd = raw.substring(idx + channelClose.length)
+            var thinking = if (channelOpen in thinkingBlock) {
+                thinkingBlock.substringAfter(channelOpen, "")
             } else {
                 thinkingBlock
             }
@@ -197,9 +211,9 @@ object Gemma4ThinkingParser {
             )
         }
         if (streaming) {
-            val startIdx = raw.indexOf(THINKING_START)
+            val startIdx = raw.indexOf(channelOpen)
             if (startIdx >= 0) {
-                val afterChannel = raw.substring(startIdx + THINKING_START.length)
+                val afterChannel = raw.substring(startIdx + channelOpen.length)
                 val thinking = stripThoughtLabelStreaming(afterChannel)
                 return if (thinking == null) {
                     Gemma4ThinkingParseResult(thinking = null, answer = "")
