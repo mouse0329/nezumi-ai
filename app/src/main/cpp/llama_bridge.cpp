@@ -228,6 +228,54 @@ static void nezumi_llama_load_log_callback(ggml_log_level level, const char *tex
     }
 }
 
+// buf[0, n) のうち、完成した UTF-8 符号点だけを含むプレフィックス長。
+// 日本語・絵文字などは複数バイトに跨るトークン分割が普通なので、
+// 末尾の未完成シーケンスは呼び出し側が保留する。
+static size_t utf8_complete_size(const char *buf, size_t n)
+{
+    size_t i = 0;
+    size_t last_complete = 0;
+    while (i < n)
+    {
+        unsigned char c = static_cast<unsigned char>(buf[i]);
+        int bytes = 0;
+        if (c < 0x80)
+            bytes = 1;
+        else if ((c & 0xE0) == 0xC0)
+            bytes = 2;
+        else if ((c & 0xF0) == 0xE0)
+            bytes = 3;
+        else if ((c & 0xF8) == 0xF0)
+            bytes = 4;
+        else
+        {
+            i++;
+            last_complete = i;
+            continue;
+        }
+        if (i + static_cast<size_t>(bytes) > n)
+            break;
+        bool valid_cont = true;
+        for (int b = 1; b < bytes; b++)
+        {
+            if ((static_cast<unsigned char>(buf[i + b]) & 0xC0) != 0x80)
+            {
+                valid_cont = false;
+                break;
+            }
+        }
+        if (!valid_cont)
+        {
+            i++;
+            last_complete = i;
+            continue;
+        }
+        i += static_cast<size_t>(bytes);
+        last_complete = i;
+    }
+    return last_complete;
+}
+
 // UTF-8 → jstring (NewStringUTF は Modified UTF-8 のみ対応のため UTF-16 経由にする)
 static jstring utf8_to_jstring(JNIEnv *env, const char *buf, size_t n)
 {
@@ -380,10 +428,21 @@ static std::string token_to_piece(NezumiLlamaCtx *nc, llama_token token)
     int n = llama_token_to_piece(
         llama_model_get_vocab(nc->model), token, buf, sizeof(buf) - 1,
         /* lstrip */ 0, /* special */ false);
-    if (n <= 0)
-        return "";
-    // バッファオーバーラン時は負値が返る実装もあるため防御
-    if (n >= static_cast<int>(sizeof(buf)))
+    if (n < 0)
+    {
+        const int needed = -n;
+        if (needed <= 0)
+            return "";
+        std::string out(static_cast<size_t>(needed), '\0');
+        const int written = llama_token_to_piece(
+            llama_model_get_vocab(nc->model), token, out.data(), needed,
+            /* lstrip */ 0, /* special */ false);
+        if (written <= 0)
+            return "";
+        out.resize(static_cast<size_t>(written));
+        return out;
+    }
+    if (n == 0)
         return "";
     return std::string(buf, n);
 }
@@ -495,6 +554,11 @@ static std::string generate_loop(JNIEnv *env, NezumiLlamaCtx *nc,
                 }
                 safe_end -= pending;
             }
+            // stop word 保留のあと、末尾の未完成 UTF-8 も残す。
+            // utf8_to_jstring は未完成シーケンスを捨てるため、ここで streamed_size
+            // まで進めると「あ」の先頭 2 バイトが欠落したまま次トークンの継続バイトだけ
+            // が届き、ストリーミング中の日本語だけ欠ける (最終 result は完全)。
+            safe_end = utf8_complete_size(result.data(), safe_end);
             if (safe_end > streamed_size)
             {
                 const std::string safe_piece = result.substr(streamed_size, safe_end - streamed_size);

@@ -76,6 +76,22 @@ class LiteRtLmEngine(
             val t = partial.trimStart()
             return !t.startsWith("<ctrl", ignoreCase = true)
         }
+
+        /**
+         * ストリーミング累積テキストの末尾が未完成の符号点なら保留する。
+         * LiteRT-LM ネイティブがトークン単位で UTF-8 を Java 文字列にすると、
+         * 日本語の途中バイトが U+FFFD になったり孤立サロゲートになったりする。
+         * 次チャンクで本物の文字に置き換わるため、ここで切ると欠落して見える。
+         */
+        private fun holdIncompleteUnicodeTail(text: String): String {
+            if (text.isEmpty()) return text
+            val last = text.last()
+            return if (last == '\uFFFD' || last.isHighSurrogate()) {
+                text.dropLast(1)
+            } else {
+                text
+            }
+        }
     }
 
     private fun backendTypeLabel(backend: Backend): String {
@@ -1484,10 +1500,14 @@ class LiteRtLmEngine(
                             }
                             val thought = message.channels[THOUGHT_CHANNEL]
                             if (!thought.isNullOrEmpty()) {
-                                emitChunkBlocking(InferenceStreamProtocol.encodeThinkChunk(thought))
+                                emitChunkBlocking(
+                                    InferenceStreamProtocol.encodeThinkChunk(
+                                        holdIncompleteUnicodeTail(thought)
+                                    )
+                                )
                             }
                             if (calls.isNotEmpty()) return@collect
-                            val text = message.toString()
+                            val text = holdIncompleteUnicodeTail(message.toString())
                             if (shouldEmitPartialText(text)) {
                                 // TTFT計測
                                 if (firstTokenMs < 0) {
