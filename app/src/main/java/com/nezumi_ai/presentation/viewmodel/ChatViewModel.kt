@@ -250,6 +250,10 @@ class ChatViewModel(
     private class GenerationWallTimeoutException : Exception("GENERATION_WALL_TIMEOUT")
 
     private suspend fun getActiveSelectedModel(): String {
+        val override = com.nezumi_ai.utils.PreferencesHelper.getPresetModelOverride(appContext)
+        if (override.isNotBlank()) {
+            return normalizeModel(mapPresetModelIdToSettingsModel(override) ?: override)
+        }
         val preset = presetRepository?.getCurrentPreset()
         val presetModel = preset?.modelId?.let { mapPresetModelIdToSettingsModel(it) }
         return normalizeModel(presetModel ?: settingsRepository.getSelectedModel())

@@ -159,19 +159,20 @@ class PresetSettingsFragment : Fragment() {
     @Composable
     private fun PresetScreen() {
         val scope = rememberCoroutineScope()
-        // ★ パフォーマンス修正: observePresets() は呼ぶたびに新しい Flow を返す。remember せずに
-        //   collectAsState へ渡すと、検索入力・ドラッグの入れ替え・選択などで PresetScreen が
-        //   再コンポーズされるたびに購読が張り直され、Room の再クエリが走っていた。
+        val ctx = requireContext()
         val presetsFlow = remember { presetRepository.observePresets() }
         val presets by presetsFlow.collectAsState(initial = emptyList())
+        var detached by remember { mutableStateOf(PreferencesHelper.isPresetDetached(ctx)) }
         var currentPresetId by remember {
-            mutableStateOf(PreferencesHelper.getCurrentPresetId(requireContext()))
+            mutableStateOf(PreferencesHelper.getCurrentPresetId(ctx).takeIf { it.isNotBlank() && !detached })
         }
-        // ★ パフォーマンス修正: downloadedModels() は listFiles・ヘッダ検証・クラウド設定読取を含む。
-        //   以前はメインスレッドの composition 中に同期実行していたため画面遷移がカクつくことがあった。
-        //   produceState + Dispatchers.IO でバックグラウンド計算し、結果が来るまで空リストで描画する。
-        //   PresetModelCatalog 側にもプロセス内キャッシュがあるため 2 回目以降はほぼ即時。
-        val appCtx = requireContext().applicationContext
+        var overrideModelId by remember { mutableStateOf(PreferencesHelper.getPresetModelOverride(ctx)) }
+        var tab by remember { mutableStateOf(PresetPickerTab.PRESET) }
+        var query by remember { mutableStateOf("") }
+        var pins by remember { mutableStateOf(PreferencesHelper.getPresetPins(ctx).toSet()) }
+        var expandedIds by remember { mutableStateOf(setOf<String>()) }
+        var pendingDelete by remember { mutableStateOf<PresetEntity?>(null) }
+        val appCtx = ctx.applicationContext
         val downloadedModelOptions by produceState(
             initialValue = emptyList<com.nezumi_ai.data.preset.PresetModelOption>(),
             presets
@@ -180,72 +181,33 @@ class PresetSettingsFragment : Fragment() {
                 com.nezumi_ai.data.preset.PresetModelCatalog.downloadedModels(appCtx)
             }
         }
-        val modelLabelById = remember(presets, downloadedModelOptions) {
-            presets.associate { it.id to modelLabel(it.modelId, downloadedModelOptions) }
+        val fallbackModelId by produceState(initialValue = "") {
+            value = withContext(Dispatchers.IO) {
+                com.nezumi_ai.data.repository.SettingsRepository
+                    .fromDatabase(NezumiAiDatabase.getInstance(appCtx))
+                    .getSelectedModel()
+            }
         }
+        val currentPreset = presets.firstOrNull { it.id == currentPresetId }
+        val mcpPrefs = remember { McpPreferences.get(requireContext()) }
+        val mcpServers by mcpPrefs.servers.collectAsState()
+        val mcpNameById = remember(mcpServers) { mcpServers.associate { it.id to it.name } }
         var editingPreset by remember { mutableStateOf<PresetEntity?>(null) }
         var showCreateDialog by remember { mutableStateOf(false) }
-        var presetSearchQuery by remember { mutableStateOf("") }
-        val displayedPresets = remember(presets, presetSearchQuery) {
-            val q = presetSearchQuery.trim()
-            if (q.isEmpty()) presets
-            else presets.filter { p ->
-                p.name.contains(q, ignoreCase = true) ||
-                    p.description.contains(q, ignoreCase = true) ||
-                    p.tagsCsv.contains(q, ignoreCase = true)
-            }
+
+        fun persistPins(next: Set<String>) {
+            pins = next
+            PreferencesHelper.setPresetPins(appCtx, next)
         }
 
-        // ドラッグ並び替え状態
-        var draggingList by remember { mutableStateOf<List<PresetEntity>?>(null) }
-        var dragIndex by remember { mutableIntStateOf(-1) }
-        var dragOffsetY by remember { mutableFloatStateOf(0f) }
-        var autoScrollJob by remember { mutableStateOf<Job?>(null) }
-        // 自動スクロールの、ループ内で参照される最新のポインタY位置と方向。
-        // onDrag のローカル変数を while(true) のコルーチン内で参照しても stale になるので、
-        // 毎回 onDrag で mutableStateOf に上書きして共有する。
-        var autoScrollDirection by remember { mutableIntStateOf(0) } // -1: up, 0: none, 1: down
-        var autoScrollDistance by remember { mutableFloatStateOf(0f) } // edge への食い込み量(0..edgeThreshold)
-        // 自動スクロール中も指の下にカードが留まるよう、スクロール量に合わせて
-        // dragOffsetY を補償する（スクロールでベース位置が動いても視覚位置を固定）。
-        // 並び替え確定後、DB からの新しい順序が Flow で届くまで表示する"暫定並び順"。
-        //   これがある間は displayedPresets(=DBの古い順序) を上書きし、
-        //   "決定時に一瞬前の状態が表示される" フリッカーを防ぐ。
-        var pendingOrderIds by remember { mutableStateOf<List<String>?>(null) }
-        val density = LocalDensity.current
-        val itemSpacingPx = with(density) { 12.dp.toPx() }
-
-        // pendingOrderIds に基づいて displayedPresets を並び替えた最終表示リスト。
-        // DB からの新しい順序と pendingOrderIds が一致したら pendingOrderIds を解除する。
-        val sortedDisplayed = remember(displayedPresets, pendingOrderIds) {
-            val pending = pendingOrderIds
-            if (pending == null) {
-                displayedPresets
-            } else {
-                val byId = displayedPresets.associateBy { it.id }
-                val reordered = pending.mapNotNull { byId[it] }
-                // pending に含まれない新規/検索でフィルタされた項目はそのまま末尾に追加
-                val remaining = displayedPresets.filter { it.id !in pending }
-                reordered + remaining
+        fun rememberModel(modelId: String) {
+            if (modelId.isBlank()) return
+            scope.launch(Dispatchers.IO) {
+                com.nezumi_ai.data.repository.SettingsRepository
+                    .fromDatabase(NezumiAiDatabase.getInstance(appCtx))
+                    .updateModel(modelId)
             }
         }
-
-        // DB の順序が pending と一致したら pending を解除する（Flow が追いついた合図）。
-        LaunchedEffect(displayedPresets, pendingOrderIds) {
-            val pending = pendingOrderIds ?: return@LaunchedEffect
-            val actualIdsInPendingOrder = displayedPresets.map { it.id }
-                .filter { it in pending }
-            if (actualIdsInPendingOrder == pending.filter { it in displayedPresets.map { p -> p.id } }) {
-                pendingOrderIds = null
-            }
-        }
-
-        // ドラッグ中は draggingList を使い、それ以外は sortedDisplayed を使う
-        val visibleList = draggingList ?: sortedDisplayed
-        // ★ パフォーマンス修正: 行のコールバックが visibleList / index を直接捕まえていると、
-        //   ドラッグの入れ替えのたびに全行のラムダが作り直され、全行が再コンポーズされる。
-        //   State 経由で最新値を呼び出し時に読むことで、ラムダの中身を安定させる。
-        val visibleListState = rememberUpdatedState(visibleList)
 
         if (showCreateDialog) {
             PresetEditDialog(
@@ -270,10 +232,7 @@ class PresetSettingsFragment : Fragment() {
                         if (presetRepository.updatePreset(updated)) {
                             editingPreset = null
                             toast(getString(R.string.preset_toast_saved))
-                            // 現在選択中のプリセットを編集した場合は、モデル再ロードなしで
-                            // MCP サーバー・ツール一覧を即時に反映させる
-                            val currentId = com.nezumi_ai.utils.PreferencesHelper
-                                .getCurrentPresetId(requireContext())
+                            val currentId = PreferencesHelper.getCurrentPresetId(requireContext())
                             if (currentId == updated.id) {
                                 presetRepository.applyActivePresetToolsSync()
                             }
@@ -285,433 +244,142 @@ class PresetSettingsFragment : Fragment() {
             )
         }
 
-        val listState = rememberLazyListState()
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // ★ パフォーマンス修正: 固定ヘッダー項目にも安定 key を付け、プリセット行の
-            //   並び替え/増減で index がずれても再コンポーズされないようにする。
-            item(key = "status_bar_spacer") { Spacer(modifier = Modifier.statusBarsPadding()) }
-            item(key = "header") {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { findNavController().navigateUp() }) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_back),
-                                contentDescription = stringResource(id = R.string.back),
-                                tint = MaterialTheme.colorScheme.onBackground
-                            )
-                        }
-                        Text(
-                            text = stringResource(id = R.string.preset_screen_title),
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    TextButton(
-                        onClick = {
-                            scope.launch(Dispatchers.IO) {
-                                try {
-                                    val manager = com.nezumi_ai.data.inference.ModelManager.getInstance(requireContext())
-                                    manager.unloadModel()
-                                    withContext(Dispatchers.Main) {
-                                        toast(getString(R.string.preset_toast_model_released))
-                                    }
-                                } catch (e: Exception) {
-                                    withContext(Dispatchers.Main) {
-                                        toast(getString(R.string.preset_toast_model_release_failed, e.message ?: ""))
-                                    }
-                                }
-                            }
-                        }
-                    ) {
-                        Text(stringResource(id = R.string.preset_release_model))
-                    }
-                }
-            }
-
-            item(key = "search") {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = presetSearchQuery,
-                        onValueChange = { presetSearchQuery = it },
-                        label = { Text(stringResource(id = R.string.preset_search_label)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    if (presets.isEmpty()) {
-                        Text(
-                            text = stringResource(id = R.string.preset_empty_no_presets),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    } else if (displayedPresets.isEmpty()) {
-                        Text(
-                            text = stringResource(id = R.string.preset_empty_no_matches),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
-            itemsIndexed(
-                items = visibleList,
-                key = { _, preset -> preset.id },
-                // ★ パフォーマンス修正: contentType を固定し、ドラッグ並び替えや
-                //   検索フィルタでアイテム位置が変わっても既存コンポジションが再利用
-                //   されるようにする。これがないと移動した行が全再コンポーズされ、
-                //   スクロール/ドラッグがカクつく。
-                contentType = { _, _ -> "preset_row" }
-            ) { index, preset ->
-                val isDragging = index == dragIndex
-                PresetRow(
-                    preset = preset,
-                    modelLabelText = modelLabelById[preset.id] ?: preset.modelId,
-                    selected = preset.id == currentPresetId,
-                    canMoveUp = index > 0,
-                    canMoveDown = index < visibleList.lastIndex,
-                    isDragging = isDragging,
-                    // ★ State を composition で読まず、graphicsLayer 内(描画フェーズ)で読ませる。
-                    //   これでドラッグ中に毎フレーム行が再コンポーズされなくなる。
-                    dragOffsetYProvider = { if (isDragging) dragOffsetY else 0f },
-                    onDragStart = {
-                        val list = visibleListState.value
-                        val currentIndex = list.indexOfFirst { it.id == preset.id }
-                        if (currentIndex >= 0) {
-                            dragIndex = currentIndex
-                            dragOffsetY = 0f
-                            draggingList = list.toMutableList()
-                        }
-                    },
-                    onDrag = { dy, pointerYInViewport, threshold ->
-                        // threshold はカード高さのみなので、spacedBy 分を加えて
-                        // 隣アイテムとの実際の間隔に合わせる（これがないと swap 時に指から離れる）
-                        val step = threshold + itemSpacingPx
-                        dragOffsetY += dy
-                        when {
-                            dragOffsetY > step && dragIndex < (draggingList?.lastIndex ?: 0) -> {
-                                val list = draggingList!!.toMutableList()
-                                val tmp = list[dragIndex + 1]; list[dragIndex + 1] = list[dragIndex]; list[dragIndex] = tmp
-                                draggingList = list
-                                dragIndex++
-                                dragOffsetY -= step
-                            }
-                            dragOffsetY < -step && dragIndex > 0 -> {
-                                val list = draggingList!!.toMutableList()
-                                val tmp = list[dragIndex - 1]; list[dragIndex - 1] = list[dragIndex]; list[dragIndex] = tmp
-                                draggingList = list
-                                dragIndex--
-                                dragOffsetY += step
-                            }
-                        }
-
- // 自動スクロール:
-                        //   ・従来の while(true){ scrollToItem() } は 1item ごとにジャンプしてカクついていた。
-                        //     animateScrollBy と小さめの幅で連続スクロールさせることで滑らかにする。
-                        //   ・edge 判定をー pointerYInViewport は Card 内座標なので、
-                        //     LazyColumn の viewport 基準に変換してから判定する。
-                        val viewportHeight = listState.layoutInfo.viewportSize.height
-                        // ドラッグ中の item は itemsIndexed により LazyList の index は
-                        // 前置アイテム(Spacer / ヘッダ / 検索欄) の分だけオフセットする。
-                        // 確実に見つけるため、検索欄とヘッダーを除いた"data item"の相対位置を見る。
-                        val leadingItemCount = 3 // Spacer + Header + Search
-                        val currentItemInfo = listState.layoutInfo.visibleItemsInfo
-                            .find { it.index == dragIndex + leadingItemCount }
-                        val pointerYInList: Float = if (currentItemInfo != null) {
-                            // Card の上端（viewport 基準） + drag offset + ポインタのCard内Y
-                            currentItemInfo.offset + dragOffsetY + pointerYInViewport
-                        } else {
-                            pointerYInViewport
-                        }
-                        val edgeThreshold = 150f
-                        val shouldScrollUp = pointerYInList < edgeThreshold
-                        val shouldScrollDown = pointerYInList > viewportHeight - edgeThreshold
-
-                        // 最新の方向と食い込み量を State へ書き込み、自動スクロールループから参照させる。
-                        val newDirection = when {
-                            shouldScrollDown -> 1
-                            shouldScrollUp -> -1
-                            else -> 0
-                        }
-                        autoScrollDirection = newDirection
-                        autoScrollDistance = when (newDirection) {
-                            1 -> (pointerYInList - (viewportHeight - edgeThreshold)).coerceAtLeast(0f)
-                            -1 -> (edgeThreshold - pointerYInList).coerceAtLeast(0f)
-                            else -> 0f
-                        }
-
-                        if (newDirection != 0) {
-                            // 既にジョブが回っているなら手を付けない（キャンセル→再起動の回避）。
-                            val running = autoScrollJob?.isActive == true
-                            if (!running) {
-                                autoScrollJob = scope.launch {
-                                    while (autoScrollDirection != 0) {
-                                        val speedFactor = (autoScrollDistance / edgeThreshold).coerceIn(0.1f, 1f)
-                                        val pixelsPerFrame = 24f * speedFactor // 1frameあたり最大24px
-                                        val delta = pixelsPerFrame * autoScrollDirection
-                                        listState.scrollBy(delta)
-                                        // スクロールでアイテムのベース位置が動く分、
-                                        // translation を逆方向に補償して指の下にカードを留める
-                                        dragOffsetY += delta
-                                        delay(16)
-                                    }
-                                }
-                            }
-                        } else {
-                            autoScrollJob?.cancel()
-                            autoScrollJob = null
-                        }
-                    },
-                    onDragEnd = {
-                        autoScrollDirection = 0
-                        autoScrollDistance = 0f
-                        autoScrollJob?.cancel()
-                        autoScrollJob = null
-                        val finalList = draggingList
-                        dragIndex = -1
-                        dragOffsetY = 0f
-                        if (finalList != null) {
- // フリッカー防止:
-                            //   draggingList を null に戻す前に、確定した順序を pendingOrderIds に登録する。
-                            //   これにより、DB Flow が更新後の順序を配信するまでの間も、
-                            //   sortedDisplayed が pendingOrderIds に従って並ぶ。
-                            val finalIds = finalList.map { it.id }
-                            pendingOrderIds = finalIds
-                            draggingList = null
-                            scope.launch {
-                                try {
-                                    presetRepository.reorder(finalIds)
-                                    android.util.Log.d("PresetReorder", "success: ${finalList.map { it.name }}")
-                                } catch (e: Exception) {
-                                    android.util.Log.e("PresetReorder", "failed", e)
-                                    // 失敗時は pending を解除して DB の順序に戻す
-                                    pendingOrderIds = null
-                                }
-                            }
-                        } else {
-                            draggingList = null
-                        }
-                    },
-                    onMoveUp = {
-                        scope.launch {
-                            val ids = visibleListState.value.toMutableList()
-                            val i = ids.indexOfFirst { it.id == preset.id }
-                            if (i > 0) {
-                                val tmp = ids[i - 1]; ids[i - 1] = ids[i]; ids[i] = tmp
-                                presetRepository.reorder(ids.map { it.id })
-                            }
-                        }
-                    },
-                    onMoveDown = {
-                        scope.launch {
-                            val ids = visibleListState.value.toMutableList()
-                            val i = ids.indexOfFirst { it.id == preset.id }
-                            if (i >= 0 && i < ids.lastIndex) {
-                                val tmp = ids[i + 1]; ids[i + 1] = ids[i]; ids[i] = tmp
-                                presetRepository.reorder(ids.map { it.id })
-                            }
-                        }
-                    },
-                    onSelect = {
-                        scope.launch {
-                            presetRepository.selectPreset(preset.id)
-                            currentPresetId = preset.id
-                            toast(getString(R.string.preset_toast_selected, preset.name))
-                        }
-                    },
-                    onEdit = { editingPreset = preset },
-                    onDelete = {
+        pendingDelete?.let { preset ->
+            AlertDialog(
+                onDismissRequest = { pendingDelete = null },
+                title = { Text(stringResource(R.string.preset_delete_confirm_title)) },
+                text = { Text(stringResource(R.string.preset_delete_confirm_body, preset.name)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        pendingDelete = null
                         scope.launch {
                             if (presetRepository.deletePreset(preset.id)) {
-                                currentPresetId = PreferencesHelper.getCurrentPresetId(requireContext())
+                                if (currentPresetId == preset.id) {
+                                    detached = true
+                                    currentPresetId = null
+                                    overrideModelId = PreferencesHelper.getPresetModelOverride(appCtx)
+                                }
                                 toast(getString(R.string.preset_toast_deleted))
                             } else {
                                 toast(getString(R.string.preset_toast_cannot_delete))
                             }
                         }
+                    }) { Text(stringResource(R.string.delete)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDelete = null }) {
+                        Text(stringResource(R.string.preset_cancel))
                     }
-                )
-            }
-
-            item {
-                Button(
-                    onClick = { showCreateDialog = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(stringResource(id = R.string.preset_new_button))
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun PresetRow(
-        preset: PresetEntity,
-        modelLabelText: String,
-        selected: Boolean,
-        canMoveUp: Boolean,
-        canMoveDown: Boolean,
-        isDragging: Boolean,
-        dragOffsetYProvider: () -> Float,
-        onDragStart: () -> Unit,
-        onDrag: (Float, Float, Float) -> Unit,
-        onDragEnd: () -> Unit,
-        onMoveUp: () -> Unit,
-        onMoveDown: () -> Unit,
-        onSelect: () -> Unit,
-        onEdit: () -> Unit,
-        onDelete: () -> Unit
-    ) {
-        // ★ パフォーマンス/バグ修正:
-        //   ・以前は onGloballyPositioned で高さを state に書き込んでいたため、行が画面に入るたびに
-        //     追加の再コンポーズが走っていた。PointerInputScope の size から直接読めば state は不要。
-        //   ・pointerInput(Unit) のブロックは最初の composition で捕まえたラムダ / 値を使い続ける。
-        //     (旧実装では thresholdPx が初回値の 120f に固定され、index を捕まえた onDragStart も
-        //      並び替え・検索後に古い index を指していた。)
-        //     rememberUpdatedState 経由で常に最新のコールバックを呼ぶ。
-        val currentOnDragStart by rememberUpdatedState(onDragStart)
-        val currentOnDrag by rememberUpdatedState(onDrag)
-        val currentOnDragEnd by rememberUpdatedState(onDragEnd)
-
-        // 選択中のプリセットはチェックマークだけだと見落としやすいので、
-        // 背景色 + ボーダー + 左のアクセントバーで強くハイライトする。
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .zIndex(if (isDragging) 1f else 0f)
-                .graphicsLayer { translationY = dragOffsetYProvider() }
-                .pointerInput(Unit) {
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = { currentOnDragStart() },
-                        onDrag = { change, dragAmount ->
-                            val thresholdPx = if (size.height > 0) size.height.toFloat() else 120f
-                            currentOnDrag(dragAmount.y, change.position.y, thresholdPx)
-                        },
-                        onDragEnd = { currentOnDragEnd() },
-                        onDragCancel = { currentOnDragEnd() }
-                    )
-                }
-                .clickable(onClick = onSelect)
-                .then(
-                    if (selected) Modifier.border(
-                        width = 2.dp,
-                        color = MaterialTheme.colorScheme.primary,
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
-                    ) else Modifier
-                ),
-            colors = CardDefaults.cardColors(
-                containerColor = when {
-                    isDragging -> MaterialTheme.colorScheme.surfaceVariant
-                    selected -> MaterialTheme.colorScheme.primaryContainer
-                    else -> MaterialTheme.colorScheme.surface
                 }
             )
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "${preset.icon} ${preset.name}",
-                            color = MaterialTheme.colorScheme.onSurface,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        if (preset.description.isNotBlank()) {
-                            // プリセット一覧の説明行は 1 行に収め、ロケール依存の文字数上限を
-                            // 超えたら … で折り返す。リソース値は JA=16 / EN=32 を想定。
-                            val limit = integerResource(id = R.integer.preset_skill_description_max_chars)
-                            val truncated = if (preset.description.length > limit)
-                                preset.description.take(limit).trimEnd() + "…"
-                            else preset.description
-                            Text(
-                                text = truncated,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1
-                            )
-                        }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (selected) {
-                            // 選択中バッジ（背景色 + ボーダーだけでは分かりにくいので、
-                            // 明確な「選択中」ラベルをつける）
-                            androidx.compose.material3.AssistChip(
-                                onClick = {},
-                                enabled = false,
-                                label = { Text(stringResource(id = R.string.preset_selected_badge), fontWeight = FontWeight.Bold) },
-                                colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(
-                                    disabledContainerColor = MaterialTheme.colorScheme.primary,
-                                    disabledLabelColor = MaterialTheme.colorScheme.onPrimary
-                                ),
-                                modifier = Modifier.padding(end = 4.dp)
-                            )
-                        }
-                        IconButton(onClick = onMoveUp, enabled = canMoveUp) {
-                            Text("↑", color = if (canMoveUp) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        IconButton(onClick = onMoveDown, enabled = canMoveDown) {
-                            Text("↓", color = if (canMoveDown) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-                // ★ パフォーマンス修正: formatToolLabels は preset.enabledTools (JSON文字列) の
-                //   パース + toolOptions とのフィルタ/結合を行うため、preset が変わらない限り
-                //   再計算不要。remember でキャッシュして再コンポジションのたびの再計算を避ける。
-                val toolLabels = remember(preset.enabledTools) { formatToolLabels(preset.enabledTools) }
-                Text(
-                    text = buildString {
-                        append(modelLabelText)
-                        append(" / ")
-                        append(stringResource(id = R.string.preset_status_memory, if (preset.memoryEnabled) stringResource(id = R.string.status_on) else stringResource(id = R.string.status_off)))
-                        if (preset.toolCallingEnabled) {
-                            append(" / ")
-                            if (toolLabels.isNotEmpty()) {
-                                append(stringResource(id = R.string.preset_status_tool_calling_with_list, toolLabels))
-                            } else {
-                                append(stringResource(id = R.string.preset_status_tool_calling))
-                            }
-                        }
-                    },
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall
-                )
-                if (!preset.isLocked) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = onEdit) {
-                            Text(stringResource(id = R.string.common_edit))
-                        }
-                        if (!preset.isDefault) {
-                            TextButton(onClick = onDelete) {
-                                Text(stringResource(id = R.string.delete))
-                            }
-                        }
-                    }
-                }
-            }
         }
+
+        PresetPickerContent(
+            tab = tab,
+            query = query,
+            presets = presets,
+            models = downloadedModelOptions,
+            currentPreset = currentPreset,
+            detached = detached,
+            overrideModelId = overrideModelId,
+            fallbackModelId = fallbackModelId,
+            pins = pins,
+            expandedIds = expandedIds,
+            modelLabel = { modelLabel(it, downloadedModelOptions) },
+            toolLabel = { id -> toolOptions.firstOrNull { it.id == id }?.label ?: id },
+            enabledToolIds = { preset ->
+                if (!preset.toolCallingEnabled) emptyList() else parseToolIds(preset.enabledTools).toList()
+            },
+            mcpNames = { preset ->
+                McpPreferences.decodeServerIds(preset.mcpServerIds).map { id ->
+                    mcpNameById[id]?.takeIf { it.isNotBlank() } ?: id
+                }
+            },
+            onTab = { next ->
+                tab = next
+                query = ""
+            },
+            onQuery = { query = it },
+            onBack = { findNavController().navigateUp() },
+            onCreate = { showCreateDialog = true },
+            onTogglePin = { key ->
+                persistPins(if (key in pins) pins - key else pins + key)
+            },
+            onToggleExpanded = { id ->
+                expandedIds = if (id in expandedIds) expandedIds - id else expandedIds + id
+            },
+            onSelectPreset = { preset ->
+                scope.launch {
+                    presetRepository.selectPreset(preset.id)
+                    detached = false
+                    currentPresetId = preset.id
+                    overrideModelId = ""
+                    toast(getString(R.string.preset_toast_selected, preset.name))
+                }
+            },
+            onSelectNone = {
+                val keep = overrideModelId.ifBlank {
+                    currentPreset?.modelId?.takeIf { it.isNotBlank() } ?: fallbackModelId
+                }
+                scope.launch {
+                    presetRepository.clearCurrentPreset(keep)
+                    detached = true
+                    currentPresetId = null
+                    overrideModelId = keep
+                    tab = PresetPickerTab.MODEL
+                    query = ""
+                    rememberModel(keep)
+                    toast(getString(R.string.preset_toast_none_pick_model))
+                }
+            },
+            onClearPreset = {
+                val keep = overrideModelId.ifBlank {
+                    currentPreset?.modelId?.takeIf { it.isNotBlank() } ?: fallbackModelId
+                }
+                scope.launch {
+                    presetRepository.clearCurrentPreset(keep)
+                    detached = true
+                    currentPresetId = null
+                    overrideModelId = keep
+                    rememberModel(keep)
+                    toast(getString(R.string.preset_toast_cleared))
+                }
+            },
+            onResetOverride = {
+                scope.launch {
+                    presetRepository.setModelOverride("")
+                    overrideModelId = ""
+                    toast(getString(R.string.preset_toast_model_reset))
+                }
+            },
+            onSelectModel = { modelId ->
+                val preset = if (detached) null else currentPreset
+                scope.launch {
+                    if (preset == null) {
+                        presetRepository.setModelOverride(modelId)
+                        overrideModelId = modelId
+                        rememberModel(modelId)
+                        toast(getString(R.string.preset_toast_standalone))
+                    } else if (modelId == preset.modelId) {
+                        presetRepository.setModelOverride("")
+                        overrideModelId = ""
+                        toast(getString(R.string.preset_toast_model_reset))
+                    } else {
+                        presetRepository.setModelOverride(modelId)
+                        overrideModelId = modelId
+                        rememberModel(modelId)
+                        toast(getString(R.string.preset_toast_model_override))
+                    }
+                }
+            },
+            onEdit = { preset ->
+                if (preset.isLocked) toast(getString(R.string.preset_toast_locked_edit))
+                else editingPreset = preset
+            },
+            onDelete = { pendingDelete = it }
+        )
     }
 
-    /**
-     * ★ パフォーマンス修正: ツール / スキル / MCP サーバーのチェック行を独立した Composable に切り出す。
-     *   これらは 1 つの LazyColumn item の中に forEach で並んでおり、以前は 1 行をトグルするたびに
-     *   全行の Row / Checkbox が再コンポーズされていた。引数を Boolean / String / 安定ラムダにして、
-     *   状態が変わった行だけが再コンポーズされる (それ以外は skip される) ようにする。
-     */
     @Composable
     private fun PresetCheckRow(
         title: String,

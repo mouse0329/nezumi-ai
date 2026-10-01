@@ -979,7 +979,7 @@ class ChatFragment : Fragment() {
         //   起動直後は変更検知が発火しないため null 初期値でも支障なく、
         //   IO で読み終わり次第 UI スレッドに書き戻す。
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            val presetId = PreferencesHelper.getCurrentPresetId(appContext)
+            val presetId = presetSelectionKey(appContext)
             withContext(Dispatchers.Main) {
                 if (lastObservedPresetId == null) {
                     lastObservedPresetId = presetId
@@ -1900,6 +1900,13 @@ class ChatFragment : Fragment() {
      * MainActivity 側でシークレットモードが終了/開始されたときに UI フラグを同期する。
      * これがないと通常セッションに移動してもヘッダ色などがシークレットモードのまま戻らない。
      */
+    private fun presetSelectionKey(ctx: android.content.Context): String {
+        val id = PreferencesHelper.getCurrentPresetId(ctx)
+        val detached = PreferencesHelper.isPresetDetached(ctx)
+        val override = PreferencesHelper.getPresetModelOverride(ctx)
+        return "$detached|$id|$override"
+    }
+
     override fun onResume() {
         super.onResume()
         disableKeyboardLearning(viewModel.isCurrentSessionIncognito.value)
@@ -1916,7 +1923,7 @@ class ChatFragment : Fragment() {
             val newContextMeterVisible = PreferencesHelper.isShowContextMeter(ctx)
             val newShowTps = PreferencesHelper.isShowTps(ctx)
             val newShowTtft = PreferencesHelper.isShowTtft(ctx)
-            val currentPresetId = PreferencesHelper.getCurrentPresetId(ctx)
+            val currentPresetId = presetSelectionKey(ctx)
             val preset = presetRepository.getCurrentPreset()
 
             withContext(Dispatchers.Main) {

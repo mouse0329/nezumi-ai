@@ -104,20 +104,35 @@ class PresetRepository(
         if (preset.isDefault || preset.isLocked) return false
         dao.delete(preset)
         if (PreferencesHelper.getCurrentPresetId(context) == id) {
-            val fallback = dao.getDefault() ?: dao.getAll().firstOrNull(::shouldShowPreset)
-            PreferencesHelper.setCurrentPresetId(context, fallback?.id.orEmpty())
-            if (fallback != null) {
-                applyPresetTools(fallback)
-            }
+            clearCurrentPreset()
         }
         return true
     }
 
     suspend fun selectPreset(id: String): PresetEntity? {
         val preset = dao.getById(id) ?: return null
+        PreferencesHelper.setPresetDetached(context, false)
+        PreferencesHelper.setPresetModelOverride(context, "")
         PreferencesHelper.setCurrentPresetId(context, preset.id)
         applyPresetTools(preset)
         return preset
+    }
+
+    suspend fun clearCurrentPreset(keepModelId: String = "") {
+        PreferencesHelper.setPresetDetached(context, true)
+        PreferencesHelper.setPresetModelOverride(context, keepModelId)
+        PreferencesHelper.setCurrentPresetId(context, "")
+        clearActiveTools()
+    }
+
+    fun setModelOverride(modelId: String) {
+        PreferencesHelper.setPresetModelOverride(context, modelId)
+    }
+
+    private fun clearActiveTools() {
+        val prefs = ToolPreferences(context)
+        prefs.setActivePresetToolIds("[]")
+        prefs.setActiveMcpServerIds(emptySet())
     }
 
     private fun applyPresetTools(preset: PresetEntity) {
@@ -180,6 +195,7 @@ class PresetRepository(
     }
 
     suspend fun getCurrentPreset(): PresetEntity? {
+        if (PreferencesHelper.isPresetDetached(context)) return null
         val storedId = PreferencesHelper.getCurrentPresetId(context)
         return storedId.takeIf { it.isNotBlank() }?.let { dao.getById(it) }?.takeIf(::shouldShowPreset)
             ?: dao.getDefault()
@@ -278,6 +294,10 @@ class PresetRepository(
     }
 
     private suspend fun ensureCurrentPresetSelected() {
+        if (PreferencesHelper.isPresetDetached(context)) {
+            clearActiveTools()
+            return
+        }
         val stored = PreferencesHelper.getCurrentPresetId(context)
         if (stored.isNotBlank()) {
             val storedPreset = dao.getById(stored)

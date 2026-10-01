@@ -20,6 +20,9 @@ object PreferencesHelper {
     private const val KEY_SD_PROMPT = "sd_prompt"
     private const val KEY_SD_NEGATIVE_PROMPT = "sd_negative_prompt"
     private const val KEY_CURRENT_PRESET_ID = "current_preset_id"
+    private const val KEY_PRESET_DETACHED = "preset_detached"
+    private const val KEY_PRESET_MODEL_OVERRIDE = "preset_model_override"
+    private const val KEY_PRESET_PINS = "preset_pins"
     private const val KEY_BRAVE_SEARCH_API_KEY = "brave_search_api_key"
     private const val KEY_ENABLE_THINKING = "enable_thinking"
     private const val KEY_THINKING_EFFORT = "thinking_effort"
@@ -235,6 +238,30 @@ object PreferencesHelper {
 
     fun setCurrentPresetId(context: Context, presetId: String) {
         getSharedPreferences(context).edit().putString(KEY_CURRENT_PRESET_ID, presetId).apply()
+    }
+
+    fun isPresetDetached(context: Context): Boolean {
+        return getSharedPreferences(context).getBoolean(KEY_PRESET_DETACHED, false)
+    }
+
+    fun setPresetDetached(context: Context, detached: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_PRESET_DETACHED, detached).apply()
+    }
+
+    fun getPresetModelOverride(context: Context): String {
+        return getSharedPreferences(context).getString(KEY_PRESET_MODEL_OVERRIDE, "") ?: ""
+    }
+
+    fun setPresetModelOverride(context: Context, modelId: String) {
+        getSharedPreferences(context).edit().putString(KEY_PRESET_MODEL_OVERRIDE, modelId).apply()
+    }
+
+    fun getPresetPins(context: Context): Set<String> {
+        return getSharedPreferences(context).getStringSet(KEY_PRESET_PINS, emptySet()) ?: emptySet()
+    }
+
+    fun setPresetPins(context: Context, pins: Set<String>) {
+        getSharedPreferences(context).edit().putStringSet(KEY_PRESET_PINS, pins.toSet()).apply()
     }
 
     fun getBraveSearchApiKey(context: Context): String {
