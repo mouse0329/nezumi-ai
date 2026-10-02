@@ -9,9 +9,12 @@ import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.navigation.NavController
 import androidx.navigation.navOptions
 import android.util.Log
-import android.view.View
+import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -22,7 +25,6 @@ import androidx.core.content.ContextCompat
 import androidx.activity.compose.setContent
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -41,16 +43,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberDrawerState
-import androidx.compose.material3.DrawerValue
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -60,6 +56,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.drawerlayout.widget.DrawerLayout
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import coil.compose.AsyncImage
 import com.nezumi_ai.data.database.NezumiAiDatabase
@@ -104,10 +101,12 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "MainActivity"
     }
 
-    // Compose ModalNavigationDrawer の状態。onCreate の setContent 内で初期化する。
-    // ドロワー開閉は ChatFragment 等から openDrawer()/closeDrawer() 経由で操作される。
-    private var composeDrawerState: androidx.compose.material3.DrawerState? = null
-    private var composeDrawerScope: kotlinx.coroutines.CoroutineScope? = null
+    // チャット本体は DrawerLayout の content に載せる。
+    // ModalNavigationDrawer の content スロットに AndroidView(NavHost) を置くと、
+    // 起動のたびに本体が描画されず窓背景 (#111827) だけが残り、サイドバーだけ開く。
+    private var appDrawerLayout: DrawerLayout? = null
+    private var navHostContainer: ViewGroup? = null
+    private var navHostAttachAttempts = 0
     // ドロワー履歴リストの Compose State (旧 DrawerHistoryAdapter の submitList 相当)。
     private var drawerEntries by mutableStateOf<List<DrawerHistoryEntry>>(emptyList())
     private var drawerCurrentSessionId by mutableStateOf<Long?>(null)
@@ -138,100 +137,29 @@ class MainActivity : AppCompatActivity() {
         isIncognitoModeActive = savedInstanceState?.getBoolean("is_incognito_mode_active") ?: false
 
         try {
-            // XML レイアウト (activity_main.xml) を廃止し、DrawerLayout + NavHost を
-            // Compose の ModalNavigationDrawer + AndroidView(NavHostFragment) で構築する。
+            // XML レイアウト (activity_main.xml) を廃止したあとも、チャット本体は
+            // View 階層の DrawerLayout に載せる。Compose の ModalNavigationDrawer は
+            // content スロットの AndroidView を描画しないことがあり、起動のたびに
+            // 画面が窓背景のまま真っ黒になり、サイドバーだけ開いて操作できない。
             setContent {
-                val drawerState = rememberDrawerState(DrawerValue.Closed)
-                val scope = rememberCoroutineScope()
-                composeDrawerState = drawerState
-                composeDrawerScope = scope
-                // サイドバーはチャット画面でのみ開けるようにする。
-                // 設定・ミニアプリ・ミニアプリマネージャー・モデル管理などの
-                // チャット以外の画面ではジェスチャー/ボタンの両方で無効化する。
-                val drawerGesturesEnabled = drawerEnabledByNav
-                if (!drawerGesturesEnabled && drawerState.isOpen) {
-                    LaunchedEffect(drawerGesturesEnabled) { drawerState.close() }
-                }
-
+                val drawerLocked = !drawerEnabledByNav
                 NezumiComposeTheme {
-                    ModalNavigationDrawer(
-                        drawerState = drawerState,
-                        gesturesEnabled = drawerGesturesEnabled,
-                        drawerContent = {
-                            ModalDrawerSheet(
-                                modifier = Modifier.width(280.dp)
-                            ) {
-                                DrawerContent(
-                                    entries = drawerEntries,
-                                    currentSessionId = drawerCurrentSessionId,
-                                    sessionsEmpty = drawerSessionsEmpty,
-                                    historyLoading = drawerHistoryLoading,
-                                    menuSessionId = drawerMenuSession?.id,
-                                    onSessionClick = { session ->
-                                        closeDrawer()
-                                        openChatSession(session.id)
-                                    },
-                                    onSessionMenuClick = { session ->
-                                        drawerMenuSession = session
-                                    },
-                                    onSessionMenuDismiss = { drawerMenuSession = null },
-                                    onTogglePin = { session ->
-                                        drawerMenuSession = null
-                                        togglePinSession(session)
-                                    },
-                                    onRenameSession = { session ->
-                                        drawerMenuSession = null
-                                        showRenameSessionDialog(session)
-                                    },
-                                    onDeleteSession = { session ->
-                                        drawerMenuSession = null
-                                        showDeleteSessionDialog(session)
-                                    },
-                                    onSettingsClick = { navigateFromDrawer(R.id.settingsFragment) },
-                                    onModelSettingsClick = { navigateFromDrawer(R.id.modelSettingsFragment) },
-                                    onPresetSettingsClick = { navigateFromDrawer(R.id.presetSettingsFragment) },
-                                    onMiniAppsClick = { navigateFromDrawer(R.id.miniAppManagerFragment) },
-                                    onNewChatClick = {
-                                        closeDrawer()
-                                        createAndOpenSession()
-                                    },
-                                    onIncognitoClick = {
-                                        closeDrawer()
-                                        createAndOpenIncognitoSession()
-                                    },
-                                    onImageGenClick = { navigateFromDrawer(R.id.imageGenFragment) },
-                                    onSearchClick = {
-                                        closeDrawer()
-                                        showHistorySearchModal()
-                                    }
-                                )
+                    AndroidView(
+                        factory = { ctx -> createAppShell(ctx) },
+                        modifier = Modifier.fillMaxSize(),
+                        update = { drawerLayout ->
+                            val lockMode = if (drawerLocked) {
+                                DrawerLayout.LOCK_MODE_LOCKED_CLOSED
+                            } else {
+                                DrawerLayout.LOCK_MODE_UNLOCKED
                             }
+                            drawerLayout.setDrawerLockMode(lockMode, Gravity.START)
+                            if (drawerLocked && drawerLayout.isDrawerOpen(Gravity.START)) {
+                                drawerLayout.closeDrawer(Gravity.START)
+                            }
+                            attachNavHostIfNeeded()
                         }
-                    ) {
-                        // content_main.xml の NavHostFragment 相当
-                        AndroidView(
-                            factory = { ctx ->
-                                androidx.fragment.app.FragmentContainerView(ctx).apply {
-                                    id = R.id.nav_host_fragment_content_main
-                                    // factory 時点ではまだ Activity 階層に載っていない。
-                                    // ここで commitNow すると NavHost クラッシュになる。
-                                    addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-                                        override fun onViewAttachedToWindow(v: View) {
-                                            v.post { attachNavHostIfNeeded() }
-                                        }
-                                        override fun onViewDetachedFromWindow(v: View) = Unit
-                                    })
-                                }
-                            },
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(colorResource(R.color.bg_chat))
-                        )
-                        // ドロワーが開いているときに戻るボタンでドロワーを閉じる
-                        BackHandler(enabled = drawerState.isOpen) {
-                            scope.launch { drawerState.close() }
-                        }
-                    }
+                    )
                 }
             }
 
@@ -304,13 +232,130 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * チャット本体 (NavHost) を DrawerLayout の content に、サイドバーを ComposeView に載せる。
+     * 本体を Compose の ModalNavigationDrawer content に置くと描画されず真っ黒になる。
+     */
+    private fun createAppShell(ctx: Context): DrawerLayout {
+        val drawerWidth = (280 * ctx.resources.displayMetrics.density).toInt()
+        val content = FragmentContainerView(ctx).apply {
+            id = R.id.nav_host_fragment_content_main
+            layoutParams = DrawerLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundColor(ContextCompat.getColor(ctx, R.color.bg_chat))
+            addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) {
+                    v.post { attachNavHostIfNeeded() }
+                }
+                override fun onViewDetachedFromWindow(v: View) = Unit
+            })
+        }
+        val drawerPane = ComposeView(ctx).apply {
+            setViewTreeLifecycleOwner(this@MainActivity)
+            setViewTreeViewModelStoreOwner(this@MainActivity)
+            setViewTreeSavedStateRegistryOwner(this@MainActivity)
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+            layoutParams = DrawerLayout.LayoutParams(drawerWidth, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                gravity = Gravity.START
+            }
+            setContent {
+                NezumiComposeTheme {
+                    DrawerContent(
+                        entries = drawerEntries,
+                        currentSessionId = drawerCurrentSessionId,
+                        sessionsEmpty = drawerSessionsEmpty,
+                        historyLoading = drawerHistoryLoading,
+                        menuSessionId = drawerMenuSession?.id,
+                        onSessionClick = { session ->
+                            closeDrawer()
+                            openChatSession(session.id)
+                        },
+                        onSessionMenuClick = { session ->
+                            drawerMenuSession = session
+                        },
+                        onSessionMenuDismiss = { drawerMenuSession = null },
+                        onTogglePin = { session ->
+                            drawerMenuSession = null
+                            togglePinSession(session)
+                        },
+                        onRenameSession = { session ->
+                            drawerMenuSession = null
+                            showRenameSessionDialog(session)
+                        },
+                        onDeleteSession = { session ->
+                            drawerMenuSession = null
+                            showDeleteSessionDialog(session)
+                        },
+                        onSettingsClick = { navigateFromDrawer(R.id.settingsFragment) },
+                        onModelSettingsClick = { navigateFromDrawer(R.id.modelSettingsFragment) },
+                        onPresetSettingsClick = { navigateFromDrawer(R.id.presetSettingsFragment) },
+                        onMiniAppsClick = { navigateFromDrawer(R.id.miniAppManagerFragment) },
+                        onNewChatClick = {
+                            closeDrawer()
+                            createAndOpenSession()
+                        },
+                        onIncognitoClick = {
+                            closeDrawer()
+                            createAndOpenIncognitoSession()
+                        },
+                        onImageGenClick = { navigateFromDrawer(R.id.imageGenFragment) },
+                        onSearchClick = {
+                            closeDrawer()
+                            showHistorySearchModal()
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
+        return DrawerLayout(ctx).apply {
+            fitsSystemWindows = false
+            addView(content)
+            addView(drawerPane)
+            navHostContainer = content
+            appDrawerLayout = this
+        }
+    }
+
     private fun attachNavHostIfNeeded() {
         if (isFinishing || isDestroyed) return
-        val container = findViewById<View>(R.id.nav_host_fragment_content_main) ?: return
-        if (!container.isAttachedToWindow) return
+        val container = navHostContainer
+            ?: findViewById<ViewGroup>(R.id.nav_host_fragment_content_main)
+            ?: return
+        if (!container.isAttachedToWindow) {
+            scheduleNavHostAttach()
+            return
+        }
         val fragmentManager = supportFragmentManager
-        if (fragmentManager.findFragmentById(R.id.nav_host_fragment_content_main) != null) return
-        if (fragmentManager.isStateSaved) return
+        if (fragmentManager.isStateSaved) {
+            scheduleNavHostAttach()
+            return
+        }
+
+        val existing = fragmentManager.findFragmentById(R.id.nav_host_fragment_content_main)
+        if (existing != null) {
+            val hostView = existing.view
+            if (hostView != null && hostView.parent === container) {
+                ensureNavHostFillsContainer(container)
+                navHostAttachAttempts = 0
+                return
+            }
+            if (hostView == null) {
+                // 復元直後で view がまだ無い。次フレームで入れ直す。
+                scheduleNavHostAttach()
+                return
+            }
+            // AndroidView の作り直しで、古いコンテナにだけ view が残っている。
+            runCatching {
+                fragmentManager.beginTransaction().remove(existing).commitNow()
+            }.onFailure { t ->
+                Log.e(TAG, "Failed to detach stale NavHost", t)
+                scheduleNavHostAttach()
+                return
+            }
+        }
 
         runCatching {
             val navHost = androidx.navigation.fragment.NavHostFragment.create(R.navigation.nav_graph)
@@ -323,9 +368,44 @@ class MainActivity : AppCompatActivity() {
                 drawerEnabledByNav = destination.id == R.id.chatFragment
             }
             drawerEnabledByNav = navHost.navController.currentDestination?.id == R.id.chatFragment
+            ensureNavHostFillsContainer(container)
+            navHostAttachAttempts = 0
+            Log.d(TAG, "NavHost attached")
         }.onFailure { t ->
             Log.e(TAG, "Failed to attach NavHost", t)
+            scheduleNavHostAttach()
         }
+    }
+
+    private fun ensureNavHostFillsContainer(container: ViewGroup) {
+        container.layoutParams?.let { lp ->
+            lp.width = ViewGroup.LayoutParams.MATCH_PARENT
+            lp.height = ViewGroup.LayoutParams.MATCH_PARENT
+        }
+        for (i in 0 until container.childCount) {
+            val child = container.getChildAt(i)
+            val lp = child.layoutParams
+            if (lp == null) {
+                child.layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            } else {
+                lp.width = ViewGroup.LayoutParams.MATCH_PARENT
+                lp.height = ViewGroup.LayoutParams.MATCH_PARENT
+                child.layoutParams = lp
+            }
+        }
+        container.requestLayout()
+    }
+
+    private fun scheduleNavHostAttach() {
+        if (navHostAttachAttempts >= 10) {
+            Log.e(TAG, "Giving up attaching NavHost after $navHostAttachAttempts attempts")
+            return
+        }
+        navHostAttachAttempts++
+        window.decorView.postDelayed({ attachNavHostIfNeeded() }, 32L * navHostAttachAttempts)
     }
 
     /**
@@ -341,6 +421,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun retryNavController(action: (NavController) -> Unit, attempt: Int) {
         if (isFinishing || isDestroyed) return
+        attachNavHostIfNeeded()
         val navController = (supportFragmentManager
             .findFragmentById(R.id.nav_host_fragment_content_main)
                 as? androidx.navigation.fragment.NavHostFragment)
@@ -349,7 +430,7 @@ class MainActivity : AppCompatActivity() {
             action(navController)
             return
         }
-        val delays = longArrayOf(16L, 50L, 100L, 250L, 500L)
+        val delays = longArrayOf(16L, 50L, 100L, 250L, 500L, 800L)
         if (attempt >= delays.size) {
             Log.w(TAG, "NavHost is not ready; navigation request was skipped")
             return
@@ -401,13 +482,17 @@ class MainActivity : AppCompatActivity() {
 
     fun openDrawer() {
         if (!drawerEnabledByNav) return
-        val state = composeDrawerState ?: return
-        composeDrawerScope?.launch { state.open() }
+        val drawer = appDrawerLayout ?: return
+        if (!drawer.isDrawerOpen(Gravity.START)) {
+            drawer.openDrawer(Gravity.START)
+        }
     }
 
     fun closeDrawer() {
-        val state = composeDrawerState ?: return
-        composeDrawerScope?.launch { state.close() }
+        val drawer = appDrawerLayout ?: return
+        if (drawer.isDrawerOpen(Gravity.START)) {
+            drawer.closeDrawer(Gravity.START)
+        }
     }
 
     /**
@@ -565,9 +650,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onBackPressed() {
-        // ドロワーは Compose 側の BackHandler (setContent 内) が閉じる。
-        // ここでは開状態だけ確認して消費済みかどうかを判定する。
-        if (drawerEnabledByNav && composeDrawerState?.isOpen == true) {
+        if (drawerEnabledByNav && appDrawerLayout?.isDrawerOpen(Gravity.START) == true) {
             closeDrawer()
         } else {
             super.onBackPressed()
@@ -841,6 +924,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        attachNavHostIfNeeded()
 
         // Register screen off receiver to stop generation when screen sleeps
         registerScreenOffReceiver()
