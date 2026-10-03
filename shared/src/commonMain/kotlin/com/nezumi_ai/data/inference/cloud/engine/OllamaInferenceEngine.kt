@@ -1,10 +1,12 @@
 package com.nezumi_ai.data.inference.cloud.engine
 
 import com.nezumi_ai.data.inference.CloudInferenceParams
+import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
 import com.nezumi_ai.data.inference.cloud.CloudHttpClient
 import com.nezumi_ai.data.inference.cloud.CloudChatMessage
 import com.nezumi_ai.data.inference.cloud.CloudLog
+import com.nezumi_ai.data.inference.cloud.CloudThinkingEffort
 import com.nezumi_ai.data.inference.cloud.ImageEncoding
 import io.ktor.client.request.header
 import io.ktor.client.request.preparePost
@@ -112,6 +114,13 @@ class OllamaInferenceEngine(
                     }
                 }
             }
+            // 思考が使えない原因: think 未指定だと思考モデルが思考を出さず、
+            // 出しても message.thinking を読んでいなかった。
+            // ON は low/medium/high、OFF は false。
+            when (val think = CloudThinkingEffort.ollamaThinkValue(config.enableThinking, config.thinkingEffort)) {
+                is Boolean -> put("think", think)
+                is String -> put("think", think)
+            }
         }
 
         http.preparePost(endpoint) {
@@ -143,6 +152,10 @@ class OllamaInferenceEngine(
                     val parsed = parseChunk(line)
                     val delta = parsed.first
                     val done = parsed.second
+                    val thinking = parsed.third
+                    if (!thinking.isNullOrEmpty()) {
+                        session.trySend(InferenceStreamProtocol.encodeThinkChunk(thinking))
+                    }
                     if (!delta.isNullOrEmpty()) {
                         onDelta(delta)
                     }
@@ -154,10 +167,10 @@ class OllamaInferenceEngine(
         CloudLog.d(TAG, "Ollama stream finished session=$sessionId")
     }
 
-    private fun parseChunk(line: String): Pair<String?, Boolean> {
+    private fun parseChunk(line: String): Triple<String?, Boolean, String?> {
         val root = runCatching {
             json.parseToJsonElement(line)
-        }.getOrNull() as? JsonObject ?: return null to false
+        }.getOrNull() as? JsonObject ?: return Triple(null, false, null)
 
         val done = runCatching {
             root["done"]?.jsonPrimitive?.booleanOrNull
@@ -167,6 +180,11 @@ class OllamaInferenceEngine(
         val contentDelta = message?.let { messageObject ->
             runCatching {
                 messageObject["content"]?.jsonPrimitive?.content
+            }.getOrNull()
+        }
+        val thinkingDelta = message?.let { messageObject ->
+            runCatching {
+                messageObject["thinking"]?.jsonPrimitive?.content
             }.getOrNull()
         }
 
@@ -187,7 +205,7 @@ class OllamaInferenceEngine(
             contentDelta
         }
 
-        return delta to done
+        return Triple(delta, done, thinkingDelta)
     }
 
     private fun synthesizeGemma4ToolCallText(toolCallsElement: JsonElement): String? {

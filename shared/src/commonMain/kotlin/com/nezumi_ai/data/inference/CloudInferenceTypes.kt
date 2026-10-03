@@ -7,7 +7,11 @@ data class CloudInferenceParams(
     val topP: Float,
     val customStopTokens: List<String>,
     val enableToolCalling: Boolean,
-    val contextWindow: Int
+    val contextWindow: Int,
+    /** チャットの思考 ON/OFF。クラウドはサービス別パラメータへマップする。 */
+    val enableThinking: Boolean = false,
+    /** low / medium / high。非対応サービスでは無視する。 */
+    val thinkingEffort: String = "low"
 )
 
 /** LiteRT ToolCall のプラットフォーム非依存版。 */

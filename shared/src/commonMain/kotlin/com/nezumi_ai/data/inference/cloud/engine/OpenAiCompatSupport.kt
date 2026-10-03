@@ -2,6 +2,7 @@ package com.nezumi_ai.data.inference.cloud.engine
 
 import com.nezumi_ai.data.inference.CloudInferenceParams
 import com.nezumi_ai.data.inference.cloud.CloudChatMessage
+import com.nezumi_ai.data.inference.cloud.CloudThinkingEffort
 import com.nezumi_ai.data.inference.cloud.ImageEncoding
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -31,6 +32,12 @@ internal object OpenAiCompatSupport {
             put("model", model); put("stream", stream)
             put("temperature", config.temperature.toDouble()); put("top_p", config.topP.toDouble())
             put("max_tokens", config.maxTokens)
+            if (config.enableThinking && CloudThinkingEffort.openaiSupportsReasoningEffort(model)) {
+                put(
+                    "reasoning_effort",
+                    CloudThinkingEffort.normalize(config.thinkingEffort)
+                )
+            }
             if (config.customStopTokens.isNotEmpty()) putJsonArray("stop") { config.customStopTokens.forEach { add(it) } }
             putJsonArray("messages") {
                 messages.forEach { msg ->
@@ -61,14 +68,24 @@ internal object OpenAiCompatSupport {
         }
     }
 
-    fun extractDeltaContent(payload: String, jsonParser: (String) -> JsonElement?): String? {
+    data class DeltaPieces(val content: String?, val thinking: String?)
+
+    fun extractDeltaContent(payload: String, jsonParser: (String) -> JsonElement?): String? =
+        extractDeltaPieces(payload, jsonParser).content
+
+    fun extractDeltaPieces(payload: String, jsonParser: (String) -> JsonElement?): DeltaPieces {
         val trimmed = payload.trim()
-        if (trimmed.isEmpty() || trimmed == "[DONE]") return null
-        val root = jsonParser(trimmed) as? JsonObject ?: return null
-        val choices = root["choices"] as? JsonArray ?: return null
-        val first = choices.firstOrNull() as? JsonObject ?: return null
-        val delta = first["delta"] as? JsonObject ?: return null
-        val content = delta["content"] ?: return null
-        return runCatching { content.jsonPrimitive.content }.getOrNull()
+        if (trimmed.isEmpty() || trimmed == "[DONE]") return DeltaPieces(null, null)
+        val root = jsonParser(trimmed) as? JsonObject ?: return DeltaPieces(null, null)
+        val choices = root["choices"] as? JsonArray ?: return DeltaPieces(null, null)
+        val first = choices.firstOrNull() as? JsonObject ?: return DeltaPieces(null, null)
+        val delta = first["delta"] as? JsonObject ?: return DeltaPieces(null, null)
+        val content = delta["content"]?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+        val thinking = delta["reasoning_content"]?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+            ?: (delta["reasoning"] as? JsonObject)?.get("content")?.let {
+                runCatching { it.jsonPrimitive.content }.getOrNull()
+            }
+            ?: delta["reasoning"]?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+        return DeltaPieces(content, thinking)
     }
 }

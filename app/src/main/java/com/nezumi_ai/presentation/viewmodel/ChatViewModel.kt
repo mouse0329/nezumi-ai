@@ -1073,6 +1073,7 @@ class ChatViewModel(
             try {
                 _selectedModel.collect { model ->
                     refreshContextWindowForModel(model)
+                    syncThinkingEffortForModel(model)
                 }
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
@@ -1326,11 +1327,22 @@ class ChatViewModel(
     }
 
     fun setChatSessionThinkingEffort(effort: String) {
-        // エフォートはプロンプト構築時に参照されるだけなので、切り替えのみで
-        // モデルリロード / KV クリアは不要 (ON/OFF トグルと違いテンプレ構造を変えない)。
-        if (effort == _chatSessionThinkingEffort.value) return
+        // エフォートはプロンプト構築時 / クラウドリクエスト時に参照されるだけなので、
+        // 切り替えのみでモデルリロード / KV クリアは不要。
+        // クラウドはサービスごとに保存する (Ollama の low が Gemini に流れない)。
+        if (effort == _chatSessionThinkingEffort.value) {
+            PreferencesHelper.setThinkingEffort(appContext, effort, _selectedModel.value)
+            return
+        }
         _chatSessionThinkingEffort.value = effort
-        PreferencesHelper.setThinkingEffort(appContext, effort)
+        PreferencesHelper.setThinkingEffort(appContext, effort, _selectedModel.value)
+    }
+
+    private fun syncThinkingEffortForModel(modelKey: String) {
+        val effort = PreferencesHelper.getThinkingEffort(appContext, modelKey)
+        if (effort != _chatSessionThinkingEffort.value) {
+            _chatSessionThinkingEffort.value = effort
+        }
     }
 
     /**
@@ -1343,7 +1355,9 @@ class ChatViewModel(
      *   1. ユーザーが手動テンプレート / ビルトインを明示選択済み → その文字列を直接検査
      *   2. GGUF (MODE_AUTO) → ロード時にメタデータから記録された capability を参照
      *      (未ロードで未記録ならモデル名ヒューリスティックにフォールバック)
-     *   3. クラウド等テンプレート無関係のモデル → モデル名ヒューリスティック
+     *   3. クラウド → そのサービスが思考強度 API を持つか
+     *   4. LiteRT-LM / ビルトイン Gemma → 未対応なので非表示
+     *   5. それ以外 → モデル名ヒューリスティック
      */
     fun isThinkingEffortSupportedForModel(modelKey: String): Boolean {
         return runCatching {
@@ -1360,10 +1374,23 @@ class ChatViewModel(
                 com.nezumi_ai.utils.GgufMetadataReader.readChatTemplate(File(modelKey))
                     ?.let { com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.templateSupportsThinkingEffort(it) }
                     ?: com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.usesThinkingEffortVariable(modelKey)
+            } else if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(modelKey)) {
+                com.nezumi_ai.data.inference.cloud.CloudThinkingEffort
+                    .levelsForModel(modelKey).isNotEmpty()
+            } else if (isLiteRtEffortUnsupported(modelKey)) {
+                false
             } else {
                 com.nezumi_ai.data.inference.prompt.ModelNameHeuristics.usesThinkingEffortVariable(modelKey)
             }
         }.getOrDefault(false)
+    }
+
+    private fun isLiteRtEffortUnsupported(modelKey: String): Boolean {
+        val lower = modelKey.trim().lowercase()
+        if (lower.endsWith(".litertlm") || lower.endsWith(".task")) return true
+        return lower == "gemma4-2b" || lower == "gemma4-4b" ||
+            lower == "gemma-3n-2b" || lower == "gemma-3n-4b" ||
+            lower == "e2b" || lower == "e4b"
     }
 
     /** 同一モデルパスに対して chat_template 由来の自動有効化を一度だけ走らせるための記録。 */
@@ -4286,7 +4313,7 @@ class ChatViewModel(
             thinkingEnabledOverride -> base.copy(enableThinking = true)
             disableThinking -> base.copy(enableThinking = false)
             else -> base
-        }
+        }.copy(thinkingEffort = _chatSessionThinkingEffort.value)
         Log.d(
             TAG,
             "chatInferenceConfigForModel: model=$model, disableThinking=$disableThinking, overrideEnabled=$thinkingEnabledOverride, enableThinking=${result.enableThinking}"

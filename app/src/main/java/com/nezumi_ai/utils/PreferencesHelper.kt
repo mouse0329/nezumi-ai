@@ -289,13 +289,25 @@ object PreferencesHelper {
         getSharedPreferences(context).edit().putBoolean(KEY_ENABLE_THINKING, enabled).apply()
     }
 
-    fun getThinkingEffort(context: Context): String {
-        return getSharedPreferences(context).getString(KEY_THINKING_EFFORT, DEFAULT_THINKING_EFFORT)
+    fun getThinkingEffort(context: Context, modelKey: String = ""): String {
+        val prefs = getSharedPreferences(context)
+        val key = thinkingEffortKeyFor(modelKey)
+        val scoped = prefs.getString(key, null)
+        if (!scoped.isNullOrBlank()) return scoped
+        return prefs.getString(KEY_THINKING_EFFORT, DEFAULT_THINKING_EFFORT)
             ?: DEFAULT_THINKING_EFFORT
     }
 
-    fun setThinkingEffort(context: Context, effort: String) {
-        getSharedPreferences(context).edit().putString(KEY_THINKING_EFFORT, effort).apply()
+    fun setThinkingEffort(context: Context, effort: String, modelKey: String = "") {
+        getSharedPreferences(context).edit()
+            .putString(thinkingEffortKeyFor(modelKey), effort)
+            .apply()
+    }
+
+    /** クラウドはサービス ID ごとに保存する。ローカルは従来の単一キー。 */
+    private fun thinkingEffortKeyFor(modelKey: String): String {
+        val providerId = com.nezumi_ai.data.inference.cloud.CloudModelId.parse(modelKey)?.provider?.id
+        return if (providerId.isNullOrBlank()) KEY_THINKING_EFFORT else "$KEY_THINKING_EFFORT.$providerId"
     }
 
     /**
@@ -319,17 +331,27 @@ object PreferencesHelper {
      * (解析自体は [ModelNameHeuristics.parseReasoningEffortGranularity])。
      *
      * 戻り値の意味:
-     *  - 空リスト: テンプレートが effort を解釈しない (UI は選択肢を出さない)
+     *  - 空リスト: テンプレート / サービスが effort を解釈しない (UI は選択肢を出さない)
      *  - 1 要素  : BINARY (例: Granite 4.x の "low" のみ)
      *  - 複数    : GRADED (検出レベル集合。3 値とは限らない)
-     * GGUF 以外のモデルやテンプレート読み取り失敗時は従来互換の 3 値
-     * [ALL_THINKING_EFFORTS] にフォールバックする。
+     * LiteRT-LM (.litertlm / .task / ビルトイン Gemma) は思考強度未対応のため空。
+     * クラウドはサービスが強度 API を持つときだけ low / medium / high。
+     * GGUF 以外でテンプレートを読めないモデルは空 (従来の 3 値フォールバックは GGUF のみ)。
      */
     fun resolveSupportedThinkingEffortLevels(context: Context, modelPathOrName: String): List<String> {
-        if (modelPathOrName.isBlank()) return ALL_THINKING_EFFORTS
+        if (modelPathOrName.isBlank()) return emptyList()
+        if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(modelPathOrName)) {
+            return com.nezumi_ai.data.inference.cloud.CloudThinkingEffort.levelsForModel(modelPathOrName)
+        }
+        val lower = modelPathOrName.trim().lowercase()
+        if (lower.endsWith(".litertlm") || lower.endsWith(".task")) return emptyList()
+        if (lower == "gemma4-2b" || lower == "gemma4-4b" ||
+            lower == "gemma-3n-2b" || lower == "gemma-3n-4b" ||
+            lower == "e2b" || lower == "e4b"
+        ) return emptyList()
         val isLocalGguf = modelPathOrName.endsWith(".gguf", ignoreCase = true) &&
             java.io.File(modelPathOrName).isAbsolute
-        if (!isLocalGguf) return ALL_THINKING_EFFORTS
+        if (!isLocalGguf) return emptyList()
         return runCatching {
             val template = com.nezumi_ai.data.inference.PromptTemplateStore
                 .resolveTemplate(context, modelPathOrName)

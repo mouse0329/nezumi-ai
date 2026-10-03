@@ -1,10 +1,12 @@
 package com.nezumi_ai.data.inference.cloud.engine
 
 import com.nezumi_ai.data.inference.CloudInferenceParams
+import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
 import com.nezumi_ai.data.inference.cloud.CloudHttpClient
 import com.nezumi_ai.data.inference.cloud.CloudChatMessage
 import com.nezumi_ai.data.inference.cloud.CloudLog
+import com.nezumi_ai.data.inference.cloud.CloudThinkingEffort
 import com.nezumi_ai.data.inference.cloud.ImageEncoding
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -21,6 +23,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -77,6 +80,12 @@ class GeminiInferenceEngine(
             putJsonObject("generationConfig") {
                 put("temperature", config.temperature.toDouble()); put("topP", config.topP.toDouble()); put("maxOutputTokens", config.maxTokens)
                 if (config.customStopTokens.isNotEmpty()) putJsonArray("stopSequences") { config.customStopTokens.forEach { add(it) } }
+                if (config.enableThinking && CloudThinkingEffort.geminiSupportsThinkingLevel(model)) {
+                    putJsonObject("thinkingConfig") {
+                        put("thinkingLevel", CloudThinkingEffort.normalize(config.thinkingEffort))
+                        put("includeThoughts", true)
+                    }
+                }
             }
         }
 
@@ -93,7 +102,12 @@ class GeminiInferenceEngine(
             suspend fun dispatch(data: String): Boolean {
                 if (session.isClosedForSend) return false
                 val trimmed = data.trim(); if (trimmed.isEmpty()) return true
-                val text = extractTextParts(trimmed); if (text != null) onDelta(text); return true
+                val pieces = extractParts(trimmed)
+                if (!pieces.second.isNullOrEmpty()) {
+                    session.trySend(InferenceStreamProtocol.encodeThinkChunk(pieces.second!!))
+                }
+                if (pieces.first != null) onDelta(pieces.first!!)
+                return true
             }
             withStreamChannel(response) { ch ->
                 while (true) {
@@ -110,18 +124,21 @@ class GeminiInferenceEngine(
         CloudLog.d(TAG, "Gemini stream finished session=$sessionId")
     }
 
-    private fun extractTextParts(payload: String): String? {
-        val root = runCatching { json.parseToJsonElement(payload) }.getOrNull() as? JsonObject ?: return null
-        val candidates = root["candidates"] as? JsonArray ?: return null
-        val first = candidates.firstOrNull() as? JsonObject ?: return null
-        val content = first["content"] as? JsonObject ?: return null
-        val parts = content["parts"] as? JsonArray ?: return null
-        val sb = StringBuilder()
+    private fun extractParts(payload: String): Pair<String?, String?> {
+        val root = runCatching { json.parseToJsonElement(payload) }.getOrNull() as? JsonObject ?: return null to null
+        val candidates = root["candidates"] as? JsonArray ?: return null to null
+        val first = candidates.firstOrNull() as? JsonObject ?: return null to null
+        val content = first["content"] as? JsonObject ?: return null to null
+        val parts = content["parts"] as? JsonArray ?: return null to null
+        val answer = StringBuilder()
+        val thinking = StringBuilder()
         for (p in parts) {
             val obj = p as? JsonObject ?: continue
             val text = runCatching { obj["text"]?.jsonPrimitive?.content }.getOrNull()
-            if (!text.isNullOrEmpty()) sb.append(text)
+            if (text.isNullOrEmpty()) continue
+            val isThought = runCatching { obj["thought"]?.jsonPrimitive?.booleanOrNull }.getOrNull() == true
+            if (isThought) thinking.append(text) else answer.append(text)
         }
-        return if (sb.isEmpty()) null else sb.toString()
+        return answer.toString().ifEmpty { null } to thinking.toString().ifEmpty { null }
     }
 }

@@ -1934,7 +1934,8 @@ class ChatFragment : Fragment() {
                 updateMediaAvailability(currentModelKey)
                 updateThinkingToggleVisibility()
                 // 設定画面などで変更された可能性のあるエフォート値を復元する。
-                thinkingEffort = PreferencesHelper.getThinkingEffort(ctx)
+                thinkingEffort = PreferencesHelper.getThinkingEffort(ctx, currentModelKey)
+                viewModel.setChatSessionThinkingEffort(thinkingEffort)
 
                 if (newContextMeterVisible != contextMeterVisible) {
                     contextMeterVisible = newContextMeterVisible

@@ -1,6 +1,7 @@
 package com.nezumi_ai.data.inference.cloud.engine
 
 import com.nezumi_ai.data.inference.CloudInferenceParams
+import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
 import com.nezumi_ai.data.inference.cloud.CloudChatMessage
 import com.nezumi_ai.data.inference.cloud.CloudHttpClient
@@ -67,8 +68,11 @@ class LmStudioInferenceEngine(
             suspend fun dispatch(data: String): Boolean {
                 if (session.isClosedForSend) return false
                 if (data.trim() == "[DONE]") return false
-                val delta = OpenAiCompatSupport.extractDeltaContent(data) { parseSafely(it) }
-                if (delta != null) onDelta(delta)
+                val pieces = OpenAiCompatSupport.extractDeltaPieces(data) { parseSafely(it) }
+                if (!pieces.thinking.isNullOrEmpty()) {
+                    session.trySend(InferenceStreamProtocol.encodeThinkChunk(pieces.thinking))
+                }
+                if (pieces.content != null) onDelta(pieces.content)
                 return true
             }
             withStreamChannel(response) { ch ->

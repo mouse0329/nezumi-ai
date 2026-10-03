@@ -10,6 +10,8 @@ data class InferenceConfig(
     val topP: Float = 0.95f,
     /** LiteRT-LM の投機的デコーディング有効化（推論高速化。デフォルトはオフ） */
     val enableThinking: Boolean = false,
+    /** 思考強度 (low / medium / high)。クラウドはサービス別に保持した値を載せる。 */
+    val thinkingEffort: String = "low",
     val enableSpeculativeDecoding: Boolean = false,
     val backendType: String = "CPU",
     /** LiteRT-LM のロード時に vision/audio executor を必須化する。 */

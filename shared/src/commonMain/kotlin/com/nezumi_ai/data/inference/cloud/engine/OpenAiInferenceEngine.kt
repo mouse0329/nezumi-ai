@@ -1,6 +1,7 @@
 package com.nezumi_ai.data.inference.cloud.engine
 
 import com.nezumi_ai.data.inference.CloudInferenceParams
+import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
 import com.nezumi_ai.data.inference.cloud.CloudChatMessage
 import com.nezumi_ai.data.inference.cloud.CloudHttpClient
@@ -47,9 +48,12 @@ class OpenAiInferenceEngine(
             val dataBuffer = StringBuilder()
             suspend fun dispatch(data: String): Boolean {
                 if (session.isClosedForSend) return false
-                val delta = OpenAiCompatSupport.extractDeltaContent(data) { parseSafely(it) }
+                val pieces = OpenAiCompatSupport.extractDeltaPieces(data) { parseSafely(it) }
                 if (data.trim() == "[DONE]") return false
-                if (delta != null) onDelta(delta)
+                if (!pieces.thinking.isNullOrEmpty()) {
+                    session.trySend(InferenceStreamProtocol.encodeThinkChunk(pieces.thinking))
+                }
+                if (pieces.content != null) onDelta(pieces.content)
                 return true
             }
             withStreamChannel(response) { ch ->

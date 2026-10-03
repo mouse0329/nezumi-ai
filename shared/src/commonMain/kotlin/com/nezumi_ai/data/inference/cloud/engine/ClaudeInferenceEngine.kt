@@ -1,10 +1,12 @@
 package com.nezumi_ai.data.inference.cloud.engine
 
 import com.nezumi_ai.data.inference.CloudInferenceParams
+import com.nezumi_ai.data.inference.InferenceStreamProtocol
 import com.nezumi_ai.data.inference.cloud.CloudApiKeyStore
 import com.nezumi_ai.data.inference.cloud.CloudHttpClient
 import com.nezumi_ai.data.inference.cloud.CloudChatMessage
 import com.nezumi_ai.data.inference.cloud.CloudLog
+import com.nezumi_ai.data.inference.cloud.CloudThinkingEffort
 import com.nezumi_ai.data.inference.cloud.ImageEncoding
 import io.ktor.client.request.header
 import io.ktor.client.request.preparePost
@@ -51,9 +53,25 @@ class ClaudeInferenceEngine(
             .trim()
 
         val bodyJson = buildJsonObject {
-            put("model", model); put("max_tokens", config.maxTokens)
-            put("temperature", config.temperature.toDouble()); put("top_p", config.topP.toDouble()); put("stream", true)
+            put("model", model); put("max_tokens", config.maxTokens); put("stream", true)
+            // extended thinking は temperature != 1 / top_p 指定で 400 になる。
+            if (!config.enableThinking) {
+                put("temperature", config.temperature.toDouble())
+                put("top_p", config.topP.toDouble())
+            }
             if (systemText.isNotBlank()) put("system", systemText)
+            if (config.enableThinking) {
+                val effort = CloudThinkingEffort.normalize(config.thinkingEffort)
+                if (CloudThinkingEffort.claudeSupportsEffort(model)) {
+                    putJsonObject("output_config") { put("effort", effort) }
+                    putJsonObject("thinking") { put("type", "adaptive") }
+                } else {
+                    putJsonObject("thinking") {
+                        put("type", "enabled")
+                        put("budget_tokens", CloudThinkingEffort.claudeBudgetTokens(effort, config.maxTokens))
+                    }
+                }
+            }
             if (config.customStopTokens.isNotEmpty()) putJsonArray("stop_sequences") { config.customStopTokens.forEach { add(it) } }
             putJsonArray("messages") {
                 messages.forEach { msg ->
@@ -100,8 +118,11 @@ class ClaudeInferenceEngine(
                 if (session.isClosedForSend) return false
                 if (ev == "message_stop") return false
                 if (ev != null && ev != "content_block_delta") return true
-                val text = extractTextDelta(data)
-                if (text != null) onDelta(text)
+                val pieces = extractDeltas(data)
+                if (!pieces.second.isNullOrEmpty()) {
+                    session.trySend(InferenceStreamProtocol.encodeThinkChunk(pieces.second!!))
+                }
+                if (pieces.first != null) onDelta(pieces.first!!)
                 return true
             }
             withStreamChannel(response) { ch ->
@@ -125,12 +146,18 @@ class ClaudeInferenceEngine(
         CloudLog.d(TAG, "Claude stream finished session=$sessionId")
     }
 
-    private fun extractTextDelta(payload: String): String? {
-        val root = runCatching { json.parseToJsonElement(payload.trim()) }.getOrNull() as? JsonObject ?: return null
-        if (runCatching { root["type"]?.jsonPrimitive?.content }.getOrNull() != "content_block_delta") return null
-        val delta = root["delta"] as? JsonObject ?: return null
-        if (runCatching { delta["type"]?.jsonPrimitive?.content }.getOrNull() != "text_delta") return null
-        return runCatching { delta["text"]?.jsonPrimitive?.content }.getOrNull()
+    private fun extractDeltas(payload: String): Pair<String?, String?> {
+        val root = runCatching { json.parseToJsonElement(payload.trim()) }.getOrNull() as? JsonObject ?: return null to null
+        if (runCatching { root["type"]?.jsonPrimitive?.content }.getOrNull() != "content_block_delta") return null to null
+        val delta = root["delta"] as? JsonObject ?: return null to null
+        val type = runCatching { delta["type"]?.jsonPrimitive?.content }.getOrNull()
+        val text = runCatching { delta["text"]?.jsonPrimitive?.content }.getOrNull()
+        val thinking = runCatching { delta["thinking"]?.jsonPrimitive?.content }.getOrNull()
+        return when (type) {
+            "text_delta" -> text to null
+            "thinking_delta" -> null to thinking
+            else -> null to null
+        }
     }
 
     companion object { private const val ANTHROPIC_VERSION = "2023-06-01" }
