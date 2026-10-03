@@ -12,6 +12,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -383,7 +384,7 @@ open class ModelSettingsFragment : Fragment() {
                     }
                     toast("モデルを追加しました: ${File(modelPath).name}")
                     refreshImportedTasks()
-                    // ファイルインポートも「追加完了」までが完了。素の状態プリセットを即時作成する。
+                    // インポート完了後はプリセットを追加しない。孤児参照の掃除だけ行う。
                     presetRepository.ensurePlainPresetsForDownloadedModels()
                     val imported = ModelFileManager.ImportedTaskModel(
                         path = modelPath,
@@ -601,6 +602,7 @@ open class ModelSettingsFragment : Fragment() {
                         val speedKey = "${entry.hfRepo}/${entry.hfFile?.substringAfterLast('/')}"
                         ModelAccordionItem(
                             title = state.title,
+                            tagSource = entry.hfFile ?: entry.displayName,
                             status = state.status,
                             isExpanded = isExpanded,
                             onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
@@ -663,6 +665,7 @@ open class ModelSettingsFragment : Fragment() {
                         val sizeBytes = getModelSizeBytes(model)
                         ModelAccordionItem(
                             title = state.title,
+                            tagSource = "${state.title} ${model.name}",
                             status = state.status,
                             isExpanded = isExpanded,
                             onToggle = { expandedModelKey = if (isExpanded) null else modelKey },
@@ -2279,31 +2282,36 @@ open class ModelSettingsFragment : Fragment() {
                     )
                 },
             colors = CardDefaults.cardColors(
-                containerColor = colorResource(id = R.color.primary_light)
+                containerColor = colorResource(id = R.color.surface_card)
             )
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = CloudModelId.displayLabel(modelId),
-                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
                         color = colorResource(id = R.color.text_primary)
+                    )
+                    ModelQuantTags(
+                        nameSource = parsed?.modelName ?: modelId,
+                        extraTags = listOf(stringResource(id = R.string.model_tag_cloud))
                     )
                     Text(
                         text = stringResource(
                             id = if (configured) R.string.cloud_models_status_configured
                             else R.string.cloud_models_status_missing
                         ),
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.labelSmall,
                         color = colorResource(
                             id = if (configured) R.color.primary else R.color.text_secondary
-                        )
+                        ),
+                        modifier = Modifier.padding(top = 2.dp)
                     )
                 }
                 TextButton(
@@ -2317,6 +2325,29 @@ open class ModelSettingsFragment : Fragment() {
                         fontSize = 12.sp
                     )
                 }
+            }
+        }
+    }
+
+    @Composable
+    private fun ModelQuantTags(nameSource: String, extraTags: List<String> = emptyList()) {
+        val meta = modelNameMeta(nameSource)
+        val tags = (listOf(meta.size, meta.quant) + extraTags).filter { it.isNotBlank() }.distinct()
+        if (tags.isEmpty()) return
+        val sub = colorResource(id = R.color.text_secondary)
+        Row(
+            modifier = Modifier.padding(top = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            tags.forEach { tag ->
+                Text(
+                    text = tag,
+                    color = sub,
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .border(1.dp, sub.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                )
             }
         }
     }
@@ -4154,7 +4185,8 @@ open class ModelSettingsFragment : Fragment() {
         speedInfo: DownloadSpeedInfo? = null,
         isPaused: Boolean = false,
         engineLabel: String = "LiteRT-LM",
-        onPause: (() -> Unit)? = null
+        onPause: (() -> Unit)? = null,
+        tagSource: String = ""
     ) {
         Card(
             modifier = Modifier
@@ -4172,6 +4204,7 @@ open class ModelSettingsFragment : Fragment() {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(text = title, fontWeight = FontWeight.SemiBold)
+                        ModelQuantTags(tagSource.ifBlank { title })
                         fileSizeLabel?.let { size ->
                             Text(
                                 text = size,
@@ -4379,6 +4412,7 @@ open class ModelSettingsFragment : Fragment() {
                             ),
                             fontWeight = FontWeight.SemiBold
                         )
+                        ModelQuantTags(model.path)
                         model.hfRepoQualifier?.let { repo ->
                             Text(
                                 text = "HF: $repo",
@@ -4745,10 +4779,9 @@ open class ModelSettingsFragment : Fragment() {
         expandedModelKey = null
         if (ok) {
             // モデル削除 = プリセットの孤児掃除。
-            // - plain プリセット (ロック済み・自動生成) は DB から丸ごと除去。
-            // - バグ修正: ユーザーが作成した通常のプリセットは削除せず、
+            // - 既存の plain プリセット（旧仕様で自動生成・ロック済み）は DB から除去。
+            // - ユーザーが作成した通常のプリセットは削除せず、
             //   削除済みモデルを指していた model_id を未選択状態にクリアする。
-            //   （そのままだと一覧に残った上、存在しないモデルで動作させようとしてしまっていた）
             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                 presetRepository.ensurePlainPresetsForDownloadedModels()
             }
@@ -4764,8 +4797,8 @@ open class ModelSettingsFragment : Fragment() {
             refreshImportedTasks()
             expandedModelKey = null
             // モデル削除 = プリセットの孤児掃除。
-            // - plain プリセット (ロック済み・自動生成) は DB から丸ごと除去。
-            // - バグ修正: ユーザーが作成した通常のプリセットは削除せず、
+            // - 既存の plain プリセット（旧仕様で自動生成・ロック済み）は DB から除去。
+            // - ユーザーが作成した通常のプリセットは削除せず、
             //   削除済みモデルを指していた model_id を未選択状態にクリアする。
             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
                 presetRepository.ensurePlainPresetsForDownloadedModels()

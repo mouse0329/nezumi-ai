@@ -1066,6 +1066,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="cloud_models_credentials_save_failed">保存に失敗しました</string>
     <string name="cloud_models_status_configured">設定済み</string>
     <string name="cloud_models_status_missing">未設定</string>
+    <string name="model_tag_cloud">Cloud</string>
     <string name="cloud_models_empty">クラウドモデルはまだ追加されていません。</string>
     <!-- デフォルトプリセットのモデル未選択モーダル -->
     <string name="default_model_missing_title">モデルが選択されていません</string>

@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nezumi_ai.R
 import com.nezumi_ai.data.database.entity.PresetEntity
+import com.nezumi_ai.data.inference.cloud.CloudModelId
 import com.nezumi_ai.data.preset.PresetConstants
 import com.nezumi_ai.data.preset.PresetModelOption
 import java.io.File
@@ -59,9 +60,9 @@ internal fun modelNameMeta(modelId: String): ModelNameMeta {
     val token = base.split(Regex("[-._ ]")).firstOrNull().orEmpty()
     val key = token.lowercase().replace(Regex("\\d+$"), "").ifBlank { token.lowercase() }
         .ifBlank { "other" }
-    val quant = Regex("(?:^|[-._])(iq\\d|q\\d(?:_[0-9a-z]+)?|f32|f16|bf16)", RegexOption.IGNORE_CASE)
+    val quant = Regex("(?:^|[-._ ])(iq\\d|q\\d(?:_[0-9a-z]+)?|f32|f16|bf16)", RegexOption.IGNORE_CASE)
         .find(base)?.groupValues?.getOrNull(1).orEmpty().uppercase()
-    val size = Regex("(?:^|[-._])(\\d+(?:\\.\\d+)?b)(?=[-._]|$)", RegexOption.IGNORE_CASE)
+    val size = Regex("(?:^|[-._ ])(\\d+(?:\\.\\d+)?b)(?=[-._ ]|$)", RegexOption.IGNORE_CASE)
         .find(base)?.groupValues?.getOrNull(1).orEmpty().uppercase()
     return ModelNameMeta(groupKey = key, quant = quant, size = size)
 }
@@ -815,15 +816,13 @@ private fun PresetPickerRow(
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.clickable(onClick = onEdit).padding(vertical = 4.dp)
                         )
-                        if (!preset.isLocked && !preset.isDefault) {
-                            Text(
-                                text = stringResource(R.string.delete),
-                                color = danger,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.clickable(onClick = onDelete).padding(vertical = 4.dp)
-                            )
-                        }
+                        Text(
+                            text = stringResource(R.string.delete),
+                            color = danger,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.clickable(onClick = onDelete).padding(vertical = 4.dp)
+                        )
                     }
                 }
             }
@@ -893,7 +892,11 @@ private fun ModelPickerRow(
                         MiniBadge(stringResource(R.string.preset_badge_in_use), accent, accentBg)
                     }
                 }
-                val tags = listOf(meta.size, meta.quant).filter { it.isNotBlank() }
+                val tags = buildList {
+                    add(meta.size)
+                    add(meta.quant)
+                    if (CloudModelId.isCloud(model.id)) add(stringResource(R.string.model_tag_cloud))
+                }.filter { it.isNotBlank() }
                 if (tags.isNotEmpty()) {
                     Row(modifier = Modifier.padding(top = 5.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         tags.forEach { Tag(it, sub, line) }

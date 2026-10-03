@@ -1204,6 +1204,7 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="cloud_models_credentials_save_failed">Failed to save</string>
     <string name="cloud_models_status_configured">Configured</string>
     <string name="cloud_models_status_missing">Not configured</string>
+    <string name="model_tag_cloud">Cloud</string>
     <string name="cloud_models_empty">No cloud models have been added yet.</string>
     <!-- Default preset model-missing modal -->
     <string name="default_model_missing_title">No model selected</string>

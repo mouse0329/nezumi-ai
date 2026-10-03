@@ -23,6 +23,7 @@ object PreferencesHelper {
     private const val KEY_PRESET_DETACHED = "preset_detached"
     private const val KEY_PRESET_MODEL_OVERRIDE = "preset_model_override"
     private const val KEY_PRESET_PINS = "preset_pins"
+    private const val KEY_DEFAULT_PRESET_DISMISSED = "default_preset_dismissed"
     private const val KEY_BRAVE_SEARCH_API_KEY = "brave_search_api_key"
     private const val KEY_ENABLE_THINKING = "enable_thinking"
     private const val KEY_THINKING_EFFORT = "thinking_effort"
@@ -262,6 +263,14 @@ object PreferencesHelper {
 
     fun setPresetPins(context: Context, pins: Set<String>) {
         getSharedPreferences(context).edit().putStringSet(KEY_PRESET_PINS, pins.toSet()).apply()
+    }
+
+    fun isDefaultPresetDismissed(context: Context): Boolean {
+        return getSharedPreferences(context).getBoolean(KEY_DEFAULT_PRESET_DISMISSED, false)
+    }
+
+    fun setDefaultPresetDismissed(context: Context, dismissed: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_DEFAULT_PRESET_DISMISSED, dismissed).apply()
     }
 
     fun getBraveSearchApiKey(context: Context): String {

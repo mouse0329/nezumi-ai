@@ -59,9 +59,9 @@ class ModelDownloadWorker(
     }
 
     /**
-     * ダウンロード完了 = 追加完了。
-     * ダウンロード済みモデルの「素の状態」プリセットを即時作成し、
-     * モデル管理画面・プリセット画面のリストへ反映させる（孤児プリセットも掃除）。
+     * ダウンロード完了後のプリセット整合。
+     * モデル追加時のロック済み plain プリセット自動生成は行わない。
+     * 削除済みモデルを指す孤児プリセットの掃除だけ行う。
      */
     private suspend fun registerDownloadedModels() {
         runCatching {
@@ -216,7 +216,7 @@ class ModelDownloadWorker(
             result.fold(
                 onSuccess = {
                     doSafetyModelWork() // 画像生成モデルのダウンロード完了時にセーフティモデルも確保
-                    registerDownloadedModels() // ダウンロード完了 = 追加完了（素の状態プリセットを即時作成）
+                    registerDownloadedModels() // ダウンロード完了後に孤児プリセットを掃除
                     showDownloadCompletedNotification(model, it.length(), notificationId)
                     Result.success(
                         workDataOf(
@@ -393,7 +393,7 @@ class ModelDownloadWorker(
                             persistThinking = false
                         )
                     }
-                    registerDownloadedModels() // ダウンロード完了 = 追加完了（素の状態プリセットを即時作成）
+                    registerDownloadedModels() // ダウンロード完了後に孤児プリセットを掃除
                     showCustomDownloadCompletedNotification(modelId, filePath, file.length())
                     Result.success(
                         workDataOf(

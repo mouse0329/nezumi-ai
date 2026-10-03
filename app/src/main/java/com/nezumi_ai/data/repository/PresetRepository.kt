@@ -101,7 +101,11 @@ class PresetRepository(
 
     suspend fun deletePreset(id: String): Boolean {
         val preset = dao.getById(id) ?: return false
-        if (preset.isDefault || preset.isLocked) return false
+        // ロック済み plain も組み込みデフォルトも削除できる。
+        // デフォルトは削除後に起動のたびに作り直さない。
+        if (preset.isDefault || preset.id == DEFAULT_NEZUMI_AI_ID) {
+            PreferencesHelper.setDefaultPresetDismissed(context, true)
+        }
         dao.delete(preset)
         if (PreferencesHelper.getCurrentPresetId(context) == id) {
             clearCurrentPreset()
@@ -204,7 +208,9 @@ class PresetRepository(
 
     suspend fun initializeDefaultsIfNeeded() {
         if (dao.count() > 0) {
-            ensureNezumiAiDefaultExists()
+            if (!PreferencesHelper.isDefaultPresetDismissed(context)) {
+                ensureNezumiAiDefaultExists()
+            }
             updateNezumiAiDefaultTools()  // 既存のデフォルトプリセットのツールを更新
             ensurePlainPresetsForDownloadedModels()
             deleteLegacyGeneratedDefaults()
@@ -212,16 +218,18 @@ class PresetRepository(
             return
         }
 
+        ensurePlainPresetsForDownloadedModels()
+        if (PreferencesHelper.isDefaultPresetDismissed(context)) return
         val defaults = listOf(createNezumiAiDefault())
         dao.insertIgnore(defaults)
-        ensurePlainPresetsForDownloadedModels()
         PreferencesHelper.setCurrentPresetId(context, DEFAULT_NEZUMI_AI_ID)
         applyPresetTools(defaults.first())
     }
 
     suspend fun ensurePlainPresetsForDownloadedModels() {
         val downloadedIds = PresetModelCatalog.downloadedModels(context).map { it.id }.toSet()
-        // 孤児プリセットの掃除: モデルが削除されたのに残っている plain プリセットを DB から削除する。
+        // 仕様変更: モデル追加時のロック済み plain プリセット自動生成は行わない。
+        // 既存分の孤児掃除だけ残す。モデルが削除されたのに残っている plain プリセットを DB から削除する。
         // (shouldShowPreset は Room Flow の再発火待ちのため、モデルファイル削除だけでは
         //  プリセット一覧から消えない。ここで DB を直接更新して Flow を再発火させる)
         val allPresets = dao.getAll()
@@ -243,12 +251,6 @@ class PresetRepository(
             .forEach { orphaned ->
                 dao.update(orphaned.copy(modelId = "", updatedAt = now))
             }
-        PresetModelCatalog.downloadedModels(context).forEach { model ->
-            // ローカル・インポート・クラウドいずれも「システムプロンプトなし・ツールなし」の
-            // ロック済み plain プリセットを用意する。
-            // クラウドは isConfigured が false になると shouldShowPreset で一覧から消える。
-            ensurePlainPreset(model.id, model.label)
-        }
     }
 
     /** 指定プリセットがモデル未選択状態か（バグ修正: モデル削除で孤児化した場合を検知するため）。 */
@@ -271,26 +273,6 @@ class PresetRepository(
             dao.getById(id)?.let { applyPresetTools(it) }
         }
         return true
-    }
-
-    private suspend fun ensurePlainPreset(modelId: String, displayName: String) {
-        val id = plainPresetId(modelId)
-        if (dao.getById(id) != null) return
-        val now = System.currentTimeMillis()
-        dao.insert(
-            PresetEntity(
-                id = id,
-                name = displayName,
- icon = "",
-                modelId = modelId,
-                enabledTools = "[]",
-                createdAt = now,
-                updatedAt = now,
-                memoryEnabled = false,
-                description = plainDescription(),
-                isLocked = true
-            )
-        )
     }
 
     private suspend fun ensureCurrentPresetSelected() {
@@ -339,6 +321,7 @@ class PresetRepository(
     }
 
     private suspend fun ensureNezumiAiDefaultExists() {
+        if (PreferencesHelper.isDefaultPresetDismissed(context)) return
         if (dao.getById(DEFAULT_NEZUMI_AI_ID) != null) return
         dao.insert(createNezumiAiDefault())
     }
@@ -407,12 +390,6 @@ class PresetRepository(
         val isPlain = preset.id.startsWith(PLAIN_PRESET_ID_PREFIX)
         return !isPlain || PresetModelCatalog.isDownloaded(context, preset.modelId)
     }
-
-    /**
-     * "plain"プリセット（システムプロンプトなし・ツールなし）の説明文を現行ロケールで取得。
-     * 初回作成時だけ使う。既存のプリセットはユーザーデータ保護のため上書きしない。
-     */
-    private fun plainDescription(): String = context.getString(R.string.preset_plain_description)
 
     companion object {
         const val DEFAULT_NEZUMI_AI_ID = "default_nezumi_ai"
