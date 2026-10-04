@@ -6,4 +6,6 @@ package com.nezumi_ai.data.inference.remote;
 oneway interface IRemoteResultCallback {
     void onSuccess();
     void onError(String message);
+    /** ロード中のエンジンログ。届くたびに無通信タイマーをリセットする。 */
+    void onProgress(String line);
 }

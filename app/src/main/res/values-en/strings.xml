@@ -650,6 +650,8 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="settings_stop_kb_learning_desc">Do not let the IME learn from what you type</string>
     <string name="settings_show_context_meter_title">Show context meter</string>
     <string name="settings_show_context_meter_desc">Show a usage meter above the chat</string>
+    <string name="settings_show_engine_load_log_title">Show engine logs on the load screen</string>
+    <string name="settings_show_engine_load_log_desc">Show LiteRT-LM / llama.cpp logs in real time while a model is loading</string>
     <string name="settings_show_tps_title">Show TPS</string>
     <string name="settings_show_tps_desc">Show tokens per second (generation speed)</string>
     <string name="settings_show_ttft_title">Show TTFT</string>

@@ -127,6 +127,7 @@ import com.nezumi_ai.presentation.viewmodel.ChatViewModelFactory
 import com.nezumi_ai.presentation.viewmodel.ImageGenConfirmationRequest
 import com.nezumi_ai.presentation.ui.adapter.MessageAdapter
 import com.nezumi_ai.data.inference.ToolCallState
+import com.nezumi_ai.data.inference.remote.EngineLoadLogHub
 import com.nezumi_ai.presentation.ui.composable.ToolCallProgressBar
 import com.nezumi_ai.presentation.ui.composable.MediaPreviewBar
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
@@ -144,7 +145,6 @@ import kotlin.math.max
 import androidx.compose.runtime.collectAsState
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.ui.text.style.TextOverflow
 import com.nezumi_ai.presentation.ui.theme.createNotoSansJpFontFamily
 import com.nezumi_ai.presentation.ui.theme.nezumiSwitchColors
@@ -206,6 +206,10 @@ class ChatFragment : Fragment() {
     private var showMessagesLoadingState by mutableStateOf(false)
     private var showEmptyStateFlag by mutableStateOf(false)
     private var toolProgressVisible by mutableStateOf(false)
+    // 画像生成の確認ダイアログは ViewModel 初期化後にだけ Compose する。
+    // setContent は onCreateView で登録されるが、viewModel 代入は onViewCreated なので、
+    // このフラグが立つまで ImageGenConfirmationDialog を合成しない。
+    private var imageGenConfirmHostReady by mutableStateOf(false)
 
     private lateinit var viewModel: ChatViewModel
     private lateinit var adapter: MessageAdapter
@@ -271,6 +275,8 @@ class ChatFragment : Fragment() {
     private var responseTypingText by mutableStateOf("")
     private var modelLoadingOverlayVisible by mutableStateOf(false)
     private var modelLoadingText by mutableStateOf("")
+    private var engineLoadLogText by mutableStateOf("")
+    private var showEngineLoadLog by mutableStateOf(false)
     private var contextMeterText by mutableStateOf("")
     private var contextMeterToolFraction by mutableStateOf(0f)
     private var contextMeterSystemFraction by mutableStateOf(0f)
@@ -303,6 +309,9 @@ class ChatFragment : Fragment() {
     // 要望: 思考強度 UI はテンプレートが reasoning_effort を解釈するモデルのみ表示。
     // 初期値 true は未評価時のちらつき防止で、updateThinkingToggleVisibility() が即時補正する。
     private var thinkingEffortVisible by mutableStateOf(true)
+    // 添付シートの思考強度。GGUF の chat_template 読みは重いので、メニューを開く
+    // メインスレッドでは読まず、モデル選択時に IO で解決した値だけを使う。
+    private var attachmentEffortLevels by mutableStateOf<List<String>>(emptyList())
     private var currentToolCallState by mutableStateOf<ToolCallState?>(null)
     private var currentImageGenProgress by mutableStateOf<Pair<Int, Int>?>(null)
     private var messagesIsEmpty by mutableStateOf(true)
@@ -875,6 +884,7 @@ class ChatFragment : Fragment() {
         savedInstanceState: Bundle?
     ): View {
         isViewCreated = true
+        imageGenConfirmHostReady = false
         return ComposeView(requireContext()).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
@@ -963,6 +973,11 @@ class ChatFragment : Fragment() {
                         },
                         modelLoadingOverlay = { ModelLoadingOverlay() }
                     )
+                    // ツール経由の generate_image は confirmationRequest を立てて承認を待つ。
+                    // この Composable を合成しないとダイアログが出ず、了承できず生成が始まらない。
+                    if (imageGenConfirmHostReady) {
+                        ImageGenConfirmationDialog()
+                    }
                 }
             }
         }
@@ -1009,6 +1024,7 @@ class ChatFragment : Fragment() {
             memoryRepository
         )
         viewModel = ViewModelProvider(requireActivity(), factory).get(ChatViewModel::class.java)
+        imageGenConfirmHostReady = true
         // エフォートは永続化値を復元し、ViewModel 側の Flow にも同期する。
         //   viewModel 代入より前に呼ぶと lateinit 未初期化でクラッシュするため、
         //   必ずこの直後に置くこと (Fix: UninitializedPropertyAccessException)。
@@ -1388,7 +1404,12 @@ class ChatFragment : Fragment() {
         val v = view ?: return
         val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
         imm.hideSoftInputFromWindow(v.windowToken, 0)
-        showAttachmentActionSheet()
+        // Compose のクリック処理中に BottomSheet を出すと、未ロード時の再構成と
+        // かち合ってメインスレッドが固まる。次のフレームで開く。
+        v.post {
+            if (!isAdded) return@post
+            showAttachmentActionSheet()
+        }
     }
 
     /** マイクボタン押下: 録音中なら停止、そうでなければ録音開始。 */
@@ -1916,6 +1937,12 @@ class ChatFragment : Fragment() {
                 if (status.isNotEmpty()) modelLoadingText = status
             }
         }
+        viewLifecycleOwner.lifecycleScope.launch {
+            EngineLoadLogHub.text.collect { text ->
+                engineLoadLogText = text
+            }
+        }
+        showEngineLoadLog = PreferencesHelper.isShowEngineLoadLog(requireContext())
     }
 
     private fun applyIncognitoModeSettings(isIncognito: Boolean) {
@@ -1974,6 +2001,7 @@ class ChatFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        showEngineLoadLog = PreferencesHelper.isShowEngineLoadLog(requireContext())
         disableKeyboardLearning(viewModel.isCurrentSessionIncognito.value)
 
         // SharedPreferences 初回読取・listFiles・プリセット取得はすべて IO へ逃がす。
@@ -2448,10 +2476,16 @@ class ChatFragment : Fragment() {
             // 要望: 思考強度 (low / medium / high) はテンプレートが reasoning_effort を
             // 解釈するモデルのみ表示する。非対応モデルでは UI から消す。
             val thinkingEffortSupported = viewModel.isThinkingEffortSupportedForModel(modelKey)
+            // 添付シート用。未ロードの GGUF / LiteRT-LM でもメニュー表示時に
+            // ファイル走査やエンジン問い合わせをしない。
+            val effortLevels = runCatching {
+                PreferencesHelper.resolveSupportedThinkingEffortLevels(ctx, modelKey)
+            }.getOrDefault(emptyList())
             withContext(Dispatchers.Main) {
                 if (!isAdded || !isViewCreated || currentModelKey != modelKey) return@withContext
                 thinkingToggleVisible = modelSupportsThinking
                 thinkingEffortVisible = thinkingEffortSupported
+                attachmentEffortLevels = effortLevels
                 renderThinkingToggleState()
             }
         }
@@ -3253,6 +3287,19 @@ class ChatFragment : Fragment() {
                     color = colorResource(id = R.color.text_primary),
                     style = MaterialTheme.typography.bodyMedium
                 )
+                if (showEngineLoadLog && engineLoadLogText.isNotEmpty()) {
+                    Text(
+                        text = engineLoadLogText,
+                        color = colorResource(id = R.color.text_secondary),
+                        fontSize = 10.sp,
+                        lineHeight = 13.sp,
+                        modifier = Modifier
+                            .padding(horizontal = 20.dp)
+                            .fillMaxWidth()
+                            .heightIn(max = 180.dp)
+                            .verticalScroll(rememberScrollState())
+                    )
+                }
             }
         }
     }
@@ -3352,6 +3399,7 @@ class ChatFragment : Fragment() {
      */
     @Composable
     private fun ImageGenConfirmationDialog() {
+        if (!::viewModel.isInitialized) return
         val request by viewModel.confirmationRequest.collectAsState()
         val req = request ?: return
 
@@ -3375,7 +3423,7 @@ class ChatFragment : Fragment() {
         val accent = colorResource(id = R.color.image_gen_confirm_accent)
         val accentSoft = colorResource(id = R.color.image_gen_confirm_accent_soft)
 
-        AlertDialog(
+        androidx.compose.material3.AlertDialog(
             onDismissRequest = { viewModel.onCancelGenerateImage() },
             containerColor = bg,
             title = {
@@ -3757,12 +3805,9 @@ class ChatFragment : Fragment() {
                         // シンキング非対応モデルではセクション自体を出さない (従来どおり添付のみ)。
                         thinkingOn = if (thinkingToggleVisible) !thinkingToggleChecked else null,
                         thinkingEffort = thinkingEffort,
-                        // 選択肢はロード中モデルの chat_template 解析結果で動的化する
-                        // (Granite 4.x 等の BINARY なら Low 1 択、effort 非対応なら空=非表示)。
-                        effortLevels = PreferencesHelper.resolveSupportedThinkingEffortLevels(
-                            ctx,
-                            viewModel.selectedModel.value.orEmpty()
-                        ),
+                        // 未ロード時にここで GGUF を読むとメニューが開かず固まる。
+                        // モデル選択時に IO で解決済みの値だけを渡す。
+                        effortLevels = attachmentEffortLevels,
                         onThinkingChange = { checked ->
                             viewModel.setChatSessionDisableThinking(!checked)
                         },

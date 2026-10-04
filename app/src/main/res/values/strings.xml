@@ -525,6 +525,8 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="settings_stop_kb_learning_desc">IME に入力内容を学習させない</string>
     <string name="settings_show_context_meter_title">コンテキストメーターを表示</string>
     <string name="settings_show_context_meter_desc">チャット上に使用量メーターを出します</string>
+    <string name="settings_show_engine_load_log_title">ロード画面にエンジンログを表示</string>
+    <string name="settings_show_engine_load_log_desc">LiteRT-LM / llama.cpp のロード中、エンジンログをリアルタイムで表示します</string>
     <string name="settings_show_tps_title">TPS を表示</string>
     <string name="settings_show_tps_desc">トークン/秒 (生成速度) を表示します</string>
     <string name="settings_show_ttft_title">TTFT を表示</string>

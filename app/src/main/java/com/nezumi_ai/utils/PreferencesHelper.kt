@@ -46,6 +46,7 @@ object PreferencesHelper {
     private const val KEY_MINIAPP_DEV_MODE = "miniapp_dev_mode"
  // 新設: 全般タブで切り替えられる UI 表示オプション。既定はいずれも「表示しない」。
     private const val KEY_SHOW_CONTEXT_METER = "show_context_meter"
+    private const val KEY_SHOW_ENGINE_LOAD_LOG = "show_engine_load_log"
     private const val KEY_SHOW_TPS = "show_tps"
     private const val KEY_SHOW_TTFT = "show_ttft"
  // スクリーンショット無効化 (FLAG_SECURE を常時有効化するかどうか)
@@ -497,6 +498,15 @@ object PreferencesHelper {
 
     fun setShowContextMeter(context: Context, enabled: Boolean) {
         getSharedPreferences(context).edit().putBoolean(KEY_SHOW_CONTEXT_METER, enabled).apply()
+    }
+
+    /** ロード画面に LiteRT-LM / llama.cpp のエンジンログをリアルタイム表示する。既定はオフ。 */
+    fun isShowEngineLoadLog(context: Context): Boolean {
+        return getSharedPreferences(context).getBoolean(KEY_SHOW_ENGINE_LOAD_LOG, false)
+    }
+
+    fun setShowEngineLoadLog(context: Context, enabled: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_SHOW_ENGINE_LOAD_LOG, enabled).apply()
     }
 
     // Mini App Platform (仕様 v1.1 §32 Developer Mode):

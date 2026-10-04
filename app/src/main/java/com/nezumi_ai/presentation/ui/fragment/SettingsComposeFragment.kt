@@ -1089,6 +1089,7 @@ class SettingsComposeFragment : Fragment() {
                             var isAlwaysLockEnabled by remember { mutableStateOf(PreferencesHelper.isAlwaysLockEnabled(context)) }
                             var isStopKeyboardLearning by remember { mutableStateOf(PreferencesHelper.isStopKeyboardLearningEnabled(context)) }
                             var isShowContextMeter by remember { mutableStateOf(PreferencesHelper.isShowContextMeter(context)) }
+                            var isShowEngineLoadLog by remember { mutableStateOf(PreferencesHelper.isShowEngineLoadLog(context)) }
                             var isMiniAppDevMode by remember { mutableStateOf(PreferencesHelper.isMiniAppDevModeEnabled(context)) }
                             var isShowTps by remember { mutableStateOf(PreferencesHelper.isShowTps(context)) }
                             var isShowTtft by remember { mutableStateOf(PreferencesHelper.isShowTtft(context)) }
@@ -1340,6 +1341,42 @@ class SettingsComposeFragment : Fragment() {
                                         onCheckedChange = { checked ->
                                             isShowContextMeter = checked
                                             PreferencesHelper.setShowContextMeter(context, checked)
+                                        },
+                                        colors = nezumiSwitchColors()
+                                    )
+                                }
+
+                                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .settingsSearchAnchor(
+                                                R.string.settings_show_engine_load_log_title,
+                                                settingsSearchJumpState
+                                            )
+                                    ) {
+                                        Text(
+                                            text = stringResource(id = R.string.settings_show_engine_load_log_title),
+                                            color = colorResource(id = R.color.text_primary),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Text(
+                                            text = stringResource(id = R.string.settings_show_engine_load_log_desc),
+                                            color = colorResource(id = R.color.text_secondary),
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                    Switch(
+                                        checked = isShowEngineLoadLog,
+                                        onCheckedChange = { checked ->
+                                            isShowEngineLoadLog = checked
+                                            PreferencesHelper.setShowEngineLoadLog(context, checked)
                                         },
                                         colors = nezumiSwitchColors()
                                     )

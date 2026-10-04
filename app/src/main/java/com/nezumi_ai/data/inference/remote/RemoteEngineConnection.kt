@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.DeadObjectException
 import android.os.IBinder
 import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -343,6 +344,7 @@ class RemoteEngineConnection(
             val result = CompletableDeferred<Result<Unit>>()
             pendingResult = result
             try {
+                EngineLoadLogHub.begin()
                 service.loadModel(modelName, config, object : IRemoteResultCallback.Stub() {
                     override fun onSuccess() {
                         result.complete(Result.success(Unit))
@@ -353,23 +355,56 @@ class RemoteEngineConnection(
                             Result.failure(RuntimeException(message ?: "remote loadModel failed"))
                         )
                     }
+
+                    override fun onProgress(line: String?) {
+                        EngineLoadLogHub.note(line)
+                    }
                 })
-                withTimeout(LOAD_TIMEOUT_MS) { result.await() }
-            } catch (t: TimeoutCancellationException) {
-                Log.w(tag, "loadModel timed out; remote process may be unresponsive", t)
-                val likelyOutOfMemory = wasProcessKilledForLowMemory(lastKnownPid)
-                Result.failure(
-                    RemoteEngineProcessDiedException(
-                        "loadModel timed out; remote process may be unresponsive",
-                        likelyOutOfMemory
-                    )
-                )
+                EngineLoadLogHub.note("load started")
+                awaitLoadWithIdleTimeout(result)
             } catch (t: Throwable) {
                 handleRemoteException(t, "loadModel")
             } finally {
+                EngineLoadLogHub.end()
                 if (pendingResult === result) pendingResult = null
             }
         }.also { invalidateEngineStatusCache() }
+
+    /**
+     * ロード完了を待つ。制限時間は開始からではなく、最後のエンジンログからの無通信。
+     * ログが再び届けば残り時間は [LOAD_IDLE_TIMEOUT_MS] に戻る。
+     */
+    private suspend fun awaitLoadWithIdleTimeout(
+        result: CompletableDeferred<Result<Unit>>
+    ): Result<Unit> {
+        while (true) {
+            val idleFor = SystemClock.elapsedRealtime() - EngineLoadLogHub.lastActivityElapsedMs()
+            val remaining = LOAD_IDLE_TIMEOUT_MS - idleFor
+            if (remaining <= 0L) {
+                Log.w(tag, "loadModel idle timeout; no engine log for ${LOAD_IDLE_TIMEOUT_MS}ms")
+                val likelyOutOfMemory = wasProcessKilledForLowMemory(lastKnownPid)
+                return Result.failure(
+                    RemoteEngineProcessDiedException(
+                        "loadModel idle timeout; no engine log for ${LOAD_IDLE_TIMEOUT_MS}ms",
+                        likelyOutOfMemory
+                    )
+                )
+            }
+            val step = minOf(remaining, 500L)
+            val done = withTimeoutOrNull(step) { result.await() }
+            if (done != null) return done
+            val pid = lastKnownPid
+            if (pid > 0 && !isProcessAlive(pid)) {
+                val likelyOutOfMemory = wasProcessKilledForLowMemory(pid)
+                return Result.failure(
+                    RemoteEngineProcessDiedException(
+                        "remote process died during loadModel",
+                        likelyOutOfMemory
+                    )
+                )
+            }
+        }
+    }
 
     suspend fun unloadModel(): Result<Unit> = withContext(Dispatchers.IO) {
         // 起動最適化 (#litert-lazy-start): 一度も bind されていない (＝一度も
@@ -390,6 +425,8 @@ class RemoteEngineConnection(
                         Result.failure(RuntimeException(message ?: "remote unloadModel failed"))
                     )
                 }
+
+                override fun onProgress(line: String?) = Unit
             })
             withTimeout(UNLOAD_TIMEOUT_MS) { result.await() }
         } catch (t: TimeoutCancellationException) {
@@ -556,6 +593,8 @@ class RemoteEngineConnection(
                         Result.failure(RuntimeException(message ?: "remote forceReset failed"))
                     )
                 }
+
+                override fun onProgress(line: String?) = Unit
             })
             result.await()
         } catch (t: Throwable) {
@@ -689,7 +728,8 @@ class RemoteEngineConnection(
 
     companion object {
         private const val BIND_TIMEOUT_MS = 15_000L
-        private const val LOAD_TIMEOUT_MS = 60_000L
+        /** ログが途切れてからこの時間動かなければロード失敗。開始からの壁時計ではない。 */
+        private const val LOAD_IDLE_TIMEOUT_MS = 60_000L
         private const val UNLOAD_TIMEOUT_MS = 10_000L
         /** getEngineStatus のキャッシュ TTL。連打吸収用の短い窓。 */
         private const val ENGINE_STATUS_CACHE_TTL_MS = 2_000L

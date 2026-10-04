@@ -49,11 +49,14 @@ class LiteRtEngineService : Service() {
         override fun loadModel(modelName: String?, config: Bundle?, callback: IRemoteResultCallback?) {
             if (callback == null) return
             serviceScope.launch {
+                val logForwarder = RemoteLoadLogForwarder(callback)
+                logForwarder.start()
                 try {
                     if (modelName == null) {
                         callback.onError("modelName is null")
                         return@launch
                     }
+                    Log.i(TAG, "loadModel start: $modelName")
                     val result = liteRtEngine.loadModel(
                         modelName,
                         InferenceConfigBundle.fromBundle(config)
@@ -67,6 +70,8 @@ class LiteRtEngineService : Service() {
                     if (t is CancellationException) throw t
                     Log.e(TAG, "loadModel threw", t)
                     callback.onError(t.message ?: "loadModel threw")
+                } finally {
+                    logForwarder.stop()
                 }
             }
         }
