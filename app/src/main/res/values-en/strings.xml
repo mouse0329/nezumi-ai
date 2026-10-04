@@ -68,7 +68,7 @@ Enjoy chatting with your AI!</string>
     <string name="context_meter_system">System</string>
     <string name="context_meter_chat">Chat</string>
     <string name="context_meter_media">Image/Audio</string>
-    <string name="context_meter_send_to_calculate">Send a message to calculate</string>
+    <string name="context_meter_send_to_calculate">Waiting for input</string>
     <string name="response_generating">Responding</string>
     <string name="model_preparing">Preparing model</string>
     <string name="model_preparing_with_elapsed">Preparing model (%1$ds)</string>

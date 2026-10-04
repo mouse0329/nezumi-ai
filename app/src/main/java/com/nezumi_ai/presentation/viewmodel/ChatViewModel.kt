@@ -465,6 +465,12 @@ class ChatViewModel(
         //   そのメッセージ id を UI に通知する。
         val chosen = siblings[clamped]
         viewModelScope.launch { _scrollToVariantMessageId.emit(chosen.id) }
+        val sessionId = _currentSessionId.value
+        if (sessionId != null && meterCalculatedSessionId == sessionId) {
+            viewModelScope.launch(Dispatchers.IO) {
+                estimateContextUsageChars(_messages.value, sessionId)
+            }
+        }
     }
 
     private val _pendingMediaMessage = MutableStateFlow<MessageEntity?>(null)
@@ -640,16 +646,37 @@ class ChatViewModel(
     /** LiteRT-LM は prefill 合計しか無いので内訳バーを出さない。 */
     private val _meterTotalOnly = MutableStateFlow(false)
     val meterTotalOnly: StateFlow<Boolean> = _meterTotalOnly
+    /**
+     * 生成中は送信直前の計算結果を出したままにする。
+     * ストリーミングで messages が再emitされてもメーターを消さず、リアルタイム更新もしない。
+     */
+    @Volatile private var holdContextMeterDuringGeneration = false
+    @Volatile private var heldMeterSessionId: Long? = null
+    /** このプロセス内で、今表示中のセッション向けに確定した計算があるか。アプリ終了で捨てる。 */
+    @Volatile private var meterCalculatedSessionId: Long? = null
+    @Volatile private var ggufTokensPerImage: Int = 0
+    @Volatile private var ggufTokensPerAudio: Int = 0
 
     private fun setMeterLoadedModel(name: String?) {
         val loaded = name?.takeIf { it.isNotBlank() }
+        val sameLoaded = loaded != null && loaded == meterLoadedModelName
         meterLoadedModelName = loaded
         _meterModelLoaded.value = loaded != null
-        _meterAwaitingSend.value = true
         if (loaded == null) {
+            holdContextMeterDuringGeneration = false
+            heldMeterSessionId = null
+            meterCalculatedSessionId = null
+            ggufTokensPerImage = 0
+            ggufTokensPerAudio = 0
+            _meterAwaitingSend.value = true
             _contextUsageTokens.value = 0
             _contextMediaTokens.value = 0
             _contextMeterSegments.value = ContextMeterSegments()
+        } else if (!sameLoaded) {
+            // 別モデルへ切り替わったときだけ送り直し待ちにする。
+            // 同じモデルの再ロードショートカットで awaiting に戻すと、
+            // 同一セッションの生成中にトークン数が消える。
+            _meterAwaitingSend.value = true
         }
     }
 
@@ -1171,6 +1198,9 @@ class ChatViewModel(
         _contextMediaTokens.value = 0
         _contextMeterSegments.value = ContextMeterSegments()
         _meterAwaitingSend.value = true
+        holdContextMeterDuringGeneration = false
+        heldMeterSessionId = null
+        meterCalculatedSessionId = null
         // バグ修正 (#context-meter-stale): 切替前セッションの chars 推定値・生プロンプト・
         // 推定スロットル時刻が残っていると、新セッションの初回推定が完了するまで
         // メーターに「前のセッションのコンテキスト量」が表示され続けていた。
@@ -2171,6 +2201,8 @@ class ChatViewModel(
             }
 
             Log.d(TAG, "Starting inference for session $sessionId")
+            // 生成中も送信直前の計算を出す。リアルタイム更新はしない。
+            publishContextMeterBeforeGeneration(sessionId)
 
             // ① 起動時 pending 抽出処理（モデルロード完了後に1回だけ実行）
             //
@@ -3265,24 +3297,49 @@ class ChatViewModel(
                 com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)
             if (!isCloudCompletion) runCatching {
                 val exactContextTokens = manager.getCurrentContextTokenCountSync()
-                if (exactContextTokens != null && exactContextTokens > 0) {
-                    val mediaTokens = manager.getLastPromptTokenInfoSync()?.second ?: 0
-                    // バグ修正 (Thinking がコンテキストメーターに含まれない):
-                    //   KV 実測値には Thinking チャンネルのデコード分が含まれないため、
-                    //   最終 thinkingContent を推定トークン化して加算し、実際のセッション
-                    //   コンテキスト量に近づける。
-                    val thinkingTokens =
-                        TextTokenEstimator.estimateOutputTokens(finalThinking ?: "").toInt().coerceAtLeast(0)
-                    val totalTokens = exactContextTokens + thinkingTokens
-                    if (isCurrentContextSession(sessionId)) {
-                        applyMeterAfterSend(manager, engineModelName, totalTokens, mediaTokens)
-                    }
-                    // シークレットセッションは DB に残さない (既存のプライバシー方針に合わせる)
-                    if (!_isCurrentSessionIncognito.value) {
-                        sessionRepository.updateLastKnownContextTokens(sessionId, totalTokens, mediaTokens)
-                    }
-                    Log.d(TAG, "CONTEXT_METER: exact context tokens=$exactContextTokens (media=$mediaTokens) session=$sessionId")
+                val mediaTokens = manager.getLastPromptTokenInfoSync()?.second ?: _contextMediaTokens.value
+                // バグ修正 (Thinking がコンテキストメーターに含まれない):
+                //   KV 実測値には Thinking チャンネルのデコード分が含まれないため、
+                //   最終 thinkingContent を推定トークン化して加算し、実際のセッション
+                //   コンテキスト量に近づける。
+                val thinkingTokens =
+                    TextTokenEstimator.estimateOutputTokens(finalThinking ?: "").toInt().coerceAtLeast(0)
+                val generatedEstimate = TextTokenEstimator.estimateOutputTokens(
+                    completeResponse + (finalThinking ?: "")
+                ).toInt().coerceAtLeast(0)
+                val decodeTokens = if (isLiteRtEngineHere) {
+                    manager.getLastDecodeTokenCountSync()?.takeIf { it > 0 }
+                } else {
+                    null
                 }
+                val generatedTokens = decodeTokens ?: generatedEstimate
+                val prefillTokens = if (isLiteRtEngineHere) {
+                    manager.getLastPromptTokenInfoSync()?.first?.takeIf { it > 0 }
+                } else {
+                    null
+                }
+                // llama.cpp は n_past がプロンプト以下のとき生成分を含んでいない。
+                // LiteRT-LM は getTokenCount が取れない回があるので prefill+decode に落とす。
+                val totalTokens = when {
+                    exactContextTokens != null && exactContextTokens > 0 &&
+                        (prefillTokens == null || exactContextTokens > prefillTokens) ->
+                        exactContextTokens + thinkingTokens
+                    prefillTokens != null -> prefillTokens + generatedTokens
+                    exactContextTokens != null && exactContextTokens > 0 ->
+                        exactContextTokens + generatedTokens
+                    else -> _contextUsageTokens.value + generatedTokens
+                }
+                if (isCurrentContextSession(sessionId)) {
+                    applyMeterAfterSend(
+                        manager,
+                        engineModelName,
+                        totalTokens,
+                        mediaTokens,
+                        generatedTokens
+                    )
+                }
+                // メーター計算はプロセス内だけ。アプリを閉じたら捨てる。
+                Log.d(TAG, "CONTEXT_METER: exact context tokens=$exactContextTokens (media=$mediaTokens generated=$generatedTokens) session=$sessionId")
             }.onFailure { Log.w(TAG, "persist context tokens failed", it) }
 
             val finalizationContext =
@@ -3538,6 +3595,10 @@ class ChatViewModel(
             }
         } finally {
             Log.d(TAG, "generateAIResponse finally entered")
+            if (heldMeterSessionId == sessionId) {
+                holdContextMeterDuringGeneration = false
+                heldMeterSessionId = null
+            }
             // Ensure cleanup runs even if the coroutine job was cancelled.
             withContext(NonCancellable) {
                 streamingAssistantMessageIdForTools = null
@@ -4997,13 +5058,19 @@ class ChatViewModel(
     ): Int {
  // バグ修正: メーター計算を実際の推論ロジック（buildPromptWithSessionContext）と統一
         // Phase 14: プロンプトの現在の文字数を推定（実際の制限は config.contextWindow（トークン数）に依存）
-        if (messages.none { msg ->
+        // 生成中は、そのセッションで確定した計算だけを維持する。
+        if (holdContextMeterDuringGeneration && heldMeterSessionId == sessionId) {
+            return _contextUsageChars.value
+        }
+        // 再生成バリアントはコンテキストと同じく選択中の 1 件だけを数える。
+        val countedMessages = messagesIncludedInModelContext(messages)
+        if (countedMessages.none { msg ->
                 msg.role.equals("user", ignoreCase = true) ||
                     msg.role.equals("assistant", ignoreCase = true) ||
                     msg.role.equals("model", ignoreCase = true)
             }
         ) {
-            if (isCurrentContextSession(sessionId)) {
+            if (isCurrentContextSession(sessionId) && _meterAwaitingSend.value) {
                 _contextUsageTokens.value = 0
                 _contextMediaTokens.value = 0
                 _contextMeterSegments.value = ContextMeterSegments()
@@ -5015,8 +5082,9 @@ class ChatViewModel(
         // 未ロードでも :gguf へ Binder し、loadModelWithOverlay の表示前で固まる。
         // ここはローカル文字推定だけ。分母はロード済みモデル名があればその窓。
         val loadedModelName = meterLoadedModelName?.takeIf { it.isNotBlank() }
-        if (loadedModelName == null || _meterAwaitingSend.value) {
-            if (isCurrentContextSession(sessionId)) {
+        if (loadedModelName == null || meterCalculatedSessionId != sessionId) {
+            if (isCurrentContextSession(sessionId) && meterCalculatedSessionId != sessionId) {
+                _meterAwaitingSend.value = true
                 _contextUsageTokens.value = 0
                 _contextMediaTokens.value = 0
                 _contextMeterSegments.value = ContextMeterSegments()
@@ -5044,7 +5112,7 @@ class ChatViewModel(
         } else {
             ""
         }
-        val chatText = messages
+        val chatText = countedMessages
             .asSequence()
             .filterNot { shouldExcludeFromModelContext(it) }
             .map { message ->
@@ -5073,24 +5141,38 @@ class ChatViewModel(
         val systemTokens = countLocal(systemText)
         val toolTokens = countLocal(toolsText)
         val chatTokens = countLocal(chatText)
-        val mediaTokens = messages.sumOf { message ->
-            var tokens = 0
-            if (!message.imageUri.isNullOrBlank()) {
-                tokens += message.imageUri.split(',').count { it.isNotBlank() } * 256
+        val gguf = isGgufEngineModel(loadedModelName)
+        val mediaTokens = if (gguf) {
+            recountGgufMediaTokens(countedMessages)
+        } else {
+            countedMessages.sumOf { message ->
+                var tokens = 0
+                if (!message.imageUri.isNullOrBlank()) {
+                    tokens += message.imageUri.split(',').count { it.isNotBlank() } * 256
+                }
+                if (!message.audioUri.isNullOrBlank()) tokens += 150
+                tokens
             }
-            if (!message.audioUri.isNullOrBlank()) tokens += 150
-            tokens
         }
         val fullTokens = (systemTokens + toolTokens + chatTokens + mediaTokens).coerceAtLeast(0)
         if (isCurrentContextSession(sessionId)) {
-            _contextMeterSegments.value = ContextMeterSegments(
-                systemTokens = systemTokens,
-                toolTokens = toolTokens,
-                chatTokens = chatTokens,
-                mediaTokens = mediaTokens
-            )
-            _contextMediaTokens.value = mediaTokens
+            if (gguf) {
+                _contextMeterSegments.value = ContextMeterSegments(
+                    systemTokens = systemTokens,
+                    toolTokens = toolTokens,
+                    chatTokens = chatTokens,
+                    mediaTokens = mediaTokens
+                )
+                _contextMediaTokens.value = mediaTokens
+                _meterTotalOnly.value = false
+            } else {
+                // LiteRT-LM は API 上、コンテキスト全体の大きさしか分からない。
+                _contextMeterSegments.value = ContextMeterSegments()
+                _contextMediaTokens.value = 0
+                _meterTotalOnly.value = true
+            }
             _contextUsageTokens.value = fullTokens
+            _meterAwaitingSend.value = false
             Log.d(
                 TAG,
                 "CONTEXT_METER: local loaded=$loadedModelName window=$meterWindow tokens=$fullTokens " +
@@ -5100,45 +5182,161 @@ class ChatViewModel(
         return systemText.length + toolsText.length + chatText.length
     }
 
+    /** プロンプト構築と同じく、選択中の再生成 1 件以外はメーターに入れない。 */
+    private fun messagesIncludedInModelContext(messages: List<MessageEntity>): List<MessageEntity> {
+        val selected = applyVariantSelection(messages, _selectedVariantByParent.value)
+        val regeneratingParentId = _pendingAssistantVariantSpec?.parentUserMessageId
+        return if (regeneratingParentId != null) {
+            selected.filterNot { msg ->
+                msg.role != "user" && msg.parentUserMessageId == regeneratingParentId
+            }
+        } else {
+            selected
+        }
+    }
+
+    private fun recountGgufMediaTokens(messages: List<MessageEntity>): Int {
+        var images = 0
+        var audio = 0
+        for (message in messages) {
+            if (shouldExcludeFromModelContext(message)) continue
+            message.imageUri?.split(',')?.forEach { raw ->
+                val uri = raw.trim()
+                if (uri.isEmpty()) return@forEach
+                if (com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(uri) ||
+                    com.nezumi_ai.data.media.TextFileAttachmentEncoding.isMarker(uri)
+                ) {
+                    return@forEach
+                }
+                images++
+            }
+            if (!message.audioUri.isNullOrBlank()) audio++
+        }
+        if (images == 0 && audio == 0) return 0
+        val perImage = ggufTokensPerImage.takeIf { it > 0 } ?: return 0
+        val perAudio = ggufTokensPerAudio.takeIf { it > 0 } ?: perImage
+        return images * perImage + audio * perAudio
+    }
+
+    private fun updateGgufMediaUnits(requestMedia: Int, messages: List<MessageEntity>) {
+        if (requestMedia <= 0) return
+        val latest = messages.lastOrNull { message ->
+            message.role.equals("user", ignoreCase = true) &&
+                (!message.imageUri.isNullOrBlank() || !message.audioUri.isNullOrBlank())
+        } ?: return
+        val items = recountAttachmentCount(listOf(latest))
+        if (items <= 0) return
+        val each = requestMedia / items
+        if (each <= 0) return
+        if (!latest.imageUri.isNullOrBlank()) ggufTokensPerImage = each
+        if (!latest.audioUri.isNullOrBlank()) ggufTokensPerAudio = each
+    }
+
+    private fun recountAttachmentCount(messages: List<MessageEntity>): Int {
+        var count = 0
+        for (message in messages) {
+            message.imageUri?.split(',')?.forEach { raw ->
+                val uri = raw.trim()
+                if (uri.isEmpty()) return@forEach
+                if (com.nezumi_ai.data.media.VideoAttachmentEncoding.isMarker(uri) ||
+                    com.nezumi_ai.data.media.TextFileAttachmentEncoding.isMarker(uri)
+                ) {
+                    return@forEach
+                }
+                count++
+            }
+            if (!message.audioUri.isNullOrBlank()) count++
+        }
+        return count
+    }
+
+    /**
+     * 推論開始前に、今の履歴（送信済みユーザー分を含む）でメーターを確定する。
+     * 生成中はこの値を保持し、完了後にモデル生成分を足す。
+     */
+    private suspend fun publishContextMeterBeforeGeneration(sessionId: Long) {
+        if (!isCurrentContextSession(sessionId)) return
+        if (meterLoadedModelName.isNullOrBlank()) return
+        val messages = runCatching { messageRepository.getMessagesForSessionOnce(sessionId) }
+            .getOrDefault(emptyList())
+        holdContextMeterDuringGeneration = false
+        meterCalculatedSessionId = sessionId
+        _meterAwaitingSend.value = false
+        estimateContextUsageChars(messages, sessionId)
+        holdContextMeterDuringGeneration = true
+        heldMeterSessionId = sessionId
+        Log.d(
+            TAG,
+            "CONTEXT_METER: held before generation tokens=${_contextUsageTokens.value} session=$sessionId"
+        )
+    }
+
     private fun applyMeterAfterSend(
         manager: ModelManager,
         engineModelName: String,
         fallbackTotal: Int,
-        fallbackMedia: Int
+        fallbackMedia: Int,
+        generatedTokens: Int = 0
     ) {
         val gguf = isGgufEngineModel(engineModelName)
-        val nativeInfo = if (gguf) manager.getLastPromptTokenInfoSync() else null
-        val total = nativeInfo?.first?.takeIf { it > 0 } ?: fallbackTotal
+        // GGUF の last prompt info は送信プロンプト分だけ。生成トークンは n_past 側にある。
+        // プロンプト分を優先すると、次の送信までモデル生成分がメーターに入らない。
+        val promptInfo = if (gguf) manager.getLastPromptTokenInfoSync() else null
+        val promptTokens = promptInfo?.first?.takeIf { it > 0 }
+        val contextTotal = fallbackTotal.takeIf { it > 0 }
+        val generated = generatedTokens.coerceAtLeast(0)
+        val total = when {
+            contextTotal != null && promptTokens != null && contextTotal > promptTokens -> contextTotal
+            contextTotal != null && promptTokens == null -> contextTotal
+            promptTokens != null -> promptTokens + generated
+            contextTotal != null -> contextTotal
+            else -> (_contextUsageTokens.value + generated).coerceAtLeast(0)
+        }
         if (!gguf) {
+            // LiteRT-LM は合計だけ。llama.cpp の内訳バーは出さない。
             _contextMeterSegments.value = ContextMeterSegments()
             _contextMediaTokens.value = 0
             _contextUsageTokens.value = total.coerceAtLeast(0)
             _meterTotalOnly.value = true
             _meterAwaitingSend.value = false
+            meterCalculatedSessionId = _currentSessionId.value
             Log.d(TAG, "CONTEXT_METER: LiteRT total only=$total")
             return
         }
-        val media = nativeInfo?.second?.coerceAtLeast(0) ?: fallbackMedia
+        val requestMedia = promptInfo?.second?.coerceAtLeast(0) ?: 0
+        updateGgufMediaUnits(requestMedia, _messages.value)
+        val media = recountGgufMediaTokens(_messages.value)
         val current = _contextMeterSegments.value
-        val textSum = (current.systemTokens + current.toolTokens + current.chatTokens).coerceAtLeast(0)
         val textTotal = (total - media).coerceAtLeast(0)
-        val scaled = if (textSum > 0 && textTotal > 0) {
-            val scale = textTotal.toFloat() / textSum.toFloat()
-            ContextMeterSegments(
-                systemTokens = (current.systemTokens * scale).toInt().coerceAtLeast(0),
-                toolTokens = (current.toolTokens * scale).toInt().coerceAtLeast(0),
-                chatTokens = (current.chatTokens * scale).toInt().coerceAtLeast(0),
-                mediaTokens = media
-            )
+        val fixed = (current.systemTokens + current.toolTokens).coerceAtLeast(0)
+        val chatFromTotal = (textTotal - fixed).coerceAtLeast(0)
+        // n_past / getTokenCount が生成分を含んでいれば内訳をそちらに合わせる。
+        // 含んでいなければ、送信前のチャット分に生成トークンを足す。
+        val chatTokens = if (chatFromTotal > current.chatTokens) {
+            chatFromTotal
         } else {
-            ContextMeterSegments(chatTokens = textTotal, mediaTokens = media)
+            current.chatTokens + generated
         }
+        val scaled = ContextMeterSegments(
+            systemTokens = current.systemTokens.coerceAtLeast(0),
+            toolTokens = current.toolTokens.coerceAtLeast(0),
+            chatTokens = chatTokens.coerceAtLeast(0),
+            mediaTokens = media
+        )
+        val published = (scaled.systemTokens + scaled.toolTokens + scaled.chatTokens + scaled.mediaTokens)
+            .coerceAtLeast(0)
         _contextMeterSegments.value = scaled
         _contextMediaTokens.value = media
-        _contextUsageTokens.value = total.coerceAtLeast(0)
+        _contextUsageTokens.value = published
+        // LiteRT-LM も送信前の内訳を残す。合計だけにして内訳を消すとパラメータが欠ける。
         _meterTotalOnly.value = false
         _meterAwaitingSend.value = false
-        Log.d(TAG, "CONTEXT_METER: after send gguf total=$total media=$media")
+        meterCalculatedSessionId = _currentSessionId.value
+        Log.d(
+            TAG,
+            "CONTEXT_METER: after send gguf=$gguf total=$published prompt=$promptTokens " +
+                "context=$contextTotal generated=$generated media=$media"
+        )
     }
 
     private fun isAssistantErrorLikeMessage(content: String): Boolean =

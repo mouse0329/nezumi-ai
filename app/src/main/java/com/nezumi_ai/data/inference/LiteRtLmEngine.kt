@@ -1703,6 +1703,7 @@ class LiteRtLmEngine(
                             lastKnownConversationTokenCount =
                                 runCatching { conv.getTokenCount() }
                                     .getOrNull()?.takeIf { it >= 0 }
+                                    ?: (snapshot.prefillTokens + snapshot.decodeTokens).takeIf { it > 0 }
                             if (snapshot.decodeTokensPerSecond > 0.0) {
                                 emitChunkBlocking(
                                     InferenceStreamProtocol.encodeTps(
