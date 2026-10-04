@@ -22,6 +22,10 @@
     <color name="loading_overlay">#B3000000</color>
     <color name="context_meter_progress">#CBD5E1</color>
     <color name="context_meter_track">#374151</color>
+    <color name="context_meter_tools">#FBBF24</color>
+    <color name="context_meter_system">#60A5FA</color>
+    <color name="context_meter_chat">#34D399</color>
+    <color name="context_meter_media">#F87171</color>
 
     <!-- Border Colors -->
     <color name="border">#374151</color>

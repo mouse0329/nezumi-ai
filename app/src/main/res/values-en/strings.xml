@@ -64,6 +64,11 @@ Enjoy chatting with your AI!</string>
     <string name="model_not_downloaded">Model not downloaded</string>
     <string name="model_loading">Loading model…</string>
     <string name="context_meter_format">Context: %1$d / %2$d tokens</string>
+    <string name="context_meter_tools">Tools</string>
+    <string name="context_meter_system">System</string>
+    <string name="context_meter_chat">Chat</string>
+    <string name="context_meter_media">Image/Audio</string>
+    <string name="context_meter_send_to_calculate">Send a message to calculate</string>
     <string name="response_generating">Responding</string>
     <string name="model_preparing">Preparing model</string>
     <string name="model_preparing_with_elapsed">Preparing model (%1$ds)</string>

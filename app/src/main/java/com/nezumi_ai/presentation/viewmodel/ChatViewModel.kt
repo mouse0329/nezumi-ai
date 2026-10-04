@@ -617,6 +617,42 @@ class ChatViewModel(
     private val _contextMediaTokens = MutableStateFlow(0)
     val contextMediaTokens: StateFlow<Int> = _contextMediaTokens
 
+    /**
+     * メーター内訳。ロード中モデルのトークナイザでシステム / ツール定義 / チャットを別々に数える。
+     * セッションに保存した前回モデルの実測値は使わない。
+     */
+    data class ContextMeterSegments(
+        val systemTokens: Int = 0,
+        val toolTokens: Int = 0,
+        val chatTokens: Int = 0,
+        val mediaTokens: Int = 0
+    )
+
+    private val _contextMeterSegments = MutableStateFlow(ContextMeterSegments())
+    val contextMeterSegments: StateFlow<ContextMeterSegments> = _contextMeterSegments
+
+    /** ロード成功後だけセットする。未ロードのあいだメーターは出さない。 */
+    @Volatile private var meterLoadedModelName: String? = null
+    private val _meterModelLoaded = MutableStateFlow(false)
+    val meterModelLoaded: StateFlow<Boolean> = _meterModelLoaded
+    private val _meterAwaitingSend = MutableStateFlow(true)
+    val meterAwaitingSend: StateFlow<Boolean> = _meterAwaitingSend
+    /** LiteRT-LM は prefill 合計しか無いので内訳バーを出さない。 */
+    private val _meterTotalOnly = MutableStateFlow(false)
+    val meterTotalOnly: StateFlow<Boolean> = _meterTotalOnly
+
+    private fun setMeterLoadedModel(name: String?) {
+        val loaded = name?.takeIf { it.isNotBlank() }
+        meterLoadedModelName = loaded
+        _meterModelLoaded.value = loaded != null
+        _meterAwaitingSend.value = true
+        if (loaded == null) {
+            _contextUsageTokens.value = 0
+            _contextMediaTokens.value = 0
+            _contextMeterSegments.value = ContextMeterSegments()
+        }
+    }
+
     private val _contextWindowSize = MutableStateFlow(4096)
     val contextWindowSize: StateFlow<Int> = _contextWindowSize
 
@@ -1091,10 +1127,28 @@ class ChatViewModel(
     }
 
     private suspend fun refreshContextWindowForModel(model: String) {
-        val contextWindow = settingsRepository.getContextWindowForModel(model)
+        // メーター分母だけ更新する。ここで ModelManager を触ると、ロード前に
+        // リモートエンジンへ繋ぎに行き、モデルロードが失敗することがある。
+        val lookup = contextWindowLookupModel(meterLoadedModelName, model)
+        val contextWindow = settingsRepository.getContextWindowForModel(lookup)
         _contextWindowSize.value = contextWindow
         _contextWindowCapacityChars.value = contextWindow * TOKEN_TO_CHAR_RATIO
-        Log.d(TAG, "Context window updated for model=$model: $contextWindow")
+        Log.d(TAG, "Context window updated for loaded=$meterLoadedModelName selected=$model lookup=$lookup: $contextWindow")
+    }
+
+    /**
+     * 設定マップのキーは表示名 / インポートパス。エンジン別名 (gemma4-2b 等) のまま
+     * 引くと別モデルの窓に落ちるので、パスのときだけロード名を優先する。
+     */
+    private fun contextWindowLookupModel(loadedModel: String?, selectedModel: String): String {
+        val loaded = loadedModel?.trim().orEmpty()
+        if (loaded.isEmpty()) return selectedModel
+        val lowered = loaded.lowercase()
+        val isPath = loaded.startsWith("/") ||
+            lowered.endsWith(".gguf") ||
+            lowered.endsWith(".task") ||
+            lowered.endsWith(".litertlm")
+        return if (isPath) loaded else selectedModel.ifBlank { loaded }
     }
 
     /**
@@ -1109,10 +1163,14 @@ class ChatViewModel(
         val previousSessionId = _currentSessionId.value
         _currentSessionId.value = sessionId
 
-        // コンテキストメーター正確化: セッション切替時は一旦リセットし、
-        // 前回保存した実測値 (DB) があればそれで復元する (アプリ再起動対策)。
+        // コンテキストメーター: セッションに残した lastKnownContextTokens は
+        // 前回生成したモデルの実測値なので、別モデルをロードしたままセッションを
+        // 移動するとメーターが跳ねる。ここでは必ずリセットし、後段の推定で
+        // 今ロードしているモデルのトークナイザとコンテキスト長から計算し直す。
         _contextUsageTokens.value = 0
         _contextMediaTokens.value = 0
+        _contextMeterSegments.value = ContextMeterSegments()
+        _meterAwaitingSend.value = true
         // バグ修正 (#context-meter-stale): 切替前セッションの chars 推定値・生プロンプト・
         // 推定スロットル時刻が残っていると、新セッションの初回推定が完了するまで
         // メーターに「前のセッションのコンテキスト量」が表示され続けていた。
@@ -1121,27 +1179,6 @@ class ChatViewModel(
         _contextUsageChars.value = 0
         lastContextUsageEstimationAtMs = 0L
         contextUsageEstimationJob?.cancel()
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching { sessionRepository.getSessionById(sessionId) }.getOrNull()?.let { session ->
-                // DB 読み出し中に別セッションへ切り替わることがある。古い読み出し結果を
-                // 現在のメーターへ反映すると、空の新規セッションに前セッションの値が残る。
-                val hasConversation = runCatching {
-                    messageRepository.getMessagesForSessionOnce(sessionId)
-                }.getOrNull()?.any { msg ->
-                    msg.role.equals("user", ignoreCase = true) ||
-                        msg.role.equals("assistant", ignoreCase = true) ||
-                        msg.role.equals("model", ignoreCase = true)
-                } == true
-                if (isDisplayedSession(sessionId) && hasConversation && session.lastKnownContextTokens > 0) {
-                    _contextUsageTokens.value = session.lastKnownContextTokens
-                    _contextMediaTokens.value = session.lastKnownMediaTokens
-                    Log.d(TAG, "CONTEXT_METER: restored persisted tokens=${session.lastKnownContextTokens} (media=${session.lastKnownMediaTokens}) session=$sessionId")
-                } else if (isDisplayedSession(sessionId) && !hasConversation) {
-                    _contextUsageTokens.value = 0
-                    _contextMediaTokens.value = 0
-                }
-            }
-        }
 
         // 見た目（紫バー等）は「現在のセッションがシークレットか」で決める。
         // 解除時に見た目を戻す処理は不要になり、切替のたびにここで確定する。
@@ -1176,13 +1213,13 @@ class ChatViewModel(
         stopGenerationInternal()
 
         if (previousSessionId != sessionId) {
-            // ハング対策 (#session-switch-hang 続報): clearKvCache は内部で同期 Binder
-            // 呼び出しを行うため、推論サービスがビジーだと呼び出しスレッドが
-            // ブロックされ、セッション追加/切替がハングしたように見える。
-            // 切替処理の完了を待たせないよう、バックグラウンドに逃がす。
-            viewModelScope.launch(Dispatchers.IO) {
-                runCatching { ModelManager.getInstance(appContext).clearKvCache() }
-                    .onFailure { Log.w(TAG, "clearKvCache on session change failed", it) }
+            val loaded = meterLoadedModelName
+            val loadedIsGguf = loaded != null && isGgufEngineModel(loaded)
+            if (loadedIsGguf) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    runCatching { ModelManager.getInstance(appContext).clearKvCache() }
+                        .onFailure { Log.w(TAG, "clearKvCache on session change failed", it) }
+                }
             }
         }
 
@@ -1594,6 +1631,8 @@ class ChatViewModel(
         //     モデル既ロード時は loadModelWithOverlay がショートカットして一切のロード処理をしないため、
         //     入口で立てたインジケーターだけが残り「ロード不要なのにグルグルが無限に続く」バグの原因になっていた。
         _isLoading.value = true
+        contextUsageEstimationJob?.cancel()
+        contextUsageEstimationJob = null
 
         viewModelScope.launch {
             val thisJob = coroutineContext[Job] ?: return@launch
@@ -2020,12 +2059,16 @@ class ChatViewModel(
             currentEngineModelName = engineModelName
             val hasMediaInput = images.isNotEmpty() || audioClips.isNotEmpty()
             currentHasMediaInput = hasMediaInput
-            if (!ModelFileManager.isModelAvailable(appContext, engineModelName)) {
+            val modelAvailable = ModelFileManager.isModelAvailable(appContext, engineModelName)
+            Log.d(TAG, "generateAIResponse: model=$selectedModel engine=$engineModelName available=$modelAvailable")
+            if (!modelAvailable) {
                 val unavailableMsg = if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(selectedModel)) {
                     appContext.getString(R.string.cloud_model_unconfigured, selectedModel)
                 } else {
                     appContext.getString(R.string.selected_model_not_downloaded, selectedModel)
                 }
+                Log.w(TAG, "generateAIResponse: load not started, model unavailable: $engineModelName")
+                clearModelLoadingIndicator()
                 messageRepository.addMessage(
                     sessionId = sessionId,
                     role = "assistant",
@@ -2033,7 +2076,7 @@ class ChatViewModel(
                 )
                 return
             }
-            val baseConfig = chatInferenceConfigForModel(selectedModel)
+            val baseConfig = chatInferenceConfigForModel(selectedModel, probeTemplate = false)
             val backend = settingsRepository.getBackendForModel(selectedModel)
             // Bug fix: LiteRT-LM 外部インポートモデル (.task / .litertlm) については、
             // モデル設定で画像/音声のスイッチを ON にしていない限り requireMultimodal を立てない。
@@ -3118,11 +3161,21 @@ class ChatViewModel(
                 }
             )
             finalThinking = streamedThinking
+            // 完了前の停止で、タグの無い途中出力を Thinking 枠へ入れない。
+            val stoppedThinking = if (!collectionCancelledByUser) {
+                finalThinking
+            } else if (markupSpec.containsThinkingOpen(answerBuilder.toString()) ||
+                markupSpec.containsThinkingOpen(finalThinking.orEmpty())
+            ) {
+                finalThinking
+            } else {
+                null
+            }
             val note = streamAbortNote
             val stoppedWithoutPayload =
-                collectionCancelledByUser && completeResponse.isEmpty() && finalThinking.isNullOrEmpty()
+                collectionCancelledByUser && completeResponse.isEmpty() && stoppedThinking.isNullOrEmpty()
             val stoppedDuringThinkingOnly =
-                collectionCancelledByUser && completeResponse.isEmpty() && !finalThinking.isNullOrEmpty()
+                collectionCancelledByUser && completeResponse.isEmpty() && !stoppedThinking.isNullOrEmpty()
             val contentToSave =
                 when {
                     stoppedWithoutPayload -> ""  // 空の場合は空文字列を保存（後でフォールバックメッセージに置換）
@@ -3137,7 +3190,7 @@ class ChatViewModel(
                 if (collectionCancelledByUser) withUserStopCard(toolResultsJson) else toolResultsJson
 
             val hasPayload =
-                contentToSave.isNotEmpty() || !finalThinking.isNullOrEmpty()
+                contentToSave.isNotEmpty() || !stoppedThinking.isNullOrEmpty()
 
             Log.d(TAG, "generateAIResponse finalization: hasPayload=$hasPayload, activeStreamingMessageId=$activeStreamingMessageId, completeResponse.len=${completeResponse.length}, finalThinking=${!finalThinking.isNullOrEmpty()}")
 
@@ -3222,8 +3275,7 @@ class ChatViewModel(
                         TextTokenEstimator.estimateOutputTokens(finalThinking ?: "").toInt().coerceAtLeast(0)
                     val totalTokens = exactContextTokens + thinkingTokens
                     if (isCurrentContextSession(sessionId)) {
-                        _contextUsageTokens.value = totalTokens
-                        _contextMediaTokens.value = mediaTokens
+                        applyMeterAfterSend(manager, engineModelName, totalTokens, mediaTokens)
                     }
                     // シークレットセッションは DB に残さない (既存のプライバシー方針に合わせる)
                     if (!_isCurrentSessionIncognito.value) {
@@ -3245,14 +3297,14 @@ class ChatViewModel(
                         // Thinking ON で思考だけ出た場合は raw を本文へ埋め戻さない。
                         // Granite 等はタグが無いので stripThink しても全文が本文になり、
                         // thinkingContent と二重表示される。
-                        if (config.enableThinking && !finalThinking.isNullOrBlank()) {
+                        if (config.enableThinking && !stoppedThinking.isNullOrBlank() && !collectionCancelledByUser) {
                             ""
                         } else {
                             stripThinkSectionsForDisplay(answerBuilder.toString()).trim()
                         }
                     },
                         isStreaming = false,
-                        thinkingContent = finalThinking,
+                        thinkingContent = if (collectionCancelledByUser) stoppedThinking else finalThinking,
                         toolResultsJson = finalToolResultsJson,
                         generationTps = finalTps,
                         generationTimeMs = generationTimeMs,
@@ -3364,7 +3416,8 @@ class ChatViewModel(
                             )
                         }.getOrDefault(ChatMarkupSpec.DEFAULT)
                         val stopEnableThinking =
-                            !current?.thinkingContent.isNullOrBlank() || stopSpec.supportsThinking
+                            stopSpec.containsThinkingOpen(existingContent) ||
+                                stopSpec.containsThinkingOpen(current?.thinkingContent.orEmpty())
                         val (contentAfterThinkStrip, salvagedThinking) =
                             ThinkingLeakSalvage.resolveStopWithoutThinkTags(
                                 persistedContent = existingContent,
@@ -3518,7 +3571,8 @@ class ChatViewModel(
                                     )
                                 }.getOrDefault(ChatMarkupSpec.DEFAULT)
                                 val stopEnableThinking =
-                                    !current.thinkingContent.isNullOrBlank() || stopSpec.supportsThinking
+                                    stopSpec.containsThinkingOpen(current.content) ||
+                                        stopSpec.containsThinkingOpen(current.thinkingContent.orEmpty())
                                 val salvaged = ThinkingLeakSalvage.resolveStopWithoutThinkTags(
                                     persistedContent = current.content,
                                     persistedThinking = current.thinkingContent,
@@ -4299,8 +4353,15 @@ class ChatViewModel(
         }
     }
 
-    private suspend fun chatInferenceConfigForModel(model: String): InferenceConfig {
-        val base = settingsRepository.getInferenceConfigForModel(model, appContext)
+    private suspend fun chatInferenceConfigForModel(
+        model: String,
+        probeTemplate: Boolean = true
+    ): InferenceConfig {
+        val base = settingsRepository.getInferenceConfigForModel(
+            model,
+            appContext,
+            probeTemplate = probeTemplate
+        )
         val disableThinking = _chatSessionDisableThinking.value
         val thinkingEnabledOverride = _chatSessionThinkingEnabledOverride.value
  // Bug fix: 以前は modelSupportsGemmaThinking() でしか override を受け付けないため、
@@ -4945,69 +5006,139 @@ class ChatViewModel(
             if (isCurrentContextSession(sessionId)) {
                 _contextUsageTokens.value = 0
                 _contextMediaTokens.value = 0
+                _contextMeterSegments.value = ContextMeterSegments()
             }
             return 0
         }
         val selectedModel = getActiveSelectedModel()
-        val engineModelName = toEngineModelName(selectedModel)
-        // クラウドモデルはコンテキストメーターを表示しない方針のため推定自体をスキップする。
-        // ローカル組み立てのプロンプト文字数は API 側の実コンテキスト消費と一致せず、
-        // 実トークン数を取得する手段もないため、正確なメーターを構成できない。
+        // メーターはロードを始めない。buildPromptFromMessages / ModelManager は
+        // 未ロードでも :gguf へ Binder し、loadModelWithOverlay の表示前で固まる。
+        // ここはローカル文字推定だけ。分母はロード済みモデル名があればその窓。
+        val loadedModelName = meterLoadedModelName?.takeIf { it.isNotBlank() }
+        if (loadedModelName == null || _meterAwaitingSend.value) {
+            if (isCurrentContextSession(sessionId)) {
+                _contextUsageTokens.value = 0
+                _contextMediaTokens.value = 0
+                _contextMeterSegments.value = ContextMeterSegments()
+            }
+            return 0
+        }
+        val engineModelName = toEngineModelName(loadedModelName ?: selectedModel)
         if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(engineModelName)) {
             return 0
         }
-        val isGgufEngine = isGgufEngineModel(engineModelName)
-        // 生成中はキャッシュ済みの推論設定を使い回す（#toolcalling-resolve-spam 対策）
+        val meterWindow = settingsRepository.getContextWindowForModel(
+            contextWindowLookupModel(loadedModelName, selectedModel)
+        ).coerceAtLeast(1)
+        if (isCurrentContextSession(sessionId)) {
+            _contextWindowSize.value = meterWindow
+            _contextWindowCapacityChars.value = meterWindow * TOKEN_TO_CHAR_RATIO
+        }
         val config = getCachedMeterInferenceConfig(selectedModel)
-        // 修正: メーター/raw コンテキストのプロンプト構築にも、実際の生成時と同じ
-        //   セッション単位の Thinking オーバーライド (4010-4020 行) を反映させる。
-        //   (旧: 設定値をそのまま使っていたため、スイッチで Thinking を切った場合に
-        //    メーター・raw 表示が実際の生成プロンプトと不一致になっていた)
-        val effectiveEnableThinking = when {
-            _chatSessionThinkingEnabledOverride.value -> true
-            _chatSessionDisableThinking.value -> false
-            else -> config.enableThinking
-        }
-        val basePrompt = buildPromptFromMessages(
-            messages,
-            isGgufEngine,
-            engineModelName,
-            effectiveEnableThinking,
-            enableToolCalling = config.enableToolCalling
-        )
-
- // 常に trimPromptToWindow で実際に使用される文字数を計算
-        val maxChars = config.contextWindow * TOKEN_TO_CHAR_RATIO
-        val trimmedBase = trimPromptToWindow(basePrompt, config.contextWindow)
-        val basePromptSize = trimmedBase.length
-
-        // コンテキストメーター正確化 (GGUF):
-        //   chars→トークン換算 (÷4) は粗いため、モデルロード済みなら実トークナイザで
-        //   正確なトークン数を取得し、メーターにはトークン数を表示する。
-        //   トークナイズはプロンプト評価を伴わないため軽い。失敗時は従来の chars 換算にフォールバック。
-        val manager = requireModelManager()
-        if (isGgufEngine) {
-            runCatching { manager.countPromptTokensSync(trimmedBase) }
-                .getOrNull()?.let { exactTokens ->
-                    if (exactTokens > 0 && isCurrentContextSession(sessionId)) {
-                        _contextUsageTokens.value = exactTokens
-                        Log.d(TAG, "CONTEXT_METER: GGUF exact tokenized tokens=$exactTokens (chars=$basePromptSize)")
-                    }
-                }
+        val systemText = getActiveSystemPrompt().trim()
+        val toolsText = if (config.enableToolCalling) {
+            val skills = availableSkillsForCurrentPreset(true)
+            runCatching {
+                GgufToolPromptBuilder.collectEnabledToolsJsonArray(appContext, skills)
+            }.getOrDefault("")
         } else {
-            // LiteRT-LM: 会話の KV キャッシュ実測値 (画像・音声を含む) があれば優先する。
-            //   Conversation.getTokenCount() は prefill + decode の実測トークン数を返す。
-            runCatching { manager.getCurrentContextTokenCountSync() }
-                .getOrNull()?.let { exactTokens ->
-                    if (exactTokens > 0 && isCurrentContextSession(sessionId)) {
-                        _contextUsageTokens.value = exactTokens
-                        Log.d(TAG, "CONTEXT_METER: LiteRT exact KV tokens=$exactTokens (chars=$basePromptSize)")
+            ""
+        }
+        val chatText = messages
+            .asSequence()
+            .filterNot { shouldExcludeFromModelContext(it) }
+            .map { message ->
+                buildString {
+                    if (message.content.isNotBlank()) append(message.content)
+                    val thinking = message.thinkingContent
+                    if (!thinking.isNullOrBlank()) {
+                        if (isNotEmpty()) append('\n')
+                        append(thinking)
+                    }
+                    val toolResults = message.toolResultsJson
+                    if (!toolResults.isNullOrBlank() && toolResults != "[]") {
+                        if (isNotEmpty()) append('\n')
+                        append(toolResults)
                     }
                 }
+            }
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
+
+        fun countLocal(text: String): Int {
+            if (text.isBlank()) return 0
+            return TextTokenEstimator.estimateOutputTokens(text).toInt().coerceAtLeast(0)
         }
 
-        // コンテキスト圧縮を廃止したので、未圧縮のプロンプトサイズをそのまま返す。
-        return basePromptSize
+        val systemTokens = countLocal(systemText)
+        val toolTokens = countLocal(toolsText)
+        val chatTokens = countLocal(chatText)
+        val mediaTokens = messages.sumOf { message ->
+            var tokens = 0
+            if (!message.imageUri.isNullOrBlank()) {
+                tokens += message.imageUri.split(',').count { it.isNotBlank() } * 256
+            }
+            if (!message.audioUri.isNullOrBlank()) tokens += 150
+            tokens
+        }
+        val fullTokens = (systemTokens + toolTokens + chatTokens + mediaTokens).coerceAtLeast(0)
+        if (isCurrentContextSession(sessionId)) {
+            _contextMeterSegments.value = ContextMeterSegments(
+                systemTokens = systemTokens,
+                toolTokens = toolTokens,
+                chatTokens = chatTokens,
+                mediaTokens = mediaTokens
+            )
+            _contextMediaTokens.value = mediaTokens
+            _contextUsageTokens.value = fullTokens
+            Log.d(
+                TAG,
+                "CONTEXT_METER: local loaded=$loadedModelName window=$meterWindow tokens=$fullTokens " +
+                    "system=$systemTokens tools=$toolTokens chat=$chatTokens media=$mediaTokens session=$sessionId"
+            )
+        }
+        return systemText.length + toolsText.length + chatText.length
+    }
+
+    private fun applyMeterAfterSend(
+        manager: ModelManager,
+        engineModelName: String,
+        fallbackTotal: Int,
+        fallbackMedia: Int
+    ) {
+        val gguf = isGgufEngineModel(engineModelName)
+        val nativeInfo = if (gguf) manager.getLastPromptTokenInfoSync() else null
+        val total = nativeInfo?.first?.takeIf { it > 0 } ?: fallbackTotal
+        if (!gguf) {
+            _contextMeterSegments.value = ContextMeterSegments()
+            _contextMediaTokens.value = 0
+            _contextUsageTokens.value = total.coerceAtLeast(0)
+            _meterTotalOnly.value = true
+            _meterAwaitingSend.value = false
+            Log.d(TAG, "CONTEXT_METER: LiteRT total only=$total")
+            return
+        }
+        val media = nativeInfo?.second?.coerceAtLeast(0) ?: fallbackMedia
+        val current = _contextMeterSegments.value
+        val textSum = (current.systemTokens + current.toolTokens + current.chatTokens).coerceAtLeast(0)
+        val textTotal = (total - media).coerceAtLeast(0)
+        val scaled = if (textSum > 0 && textTotal > 0) {
+            val scale = textTotal.toFloat() / textSum.toFloat()
+            ContextMeterSegments(
+                systemTokens = (current.systemTokens * scale).toInt().coerceAtLeast(0),
+                toolTokens = (current.toolTokens * scale).toInt().coerceAtLeast(0),
+                chatTokens = (current.chatTokens * scale).toInt().coerceAtLeast(0),
+                mediaTokens = media
+            )
+        } else {
+            ContextMeterSegments(chatTokens = textTotal, mediaTokens = media)
+        }
+        _contextMeterSegments.value = scaled
+        _contextMediaTokens.value = media
+        _contextUsageTokens.value = total.coerceAtLeast(0)
+        _meterTotalOnly.value = false
+        _meterAwaitingSend.value = false
+        Log.d(TAG, "CONTEXT_METER: after send gguf total=$total media=$media")
     }
 
     private fun isAssistantErrorLikeMessage(content: String): Boolean =
@@ -5278,8 +5409,11 @@ class ChatViewModel(
         skipMemoryWarning: Boolean = false,
         skipCpuCompatibilityWarning: Boolean = false
     ): Result<Unit> {
+        contextUsageEstimationJob?.cancel()
+        contextUsageEstimationJob = null
         val manager = requireModelManager()
         val engineModelName = toEngineModelName(model)
+        Log.d(TAG, "loadModelWithOverlay: enter model=$model engine=$engineModelName")
         val isModelAlreadyLoaded = manager.isModelLoaded(engineModelName, config)
         val isSameModelLoaded = manager.isSameModelLoaded(engineModelName)
         val effectiveSkipMemoryWarning = skipMemoryWarning || isModelAlreadyLoaded
@@ -5290,6 +5424,7 @@ class ChatViewModel(
         //   「ロード不要なのにグルグルが永遠に続く」バグの主な原因だった。
         //   ここで先手を打ってリターンすれば、呼び元は瞬時に推論以降のフェーズに進める。
         if (isModelAlreadyLoaded) {
+            setMeterLoadedModel(engineModelName)
             Log.d(TAG, "loadModelWithOverlay: SHORT_CIRCUIT model=$model already loaded, skip overlay entirely")
             // 万一呼び元が先にインジケーターを立てていた場合に備えてもクリアしておく。
             if (_isModelLoading.value || modelLoadingTickerJob?.isActive == true) {
@@ -5299,6 +5434,7 @@ class ChatViewModel(
         }
 
         _isModelLoading.value = true
+        setMeterLoadedModel(null)
  // モデル名やフェーズごとのラベルは以前「[Gemma4-2B] エンジンを初期化中...」などバラバラだったのを
         //   全て「モデル準備中 · <フェーズ> (n秒)」に統一する。タイマーを 1秒毎に回して
         //   進捗ラベルを自動更新。
@@ -5310,8 +5446,12 @@ class ChatViewModel(
                 else -> appContext.getString(R.string.model_kind_custom)
             }
 
-            // Phase 14: モデルロード前にメモリ確認
-            updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_memory_check))
+            // チャット送信はメモリ警告を出さない。確認フェーズに留めると先へ進まない。
+            if (skipMemoryWarning) {
+                updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_engine_init))
+            } else {
+                updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_memory_check))
+            }
             Log.d(
                 TAG,
                 "loadModelWithOverlay: PRE_LOAD_MEMORY_CHECK model=$model backend=${config.backendType} alreadyLoaded=$isModelAlreadyLoaded sameModelLoaded=$isSameModelLoaded skipMemoryWarning=$skipMemoryWarning effectiveSkip=$effectiveSkipMemoryWarning"
@@ -5426,6 +5566,7 @@ class ChatViewModel(
             }
 
             if (result.isSuccess) {
+                setMeterLoadedModel(engineModelName)
                 updateModelLoadingPhase("ロード完了")
                 Log.d(TAG, "loadModelWithOverlay: SUCCESS - model=$model")
 
@@ -5509,6 +5650,8 @@ class ChatViewModel(
         //     モデルが既ロードの場合は loadModelWithOverlay がショートカットしてオーバーレイを出さない仕様に統一。
         //     以前は入口で先立てしていたため、既ロード時に「ロード不要なのにグルグルが無限に続く」バグを起こしていた。
         _isLoading.value = true
+        contextUsageEstimationJob?.cancel()
+        contextUsageEstimationJob = null
 
         // 計算集約的な処理はDefault（CPU 集約的タスク用）で実行
         viewModelScope.launch(Dispatchers.Default) {
@@ -5948,6 +6091,7 @@ class ChatViewModel(
         // Use GlobalScope + IO for async unload; wait up to 3 seconds.
         try {
             Log.d(TAG, "Unloading LiteRT-LM model and KVCache...")
+            setMeterLoadedModel(null)
             val unloadJob = kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
                 modelManager?.unloadModel()
             }

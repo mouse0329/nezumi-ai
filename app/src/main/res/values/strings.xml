@@ -57,6 +57,11 @@
     <string name="model_not_downloaded">モデル未ダウンロード</string>
     <string name="model_loading">モデルをロード中...</string>
     <string name="context_meter_format">コンテキスト使用量: %1$d / %2$d tokens</string>
+    <string name="context_meter_tools">ツール</string>
+    <string name="context_meter_system">システム</string>
+    <string name="context_meter_chat">チャット</string>
+    <string name="context_meter_media">画像/音声</string>
+    <string name="context_meter_send_to_calculate">チャットを送信してください</string>
     <string name="response_generating">応答中</string>
     <!-- モデルロード中のオーバーレイに表示する統一文言。以前は「モデルを準備中...」「[XXX] エンジンを初期化中...」「[XXX] メモリを確認中...」など揺れがあったが、
          全ての読み込みフェーズを『モデル準備中』で統一する。 -->

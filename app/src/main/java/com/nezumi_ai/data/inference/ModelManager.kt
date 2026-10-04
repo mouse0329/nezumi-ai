@@ -172,6 +172,7 @@ class ModelManager(
      * Qwen 等の `/think` `/no_think` directive が正しく作用するようにする。
      */
     fun clearKvCache() {
+        if (activeEngine !is RemoteGgufInferenceEngine || currentModelName == null) return
         runCatching { ggufEngine?.clearKvCacheIfLoaded() }
             .onFailure { Log.w(TAG, "clearKvCache failed on GGUF engine", it) }
     }
@@ -188,6 +189,7 @@ class ModelManager(
      * リセットしてから生成を始める。LiteRT や未ロード時は何もしない。
      */
     fun requestForceClearBeforeNextInference() {
+        if (activeEngine !is RemoteGgufInferenceEngine || currentModelName == null) return
         runCatching { ggufEngine?.requestForceClearBeforeNextInference() }
             .onFailure { Log.w(TAG, "requestForceClearBeforeNextInference failed on GGUF engine", it) }
     }

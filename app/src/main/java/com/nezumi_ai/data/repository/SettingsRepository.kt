@@ -152,7 +152,11 @@ class SettingsRepository(
         ).normalized()
     }
 
-    suspend fun getInferenceConfigForModel(model: String, appContext: android.content.Context? = null): InferenceConfig {
+    suspend fun getInferenceConfigForModel(
+        model: String,
+        appContext: android.content.Context? = null,
+        probeTemplate: Boolean = true
+    ): InferenceConfig {
         val current = currentSettings()
         val backend = getBackendForModel(model)
         val contextWindow = getContextWindowForModel(model)
@@ -160,9 +164,9 @@ class SettingsRepository(
         val isGguf = isGgufModel(model)
         val enableThinkingPref = appContext?.let { PreferencesHelper.isEnableThinking(it) } ?: false
         val requireMultimodalPref = appContext?.let { PreferencesHelper.isRequireMultimodal(it) } ?: false
-        // Thinking はプロンプトテンプレートが Thinking を定義しているときだけ有効化できる。
-        // 定義済みなら capability 未設定でも ON 扱い (標準 ON)。空テンプレは不可。
-        val templateDeclaresThinking = appContext != null &&
+        // ロード開始前の GGUF 全メタデータ走査はここで止まって見える。
+        // probeTemplate=false のときは保存済み capability だけで Thinking を決める。
+        val templateDeclaresThinking = probeTemplate && appContext != null &&
             com.nezumi_ai.data.inference.ChatMarkupSpec.fromChatTemplate(
                 com.nezumi_ai.data.inference.GgufFormatResolver.resolveChatTemplateText(appContext, model)
             ).supportsThinking

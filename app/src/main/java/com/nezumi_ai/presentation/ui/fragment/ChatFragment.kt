@@ -34,6 +34,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -51,6 +52,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.LinearProgressIndicator
 import com.nezumi_ai.presentation.ui.composable.SvgSpinner
 import androidx.compose.material3.MaterialTheme
@@ -69,6 +71,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.ComposeView
@@ -233,7 +237,11 @@ class ChatFragment : Fragment() {
     fun switchSession(sessionId: Long) {
         if (!isViewCreated || !isAdded) return
         contextMeterText = getString(R.string.context_meter_format, 0, 0)
-        contextMeterProgress = 0f
+        contextMeterToolFraction = 0f
+        contextMeterSystemFraction = 0f
+        contextMeterChatFraction = 0f
+        contextMeterMediaFraction = 0f
+        contextMeterModelLoaded = false
         contextMeterMediaTokens = 0
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -264,7 +272,13 @@ class ChatFragment : Fragment() {
     private var modelLoadingOverlayVisible by mutableStateOf(false)
     private var modelLoadingText by mutableStateOf("")
     private var contextMeterText by mutableStateOf("")
-    private var contextMeterProgress by mutableStateOf(0f)
+    private var contextMeterToolFraction by mutableStateOf(0f)
+    private var contextMeterSystemFraction by mutableStateOf(0f)
+    private var contextMeterChatFraction by mutableStateOf(0f)
+    private var contextMeterMediaFraction by mutableStateOf(0f)
+    private var contextMeterModelLoaded by mutableStateOf(false)
+    private var contextMeterAwaitingSend by mutableStateOf(true)
+    private var contextMeterTotalOnly by mutableStateOf(false)
     // コンテキストメーター正確化: 実測トークンのうち画像・音声由来のトークン数 (詳細表示用)
     private var contextMeterMediaTokens by mutableStateOf(0)
  // 新: コンテキストメーターの表示可否。全般タブで切り替えられる。既定は表示しない。
@@ -1712,24 +1726,75 @@ class ChatFragment : Fragment() {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.meterModelLoaded.collect { loaded ->
+                contextMeterModelLoaded = loaded
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.meterAwaitingSend.collect { awaiting ->
+                contextMeterAwaitingSend = awaiting
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.meterTotalOnly.collect { totalOnly ->
+                contextMeterTotalOnly = totalOnly
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
             combine(
                 viewModel.contextUsageChars,
                 viewModel.contextUsageTokens,
                 viewModel.contextMediaTokens,
-                viewModel.contextWindowSize
-            ) { usedChars, exactTokens, mediaTokens, maxTokens ->
-                arrayOf(usedChars, exactTokens, mediaTokens, maxTokens)
-            }.collect { (usedChars, exactTokens, mediaTokens, maxTokens) ->
-                // コンテキストメーター正確化:
-                //   実測/実トークナイズのトークン数 (contextUsageTokens) が取れているときは
-                //   従来の chars→トークン換算 (÷4) よりそちらを優先表示する。
-                //   画像・音声トークンを含むため、マルチモーダル利用時も実態に近い。
-                val usedTokens = if (exactTokens > 0) exactTokens else ((usedChars + 3) / 4).coerceAtLeast(0)
+                viewModel.contextWindowSize,
+                viewModel.contextMeterSegments
+            ) { usedChars, exactTokens, mediaTokens, maxTokens, segments ->
+                arrayOf(usedChars, exactTokens, mediaTokens, maxTokens, segments)
+            }.collect { values ->
+                val usedChars = values[0] as Int
+                val exactTokens = values[1] as Int
+                val mediaTokens = values[2] as Int
+                val maxTokens = values[3] as Int
+                val segments = values[4] as ChatViewModel.ContextMeterSegments
+                if (!contextMeterModelLoaded) {
+                    contextMeterText = getString(R.string.context_meter_format, 0, 0)
+                    contextMeterToolFraction = 0f
+                    contextMeterSystemFraction = 0f
+                    contextMeterChatFraction = 0f
+                    contextMeterMediaFraction = 0f
+                    contextMeterMediaTokens = 0
+                    return@collect
+                }
+                val media = max(segments.mediaTokens, mediaTokens).coerceAtLeast(0)
+                val segmentSum = (segments.toolTokens + segments.systemTokens + segments.chatTokens + media)
+                    .coerceAtLeast(0)
+                val usedTokens = when {
+                    exactTokens > 0 -> exactTokens
+                    segmentSum > 0 -> segmentSum
+                    else -> ((usedChars + 3) / 4).coerceAtLeast(0)
+                }
                 val safeMaxTokens = maxTokens.coerceAtLeast(1)
                 contextMeterText = getString(R.string.context_meter_format, usedTokens, safeMaxTokens)
-                contextMeterMediaTokens = mediaTokens.coerceAtLeast(0)
-                contextMeterProgress =
-                    (((usedTokens.toLong() * 1000L) / safeMaxTokens.toLong()).toInt().coerceIn(0, 1000) / 1000f)
+                contextMeterMediaTokens = media
+                val usedRatio = (usedTokens.toFloat() / safeMaxTokens.toFloat()).coerceIn(0f, 1f)
+                if (contextMeterTotalOnly) {
+                    contextMeterToolFraction = 0f
+                    contextMeterSystemFraction = 0f
+                    contextMeterChatFraction = usedRatio
+                    contextMeterMediaFraction = 0f
+                } else if (segmentSum <= 0 || usedRatio <= 0f) {
+                    contextMeterToolFraction = 0f
+                    contextMeterSystemFraction = 0f
+                    contextMeterChatFraction = 0f
+                    contextMeterMediaFraction = 0f
+                } else {
+                    contextMeterToolFraction = usedRatio * segments.toolTokens / segmentSum
+                    contextMeterSystemFraction = usedRatio * segments.systemTokens / segmentSum
+                    contextMeterChatFraction = usedRatio * segments.chatTokens / segmentSum
+                    contextMeterMediaFraction = usedRatio * media / segmentSum
+                }
             }
         }
 
@@ -3196,7 +3261,7 @@ class ChatFragment : Fragment() {
     private fun ContextMeterSection() {
  // 全般タブの「コンテキストメーターを表示」フラグが OFF のときは何も描画しない。
         // クラウドモデル選択中も描画しない (ローカル推定値が実態と一致しないため)。
-        if (!contextMeterVisible || isCloudModelSelected) return
+        if (!contextMeterVisible || isCloudModelSelected || !contextMeterModelLoaded) return
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -3205,15 +3270,75 @@ class ChatFragment : Fragment() {
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
-                text = contextMeterText,
+                text = if (contextMeterAwaitingSend) {
+                    stringResource(id = R.string.context_meter_send_to_calculate)
+                } else {
+                    contextMeterText
+                },
                 color = colorResource(id = R.color.text_secondary),
                 style = MaterialTheme.typography.bodySmall
             )
-            LinearProgressIndicator(
-                progress = { contextMeterProgress },
-                modifier = Modifier.fillMaxWidth(),
-                color = colorResource(id = R.color.primary),
-                trackColor = colorResource(id = R.color.context_meter_track)
+            if (contextMeterAwaitingSend) return@Column
+            val track = colorResource(id = R.color.context_meter_track)
+            val totalColor = colorResource(id = R.color.context_meter_progress)
+            val toolColor = colorResource(id = R.color.context_meter_tools)
+            val systemColor = colorResource(id = R.color.context_meter_system)
+            val chatColor = colorResource(id = R.color.context_meter_chat)
+            val mediaColor = colorResource(id = R.color.context_meter_media)
+            val totalFraction = (contextMeterToolFraction + contextMeterSystemFraction +
+                contextMeterChatFraction + contextMeterMediaFraction).coerceIn(0f, 1f)
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(track)
+            ) {
+                var x = 0f
+                fun drawSegment(fraction: Float, color: Color) {
+                    if (fraction <= 0f) return
+                    val width = size.width * fraction
+                    drawRect(color, topLeft = Offset(x, 0f), size = Size(width, size.height))
+                    x += width
+                }
+                if (contextMeterTotalOnly) {
+                    drawSegment(totalFraction, totalColor)
+                } else {
+                    drawSegment(contextMeterToolFraction, toolColor)
+                    drawSegment(contextMeterSystemFraction, systemColor)
+                    drawSegment(contextMeterChatFraction, chatColor)
+                    drawSegment(contextMeterMediaFraction, mediaColor)
+                }
+            }
+            if (!contextMeterTotalOnly) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ContextMeterLegend(toolColor, stringResource(id = R.string.context_meter_tools))
+                    ContextMeterLegend(systemColor, stringResource(id = R.string.context_meter_system))
+                    ContextMeterLegend(chatColor, stringResource(id = R.string.context_meter_chat))
+                    ContextMeterLegend(mediaColor, stringResource(id = R.string.context_meter_media))
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun ContextMeterLegend(color: Color, label: String) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(color)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = label,
+                color = colorResource(id = R.color.text_secondary),
+                style = MaterialTheme.typography.labelSmall
             )
         }
     }
