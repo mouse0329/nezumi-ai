@@ -360,7 +360,6 @@ class RemoteEngineConnection(
                         EngineLoadLogHub.note(line)
                     }
                 })
-                EngineLoadLogHub.note("load started")
                 awaitLoadWithIdleTimeout(result)
             } catch (t: Throwable) {
                 handleRemoteException(t, "loadModel")
@@ -371,17 +370,22 @@ class RemoteEngineConnection(
         }.also { invalidateEngineStatusCache() }
 
     /**
-     * ロード完了を待つ。制限時間は開始からではなく、最後のエンジンログからの無通信。
-     * ログが再び届けば残り時間は [LOAD_IDLE_TIMEOUT_MS] に戻る。
+     * ロード完了を待つ。制限時間は開始からではなく、最後のエンジンログが
+     * 途絶えてから [LOAD_IDLE_TIMEOUT_MS]。ログが再び届けば期限はその時刻から
+     * やり直す。開始時に合成ログを積むと、ログ継続中でも開始 60 秒で切れていた。
      */
     private suspend fun awaitLoadWithIdleTimeout(
         result: CompletableDeferred<Result<Unit>>
     ): Result<Unit> {
         while (true) {
-            val idleFor = SystemClock.elapsedRealtime() - EngineLoadLogHub.lastActivityElapsedMs()
-            val remaining = LOAD_IDLE_TIMEOUT_MS - idleFor
-            if (remaining <= 0L) {
-                Log.w(tag, "loadModel idle timeout; no engine log for ${LOAD_IDLE_TIMEOUT_MS}ms")
+            if (result.isCompleted) return result.await()
+            val now = SystemClock.elapsedRealtime()
+            val lastLog = EngineLoadLogHub.lastLogElapsedMs()
+            val idleAnchor = if (lastLog > 0L) lastLog else EngineLoadLogHub.loadStartedElapsedMs()
+            val idleFor = now - idleAnchor
+            if (idleAnchor > 0L && idleFor >= LOAD_IDLE_TIMEOUT_MS) {
+                val since = if (lastLog > 0L) "last engine log" else "load start (no engine log)"
+                Log.w(tag, "loadModel idle timeout; no engine log for ${idleFor}ms ($since)")
                 val likelyOutOfMemory = wasProcessKilledForLowMemory(lastKnownPid)
                 return Result.failure(
                     RemoteEngineProcessDiedException(
@@ -390,9 +394,10 @@ class RemoteEngineConnection(
                     )
                 )
             }
-            val step = minOf(remaining, 500L)
-            val done = withTimeoutOrNull(step) { result.await() }
-            if (done != null) return done
+            val remaining = (LOAD_IDLE_TIMEOUT_MS - idleFor).coerceAtLeast(1L)
+            val step = minOf(remaining, 250L)
+            delay(step)
+            if (result.isCompleted) return result.await()
             val pid = lastKnownPid
             if (pid > 0 && !isProcessAlive(pid)) {
                 val likelyOutOfMemory = wasProcessKilledForLowMemory(pid)

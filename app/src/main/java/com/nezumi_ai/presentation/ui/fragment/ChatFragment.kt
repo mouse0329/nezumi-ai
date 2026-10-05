@@ -65,10 +65,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -3288,6 +3290,13 @@ class ChatFragment : Fragment() {
                     style = MaterialTheme.typography.bodyMedium
                 )
                 if (showEngineLoadLog && engineLoadLogText.isNotEmpty()) {
+                    val logScroll = rememberScrollState()
+                    // 新しい行が来ても、ユーザーが上に戻しても、常に末尾へ固定する。
+                    LaunchedEffect(engineLoadLogText) {
+                        snapshotFlow { logScroll.maxValue }.collect { max ->
+                            logScroll.scrollTo(max)
+                        }
+                    }
                     Text(
                         text = engineLoadLogText,
                         color = colorResource(id = R.color.text_secondary),
@@ -3297,7 +3306,7 @@ class ChatFragment : Fragment() {
                             .padding(horizontal = 20.dp)
                             .fillMaxWidth()
                             .heightIn(max = 180.dp)
-                            .verticalScroll(rememberScrollState())
+                            .verticalScroll(logScroll, enabled = false)
                     )
                 }
             }

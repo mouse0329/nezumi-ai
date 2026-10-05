@@ -1573,14 +1573,14 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
 
     <!-- Model / inference error dialog messages -->
     <string name="model_load_error_title">モデルロードエラー</string>
-    <string name="model_load_error_generic">モデルのロードに失敗しました。モデル管理画面で再ダウンロードしてください。</string>
+    <string name="model_load_error_generic">モデルのロードに失敗しました。</string>
     <string name="model_load_error_low_memory">モデルのロードに失敗しました。メモリ不足の可能性があります。より小さいモデルか、量子化レベルの低いモデルをお試しください。 (%1$d%%)</string>
-    <string name="model_load_error_unreadable">モデルファイルが読み込めません。モデル管理画面で再ダウンロードしてください。</string>
+    <string name="model_load_error_unreadable">モデルファイルが読み込めません。</string>
     <string name="model_load_error_short">モデルのロードに失敗しました。</string>
     <string name="model_load_error_preset_missing">プリセットモデルのロードに失敗しました。ファイルが見つかりません。</string>
     <string name="model_load_error_preset_generic">プリセットモデルのロードに失敗しました</string>
     <string name="model_reload_error_title">モデル再ロードエラー</string>
-    <string name="model_reload_error_generic">LLMモデルの再ロードに失敗しました。モデル管理画面で再ダウンロードしてください。</string>
+    <string name="model_reload_error_generic">LLMモデルの再ロードに失敗しました。</string>
     <string name="model_reload_error_restart">LLMモデルの再ロードに失敗しました。チャットを再起動してください。</string>
     <string name="model_task_incomplete_download">モデルファイル(.task)のダウンロードが不完全です。ダウンロード中に中断された可能性があります。モデル管理画面でモデルを削除して再度ダウンロードしてください。</string>
     <string name="model_task_corrupted">モデルファイル(.task)が破損しています。コピー中にエラーが発生した可能性があります。ファイルを削除して再度追加してください。</string>

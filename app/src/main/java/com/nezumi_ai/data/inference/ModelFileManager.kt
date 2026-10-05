@@ -1004,14 +1004,14 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         // ファイルサイズ検証
         if (file.length() != metadata.expectedBytes) {
             deleteModel(context, model)
-            return Result.failure(IllegalStateException("モデルサイズが不正です。再ダウンロードしてください"))
+            return Result.failure(IllegalStateException("モデルサイズが不正です"))
         }
 
         // ハッシュ値検証 (これが破損対策の要)
         val expectedSha = metadata.expectedSha256
         if (expectedSha.isNullOrBlank()) {
             deleteModel(context, model)
-            return Result.failure(IllegalStateException("モデル整合性情報が不足しています。再ダウンロードしてください"))
+            return Result.failure(IllegalStateException("モデル整合性情報が不足しています"))
         }
 
         val actualSha = runCatching { sha256Blocking(file) }.getOrElse {
@@ -1020,7 +1020,7 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         
         if (!actualSha.equals(expectedSha, ignoreCase = true)) {
             deleteModel(context, model)
-            return Result.failure(IllegalStateException("モデルが破損しています。再ダウンロードしてください"))
+            return Result.failure(IllegalStateException("モデルが破損しています"))
         }
 
         return Result.success(file)

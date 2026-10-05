@@ -10,6 +10,10 @@ import android.util.Log
  * 一般アプリは他プロセスの logcat を読めないため、ログが出ているプロセス側で読む。
  * 行が届くたびに呼び出し側の無通信タイマーをリセットする。
  *
+ * `--pid` と `-T` を同時に付けると、一部の端末で先頭 1 行だけ出して終了し、
+ * タイマーがロード開始から 60 秒のままになる。追従は `-T 1` のみにし、
+ * プロセス終了まで読み続ける。
+ *
  * android.os.Process と java.lang.Process を混同しないこと。
  */
 internal class RemoteLoadLogForwarder(
@@ -20,9 +24,8 @@ internal class RemoteLoadLogForwarder(
 
     fun start() {
         if (callback == null || thread != null) return
-        val pid = android.os.Process.myPid()
         val proc = runCatching {
-            ProcessBuilder("logcat", "-v", "brief", "--pid=$pid", "-T", "1")
+            ProcessBuilder("logcat", "-v", "brief", "-T", "1")
                 .redirectErrorStream(true)
                 .start()
         }.getOrElse {
