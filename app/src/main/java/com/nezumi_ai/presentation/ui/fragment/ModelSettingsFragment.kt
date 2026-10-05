@@ -164,31 +164,31 @@ enum class ModelType {
 open class ModelSettingsFragment : Fragment() {
     private lateinit var settingsRepository: SettingsRepository
     private var authService: AuthorizationService? = null
-    private var preloadMemoryWarningThresholdPercent by mutableStateOf(MemoryObserver.DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT)
+    internal var preloadMemoryWarningThresholdPercent by mutableStateOf(MemoryObserver.DEFAULT_PRELOAD_MEMORY_WARNING_THRESHOLD_PERCENT)
     private var pendingDownloadPermissionModel: ModelFileManager.LocalModel? = null
 
-    private var hfLinked by mutableStateOf(false)
-    private var hfSearchQuery by mutableStateOf("")
-    private var hfSearchLoading by mutableStateOf(false)
-    private var hfSearchError by mutableStateOf<String?>(null)
+    internal var hfLinked by mutableStateOf(false)
+    internal var hfSearchQuery by mutableStateOf("")
+    internal var hfSearchLoading by mutableStateOf(false)
+    internal var hfSearchError by mutableStateOf<String?>(null)
     // Bug fix: 検索前から「検索結果がありません」と出ていた。
     //   未検索 / 検索中 / 0件ヒットを区別するためのフラグ。
-    private var hfHasSearched by mutableStateOf(false)
-    private var hfSearchResults by mutableStateOf<List<ModelFileManager.HfModelSearchResult>>(emptyList())
-    private var hfSearchNextPageUrl by mutableStateOf<String?>(null)
-    private var hfSearchLoadingMore by mutableStateOf(false)
-    private var hfSearchResultsDialogVisible by mutableStateOf(false)
-    private var hfFilePickerModel by mutableStateOf<ModelFileManager.HfModelSearchResult?>(null)
-    private var hfFilePickerLoading by mutableStateOf(false)
-    private var hfFilePickerFiles by mutableStateOf<List<ModelFileManager.HfModelFile>>(emptyList())
-    private var hfMmprojCandidates by mutableStateOf<List<ModelFileManager.HfModelFile>>(emptyList())
-    private var hfReadmeText by mutableStateOf<String?>(null)
-    private var hfReadmeLoading by mutableStateOf(false)
-    private var hfReadmeError by mutableStateOf<String?>(null)
-    private var hfReadmePageVisible by mutableStateOf(false)
-    private var hfReadmePageTitle by mutableStateOf("")
-    private var hfDownloadingFilePath by mutableStateOf<String?>(null)
-    private var hfQueuedDownloads by mutableStateOf<List<HfQueuedDownloadUiState>>(emptyList())
+    internal var hfHasSearched by mutableStateOf(false)
+    internal var hfSearchResults by mutableStateOf<List<ModelFileManager.HfModelSearchResult>>(emptyList())
+    internal var hfSearchNextPageUrl by mutableStateOf<String?>(null)
+    internal var hfSearchLoadingMore by mutableStateOf(false)
+    internal var hfSearchResultsDialogVisible by mutableStateOf(false)
+    internal var hfFilePickerModel by mutableStateOf<ModelFileManager.HfModelSearchResult?>(null)
+    internal var hfFilePickerLoading by mutableStateOf(false)
+    internal var hfFilePickerFiles by mutableStateOf<List<ModelFileManager.HfModelFile>>(emptyList())
+    internal var hfMmprojCandidates by mutableStateOf<List<ModelFileManager.HfModelFile>>(emptyList())
+    internal var hfReadmeText by mutableStateOf<String?>(null)
+    internal var hfReadmeLoading by mutableStateOf(false)
+    internal var hfReadmeError by mutableStateOf<String?>(null)
+    internal var hfReadmePageVisible by mutableStateOf(false)
+    internal var hfReadmePageTitle by mutableStateOf("")
+    internal var hfDownloadingFilePath by mutableStateOf<String?>(null)
+    internal var hfQueuedDownloads by mutableStateOf<List<HfQueuedDownloadUiState>>(emptyList())
     private val hfSucceededWorkIds = mutableSetOf<java.util.UUID>()
     private val imageModelSucceededWorkIds = mutableSetOf<java.util.UUID>()
     // ダウンロードカードの「未完なのに消える」対策:
@@ -199,7 +199,7 @@ open class ModelSettingsFragment : Fragment() {
     private val hfDownloadCardCache = mutableMapOf<String, HfQueuedDownloadUiState>()
     private val imageModelDownloadCardCache = mutableMapOf<String, ImageModelDownloadUiState>()
     private var importedTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
-    private var importedMmprojTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
+    internal var importedMmprojTasks by mutableStateOf<List<ModelFileManager.ImportedTaskModel>>(emptyList())
 
  // ローカルインポートモデルの「整理」UI 状態
     //   - 検索欄
@@ -217,46 +217,46 @@ open class ModelSettingsFragment : Fragment() {
         UPDATED("更新順"),
         SIZE("サイズ順")
     }
-    private lateinit var presetRepository: PresetRepository
+    internal lateinit var presetRepository: PresetRepository
     private var isImportingModel by mutableStateOf(false)
-    private var modelSettingsDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
+    internal var modelSettingsDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
     // GGUF メタデータ全件表示ダイアログ用の状態。
-    private var metadataDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
-    private var metadataDialogData by mutableStateOf<GgufMetadataReader.FullMetadata?>(null)
-    private var metadataDialogError by mutableStateOf<String?>(null)
-    private var metadataDialogLoading by mutableStateOf(false)
-    private var capabilityDialogImageEnabled by mutableStateOf(false)
-    private var showToolCallingDisableConfirmDialog by mutableStateOf(false)
-    private var toolCallingDisableConfirmModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
-    private var toolCallingDisableConfirmNewCapabilities by mutableStateOf<ImportedModelCapabilities?>(null)
-    private var toolCallingDisableConfirmTokens by mutableStateOf<List<String>>(emptyList())
-    private var toolCallingDisableConflictCount by mutableStateOf(0)
-    private var capabilityDialogAudioEnabled by mutableStateOf(false)
-    private var capabilityDialogThinkingEnabled by mutableStateOf(false)
-    private var capabilityDialogThinkingDefined by mutableStateOf(false)
-    private var capabilityDialogCachedAutoTemplate by mutableStateOf<String?>(null)
-    private var capabilityDialogToolCallingEnabled by mutableStateOf(false)
-    private var capabilityDialogMmprojPath by mutableStateOf("")
+    internal var metadataDialogModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
+    internal var metadataDialogData by mutableStateOf<GgufMetadataReader.FullMetadata?>(null)
+    internal var metadataDialogError by mutableStateOf<String?>(null)
+    internal var metadataDialogLoading by mutableStateOf(false)
+    internal var capabilityDialogImageEnabled by mutableStateOf(false)
+    internal var showToolCallingDisableConfirmDialog by mutableStateOf(false)
+    internal var toolCallingDisableConfirmModel by mutableStateOf<ModelFileManager.ImportedTaskModel?>(null)
+    internal var toolCallingDisableConfirmNewCapabilities by mutableStateOf<ImportedModelCapabilities?>(null)
+    internal var toolCallingDisableConfirmTokens by mutableStateOf<List<String>>(emptyList())
+    internal var toolCallingDisableConflictCount by mutableStateOf(0)
+    internal var capabilityDialogAudioEnabled by mutableStateOf(false)
+    internal var capabilityDialogThinkingEnabled by mutableStateOf(false)
+    internal var capabilityDialogThinkingDefined by mutableStateOf(false)
+    internal var capabilityDialogCachedAutoTemplate by mutableStateOf<String?>(null)
+    internal var capabilityDialogToolCallingEnabled by mutableStateOf(false)
+    internal var capabilityDialogMmprojPath by mutableStateOf("")
     private var capabilityDialogCurrentCapabilities by mutableStateOf<ImportedModelCapabilities?>(null)
     private var capabilityDialogModelType by mutableStateOf<ModelType>(ModelType.LLM)
-    private var mmprojDropdownExpanded by mutableStateOf(false)
-    private var capabilityDialogRepoMmprojCandidates by mutableStateOf<List<ModelFileManager.HfModelFile>>(emptyList())
-    private var capabilityDialogRepoMmprojLoading by mutableStateOf(false)
+    internal var mmprojDropdownExpanded by mutableStateOf(false)
+    internal var capabilityDialogRepoMmprojCandidates by mutableStateOf<List<ModelFileManager.HfModelFile>>(emptyList())
+    internal var capabilityDialogRepoMmprojLoading by mutableStateOf(false)
 
     // --- プロンプトテンプレート設定（Issue #31 / #32） ---
-    private var capabilityDialogTemplateMode by mutableStateOf(PromptTemplateStore.MODE_AUTO)
-    private var capabilityDialogTemplateCustom by mutableStateOf("")
-    private var capabilityDialogTemplateError by mutableStateOf<String?>(null)
-    private var capabilityDialogTemplateExpanded by mutableStateOf(false)
+    internal var capabilityDialogTemplateMode by mutableStateOf(PromptTemplateStore.MODE_AUTO)
+    internal var capabilityDialogTemplateCustom by mutableStateOf("")
+    internal var capabilityDialogTemplateError by mutableStateOf<String?>(null)
+    internal var capabilityDialogTemplateExpanded by mutableStateOf(false)
     
-    private var imageModelsLoading by mutableStateOf(false)
-    private var imageModelsError by mutableStateOf<String?>(null)
+    internal var imageModelsLoading by mutableStateOf(false)
+    internal var imageModelsError by mutableStateOf<String?>(null)
     private var availableImageModels by mutableStateOf<List<com.nezumi_ai.data.inference.ImageModel>>(emptyList())
     private var imageModelsDialogVisible by mutableStateOf(false)
     private var imageModelSearchQuery by mutableStateOf("")
     private var downloadingImageModelIds by mutableStateOf<Set<String>>(emptySet())
-    private var imageModelDownloadStates by mutableStateOf<List<ImageModelDownloadUiState>>(emptyList())
-    private var safetyModelDownloadState by mutableStateOf<ImageModelDownloadUiState?>(null)
+    internal var imageModelDownloadStates by mutableStateOf<List<ImageModelDownloadUiState>>(emptyList())
+    internal var safetyModelDownloadState by mutableStateOf<ImageModelDownloadUiState?>(null)
     private var voicevoxState by mutableStateOf(VoicevoxModelUiState())
     private var voicevoxInitializing by mutableStateOf(false)
     private var voicevoxDownloadState by mutableStateOf<VoicevoxDownloadUiState?>(null)
@@ -269,11 +269,11 @@ open class ModelSettingsFragment : Fragment() {
 
     // --- ダウンロード前ライセンス確認ダイアログ ---
     // 画像モデル: ダウンロードボタン押下時に対象モデルを保持し、ライセンス取得中/取得結果を表示する。
-    private var imageLicensePendingModel by mutableStateOf<com.nezumi_ai.data.inference.ImageModel?>(null)
-    private var imageLicenseLoading by mutableStateOf(false)
-    private var imageLicenseInfo by mutableStateOf<com.nezumi_ai.data.inference.ImageModelLicenseInfo?>(null)
+    internal var imageLicensePendingModel by mutableStateOf<com.nezumi_ai.data.inference.ImageModel?>(null)
+    internal var imageLicenseLoading by mutableStateOf(false)
+    internal var imageLicenseInfo by mutableStateOf<com.nezumi_ai.data.inference.ImageModelLicenseInfo?>(null)
     // VOICEVOX: スタイル選択時に確認を挟むための保留状態。
-    private var voicevoxLicensePendingStyleId by mutableStateOf<Int?>(null)
+    internal var voicevoxLicensePendingStyleId by mutableStateOf<Int?>(null)
 
     // SD (画像生成) モデル zip ピッカー。
     // zip 内に unet.mnn / clip*.mnn / vae_decoder*.mnn と、
@@ -314,15 +314,15 @@ open class ModelSettingsFragment : Fragment() {
             }
         }
     // .vvm の外部手動追加は仕様上削除されたため、ピッカー Launcher も削除している。
-    private var settingsDialogDisplayName by mutableStateOf("")
-    private var settingsDialogStopTokens by mutableStateOf("")
+    internal var settingsDialogDisplayName by mutableStateOf("")
+    internal var settingsDialogStopTokens by mutableStateOf("")
 
     // モデル設定ダイアログの自動保存制御: openModelSettingsDialog() 内で値をセットする間は
     // true にし、LaunchedEffect の snapshotFlow が初回ロード値を保存に回すのを防ぐ。
     // Compose で入力値が変わったときのみデバウンス保存することで
     // 「保存ボタンなしでその場で保存される」を実現する。
-    @Volatile private var modelSettingsAutoSaveSuspended: Boolean = true
-    private var modelSettingsAutoSaveJob: kotlinx.coroutines.Job? = null
+    @Volatile internal var modelSettingsAutoSaveSuspended: Boolean = true
+    internal var modelSettingsAutoSaveJob: kotlinx.coroutines.Job? = null
 
     private var expandedModelKey by mutableStateOf<String?>(null)
 
@@ -332,16 +332,16 @@ open class ModelSettingsFragment : Fragment() {
     
     private var selectedTab by mutableStateOf(ModelType.LLM)
 
-    private val modelStates = mutableStateMapOf<ModelFileManager.LocalModel, ModelUiState>()
+    internal val modelStates = mutableStateMapOf<ModelFileManager.LocalModel, ModelUiState>()
     /** おすすめ GGUF（RecommendedModelCatalog）の DL 状態。Gemma の modelStates と同じ役割。 */
-    private val recommendedGgufStates = mutableStateMapOf<String, ModelUiState>()
+    internal val recommendedGgufStates = mutableStateMapOf<String, ModelUiState>()
     private val ggufCardMetadataStates = mutableStateMapOf<String, GgufCardMetadataUiState>()
 
  // 埋め込みモデルダウンロード進捗（DLタブで表示）
     private var embeddingDownloadState by mutableStateOf<EmbeddingDownloadUiState?>(null)
 
  // ダウンロード中のネットワーク速度表示用（DLタブで表示）
-    private var activeDownloadSpeeds by mutableStateOf<Map<String, DownloadSpeedInfo>>(emptyMap())
+    internal var activeDownloadSpeeds by mutableStateOf<Map<String, DownloadSpeedInfo>>(emptyMap())
 
  // リポジトリ更新通知: ダウンロード済みモデルのリポジトリが更新された場合に表示する
     private var repoUpdateNotifications by mutableStateOf<List<RepoUpdateNotification>>(emptyList())
@@ -463,7 +463,7 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     @Composable
-    private fun ModelScreen() {
+    internal fun ModelScreen() {
         if (hfReadmePageVisible) {
             HfReadmePage()
             return
@@ -913,706 +913,6 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
-    @Composable
-    private fun ImportingDialog() {
-        Dialog(onDismissRequest = {}) {
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = colorResource(id = R.color.primary_light)
-                )
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SvgSpinner(
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Text(
-                        text = stringResource(id = R.string.import_task_loading),
-                        color = colorResource(id = R.color.text_primary)
-                    )
-                }
-            }
-        }
-    }
-
-    /**
-     * GGUF ヘッダーの全メタデータを Hugging Face の「Xet Pointer Details」のような
-     * key / value テーブルとして表示するダイアログ。llama.cpp を経由せず、
-     * GgufMetadataReader でヘッダーを直接パースして得た結果を表示する。
-     */
-    @Composable
-    private fun GgufMetadataDialog() {
-        val model = metadataDialogModel ?: return
-        Dialog(onDismissRequest = {
-            metadataDialogModel = null
-            metadataDialogData = null
-            metadataDialogError = null
-        }) {
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .padding(16.dp)
-                        .heightIn(max = 560.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = stringResource(id = R.string.gguf_metadata_dialog_title),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        IconButton(onClick = {
-                            metadataDialogModel = null
-                            metadataDialogData = null
-                            metadataDialogError = null
-                        }) {
-                            Icon(
-                                imageVector = Icons.Filled.Close,
-                                contentDescription = stringResource(id = R.string.common_close),
-                                tint = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-                    Text(
-                        text = File(model.path).name,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Divider()
-
-                    val data = metadataDialogData
-                    val error = metadataDialogError
-                    when {
-                        metadataDialogLoading -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 24.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator()
-                            }
-                        }
-                        error != null -> {
-                            Text(
-                                text = stringResource(id = R.string.gguf_metadata_read_error, error),
-                                color = MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                        data != null -> {
-                            // サマリー行（version / tensor_count / kv_count）。HF の表と同じ並び。
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                MetadataSummaryRow(stringResource(id = R.string.gguf_metadata_version), data.version.toString())
-                                MetadataSummaryRow(stringResource(id = R.string.gguf_metadata_tensor_count), data.tensorCount.toString())
-                                MetadataSummaryRow(stringResource(id = R.string.gguf_metadata_kv_count), data.kvCount.toString())
-                            }
-                            Divider()
-                            val clipboard = LocalClipboardManager.current
-                            LazyColumn(
-                                modifier = Modifier.weight(1f, fill = false),
-                                verticalArrangement = Arrangement.spacedBy(1.dp)
-                            ) {
-                                itemsIndexed(data.entries) { index, (key, value) ->
-                                    val rowColor = if (index % 2 == 0) {
-                                        MaterialTheme.colorScheme.surfaceContainerHigh
-                                    } else {
-                                        MaterialTheme.colorScheme.surfaceContainerHighest
-                                    }
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(rowColor)
-                                            .padding(horizontal = 8.dp, vertical = 6.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Text(
-                                            text = key,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.weight(0.45f)
-                                        )
-                                        Text(
-                                            text = value,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            modifier = Modifier.weight(0.55f)
-                                        )
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            val copiedToastText = stringResource(id = R.string.gguf_metadata_copied_toast)
-                            val versionLabel = stringResource(id = R.string.gguf_metadata_version)
-                            val tensorCountLabel = stringResource(id = R.string.gguf_metadata_tensor_count)
-                            val kvCountLabel = stringResource(id = R.string.gguf_metadata_kv_count)
-                            TextButton(onClick = {
-                                val text = buildString {
-                                    appendLine("$versionLabel\t${data.version}")
-                                    appendLine("$tensorCountLabel\t${data.tensorCount}")
-                                    appendLine("$kvCountLabel\t${data.kvCount}")
-                                    data.entries.forEach { (k, v) -> appendLine("$k\t$v") }
-                                }
-                                clipboard.setText(AnnotatedString(text))
-                                toast(copiedToastText)
-                            }) {
-                                Text(stringResource(id = R.string.gguf_metadata_copy_all))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun MetadataSummaryRow(label: String, value: String) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-        }
-    }
-
-    @Composable
-    private fun ImportedModelSettingsDialog(model: ModelFileManager.ImportedTaskModel) {
-        val loweredPath = model.path.lowercase()
-        val isGguf = loweredPath.endsWith(".gguf")
-        val isLiteRt = loweredPath.endsWith(".litertlm") || loweredPath.endsWith(".task")
-        val supportsToolCalling = isGguf || isLiteRt
-        val dialogTitle = ImportedModelCapabilityStore.resolveDisplayName(
-            requireContext(), model.path, model.shortDisplayName
-        )
-        Dialog(onDismissRequest = {
-            // ダイアログを閉じる際に未保存値を即時 flush する。
-            // 保存ボタンを廃止したため、回転中のデバウンス保存が未完了のまま
-            // 閉じるシナリオを回避する。
-            modelSettingsAutoSaveJob?.cancel()
-            modelSettingsAutoSaveJob = null
-            val pendingModel = modelSettingsDialogModel
-            if (pendingModel != null) {
-                viewLifecycleOwner.lifecycleScope.launch {
-                    autoPersistModelSettingsFromDialog()
-                    refreshImportedTasks()
-                }
-            }
-            modelSettingsDialogModel = null
-        }) {
-            LaunchedEffect(
-                modelSettingsDialogModel,
-                capabilityDialogTemplateMode,
-                capabilityDialogTemplateCustom,
-                capabilityDialogCachedAutoTemplate
-            ) {
-                val path = modelSettingsDialogModel?.path ?: return@LaunchedEffect
-                val defined = dialogTemplateDeclaresThinking()
-                capabilityDialogThinkingDefined = defined
-                if (!defined) {
-                    // 非対応の間は UI 上だけ OFF。ストアは書き換えない (persistThinking = false)。
-                    capabilityDialogThinkingEnabled = false
-                } else if (ImportedModelCapabilityStore.hasThinkingSetting(requireContext(), path)) {
-                    // 保存済みの ON/OFF を復元する (非対応 → 対応に戻したとき UI が OFF のまま残るのを防ぐ)。
-                    capabilityDialogThinkingEnabled =
-                        ImportedModelCapabilityStore.get(requireContext(), path).thinkingEnabled
-                } else if (!capabilityDialogThinkingEnabled) {
-                    capabilityDialogThinkingEnabled = true
-                }
-            }
-            @OptIn(FlowPreview::class)
-            LaunchedEffect(modelSettingsDialogModel) {
-                // ダイアログ内の全値を snapshotFlow で監視し、350ms でデバウンスして自動保存する。
-                snapshotFlow {
-                    // 取りこぼしないよう state を全て単一 String キーに封入して監視する。
-                    buildString {
-                        append(capabilityDialogImageEnabled); append('|')
-                        append(capabilityDialogAudioEnabled); append('|')
-                        append(capabilityDialogThinkingEnabled); append('|')
-                        append(capabilityDialogToolCallingEnabled); append('|')
-                        append(capabilityDialogMmprojPath); append('|')
-                        append(settingsDialogDisplayName); append('|')
-                        append(settingsDialogStopTokens); append('|')
-                        append(capabilityDialogTemplateMode); append('|')
-                        append(capabilityDialogTemplateCustom)
-                    }
-                }
-                    .filter { !modelSettingsAutoSaveSuspended }
-                    .distinctUntilChanged()
-                    .debounce(350)
-                    .collect { autoPersistModelSettingsFromDialog() }
-            }
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                )
-            ) {
-                Column(
-                    modifier = Modifier
-                        .padding(16.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = stringResource(id = R.string.model_settings_dialog_title),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (isGguf) {
-                                // GGUF ヘッダーの全メタデータを表で確認するボタン。
-                                TextButton(onClick = {
-                                    metadataDialogModel = model
-                                    metadataDialogData = null
-                                    metadataDialogError = null
-                                    metadataDialogLoading = true
-                                    viewLifecycleOwner.lifecycleScope.launch {
-                                        val result = withContext(Dispatchers.IO) {
-                                            runCatching {
-                                                GgufMetadataReader.readFullMetadata(File(model.path))
-                                            }
-                                        }
-                                        result.onSuccess { metadataDialogData = it }
-                                        result.onFailure { e -> metadataDialogError = e.message ?: "" }
-                                        metadataDialogLoading = false
-                                    }
-                                }) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Info,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp),
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        stringResource(id = R.string.gguf_metadata_button),
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                            // 保存ボタンを廃止し、クローズのみの X ボタン。
-                            IconButton(onClick = {
-                                modelSettingsAutoSaveJob?.cancel()
-                                val pendingModel = modelSettingsDialogModel
-                                if (pendingModel != null) {
-                                    viewLifecycleOwner.lifecycleScope.launch {
-                                        autoPersistModelSettingsFromDialog()
-                                        refreshImportedTasks()
-                                    }
-                                }
-                                modelSettingsDialogModel = null
-                            }) {
-                                Icon(
-                                    imageVector = Icons.Filled.Close,
-                                    contentDescription = stringResource(id = R.string.common_close),
-                                    tint = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                    }
-                    Text(
-                        text = dialogTitle,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    model.hfRepoQualifier?.let { repo ->
-                        Text(
-                            text = "HF: $repo",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Divider()
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(stringResource(id = R.string.model_settings_enable_image_input), color = MaterialTheme.colorScheme.onSurface)
-                        Switch(
-                            checked = capabilityDialogImageEnabled,
-                            onCheckedChange = { capabilityDialogImageEnabled = it },
-                            colors = nezumiSwitchColors()
-                        )
-                    }
-                    if (isGguf && capabilityDialogImageEnabled) {
-                        Text(
-                            text = stringResource(
-                                id = R.string.model_settings_mmproj_status,
-                                if (capabilityDialogMmprojPath.isNotBlank()) java.io.File(capabilityDialogMmprojPath).name else stringResource(id = R.string.model_settings_mmproj_unselected)
-                            ),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(start = 8.dp)
-                        )
-                        ExposedDropdownMenuBox(
-                            expanded = mmprojDropdownExpanded,
-                            onExpandedChange = { mmprojDropdownExpanded = it }
-                        ) {
-                            OutlinedTextField(
-                                value = if (capabilityDialogMmprojPath.isBlank()) stringResource(id = R.string.model_settings_mmproj_unselected) else java.io.File(capabilityDialogMmprojPath).name,
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text(stringResource(id = R.string.model_settings_mmproj_file_label)) },
-                                trailingIcon = {
-                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = mmprojDropdownExpanded)
-                                },
-                                modifier = Modifier.menuAnchor()
-                            )
-                            ExposedDropdownMenu(
-                                expanded = mmprojDropdownExpanded,
-                                onDismissRequest = { mmprojDropdownExpanded = false }
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(id = R.string.model_settings_mmproj_unselected)) },
-                                    onClick = {
-                                        capabilityDialogMmprojPath = ""
-                                        mmprojDropdownExpanded = false
-                                    }
-                                )
-                                if (capabilityDialogRepoMmprojLoading) {
-                                    DropdownMenuItem(text = { Text(stringResource(id = R.string.model_settings_mmproj_loading_candidates)) }, onClick = {})
-                                } else {
-                                    val repoQualifier = model.hfRepoQualifier
-                                    val localRepoMmprojTasks = if (repoQualifier != null) {
-                                        importedMmprojTasks.filter { it.hfRepoQualifier == repoQualifier }
-                                    } else importedMmprojTasks
-                                    localRepoMmprojTasks.forEach { mmprojModel ->
-                                        DropdownMenuItem(
-                                            text = { Text(mmprojModel.shortDisplayName) },
-                                            onClick = {
-                                                capabilityDialogMmprojPath = mmprojModel.path
-                                                mmprojDropdownExpanded = false
-                                            }
-                                        )
-                                    }
-                                    val localPaths = localRepoMmprojTasks.map { it.fileNameStem.substringAfter("__") }
-                                    capabilityDialogRepoMmprojCandidates.filter { candidate ->
-                                        val candidateStem = candidate.path.replace('/', '_').replace(Regex("[^A-Za-z0-9._-]"), "_")
-                                        localPaths.none { it == candidateStem || candidate.path.endsWith(it) }
-                                    }.forEach { candidate ->
-                                        val localFile = model.hfRepoQualifier?.let {
-                                            ModelFileManager.hfModelIdFromRepoQualifier(it)
-                                        }?.let { hfId ->
-                                            ModelFileManager.huggingFaceImportedFile(requireContext(), hfId, candidate.path)
-                                        }
-                                        if (localFile != null && localFile.isFile) return@forEach
-                                        val label = candidate.path.substringAfterLast("/") +
-                                            (candidate.sizeBytes?.let { " (${it / 1024 / 1024}MB, 未DL)" } ?: " (未DL)")
-                                        DropdownMenuItem(
-                                            text = { Text(label) },
-                                            onClick = {
-                                                mmprojDropdownExpanded = false
-                                                val hfModelId = model.hfRepoQualifier?.let {
-                                                    ModelFileManager.hfModelIdFromRepoQualifier(it)
-                                                }
-                                                if (hfModelId != null) {
-                                                    val enqueued = ModelDownloadWorker.enqueueCustomHf(
-                                                        requireContext(), hfModelId, candidate.path
-                                                    )
-                                                    if (enqueued) {
-                                                        toast("mmproj のダウンロードを開始しました: ${candidate.path.substringAfterLast("/")}")
-                                                    } else if (ModelFileManager.huggingFaceImportedFile(
-                                                            requireContext(), hfModelId, candidate.path
-                                                        ).isFile
-                                                    ) {
-                                                        capabilityDialogMmprojPath =
-                                                            ModelFileManager.huggingFaceImportedFile(
-                                                                requireContext(), hfModelId, candidate.path
-                                                            ).absolutePath
-                                                    }
-                                                }
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(stringResource(id = R.string.model_settings_enable_audio_input), color = MaterialTheme.colorScheme.onSurface)
-                        Switch(
-                            checked = capabilityDialogAudioEnabled,
-                            onCheckedChange = { capabilityDialogAudioEnabled = it },
-                            colors = nezumiSwitchColors()
-                        )
-                    }
-                    // Thinking トグルはプロンプトテンプレートが Thinking を定義しているときだけ出す。
-                    if (capabilityDialogThinkingDefined) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(stringResource(id = R.string.model_settings_enable_thinking), color = MaterialTheme.colorScheme.onSurface)
-                            Switch(
-                                checked = capabilityDialogThinkingEnabled,
-                                onCheckedChange = { capabilityDialogThinkingEnabled = it },
-                                colors = nezumiSwitchColors()
-                            )
-                        }
-                    }
-                    if (supportsToolCalling) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(stringResource(id = R.string.model_settings_tool_calling_enable), color = MaterialTheme.colorScheme.onSurface)
-                                Text(
-                                    text = if (isLiteRt) stringResource(id = R.string.model_settings_tool_calling_support_litertlm) else stringResource(id = R.string.model_settings_tool_calling_support_gguf),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = capabilityDialogToolCallingEnabled,
-                                onCheckedChange = { capabilityDialogToolCallingEnabled = it },
-                                colors = nezumiSwitchColors()
-                            )
-                        }
-                    }
-                    Divider()
-                    Text(
-                        text = stringResource(id = R.string.model_settings_display_name_title),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    OutlinedTextField(
-                        modifier = Modifier.fillMaxWidth(),
-                        value = settingsDialogDisplayName,
-                        onValueChange = { settingsDialogDisplayName = it },
-                        label = { Text(stringResource(id = R.string.model_settings_display_name_label)) },
-                        singleLine = true
-                    )
-                    Text(
-                        text = stringResource(id = R.string.model_settings_forbidden_filename_chars),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    if (isGguf) {
-                        Divider()
-                        Text(
-                            text = stringResource(id = R.string.model_settings_chat_template_title),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = stringResource(id = R.string.model_settings_chat_template_description),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        // 要望対応: テンプレート選択は「GGUF メタデータのテンプレート」か
-                        // 「手動入力」の二択に絞る。旧ビルトイン選択 (llama3 / chatml 等) は
-                        // ダイアログを開いた時点で MODE_AUTO (= GGUF メタデータ) に読み替える。
-                        val ggufTemplateLabel = stringResource(id = R.string.model_settings_template_gguf_metadata)
-                        val customLabel = stringResource(id = R.string.model_settings_template_custom)
-                        val templateOptions = remember(ggufTemplateLabel, customLabel) {
-                            listOf(
-                                PromptTemplateStore.MODE_AUTO to ggufTemplateLabel,
-                                PromptTemplateStore.MODE_CUSTOM to customLabel
-                            )
-                        }
-                        val currentLabel = templateOptions.firstOrNull { it.first == capabilityDialogTemplateMode }?.second
-                            ?: ggufTemplateLabel
-                        ExposedDropdownMenuBox(
-                            expanded = capabilityDialogTemplateExpanded,
-                            onExpandedChange = { capabilityDialogTemplateExpanded = it }
-                        ) {
-                            OutlinedTextField(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .menuAnchor(),
-                                value = currentLabel,
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text(stringResource(id = R.string.model_settings_chat_template_label)) },
-                                trailingIcon = {
-                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = capabilityDialogTemplateExpanded)
-                                }
-                            )
-                            ExposedDropdownMenu(
-                                expanded = capabilityDialogTemplateExpanded,
-                                onDismissRequest = { capabilityDialogTemplateExpanded = false }
-                            ) {
-                                templateOptions.forEach { (id, label) ->
-                                    DropdownMenuItem(
-                                        text = { Text(label) },
-                                        onClick = {
-                                            val previousMode = capabilityDialogTemplateMode
-                                            capabilityDialogTemplateMode = id
-                                            capabilityDialogTemplateExpanded = false
-                                            capabilityDialogTemplateError = null
-                                            when {
-                                                // 要望: 手動に切り替えたときは GGUF メタデータの
-                                                // テンプレートを自動入力する (編集の出発点)。
-                                                id == PromptTemplateStore.MODE_CUSTOM &&
-                                                    previousMode != PromptTemplateStore.MODE_CUSTOM -> {
-                                                    val ggufTemplate = runCatching {
-                                                        GgufMetadataReader.readChatTemplate(
-                                                            File(modelSettingsDialogModel?.path.orEmpty())
-                                                        )
-                                                    }.getOrNull()
-                                                    if (!ggufTemplate.isNullOrBlank()) {
-                                                        capabilityDialogTemplateCustom = ggufTemplate
-                                                    } else if (capabilityDialogTemplateCustom.isBlank()) {
-                                                        capabilityDialogTemplateCustom =
-                                                            PromptTemplateStore.BUILTIN_TEMPLATES
-                                                                .firstOrNull { it.id == previousMode }?.template
-                                                                ?: ""
-                                                    }
-                                                }
-                                                // 要望: GGUF メタデータへ戻したら手動テンプレートは削除する。
-                                                id == PromptTemplateStore.MODE_AUTO -> {
-                                                    capabilityDialogTemplateCustom = ""
-                                                }
-                                            }
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                        // ビルトイン選択時は説明を表示
-                        PromptTemplateStore.BUILTIN_TEMPLATES.firstOrNull { it.id == capabilityDialogTemplateMode }?.let { b ->
-                            Text(
-                                text = b.description,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        if (capabilityDialogTemplateMode == PromptTemplateStore.MODE_CUSTOM) {
-                            OutlinedTextField(
-                                modifier = Modifier.fillMaxWidth(),
-                                value = capabilityDialogTemplateCustom,
-                                onValueChange = {
-                                    capabilityDialogTemplateCustom = it
-                                    capabilityDialogTemplateError = null
-                                },
-                                label = { Text(stringResource(id = R.string.model_settings_custom_template_label)) },
-                                placeholder = { Text("{% for message in messages %}...{% endfor %}{% if add_generation_prompt %}...{% endif %}") },
-                                minLines = 5,
-                                isError = capabilityDialogTemplateError != null
-                            )
-                            Text(
-                                text = stringResource(id = R.string.model_settings_template_variables),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = stringResource(id = R.string.model_settings_template_jinja_hint),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            capabilityDialogTemplateError?.let { err ->
-                                Text(
-                                    text = err,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
-                    }
-                    Divider()
-                    Text(
-                        text = stringResource(id = R.string.model_settings_stop_tokens_title),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    OutlinedTextField(
-                        modifier = Modifier.fillMaxWidth(),
-                        value = settingsDialogStopTokens,
-                        onValueChange = { settingsDialogStopTokens = it },
-                        label = { Text(stringResource(id = R.string.model_settings_additional_stop_tokens_label)) },
-                        placeholder = { Text("<|im_end|>,<|im_start|>") },
-                        minLines = 2
-                    )
-                    Text(
-                        text = stringResource(id = R.string.model_settings_stop_tokens_description),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    // NOTE: 保存 / キャンセル ボタン行は完全に廃止。
-                    // 入力は LaunchedEffect のデバウンス保存で自動反映され、
-                    // ダイアログの X / 外側タップで flush される。
-                }
-            }
-        }
-
-        if (showToolCallingDisableConfirmDialog && toolCallingDisableConfirmModel != null && toolCallingDisableConfirmNewCapabilities != null) {
-            AlertDialog(
-                onDismissRequest = { showToolCallingDisableConfirmDialog = false },
-                title = { Text(stringResource(id = R.string.model_tool_calling_disable_confirm_title)) },
-                text = {
-                    Text(stringResource(id = R.string.model_tool_calling_disable_confirm_message, toolCallingDisableConflictCount))
-                },
-                confirmButton = {
-                    Button(onClick = {
-                        val modelForConfirm = toolCallingDisableConfirmModel ?: return@Button
-                        val newCapabilitiesForConfirm = toolCallingDisableConfirmNewCapabilities ?: return@Button
-                        val tokensForConfirm = toolCallingDisableConfirmTokens
-                        toolCallingDisableConfirmModel = null
-                        toolCallingDisableConfirmNewCapabilities = null
-                        toolCallingDisableConfirmTokens = emptyList()
-                        showToolCallingDisableConfirmDialog = false
-                        viewLifecycleOwner.lifecycleScope.launch {
-                            withContext(Dispatchers.IO) {
-                                presetRepository.disableToolCallingForPresetsUsingModel(modelForConfirm.path)
-                            }
-                            persistModelSettings(modelForConfirm, newCapabilitiesForConfirm, isGguf, tokensForConfirm)
-                        }
-                    }) { Text(stringResource(id = R.string.common_yes)) }
-                },
-                dismissButton = {
-                    TextButton(onClick = {
-                        // 確認キャンセル時: トグルを元に戻して自動保存のリトライを回避する。
-                        modelSettingsAutoSaveSuspended = true
-                        capabilityDialogToolCallingEnabled = true
-                        toolCallingDisableConfirmModel = null
-                        toolCallingDisableConfirmNewCapabilities = null
-                        toolCallingDisableConfirmTokens = emptyList()
-                        showToolCallingDisableConfirmDialog = false
-                        viewLifecycleOwner.lifecycleScope.launch {
-                            kotlinx.coroutines.delay(500)
-                            modelSettingsAutoSaveSuspended = false
-                        }
-                    }) { Text("キャンセル") }
-                }
-            )
-        }
-    }
 
  // TabSelector は ModelSidebarSelector に置き換えられたため削除。
     //   古い横並びタブはスクロール可能なことに気づきにくかったため、縦型サイドバーに変更した。
@@ -1975,7 +1275,6 @@ open class ModelSettingsFragment : Fragment() {
     }
 
 
-
     @Composable
     private fun TabButton(
         text: String,
@@ -2017,228 +1316,12 @@ open class ModelSettingsFragment : Fragment() {
     }
     
     
-    @Composable
-    private fun DownloadQueueCard() {
-        // Gemma (LocalModel) のみここで表示。おすすめ llama.cpp は hfQueuedDownloads 側に出るため二重表示しない。
-        val builtinDownloading = ModelFileManager.LocalModel.entries.mapNotNull { m ->
-            val s = modelStates[m] ?: return@mapNotNull null
-            if (s.isDownloading) m to s else null
-        }
-        if (builtinDownloading.isNotEmpty()) {
-            Text(
-                text = stringResource(id = R.string.model_download_queue_builtin_header),
-                style = MaterialTheme.typography.labelSmall,
-                color = colorResource(id = R.color.text_secondary),
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                builtinDownloading.forEach { (model, state) ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = colorResource(id = R.color.surface_card))
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(text = state.title, fontWeight = FontWeight.SemiBold)
-                            if (state.progress > 0f) {
-                                LinearProgressIndicator(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    progress = { state.progress },
-                                    color = colorResource(id = R.color.primary),
-                                    trackColor = colorResource(id = R.color.context_meter_track)
-                                )
-                            } else {
-                                LinearProgressIndicator(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    color = colorResource(id = R.color.primary),
-                                    trackColor = colorResource(id = R.color.context_meter_track)
-                                )
-                            }
-                            Text(
-                                text = state.progressText.ifBlank { state.status },
-                                color = colorResource(id = R.color.text_secondary),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                                TextButton(onClick = {
-                                    ModelDownloadWorker.pause(requireContext(), model)
-                                    toast(getString(R.string.model_download_paused_toast))
-                                }) { Text(stringResource(id = R.string.model_download_pause)) }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if (hfQueuedDownloads.isNotEmpty()) {
-            Text(
-                text = stringResource(id = R.string.model_download_queue_hf_header),
-                style = MaterialTheme.typography.labelSmall,
-                color = colorResource(id = R.color.text_secondary),
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(
-                    start = 4.dp,
-                    bottom = 8.dp,
-                    top = if (builtinDownloading.isNotEmpty()) 16.dp else 0.dp
-                )
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                hfQueuedDownloads.forEach { item ->
-                    // HF カスタム DL の速度キーは observeDownloadSpeeds() で
-                    //   "{modelId}/{fileName}" 形式で登録される。
-                    val speedKey = "${item.modelId}/${item.filePath.substringAfterLast('/')}"
-                    val speedInfo = activeDownloadSpeeds[speedKey]
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = colorResource(id = R.color.surface_card)
-                        )
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(text = item.modelId, fontWeight = FontWeight.SemiBold)
-                            Text(text = item.filePath, color = colorResource(id = R.color.text_secondary), style = MaterialTheme.typography.bodySmall)
-                            if (item.totalBytes > 0L) {
-                                LinearProgressIndicator(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    progress = { item.progress },
-                                    color = colorResource(id = R.color.primary),
-                                    trackColor = colorResource(id = R.color.context_meter_track)
-                                )
-                            } else {
-                                LinearProgressIndicator(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    color = colorResource(id = R.color.primary),
-                                    trackColor = colorResource(id = R.color.context_meter_track)
-                                )
-                            }
-                            Text(text = item.statusText, color = colorResource(id = R.color.text_secondary), style = MaterialTheme.typography.bodySmall)
-                            // 各カードに通信速度と残り時間を表示
-                            speedInfo?.let { info ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = String.format("%.1f MB/s", info.speedMbps),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = colorResource(id = R.color.primary),
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    if (info.estimatedRemainingSec > 0) {
-                                        val remainMin = (info.estimatedRemainingSec / 60).toInt()
-                                        val remainSec = (info.estimatedRemainingSec % 60).toInt()
-                                        Text(
-                                            text = "残り ${remainMin}分${remainSec}秒",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = colorResource(id = R.color.text_secondary)
-                                        )
-                                    }
-                                }
-                            }
-                            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                                if (item.isActive) {
-                                    TextButton(onClick = {
-                                        ModelDownloadWorker.pauseCustomHf(
-                                            requireContext(),
-                                            item.modelId,
-                                            item.filePath
-                                        )
-                                        toast("一時停止しました。再開時は続きからダウンロードします")
-                                    }) { Text("一時停止") }
-                                } else if (item.isPaused) {
-                                    TextButton(onClick = {
-                                        ModelDownloadWorker.enqueueCustomHf(
-                                            requireContext(),
-                                            item.modelId,
-                                            item.filePath
-                                        )
-                                    }) { Text("再開") }
-                                }
-                                if (item.isActive || item.isPaused) {
-                                    TextButton(onClick = {
-                                        ModelDownloadWorker.cancelCustomHf(
-                                            requireContext(),
-                                            item.modelId,
-                                            item.filePath
-                                        )
-                                    }) { Text("キャンセル") }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        if (imageModelDownloadStates.isNotEmpty()) {
-            Text(
-                text = "画像生成モデル ダウンロード中",
-                style = MaterialTheme.typography.labelSmall,
-                color = colorResource(id = R.color.text_secondary),
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(start = 4.dp, bottom = 8.dp, top = if (hfQueuedDownloads.isNotEmpty()) 16.dp else 0.dp)
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                imageModelDownloadStates.forEach { item ->
-                    ModelDownloadProgressCard(
-                        item,
-                        onPause = {
-                            ModelDownloadWorker.pauseImageModel(requireContext(), item.modelId)
-                            toast("一時停止しました。再開時は続きからダウンロードします")
-                        },
-                        onCancel = {
-                            ModelDownloadWorker.cancelImageModel(requireContext(), item.modelId)
-                        }
-                    )
-                }
-            }
-        }
-
-        safetyModelDownloadState?.let { item ->
-            Text(
-                text = "セーフティモデル ダウンロード中",
-                style = MaterialTheme.typography.labelSmall,
-                color = colorResource(id = R.color.text_secondary),
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(
-                    start = 4.dp,
-                    bottom = 8.dp,
-                    top = if (hfQueuedDownloads.isNotEmpty() || imageModelDownloadStates.isNotEmpty()) 16.dp else 0.dp
-                )
-            )
-            ModelDownloadProgressCard(item)
-        }
-        
-        val anyRecommendedDownloading = recommendedGgufStates.values.any { it.isDownloading }
-        val anyBuiltinDownloading = modelStates.values.any { it.isDownloading }
-        if (hfQueuedDownloads.isEmpty() && imageModelDownloadStates.isEmpty() &&
-            safetyModelDownloadState == null && !anyRecommendedDownloading && !anyBuiltinDownloading
-        ) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = colorResource(id = R.color.primary_light)
-                )
-            ) {
-                Text(
-                    text = stringResource(id = R.string.model_download_queue_empty),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colorResource(id = R.color.text_secondary),
-                    modifier = Modifier.padding(16.dp)
-                )
-            }
-        }
-    }
-
     // ─── クラウドモデル管理 (追加/編集/削除をモーダルで行う) ────────────────
 
     /** 追加/編集モーダルの状態。null のときは非表示。 */
-    private var cloudDialogState by mutableStateOf<CloudDialogState?>(null)
+    internal var cloudDialogState by mutableStateOf<CloudDialogState?>(null)
 
-    private data class CloudDialogState(
+    internal data class CloudDialogState(
         /** 編集対象の modelId。null のときは新規追加。 */
         val editingModelId: String? = null,
         val provider: CloudApiKeyStore.Provider = CloudApiKeyStore.Provider.LM_STUDIO,
@@ -2254,581 +1337,11 @@ open class ModelSettingsFragment : Fragment() {
     )
 
     /** 登録済みクラウドモデルの一覧。再読み込みは revision をインクリメントして行う。 */
-    private var cloudModelsRevision by mutableStateOf(0)
+    internal var cloudModelsRevision by mutableStateOf(0)
     private val registeredCloudModels: List<String>
         get() = CloudUserModelRegistry.listForContext(requireContext())
 
-    /**
-     * 追加済みモデル一覧に並べるクラウドモデル 1 件分の行。
-     * タップで編集モーダル、削除ボタンで登録解除。
-     */
-    @Composable
-    private fun CloudModelListItem(modelId: String) {
-        val context = requireContext()
-        val parsed = CloudModelId.parse(modelId)
-        val configured = CloudUserModelRegistry.isConfiguredForContext(context, modelId)
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable {
-                    val overrideKey = CloudUserModelRegistry.getOverrideApiKeyForContext(context, modelId)
-                    val overrideUrl = CloudUserModelRegistry.getOverrideBaseUrlForContext(context, modelId)
-                    cloudDialogState = CloudDialogState(
-                        editingModelId = modelId,
-                        provider = parsed?.provider ?: CloudApiKeyStore.Provider.LM_STUDIO,
-                        modelName = parsed?.modelName ?: "",
-                        apiKey = overrideKey,
-                        baseUrl = overrideUrl
-                    )
-                },
-            colors = CardDefaults.cardColors(
-                containerColor = colorResource(id = R.color.surface_card)
-            )
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = CloudModelId.displayLabel(modelId),
-                        fontWeight = FontWeight.SemiBold,
-                        color = colorResource(id = R.color.text_primary)
-                    )
-                    ModelQuantTags(
-                        nameSource = parsed?.modelName ?: modelId,
-                        extraTags = listOf(stringResource(id = R.string.model_tag_cloud))
-                    )
-                    Text(
-                        text = stringResource(
-                            id = if (configured) R.string.cloud_models_status_configured
-                            else R.string.cloud_models_status_missing
-                        ),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colorResource(
-                            id = if (configured) R.color.primary else R.color.text_secondary
-                        ),
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
-                }
-                TextButton(
-                    onClick = {
-                        CloudUserModelRegistry.removeForContext(context, modelId)
-                        cloudModelsRevision++
-                    }
-                ) {
-                    Text(
-                        stringResource(id = R.string.cloud_models_remove_button),
-                        fontSize = 12.sp
-                    )
-                }
-            }
-        }
-    }
 
-    @Composable
-    private fun ModelQuantTags(nameSource: String, extraTags: List<String> = emptyList()) {
-        val meta = modelNameMeta(nameSource)
-        val tags = (listOf(meta.size, meta.quant) + extraTags).filter { it.isNotBlank() }.distinct()
-        if (tags.isEmpty()) return
-        val sub = colorResource(id = R.color.text_secondary)
-        Row(
-            modifier = Modifier.padding(top = 5.dp),
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            tags.forEach { tag ->
-                Text(
-                    text = tag,
-                    color = sub,
-                    fontSize = 11.sp,
-                    modifier = Modifier
-                        .border(1.dp, sub.copy(alpha = 0.45f), RoundedCornerShape(6.dp))
-                        .padding(horizontal = 7.dp, vertical = 2.dp)
-                )
-            }
-        }
-    }
-
-    /** クラウドモデル追加/編集ダイアログを常にコンポジションに載せる（ModelScreen 先頭から呼ぶ）。 */
-    @Composable
-    private fun CloudModelDialogHost() {
-        val context = requireContext()
-        cloudDialogState?.let { dialogState ->
-            CloudModelDialog(
-                state = dialogState,
-                onDismiss = { cloudDialogState = null },
-                onSave = { saved ->
-                    val isNew = saved.editingModelId == null
-                    val modelId = saved.editingModelId
-                        ?: CloudModelId.build(saved.provider, saved.modelName)
-
-                    // 編集でプロバイダ/モデル名が変わった場合は古い登録を消して新しい ID で登録する。
-                    if (!isNew && saved.editingModelId != modelId) {
-                        CloudUserModelRegistry.removeForContext(context, saved.editingModelId)
-                    }
-                    CloudUserModelRegistry.addForContext(context, modelId)
-                    CloudUserModelRegistry.saveOverrideForContext(context, modelId, saved.apiKey, saved.baseUrl)
-
-                    toast(getString(R.string.cloud_models_credentials_saved))
-                    cloudModelsRevision++
-                    cloudDialogState = null
-                }
-            )
-        }
-    }
-
-    /**
-     * クラウドモデルの追加/編集モーダル。
-     *
-     * - プロバイダーはドロップダウンで選択。選んだプロバイダーに応じて入力項目を出し分ける。
-     * - ローカル系 (LM Studio / Ollama ローカル) はモデル選択と URL のみ (API キー不要)。
-     *   モデル名は `/v1/models` から取得した一覧をドロップダウンで選ぶ。
-     * - クラウド系 (Ollama クラウドを含む) はモデル名を自由入力。API キーとアクセスポイントを設定できる。
-     *   Ollama クラウドはモデル一覧を `/api/tags` から API キー付きで取得できる。
-     */
-    @Composable
-    private fun CloudModelDialog(
-        state: CloudDialogState,
-        onDismiss: () -> Unit,
-        onSave: (CloudDialogState) -> Unit
-    ) {
-        // Ollama クラウド (旧称リモート) はリモートサーバーではなく ollama.com の
-        // クラウドサービスなので、他のクラウドプロバイダと同じく API キー必須として扱う。
-        val isLocalProvider = state.provider == CloudApiKeyStore.Provider.LM_STUDIO ||
-            state.provider == CloudApiKeyStore.Provider.OLLAMA_LOCAL
-        val requiresApiKey = state.provider.requiresApiKey
-
-        AlertDialog(
-            onDismissRequest = onDismiss,
-            title = {
-                Text(
-                    text = stringResource(
-                        id = if (state.editingModelId == null) R.string.cloud_models_add_dialog_title_add
-                        else R.string.cloud_models_add_dialog_title_edit
-                    )
-                )
-            },
-            text = {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.verticalScroll(rememberScrollState())
-                ) {
-                    // プロバイダー選択
-                    Column {
-                        Text(
-                            text = stringResource(id = R.string.cloud_models_provider_label),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colorResource(id = R.color.text_secondary)
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        ExposedDropdownMenuBox(
-                            expanded = state.providerDropdownExpanded,
-                            onExpandedChange = {
-                                cloudDialogState = state.copy(providerDropdownExpanded = it)
-                            }
-                        ) {
-                            OutlinedTextField(
-                                value = providerLabel(state.provider),
-                                onValueChange = {},
-                                readOnly = true,
-                                trailingIcon = {
-                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = state.providerDropdownExpanded)
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .menuAnchor()
-                            )
-                            ExposedDropdownMenu(
-                                expanded = state.providerDropdownExpanded,
-                                onDismissRequest = {
-                                    cloudDialogState = state.copy(providerDropdownExpanded = false)
-                                }
-                            ) {
-                                CloudApiKeyStore.Provider.values().forEach { provider ->
-                                    DropdownMenuItem(
-                                        text = { Text(providerLabel(provider)) },
-                                        onClick = {
-                                            cloudDialogState = state.copy(
-                                                provider = provider,
-                                                providerDropdownExpanded = false,
-                                                fetchedModels = emptyList(),
-                                                modelName = ""
-                                            )
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Base URL (ローカル系は URL のみ。クラウド系もアクセスポイント変更可)
-                    Column {
-                        Text(
-                            text = stringResource(id = R.string.cloud_models_base_url_label),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colorResource(id = R.color.text_secondary)
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        OutlinedTextField(
-                            value = state.baseUrl,
-                            onValueChange = { cloudDialogState = state.copy(baseUrl = it) },
-                            placeholder = {
-                                Text(
-                                    text = state.provider.defaultBaseUrl
-                                        ?: stringResource(id = R.string.cloud_models_base_url_required_hint)
-                                )
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        state.provider.defaultBaseUrl?.let { defaultBaseUrl ->
-                            Text(
-                                text = stringResource(
-                                    id = R.string.cloud_models_base_url_default_hint,
-                                    defaultBaseUrl
-                                ),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colorResource(id = R.color.text_secondary)
-                            )
-                        }
-                    }
-
-                    // API キー (クラウド系のみ必須。ローカル系は任意)
-                    if (requiresApiKey || !isLocalProvider) {
-                        Column {
-                            Text(
-                                text = stringResource(id = R.string.cloud_models_api_key_label),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = colorResource(id = R.color.text_secondary)
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            OutlinedTextField(
-                                value = state.apiKey,
-                                onValueChange = { cloudDialogState = state.copy(apiKey = it) },
-                                placeholder = {
-                                    Text(stringResource(id = R.string.cloud_models_api_key_placeholder))
-                                },
-                                visualTransformation = PasswordVisualTransformation(),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    }
-
-                    // モデル名
-                    Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = stringResource(id = R.string.cloud_models_model_name_label),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = colorResource(id = R.color.text_secondary)
-                            )
-                            if (isLocalProvider || state.provider == CloudApiKeyStore.Provider.OLLAMA_REMOTE) {
-                                TextButton(
-                                    onClick = {
-                                        cloudDialogState = state.copy(fetchingModels = true)
-                                        viewLifecycleOwner.lifecycleScope.launch {
-                                            val baseUrl = state.baseUrl.ifBlank {
-                                                state.provider.defaultBaseUrl.orEmpty()
-                                            }
-                                            val models = LocalModelListFetcher.fetch(
-                                                provider = state.provider,
-                                                baseUrl = baseUrl,
-                                                apiKey = state.apiKey
-                                            )
-                                            cloudDialogState = cloudDialogState?.copy(
-                                                fetchedModels = models,
-                                                fetchingModels = false,
-                                                errorMessage = if (models.isEmpty()) {
-                                                    getString(R.string.cloud_models_fetch_models_empty)
-                                                } else null
-                                            )
-                                        }
-                                    }
-                                ) {
-                                    Text(
-                                        text = stringResource(
-                                            id = if (state.fetchingModels) R.string.cloud_models_fetch_models_loading
-                                            else R.string.cloud_models_fetch_models
-                                        ),
-                                        fontSize = 12.sp
-                                    )
-                                }
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        val canPickFromFetched = isLocalProvider || state.provider == CloudApiKeyStore.Provider.OLLAMA_REMOTE
-                        if (canPickFromFetched && state.fetchedModels.isNotEmpty()) {
-                            // 取得できた一覧をドロップダウンで選ぶ
-                            ExposedDropdownMenuBox(
-                                expanded = state.modelDropdownExpanded,
-                                onExpandedChange = {
-                                    cloudDialogState = state.copy(modelDropdownExpanded = it)
-                                }
-                            ) {
-                                OutlinedTextField(
-                                    value = state.modelName,
-                                    onValueChange = { cloudDialogState = state.copy(modelName = it) },
-                                    trailingIcon = {
-                                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = state.modelDropdownExpanded)
-                                    },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .menuAnchor()
-                                )
-                                ExposedDropdownMenu(
-                                    expanded = state.modelDropdownExpanded,
-                                    onDismissRequest = {
-                                        cloudDialogState = state.copy(modelDropdownExpanded = false)
-                                    }
-                                ) {
-                                    state.fetchedModels.forEach { modelName ->
-                                        DropdownMenuItem(
-                                            text = { Text(modelName) },
-                                            onClick = {
-                                                cloudDialogState = state.copy(
-                                                    modelName = modelName,
-                                                    modelDropdownExpanded = false
-                                                )
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            OutlinedTextField(
-                                value = state.modelName,
-                                onValueChange = { cloudDialogState = state.copy(modelName = it) },
-                                placeholder = {
-                                    Text(modelNameHint(state.provider))
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    }
-
-                    // エラーメッセージ
-                    state.errorMessage?.let { message ->
-                        Text(
-                            text = message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colorResource(id = R.color.error)
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val modelName = state.modelName.trim()
-                        if (modelName.isEmpty()) {
-                            cloudDialogState = state.copy(
-                                errorMessage = getString(R.string.cloud_models_add_failed_blank)
-                            )
-                            return@Button
-                        }
-                        if (requiresApiKey && state.apiKey.isBlank()) {
-                            cloudDialogState = state.copy(
-                                errorMessage = getString(R.string.cloud_models_add_failed_not_configured)
-                            )
-                            return@Button
-                        }
-                        val resolvedUrl = state.baseUrl.ifBlank { state.provider.defaultBaseUrl.orEmpty() }
-                        if ((isLocalProvider || state.provider.defaultBaseUrl == null) && !(resolvedUrl.startsWith("http://") || resolvedUrl.startsWith("https://"))) {
-                            cloudDialogState = state.copy(
-                                errorMessage = getString(R.string.cloud_models_base_url_required_hint)
-                            )
-                            return@Button
-                        }
-                        onSave(state.copy(modelName = modelName, baseUrl = resolvedUrl))
-                    }
-                ) {
-                    Text(
-                        stringResource(
-                            id = if (state.editingModelId == null) R.string.cloud_models_add_button
-                            else R.string.cloud_models_save_button
-                        )
-                    )
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = onDismiss) {
-                    Text(stringResource(id = android.R.string.cancel))
-                }
-            }
-        )
-    }
-
-    private fun providerLabel(provider: CloudApiKeyStore.Provider): String = when (provider) {
-        CloudApiKeyStore.Provider.CLAUDE -> getString(R.string.cloud_models_provider_claude)
-        CloudApiKeyStore.Provider.GEMINI -> getString(R.string.cloud_models_provider_gemini)
-        CloudApiKeyStore.Provider.OPENAI -> getString(R.string.cloud_models_provider_openai)
-        CloudApiKeyStore.Provider.OLLAMA_LOCAL -> getString(R.string.cloud_models_provider_ollama_local)
-        CloudApiKeyStore.Provider.OLLAMA_REMOTE -> getString(R.string.cloud_models_provider_ollama_remote)
-        CloudApiKeyStore.Provider.LM_STUDIO -> getString(R.string.cloud_models_provider_lmstudio)
-    }
-
-    private fun modelNameHint(provider: CloudApiKeyStore.Provider): String = when (provider) {
-        CloudApiKeyStore.Provider.CLAUDE -> getString(R.string.cloud_models_model_name_hint_claude)
-        CloudApiKeyStore.Provider.GEMINI -> getString(R.string.cloud_models_model_name_hint_gemini)
-        CloudApiKeyStore.Provider.OPENAI -> getString(R.string.cloud_models_model_name_hint_openai)
-        CloudApiKeyStore.Provider.OLLAMA_LOCAL,
-        CloudApiKeyStore.Provider.OLLAMA_REMOTE -> getString(R.string.cloud_models_model_name_hint_ollama)
-        CloudApiKeyStore.Provider.LM_STUDIO -> getString(R.string.cloud_models_model_name_hint_lmstudio)
-    }
-
-    @Composable
-    private fun HfCard() {
-        Text(
-            text = "Hugging Face 連携",
-            style = MaterialTheme.typography.labelSmall,
-            color = colorResource(id = R.color.text_secondary),
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
-        )
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = colorResource(id = R.color.primary_light)
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(text = "HF:", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            text = if (hfLinked) "連携済み" else "未連携",
-                            color = colorResource(id = R.color.text_secondary),
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                    Button(
-                        onClick = { if (hfLinked) logoutHf() else startOAuthLogin() },
-                        modifier = Modifier.height(36.dp)
-                    ) {
-                        Text(if (hfLinked) "ログアウト" else "ログイン 🤗", fontSize = 12.sp)
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun HfModelSearchCard() {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = colorResource(id = R.color.primary_light)
-            )
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedTextField(
-                        modifier = Modifier.weight(1f),
-                        value = hfSearchQuery,
-                        onValueChange = { hfSearchQuery = it },
-                        placeholder = { Text("キーワード / repo id") },
-                        singleLine = true
-                    )
-                    Button(
-                        enabled = !hfSearchLoading,
-                        onClick = { searchHfModels() },
-                        modifier = Modifier.height(56.dp)
-                    ) {
-                        Text(if (hfSearchLoading) "検索中..." else "検索")
-                    }
-                }
-                if (hfSearchResults.isNotEmpty()) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(
-                            enabled = !hfSearchLoading,
-                            onClick = { hfSearchResultsDialogVisible = true }
-                        ) {
-                            Text("結果を見る (${hfSearchResults.size})")
-                        }
-                        TextButton(
-                            enabled = !hfSearchLoading,
-                            onClick = {
-                                hfSearchResults = emptyList()
-                                hfSearchNextPageUrl = null
-                                hfSearchError = null
-                                hfHasSearched = false
-                                hfSearchResultsDialogVisible = false
-                            }
-                        ) {
-                            Text("クリア")
-                        }
-                    }
-                }
-                hfSearchError?.let {
-                    Text(text = it, color = colorResource(id = R.color.text_primary), style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun SdImageGenFromHfCard() {
-        Text(
-            text = "リポジトリ",
-            style = MaterialTheme.typography.labelSmall,
-            color = colorResource(id = R.color.text_secondary),
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
-        )
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = colorResource(id = R.color.primary_light)
-            )
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text(
-                    text = "sd-mnn (MNN)",
-
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colorResource(id = R.color.text_secondary)
-                )
-                Button(
-                    onClick = { loadImageModels() },
-                    enabled = !imageModelsLoading,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(if (imageModelsLoading) "読込中..." else "モデル一覧を表示")
-                }
-                imageModelsError?.let {
-                    Text(
-                        text = it,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    if (!hfLinked || it.contains("認証")) {
-                        TextButton(onClick = { startOAuthLogin() }) {
-                            Text("HuggingFaceに再ログイン")
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    
     @Composable
     private fun BuiltInModelsCard() {
         Text(
@@ -3233,7 +1746,7 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     /** ライセンス確認ダイアログで「同意してダウンロード」が押された時。 */
-    private fun confirmImageModelDownload() {
+    internal fun confirmImageModelDownload() {
         val model = imageLicensePendingModel ?: return
         imageLicensePendingModel = null
         imageLicenseInfo = null
@@ -3242,503 +1755,12 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     /** ライセンス確認ダイアログで「キャンセル」が押された時、または閉じた時。 */
-    private fun dismissImageLicenseDialog() {
+    internal fun dismissImageLicenseDialog() {
         imageLicensePendingModel = null
         imageLicenseInfo = null
         imageLicenseLoading = false
     }
 
-    @Composable
-    private fun ImageModelLicenseConfirmDialog() {
-        val model = imageLicensePendingModel ?: return
-        val info = imageLicenseInfo
-        val uriHandler = LocalUriHandler.current
-
-        AlertDialog(
-            onDismissRequest = { dismissImageLicenseDialog() },
-            title = { Text("画像生成モデルのライセンス確認") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "「${model.displayName}」をダウンロードします。このモデルは元モデルの配布ライセンス（例: CreativeML Open RAIL-M 等）に従い、商用利用の可否や生成物の用途制限（未成年者の性的搾取、偽情報生成、嫌がらせ、差別的表現などの禁止を含む場合があります）が定められています。内容を確認してから同意してください。",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    when {
-                        imageLicenseLoading -> {
-                            Text("ライセンス情報を取得しています...", style = MaterialTheme.typography.bodySmall)
-                        }
-                        info == null -> {
-                            Text("ライセンス情報を取得できませんでした。", style = MaterialTheme.typography.bodySmall)
-                        }
-                        !info.found -> {
-                            Text(
-                                text = "このモデルのライセンスファイル（LICENSE.md / README.md）を自動取得できませんでした。" +
-                                    "ダウンロード前に必ずHuggingFaceのモデルページで利用条件をご確認ください。",
-                                color = MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            TextButton(onClick = { uriHandler.openUri(info.repoUrl) }) {
-                                Text("HuggingFaceでモデルページを開く")
-                            }
-                        }
-                        else -> {
-                            info.licenseId?.let { lic ->
-                                Text("ライセンス種別: $lic", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                            }
-                            val sourceLabel = when (info.source) {
-                                com.nezumi_ai.data.inference.ImageModelLicenseSource.LICENSE_FILE -> "LICENSE.md より取得"
-                                com.nezumi_ai.data.inference.ImageModelLicenseSource.README -> "README.md より取得"
-                                else -> null
-                            }
-                            sourceLabel?.let {
-                                Text(it, color = colorResource(id = R.color.text_secondary), style = MaterialTheme.typography.labelSmall)
-                            }
-                            info.bodyText?.let { body ->
-                                Text(
-                                    text = body,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier
-                                        .heightIn(max = 240.dp)
-                                        .verticalScroll(rememberScrollState())
-                                )
-                            }
-                            TextButton(onClick = { uriHandler.openUri(info.repoUrl) }) {
-                                Text("HuggingFaceで全文を開く")
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = { confirmImageModelDownload() },
-                    enabled = !imageLicenseLoading
-                ) {
-                    Text("同意してダウンロード")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { dismissImageLicenseDialog() }) {
-                    Text("キャンセル")
-                }
-            }
-        )
-    }
-
-    @Composable
-    private fun VoicevoxLicenseConfirmDialog() {
-        val styleId = voicevoxLicensePendingStyleId ?: return
-        val style = com.nezumi_ai.voicevox.VoicevoxManager.allStyles.firstOrNull { it.styleId == styleId }
-        val uriHandler = LocalUriHandler.current
-
-        fun dismiss() { voicevoxLicensePendingStyleId = null }
-
-        AlertDialog(
-            onDismissRequest = { dismiss() },
-            title = { Text("音声ライブラリのライセンス確認") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "「${style?.detailName ?: "選択した声"}」の音声モデルをダウンロードします。" +
-                            "生成音声を利用する際は VOICEVOX 本体および話者ごとのクレジット表記・利用規約の遵守が必要です。",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    val license = style?.license
-                    if (license == null) {
-                        Text(
-                            text = "この話者のライセンス情報を確認できませんでした。ダウンロード前に VOICEVOX 公式サイトで規約をご確認ください。",
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        TextButton(onClick = { uriHandler.openUri(com.nezumi_ai.voicevox.VoicevoxLicense.VOICEVOX_TERMS_URL) }) {
-                            Text("VOICEVOX利用規約を開く")
-                        }
-                    } else {
-                        Text("クレジット表記: ${license.credit}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                        Text("商用利用: ${license.commercialLabel}", style = MaterialTheme.typography.bodySmall)
-                        license.note?.let { note ->
-                            Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                        }
-                        if (license.termsUrl.isNotBlank()) {
-                            TextButton(onClick = { uriHandler.openUri(license.termsUrl) }) {
-                                Text("この話者の利用規約を開く")
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    val app = requireContext().applicationContext as MyApplication
-                    app.selectVoicevoxStyle(styleId)
-                    refreshVoicevoxState()
-                    dismiss()
-                }) {
-                    Text("同意してダウンロード")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { dismiss() }) {
-                    Text("キャンセル")
-                }
-            }
-        )
-    }
-
-    @Composable
-    private fun HfSearchResultsContent() {
-        // 旧 HfModelSearchCard を廃止したので、検索入力欄をこのページの上部に移した。
-        // さらにリストを一定量スクロールしたときだけ右下に「上にジャンプ」ボタンを出す。
-        val listState = rememberLazyListState()
-        val scope = androidx.compose.runtime.rememberCoroutineScope()
-        val showJumpTop by remember {
-            derivedStateOf {
-                listState.firstVisibleItemIndex > 0 ||
-                    listState.firstVisibleItemScrollOffset > 200
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(colorResource(id = R.color.bg_session_list))
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { hfSearchResultsDialogVisible = false }) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_back),
-                            contentDescription = "戻る",
-                            tint = colorResource(id = R.color.text_primary)
-                        )
-                    }
-                    Text(
-                        text = "検索結果",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = colorResource(id = R.color.text_primary),
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                // 検索入力欄（旧 HfModelSearchCard から移行）。
-                //   - 旧実装と同じく hfSearchQuery / searchHfModels() にバインドし、
-                //     検索実行後は現ページに結果リストが差し替わる。
-                //   - クリア・結果を見るボタンはこのページ自体が結果ビューなので不要。
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = colorResource(id = R.color.primary_light)
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedTextField(
-                                modifier = Modifier.weight(1f),
-                                value = hfSearchQuery,
-                                onValueChange = { hfSearchQuery = it },
-                                placeholder = { Text("キーワード / repo id") },
-                                singleLine = true
-                            )
-                            Button(
-                                enabled = !hfSearchLoading,
-                                onClick = { searchHfModels() },
-                                modifier = Modifier.height(56.dp)
-                            ) {
-                                Text(if (hfSearchLoading) "検索中..." else "検索")
-                            }
-                        }
-                        hfSearchError?.let {
-                            Text(
-                                text = it,
-                                color = colorResource(id = R.color.text_primary),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                    }
-                }
-
-                if (hfSearchResults.isEmpty()) {
-                    Text(
-                        text = if (hfSearchLoading) "検索中..." else if (!hfHasSearched) "キーワードを入力して検索してください" else "検索結果がありません",
-                        color = colorResource(id = R.color.text_secondary)
-                    )
-                } else {
-                    Text(
-                        text = "${hfSearchResults.size}件の結果",
-                        color = colorResource(id = R.color.text_secondary),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-     // 次ページの自動読み込み:
-                    //   旧: LaunchedEffect(hfSearchResults.size) → trigger item が
-                    //       LazyColumn に compose された瞬間に発火していたため、
-                    //       ユーザーがスクロールしていなくても全ページを一気に取得してしまう。
-                    //   新: リストの末尾付近が実際に表示されたときだけ loadMore を呼ぶ。
-                    LaunchedEffect(listState) {
-                        snapshotFlow {
-                            val info = listState.layoutInfo
-                            val total = info.totalItemsCount
-                            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
-                            // 末尾に多少余裕を持たせる (2item 手前からプリフェッチ)
-                            total > 0 && lastVisible >= total - 2
-                        }
-                            .distinctUntilChanged()
-                            .filter { it }
-                            .collect {
-                                val nextUrl = hfSearchNextPageUrl
-                                if (nextUrl != null && !hfSearchLoadingMore) {
-                                    loadMoreHfResults(nextUrl)
-                                }
-                            }
-                    }
-                    LazyColumn(
-                        state = listState,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(hfSearchResults, key = { it.id }) { result ->
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = colorResource(id = R.color.primary_light)
-                                )
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Text(
-                                            text = "\u2B73",
-                                            color = colorResource(id = R.color.primary),
-                                            fontSize = 18.sp
-                                        )
-                                        Text(text = result.id, fontWeight = FontWeight.SemiBold)
-                                    }
-                                    Text(
-                                        text = "DL: ${result.downloads} / Likes: ${result.likes}",
-                                        color = colorResource(id = R.color.text_secondary)
-                                    )
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(
-                                            enabled = !hfFilePickerLoading,
-                                            onClick = {
-                                                openHfFilePicker(result)
-                                            }
-                                        ) {
-                                            Text("ファイル選択")
-                                        }
-                                        TextButton(onClick = {
-                                            if (!com.nezumi_ai.utils.ExternalLinkOpener.openUrl(
-                                                    requireContext(),
-                                                    "https://huggingface.co/${result.id}"
-                                                )
-                                            ) {
-                                                toast("ブラウザを起動できませんでした")
-                                            }
-                                        }) {
-                                            Text("ページを開く")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-         // 次ページプレースホルダー: スピナーのみ。loadMore のトリガーは
-                        //   上の snapshotFlow 監視で行うので、この item は "現在ロード中に見える" 存在だけ。
-                        item {
-                            if (hfSearchNextPageUrl != null && hfSearchLoadingMore) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 12.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    SvgSpinner()
-                                }
-                            } else if (hfSearchNextPageUrl != null) {
-                                // 候補があるが未ロードのときもプレースホルダーだけ支持しておく（高さは保つ）
-                                Spacer(modifier = Modifier.height(24.dp))
-                            }
-                        }
-                    }
-                }
-            }
-
-            // スクロールして先頭から離れたときだけ右下に「上にジャンプ」 FAB を表示する。
-            // ModelScreen の「＋」FAB と同じ位置だが、他タブと並びではない検索ビュー上のボタンなので衝突はない。
-            if (showJumpTop && hfSearchResults.isNotEmpty()) {
-                FloatingActionButton(
-                    onClick = {
-                        scope.launch { listState.animateScrollToItem(0) }
-                    },
-                    containerColor = colorResource(id = R.color.primary),
-                    contentColor = Color.White,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 20.dp, bottom = 24.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.KeyboardArrowUp,
-                        contentDescription = "上までジャンプ"
-                    )
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun HfFilePickerDialog(model: ModelFileManager.HfModelSearchResult) {
-        Dialog(onDismissRequest = {
-            if (hfDownloadingFilePath == null) {
-                hfFilePickerModel = null
-            }
-        }) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth(0.92f)
-                    .heightIn(max = 640.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = colorResource(id = R.color.primary_light)
-                )
-            ) {
-                Column(
-                    modifier = Modifier
-                        .padding(16.dp)
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(text = "ダウンロードするファイルを選択", fontWeight = FontWeight.Bold)
-                    Text(text = model.id, color = colorResource(id = R.color.text_secondary))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(onClick = { 
-                            hfReadmePageTitle = model.id
-                            hfReadmePageVisible = true
-                            fetchHfReadme(model.id) 
-                        }) {
-                            Text("README")
-                        }
-                    }
-                    if (hfFilePickerLoading) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            SvgSpinner(modifier = Modifier.size(18.dp))
-                            Text("ファイル一覧を取得中...")
-                        }
-                    } else if (hfFilePickerFiles.isEmpty() && hfMmprojCandidates.isEmpty()) {
-                        Text("対応ファイル（.gguf / .task / .litertlm / .mmproj）が見つかりません")
-                    } else {
-                        // メインモデルファイル一覧
-                        if (hfFilePickerFiles.isNotEmpty()) {
-                            // mmproj がある場合は自動DLの旨を表示
-                            if (hfMmprojCandidates.isNotEmpty()) {
-                                val autoMmproj = hfMmprojCandidates
-                                    .filter { it.sizeBytes != null }
-                                    .minByOrNull { it.sizeBytes!! }
-                                    ?: hfMmprojCandidates.first()
-                                Text(
- text = "mmproj が見つかりました。DL時に「${autoMmproj.path}」も自動ダウンロードし、画像認識が有効になります。",
-                                    color = colorResource(id = R.color.text_secondary),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.padding(bottom = 4.dp)
-                                )
-                            }
-                            hfFilePickerFiles.forEach { file ->
-                                HfFileRow(model.id, file)
-                            }
-                        }
-                        // mmproj セクション（同リポジトリのみ）
-                        if (hfMmprojCandidates.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "mmproj（マルチモーダル用）",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = colorResource(id = R.color.text_primary)
-                            )
-                            hfMmprojCandidates.forEach { file ->
-                                HfFileRow(model.id, file, isMmproj = true)
-                            }
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        TextButton(
-                            enabled = hfDownloadingFilePath == null,
-                            onClick = { hfFilePickerModel = null }
-                        ) { Text("閉じる") }
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable
-    private fun HfFileRow(
-        modelId: String,
-        file: ModelFileManager.HfModelFile,
-        isMmproj: Boolean = false
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                Text(text = file.path)
-                Text(
-                    text = file.sizeBytes?.let { formatBytes(it) } ?: "size: unknown",
-                    color = colorResource(id = R.color.text_secondary)
-                )
-                if (file.sizeBytes != null) {
-                    val isMemoryLow = MemoryObserver.isMemoryLowForFileSize(requireContext(), file.sizeBytes, preloadMemoryWarningThresholdPercent, useAvailable = false)
-                    val resourceCheck = ModelFileManager.checkDownloadResources(requireContext(), file.sizeBytes, preloadMemoryWarningThresholdPercent)
-                    if (isMemoryLow || resourceCheck.isStorageLow) {
-                        Text(
-                            text = when {
- isMemoryLow && resourceCheck.isStorageLow -> "メモリ・ストレージ不足"
- isMemoryLow -> "メモリ不足"
- else -> "ストレージ不足"
-                            },
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
-                    }
-                }
-            }
-            Button(
-                enabled = hfDownloadingFilePath == null && (file.sizeBytes == null || !ModelFileManager.checkDownloadResources(requireContext(), file.sizeBytes, preloadMemoryWarningThresholdPercent).isStorageLow),
-                onClick = {
-                    if (isMmproj) downloadHfMmprojFile(modelId, file.path)
-                    else downloadHfModelFile(modelId, file.path)
-                }
-            ) {
-                val isDownloading = hfDownloadingFilePath == file.path
-                Text(if (isDownloading) "DL中..." else "DL")
-            }
-        }
-    }
 
     @Composable
     private fun ModelListCard() {
@@ -4760,7 +2782,7 @@ open class ModelSettingsFragment : Fragment() {
         //   FAB メニュー・戻るボタン・クリアボタン・検索処理本体だけが制御する。
     }
 
-    private fun logoutHf() {
+    internal fun logoutHf() {
         HfAuthManager.clearToken(requireContext())
         renderHfTokenState()
         toast("ログアウトしました")
@@ -4808,7 +2830,7 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
-    private fun refreshImportedTasks() {
+    internal fun refreshImportedTasks() {
         Log.d("ModelSettings", "refreshImportedTasks: called")
         importedTasks = ModelFileManager.listImportedTaskModels(requireContext())
         importedMmprojTasks = ModelFileManager.listImportedMmprojModels(requireContext())
@@ -4821,7 +2843,7 @@ open class ModelSettingsFragment : Fragment() {
         Log.d("ModelSettings", "refreshImportedTasks: completed, sdModels.size=${sdModels.size}")
     }
 
-    private fun loadImageModels() {
+    internal fun loadImageModels() {
         imageModelsLoading = true
         imageModelsError = null
         viewLifecycleOwner.lifecycleScope.launch {
@@ -4918,7 +2940,7 @@ open class ModelSettingsFragment : Fragment() {
         sdModels = models
     }
 
-    private fun searchHfModels() {
+    internal fun searchHfModels() {
         val query = hfSearchQuery.trim()
         if (query.isBlank()) {
             hfSearchError = "検索ワードを入力してください"
@@ -4957,7 +2979,7 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
-    private fun loadMoreHfResults(nextUrl: String) {
+    internal fun loadMoreHfResults(nextUrl: String) {
         if (hfSearchLoadingMore) return
         hfSearchLoadingMore = true
         viewLifecycleOwner.lifecycleScope.launch {
@@ -4975,7 +2997,7 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
-    private fun openHfFilePicker(result: ModelFileManager.HfModelSearchResult) {
+    internal fun openHfFilePicker(result: ModelFileManager.HfModelSearchResult) {
         hfFilePickerModel = result
         hfFilePickerLoading = true
         hfFilePickerFiles = emptyList()
@@ -5009,7 +3031,7 @@ open class ModelSettingsFragment : Fragment() {
         fetchHfReadme(result.id)
     }
 
-    private fun fetchHfReadme(modelId: String) {
+    internal fun fetchHfReadme(modelId: String) {
         hfReadmeText = null
         hfReadmeError = null
         hfReadmeLoading = true
@@ -5026,7 +3048,7 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
-    private fun dialogTemplateDeclaresThinking(): Boolean {
+    internal fun dialogTemplateDeclaresThinking(): Boolean {
         val template = when (capabilityDialogTemplateMode) {
             PromptTemplateStore.MODE_CUSTOM -> capabilityDialogTemplateCustom
             else -> capabilityDialogCachedAutoTemplate
@@ -5109,7 +3131,7 @@ open class ModelSettingsFragment : Fragment() {
      * 自動保存用。バリデーション失敗時は trace レベルのログのみでサイレントにスキップ。
      * 保存ボタン介しと違い UI フィードバックを出さない (Toast もなし)。
      */
-    private suspend fun autoPersistModelSettingsFromDialog() {
+    internal suspend fun autoPersistModelSettingsFromDialog() {
         val model = modelSettingsDialogModel ?: return
         val displayName = settingsDialogDisplayName
         val invalidChars = Regex("[\\\\/:*?\"<>|]")
@@ -5176,7 +3198,7 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
-    private suspend fun persistModelSettings(
+    internal suspend fun persistModelSettings(
         model: ModelFileManager.ImportedTaskModel,
         newCapabilities: ImportedModelCapabilities,
         isGguf: Boolean,
@@ -5208,7 +3230,7 @@ open class ModelSettingsFragment : Fragment() {
         toast("設定を保存しました")
     }
 
-    private fun downloadHfModelFile(modelId: String, filePath: String) {
+    internal fun downloadHfModelFile(modelId: String, filePath: String) {
         hfDownloadingFilePath = filePath
         val enqueued = ModelDownloadWorker.enqueueCustomHf(requireContext(), modelId, filePath)
         if (enqueued) {
@@ -5261,7 +3283,7 @@ open class ModelSettingsFragment : Fragment() {
     }
 
     /** mmproj ファイルを単独でダウンロードする（メインモデルDL時の自動DLとは別に、後から個別追加する用途） */
-    private fun downloadHfMmprojFile(modelId: String, filePath: String) {
+    internal fun downloadHfMmprojFile(modelId: String, filePath: String) {
         hfDownloadingFilePath = filePath
         val enqueued = ModelDownloadWorker.enqueueCustomHf(requireContext(), modelId, filePath)
         if (enqueued) {
@@ -5592,7 +3614,7 @@ open class ModelSettingsFragment : Fragment() {
     }
 
  // 組み込みモデル + HFカスタム + 画像モデルのダウンロード速度を観測
-    private fun observeDownloadSpeeds() {
+    internal fun observeDownloadSpeeds() {
         val speedMap = mutableMapOf<String, DownloadSpeedInfo>()
         // 組み込みモデル
         ModelFileManager.LocalModel.entries.forEach { model ->
@@ -5773,7 +3795,7 @@ open class ModelSettingsFragment : Fragment() {
             }
     }
 
-    private fun refreshVoicevoxState() {
+    internal fun refreshVoicevoxState() {
         if (!com.nezumi_ai.voicevox.VoicevoxFeatureFlag.ENABLED) return
         if (!isAdded) return
         val manager = (requireContext().applicationContext as MyApplication).getVoicevoxManager()
@@ -6022,7 +4044,7 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
-    private fun startOAuthLogin() {
+    internal fun startOAuthLogin() {
         if (hfLinked) {
             toast("すでに連携済みです。切り替える場合は先にログアウトしてください")
             return
@@ -6075,7 +4097,7 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
-    private fun toast(message: String) {
+    internal fun toast(message: String) {
         if (!isAdded) return
         Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
     }
@@ -6085,7 +4107,7 @@ open class ModelSettingsFragment : Fragment() {
         return String.format("%.2fGB", gb)
     }
 
-    private fun formatBytes(bytes: Long): String {
+    internal fun formatBytes(bytes: Long): String {
         val mb = bytes / (1024.0 * 1024.0)
         return if (mb >= 1024.0) {
             String.format(Locale.US, "%.2f GB", mb / 1024.0)
@@ -6151,7 +4173,7 @@ open class ModelSettingsFragment : Fragment() {
         val errorMessage: String? = null,
     )
 
-    private class ModelUiState(val title: String) {
+    internal class ModelUiState(val title: String) {
         var status by mutableStateOf("未ダウンロード")
         var progress by mutableFloatStateOf(0f)
         var progressText by mutableStateOf("")
@@ -6163,7 +4185,7 @@ open class ModelSettingsFragment : Fragment() {
         var isPaused by mutableStateOf(false)
     }
 
-    private data class HfQueuedDownloadUiState(
+    internal data class HfQueuedDownloadUiState(
         val modelId: String,
         val filePath: String,
         val downloadedBytes: Long,
@@ -6181,7 +4203,7 @@ open class ModelSettingsFragment : Fragment() {
     }
     
     @Composable
-    private fun ModelDownloadProgressCard(
+    internal fun ModelDownloadProgressCard(
         item: ImageModelDownloadUiState,
         onPause: (() -> Unit)? = null,
         onCancel: (() -> Unit)? = null
@@ -6265,7 +4287,7 @@ open class ModelSettingsFragment : Fragment() {
         }
     }
 
-    private data class ImageModelDownloadUiState(
+    internal data class ImageModelDownloadUiState(
         val modelId: String,
         val modelName: String,
         val downloadedBytes: Long,
@@ -6367,7 +4389,7 @@ open class ModelSettingsFragment : Fragment() {
     }
 
  // ネットワーク速度表示用
-    private data class DownloadSpeedInfo(
+    internal data class DownloadSpeedInfo(
         val speedMbps: Double,
         val estimatedRemainingSec: Double,
         val downloadedBytes: Long,
@@ -6463,97 +4485,6 @@ open class ModelSettingsFragment : Fragment() {
         )
     }
 
-    @Composable
-    private fun HfReadmePage() {
-        val isDark = isSystemInDarkTheme()
-        val textColor = colorResource(id = R.color.text_primary)
-        val linkSpan = SpanStyle(color = textColor, textDecoration = TextDecoration.Underline)
-        val linkStyle = TextLinkStyles(
-            style = linkSpan,
-            hoveredStyle = linkSpan,
-            pressedStyle = linkSpan,
-            focusedStyle = linkSpan
-        )
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .background(colorResource(id = R.color.bg_session_list))
-        ) {
-            // Header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "README",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        color = if (isDark) Color.White else LocalContentColor.current
-                    )
-                    Text(
-                        text = hfReadmePageTitle,
-                        color = colorResource(id = R.color.text_secondary),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-                IconButton(
-                    onClick = { hfReadmePageVisible = false }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Close",
-                        tint = if (isDark) Color.White else colorResource(id = R.color.text_primary)
-                    )
-                }
-            }
-
-            // Content
-            if (hfReadmeLoading) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    SvgSpinner()
-                    Text("READMEを読み込み中...", modifier = Modifier.padding(top = 8.dp), color = if (isDark) Color.White else LocalContentColor.current)
-                }
-            } else if (hfReadmeError != null) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text("エラー: ${hfReadmeError}", color = if (isDark) Color.White else colorResource(id = R.color.text_primary))
-                }
-            } else if (hfReadmeText != null) {
-                CompositionLocalProvider(
-                    LocalContentColor provides (if (isDark) androidx.compose.ui.graphics.Color.White else LocalContentColor.current)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .verticalScroll(rememberScrollState())
-                            .padding(16.dp)
-                    ) {
-                        MarkdownLatexText(
-                            text = hfReadmeText!!,
-                            modifier = Modifier.fillMaxWidth(),
-                            linkStyle = linkStyle
-                        )
-                    }
-                }
-            }
-        }
-    }
 
     /**
  * ローカルインポートモデルの「検索＋並び替え」バー。
