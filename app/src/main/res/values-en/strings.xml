@@ -1601,6 +1601,8 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="model_loading_phase_memory_check">Checking memory</string>
     <string name="model_loading_phase_weights">Loading weights</string>
     <string name="model_loading_phase_engine_init">Initializing engine</string>
+    <string name="model_loading_phase_template_scan">Checking chat template</string>
+    <string name="model_loading_phase_memory_release">Releasing memory</string>
     <string name="model_kind_custom">Model</string>
 
     <!-- Generation status messages -->

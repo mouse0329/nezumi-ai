@@ -1671,6 +1671,8 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="model_loading_phase_memory_check">メモリ確認</string>
     <string name="model_loading_phase_weights">重みロード</string>
     <string name="model_loading_phase_engine_init">エンジン初期化</string>
+    <string name="model_loading_phase_template_scan">チャットテンプレート確認</string>
+    <string name="model_loading_phase_memory_release">メモリ解放中</string>
     <string name="model_kind_custom">モデル</string>
 
     <!-- Generation status messages -->

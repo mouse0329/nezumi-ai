@@ -2050,14 +2050,10 @@ class ChatFragment : Fragment() {
 
                 if (lastObservedPresetId != null && currentPresetId != lastObservedPresetId) {
                     lastObservedPresetId = currentPresetId
-                    // 画面復帰直後の最初のフレームを描画してからモデルを事前ロードする。
-                    // ネイティブモデル初期化は IO 上でも CPU/メモリ負荷が高く、直ちに
-                    // 開始すると「プリセット選択から戻る」操作の表示を遅らせる。
-                    view?.postOnAnimation {
-                        if (isAdded && isResumed) {
-                            viewModel.preloadActivePresetModel()
-                        }
-                    }
+                    // プリセットを閉じたらすぐロードを始める。次フレーム待ちにすると、
+                    // 復帰直後に離れたときコールバックが落ちてロード自体が始まらない。
+                    // 重い初期化は ViewModel 側の IO で行い、オーバーレイは先に出す。
+                    viewModel.preloadActivePresetModel()
                 } else {
                     lastObservedPresetId = currentPresetId
                 }

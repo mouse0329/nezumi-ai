@@ -2,6 +2,7 @@ package com.nezumi_ai.utils
 
 import java.io.File
 import java.io.RandomAccessFile
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
 object GgufMetadataReader {
@@ -25,8 +26,15 @@ object GgufMetadataReader {
     private data class FullMetadataCacheEntry(val metadata: FullMetadata, val lastModified: Long)
     private val fullMetadataCache = ConcurrentHashMap<String, FullMetadataCacheEntry>()
 
-    private data class ChatTemplateCacheEntry(val template: String?, val lastModified: Long)
+    private data class ChatTemplateCacheEntry(val template: String?, val lastModified: Long, val length: Long)
     private val chatTemplateCache = ConcurrentHashMap<String, ChatTemplateCacheEntry>()
+    private var persistentCacheDir: File? = null
+
+    /** プロセスをまたいで全走査を繰り返さない。cacheDir/gguf-chat-template を渡す。 */
+    fun setPersistentCacheDir(dir: File) {
+        dir.mkdirs()
+        persistentCacheDir = dir
+    }
 
     private const val GGUF_MAGIC = 0x46554747
 
@@ -57,6 +65,7 @@ object GgufMetadataReader {
 
     fun invalidate(path: String): Boolean {
         chatTemplateCache.remove(path)
+        persistentCacheFile(path)?.delete()
         fullMetadataCache.remove(path)
         return cache.remove(path) != null
     }
@@ -164,12 +173,49 @@ object GgufMetadataReader {
     fun readChatTemplate(file: File): String? {
         if (!file.isFile) return null
         val lastModified = file.lastModified()
+        val length = file.length()
         chatTemplateCache[file.absolutePath]?.let { entry ->
-            if (entry.lastModified == lastModified) return entry.template
+            if (entry.lastModified == lastModified && entry.length == length) return entry.template
+        }
+        readPersistentChatTemplate(file, lastModified, length)?.let { cached ->
+            chatTemplateCache[file.absolutePath] = ChatTemplateCacheEntry(cached.template, lastModified, length)
+            return cached.template
         }
         val template = runCatching { readChatTemplateFromFile(file) }.getOrNull()
-        chatTemplateCache[file.absolutePath] = ChatTemplateCacheEntry(template, lastModified)
+        chatTemplateCache[file.absolutePath] = ChatTemplateCacheEntry(template, lastModified, length)
+        writePersistentChatTemplate(file, lastModified, length, template)
         return template
+    }
+
+    private fun persistentCacheFile(path: String): File? {
+        val dir = persistentCacheDir ?: return null
+        val digest = MessageDigest.getInstance("SHA-256").digest(path.toByteArray())
+        val name = digest.joinToString("") { "%02x".format(it) }.take(32)
+        return File(dir, "$name.chat_template")
+    }
+
+    private class CachedTemplate(val template: String?)
+
+    /** 空テンプレートもキャッシュする。未作成・不一致なら null。 */
+    private fun readPersistentChatTemplate(file: File, lastModified: Long, length: Long): CachedTemplate? {
+        val cacheFile = persistentCacheFile(file.absolutePath) ?: return null
+        if (!cacheFile.isFile) return null
+        val text = runCatching { cacheFile.readText() }.getOrNull() ?: return null
+        val headerEnd = text.indexOf('\n')
+        if (headerEnd < 0) return null
+        val header = text.substring(0, headerEnd)
+        if (header != "$lastModified|$length") return null
+        val body = text.substring(headerEnd + 1)
+        return CachedTemplate(if (body == "\u0000") null else body)
+    }
+
+    private fun writePersistentChatTemplate(file: File, lastModified: Long, length: Long, template: String?) {
+        val cacheFile = persistentCacheFile(file.absolutePath) ?: return
+        val body = template ?: "\u0000"
+        runCatching {
+            cacheFile.parentFile?.mkdirs()
+            cacheFile.writeText("$lastModified|$length\n$body")
+        }
     }
 
     private fun readChatTemplateFromFile(file: File): String? {

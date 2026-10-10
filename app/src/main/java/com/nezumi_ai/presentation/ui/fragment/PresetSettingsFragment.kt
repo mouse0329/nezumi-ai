@@ -66,6 +66,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.nezumi_ai.R
@@ -73,6 +74,7 @@ import com.nezumi_ai.data.database.NezumiAiDatabase
 import com.nezumi_ai.data.database.entity.PresetEntity
 import com.nezumi_ai.data.mcp.McpPreferences
 import com.nezumi_ai.presentation.ui.component.McpServerManagerDialog
+import com.nezumi_ai.presentation.viewmodel.ChatViewModel
 import com.nezumi_ai.data.skill.SkillRepository
 import com.nezumi_ai.data.preset.PresetConstants
 import com.nezumi_ai.data.preset.PresetModelCatalog
@@ -92,6 +94,27 @@ import com.nezumi_ai.presentation.ui.theme.createNotoSansJpTypography
 
 class PresetSettingsFragment : Fragment() {
     private lateinit var presetRepository: PresetRepository
+    private var presetLoadStarted = false
+
+    /**
+     * プリセットを閉じた時点でチャットのモデルロードを始める。
+     * ChatFragment.onResume 待ちにすると、GGUF はテンプレート走査が先に走り
+     * llama.cpp のロードが始まらない。
+     */
+    private fun startPresetModelLoad() {
+        if (presetLoadStarted || !isAdded) return
+        presetLoadStarted = true
+        val vm = runCatching {
+            ViewModelProvider(requireActivity()).get(ChatViewModel::class.java)
+        }.getOrNull() ?: return
+        vm.preloadActivePresetModel()
+    }
+
+    override fun onPause() {
+        // システム戻るでも onBack と同じくロードを始める。
+        startPresetModelLoad()
+        super.onPause()
+    }
 
     // フラッシュライトツールは Android 上では CAMERA 権限が必要なため、
     // チェックボックスで有効化したときに権限をリクエストする。
@@ -300,7 +323,10 @@ class PresetSettingsFragment : Fragment() {
                 query = ""
             },
             onQuery = { query = it },
-            onBack = { findNavController().navigateUp() },
+            onBack = {
+                startPresetModelLoad()
+                findNavController().navigateUp()
+            },
             onCreate = { showCreateDialog = true },
             onTogglePin = { key ->
                 persistPins(if (key in pins) pins - key else pins + key)

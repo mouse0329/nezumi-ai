@@ -500,6 +500,11 @@ class ChatViewModel(
     private val _modelLoadingElapsedSec = MutableStateFlow(0)
     private var modelLoadingTickerJob: Job? = null
     private var modelLoadingStartMs: Long = 0L
+    // プリセット復帰と送信が同じモデルを同時にロードすると、先に終わった側の
+    // finally がオーバーレイを消し、遅れた側がロード中のエンジンを unload する。
+    // ロード本体は直列化し、表示は呼び出し側の深さで残す。
+    private val modelLoadMutex = Mutex()
+    private var modelLoadingOverlayDepth = 0
 
     private fun composeModelLoadingLabel(): String {
         val phase = _modelLoadingPhase.value
@@ -551,12 +556,31 @@ class ChatViewModel(
  * 「モデル準備中が終わらない」バグの防御の中核。
      */
     private fun clearModelLoadingIndicator() {
+        modelLoadingOverlayDepth = 0
         modelLoadingTickerJob?.cancel()
         modelLoadingTickerJob = null
         _modelLoadingElapsedSec.value = 0
         _modelLoadingPhase.value = null
         _isModelLoading.value = false
         _modelLoadingStatus.value = ""
+    }
+
+    private fun acquireModelLoadingOverlay() {
+        modelLoadingOverlayDepth++
+        _isModelLoading.value = true
+        if (modelLoadingTickerJob?.isActive != true) {
+            startModelLoadingIndicator()
+        }
+    }
+
+    /** この呼び出し分だけ表示を手放す。他のロードがまだ持っていれば画面は残す。 */
+    private fun releaseModelLoadingOverlay() {
+        if (modelLoadingOverlayDepth > 0) {
+            modelLoadingOverlayDepth--
+        }
+        if (modelLoadingOverlayDepth == 0) {
+            clearModelLoadingIndicator()
+        }
     }
 
     private val _isExtracting = MutableStateFlow(false)
@@ -1589,7 +1613,8 @@ class ChatViewModel(
     }
 
     fun preloadActivePresetModel() {
-        if (_isLoading.value || _isModelLoading.value) return
+        // 送信中でも戻る。同じモデルなら loadModelWithOverlay が直列化して待つ。
+        // ここで return すると、プリセットを閉じた直後のロードが落ちたままになる。
         viewModelScope.launch(Dispatchers.IO) {
             // バグ修正: モデル削除でプリセットが未選択状態 (modelId == "") になっているとき、
             // getActiveSelectedModel() は settingsRepository.getSelectedModel()
@@ -1615,7 +1640,12 @@ class ChatViewModel(
                 _uiMessage.emit(msg)
                 return@launch
             }
-            val config = chatInferenceConfigForModel(selectedModel)
+            // 全走査はキャッシュする。未キャッシュ時の時間はロード画面のあいだに含める。
+            acquireModelLoadingOverlay()
+            try {
+            updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_template_scan))
+            val config = chatInferenceConfigForModel(selectedModel, probeTemplate = true)
+            Log.d(TAG, "preloadActivePresetModel: start model=$selectedModel")
             val result = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = true)
             if (result.isFailure) {
                 val error = result.exceptionOrNull()
@@ -1645,6 +1675,9 @@ class ChatViewModel(
                         details = error?.message
                     )
                 }
+            }
+            } finally {
+                releaseModelLoadingOverlay()
             }
         }
     }
@@ -1715,7 +1748,7 @@ class ChatViewModel(
  // 早期 return / 例外パスで loadModelWithOverlay に到達せず
                 //   _isModelLoading が残り UI が固まるのを防止する防御的クリーンアップ。
                 //   loadModelWithOverlay 自体が到達した場合は既に自身の finally でクリア済み。
-                if (_isModelLoading.value) {
+                if (_isModelLoading.value && modelLoadingOverlayDepth == 0) {
                     clearModelLoadingIndicator()
                 }
                 // このJobがまだcurrentなら null にする（前のJobから overwrite されない）
@@ -1992,7 +2025,7 @@ class ChatViewModel(
                 _pendingAssistantVariantSpec = null
                 withContext(Dispatchers.Main) {
                     _isLoading.value = false
-                    if (_isModelLoading.value) {
+                    if (_isModelLoading.value && modelLoadingOverlayDepth == 0) {
                         clearModelLoadingIndicator()
                     }
                 }
@@ -2098,7 +2131,9 @@ class ChatViewModel(
                     appContext.getString(R.string.selected_model_not_downloaded, selectedModel)
                 }
                 Log.w(TAG, "generateAIResponse: load not started, model unavailable: $engineModelName")
-                clearModelLoadingIndicator()
+                if (modelLoadingOverlayDepth == 0) {
+                    clearModelLoadingIndicator()
+                }
                 messageRepository.addMessage(
                     sessionId = sessionId,
                     role = "assistant",
@@ -2106,7 +2141,19 @@ class ChatViewModel(
                 )
                 return
             }
-            val baseConfig = chatInferenceConfigForModel(selectedModel, probeTemplate = false)
+            // GGUF のテンプレート全走査はロード時間に含める。結果はディスクキャッシュする。
+            val includeTemplateProbe = engineModelName.endsWith(".gguf", ignoreCase = true)
+            val modelLoadStartMs = System.currentTimeMillis()
+            if (includeTemplateProbe) {
+                acquireModelLoadingOverlay()
+                updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_template_scan))
+            }
+            val baseConfig = try {
+                chatInferenceConfigForModel(selectedModel, probeTemplate = includeTemplateProbe)
+            } catch (t: Throwable) {
+                if (includeTemplateProbe) releaseModelLoadingOverlay()
+                throw t
+            }
             val backend = settingsRepository.getBackendForModel(selectedModel)
             // Bug fix: LiteRT-LM 外部インポートモデル (.task / .litertlm) については、
             // モデル設定で画像/音声のスイッチを ON にしていない限り requireMultimodal を立てない。
@@ -2129,8 +2176,7 @@ class ChatViewModel(
             Log.d(TAG, "generateAIResponse START: model=$selectedModel, enableThinking=${config.enableThinking}, backend=${config.backendType}, requestedBackend=$backend, memoryUsage=$memoryPercent%")
 
             // Phase 11: ロード進捗ログの細分化
-            val modelLoadStartMs = System.currentTimeMillis()
-            Log.d(TAG, "generateAIResponse LOAD_START: model=$selectedModel")
+            Log.d(TAG, "generateAIResponse LOAD_START: model=$selectedModel templateProbe=$includeTemplateProbe")
 
             // チャット推論時はメモリ警告を出さずロードを続行する。
             // 警告はモデルダウンロード・設定画面側に限定し、会話のたびにブロックしない。
@@ -2141,7 +2187,11 @@ class ChatViewModel(
                 "generateAIResponse: engineModelName=$engineModelName isModelAlreadyLoaded=$isModelAlreadyLoaded skipMemoryWarning=$skipMemoryWarning"
             )
 
-            val loadResult = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = false, skipMemoryWarning = skipMemoryWarning)
+            val loadResult = try {
+                loadModelWithOverlay(selectedModel, config, onlyIfAvailable = false, skipMemoryWarning = skipMemoryWarning)
+            } finally {
+                if (includeTemplateProbe) releaseModelLoadingOverlay()
+            }
 
             val modelLoadEndMs = System.currentTimeMillis()
             Log.d(TAG, "generateAIResponse LOAD_END: model=$selectedModel duration=${modelLoadEndMs - modelLoadStartMs}ms success=${loadResult.isSuccess}")
@@ -4212,6 +4262,8 @@ class ChatViewModel(
         Log.d(TAG, "performGenerateImageFromTool: requireModelManager succeeded")
 
         Log.d(TAG, "performGenerateImageFromTool: Unloading LLM before SD")
+        acquireModelLoadingOverlay()
+        updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_memory_release))
         val unloadResult = try {
             withTimeoutOrNull(20_000L) {
                 manager.unloadModel(skipCancelInference = false)
@@ -4219,6 +4271,8 @@ class ChatViewModel(
         } catch (e: Exception) {
             Log.e(TAG, "performGenerateImageFromTool: unloadModel threw exception", e)
             Result.failure(e)
+        } finally {
+            releaseModelLoadingOverlay()
         }
 
         if (unloadResult == null || unloadResult.isFailure) {
@@ -5597,7 +5651,17 @@ class ChatViewModel(
     private suspend fun requireModelManager(): ModelManager {
         val current = modelManager
         if (current != null) return current
-        return ModelManager.getInstance(appContext).also { modelManager = it }
+        return ModelManager.getInstance(appContext).also { manager ->
+            modelManager = manager
+            manager.loadPhaseCallback = { phase ->
+                val label = when (phase) {
+                    "memory_release" -> appContext.getString(R.string.model_loading_phase_memory_release)
+                    "weights" -> appContext.getString(R.string.model_loading_phase_weights)
+                    else -> null
+                }
+                if (label != null) updateModelLoadingPhase(label)
+            }
+        }
     }
 
     private suspend fun loadModelWithOverlay(
@@ -5621,23 +5685,28 @@ class ChatViewModel(
         //   以前はこのケースでも _isModelLoading = true を一旦立ててしまい、入り口側で先に立てたタイマーと不整合を起こし
         //   「ロード不要なのにグルグルが永遠に続く」バグの主な原因だった。
         //   ここで先手を打ってリターンすれば、呼び元は瞬時に推論以降のフェーズに進める。
-        if (isModelAlreadyLoaded) {
+        if (isModelAlreadyLoaded && modelLoadingOverlayDepth == 0) {
             setMeterLoadedModel(engineModelName)
             Log.d(TAG, "loadModelWithOverlay: SHORT_CIRCUIT model=$model already loaded, skip overlay entirely")
-            // 万一呼び元が先にインジケーターを立てていた場合に備えてもクリアしておく。
-            if (_isModelLoading.value || modelLoadingTickerJob?.isActive == true) {
-                clearModelLoadingIndicator()
-            }
             return Result.success(Unit)
         }
 
-        _isModelLoading.value = true
+        acquireModelLoadingOverlay()
         setMeterLoadedModel(null)
  // モデル名やフェーズごとのラベルは以前「[Gemma4-2B] エンジンを初期化中...」などバラバラだったのを
         //   全て「モデル準備中 · <フェーズ> (n秒)」に統一する。タイマーを 1秒毎に回して
         //   進捗ラベルを自動更新。
-        startModelLoadingIndicator()
+        if (modelLoadingTickerJob?.isActive != true) {
+            startModelLoadingIndicator()
+        }
         return try {
+            modelLoadMutex.withLock {
+            val loadedAfterWait = manager.isModelLoaded(engineModelName, config)
+            if (loadedAfterWait) {
+                setMeterLoadedModel(engineModelName)
+                Log.d(TAG, "loadModelWithOverlay: SHORT_CIRCUIT after wait model=$model already loaded")
+                return@withLock Result.success(Unit)
+            }
             val displayModel = when (model.uppercase()) {
                 "GEMMA4-2B" -> "Gemma4-2B"
                 "GEMMA4-4B" -> "Gemma4-4B"
@@ -5665,7 +5734,6 @@ class ChatViewModel(
  // クリーンアップ強化: 以前は _isModelLoading = false だけだったため
                     //   _modelLoadingStatus の旧ラベルやタイマージョブが残って
                     //   「モデル準備中」が終わらないのバグの一因だった。
-                    clearModelLoadingIndicator()
                     return Result.failure(RuntimeException("CPU_COMPAT_WARNING_SHOWN"))
                 }
             }
@@ -5686,6 +5754,7 @@ class ChatViewModel(
                 // メモリ警告前に現在のモデルをアンロードしてメモリを解放する
                 if (!isModelAlreadyLoaded && manager.getCurrentModelName() != null) {
                     Log.d(TAG, "loadModelWithOverlay: unloading current model before memory warning check for model=$model")
+                    updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_memory_release))
                     val unloadResult = manager.unloadModel()
                     unloadResult.onFailure { Log.w(TAG, "loadModelWithOverlay: pre-warning unload failed", it) }
                     memoryStatus = MemoryObserver.getMemoryStatus(appContext)
@@ -5738,7 +5807,6 @@ class ChatViewModel(
  // 以前は _isModelLoading だけ false にしてラベルを残していたが、
                             //   メモリ警告ダイアログを閉じた後に UI で「モデル準備中」が見え施けていた
                             //   不具合を防ぐため、タイマー・フェーズも一旦クリアする。
-                            clearModelLoadingIndicator()
                             return Result.failure(RuntimeException("MEMORY_WARNING_SHOWN"))
                         }
                     }
@@ -5825,8 +5893,9 @@ class ChatViewModel(
                 }
             }
             result
+            }
         } finally {
-            clearModelLoadingIndicator()
+            releaseModelLoadingOverlay()
         }
     }
 
@@ -5867,7 +5936,9 @@ class ChatViewModel(
                 // セッション取得失敗時はローディング UI を必ず解除する
                 withContext(Dispatchers.Main) {
                     _isLoading.value = false
-                    clearModelLoadingIndicator()
+                    if (modelLoadingOverlayDepth == 0) {
+                        clearModelLoadingIndicator()
+                    }
                 }
                 if (generationJob == thisJob) generationJob = null
                 return@launch
@@ -5985,7 +6056,7 @@ class ChatViewModel(
  // 送信入り口で早期に立てた _isModelLoading が loadModelWithOverlay に
                     //   到達せずに早期 return したケース（モデル未ダウンロード / メモリ不足 等）で
                     //   フラグが残り UI が固まるのを防止する防御的クリーンアップ。
-                    if (_isModelLoading.value) {
+                    if (_isModelLoading.value && modelLoadingOverlayDepth == 0) {
                         clearModelLoadingIndicator()
                     }
                 }

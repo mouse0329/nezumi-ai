@@ -65,6 +65,13 @@ class ModelManager(
     /** GGUF は初回利用時まで遅延初期化し、:gguf プロセスを起動直後に立ち上げない。 */
     private var ggufEngine: RemoteGgufInferenceEngine? = null
 
+    /** ロード画面のステータス更新。UI スレッド以外からも呼ばれる。 */
+    @Volatile var loadPhaseCallback: ((String) -> Unit)? = null
+
+    fun notifyLoadPhase(phase: String) {
+        runCatching { loadPhaseCallback?.invoke(phase) }
+    }
+
     @Volatile
     private var activeEngine: AIInferenceEngine = liteRtEngine
     
@@ -392,6 +399,8 @@ class ModelManager(
                 if (currentModelName != null || activeEngine !== targetEngine) {
                     val previousEngine = activeEngine
                     val switchingEngine = previousEngine !== targetEngine
+                    // 前のモデルがあるときだけ。新しいモデルのロード開始後は残さない。
+                    if (currentModelName != null) notifyLoadPhase("memory_release")
                     Log.d(TAG, "Unloading previous model before loading new one (backend change: ${currentConfig?.backendType} -> ${normalizedConfig.backendType})")
 
                     // 強制停止: 推論中のLLM / マルチモーダルプロジェクターを即座に止める
@@ -434,6 +443,7 @@ class ModelManager(
                         }
 
                         // バックエンド/エンジン切り替え時のメモリ解放
+                        notifyLoadPhase("memory_release")
                         Log.i(TAG, "Engine/backend change detected. Forcing memory cleanup after engine process shutdown...")
                         System.gc()
                         delay(400)
@@ -443,6 +453,8 @@ class ModelManager(
                     delay(if (switchingEngine) 300 else 200)
                 }
                 
+                // 前モデルの解放が終わったら、ロード開始のステータスに戻す。
+                notifyLoadPhase("weights")
                 // 新しいモデルをロード
                 // クラウドの場合は `cloud:...` プレフィックスを剥いでエンジンに渡す。
                 val engineModel = engineModelName(modelName)
@@ -741,6 +753,7 @@ class ModelManager(
      * モデルをアンロード
      */
     suspend fun unloadModel(skipCancelInference: Boolean = false): Result<Unit> {
+        notifyLoadPhase("memory_release")
         Log.d(TAG, "ModelManager.unloadModel: start skipCancelInference=$skipCancelInference")
         return loadMutex.withLock {
             try {

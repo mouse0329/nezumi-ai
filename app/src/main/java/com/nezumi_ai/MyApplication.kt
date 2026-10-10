@@ -43,6 +43,10 @@ class MyApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // GGUF チャットテンプレートの全走査結果をプロセスをまたいで再利用する。
+        com.nezumi_ai.utils.GgufMetadataReader.setPersistentCacheDir(
+            java.io.File(cacheDir, "gguf-chat-template")
+        )
 
         // 推論エンジンのプロセス分離 (dual-engine-process-isolation-plan) に伴い、
         // :gguf / :litert の各ワーカープロセスでも MyApplication.onCreate() が走る。

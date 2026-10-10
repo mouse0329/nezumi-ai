@@ -301,8 +301,8 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.11.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.17.0")
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.29.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.30.0")
 
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("net.openid:appauth:0.11.1")
