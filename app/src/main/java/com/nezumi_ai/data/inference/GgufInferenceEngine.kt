@@ -705,6 +705,11 @@ class GgufInferenceEngine(
         return runCatching { context.hasGgufChatTemplate() }.getOrDefault(false)
     }
 
+    fun hasExplicitChatTemplate(): Boolean {
+        val context = llamaCppCtx ?: return false
+        return runCatching { context.hasExplicitChatTemplate() }.getOrDefault(false)
+    }
+
     /** 直近にネイティブがレンダリングした生プロンプト全文 (ツール定義含む・常に最新)。 */
     fun getLastAppliedPrompt(): String {
         val context = llamaCppCtx ?: return ""
@@ -1459,6 +1464,10 @@ class GgufInferenceEngine(
         val result = try {
             if (mediaPaths.isNotEmpty()) {
                 ctx.setTokenCallback(streamCallback)
+                MediaTokenProgress.update("トークン読込処理", 0, 0f)
+                ctx.setMediaProgressCallback { stage, tokens, _, tps ->
+                    MediaTokenProgress.update(stage, tokens, tps)
+                }
                 try {
                     ctx.completeWithMedia(
                         prompt = prompt,
@@ -1472,6 +1481,8 @@ class GgufInferenceEngine(
                     )
                 } finally {
                     ctx.setTokenCallback(null)
+                    ctx.setMediaProgressCallback(null)
+                    MediaTokenProgress.clear()
                 }
             } else {
                 ctx.setTokenCallback(streamCallback)

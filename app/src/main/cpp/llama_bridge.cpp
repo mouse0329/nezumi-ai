@@ -179,6 +179,10 @@ struct NezumiLlamaCtx
     jobject token_callback = nullptr; // GlobalRef
     jmethodID on_token_mid = nullptr;
 
+    // マルチモーダル トークン読込進捗コールバック
+    jobject media_progress_callback = nullptr; // GlobalRef
+    jmethodID on_media_progress_mid = nullptr;
+
     // サンプラーパラメータキャッシュ
     int32_t seed = -1;
     float cached_temp = -1.0f;
@@ -1078,6 +1082,12 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeSetTokenCallback(
         nc->token_callback = nullptr;
         nc->on_token_mid = nullptr;
     }
+    if (nc->media_progress_callback)
+    {
+        env->DeleteGlobalRef(nc->media_progress_callback);
+        nc->media_progress_callback = nullptr;
+        nc->on_media_progress_mid = nullptr;
+    }
 
     if (j_callback)
     {
@@ -1095,6 +1105,34 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeSetTokenCallback(
 }
 
 // ─── 生成中断 ─────────────────────────────────────────────────────
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeSetMediaProgressCallback(
+    JNIEnv *env,
+    jobject /* obj */,
+    jlong j_ctx,
+    jobject j_callback)
+{
+    auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
+    if (!nc)
+        return;
+
+    if (nc->media_progress_callback)
+    {
+        env->DeleteGlobalRef(nc->media_progress_callback);
+        nc->media_progress_callback = nullptr;
+        nc->on_media_progress_mid = nullptr;
+    }
+
+    if (j_callback)
+    {
+        nc->media_progress_callback = env->NewGlobalRef(j_callback);
+        jclass cls = env->GetObjectClass(j_callback);
+        nc->on_media_progress_mid = env->GetMethodID(cls, "onMediaProgress", "(Ljava/lang/String;IJF)V");
+        env->DeleteLocalRef(cls);
+    }
+}
+
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeInterrupt(
@@ -1365,17 +1403,55 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
         nc->n_past = 0;
     }
 
-    // チャンクを評価（テキストのデコードと画像エンコードを一括処理）
+    // チャンクを個別評価し、メディアチャンクではトークン読込速度を計測してコールバックする
+    // (llama.cpp mtmd_helper_eval_chunk_single を利用。print_timings はログのみのため自前計測)
     llama_pos new_n_past = nc->n_past;
     const int32_t media_n_batch = std::min(nc->n_batch, 64);
-    int32_t eval_ret = mtmd_helper_eval_chunks(nc->mtmd_ctx, nc->ctx, chunks,
-                                               nc->n_past, /* seq_id */ 0,
-                                               media_n_batch, /* logits_last */ true,
-                                               &new_n_past);
+    const size_t n_chunks = mtmd_input_chunks_size(chunks);
+    int32_t eval_ret = 0;
+    for (size_t i = 0; i < n_chunks; ++i)
+    {
+        const mtmd_input_chunk *chunk = mtmd_input_chunks_get(chunks, i);
+        if (!chunk)
+            continue;
+        const auto chunk_type = mtmd_input_chunk_get_type(chunk);
+        const size_t n_tok = mtmd_input_chunk_get_n_tokens(chunk);
+        const bool is_media = (chunk_type != MTMD_INPUT_CHUNK_TYPE_TEXT);
+
+        auto t0 = std::chrono::steady_clock::now();
+        llama_pos chunk_new_past = new_n_past;
+        int32_t ret = mtmd_helper_eval_chunk_single(nc->mtmd_ctx, nc->ctx, chunk,
+                                                    new_n_past, /* seq_id */ 0,
+                                                    media_n_batch, /* logits_last */ true,
+                                                    &chunk_new_past);
+        auto t1 = std::chrono::steady_clock::now();
+        if (ret != 0)
+        {
+            eval_ret = ret;
+            LOGE("nativeCompleteWithMedia: eval_chunk_single failed at %zu ret=%d", i, ret);
+            break;
+        }
+        new_n_past = chunk_new_past;
+
+        if (is_media && n_tok > 0 && nc->media_progress_callback && nc->on_media_progress_mid)
+        {
+            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+            float tps = (elapsed_ms > 0) ? (static_cast<float>(n_tok) * 1000.0f / static_cast<float>(elapsed_ms)) : 0.0f;
+            jstring j_stage = env->NewStringUTF("トークン読込処理");
+            env->CallVoidMethod(nc->media_progress_callback, nc->on_media_progress_mid,
+                                j_stage, static_cast<jint>(n_tok), static_cast<jlong>(elapsed_ms), tps);
+            env->DeleteLocalRef(j_stage);
+            if (env->ExceptionCheck())
+            {
+                LOGE("media progress callback exception");
+                env->ExceptionClear();
+            }
+        }
+    }
     mtmd_input_chunks_free(chunks);
     if (eval_ret != 0)
     {
-        LOGE("nativeCompleteWithMedia: eval_chunks failed ret=%d", eval_ret);
+        LOGE("nativeCompleteWithMedia: media eval failed ret=%d", eval_ret);
         return env->NewStringUTF("");
     }
     nc->n_past = new_n_past;
@@ -1527,6 +1603,18 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeHasGgufChatTemplate(
 {
     auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
     return (nc && nc->chat_params_valid) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeHasExplicitChatTemplate(
+    JNIEnv * /* env */,
+    jobject /* obj */,
+    jlong j_ctx)
+{
+    auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
+    if (!nc || !nc->chat_templates)
+        return JNI_FALSE;
+    return common_chat_templates_was_explicit(nc->chat_templates) ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL

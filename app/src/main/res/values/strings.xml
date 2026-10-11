@@ -63,6 +63,9 @@
     <string name="context_meter_media">画像/音声</string>
     <string name="context_meter_send_to_calculate">入力を待機しています</string>
     <string name="response_generating">応答中</string>
+    <string name="output_waiting_blink">出力待機中</string>
+    <string name="multimodal_token_loading">トークン読込処理</string>
+    <string name="multimodal_understanding_speed">理解速度</string>
     <!-- モデルロード中のオーバーレイに表示する統一文言。以前は「モデルを準備中...」「[XXX] エンジンを初期化中...」「[XXX] メモリを確認中...」など揺れがあったが、
          全ての読み込みフェーズを『モデル準備中』で統一する。 -->
     <string name="model_preparing">モデル準備中</string>

@@ -1583,7 +1583,9 @@ class ChatFragment : Fragment() {
                         userScrolledAwayDuringGeneration = false
                         postGenerationSettleActive = false
                         autoFollowBottomLocked = isUserAtBottom || isNearBottom()
-                        startResponseTypingAnimation()
+                        // 推論中の「応答中...」はメッセージバブル側の点滅待機に移したため、
+                        // 下部インジケータは起動しない（他サービスにないため）。
+                        // startResponseTypingAnimation()
                         if (autoFollowBottomLocked) {
                             messagesRv?.post {
                                 val lastItem = adapter.itemCount - 1

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -42,6 +43,11 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.animation.core.*
+import com.nezumi_ai.presentation.ui.composable.SvgSpinner
+import com.nezumi_ai.data.inference.MediaTokenProgress
+import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -90,6 +96,70 @@ import com.nezumi_ai.presentation.ui.component.TextFileViewerDialog
 internal fun formatMessageTime(timestamp: Long): String =
     java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
         .format(java.util.Date(timestamp))
+
+
+@Composable
+private fun OutputWaitingIndicator(
+    hasThinking: Boolean,
+    isMultimodal: Boolean
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "waiting")
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "alpha"
+    )
+    val mediaTps by MediaTokenProgress.tps.collectAsState()
+    val mediaStage by MediaTokenProgress.stage.collectAsState()
+    val showMedia = isMultimodal || mediaStage.isNotBlank()
+    val statusText = when {
+        showMedia && mediaStage.isNotBlank() -> {
+            val speed = if (mediaTps > 0f) "  %.1f t/s".format(mediaTps) else ""
+            mediaStage + speed
+        }
+        showMedia -> stringResource(R.string.multimodal_token_loading)
+        hasThinking -> stringResource(R.string.gemma_answer_generating_hint)
+        else -> stringResource(R.string.output_waiting_blink)
+    }
+    Card(
+        modifier = Modifier
+            .widthIn(max = 280.dp)
+            .padding(vertical = 2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = colorResource(R.color.surface_card)
+        ),
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            colorResource(R.color.border)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SvgSpinner(modifier = Modifier.size(20.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = statusText,
+                color = colorResource(R.color.text_secondary).copy(alpha = alpha),
+                style = MaterialTheme.typography.bodySmall
+            )
+            if (showMedia) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = stringResource(R.string.multimodal_understanding_speed),
+                    color = colorResource(R.color.text_secondary).copy(alpha = alpha * 0.8f),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+    }
+}
 
 // ─────────────────────────────────────────────────────────────
 // ユーザーメッセージ行 (item_message_user.xml 相当)
@@ -323,15 +393,43 @@ fun AiMessageItem(
                 .trackHeightChanges(onBodySizeChanged)
         ) {
             if (message.isStreaming && visibleContent.isBlank()) {
-                SelectableBubbleText(
-                    text = stringResource(
-                        if (thinking.isNullOrBlank()) R.string.response_generating
-                        else R.string.gemma_answer_generating_hint
-                    ),
-                    backgroundColor = colorResource(R.color.surface_card),
-                    textColor = colorResource(R.color.text_primary),
-                    borderColor = colorResource(R.color.border)
+                // 出力場所に点滅待機インジケータ（出力開始で消す）
+                OutputWaitingIndicator(
+                    hasThinking = !thinking.isNullOrBlank(),
+                    isMultimodal = !message.imageUri.isNullOrBlank() || !message.audioUri.isNullOrBlank()
                 )
+            } else if (message.isStreaming) {
+                // 途中で止まったら3秒以上で再表示
+                var showStalledWaiting by remember(message.id) { mutableStateOf(false) }
+                var lastChange by remember(message.id) { mutableLongStateOf(System.currentTimeMillis()) }
+                LaunchedEffect(visibleContent) {
+                    lastChange = System.currentTimeMillis()
+                    showStalledWaiting = false
+                }
+                LaunchedEffect(message.isStreaming, visibleContent) {
+                    if (!message.isStreaming) return@LaunchedEffect
+                    while (true) {
+                        delay(500)
+                        if (System.currentTimeMillis() - lastChange >= 3000L) {
+                            showStalledWaiting = true
+                        }
+                    }
+                }
+                Column {
+                    InlineToolCallMessageBody(
+                        content = visibleContent,
+                        toolResults = toolResults,
+                        isStreaming = message.isStreaming,
+                        onSaveDocument = onSaveDocument
+                    )
+                    if (showStalledWaiting) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutputWaitingIndicator(
+                            hasThinking = !thinking.isNullOrBlank(),
+                            isMultimodal = !message.imageUri.isNullOrBlank() || !message.audioUri.isNullOrBlank()
+                        )
+                    }
+                }
             } else {
                 // インライン tool-call カード対応の本文描画 (旧 renderInlineBody)。
                 InlineToolCallMessageBody(

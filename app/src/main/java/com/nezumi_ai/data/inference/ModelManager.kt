@@ -541,6 +541,9 @@ class ModelManager(
     fun hasGgufChatTemplate(): Boolean =
         (activeEngine as? RemoteGgufInferenceEngine)?.hasGgufChatTemplate() ?: false
 
+    fun hasExplicitChatTemplate(): Boolean =
+        (activeEngine as? RemoteGgufInferenceEngine)?.hasExplicitChatTemplate() ?: false
+
     /**
      * 直近の initializeModel() で要求したGPUバックエンド (OpenCL / Vulkan) が
      * この端末では実行時に利用できず、CPUへ静かにフォールバックしたかどうか。

@@ -35,6 +35,11 @@ object LlamaBridge {
         fun onToken(token: String)
     }
 
+    /** マルチモーダル トークン読込進捗コールバック */
+    interface MediaProgressCallback {
+        fun onMediaProgress(stage: String, tokens: Int, elapsedMs: Long, tps: Float)
+    }
+
     // ─── モデルライフサイクル ────────────────────────────────────
 
     /**
@@ -164,6 +169,9 @@ object LlamaBridge {
     /** 生成トークンのストリーミングコールバックを登録/解除する。 */
     external fun nativeSetTokenCallback(ctx: Long, callback: TokenCallback?)
 
+    /** メディアトークン読込進捗コールバックを登録/解除する。 */
+    external fun nativeSetMediaProgressCallback(ctx: Long, callback: MediaProgressCallback?)
+
     // ─── 生成中断 ────────────────────────────────────────────────
 
     /** 進行中の生成を中断する（ネイティブ側のアトミックフラグを立てる）。 */
@@ -232,6 +240,7 @@ object LlamaBridge {
 
     /** GGUF チャットテンプレートが利用可能かどうか。 */
     external fun nativeHasGgufChatTemplate(ctx: Long): Boolean
+    external fun nativeHasExplicitChatTemplate(ctx: Long): Boolean
 
     /**
      * 生成結果を content / reasoning_content に分離した JSON を返す。

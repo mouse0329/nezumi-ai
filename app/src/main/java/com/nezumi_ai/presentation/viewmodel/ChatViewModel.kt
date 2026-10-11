@@ -5172,11 +5172,8 @@ class ChatViewModel(
             .map { message ->
                 buildString {
                     if (message.content.isNotBlank()) append(message.content)
-                    val thinking = message.thinkingContent
-                    if (!thinking.isNullOrBlank()) {
-                        if (isNotEmpty()) append('\n')
-                        append(thinking)
-                    }
+                    // Thinking は実際のプロンプトから除外されるため、コンテキストメーターにも含めない
+                    // (バグ修正: Thinking がコンテキストウィンドウメーターに含まれていた)
                     val toolResults = message.toolResultsJson
                     if (!toolResults.isNullOrBlank() && toolResults != "[]") {
                         if (isNotEmpty()) append('\n')
@@ -5420,6 +5417,15 @@ class ChatViewModel(
         enableToolCalling: Boolean = false,
         availableSkills: List<Skill> = emptyList()
     ): String? {
+        // テンプレートがモデルに明示的に存在しない場合 (GPT-2 等) は
+        // ネイティブの既定フォールバック (Gemma4 等) を使わず、
+        // 過去ターンを引き継がずに現在のユーザーメッセージのみのプレーンテキストにする。
+        if (!requireModelManager().hasExplicitChatTemplate()) {
+            val current = messages.lastOrNull { it.role.equals("user", ignoreCase = true) }
+            val content = current?.let { sanitizer(it) }?.trim().orEmpty()
+            Log.d(TAG, "PROMPT_BUILD: no explicit chat template, using single-turn plain text (len=${content.length})")
+            return content.ifBlank { null }
+        }
         // ツール有効時はツール定義を OpenAI 互換の tools 配列 JSON として構築し、
         // system prompt への手動連結 (GgufToolPromptBuilder.appendToolDefinitions) ではなく
         // ネイティブ側 (GGUF 内蔵チャットテンプレート) のレンダリングに委譲する。

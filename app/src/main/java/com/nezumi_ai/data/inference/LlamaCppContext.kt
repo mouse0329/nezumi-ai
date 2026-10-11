@@ -90,6 +90,17 @@ class LlamaCppContext(
         LlamaBridge.nativeSetTokenCallback(ptr, bridgeCallback)
     }
 
+    fun setMediaProgressCallback(callback: ((String, Int, Long, Float) -> Unit)?) {
+        if (ptr == 0L) return
+        val bridgeCallback = callback?.let { onProgress ->
+            object : LlamaBridge.MediaProgressCallback {
+                override fun onMediaProgress(stage: String, tokens: Int, elapsedMs: Long, tps: Float) =
+                    onProgress(stage, tokens, elapsedMs, tps)
+            }
+        }
+        LlamaBridge.nativeSetMediaProgressCallback(ptr, bridgeCallback)
+    }
+
     fun applyGgufChatTemplate(messagesJson: String, toolsJson: String = "", enableThinking: Boolean, reasoningEffort: String = "", addGenerationPrompt: Boolean): String {
         if (ptr == 0L || messagesJson.isBlank()) return ""
         return LlamaBridge.nativeApplyGgufChatTemplate(ptr, messagesJson, toolsJson, enableThinking, reasoningEffort, addGenerationPrompt)
@@ -101,6 +112,7 @@ class LlamaCppContext(
     }
 
     fun hasGgufChatTemplate(): Boolean = ptr != 0L && LlamaBridge.nativeHasGgufChatTemplate(ptr)
+    fun hasExplicitChatTemplate(): Boolean = ptr != 0L && LlamaBridge.nativeHasExplicitChatTemplate(ptr)
 
     fun parseGgufChatOutput(output: String, isPartial: Boolean): String =
         if (ptr == 0L) "{}" else LlamaBridge.nativeParseGgufChatOutput(ptr, output, isPartial)
