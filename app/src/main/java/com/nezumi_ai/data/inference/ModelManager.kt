@@ -399,16 +399,22 @@ class ModelManager(
                 if (currentModelName != null || activeEngine !== targetEngine) {
                     val previousEngine = activeEngine
                     val switchingEngine = previousEngine !== targetEngine
+                    val modelChanged = currentModelName != null && currentModelName != modelName
+                    // GGUF は同一エンジン内のモデル切り替えでも :gguf プロセスを再起動する。
+                    // プロセス内で unload→load を繰り返すと、以前選択した GGUF が
+                    // ネイティブ側に残って新しいモデルが使われないケースがあったため。
+                    val restartGgufProcess = modelChanged && previousEngine is RemoteGgufInferenceEngine
+                    val needProcessShutdown = switchingEngine || restartGgufProcess
                     // 前のモデルがあるときだけ。新しいモデルのロード開始後は残さない。
                     if (currentModelName != null) notifyLoadPhase("memory_release")
-                    Log.d(TAG, "Unloading previous model before loading new one (backend change: ${currentConfig?.backendType} -> ${normalizedConfig.backendType})")
+                    Log.d(TAG, "Unloading previous model before loading new one (backend change: ${currentConfig?.backendType} -> ${normalizedConfig.backendType}, modelChanged=$modelChanged, restartGguf=$restartGgufProcess)")
 
                     // 強制停止: 推論中のLLM / マルチモーダルプロジェクターを即座に止める
                     runCatching { previousEngine.cancelInference() }
                         .onFailure { Log.w(TAG, "cancelInference failed", it) }
                     // GGUF の場合は nativeInterrupt が cancelInference 内で呼ばれる。
                     // エンジン切替時は待機を少し長くして完了を待つ。
-                    delay(if (switchingEngine) 100 else 50)
+                    delay(if (needProcessShutdown) 100 else 50)
                     runCatching { previousEngine.unloadModel() }
                         .onFailure { Log.w(TAG, "unloadModel failed", it) }
 
@@ -420,12 +426,18 @@ class ModelManager(
                     // LiteRT-LM 側は Engine.close() が SIGABRT し得るため正規の解放パスが
                     // 使えない。いずれも OS のプロセス回収に委ねるのが確実。
                     // クラウドエンジンはプロセスを持たないため対象外。
-                    if (switchingEngine) {
+                    // さらに GGUF 同士のモデル切り替えでもプロセスを再起動し、
+                    // 前のモデルが残らないようにする。
+                    if (needProcessShutdown) {
                         when (previousEngine) {
                             is RemoteGgufInferenceEngine -> {
-                                Log.i(TAG, "Switching away from GGUF: shutting down :gguf process")
+                                Log.i(TAG, "GGUF process shutdown (engine switch or model change): shutting down :gguf process")
                                 runCatching { previousEngine.shutdownProcess() }
                                     .onFailure { Log.w(TAG, "GGUF shutdownProcess failed", it) }
+                                // 次の getOrCreate で新しいアダプタを作らせる（接続は切断済みだが念のため）
+                                if (ggufEngine === previousEngine) {
+                                    ggufEngine = null
+                                }
                             }
                             is RemoteLiteRtInferenceEngine -> {
                                 Log.i(TAG, "Switching away from LiteRT-LM: shutting down :litert process")
@@ -444,13 +456,13 @@ class ModelManager(
 
                         // バックエンド/エンジン切り替え時のメモリ解放
                         notifyLoadPhase("memory_release")
-                        Log.i(TAG, "Engine/backend change detected. Forcing memory cleanup after engine process shutdown...")
+                        Log.i(TAG, "Engine/backend/model change detected. Forcing memory cleanup after engine process shutdown...")
                         System.gc()
                         delay(400)
                     }
 
                     // GPU / ネイティブリソース解放待機
-                    delay(if (switchingEngine) 300 else 200)
+                    delay(if (needProcessShutdown) 300 else 200)
                 }
                 
                 // 前モデルの解放が終わったら、ロード開始のステータスに戻す。

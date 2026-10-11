@@ -207,6 +207,10 @@ class GgufInferenceService : Service() {
                 RemoteEngineStatusKeys.KEY_HAS_GGUF_CHAT_TEMPLATE,
                 ggufEngine.hasGgufChatTemplate()
             )
+            putBoolean(
+                RemoteEngineStatusKeys.KEY_HAS_EXPLICIT_CHAT_TEMPLATE,
+                ggufEngine.hasExplicitChatTemplate()
+            )
         }
 
         // ─── GGUF 固有 ────────────────────────────────────────────

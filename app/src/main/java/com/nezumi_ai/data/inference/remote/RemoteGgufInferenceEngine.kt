@@ -176,9 +176,10 @@ class RemoteGgufInferenceEngine(
         connection.getEngineStatusSync()
             .getBoolean(RemoteEngineStatusKeys.KEY_HAS_GGUF_CHAT_TEMPLATE, false)
 
-    // リモート側では明示テンプレート有無をまだ問い合わせない。
-    // 保守的に false（テンプレートなし扱い＝単一ターン）にする。
-    fun hasExplicitChatTemplate(): Boolean = false
+    /** モデルに明示的な chat_template があるか。:gguf プロセスの実値を返す。 */
+    fun hasExplicitChatTemplate(): Boolean =
+        connection.getEngineStatusSync()
+            .getBoolean(RemoteEngineStatusKeys.KEY_HAS_EXPLICIT_CHAT_TEMPLATE, false)
 
     /** 現在の KV キャッシュ使用量 (n_past)。画像・音声を含む実測値。未取得時は null。 */
     fun getPastTokenCountSync(): Int? = runBlocking(Dispatchers.IO) {

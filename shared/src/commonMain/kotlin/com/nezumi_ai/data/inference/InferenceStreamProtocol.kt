@@ -73,6 +73,27 @@ object InferenceStreamProtocol {
         return chunk.removePrefix(TPS_PREFIX).toFloatOrNull()
     }
 
+    /** マルチモーダル トークン読込進捗（stage|tokens|tps）。:gguf プロセスからメインへ転送する。 */
+    private const val MEDIA_PROGRESS_PREFIX = "\u0000__MEDIA_PROGRESS__\u0000"
+
+    fun encodeMediaProgress(stage: String, tokens: Int, tps: Float): String {
+        val safeStage = stage.replace("|", "｜")
+        return MEDIA_PROGRESS_PREFIX + "$safeStage|$tokens|$tps"
+    }
+
+    data class MediaProgress(val stage: String, val tokens: Int, val tps: Float)
+
+    fun decodeMediaProgress(chunk: String): MediaProgress? {
+        if (!chunk.startsWith(MEDIA_PROGRESS_PREFIX)) return null
+        val body = chunk.removePrefix(MEDIA_PROGRESS_PREFIX)
+        val parts = body.split("|", limit = 3)
+        if (parts.size < 3) return null
+        val stage = parts[0]
+        val tokens = parts[1].toIntOrNull() ?: 0
+        val tps = parts[2].toFloatOrNull() ?: 0f
+        return MediaProgress(stage, tokens, tps)
+    }
+
     /**
      * Split an incoming raw chunk into ordered segments where control markers
      * (FINAL/THINK/TOOL/TPS etc.) are preserved as the start of a segment.
@@ -81,7 +102,7 @@ object InferenceStreamProtocol {
      */
     fun splitStreamChunks(chunk: String): List<String> {
         if (chunk.isEmpty()) return emptyList()
-        val markerPattern = Regex("(\u0000__FINAL__\u0000|\u0000__THINK__\u0000|\u0000__TOOL_CALL__\u0000|\u0000__TOOL_RESULT__\u0000|\u0000__TOOL_RESULTS_JSON__\u0000|\u0000__EXECUTED_TOOLS_LIST__\u0000|\u0000__TPS__\u0000)")
+        val markerPattern = Regex("(\u0000__FINAL__\u0000|\u0000__THINK__\u0000|\u0000__TOOL_CALL__\u0000|\u0000__TOOL_RESULT__\u0000|\u0000__TOOL_RESULTS_JSON__\u0000|\u0000__EXECUTED_TOOLS_LIST__\u0000|\u0000__TPS__\u0000|\u0000__MEDIA_PROGRESS__\u0000)")
         val parts = mutableListOf<String>()
         var lastIndex = 0
         val matches = markerPattern.findAll(chunk).toList()

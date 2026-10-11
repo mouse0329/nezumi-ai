@@ -939,6 +939,12 @@ class GgufInferenceEngine(
                             }
                         }
                     },
+                    emitControl = { control ->
+                        // 進捗などの制御メッセージはテキストバッファを通さず即送る。
+                        if (control.isNotEmpty()) {
+                            trySendBlocking(control)
+                        }
+                    },
                     images = images,
                     audioClips = audioClips
                 )
@@ -1366,6 +1372,7 @@ class GgufInferenceEngine(
         config: InferenceConfig,
         isFirstRound: Boolean,
         emitChunk: (String) -> Unit,
+        emitControl: (String) -> Unit = {},
         images: List<Bitmap>,
         audioClips: List<ByteArray>
     ): String = withContext(Dispatchers.IO) {
@@ -1464,9 +1471,15 @@ class GgufInferenceEngine(
         val result = try {
             if (mediaPaths.isNotEmpty()) {
                 ctx.setTokenCallback(streamCallback)
-                MediaTokenProgress.update("トークン読込処理", 0, 0f)
-                ctx.setMediaProgressCallback { stage, tokens, _, tps ->
+                // 進捗は :gguf プロセス内の MediaTokenProgress だけでなく、
+                // ストリーム経由でメインプロセスへ転送する（UI が別プロセスのため）。
+                val emitProgress = { stage: String, tokens: Int, tps: Float ->
                     MediaTokenProgress.update(stage, tokens, tps)
+                    emitControl(InferenceStreamProtocol.encodeMediaProgress(stage, tokens, tps))
+                }
+                emitProgress("トークン読込処理", 0, 0f)
+                ctx.setMediaProgressCallback { stage, tokens, _, tps ->
+                    emitProgress(stage, tokens, tps)
                 }
                 try {
                     ctx.completeWithMedia(
@@ -1483,6 +1496,8 @@ class GgufInferenceEngine(
                     ctx.setTokenCallback(null)
                     ctx.setMediaProgressCallback(null)
                     MediaTokenProgress.clear()
+                    // メイン側にもクリアを通知
+                    emitControl(InferenceStreamProtocol.encodeMediaProgress("", 0, 0f))
                 }
             } else {
                 ctx.setTokenCallback(streamCallback)
@@ -1568,11 +1583,28 @@ class GgufInferenceEngine(
         // 絶対パスで .gguf ファイルが指定された場合
         if (modelName.endsWith(".gguf", ignoreCase = true) && modelName.startsWith("/")) {
             val f = File(modelName)
-            return if (f.exists() && f.canRead()) f else null
+            if (f.exists() && f.canRead()) return f
+            // パスが変わっていてもファイル名が同じなら imported から探す
+            val byName = findImportedGgufByName(f.name)
+            if (byName != null) return byName
+            return null
+        }
+        // ファイル名だけ渡された場合も imported から解決を試みる
+        if (modelName.endsWith(".gguf", ignoreCase = true)) {
+            val byName = findImportedGgufByName(File(modelName).name)
+            if (byName != null) return byName
         }
         // TODO: ModelFileManager に GGUF エントリを追加後、ここで解決する
         Log.w(TAG, "resolveModelFile: unsupported modelName format: $modelName")
         return null
+    }
+
+    private fun findImportedGgufByName(fileName: String): File? {
+        if (fileName.isBlank()) return null
+        val importedDir = File(appContext.filesDir, "models/imported")
+        return importedDir.listFiles()?.firstOrNull { file ->
+            file.isFile && file.name.equals(fileName, ignoreCase = true) && file.canRead()
+        }
     }
 
     private fun hasGgufMagicHeader(file: File): Boolean {

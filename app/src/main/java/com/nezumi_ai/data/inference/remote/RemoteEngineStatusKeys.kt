@@ -14,6 +14,9 @@ object RemoteEngineStatusKeys {
     /** GGUF: 現在のコンテキストに GGUF chat template が適用済みか */
     const val KEY_HAS_GGUF_CHAT_TEMPLATE = "hasGgufChatTemplate"
 
+    /** GGUF: モデルに明示的な chat_template があるか（ない場合は既定フォールバックを使わない） */
+    const val KEY_HAS_EXPLICIT_CHAT_TEMPLATE = "hasExplicitChatTemplate"
+
     /** LiteRT-LM: 現在ロード済みのバックエンド ("GPU" / "CPU" / "NPU"、未ロード時は null) */
     const val KEY_LOADED_BACKEND = "loadedBackend"
 

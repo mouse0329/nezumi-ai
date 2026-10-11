@@ -255,7 +255,9 @@ object PreferencesHelper {
     }
 
     fun setPresetModelOverride(context: Context, modelId: String) {
-        getSharedPreferences(context).edit().putString(KEY_PRESET_MODEL_OVERRIDE, modelId).apply()
+        // apply() だとプロセス終了前に書き込みが落ちることがある。
+        // GGUF の長い絶対パスでも確実に残すため commit する。
+        getSharedPreferences(context).edit().putString(KEY_PRESET_MODEL_OVERRIDE, modelId).commit()
     }
 
     fun getPresetPins(context: Context): Set<String> {

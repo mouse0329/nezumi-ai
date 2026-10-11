@@ -81,6 +81,7 @@ import com.nezumi_ai.data.preset.PresetModelCatalog
 import com.nezumi_ai.data.repository.PresetRepository
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import com.nezumi_ai.utils.PreferencesHelper
+import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -380,23 +381,28 @@ class PresetSettingsFragment : Fragment() {
             },
             onSelectModel = { modelId ->
                 val preset = if (detached) null else currentPreset
-                scope.launch {
-                    if (preset == null) {
-                        presetRepository.setModelOverride(modelId)
-                        overrideModelId = modelId
-                        rememberModel(modelId)
-                        toast(getString(R.string.preset_toast_standalone))
-                    } else if (modelId == preset.modelId) {
-                        presetRepository.setModelOverride("")
-                        overrideModelId = ""
-                        toast(getString(R.string.preset_toast_model_reset))
-                    } else {
-                        presetRepository.setModelOverride(modelId)
-                        overrideModelId = modelId
-                        rememberModel(modelId)
-                        toast(getString(R.string.preset_toast_model_override))
+                // 画面を閉じた瞬間の preload と競合しないよう、選択は即座に永続化する。
+                // rememberCoroutineScope は composition 破棄でキャンセルされるため、
+                // GGUF 追加モデルを選んですぐ戻ると前のモデルが残る原因になっていた。
+                val shouldSetOverride = preset == null || modelId != preset.modelId
+                val overrideToSet = if (shouldSetOverride) modelId else ""
+                // SharedPreferences は同期的に書く（commit）
+                PreferencesHelper.setPresetModelOverride(appCtx, overrideToSet)
+                overrideModelId = overrideToSet
+                if (shouldSetOverride) {
+                    // DB 更新は fragment の lifecycleScope で行い、画面破棄でもキャンセルされない
+                    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                        com.nezumi_ai.data.repository.SettingsRepository
+                            .fromDatabase(NezumiAiDatabase.getInstance(appCtx))
+                            .updateModel(modelId)
                     }
                 }
+                val toastRes = when {
+                    preset == null -> R.string.preset_toast_standalone
+                    modelId == preset.modelId -> R.string.preset_toast_model_reset
+                    else -> R.string.preset_toast_model_override
+                }
+                toast(getString(toastRes))
             },
             onEdit = { preset ->
                 if (preset.isLocked) toast(getString(R.string.preset_toast_locked_edit))
@@ -454,14 +460,31 @@ class PresetSettingsFragment : Fragment() {
         }
         // availableModels は IO で非同期取得するため、初回 composition 時点では空。
         // ロード完了後に、未設定 or 選択肢に無い modelId を利用可能モデルへ補正する。
+        // GGUF は絶対パスが ID になるため、表記ゆれ（canonical / 末尾スラッシュ等）で
+        // 一致判定に失敗し、前のモデルに戻されてしまうのを防ぐ。
         LaunchedEffect(availableModels) {
             if (availableModels.isEmpty()) return@LaunchedEffect
             val current = modelId
-            val valid = current.isNotBlank() && availableModels.any { it.id == current }
+            fun sameModelId(a: String, b: String): Boolean {
+                if (a == b) return true
+                val fa = File(a)
+                val fb = File(b)
+                if (fa.isAbsolute && fb.isAbsolute) {
+                    return runCatching { fa.canonicalPath == fb.canonicalPath }.getOrDefault(false) ||
+                        fa.name == fb.name && fa.name.endsWith(".gguf", ignoreCase = true)
+                }
+                return false
+            }
+            val valid = current.isNotBlank() && availableModels.any { sameModelId(it.id, current) }
             if (!valid) {
-                modelId = initialPreset?.modelId?.takeIf { id -> availableModels.any { it.id == id } }
+                modelId = initialPreset?.modelId?.takeIf { id -> availableModels.any { sameModelId(it.id, id) } }
                     ?: availableModels.firstOrNull()?.id
                     ?: ""
+            } else {
+                // 一致する正規の ID に揃える（以降の保存・比較を安定させる）
+                availableModels.firstOrNull { sameModelId(it.id, current) }?.let { matched ->
+                    if (modelId != matched.id) modelId = matched.id
+                }
             }
         }
         var memoryEnabled by remember { mutableStateOf(initialPreset?.memoryEnabled ?: true) }

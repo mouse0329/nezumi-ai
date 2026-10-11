@@ -34,6 +34,7 @@ import com.nezumi_ai.data.inference.MemoryObserver
 import com.nezumi_ai.data.inference.ChatMarkupSpec
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.GgufFormatResolver
+import com.nezumi_ai.data.inference.MediaTokenProgress
 import com.nezumi_ai.data.inference.ToolCallTags
 import com.nezumi_ai.data.inference.ThinkingLeakSalvage
 import com.nezumi_ai.data.inference.GgufToolPromptBuilder
@@ -2631,8 +2632,22 @@ class ChatViewModel(
                                     val toolResultChunk = InferenceStreamProtocol.decodeToolResultChunk(seg)
                                     val toolResults = InferenceStreamProtocol.decodeToolResults(seg)
                                     val tpsValue = InferenceStreamProtocol.decodeTps(seg)
+                                    val mediaProgress = InferenceStreamProtocol.decodeMediaProgress(seg)
 
                                     when {
+                                        mediaProgress != null -> {
+                                            // :gguf プロセスから転送された入力処理進捗をメイン側の
+                                            // MediaTokenProgress に反映する（UI が collect している）。
+                                            if (mediaProgress.stage.isBlank()) {
+                                                MediaTokenProgress.clear()
+                                            } else {
+                                                MediaTokenProgress.update(
+                                                    mediaProgress.stage,
+                                                    mediaProgress.tokens,
+                                                    mediaProgress.tps
+                                                )
+                                            }
+                                        }
                                         finalFromModel != null -> {
                                             finalReceived = true
                                             Log.d(TAG, "FINAL received: length=${finalFromModel.length}")
@@ -4506,8 +4521,12 @@ class ChatViewModel(
         if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(trimmed)) {
             return trimmed
         }
+        // GGUF は絶対パスが ID。表記ゆれやファイル名のみの場合でも imported から解決する。
+        val resolvedGguf = resolveGgufModelPath(trimmed)
+        if (resolvedGguf != null) return resolvedGguf
+
         val isLocalTaskPath =
-            (lowered.endsWith(".task") || lowered.endsWith(".litertlm") || lowered.endsWith(".gguf")) &&
+            (lowered.endsWith(".task") || lowered.endsWith(".litertlm")) &&
                 File(trimmed).isAbsolute
 
         return when {
@@ -4522,11 +4541,37 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * GGUF モデル ID を実在する絶対パスに解決する。
+     * - すでに絶対パスで存在すればそれを返す
+     * - ファイル名だけ・相対・表記ゆれの場合は imported ディレクトリから同名を探す
+     * 見つからなければ null。
+     */
+    private fun resolveGgufModelPath(model: String): String? {
+        val trimmed = model.trim()
+        if (!trimmed.lowercase().endsWith(".gguf")) return null
+        val direct = File(trimmed)
+        if (direct.isAbsolute && direct.isFile && direct.canRead()) {
+            return direct.absolutePath
+        }
+        val name = direct.name
+        if (name.isBlank()) return null
+        val importedDir = File(appContext.filesDir, "models/imported")
+        val candidates = importedDir.listFiles()?.filter { file ->
+            file.isFile && file.name.equals(name, ignoreCase = true)
+        }.orEmpty()
+        return candidates.firstOrNull()?.absolutePath
+    }
+
     private fun toEngineModelName(model: String): String {
         val normalized = normalizeModel(model)
         // ModelManager は `cloud:...` のフル ID を受け取り、内部でプロバイダ分岐する。
         // ここで剥がしたり Gemma4 に置換してはいけない。
         if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(normalized)) {
+            return normalized
+        }
+        // normalizeModel が GGUF を解決済みならそのまま使う
+        if (normalized.lowercase().endsWith(".gguf") && File(normalized).isAbsolute) {
             return normalized
         }
         return when {
@@ -4535,8 +4580,7 @@ class ChatViewModel(
             normalized.equals("E4B", ignoreCase = true) -> "gemma-3n-4b"  // Gemma3n 4B
             normalized.equals("E2B", ignoreCase = true) -> "gemma-3n-2b"  // Gemma3n 2B
             (normalized.endsWith(".task") ||
-                normalized.endsWith(".litertlm") ||
-                normalized.endsWith(".gguf")) && File(normalized).isAbsolute -> normalized
+                normalized.endsWith(".litertlm")) && File(normalized).isAbsolute -> normalized
             else -> "gemma4-2b"  // デフォルト
         }
     }
@@ -5417,14 +5461,34 @@ class ChatViewModel(
         enableToolCalling: Boolean = false,
         availableSkills: List<Skill> = emptyList()
     ): String? {
-        // テンプレートがモデルに明示的に存在しない場合 (GPT-2 等) は
-        // ネイティブの既定フォールバック (Gemma4 等) を使わず、
-        // 過去ターンを引き継がずに現在のユーザーメッセージのみのプレーンテキストにする。
-        if (!requireModelManager().hasExplicitChatTemplate()) {
-            val current = messages.lastOrNull { it.role.equals("user", ignoreCase = true) }
-            val content = current?.let { sanitizer(it) }?.trim().orEmpty()
-            Log.d(TAG, "PROMPT_BUILD: no explicit chat template, using single-turn plain text (len=${content.length})")
-            return content.ifBlank { null }
+        // テンプレートがある場合は一つ前のコミットと同じネイティブ適用パスを使う。
+        // テンプレートが本当にないモデル (GPT-2 等) だけ、既定フォールバックを避けて
+        // プレーンテキストで履歴を残す。
+        val hasExplicit = requireModelManager().hasExplicitChatTemplate()
+        val hasMetadataTemplate = modelPath.isNotBlank() && runCatching {
+            com.nezumi_ai.utils.GgufMetadataReader.readChatTemplate(File(modelPath))
+        }.getOrNull()?.isNotBlank() == true
+        val hasUserTemplate = modelPath.isNotBlank() && runCatching {
+            PromptTemplateStore.resolveTemplate(appContext, modelPath)
+        }.getOrNull()?.isNotBlank() == true
+        if (!hasExplicit && !hasMetadataTemplate && !hasUserTemplate) {
+            val sb = StringBuilder()
+            val sys = systemPrompt.trim()
+            if (sys.isNotBlank()) {
+                sb.append(sys).append("\n\n")
+            }
+            messages.forEach { message ->
+                val content = sanitizer(message).trim()
+                if (content.isBlank()) return@forEach
+                val label = if (message.role.equals("assistant", ignoreCase = true)) "Assistant" else "User"
+                sb.append(label).append(": ").append(content).append("\n\n")
+            }
+            if (messages.lastOrNull()?.role.equals("user", ignoreCase = true) == true) {
+                sb.append("Assistant: ")
+            }
+            val text = sb.toString().trim()
+            Log.d(TAG, "PROMPT_BUILD: no explicit chat template, using multi-turn plain text (len=${text.length})")
+            return text.ifBlank { null }
         }
         // ツール有効時はツール定義を OpenAI 互換の tools 配列 JSON として構築し、
         // system prompt への手動連結 (GgufToolPromptBuilder.appendToolDefinitions) ではなく
