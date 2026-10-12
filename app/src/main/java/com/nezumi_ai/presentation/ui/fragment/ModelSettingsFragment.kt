@@ -132,6 +132,8 @@ import androidx.compose.ui.platform.LocalUriHandler
 import com.nezumi_ai.data.inference.GgufFormatResolver
 import com.nezumi_ai.data.inference.PromptTemplateStore
 import com.nezumi_ai.utils.GgufMetadataReader
+import com.nezumi_ai.data.inference.MemoryEstimator
+import com.nezumi_ai.data.inference.LitertlmMemoryEstimator
 import com.nezumi_ai.utils.ImportedModelCapabilities
 import com.nezumi_ai.utils.ImportedModelCapabilityStore
 import com.nezumi_ai.voicevox.VoicevoxManager
@@ -336,6 +338,7 @@ open class ModelSettingsFragment : Fragment() {
     /** おすすめ GGUF（RecommendedModelCatalog）の DL 状態。Gemma の modelStates と同じ役割。 */
     internal val recommendedGgufStates = mutableStateMapOf<String, ModelUiState>()
     private val ggufCardMetadataStates = mutableStateMapOf<String, GgufCardMetadataUiState>()
+    private val memoryEstimateStates = mutableStateMapOf<String, MemoryEstimateUiState>()
 
  // 埋め込みモデルダウンロード進捗（DLタブで表示）
     private var embeddingDownloadState by mutableStateOf<EmbeddingDownloadUiState?>(null)
@@ -2389,7 +2392,9 @@ open class ModelSettingsFragment : Fragment() {
         onDelete: () -> Unit,
     ) {
         val isGguf = model.path.lowercase().endsWith(".gguf")
+        val isLitertlm = model.path.lowercase().let { it.endsWith(".litertlm") || it.endsWith(".task") }
         val ggufMetadataState = ggufCardMetadataStates[model.path]
+        val memoryEstimateState = memoryEstimateStates[model.path]
         LaunchedEffect(isExpanded, model.path) {
             if (isExpanded && isGguf && ggufCardMetadataStates[model.path] == null) {
                 ggufCardMetadataStates[model.path] = GgufCardMetadataUiState(loading = true)
@@ -2411,6 +2416,41 @@ open class ModelSettingsFragment : Fragment() {
                     )
                 }
                 ggufCardMetadataStates[model.path] = nextState
+            }
+            if (isExpanded && (isGguf || isLitertlm) && memoryEstimateStates[model.path] == null) {
+                memoryEstimateStates[model.path] = MemoryEstimateUiState(loading = true)
+                val nextEstimate = withContext(Dispatchers.IO) {
+                    if (isGguf) {
+                        when (val result = MemoryEstimator.estimate(model.path)) {
+                            is MemoryEstimator.EstimateResult.Success -> {
+                                val e = result.estimate
+                                MemoryEstimateUiState(
+                                    estimatedRam = MemoryEstimator.formatBytes(e.estimatedRamBytes),
+                                    details = "KV: ${MemoryEstimator.formatBytes(e.kvCacheBytes)} / Compute: ${MemoryEstimator.formatBytes(e.computeBufferBytes)} / n_ctx: ${e.contextUsed}"
+                                )
+                            }
+                            is MemoryEstimator.EstimateResult.Failure -> {
+                                MemoryEstimateUiState(errorMessage = result.reason)
+                            }
+                        }
+                    } else {
+                        when (val result = LitertlmMemoryEstimator.estimate(model.path)) {
+                            is LitertlmMemoryEstimator.EstimateResult.Success -> {
+                                val e = result.estimate
+                                val kvText = e.kvCacheBytes?.let { LitertlmMemoryEstimator.formatBytes(it) } ?: "不明"
+                                val guessedNote = if (e.archParamsGuessed) " (推測)" else ""
+                                MemoryEstimateUiState(
+                                    estimatedRam = LitertlmMemoryEstimator.formatBytes(e.estimatedRamBytes),
+                                    details = "KV: $kvText$guessedNote / Weights: ${LitertlmMemoryEstimator.formatBytes(e.weightsBytes)} / Arch: ${e.architecture}"
+                                )
+                            }
+                            is LitertlmMemoryEstimator.EstimateResult.Failure -> {
+                                MemoryEstimateUiState(errorMessage = result.reason)
+                            }
+                        }
+                    }
+                }
+                memoryEstimateStates[model.path] = nextEstimate
             }
         }
         Card(
@@ -2529,6 +2569,78 @@ open class ModelSettingsFragment : Fragment() {
                                         style = MaterialTheme.typography.bodySmall,
                                         color = colorResource(id = R.color.text_primary)
                                     )
+                                }
+                            }
+                            // メモリ推定表示（GGUF / LiteRT-LM 共通）
+                            when {
+                                memoryEstimateState?.loading == true -> {
+                                    Text(
+                                        text = "メモリ推定を計算中...",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorResource(id = R.color.text_secondary)
+                                    )
+                                }
+                                memoryEstimateState?.errorMessage != null -> {
+                                    Text(
+                                        text = "メモリ推定: ${memoryEstimateState.errorMessage}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorResource(id = R.color.text_secondary)
+                                    )
+                                }
+                                memoryEstimateState != null -> {
+                                    Text(
+                                        text = "推定必要RAM: ${memoryEstimateState.estimatedRam ?: "不明"}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorResource(id = R.color.text_primary)
+                                    )
+                                    memoryEstimateState.details?.let { details ->
+                                        Text(
+                                            text = details,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = colorResource(id = R.color.text_secondary)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (isLitertlm && !isGguf) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(colorResource(id = R.color.bg_session_list))
+                                .padding(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            when {
+                                memoryEstimateState?.loading == true -> {
+                                    Text(
+                                        text = "メモリ推定を計算中...",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorResource(id = R.color.text_secondary)
+                                    )
+                                }
+                                memoryEstimateState?.errorMessage != null -> {
+                                    Text(
+                                        text = "メモリ推定: ${memoryEstimateState.errorMessage}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorResource(id = R.color.text_secondary)
+                                    )
+                                }
+                                memoryEstimateState != null -> {
+                                    Text(
+                                        text = "推定必要RAM: ${memoryEstimateState.estimatedRam ?: "不明"}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorResource(id = R.color.text_primary)
+                                    )
+                                    memoryEstimateState.details?.let { details ->
+                                        Text(
+                                            text = details,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = colorResource(id = R.color.text_secondary)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -4170,6 +4282,13 @@ open class ModelSettingsFragment : Fragment() {
         val loading: Boolean = false,
         val architecture: String? = null,
         val parameterCount: Long? = null,
+        val errorMessage: String? = null,
+    )
+
+    private data class MemoryEstimateUiState(
+        val loading: Boolean = false,
+        val estimatedRam: String? = null,
+        val details: String? = null,
         val errorMessage: String? = null,
     )
 
