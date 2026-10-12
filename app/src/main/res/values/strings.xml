@@ -1804,6 +1804,8 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="miniapp_runner_load_error">Mini App を読み込めませんでした（未インストールか、パッケージが破損しています）</string>
     <string name="settings_miniapp_dev_mode_title">Mini App 開発者モード</string>
     <string name="settings_miniapp_dev_mode_desc">未署名または未信頼の署名鍵で作成された Mini App のインストールを許可します。インストールのたびに警告と同意が求められます。</string>
+    <string name="settings_show_miniapps_title">ミニアプリを表示</string>
+    <string name="settings_show_miniapps_desc">ミニアプリはまだベータ版です。有効にするとドロワーにミニアプリ管理を表示します。</string>
     <string name="miniapp_info">情報</string>
     <string name="miniapp_close">閉じる</string>
     <string name="miniapp_info_title">%1$s の情報</string>

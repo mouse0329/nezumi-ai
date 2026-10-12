@@ -6115,8 +6115,27 @@ class ChatViewModel(
             } catch (t: Throwable) {
                 val e = if (t is Exception) t else RuntimeException(t)
                 Log.e(TAG, "Error sending message with media", e)
-                // UI 更新 - Main スレッド
+                // モデル推論失敗時にエラーダイアログが出ず、メディア付きメッセージ送信失敗の
+                // トーストだけになるケースへの対処。推論系の例外はモーダルで見せる。
+                val looksLikeInferenceError = e.message?.let { msg ->
+                    msg.contains("Failed to invoke the compiled model", ignoreCase = true) ||
+                            msg.contains("Status Code:", ignoreCase = true) ||
+                            msg.contains("TF_LITE_AUX", ignoreCase = true) ||
+                            msg.contains("Model not loaded", ignoreCase = true) ||
+                            msg.contains("inference", ignoreCase = true) ||
+                            msg.contains("mmproj", ignoreCase = true) ||
+                            msg.contains("OpenCL", ignoreCase = true) ||
+                            msg.contains("Vulkan", ignoreCase = true) ||
+                            msg.contains("NPU", ignoreCase = true)
+                } ?: false
                 withContext(Dispatchers.Main) {
+                    if (looksLikeInferenceError) {
+                        _modelErrorDialogMessage.value = formatModelErrorDialogMessage(
+                            title = appContext.getString(R.string.inference_error_title),
+                            message = appContext.getString(R.string.inference_error_body),
+                            details = e.message
+                        )
+                    }
                     _uiMessage.emit(appContext.getString(R.string.media_send_failed, e.message ?: ""))
                 }
             } finally {

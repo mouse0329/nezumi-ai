@@ -1091,6 +1091,7 @@ class SettingsComposeFragment : Fragment() {
                             var isShowContextMeter by remember { mutableStateOf(PreferencesHelper.isShowContextMeter(context)) }
                             var isShowEngineLoadLog by remember { mutableStateOf(PreferencesHelper.isShowEngineLoadLog(context)) }
                             var isMiniAppDevMode by remember { mutableStateOf(PreferencesHelper.isMiniAppDevModeEnabled(context)) }
+                            var isShowMiniApps by remember { mutableStateOf(PreferencesHelper.isShowMiniApps(context)) }
                             var isShowTps by remember { mutableStateOf(PreferencesHelper.isShowTps(context)) }
                             var isShowTtft by remember { mutableStateOf(PreferencesHelper.isShowTtft(context)) }
                             var isDisableScreenshot by remember { mutableStateOf(PreferencesHelper.isDisableScreenshot(context)) }
@@ -1377,6 +1378,43 @@ class SettingsComposeFragment : Fragment() {
                                         onCheckedChange = { checked ->
                                             isShowEngineLoadLog = checked
                                             PreferencesHelper.setShowEngineLoadLog(context, checked)
+                                        },
+                                        colors = nezumiSwitchColors()
+                                    )
+                                }
+
+                                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+
+                                // Mini App 表示 (ベータのため既定オフ)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .settingsSearchAnchor(
+                                                R.string.settings_show_miniapps_title,
+                                                settingsSearchJumpState
+                                            )
+                                    ) {
+                                        Text(
+                                            text = stringResource(id = R.string.settings_show_miniapps_title),
+                                            color = colorResource(id = R.color.text_primary),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Text(
+                                            text = stringResource(id = R.string.settings_show_miniapps_desc),
+                                            color = colorResource(id = R.color.text_secondary),
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                    Switch(
+                                        checked = isShowMiniApps,
+                                        onCheckedChange = { checked ->
+                                            isShowMiniApps = checked
+                                            PreferencesHelper.setShowMiniApps(context, checked)
                                         },
                                         colors = nezumiSwitchColors()
                                     )

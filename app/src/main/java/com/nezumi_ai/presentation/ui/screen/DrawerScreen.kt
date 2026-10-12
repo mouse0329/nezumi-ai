@@ -77,6 +77,7 @@ fun DrawerContent(
     onModelSettingsClick: () -> Unit,
     onPresetSettingsClick: () -> Unit,
     onMiniAppsClick: () -> Unit,
+    showMiniApps: Boolean = false,
     onNewChatClick: () -> Unit,
     onIncognitoClick: () -> Unit,
     onImageGenClick: () -> Unit,
@@ -151,15 +152,18 @@ fun DrawerContent(
         }
 
         // Mini Apps (Mini App Platform 仕様 v1.1 §35.5: Mini App Manager が唯一の入口)
-        DrawerOutlinedButton(
-            text = stringResource(id = R.string.miniapp_manager_title),
-            iconRes = R.drawable.ic_menu,
-            onClick = onMiniAppsClick,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 8.dp),
-            fontSize = 12.sp
-        )
+        // ベータのため標準では非表示。全般設定のスイッチで表示。
+        if (showMiniApps) {
+            DrawerOutlinedButton(
+                text = stringResource(id = R.string.miniapp_manager_title),
+                iconRes = R.drawable.ic_menu,
+                onClick = onMiniAppsClick,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                fontSize = 12.sp
+            )
+        }
 
         // 新規セッションボタン (プライマリ)
         Button(

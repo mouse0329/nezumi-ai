@@ -292,6 +292,7 @@ class MainActivity : AppCompatActivity() {
                         onModelSettingsClick = { navigateFromDrawer(R.id.modelSettingsFragment) },
                         onPresetSettingsClick = { navigateFromDrawer(R.id.presetSettingsFragment) },
                         onMiniAppsClick = { navigateFromDrawer(R.id.miniAppManagerFragment) },
+                        showMiniApps = com.nezumi_ai.utils.PreferencesHelper.isShowMiniApps(this@MainActivity),
                         onNewChatClick = {
                             closeDrawer()
                             createAndOpenSession()

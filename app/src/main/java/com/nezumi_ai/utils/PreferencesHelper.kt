@@ -44,6 +44,7 @@ object PreferencesHelper {
     private const val KEY_STOP_KEYBOARD_LEARNING = "stop_keyboard_learning"
     private const val KEY_SD_USE_OPENCL = "sd_use_opencl"
     private const val KEY_MINIAPP_DEV_MODE = "miniapp_dev_mode"
+    private const val KEY_SHOW_MINIAPPS = "show_miniapps"
  // 新設: 全般タブで切り替えられる UI 表示オプション。既定はいずれも「表示しない」。
     private const val KEY_SHOW_CONTEXT_METER = "show_context_meter"
     private const val KEY_SHOW_ENGINE_LOAD_LOG = "show_engine_load_log"
@@ -520,6 +521,15 @@ object PreferencesHelper {
 
     fun setMiniAppDevModeEnabled(context: Context, enabled: Boolean) {
         getSharedPreferences(context).edit().putBoolean(KEY_MINIAPP_DEV_MODE, enabled).apply()
+    }
+
+    // Mini App はまだベータのため、ドロワーへの表示は既定オフ。全般設定のスイッチで有効化。
+    fun isShowMiniApps(context: Context): Boolean {
+        return getSharedPreferences(context).getBoolean(KEY_SHOW_MINIAPPS, false)
+    }
+
+    fun setShowMiniApps(context: Context, enabled: Boolean) {
+        getSharedPreferences(context).edit().putBoolean(KEY_SHOW_MINIAPPS, enabled).apply()
     }
 
  // トークン/秒表示の可否。既定は「表示しない (false)」。

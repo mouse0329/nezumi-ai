@@ -142,7 +142,7 @@ fun ChatInputBar(
     onMediaMenuClick: () -> Unit,
     onMicClick: () -> Unit,
     onRecordCancel: () -> Unit,
-    onClipboardImagePaste: () -> Unit,
+    onClipboardImagePaste: (android.net.Uri) -> Unit,
     onInputViewReady: (ClipboardAwareEditText) -> Unit,
     modifier: Modifier = Modifier
 ) {

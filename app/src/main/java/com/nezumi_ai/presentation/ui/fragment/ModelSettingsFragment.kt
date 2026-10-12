@@ -983,10 +983,8 @@ open class ModelSettingsFragment : Fragment() {
                             fontWeight = FontWeight.Bold
                         )
                         if (info.estimatedRemainingSec > 0) {
-                            val remainMin = (info.estimatedRemainingSec / 60).toInt()
-                            val remainSec = (info.estimatedRemainingSec % 60).toInt()
                             Text(
-                                text = "残り ${remainMin}分${remainSec}秒",
+                                text = formatRemainingTime(info.estimatedRemainingSec),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colorResource(id = R.color.text_secondary)
                             )
@@ -1828,10 +1826,8 @@ open class ModelSettingsFragment : Fragment() {
                                                 fontWeight = FontWeight.Bold
                                             )
                                             if (info.estimatedRemainingSec > 0) {
-                                                val remainMin = (info.estimatedRemainingSec / 60).toInt()
-                                                val remainSec = (info.estimatedRemainingSec % 60).toInt()
                                                 Text(
-                                                    text = "残り ${remainMin}分${remainSec}秒",
+                                                    text = formatRemainingTime(info.estimatedRemainingSec),
                                                     style = MaterialTheme.typography.bodySmall,
                                                     color = colorResource(id = R.color.text_secondary)
                                                 )
@@ -2338,10 +2334,8 @@ open class ModelSettingsFragment : Fragment() {
                                     fontWeight = FontWeight.Bold
                                 )
                                 if (info.estimatedRemainingSec > 0) {
-                                    val remainMin = (info.estimatedRemainingSec / 60).toInt()
-                                    val remainSec = (info.estimatedRemainingSec % 60).toInt()
                                     Text(
-                                        text = "残り ${remainMin}分${remainSec}秒",
+                                        text = formatRemainingTime(info.estimatedRemainingSec),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = colorResource(id = R.color.text_secondary)
                                     )
@@ -4382,10 +4376,8 @@ open class ModelSettingsFragment : Fragment() {
                             fontWeight = FontWeight.Bold
                         )
                         if (info.estimatedRemainingSec > 0) {
-                            val remainMin = (info.estimatedRemainingSec / 60).toInt()
-                            val remainSec = (info.estimatedRemainingSec % 60).toInt()
                             Text(
-                                text = "残り ${remainMin}分${remainSec}秒",
+                                text = formatRemainingTime(info.estimatedRemainingSec),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colorResource(id = R.color.text_secondary)
                             )
@@ -4514,6 +4506,18 @@ open class ModelSettingsFragment : Fragment() {
         val downloadedBytes: Long,
         val totalBytes: Long
     )
+
+    /** 残り時間を0.1秒精度で表示する。例: "残り 2分15.3秒" / "残り 45.7秒" */
+    private fun formatRemainingTime(estimatedRemainingSec: Double): String {
+        if (estimatedRemainingSec <= 0.0) return ""
+        val minutes = (estimatedRemainingSec / 60.0).toInt()
+        val seconds = estimatedRemainingSec % 60.0
+        return if (minutes > 0) {
+            "残り ${minutes}分${String.format("%.1f", seconds)}秒"
+        } else {
+            "残り ${String.format("%.1f", seconds)}秒"
+        }
+    }
 
  // リポジトリ更新通知用
     private data class RepoUpdateNotification(

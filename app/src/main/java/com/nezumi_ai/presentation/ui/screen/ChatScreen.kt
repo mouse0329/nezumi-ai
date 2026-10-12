@@ -82,7 +82,7 @@ fun ChatScreen(
     onMediaMenuClick: () -> Unit,
     onMicClick: () -> Unit,
     onRecordCancel: () -> Unit,
-    onClipboardImagePaste: () -> Unit,
+    onClipboardImagePaste: (android.net.Uri) -> Unit,
     onInputViewReady: (ClipboardAwareEditText) -> Unit,
     // 全画面ローディングオーバーレイ
     modelLoadingOverlay: @Composable () -> Unit,

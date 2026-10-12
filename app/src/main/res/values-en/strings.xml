@@ -1734,6 +1734,8 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="miniapp_runner_load_error">Failed to load the Mini App (not installed or the package is corrupted)</string>
     <string name="settings_miniapp_dev_mode_title">Mini App Developer Mode</string>
     <string name="settings_miniapp_dev_mode_desc">Allow installing Mini Apps that are unsigned or signed with an untrusted key. A warning and explicit consent are required on every install.</string>
+    <string name="settings_show_miniapps_title">Show Mini Apps</string>
+    <string name="settings_show_miniapps_desc">Mini Apps are still in beta. When enabled, the Mini App manager is shown in the drawer.</string>
     <string name="miniapp_info">Info</string>
     <string name="miniapp_close">Close</string>
     <string name="miniapp_info_title">About %1$s</string>

@@ -137,6 +137,7 @@ class ModelDownloadWorker(
             var lastProgressUpdateTime = 0L
             var lastProgressDownloaded = -1L
             var reachedNearCompletion = false
+            var smoothedSpeedMbps = 0.0
 
             val result = ModelFileManager.ensureDownloaded(applicationContext, model) { downloaded, total ->
                 if (ModelFileManager.isCancelRequested(applicationContext, model)) {
@@ -167,18 +168,27 @@ class ModelDownloadWorker(
                     return@ensureDownloaded
                 }
 
-                // スピード計算（MB/s）
-                val speedMbps = if (timeDeltaMs > 0) {
+                // 瞬間速度（MB/s）
+                val instantSpeedMbps = if (timeDeltaMs > 0) {
                     val bytesDelta = (downloaded - lastDownloaded).coerceAtLeast(0L)
                     (bytesDelta.toDouble() / (1024.0 * 1024.0)) / (timeDeltaMs.toDouble() / 1000.0)
                 } else {
                     0.0
                 }
 
-                // 推定残り時間（秒）
+                // 速度が不安定なときの精度向上のため、指数移動平均で平滑化
+                // alpha が小さいほど滑らか（0.3 で安定と応答のバランス）
+                val alpha = 0.3
+                if (smoothedSpeedMbps <= 0.0) {
+                    smoothedSpeedMbps = instantSpeedMbps
+                } else if (instantSpeedMbps > 0.0) {
+                    smoothedSpeedMbps = alpha * instantSpeedMbps + (1.0 - alpha) * smoothedSpeedMbps
+                }
+
+                // 推定残り時間（秒）は平滑化速度を使用
                 val remainingBytes = (total - downloaded).coerceAtLeast(0L)
-                val estimatedSecRemaining = if (speedMbps > 0) {
-                    (remainingBytes.toDouble() / (1024.0 * 1024.0)) / speedMbps
+                val estimatedSecRemaining = if (smoothedSpeedMbps > 0) {
+                    (remainingBytes.toDouble() / (1024.0 * 1024.0)) / smoothedSpeedMbps
                 } else {
                     0.0
                 }
@@ -194,7 +204,7 @@ class ModelDownloadWorker(
                     val data = workDataOf(
                         KEY_DOWNLOADED_BYTES to downloaded,
                         KEY_TOTAL_BYTES to total,
-                        KEY_SPEED_MBPS to speedMbps,
+                        KEY_SPEED_MBPS to smoothedSpeedMbps,
                         KEY_ESTIMATED_REMAINING_SEC to estimatedSecRemaining
                     )
                     setProgressAsync(data)
@@ -281,6 +291,7 @@ class ModelDownloadWorker(
             var lastProgressUpdateTime = 0L
             var lastProgressDownloaded = -1L
             var reachedNearCompletion = false
+            var smoothedSpeedMbps = 0.0
 
             val result = ModelFileManager.downloadHuggingFaceModelFile(
                     context = applicationContext,
@@ -317,15 +328,25 @@ class ModelDownloadWorker(
                         return@downloadHuggingFaceModelFile
                     }
 
-                    val speedMbps = if (timeDeltaMs > 0) {
+                    // 瞬間速度（MB/s）
+                    val instantSpeedMbps = if (timeDeltaMs > 0) {
                         val bytesDelta = (downloaded - lastDownloaded).coerceAtLeast(0L)
                         (bytesDelta.toDouble() / (1024.0 * 1024.0)) / (timeDeltaMs.toDouble() / 1000.0)
                     } else {
                         0.0
                     }
+
+                    // 速度が不安定なときの精度向上のため、指数移動平均で平滑化
+                    val alpha = 0.3
+                    if (smoothedSpeedMbps <= 0.0) {
+                        smoothedSpeedMbps = instantSpeedMbps
+                    } else if (instantSpeedMbps > 0.0) {
+                        smoothedSpeedMbps = alpha * instantSpeedMbps + (1.0 - alpha) * smoothedSpeedMbps
+                    }
+
                     val remainingBytes = (total - downloaded).coerceAtLeast(0L)
-                    val estimatedSecRemaining = if (speedMbps > 0) {
-                        (remainingBytes.toDouble() / (1024.0 * 1024.0)) / speedMbps
+                    val estimatedSecRemaining = if (smoothedSpeedMbps > 0) {
+                        (remainingBytes.toDouble() / (1024.0 * 1024.0)) / smoothedSpeedMbps
                     } else {
                         0.0
                     }
@@ -344,7 +365,7 @@ class ModelDownloadWorker(
                             KEY_HF_FILE_PATH to filePath,
                             KEY_DOWNLOADED_BYTES to downloaded,
                             KEY_TOTAL_BYTES to total,
-                            KEY_SPEED_MBPS to speedMbps,
+                            KEY_SPEED_MBPS to smoothedSpeedMbps,
                             KEY_ESTIMATED_REMAINING_SEC to estimatedSecRemaining
                         )
                         setProgressAsync(data)

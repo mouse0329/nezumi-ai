@@ -40,8 +40,8 @@ class ClipboardAwareEditText @JvmOverloads constructor(
     defStyleAttr: Int = android.R.attr.editTextStyle
 ) : AppCompatEditText(context, attrs, defStyleAttr) {
 
-    /** 画像 URI がペースト/挿入されたときに呼ばれる。 */
-    var onClipboardImagePaste: (() -> Unit)? = null
+    /** 画像 URI がペースト/挿入されたときに呼ばれる。引数は検出した URI。 */
+    var onClipboardImagePaste: ((android.net.Uri) -> Unit)? = null
 
     init {
         // OS の「貼り付け」やドラッグ&ドロップで画像が渡ってきたとき、
@@ -55,10 +55,13 @@ class ClipboardAwareEditText @JvmOverloads constructor(
                 val imagePart = split.first
                 val remaining = split.second
                 if (imagePart != null) {
-                    try {
-                        onClipboardImagePaste?.invoke()
-                    } catch (t: Throwable) {
-                        Log.e("ClipboardAwareEditText", "Error in paste callback", t)
+                    val uri = imagePart.clip.getItemAt(0).uri
+                    if (uri != null) {
+                        try {
+                            onClipboardImagePaste?.invoke(uri)
+                        } catch (t: Throwable) {
+                            Log.e("ClipboardAwareEditText", "Error in paste callback", t)
+                        }
                     }
                 }
                 // 画像以外のペイロード (テキスト等) は通常経路に返す。
@@ -78,7 +81,7 @@ class ClipboardAwareEditText @JvmOverloads constructor(
                 try { inputContentInfo.requestPermission() } catch (_: Exception) {}
             }
             try {
-                onClipboardImagePaste?.invoke()
+                onClipboardImagePaste?.invoke(inputContentInfo.contentUri)
             } catch (t: Throwable) {
                 Log.e("ClipboardAwareEditText", "Error in commitContent callback", t)
             }

@@ -965,7 +965,7 @@ class ChatFragment : Fragment() {
                         onMediaMenuClick = { onMediaMenuClicked() },
                         onMicClick = { onMicClicked() },
                         onRecordCancel = { cancelAudioRecording() },
-                        onClipboardImagePaste = { pasteFromClipboard() },
+                        onClipboardImagePaste = { uri -> pasteFromClipboard(uri) },
                         onInputViewReady = { view ->
                             // AndroidView は再構成で EditText を作り直すことがあるため、
                             // 旧ビューからウォッチャーを外してから付け直す。
@@ -4057,12 +4057,22 @@ class ChatFragment : Fragment() {
         }
     }
 
-    private fun pasteFromClipboard() {
+    private fun pasteFromClipboard(providedUri: android.net.Uri? = null) {
         if (!imageInputEnabled) {
             Toast.makeText(requireContext(), getString(R.string.multimodal_image_disabled), Toast.LENGTH_SHORT).show()
             return
         }
         try {
+            // OnReceiveContent / commitContent から URI が渡された場合はそれを優先する。
+            // primaryClip を再照会すると、ペースト直後に URI がまだ反映されていない
+            // またはテキスト扱いになるケースがあり「クリップボードに画像またはURIがありません」
+            // になるバグの原因だった。
+            val uriFromCallback = providedUri
+            if (uriFromCallback != null) {
+                processClipboardImageUri(uriFromCallback)
+                return
+            }
+
             val clipboard = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as ClipboardManager
             val primaryClip = clipboard.primaryClip
 
@@ -4072,56 +4082,14 @@ class ChatFragment : Fragment() {
                 // Phase 11: 複数画像対応（最大5枚まで）
                 // URIが直接利用可能な場合
                 if (item.uri != null) {
-                    val uri = item.uri
- // 5枚制限に達している場合は、キャッシュファイルを作らずに返す
-                    if (selectedImageUrisList.size >= 5) {
-                        Toast.makeText(requireContext(), "Max 5 images allowed", Toast.LENGTH_SHORT).show()
-                        return
-                    }
-                    // キャッシュディレクトリにコピー (use ブロックで IS/OS リークを防ぐ)
-                    try {
-                        val cacheDir = java.io.File(requireContext().cacheDir, "clipboard")
-                        if (!cacheDir.exists()) cacheDir.mkdirs()
-                        val cachedFile = java.io.File(cacheDir, "IMG_${System.currentTimeMillis()}.jpg")
-                        val inputStream = requireContext().contentResolver.openInputStream(uri)
-                        if (inputStream == null) {
-                            Toast.makeText(requireContext(), getString(R.string.clipboard_image_fetch_failed), Toast.LENGTH_SHORT).show()
-                            return
-                        }
-                        inputStream.use { input ->
-                            java.io.FileOutputStream(cachedFile).use { output ->
-                                input.copyTo(output)
-                            }
-                        }
-
-                        // FileProviderでURIを取得
-                        val fileUri = androidx.core.content.FileProvider.getUriForFile(
-                            requireContext(),
-                            "${requireContext().packageName}.fileprovider",
-                            cachedFile
-                        )
-                        selectedImageUrisList = selectedImageUrisList + fileUri.toString()
-                        updateMediaPreview()
-                        Toast.makeText(requireContext(), getString(R.string.clipboard_image_pasted, selectedImageUrisList.size, 5), Toast.LENGTH_SHORT).show()
-                        Log.d("ChatFragment", "Image pasted from clipboard: ${cachedFile.absolutePath}")
-                    } catch (e: Exception) {
-                        Log.e("ChatFragment", "Error processing clipboard URI", e)
-                        Toast.makeText(requireContext(), getString(R.string.clipboard_image_fetch_failed), Toast.LENGTH_SHORT).show()
-                    }
+                    processClipboardImageUri(item.uri)
                 } else if (item.text != null) {
                     // テキストがコピーされている場合（テキストURLなど）
                     val text = item.text.toString()
                     if (text.startsWith("content://") || text.startsWith("file://")) {
                         try {
                             val uri = Uri.parse(text)
-                            // 複数画像リストに追加（最大5枚まで）
-                            if (selectedImageUrisList.size < 5) {
-                                selectedImageUrisList = selectedImageUrisList + uri.toString()
-                                updateMediaPreview()
-                                Toast.makeText(requireContext(), getString(R.string.clipboard_uri_pasted, selectedImageUrisList.size, 5), Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(requireContext(), "Max 5 images allowed", Toast.LENGTH_SHORT).show()
-                            }
+                            processClipboardImageUri(uri)
                         } catch (e: Exception) {
                             Log.e("ChatFragment", "Invalid URI in clipboard", e)
                             Toast.makeText(requireContext(), getString(R.string.clipboard_invalid_uri), Toast.LENGTH_SHORT).show()
@@ -4138,6 +4106,44 @@ class ChatFragment : Fragment() {
         } catch (e: Exception) {
             Log.e("ChatFragment", "Error accessing clipboard", e)
             Toast.makeText(requireContext(), getString(R.string.clipboard_access_failed), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun processClipboardImageUri(uri: android.net.Uri) {
+        // 5枚制限に達している場合は、キャッシュファイルを作らずに返す
+        if (selectedImageUrisList.size >= 5) {
+            Toast.makeText(requireContext(), "Max 5 images allowed", Toast.LENGTH_SHORT).show()
+            return
+        }
+        // キャッシュディレクトリにコピー (use ブロックで IS/OS リークを防ぐ)
+        try {
+            val cacheDir = java.io.File(requireContext().cacheDir, "clipboard")
+            if (!cacheDir.exists()) cacheDir.mkdirs()
+            val cachedFile = java.io.File(cacheDir, "IMG_${System.currentTimeMillis()}.jpg")
+            val inputStream = requireContext().contentResolver.openInputStream(uri)
+            if (inputStream == null) {
+                Toast.makeText(requireContext(), getString(R.string.clipboard_image_fetch_failed), Toast.LENGTH_SHORT).show()
+                return
+            }
+            inputStream.use { input ->
+                java.io.FileOutputStream(cachedFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+
+            // FileProviderでURIを取得
+            val fileUri = androidx.core.content.FileProvider.getUriForFile(
+                requireContext(),
+                "${requireContext().packageName}.fileprovider",
+                cachedFile
+            )
+            selectedImageUrisList = selectedImageUrisList + fileUri.toString()
+            updateMediaPreview()
+            Toast.makeText(requireContext(), getString(R.string.clipboard_image_pasted, selectedImageUrisList.size, 5), Toast.LENGTH_SHORT).show()
+            Log.d("ChatFragment", "Image pasted from clipboard: ${cachedFile.absolutePath}")
+        } catch (e: Exception) {
+            Log.e("ChatFragment", "Error processing clipboard URI", e)
+            Toast.makeText(requireContext(), getString(R.string.clipboard_image_fetch_failed), Toast.LENGTH_SHORT).show()
         }
     }
 
