@@ -507,6 +507,11 @@ static std::string generate_loop(JNIEnv *env, NezumiLlamaCtx *nc,
         llama_sampler_accept(nc->sampler, token);
 
         std::string piece = token_to_piece(nc, token);
+        // 最初の数トークンだけ生 ID と文字列を出して、` ループの実体を確認する
+        if (result.size() < 16)
+        {
+            LOGI("generate_loop: early token id=%d piece='%s' (hex)", token, piece.c_str());
+        }
         result += piece;
 
         // stop word 判定（複数トークンに跨る場合を考慮してローリングバッファで判定）
@@ -672,7 +677,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     jstring j_cache_type_k,
     jstring j_cache_type_v,
     jstring j_gpu_backend,
-    jint image_max_tokens)
+    jint image_max_tokens,
+    jboolean projector_use_gpu)
 {
     std::call_once(g_backend_init_once, []()
                    {
@@ -797,18 +803,23 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
         mtmd_helper_log_set(nezumi_ggml_log_callback, nullptr);
 
         mtmd_context_params mctx_params = mtmd_context_params_default();
-        mctx_params.use_gpu = gpu_layers > 0;
+        // プロジェクター (mmproj) の GPU 利用。UI との競合を避けるため
+        // ユーザーがオフにした場合は CPU で画像エンコードする。
+        // LLM 側が GPU を使っていない場合は強制的に CPU。
+        const bool projector_on_gpu = projector_use_gpu && gpu_layers > 0;
+        mctx_params.use_gpu = projector_on_gpu;
         mctx_params.n_threads = n_threads;
         // CPU 上の CLIP Flash Attention は ARM で数値が壊れ、画像後の生成が
         // 多言語の破片になることがある。GPU オフロード時のみ LLM 側と同じ FA を使う。
-        mctx_params.flash_attn_type = gpu_layers > 0
+        mctx_params.flash_attn_type = projector_on_gpu
                                           ? cparams.flash_attn_type
                                           : LLAMA_FLASH_ATTN_TYPE_DISABLED;
         mctx_params.warmup = false; // 起動時間短縮のため warmup は行わない
         // --image-max-tokens 相当: 動的解像度ビジョンモデルで 1 画像が使える
         // 最大トークン数。デフォルト 256 (モバイルでは 1472^2 級の ViT は遅すぎて
         // 不安定なため)。<= 0 のときは従来動作と同じ 256 にフォールバックする。
-        mctx_params.image_max_tokens = image_max_tokens > 0 ? image_max_tokens : 256;
+        // TEMP: force lower image token budget to diagnose non-consecutive mrope positions
+        mctx_params.image_max_tokens = 128; // image_max_tokens > 0 ? image_max_tokens : 256;
 
         nc->mtmd_ctx = mtmd_init_from_file(mmproj_path, model, mctx_params);
         env->ReleaseStringUTFChars(j_mmproj_path, mmproj_path);
@@ -1417,6 +1428,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
         const auto chunk_type = mtmd_input_chunk_get_type(chunk);
         const size_t n_tok = mtmd_input_chunk_get_n_tokens(chunk);
         const bool is_media = (chunk_type != MTMD_INPUT_CHUNK_TYPE_TEXT);
+        LOGI("media_chunk[%zu]: type=%s n_tok=%zu n_past_before=%d",
+             i, is_media ? "media" : "text", n_tok, static_cast<int>(new_n_past));
 
         auto t0 = std::chrono::steady_clock::now();
         llama_pos chunk_new_past = new_n_past;
@@ -1424,6 +1437,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
                                                     new_n_past, /* seq_id */ 0,
                                                     media_n_batch, /* logits_last */ true,
                                                     &chunk_new_past);
+        LOGI("media_chunk[%zu]: n_past_after=%d ret=%d",
+             i, static_cast<int>(chunk_new_past), ret);
         auto t1 = std::chrono::steady_clock::now();
         if (ret != 0)
         {

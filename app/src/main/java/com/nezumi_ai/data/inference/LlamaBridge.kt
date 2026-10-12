@@ -61,6 +61,7 @@ object LlamaBridge {
      * @param seed 乱数シード（-1 でランダム）
      * @param gpuBackend llama.cpp GPU バックエンド (CPU / OPENCL / VULKAN)
      * @param imageMaxTokens 1 画像が使える最大トークン数 (--image-max-tokens 相当。0 以下でデフォルト 256)
+     * @param projectorUseGpu マルチモーダルプロジェクター (mmproj) を GPU に載せるか。false で CPU（UI 競合回避）
      * @return ネイティブコンテキストポインタ（0 = 失敗）
      */
     external fun llamaInit(
@@ -85,7 +86,8 @@ object LlamaBridge {
         cacheTypeK: String,
         cacheTypeV: String,
         gpuBackend: String,
-        imageMaxTokens: Int
+        imageMaxTokens: Int,
+        projectorUseGpu: Boolean
     ): Long
 
     /** 直近の llamaInit 失敗時に llama.cpp が出力した ERROR ログ。 */

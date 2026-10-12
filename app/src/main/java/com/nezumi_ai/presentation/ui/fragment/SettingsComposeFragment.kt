@@ -159,6 +159,7 @@ class SettingsComposeFragment : Fragment() {
     internal var llamaCppUBatchSize by mutableStateOf(512)
     // マルチモーダル (mtmd) の画像最大トークン数。0 = デフォルト (256)。
     internal var llamaCppImageMaxTokens by mutableStateOf(0)
+    internal var llamaCppProjectorUseGpu by mutableStateOf(true)
     internal var llamaCppKvUnified by mutableStateOf(true)
     private var llamaCppNKeep by mutableStateOf(0)
     internal var llamaCppRopeFreqBase by mutableStateOf(0.0f)
@@ -818,6 +819,7 @@ class SettingsComposeFragment : Fragment() {
                     append(llamaCppBatchSize); append('|')
                     append(llamaCppUBatchSize); append('|')
                     append(llamaCppImageMaxTokens); append('|')
+                    append(llamaCppProjectorUseGpu); append('|')
                     append(llamaCppKvUnified); append('|')
                     append(llamaCppNKeep); append('|')
                     append(llamaCppRopeFreqBase); append('|')
@@ -1873,6 +1875,7 @@ class SettingsComposeFragment : Fragment() {
             llamaCppBatchSize = batchSize
             llamaCppUBatchSize = uBatchSize
             llamaCppImageMaxTokens = PreferencesHelper.getLlamaCppImageMaxTokens(requireContext())
+            llamaCppProjectorUseGpu = PreferencesHelper.getLlamaCppProjectorUseGpu(requireContext())
             llamaCppKvUnified = settingsRepository.getLlamaCppKvUnified()
             llamaCppNKeep = nKeep
             llamaCppRopeFreqBase = ropeFreqBase
@@ -1974,6 +1977,7 @@ class SettingsComposeFragment : Fragment() {
         settingsRepository.updateLlamaCppBatchSize(llamaCppBatchSize)
         settingsRepository.updateLlamaCppUBatchSize(llamaCppUBatchSize)
         PreferencesHelper.setLlamaCppImageMaxTokens(requireContext(), llamaCppImageMaxTokens)
+        PreferencesHelper.setLlamaCppProjectorUseGpu(requireContext(), llamaCppProjectorUseGpu)
         settingsRepository.updateLlamaCppKvUnified(llamaCppKvUnified)
         settingsRepository.updateLlamaCppNKeep(llamaCppNKeep)
         settingsRepository.updateLlamaCppRopeFreqBase(llamaCppRopeFreqBase)

@@ -17,6 +17,7 @@ class LlamaCppContext(
     ropeFreqScale: Float = 1f,
     gpuBackend: String = LlamaCppGpuBackend.CPU,
     imageMaxTokens: Int = 0,
+    projectorUseGpu: Boolean = true,
     seed: Int = -1,
     repeatLastN: Int = 64,
     offloadKqv: Boolean = true,
@@ -48,7 +49,8 @@ class LlamaCppContext(
             cacheTypeK,
             cacheTypeV,
             gpuBackend,
-            imageMaxTokens
+            imageMaxTokens,
+            projectorUseGpu
         )
     } else {
         0L

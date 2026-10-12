@@ -919,6 +919,8 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="settings_internal_batch_size">Internal batch size (n_ubatch)</string>
     <string name="settings_kv_unified">kvUnified</string>
     <string name="settings_kv_unified_desc">Enable the unified KV-cache mode.</string>
+    <string name="settings_projector_use_gpu">Process projector on GPU</string>
+    <string name="settings_projector_use_gpu_desc">Run multimodal projector (mmproj) image encoding on GPU. Turn off to use CPU and reduce UI lag from GPU contention during inference. Takes effect after model reload.</string>
     <string name="settings_rope_base">RoPE frequency base</string>
     <string name="settings_rope_base_hint">0 = auto</string>
     <string name="settings_rope_scale">RoPE frequency scale</string>

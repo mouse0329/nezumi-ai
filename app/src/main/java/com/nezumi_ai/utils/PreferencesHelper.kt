@@ -29,6 +29,7 @@ object PreferencesHelper {
     private const val KEY_THINKING_EFFORT = "thinking_effort"
     private const val KEY_REQUIRE_MULTIMODAL = "require_multimodal"
     private const val KEY_LLAMACPP_IMAGE_MAX_TOKENS = "llamacpp_image_max_tokens"
+    private const val KEY_LLAMACPP_PROJECTOR_USE_GPU = "llamacpp_projector_use_gpu"
     private const val KEY_LLAMACPP_THREADS_BATCH = "llamacpp_threads_batch"
     private const val KEY_LLAMACPP_REPEAT_PENALTY = "llamacpp_repeat_penalty"
     private const val KEY_LLAMACPP_REPEAT_LAST_N = "llamacpp_repeat_last_n"
@@ -386,6 +387,19 @@ object PreferencesHelper {
     fun setLlamaCppImageMaxTokens(context: Context, tokens: Int) {
         getSharedPreferences(context).edit()
             .putInt(KEY_LLAMACPP_IMAGE_MAX_TOKENS, tokens.coerceIn(0, 8192)).apply()
+    }
+
+    /**
+     * マルチモーダルプロジェクター (mmproj) を GPU にオフロードするか。
+     * false のときは CPU で画像エンコードし、UI との GPU 競合を避ける。
+     * 既定は true（従来どおり LLM が GPU ならプロジェクターも GPU）。
+     */
+    fun getLlamaCppProjectorUseGpu(context: Context): Boolean =
+        getSharedPreferences(context).getBoolean(KEY_LLAMACPP_PROJECTOR_USE_GPU, true)
+
+    fun setLlamaCppProjectorUseGpu(context: Context, value: Boolean) {
+        getSharedPreferences(context).edit()
+            .putBoolean(KEY_LLAMACPP_PROJECTOR_USE_GPU, value).apply()
     }
 
     fun getLlamaCppThreadsBatch(context: Context): Int =

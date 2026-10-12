@@ -564,6 +564,33 @@ internal fun SettingsComposeFragment.GgufLlamaCppSettingsCard(settingsSearchJump
                             )
                         }
 
+                        // プロジェクター (mmproj) の GPU オフロード。
+                        // オフにすると画像エンコードを CPU で行い、UI との GPU 競合による画面遅延を避ける。
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(id = R.string.settings_projector_use_gpu),
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = stringResource(id = R.string.settings_projector_use_gpu_desc),
+                                    color = colorResource(id = R.color.text_secondary),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            Switch(
+                                checked = llamaCppProjectorUseGpu,
+                                onCheckedChange = { llamaCppProjectorUseGpu = it },
+                                colors = nezumiSwitchColors()
+                            )
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,

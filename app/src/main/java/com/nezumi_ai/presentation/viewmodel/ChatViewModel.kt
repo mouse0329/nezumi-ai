@@ -5461,17 +5461,23 @@ class ChatViewModel(
         enableToolCalling: Boolean = false,
         availableSkills: List<Skill> = emptyList()
     ): String? {
-        // テンプレートがある場合は一つ前のコミットと同じネイティブ適用パスを使う。
-        // テンプレートが本当にないモデル (GPT-2 等) だけ、既定フォールバックを避けて
-        // プレーンテキストで履歴を残す。
-        val hasExplicit = requireModelManager().hasExplicitChatTemplate()
+        // プレーン (GPT-2 相当) 経路にする条件:
+        //   1. ユーザーが「手動テンプレート」を選び、本文が空 → ユーザーの意図どおり GPT-2 挙動
+        //      (GGUF メタデータに chat_template があっても無視する)
+        //   2. ユーザー指定もなく、GGUF メタデータにも chat_template が無い
+        // hasExplicitChatTemplate() は判定が狭いので使わない。
+        val selection = if (modelPath.isNotBlank()) {
+            runCatching { PromptTemplateStore.getSelection(appContext, modelPath) }.getOrNull()
+        } else null
+        val userWantsPlain = selection?.mode == PromptTemplateStore.MODE_CUSTOM &&
+            selection.customTemplate.isBlank()
         val hasMetadataTemplate = modelPath.isNotBlank() && runCatching {
             com.nezumi_ai.utils.GgufMetadataReader.readChatTemplate(File(modelPath))
         }.getOrNull()?.isNotBlank() == true
         val hasUserTemplate = modelPath.isNotBlank() && runCatching {
             PromptTemplateStore.resolveTemplate(appContext, modelPath)
         }.getOrNull()?.isNotBlank() == true
-        if (!hasExplicit && !hasMetadataTemplate && !hasUserTemplate) {
+        if (userWantsPlain || (!hasMetadataTemplate && !hasUserTemplate)) {
             val sb = StringBuilder()
             val sys = systemPrompt.trim()
             if (sys.isNotBlank()) {
@@ -5487,7 +5493,11 @@ class ChatViewModel(
                 sb.append("Assistant: ")
             }
             val text = sb.toString().trim()
-            Log.d(TAG, "PROMPT_BUILD: no explicit chat template, using multi-turn plain text (len=${text.length})")
+            Log.d(
+                TAG,
+                "PROMPT_BUILD: plain completion (userWantsPlain=$userWantsPlain, " +
+                    "meta=$hasMetadataTemplate, userTpl=$hasUserTemplate) len=${text.length}"
+            )
             return text.ifBlank { null }
         }
         // ツール有効時はツール定義を OpenAI 互換の tools 配列 JSON として構築し、

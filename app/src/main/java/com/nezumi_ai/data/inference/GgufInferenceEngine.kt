@@ -423,6 +423,9 @@ class GgufInferenceEngine(
                         // ユーザー設定 (0 = デフォルトの 256) をそのままネイティブへ渡す。
                         imageMaxTokens = com.nezumi_ai.utils.PreferencesHelper
                             .getLlamaCppImageMaxTokens(appContext),
+                        // プロジェクターを CPU に固定すると UI との GPU 競合を避けられる。
+                        projectorUseGpu = com.nezumi_ai.utils.PreferencesHelper
+                            .getLlamaCppProjectorUseGpu(appContext),
                         seed = seed,
                         repeatLastN = repeatLastN,
                         offloadKqv = offloadKqv,
@@ -878,7 +881,12 @@ class GgufInferenceEngine(
                 lastSessionId = sessionId
             }
 
+
             Log.d(TAG, "GGUF inference start: session=$sessionId promptLen=${prompt.length} images=${images.size}")
+            images.forEachIndexed { idx, bmp ->
+                Log.d(TAG, "image[$idx]: ${bmp.width}x${bmp.height} config=${bmp.config}")
+            }
+            Log.d(TAG, "projectorUseGpu=${com.nezumi_ai.utils.PreferencesHelper.getLlamaCppProjectorUseGpu(appContext)}")
             // 実際にモデルへ渡す生プロンプト全文 (ツール定義を含むネイティブレンダリング結果) を
             // 毎ターン記録する。「raw コンテキストが本当の全てではない」「常に最新にならない」
             // 問題への対応。全文は getLastAppliedPrompt() でも取得可能。
