@@ -1138,6 +1138,11 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="settings_backend_card_title">バックエンド</string>
     <string name="settings_backend_current_format">現在のバックエンド: %1$s</string>
     <string name="settings_inference_params_title">推論パラメータ</string>
+    <string name="settings_inference_reset_defaults">既定値に戻す</string>
+    <string name="settings_inference_reset_confirm_title">推論設定を既定値に戻しますか？</string>
+    <string name="settings_inference_reset_confirm_message">推論パラメータと llama.cpp の設定がすべて既定値に変わります。変更は自動保存されます。</string>
+    <string name="settings_inference_reset_confirm_ok">戻す</string>
+    <string name="settings_inference_reset_cancel">キャンセル</string>
 
     <!-- デバッグ/ログ -->
     <string name="settings_debug_title">デバッグ</string>

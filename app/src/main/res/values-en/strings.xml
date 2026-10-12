@@ -1282,6 +1282,11 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="settings_backend_card_title">Backend</string>
     <string name="settings_backend_current_format">Current backend: %1$s</string>
     <string name="settings_inference_params_title">Inference parameters</string>
+    <string name="settings_inference_reset_defaults">Reset to defaults</string>
+    <string name="settings_inference_reset_confirm_title">Reset inference settings?</string>
+    <string name="settings_inference_reset_confirm_message">All inference and llama.cpp parameters will return to their defaults. Changes are saved automatically.</string>
+    <string name="settings_inference_reset_confirm_ok">Reset</string>
+    <string name="settings_inference_reset_cancel">Cancel</string>
 
     <!-- Debug / log -->
     <string name="settings_debug_title">Debug</string>

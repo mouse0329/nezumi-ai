@@ -257,6 +257,34 @@ internal fun SettingsComposeFragment.InferenceParamsCard(settingsSearchJumpState
             }
 
             // GGUF / llama.cpp 固有設定は別のカードに移動しました
+
+            OutlinedButton(
+                onClick = { inferenceResetDialogVisible = true },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(stringResource(id = R.string.settings_inference_reset_defaults))
+            }
+
+            if (inferenceResetDialogVisible) {
+                AlertDialog(
+                    onDismissRequest = { inferenceResetDialogVisible = false },
+                    title = { Text(stringResource(id = R.string.settings_inference_reset_confirm_title)) },
+                    text = { Text(stringResource(id = R.string.settings_inference_reset_confirm_message)) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            resetInferenceParamsToDefaults()
+                            inferenceResetDialogVisible = false
+                        }) {
+                            Text(stringResource(id = R.string.settings_inference_reset_confirm_ok))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { inferenceResetDialogVisible = false }) {
+                            Text(stringResource(id = R.string.settings_inference_reset_cancel))
+                        }
+                    }
+                )
+            }
         }
     }
 }

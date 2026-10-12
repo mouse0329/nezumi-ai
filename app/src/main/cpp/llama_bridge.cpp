@@ -32,11 +32,14 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <mutex>
 #include <string>
 #include <vector>
 
 #include "llama.h"
+#include "common.h"
+#include "sampling.h"
 #include "chat.h"
 #include "json.hpp"
 #include "mtmd.h"
@@ -137,7 +140,7 @@ struct NezumiLlamaCtx
 {
     llama_model *model = nullptr;
     llama_context *ctx = nullptr;
-    llama_sampler *sampler = nullptr;
+    common_sampler *sampler = nullptr;
     llama_batch batch = {};
 
     // マルチモーダル (mtmd)。mmproj 未指定/ロード失敗時は nullptr のまま。
@@ -349,19 +352,11 @@ static jstring utf8_to_jstring(JNIEnv *env, const std::string &s)
 }
 
 // 1トークンを KV キャッシュ末尾にデコードする。成功時 true。
+// mtmd-cli generate_response と同じ common_batch_add 経路。
 static bool decode_single_token(NezumiLlamaCtx *nc, llama_token token)
 {
-    nc->batch.n_tokens = 1;
-    nc->batch.token[0] = token;
-    if (nc->batch.pos)
-        nc->batch.pos[0] = nc->n_past;
-    if (nc->batch.n_seq_id)
-        nc->batch.n_seq_id[0] = 1;
-    if (nc->batch.seq_id && nc->batch.seq_id[0])
-        nc->batch.seq_id[0][0] = 0;
-    if (nc->batch.logits)
-        nc->batch.logits[0] = 1;
-
+    common_batch_clear(nc->batch);
+    common_batch_add(nc->batch, token, nc->n_past, {0}, true);
     if (llama_decode(nc->ctx, nc->batch) != 0)
         return false;
     nc->n_past += 1;
@@ -393,31 +388,34 @@ static void context_shift(NezumiLlamaCtx *nc)
     LOGI("context_shift: discarded %d tokens, n_past=%d", n_discard, nc->n_past);
 }
 
-// サンプラーを（再）構築する
+// llama.cpp CLI (common/sampling.cpp) の common_sampler を組み立てる。
 static void rebuild_sampler(NezumiLlamaCtx *nc, float temperature, float top_p, int top_k, float repeat_penalty)
 {
     if (nc->sampler)
     {
-        llama_sampler_free(nc->sampler);
+        common_sampler_free(nc->sampler);
         nc->sampler = nullptr;
     }
 
-    // サンプラーチェーン: repeat_penalty → top_k → top_p → temperature → dist/greedy
-    nc->sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
-    llama_sampler_chain_add(nc->sampler,
-                            llama_sampler_init_penalties(
-                                /* n_vocab */ llama_vocab_n_tokens(llama_model_get_vocab(nc->model)),
-                                /* last_n */ nc->repeat_last_n,
-                                /* repeat_penalty */ repeat_penalty,
-                                /* frequency_penalty */ 0.0f,
-                                /* presence_penalty */ 0.0f));
-    llama_sampler_chain_add(nc->sampler, llama_sampler_init_top_k(top_k));
-    llama_sampler_chain_add(nc->sampler, llama_sampler_init_top_p(top_p, /* min_keep */ 1));
-    llama_sampler_chain_add(nc->sampler, llama_sampler_init_temp(temperature));
-    if (nc->seed >= 0)
-        llama_sampler_chain_add(nc->sampler, llama_sampler_init_dist(static_cast<uint32_t>(nc->seed)));
-    else
-        llama_sampler_chain_add(nc->sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+    common_params_sampling sparams;
+    sparams.temp = temperature;
+    sparams.top_p = top_p;
+    sparams.top_k = top_k;
+    sparams.penalty_repeat = repeat_penalty;
+    sparams.penalty_last_n = nc->repeat_last_n;
+    sparams.n_prev = std::max(32, nc->repeat_last_n);
+    sparams.seed = nc->seed >= 0 ? static_cast<uint32_t>(nc->seed) : LLAMA_DEFAULT_SEED;
+
+    try
+    {
+        nc->sampler = common_sampler_init(nc->model, sparams);
+    }
+    catch (const std::exception &e)
+    {
+        LOGE("rebuild_sampler: common_sampler_init failed: %s", e.what());
+        nc->sampler = nullptr;
+        return;
+    }
 
     nc->cached_temp = temperature;
     nc->cached_top_p = top_p;
@@ -425,30 +423,9 @@ static void rebuild_sampler(NezumiLlamaCtx *nc, float temperature, float top_p, 
     nc->cached_repeat_penalty = repeat_penalty;
 }
 
-// トークンを文字列化（special=false で表示用テキストのみ）
 static std::string token_to_piece(NezumiLlamaCtx *nc, llama_token token)
 {
-    char buf[256] = {};
-    int n = llama_token_to_piece(
-        llama_model_get_vocab(nc->model), token, buf, sizeof(buf) - 1,
-        /* lstrip */ 0, /* special */ false);
-    if (n < 0)
-    {
-        const int needed = -n;
-        if (needed <= 0)
-            return "";
-        std::string out(static_cast<size_t>(needed), '\0');
-        const int written = llama_token_to_piece(
-            llama_model_get_vocab(nc->model), token, out.data(), needed,
-            /* lstrip */ 0, /* special */ false);
-        if (written <= 0)
-            return "";
-        out.resize(static_cast<size_t>(written));
-        return out;
-    }
-    if (n == 0)
-        return "";
-    return std::string(buf, n);
+    return common_token_to_piece(nc->ctx, token, /* special */ false);
 }
 
 // 生成ループ本体。プロンプトは既に KV キャッシュへデコード済みの前提。
@@ -463,7 +440,9 @@ static std::string generate_loop(JNIEnv *env, NezumiLlamaCtx *nc,
     {
         rebuild_sampler(nc, temperature, top_p, top_k, repeat_penalty);
     }
-    llama_sampler_reset(nc->sampler);
+    if (!nc->sampler)
+        return "";
+    common_sampler_reset(nc->sampler);
     llama_perf_context_reset(nc->ctx);
 
     const llama_vocab *vocab = llama_model_get_vocab(nc->model);
@@ -498,13 +477,13 @@ static std::string generate_loop(JNIEnv *env, NezumiLlamaCtx *nc,
             }
         }
 
-        llama_token token = llama_sampler_sample(nc->sampler, nc->ctx, /* idx */ -1);
+        llama_token token = common_sampler_sample(nc->sampler, nc->ctx, /* idx */ -1);
         if (llama_vocab_is_eog(vocab, token))
         {
             LOGI("generate_loop: EOG token %d", token);
             break;
         }
-        llama_sampler_accept(nc->sampler, token);
+        common_sampler_accept(nc->sampler, token, true);
 
         std::string piece = token_to_piece(nc, token);
         // 最初の数トークンだけ生 ID と文字列を出して、` ループの実体を確認する
@@ -746,13 +725,20 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     cparams.n_threads = static_cast<int32_t>(n_threads);
     cparams.n_threads_batch = static_cast<int32_t>(n_threads_batch > 0 ? n_threads_batch : n_threads);
     cparams.offload_kqv = offload_kqv == JNI_TRUE;
-    auto cache_type_from_name = [](const std::string &name) {
-        if (name.empty()) return GGML_TYPE_F16;
-        if (nezumi_iequals(name.c_str(), "f32")) return GGML_TYPE_F32;
-        if (nezumi_iequals(name.c_str(), "bf16")) return GGML_TYPE_BF16;
-        if (nezumi_iequals(name.c_str(), "q8_0")) return GGML_TYPE_Q8_0;
-        if (nezumi_iequals(name.c_str(), "q4_0")) return GGML_TYPE_Q4_0;
-        if (nezumi_iequals(name.c_str(), "q5_0")) return GGML_TYPE_Q5_0;
+    auto cache_type_from_name = [](const std::string &name)
+    {
+        if (name.empty())
+            return GGML_TYPE_F16;
+        if (nezumi_iequals(name.c_str(), "f32"))
+            return GGML_TYPE_F32;
+        if (nezumi_iequals(name.c_str(), "bf16"))
+            return GGML_TYPE_BF16;
+        if (nezumi_iequals(name.c_str(), "q8_0"))
+            return GGML_TYPE_Q8_0;
+        if (nezumi_iequals(name.c_str(), "q4_0"))
+            return GGML_TYPE_Q4_0;
+        if (nezumi_iequals(name.c_str(), "q5_0"))
+            return GGML_TYPE_Q5_0;
         return GGML_TYPE_F16;
     };
     cparams.type_k = cache_type_from_name(cache_type_k_str);
@@ -899,7 +885,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaFree(
     }
     if (nc->sampler)
     {
-        llama_sampler_free(nc->sampler);
+        common_sampler_free(nc->sampler);
         nc->sampler = nullptr;
     }
     llama_batch_free(nc->batch);
@@ -1062,6 +1048,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaSample(
     jfloat repeat_penalty)
 {
     auto *nc = reinterpret_cast<NezumiLlamaCtx *>(j_ctx);
+    if (!nc || !nc->ctx)
+        return static_cast<jint>(LLAMA_TOKEN_NULL);
 
     if (!nc->sampler || nc->cached_temp != temperature || nc->cached_top_p != top_p ||
         nc->cached_top_k != top_k || nc->cached_repeat_penalty != repeat_penalty)
@@ -1069,8 +1057,10 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaSample(
         rebuild_sampler(nc, temperature, top_p, top_k, repeat_penalty);
     }
 
-    llama_token token = llama_sampler_sample(nc->sampler, nc->ctx, /* idx */ -1);
-    llama_sampler_accept(nc->sampler, token);
+    if (!nc->sampler)
+        return static_cast<jint>(LLAMA_TOKEN_NULL);
+    llama_token token = common_sampler_sample(nc->sampler, nc->ctx, /* idx */ -1);
+    common_sampler_accept(nc->sampler, token, true);
     return static_cast<jint>(token);
 }
 
@@ -1144,7 +1134,6 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeSetMediaProgressCallback(
     }
 }
 
-
 extern "C" JNIEXPORT void JNICALL
 Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeInterrupt(
     JNIEnv * /* env */,
@@ -1215,27 +1204,15 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
     env->ReleaseStringUTFChars(j_prompt, prompt);
     std::vector<std::string> stop_words = jstring_array_to_vector(env, j_stop_words);
 
-    // プロンプトをトークナイズしてバッチデコード
     // add_special=false: チャットテンプレート適用後の文字列が渡る前提（旧 rn-completion と同じ）
     const llama_vocab *vocab = llama_model_get_vocab(nc->model);
-    int n_tokens_max = static_cast<int>(prompt_str.size()) + 256;
-    std::vector<llama_token> tokens(n_tokens_max);
-    int n_tokens = llama_tokenize(vocab, prompt_str.data(), static_cast<int32_t>(prompt_str.size()),
-                                  tokens.data(), n_tokens_max,
-                                  /* add_special */ false, /* parse_special */ true);
-    if (n_tokens < 0)
-    {
-        // バッファ不足: 必要数が -n_tokens で返る
-        tokens.resize(-n_tokens);
-        n_tokens = llama_tokenize(vocab, prompt_str.data(), static_cast<int32_t>(prompt_str.size()),
-                                  tokens.data(), -n_tokens, false, true);
-    }
+    std::vector<llama_token> tokens = common_tokenize(vocab, prompt_str, /* add_special */ false, /* parse_special */ true);
+    const int n_tokens = static_cast<int>(tokens.size());
     if (n_tokens <= 0)
     {
         LOGE("nativeComplete: tokenize failed");
         return env->NewStringUTF("");
     }
-    tokens.resize(n_tokens);
 
     // コンテキストメーター正確化用に、実際にトークナイズされたプロンプト長を記録する。
     // テキストのみなのでメディアトークンは 0。
@@ -1258,28 +1235,18 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
         }
     }
 
-    // n_batch ずつ分割してデコード
+    // n_batch ずつ分割してデコード（llama-cli / mtmd-cli と同じ common_batch）
     for (int i = 0; i < n_tokens; i += nc->n_batch)
     {
         if (nc->interrupted.load(std::memory_order_acquire))
             break;
-        int chunk = std::min(nc->n_batch, n_tokens - i);
-        nc->batch.n_tokens = chunk;
+        const int chunk = std::min(nc->n_batch, n_tokens - i);
+        common_batch_clear(nc->batch);
         for (int j = 0; j < chunk; ++j)
         {
-            nc->batch.token[j] = tokens[i + j];
-            if (nc->batch.pos)
-                nc->batch.pos[j] = nc->n_past + j;
-            if (nc->batch.n_seq_id)
-                nc->batch.n_seq_id[j] = 1;
-            if (nc->batch.seq_id && nc->batch.seq_id[j])
-                nc->batch.seq_id[j][0] = 0;
-            if (nc->batch.logits)
-                nc->batch.logits[j] = 0;
+            const bool want_logits = (i + j + 1 == n_tokens);
+            common_batch_add(nc->batch, tokens[i + j], nc->n_past + j, {0}, want_logits);
         }
-        bool last_chunk = (i + chunk >= n_tokens);
-        if (nc->batch.logits && last_chunk)
-            nc->batch.logits[chunk - 1] = 1; // 最終トークンのみ logits
         if (llama_decode(nc->ctx, nc->batch) != 0)
         {
             LOGE("nativeComplete: prompt decode failed at offset %d", i);
@@ -1417,7 +1384,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
     // チャンクを個別評価し、メディアチャンクではトークン読込速度を計測してコールバックする
     // (llama.cpp mtmd_helper_eval_chunk_single を利用。print_timings はログのみのため自前計測)
     llama_pos new_n_past = nc->n_past;
-    const int32_t media_n_batch = std::min(nc->n_batch, 64);
+    const int32_t media_n_batch = nc->n_batch;
     const size_t n_chunks = mtmd_input_chunks_size(chunks);
     int32_t eval_ret = 0;
     for (size_t i = 0; i < n_chunks; ++i)
@@ -2022,7 +1989,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
         mtmd_context *mctx = nullptr;
         mtmd_helper_gen_audio *gen = nullptr;
         mtmd_bitmap *speaker = nullptr;
-        llama_sampler *smpl = nullptr;
+        common_sampler *smpl = nullptr;
         ~TtsRes()
         {
             if (gen)
@@ -2030,7 +1997,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
             if (speaker)
                 mtmd_bitmap_free(speaker);
             if (smpl)
-                llama_sampler_free(smpl);
+                common_sampler_free(smpl);
             if (mctx)
                 mtmd_free(mctx);
             if (lctx)
@@ -2138,18 +2105,28 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
         }
     }
 
-    // セマンティックコードのサンプラー (tts.cpp の common_sampler 相当)
-    res.smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
-    llama_sampler_chain_add(res.smpl, llama_sampler_init_top_k(40));
-    llama_sampler_chain_add(res.smpl, llama_sampler_init_top_p(0.9f, 1));
-    llama_sampler_chain_add(res.smpl, llama_sampler_init_temp(0.8f));
-    llama_sampler_chain_add(res.smpl, llama_sampler_init_dist(
-                                          seed < 0 ? LLAMA_DEFAULT_SEED : (uint32_t)seed));
+    // tools/tts/tts.cpp: llama_init->sampler(0) = common_sampler
+    common_params_sampling tts_sparams;
+    tts_sparams.top_k = 40;
+    tts_sparams.top_p = 0.9f;
+    tts_sparams.temp = 0.8f;
+    tts_sparams.seed = seed < 0 ? LLAMA_DEFAULT_SEED : static_cast<uint32_t>(seed);
+    try
+    {
+        res.smpl = common_sampler_init(res.model, tts_sparams);
+    }
+    catch (const std::exception &e)
+    {
+        LOGE("nativeTtsSynthesize: common_sampler_init failed: %s", e.what());
+        return fail("failed to init sampler");
+    }
+    if (!res.smpl)
+        return fail("failed to init sampler");
 
     auto sampleSemantic = [&]() -> llama_token
     {
-        llama_token t = llama_sampler_sample(res.smpl, res.lctx, -1);
-        llama_sampler_accept(res.smpl, t);
+        llama_token t = common_sampler_sample(res.smpl, res.lctx, -1);
+        common_sampler_accept(res.smpl, t, true);
         return t;
     };
 

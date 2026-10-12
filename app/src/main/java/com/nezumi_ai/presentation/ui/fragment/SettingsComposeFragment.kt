@@ -131,6 +131,7 @@ class SettingsComposeFragment : Fragment() {
     private var themeMode by mutableStateOf(PreferencesHelper.THEME_SYSTEM)
     internal var errorDialogMessage by mutableStateOf<String?>(null)
     internal var versionDialogVisible by mutableStateOf(false)
+    internal var inferenceResetDialogVisible by mutableStateOf(false)
     private var aboutDialogVisible by mutableStateOf(false)
     internal var llamaCppThreads by mutableStateOf(InferenceConfig.getDefaultThreadCount())
     internal var maxThreads by mutableStateOf(InferenceConfig.getMaxThreadCount())
@@ -161,7 +162,7 @@ class SettingsComposeFragment : Fragment() {
     internal var llamaCppImageMaxTokens by mutableStateOf(0)
     internal var llamaCppProjectorUseGpu by mutableStateOf(true)
     internal var llamaCppKvUnified by mutableStateOf(true)
-    private var llamaCppNKeep by mutableStateOf(0)
+    internal var llamaCppNKeep by mutableStateOf(0)
     internal var llamaCppRopeFreqBase by mutableStateOf(0.0f)
     internal var llamaCppRopeFreqScale by mutableStateOf(1.0f)
     internal var ropeFreqBaseInput by mutableStateOf("0.0")
@@ -1823,6 +1824,25 @@ class SettingsComposeFragment : Fragment() {
      * ツールコール呼出履歴（時刻・セッション・ツール・クエリ）を表示する。
      */
 
+
+    internal fun resetInferenceParamsToDefaults() {
+        val d = InferenceConfig()
+        contextWindowInput = d.contextWindow.toString()
+        temperatureInput = d.temperature.toString()
+        topPInput = d.topP.toString()
+        topkInput = d.maxTopK.toString()
+        maxTokensInput = d.maxTokens.toString()
+        backendType = d.backendType
+        llamaCppThreads = InferenceConfig.getDefaultThreadCount().coerceIn(1, maxThreads)
+        llamaCppGpuBackend = LlamaCppGpuBackend.CPU
+        llamaCppGpuLayers = d.llamaCppGpuLayers
+        llamaCppBatchSize = d.llamaCppBatchSize
+        llamaCppUBatchSize = d.llamaCppUBatchSize
+        llamaCppKvUnified = d.llamaCppKvUnified
+        llamaCppNKeep = d.llamaCppNKeep
+        llamaCppRopeFreqBase = d.llamaCppRopeFreqBase
+        llamaCppRopeFreqScale = d.llamaCppRopeFreqScale
+    }
 
     /**
      * LogcatRecorder がバックグラウンドで書き続けているログを表示するセクション。
