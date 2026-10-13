@@ -179,6 +179,9 @@ object LlamaBridge {
     /** 進行中の生成を中断する（ネイティブ側のアトミックフラグを立てる）。 */
     external fun nativeInterrupt(ctx: Long)
 
+    /** 診断ログ (DIAG|...) の有効/無効。llamaInit の前に呼ぶ。logcat: adb logcat -s llama_diag */
+    external fun nativeSetDiagEnabled(enabled: Boolean)
+
     /**
      * 中断フラグをクリアする。
      * 推論開始前に必ず呼ぶこと（旧方式と同じ注意点）。

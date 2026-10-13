@@ -44,6 +44,7 @@
 #include "json.hpp"
 #include "mtmd.h"
 #include "mtmd-helper.h"
+#include "llama_diag.h"
 
 #define LOG_TAG "llama_bridge"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -141,7 +142,7 @@ struct NezumiLlamaCtx
     llama_model *model = nullptr;
     llama_context *ctx = nullptr;
     common_sampler *sampler = nullptr;
-    llama_batch batch = {};
+    common_batch batch;
 
     // マルチモーダル (mtmd)。mmproj 未指定/ロード失敗時は nullptr のまま。
     mtmd_context *mtmd_ctx = nullptr;
@@ -193,27 +194,6 @@ struct NezumiLlamaCtx
     int cached_top_k = -1;
     float cached_repeat_penalty = -1.0f;
 };
-
-static void nezumi_batch_clear(llama_batch &batch)
-{
-    batch.n_tokens = 0;
-}
-
-static void nezumi_batch_add(llama_batch &batch, llama_token token, llama_pos pos,
-                             llama_seq_id seq_id, bool output)
-{
-    const int32_t i = batch.n_tokens;
-    batch.token[i] = token;
-    if (batch.pos)
-        batch.pos[i] = pos;
-    if (batch.n_seq_id)
-        batch.n_seq_id[i] = 1;
-    if (batch.seq_id && batch.seq_id[i])
-        batch.seq_id[i][0] = seq_id;
-    if (batch.logits)
-        batch.logits[i] = output;
-    batch.n_tokens = i + 1;
-}
 
 // ─── 内部ヘルパー ─────────────────────────────────────────────────
 
@@ -373,11 +353,13 @@ static jstring utf8_to_jstring(JNIEnv *env, const std::string &s)
 }
 
 // 1トークンを KV キャッシュ末尾にデコードする。成功時 true。
+// mtmd-cli generate_response と同じ common_batch + llama_process 経路。
 static bool decode_single_token(NezumiLlamaCtx *nc, llama_token token)
 {
-    nezumi_batch_clear(nc->batch);
-    nezumi_batch_add(nc->batch, token, nc->n_past, 0, true);
-    if (llama_decode(nc->ctx, nc->batch) != 0)
+    // mtmd-cli generate_response と同じ: batch.add(token, n_past++, 0, true) → llama_process
+    nc->batch.clear();
+    nc->batch.add(token, nc->n_past, 0, true);
+    if (llama_process(nc->ctx, LLAMA_PROCESS_TYPE_DECODE, nc->batch.get()) != 0)
         return false;
     nc->n_past += 1;
     return true;
@@ -498,6 +480,11 @@ static std::string generate_loop(JNIEnv *env, NezumiLlamaCtx *nc,
         }
 
         llama_token token = common_sampler_sample(nc->sampler, nc->ctx, /* idx */ -1);
+        if (i < 3)
+        {
+            NEZUMI_DIAG("DIAG|pos|gen|step=%d|n_past=%d", i, nc->n_past);
+            nezumi_diag::log_logits("gen", nc->ctx, i, token);
+        }
         if (llama_vocab_is_eog(vocab, token))
         {
             LOGI("generate_loop: EOG token %d", token);
@@ -799,7 +786,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     nc->requested_gpu_backend = requested_gpu_backend;
     nc->actual_gpu_backend = actual_gpu_backend;
     nc->gpu_backend_fallback_occurred = gpu_backend_fallback_occurred;
-    nc->batch = llama_batch_init(nc->n_batch, 0, 1); // バッチを事前確保
+    nc->batch = common_batch(ctx); // 生成用バッチ (CLI の ctx.batch 相当)
     env->GetJavaVM(&nc->jvm);
 
     // マルチモーダル (mtmd): mmproj が指定された場合のみ初期化
@@ -809,23 +796,16 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
         mtmd_helper_log_set(nezumi_ggml_log_callback, nullptr);
 
         mtmd_context_params mctx_params = mtmd_context_params_default();
-        // プロジェクター (mmproj) の GPU 利用。UI との競合を避けるため
-        // ユーザーがオフにした場合は CPU で画像エンコードする。
-        // LLM 側が GPU を使っていない場合は強制的に CPU。
-        const bool projector_on_gpu = projector_use_gpu && gpu_layers > 0;
-        mctx_params.use_gpu = projector_on_gpu;
+        // mtmd-cli init_vision_context と同じ既定値に揃える
+        mctx_params.use_gpu = projector_use_gpu == JNI_TRUE;
         mctx_params.n_threads = n_threads;
-        // CPU 上の CLIP Flash Attention は ARM で数値が壊れ、画像後の生成が
-        // 多言語の破片になることがある。GPU オフロード時のみ LLM 側と同じ FA を使う。
-        mctx_params.flash_attn_type = projector_on_gpu
-                                          ? cparams.flash_attn_type
-                                          : LLAMA_FLASH_ATTN_TYPE_DISABLED;
-        mctx_params.warmup = false; // 起動時間短縮のため warmup は行わない
-        // --image-max-tokens 相当: 動的解像度ビジョンモデルで 1 画像が使える
-        // 最大トークン数。デフォルト 256 (モバイルでは 1472^2 級の ViT は遅すぎて
-        // 不安定なため)。<= 0 のときは従来動作と同じ 256 にフォールバックする。
-        // TEMP: force lower image token budget to diagnose non-consecutive mrope positions
-        mctx_params.image_max_tokens = 128; // image_max_tokens > 0 ? image_max_tokens : 256;
+        mctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO; // CLI 既定 (CLIP 側で自動判定)
+        mctx_params.warmup = true;                                 // CLI 既定
+        mctx_params.image_max_tokens = image_max_tokens > 0 ? image_max_tokens : -1; // -1 = モデル metadata
+        NEZUMI_DIAG("DIAG|mtmd_cfg|use_gpu=%d|n_threads=%d|flash_attn_type=%d|warmup=%d|image_max_tokens=%d",
+                    mctx_params.use_gpu ? 1 : 0, mctx_params.n_threads,
+                    static_cast<int>(mctx_params.flash_attn_type), mctx_params.warmup ? 1 : 0,
+                    mctx_params.image_max_tokens);
 
         nc->mtmd_ctx = mtmd_init_from_file(mmproj_path, model, mctx_params);
         env->ReleaseStringUTFChars(j_mmproj_path, mmproj_path);
@@ -849,6 +829,13 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
         LOGW("llamaInit: no usable chat template in GGUF");
     }
 
+    NEZUMI_DIAG("DIAG|llama_cfg|n_ctx=%d|n_batch=%d|n_ubatch=%d|n_threads=%d|n_threads_batch=%d|n_gpu_layers=%d|backend=%s|flash_attn=%d|kv_unified=%d|type_k=%d|type_v=%d|offload_kqv=%d|ctx_shift=%d|rope_freq_base=%.1f|rope_freq_scale_train=%.4f",
+                n_ctx, nc->n_batch, nc->n_ubatch, n_threads, n_threads_batch, gpu_layers,
+                actual_gpu_backend.c_str(), flash_attn_enabled ? 1 : 0, kv_unified ? 1 : 0,
+                static_cast<int>(cparams.type_k), static_cast<int>(cparams.type_v),
+                offload_kqv ? 1 : 0, context_shift_enabled ? 1 : 0,
+                static_cast<double>(cparams.rope_freq_base),
+                static_cast<double>(llama_model_rope_freq_scale_train(model)));
     // backend= には実際に使われたバックエンドを出す（要求値ではない）。
     // フォールバック発生時は requested= も併記し、ログだけで矛盾なく状況が追える
     // ようにする（以前は backend=OPENCL なのに n_gpu_layers=0 という矛盾ログだった）。
@@ -908,7 +895,6 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaFree(
         common_sampler_free(nc->sampler);
         nc->sampler = nullptr;
     }
-    llama_batch_free(nc->batch);
     if (nc->chat_templates)
     {
         common_chat_templates_free(nc->chat_templates);
@@ -1022,23 +1008,10 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaDecode(
         return static_cast<jint>(-1);
     }
 
-    nc->batch.n_tokens = static_cast<int32_t>(len);
+    nc->batch.clear();
     for (int i = 0; i < len; ++i)
-    {
-        nc->batch.token[i] = static_cast<llama_token>(raw[i]);
-        if (nc->batch.pos)
-            nc->batch.pos[i] = nc->n_past + i; // KVキャッシュの現在位置から続ける
-        if (nc->batch.n_seq_id)
-            nc->batch.n_seq_id[i] = 1;
-        if (nc->batch.seq_id && nc->batch.seq_id[i])
-            nc->batch.seq_id[i][0] = 0;
-        if (nc->batch.logits)
-            nc->batch.logits[i] = 0;
-    }
-    if (nc->batch.logits && nc->batch.n_tokens > 0)
-        nc->batch.logits[nc->batch.n_tokens - 1] = 1; // 最後のトークンのみlogitsを計算
-
-    int ret = llama_decode(nc->ctx, nc->batch);
+        nc->batch.add(static_cast<llama_token>(raw[i]), nc->n_past + i, 0, i == len - 1);
+    int ret = llama_process(nc->ctx, LLAMA_PROCESS_TYPE_DECODE, nc->batch.get());
     env->ReleaseIntArrayElements(j_tokens, raw, JNI_ABORT);
 
     if (ret == 0)
@@ -1255,19 +1228,19 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
         }
     }
 
-    // n_batch ずつ分割してデコード
+    // n_batch ずつ分割してデコード（llama-cli / mtmd-cli と同じ common_batch）
     for (int i = 0; i < n_tokens; i += nc->n_batch)
     {
         if (nc->interrupted.load(std::memory_order_acquire))
             break;
         const int chunk = std::min(nc->n_batch, n_tokens - i);
-        nezumi_batch_clear(nc->batch);
+        nc->batch.clear();
         for (int j = 0; j < chunk; ++j)
         {
             const bool want_logits = (i + j + 1 == n_tokens);
-            nezumi_batch_add(nc->batch, tokens[i + j], nc->n_past + j, 0, want_logits);
+            nc->batch.add(tokens[i + j], nc->n_past + j, 0, want_logits);
         }
-        if (llama_decode(nc->ctx, nc->batch) != 0)
+        if (llama_process(nc->ctx, LLAMA_PROCESS_TYPE_DECODE, nc->batch.get()) != 0)
         {
             LOGE("nativeComplete: prompt decode failed at offset %d", i);
             return utf8_to_jstring(env, "");
@@ -1344,59 +1317,55 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
         return env->NewStringUTF("");
     }
 
-    // プロンプト＋メディアマーカーをチャンク化
+    // mtmd-cli eval_message と同じ組み立て: <__media__> で分割し、テキスト/メディアを交互に
+    // mtmd_tokenize_from_parts へ渡す。BOS は会話の先頭 (n_past == 0) のときだけ付ける。
+    const std::string marker = mtmd_default_marker();
+    std::vector<std::string> segments;
+    size_t seg_start = 0;
+    for (size_t pos; (pos = prompt_str.find(marker, seg_start)) != std::string::npos; seg_start = pos + marker.size())
+        segments.push_back(prompt_str.substr(seg_start, pos - seg_start));
+    segments.push_back(prompt_str.substr(seg_start));
+
+    if (segments.size() - 1 != bitmaps.size())
+    {
+        LOGE("nativeCompleteWithMedia: marker/media mismatch markers=%zu bitmaps=%zu",
+             segments.size() - 1, bitmaps.size());
+        for (auto *bmp : bitmaps)
+            mtmd_bitmap_free(bmp);
+        return env->NewStringUTF("");
+    }
+
+    std::vector<mtmd_input_text> texts(segments.size());
+    std::vector<mtmd_input_part> parts;
+    parts.reserve(segments.size() * 2);
+    for (size_t i = 0; i < segments.size(); ++i)
+    {
+        texts[i] = {segments[i].data(), segments[i].size(), /* add_special */ false, /* parse_special */ true};
+        parts.push_back({&texts[i], nullptr});
+        if (i < bitmaps.size())
+            parts.push_back({nullptr, bitmaps[i]});
+    }
+    std::vector<const mtmd_input_part *> parts_ptr;
+    parts_ptr.reserve(parts.size());
+    for (const auto &p : parts)
+        parts_ptr.push_back(&p);
+
     mtmd_input_chunks *chunks = mtmd_input_chunks_init();
-    mtmd_input_text input_text;
-    input_text.text = prompt_str.c_str();
-    input_text.text_len = prompt_str.size();
-    // チャットテンプレート適用済みのプロンプトに BOS を足すと、Qwen VL の
-    // IM-RoPE 位置がずれて画像後の生成が崩れる。
-    const bool chat_templated =
-        prompt_str.find("<|im_start|>") != std::string::npos ||
-        prompt_str.find("<start_of_turn>") != std::string::npos ||
-        prompt_str.find("<|start_header_id|>") != std::string::npos;
-    input_text.add_special = !chat_templated;
-    input_text.parse_special = true;
-
-    int marker_count = 0;
-    for (size_t pos = 0; (pos = prompt_str.find("<__media__>", pos)) != std::string::npos; pos += 11)
-        ++marker_count;
-    LOGI("nativeCompleteWithMedia: n_media=%d markers=%d chat_templated=%d add_special=%d prompt_len=%zu",
-         static_cast<int>(n_media), marker_count, chat_templated ? 1 : 0,
-         input_text.add_special ? 1 : 0, prompt_str.size());
-    if (marker_count != static_cast<int>(bitmaps.size()))
-    {
-        LOGW("nativeCompleteWithMedia: marker/media mismatch markers=%d bitmaps=%zu",
-             marker_count, bitmaps.size());
-    }
-    {
-        auto mpos = prompt_str.find("<__media__>");
-        if (mpos != std::string::npos)
-        {
-            size_t from = mpos > 40 ? mpos - 40 : 0;
-            size_t to = std::min(prompt_str.size(), mpos + 11 + 40);
-            std::string excerpt = prompt_str.substr(from, to - from);
-            for (char &c : excerpt)
-            {
-                if (c == '\n' || c == '\r')
-                    c = ' ';
-            }
-            LOGI("nativeCompleteWithMedia: marker excerpt='%s'", excerpt.c_str());
-        }
-    }
-
-    std::vector<const mtmd_bitmap *> bitmap_ptrs(bitmaps.begin(), bitmaps.end());
-    int32_t tok_ret = mtmd_tokenize(nc->mtmd_ctx, chunks, &input_text, bitmap_ptrs.data(), bitmap_ptrs.size());
+    const bool add_bos = (nc->n_past == 0);
+    const int32_t tok_ret = mtmd_tokenize_from_parts(nc->mtmd_ctx, chunks,
+                                                     parts_ptr.data(), parts_ptr.size(), add_bos);
     // bitmap は tokenize 後に解放してよい（チャンクが必要情報を保持）
     for (auto *bmp : bitmaps)
         mtmd_bitmap_free(bmp);
-
     if (tok_ret != 0)
     {
-        LOGE("nativeCompleteWithMedia: mtmd_tokenize failed ret=%d", tok_ret);
+        LOGE("nativeCompleteWithMedia: mtmd_tokenize_from_parts failed ret=%d", tok_ret);
         mtmd_input_chunks_free(chunks);
         return env->NewStringUTF("");
     }
+    LOGI("nativeCompleteWithMedia: media=%zu add_bos=%d", bitmaps.size(), add_bos ? 1 : 0);
+    NEZUMI_DIAG("DIAG|prompt|media=%zu|add_bos=%d|n_past_before=%d", bitmaps.size(), add_bos ? 1 : 0, nc->n_past);
+    nezumi_diag::log_chunks("prompt", chunks);
 
     // コンテキストメーター正確化用に、実際にトークナイズされた
     // プロンプト + メディアのトークン数を記録する。
@@ -1430,10 +1399,10 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
         nc->n_past = 0;
     }
 
-    // チャンクを個別評価し、メディアチャンクではトークン読込速度を計測してコールバックする
-    // (llama.cpp mtmd_helper_eval_chunk_single を利用。print_timings はログのみのため自前計測)
+    // mtmd-cli eval_message と同じ評価。テキストは mtmd_helper_eval_chunk_single、
+    // メディアは mtmd_batch でエンコードしてから mtmd_helper_decode_image_chunk。
+    // logits は最後のチャンクだけ要求する。
     llama_pos new_n_past = nc->n_past;
-    const int32_t media_n_batch = nc->n_batch;
     const size_t n_chunks = mtmd_input_chunks_size(chunks);
     int32_t eval_ret = 0;
     for (size_t i = 0; i < n_chunks; ++i)
@@ -1444,22 +1413,51 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
         const auto chunk_type = mtmd_input_chunk_get_type(chunk);
         const size_t n_tok = mtmd_input_chunk_get_n_tokens(chunk);
         const bool is_media = (chunk_type != MTMD_INPUT_CHUNK_TYPE_TEXT);
-        LOGI("media_chunk[%zu]: type=%s n_tok=%zu n_past_before=%d",
+        LOGI("eval_chunk[%zu]: type=%s n_tok=%zu n_past_before=%d",
              i, is_media ? "media" : "text", n_tok, static_cast<int>(new_n_past));
 
         auto t0 = std::chrono::steady_clock::now();
         llama_pos chunk_new_past = new_n_past;
-        int32_t ret = mtmd_helper_eval_chunk_single(nc->mtmd_ctx, nc->ctx, chunk,
-                                                    new_n_past, /* seq_id */ 0,
-                                                    media_n_batch, /* logits_last */ true,
-                                                    &chunk_new_past);
-        LOGI("media_chunk[%zu]: n_past_after=%d ret=%d",
-             i, static_cast<int>(chunk_new_past), ret);
-        auto t1 = std::chrono::steady_clock::now();
-        if (ret != 0)
+        if (!is_media)
         {
-            eval_ret = ret;
-            LOGE("nativeCompleteWithMedia: eval_chunk_single failed at %zu ret=%d", i, ret);
+            eval_ret = mtmd_helper_eval_chunk_single(nc->mtmd_ctx, nc->ctx, chunk,
+                                                     new_n_past, /* seq_id */ 0, nc->n_batch,
+                                                     /* logits_last */ i + 1 == n_chunks,
+                                                     &chunk_new_past);
+        }
+        else
+        {
+            mtmd_batch *mb = mtmd_batch_init(nc->mtmd_ctx);
+            if (!mb)
+            {
+                eval_ret = -1;
+            }
+            else
+            {
+                eval_ret = mtmd_batch_add_chunk(mb, chunk);
+                if (eval_ret == 0)
+                    eval_ret = mtmd_batch_encode(mb);
+                float *embd = (eval_ret == 0) ? mtmd_batch_get_output_embd(mb, chunk) : nullptr;
+                if (embd)
+                {
+                    nezumi_diag::log_embd("image", embd, mtmd_input_chunk_get_n_tokens(chunk),
+                                          static_cast<size_t>(llama_model_n_embd_inp(llama_get_model(nc->ctx))));
+                }
+                if (eval_ret == 0 && !embd)
+                    eval_ret = -1;
+                if (eval_ret == 0)
+                    eval_ret = mtmd_helper_decode_image_chunk(nc->mtmd_ctx, nc->ctx, chunk, embd,
+                                                              new_n_past, /* seq_id */ 0, nc->n_batch,
+                                                              &chunk_new_past, nullptr, nullptr);
+                // embd は batch が所有するので decode 後に解放する
+                mtmd_batch_free(mb);
+            }
+        }
+        auto t1 = std::chrono::steady_clock::now();
+        LOGI("eval_chunk[%zu]: n_past_after=%d ret=%d", i, static_cast<int>(chunk_new_past), eval_ret);
+        if (eval_ret != 0)
+        {
+            LOGE("nativeCompleteWithMedia: eval failed at chunk %zu ret=%d", i, eval_ret);
             break;
         }
         new_n_past = chunk_new_past;
@@ -1486,6 +1484,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
         return env->NewStringUTF("");
     }
     nc->n_past = new_n_past;
+    NEZUMI_DIAG("DIAG|pos|eval_done|n_past=%d", nc->n_past);
     LOGI("nativeCompleteWithMedia: eval done n_past=%d (delta from start logged per chunk)", nc->n_past);
 
     std::string result = generate_loop(env, nc, n_predict, temperature, top_p, top_k,
@@ -2262,4 +2261,14 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeClearLastAppliedPrompt(
     jlong j_ctx)
 {
     nezumi_reset_raw_prompt_storage(reinterpret_cast<NezumiLlamaCtx *>(j_ctx));
+}
+
+// 診断ログの有効/無効。llamaInit より前に呼ぶ。
+extern "C" JNIEXPORT void JNICALL
+Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeSetDiagEnabled(
+    JNIEnv * /* env */,
+    jobject /* obj */,
+    jboolean enabled)
+{
+    nezumi_diag::flag().store(enabled == JNI_TRUE, std::memory_order_relaxed);
 }
