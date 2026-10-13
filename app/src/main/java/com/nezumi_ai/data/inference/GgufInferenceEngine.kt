@@ -1463,6 +1463,32 @@ class GgufInferenceEngine(
         //   出力されないバグ)。コールバック経由に切り替えたので、戻り値の
         //   result はもう UI には流さない。
         Log.d(TAG, "generateRound: Starting inference, imagePaths.size=${imagePaths.size}, audioPaths.size=${audioPaths.size}, prompt.length=${prompt.length}")
+        if (imagePaths.isNotEmpty() || audioPaths.isNotEmpty()) {
+            val markerCount = Regex("<__media__>").findAll(prompt).count()
+            val first = prompt.indexOf("<__media__>")
+            val excerpt = if (first >= 0) {
+                val from = (first - 40).coerceAtLeast(0)
+                val to = (first + "<__media__>".length + 40).coerceAtMost(prompt.length)
+                prompt.substring(from, to).replace('\n', '↵')
+            } else {
+                ""
+            }
+            Log.i(
+                TAG,
+                "generateRound MEDIA: images=${imagePaths.size} audio=${audioPaths.size} " +
+                    "markers=$markerCount im_start=${prompt.contains("<|im_start|>")} " +
+                    "start_of_turn=${prompt.contains("<start_of_turn>")} " +
+                    "header_id=${prompt.contains("<|start_header_id|>")}" +
+                    if (excerpt.isNotEmpty()) " excerpt='$excerpt'" else " (no <__media__> in prompt)"
+            )
+            if (markerCount != imagePaths.size + audioPaths.size) {
+                Log.w(
+                    TAG,
+                    "generateRound MEDIA: marker/media count mismatch markers=$markerCount " +
+                        "media=${imagePaths.size + audioPaths.size}"
+                )
+            }
+        }
         // t/s (トークン/秒) が表示されないバグ修正:
         //   以前は streamCallback から PerformanceMonitor.recordToken() を
         //   一切呼んでいなかったため、totalTokens がずっと 0 のままだった。

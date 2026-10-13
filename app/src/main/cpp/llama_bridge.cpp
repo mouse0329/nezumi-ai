@@ -486,10 +486,10 @@ static std::string generate_loop(JNIEnv *env, NezumiLlamaCtx *nc,
         common_sampler_accept(nc->sampler, token, true);
 
         std::string piece = token_to_piece(nc, token);
-        // 最初の数トークンだけ生 ID と文字列を出して、` ループの実体を確認する
-        if (result.size() < 16)
+        // 最初の数トークンだけ生 ID と文字列を出して、画像後の生成崩れを確認する
+        if (result.size() < 64)
         {
-            LOGI("generate_loop: early token id=%d piece='%s' (hex)", token, piece.c_str());
+            LOGI("generate_loop: early token id=%d piece='%s' n_past=%d", token, piece.c_str(), nc->n_past);
         }
         result += piece;
 
@@ -1338,6 +1338,33 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
     input_text.add_special = !chat_templated;
     input_text.parse_special = true;
 
+    int marker_count = 0;
+    for (size_t pos = 0; (pos = prompt_str.find("<__media__>", pos)) != std::string::npos; pos += 11)
+        ++marker_count;
+    LOGI("nativeCompleteWithMedia: n_media=%d markers=%d chat_templated=%d add_special=%d prompt_len=%zu",
+         static_cast<int>(n_media), marker_count, chat_templated ? 1 : 0,
+         input_text.add_special ? 1 : 0, prompt_str.size());
+    if (marker_count != static_cast<int>(bitmaps.size()))
+    {
+        LOGW("nativeCompleteWithMedia: marker/media mismatch markers=%d bitmaps=%zu",
+             marker_count, bitmaps.size());
+    }
+    {
+        auto mpos = prompt_str.find("<__media__>");
+        if (mpos != std::string::npos)
+        {
+            size_t from = mpos > 40 ? mpos - 40 : 0;
+            size_t to = std::min(prompt_str.size(), mpos + 11 + 40);
+            std::string excerpt = prompt_str.substr(from, to - from);
+            for (char &c : excerpt)
+            {
+                if (c == '\n' || c == '\r')
+                    c = ' ';
+            }
+            LOGI("nativeCompleteWithMedia: marker excerpt='%s'", excerpt.c_str());
+        }
+    }
+
     std::vector<const mtmd_bitmap *> bitmap_ptrs(bitmaps.begin(), bitmaps.end());
     int32_t tok_ret = mtmd_tokenize(nc->mtmd_ctx, chunks, &input_text, bitmap_ptrs.data(), bitmap_ptrs.size());
     // bitmap は tokenize 後に解放してよい（チャンクが必要情報を保持）
@@ -1370,6 +1397,8 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
         }
         nc->last_prompt_tokens = total_tokens;
         nc->last_prompt_media_tokens = media_tokens;
+        LOGI("nativeCompleteWithMedia: chunks=%zu total_tokens=%d media_tokens=%d total_pos=%zu n_past_before=%d",
+             n_chunks, total_tokens, media_tokens, mtmd_helper_get_n_pos(chunks), nc->n_past);
     }
 
     // コンテキストに収まるか確認（超過時はクリア）
@@ -1437,6 +1466,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
         return env->NewStringUTF("");
     }
     nc->n_past = new_n_past;
+    LOGI("nativeCompleteWithMedia: eval done n_past=%d (delta from start logged per chunk)", nc->n_past);
 
     std::string result = generate_loop(env, nc, n_predict, temperature, top_p, top_k,
                                        repeat_penalty, stop_words);

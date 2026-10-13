@@ -5526,6 +5526,12 @@ class ChatViewModel(
             }
         }
         val payloadJson = payload.toString()
+        val payloadMarkerCount = countMediaMarkers(payloadJson)
+        Log.i(
+            TAG,
+            "PROMPT_MEDIA: payload markers=$payloadMarkerCount messages=${messages.size} " +
+                "thinking=$enableThinking tools=${toolsJson.isNotBlank()}"
+        )
         // 優先順位:
         //   1. ユーザーが明示的に選択したカスタム / ビルトイン Jinja テンプレート
         //      (ネイティブ llama.cpp minja でレンダリング)
@@ -5545,6 +5551,7 @@ class ChatViewModel(
                     )
                 }.getOrNull()
                 if (renderedWithUserTemplate != null) {
+                    logRenderedMediaPrompt("user-jinja", payloadMarkerCount, renderedWithUserTemplate)
                     return renderedWithUserTemplate
                 }
                 // レンダリング失敗 (旧 Ollama 形式の残存データ等) は内蔵テンプレートへフォールバック
@@ -5558,7 +5565,41 @@ class ChatViewModel(
         )
         // formatGgufChatTemplate の戻り値はネイティブがレンダリングし、実際にエンジンへ渡す
         // 生プロンプト全文 (ツール定義込み) そのもの。
+        if (rendered != null) {
+            logRenderedMediaPrompt("gguf-builtin", payloadMarkerCount, rendered)
+        }
         return rendered
+    }
+
+    private fun countMediaMarkers(text: String): Int =
+        Regex("<__media__>").findAll(text).count()
+
+    /** テンプレート適用後に `<__media__>` が残っているかを確認する診断ログ。 */
+    private fun logRenderedMediaPrompt(source: String, payloadMarkerCount: Int, rendered: String) {
+        val renderedMarkerCount = countMediaMarkers(rendered)
+        val first = rendered.indexOf("<__media__>")
+        val excerpt = if (first >= 0) {
+            val from = (first - 60).coerceAtLeast(0)
+            val to = (first + "<__media__>".length + 60).coerceAtMost(rendered.length)
+            rendered.substring(from, to).replace('\n', '↵')
+        } else {
+            ""
+        }
+        Log.i(
+            TAG,
+            "PROMPT_MEDIA: rendered source=$source payloadMarkers=$payloadMarkerCount " +
+                "renderedMarkers=$renderedMarkerCount len=${rendered.length} " +
+                "im_start=${rendered.contains("<|im_start|>")} " +
+                "start_of_turn=${rendered.contains("<start_of_turn>")} " +
+                "header_id=${rendered.contains("<|start_header_id|>")}" +
+                if (excerpt.isNotEmpty()) " excerpt='$excerpt'" else ""
+        )
+        if (payloadMarkerCount != renderedMarkerCount) {
+            Log.w(
+                TAG,
+                "PROMPT_MEDIA: marker count changed by template ($payloadMarkerCount -> $renderedMarkerCount)"
+            )
+        }
     }
 
     private suspend fun buildPromptFromMessages(
