@@ -194,6 +194,27 @@ struct NezumiLlamaCtx
     float cached_repeat_penalty = -1.0f;
 };
 
+static void nezumi_batch_clear(llama_batch &batch)
+{
+    batch.n_tokens = 0;
+}
+
+static void nezumi_batch_add(llama_batch &batch, llama_token token, llama_pos pos,
+                             llama_seq_id seq_id, bool output)
+{
+    const int32_t i = batch.n_tokens;
+    batch.token[i] = token;
+    if (batch.pos)
+        batch.pos[i] = pos;
+    if (batch.n_seq_id)
+        batch.n_seq_id[i] = 1;
+    if (batch.seq_id && batch.seq_id[i])
+        batch.seq_id[i][0] = seq_id;
+    if (batch.logits)
+        batch.logits[i] = output;
+    batch.n_tokens = i + 1;
+}
+
 // ─── 内部ヘルパー ─────────────────────────────────────────────────
 
 // mtmd / ggml のログを logcat に流す
@@ -352,11 +373,10 @@ static jstring utf8_to_jstring(JNIEnv *env, const std::string &s)
 }
 
 // 1トークンを KV キャッシュ末尾にデコードする。成功時 true。
-// mtmd-cli generate_response と同じ common_batch_add 経路。
 static bool decode_single_token(NezumiLlamaCtx *nc, llama_token token)
 {
-    common_batch_clear(nc->batch);
-    common_batch_add(nc->batch, token, nc->n_past, {0}, true);
+    nezumi_batch_clear(nc->batch);
+    nezumi_batch_add(nc->batch, token, nc->n_past, 0, true);
     if (llama_decode(nc->ctx, nc->batch) != 0)
         return false;
     nc->n_past += 1;
@@ -1235,17 +1255,17 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeComplete(
         }
     }
 
-    // n_batch ずつ分割してデコード（llama-cli / mtmd-cli と同じ common_batch）
+    // n_batch ずつ分割してデコード
     for (int i = 0; i < n_tokens; i += nc->n_batch)
     {
         if (nc->interrupted.load(std::memory_order_acquire))
             break;
         const int chunk = std::min(nc->n_batch, n_tokens - i);
-        common_batch_clear(nc->batch);
+        nezumi_batch_clear(nc->batch);
         for (int j = 0; j < chunk; ++j)
         {
             const bool want_logits = (i + j + 1 == n_tokens);
-            common_batch_add(nc->batch, tokens[i + j], nc->n_past + j, {0}, want_logits);
+            nezumi_batch_add(nc->batch, tokens[i + j], nc->n_past + j, 0, want_logits);
         }
         if (llama_decode(nc->ctx, nc->batch) != 0)
         {
@@ -1397,7 +1417,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
         }
         nc->last_prompt_tokens = total_tokens;
         nc->last_prompt_media_tokens = media_tokens;
-        LOGI("nativeCompleteWithMedia: chunks=%zu total_tokens=%d media_tokens=%d total_pos=%zu n_past_before=%d",
+        LOGI("nativeCompleteWithMedia: chunks=%zu total_tokens=%d media_tokens=%d total_pos=%d n_past_before=%d",
              n_chunks, total_tokens, media_tokens, mtmd_helper_get_n_pos(chunks), nc->n_past);
     }
 
