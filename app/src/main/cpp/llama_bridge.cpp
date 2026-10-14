@@ -353,15 +353,22 @@ static jstring utf8_to_jstring(JNIEnv *env, const std::string &s)
 }
 
 // 1トークンを KV キャッシュ末尾にデコードする。成功時 true。
-// mtmd-cli generate_response と同じ common_batch + llama_process 経路。
+// mtmd-cli generate_response をベースに、現バージョンの batch_ext + llama_process で実装。
 static bool decode_single_token(NezumiLlamaCtx *nc, llama_token token)
 {
-    // mtmd-cli generate_response と同じ: batch.add(token, n_past++, 0, true) → llama_process
+    // CLI 相当: clear → add(token, n_past++, 0, true) → process(DECODE)
     nc->batch.clear();
-    nc->batch.add(token, nc->n_past, 0, true);
-    if (llama_process(nc->ctx, LLAMA_PROCESS_TYPE_DECODE, nc->batch.get()) != 0)
+    nc->batch.add(token, nc->n_past++, 0, true);
+    const int process_ret = llama_process(nc->ctx, LLAMA_PROCESS_TYPE_DECODE, nc->batch.get());
+    if (process_ret != 0)
+    {
+        NEZUMI_DIAG("DIAG|decode|fail|token=%d|n_past=%d|ret=%d", token, nc->n_past, process_ret);
         return false;
-    nc->n_past += 1;
+    }
+    // 固着切り分け用
+    llama_memory_t mem = llama_get_memory(nc->ctx);
+    const llama_pos pos_max = llama_memory_seq_pos_max(mem, 0);
+    NEZUMI_DIAG("DIAG|decode|ok|token=%d|n_past=%d|pos_max=%d|ret=%d", token, nc->n_past, (int)pos_max, process_ret);
     return true;
 }
 
@@ -1418,43 +1425,20 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeCompleteWithMedia(
 
         auto t0 = std::chrono::steady_clock::now();
         llama_pos chunk_new_past = new_n_past;
-        if (!is_media)
-        {
-            eval_ret = mtmd_helper_eval_chunk_single(nc->mtmd_ctx, nc->ctx, chunk,
-                                                     new_n_past, /* seq_id */ 0, nc->n_batch,
-                                                     /* logits_last */ i + 1 == n_chunks,
-                                                     &chunk_new_past);
-        }
-        else
-        {
-            mtmd_batch *mb = mtmd_batch_init(nc->mtmd_ctx);
-            if (!mb)
-            {
-                eval_ret = -1;
-            }
-            else
-            {
-                eval_ret = mtmd_batch_add_chunk(mb, chunk);
-                if (eval_ret == 0)
-                    eval_ret = mtmd_batch_encode(mb);
-                float *embd = (eval_ret == 0) ? mtmd_batch_get_output_embd(mb, chunk) : nullptr;
-                if (embd)
-                {
-                    nezumi_diag::log_embd("image", embd, mtmd_input_chunk_get_n_tokens(chunk),
-                                          static_cast<size_t>(llama_model_n_embd_inp(llama_get_model(nc->ctx))));
-                }
-                if (eval_ret == 0 && !embd)
-                    eval_ret = -1;
-                if (eval_ret == 0)
-                    eval_ret = mtmd_helper_decode_image_chunk(nc->mtmd_ctx, nc->ctx, chunk, embd,
-                                                              new_n_past, /* seq_id */ 0, nc->n_batch,
-                                                              &chunk_new_past, nullptr, nullptr);
-                // embd は batch が所有するので decode 後に解放する
-                mtmd_batch_free(mb);
-            }
-        }
+        // llama.rn と同じく、テキストもメディアも mtmd_helper_eval_chunk_single に任せる
+        // （画像のエンコード＋M-RoPE 位置計算がヘルパー内部で正しく処理される）
+        eval_ret = mtmd_helper_eval_chunk_single(nc->mtmd_ctx, nc->ctx, chunk,
+                                                 new_n_past, /* seq_id */ 0, nc->n_batch,
+                                                 /* logits_last */ i + 1 == n_chunks,
+                                                 &chunk_new_past);
         auto t1 = std::chrono::steady_clock::now();
         LOGI("eval_chunk[%zu]: n_past_after=%d ret=%d", i, static_cast<int>(chunk_new_past), eval_ret);
+        // 画像トークンの位置が進んでいるか確認
+        llama_memory_t mem = llama_get_memory(nc->ctx);
+        const llama_pos pos_max = llama_memory_seq_pos_max(mem, 0);
+        NEZUMI_DIAG("DIAG|eval_chunk|i=%zu|type=%s|n_past_before=%d|n_past_after=%d|pos_max=%d|ret=%d",
+                    i, is_media ? "media" : "text", static_cast<int>(new_n_past),
+                    static_cast<int>(chunk_new_past), (int)pos_max, eval_ret);
         if (eval_ret != 0)
         {
             LOGE("nativeCompleteWithMedia: eval failed at chunk %zu ret=%d", i, eval_ret);
