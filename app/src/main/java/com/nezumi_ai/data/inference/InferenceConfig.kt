@@ -24,7 +24,10 @@ data class InferenceConfig(
     val llamaCppUBatchSize: Int = 512,  // n_ubatch を独立制御できるように準備
     val llamaCppKvUnified: Boolean = true,  // KV 統合をデフォルトで有効化
     val llamaCppNKeep: Int = 0,  // KV キャッシュ無効化
-    val llamaCppRopeFreqBase: Float = 500000.0f,  // 標準値
+    // 0 = GGUF の rope_freq_base を使う（llama-cli / llama.rn と同じ）。
+    // 500000 は Llama 3 の値であり、Qwen3.5 (10000000) などに強制すると M-RoPE が壊れて
+    // 画像つき生成が同じトークンの繰り返しになる。
+    val llamaCppRopeFreqBase: Float = 0.0f,
     val llamaCppRopeFreqScale: Float = 1.0f,  // 標準値
     /** モデルパスに紐付いたカスタムストップトークン（カンマ区切り）。空の場合はデフォルトのみ使用 */
     val customStopTokens: List<String> = emptyList(),
@@ -46,7 +49,7 @@ data class InferenceConfig(
         val nUBatch: Int = 512,
         val nGpuLayers: Int = 0,
         val kvUnified: Boolean = true,
-        val ropeFreqBase: Float = 500000.0f,
+        val ropeFreqBase: Float = 0.0f,
         val ropeFreqScale: Float = 1.0f
     )
 

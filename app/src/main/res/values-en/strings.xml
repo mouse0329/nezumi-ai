@@ -922,7 +922,7 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="settings_projector_use_gpu">Process projector on GPU</string>
     <string name="settings_projector_use_gpu_desc">Run multimodal projector (mmproj) image encoding on GPU. Turn off to use CPU and reduce UI lag from GPU contention during inference. Takes effect after model reload.</string>
     <string name="settings_rope_base">RoPE frequency base</string>
-    <string name="settings_rope_base_hint">0 = auto</string>
+    <string name="settings_rope_base_hint">0 = use the GGUF value (same as llama.cpp). 500000 breaks Qwen3.5</string>
     <string name="settings_rope_scale">RoPE frequency scale</string>
     <string name="settings_rope_scale_hint">1.0 = default</string>
     <string name="settings_performance_optimization">Performance optimization</string>

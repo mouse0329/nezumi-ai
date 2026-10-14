@@ -816,7 +816,9 @@ class SettingsRepository(
 
     suspend fun updateLlamaCppRopeFreqBase(ropeFreqBase: Float) {
         val current = currentSettings()
-        val clamped = ropeFreqBase.coerceIn(0.0f, 1000000.0f)
+        // Qwen3.5 の学習値は 10000000。旧上限 1000000 だと正しい上書きすら保存できなかった。
+        // 0 は GGUF メタデータ（llama.cpp 既定）。
+        val clamped = ropeFreqBase.coerceIn(0.0f, 100_000_000.0f)
         dao.update(
             current.copy(
                 llamaCppRopeFreqBase = clamped,

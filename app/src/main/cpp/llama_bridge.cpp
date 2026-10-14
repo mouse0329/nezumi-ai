@@ -757,8 +757,13 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     };
     cparams.type_k = cache_type_from_name(cache_type_k_str);
     cparams.type_v = cache_type_from_name(cache_type_v_str);
-    cparams.rope_freq_base = rope_freq_base;   // 0 = モデルのデフォルト
+    cparams.rope_freq_base = rope_freq_base;   // 0 = モデルのデフォルト (llama-cli / llama.rn)
     cparams.rope_freq_scale = rope_freq_scale; // 0 = モデルのデフォルト
+    if (rope_freq_base != 0.0f)
+    {
+        LOGW("llamaInit: RoPE freq_base override %.1f (0 uses GGUF metadata; Qwen3.5 trains at 10000000)",
+             rope_freq_base);
+    }
     cparams.flash_attn_type = flash_attn_enabled ? LLAMA_FLASH_ATTN_TYPE_ENABLED
                                                  : LLAMA_FLASH_ATTN_TYPE_DISABLED;
     cparams.kv_unified = kv_unified ? true : false;

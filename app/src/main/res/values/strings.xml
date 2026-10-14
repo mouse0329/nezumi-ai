@@ -800,7 +800,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="settings_kv_unified">kvUnified</string>
     <string name="settings_kv_unified_desc">KV キャッシュの統合モードを有効化します。</string>
     <string name="settings_rope_base">RoPE周波数基数</string>
-    <string name="settings_rope_base_hint">0 = 自動設定</string>
+    <string name="settings_rope_base_hint">0 = GGUFの値（llama.cppと同じ）。500000を入れるとQwen3.5が壊れる</string>
     <string name="settings_rope_scale">RoPE周波数スケール</string>
     <string name="settings_rope_scale_hint">1.0 = デフォルト</string>
     <string name="settings_llamacpp_advanced_title">上級者向け llama.cpp 設定</string>
