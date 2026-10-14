@@ -1,0 +1,72 @@
+--------- beginning of main
+10-13 22:53:44.394 I/llama_bridge(29618): llamaClearKvCache: done (n_past reset to 0)
+10-13 22:53:44.443 I/llama_bridge(29618): llamaClearKvCache: done (n_past reset to 0)
+10-13 22:53:49.017 I/llama_bridge(29618): llamaClearKvCache: done (n_past reset to 0)
+10-13 22:53:49.028 I/llama_bridge(29618): llamaClearKvCache: done (n_past reset to 0)
+10-13 22:53:49.115 I/llama_bridge(29618): nativeSetTokenCallback: callback installed
+10-13 22:53:49.125 I/llama_bridge(29618): mtmd_group_mergeable_bitmaps: no merging for part index 1
+10-13 22:53:49.125 I/llama_bridge(29618): add_text: <|im_start|>user
+10-13 22:53:49.125 I/llama_bridge(29618): 
+10-13 22:53:49.126 I/llama_bridge(29618): add_text: <|vision_start|>
+10-13 22:53:49.150 I/llama_bridge(29618): add_media: preproc_out has 1 entries, grid_x = 0, grid_y = 0, has_overview = 0
+10-13 22:53:49.150 I/llama_bridge(29618): image_tokens->nx = 14
+10-13 22:53:49.150 I/llama_bridge(29618): image_tokens->ny = 32
+10-13 22:53:49.150 I/llama_bridge(29618): batch_f32 size = 1
+10-13 22:53:49.150 I/llama_bridge(29618): add_text: <|vision_end|>
+10-13 22:53:49.150 I/llama_bridge(29618): add_text: 
+10-13 22:53:49.150 I/llama_bridge(29618): 縺薙ｌ繧定ｦ九※縺上□縺輔＞<|im_end|>
+10-13 22:53:49.150 I/llama_bridge(29618): <|im_start|>assistant
+10-13 22:53:49.150 I/llama_bridge(29618): <think>
+10-13 22:53:49.150 I/llama_bridge(29618): 
+10-13 22:53:49.150 I/llama_bridge(29618): </think>
+10-13 22:53:49.150 I/llama_bridge(29618): 
+10-13 22:53:49.150 I/llama_bridge(29618): 
+10-13 22:53:49.154 I/llama_bridge(29618): nativeCompleteWithMedia: media=1 add_bos=1
+10-13 22:53:49.154 I/llama_diag(29618): DIAG|prompt|media=1|add_bos=1|n_past_before=0
+10-13 22:53:49.154 I/llama_diag(29618): DIAG|chunks|prompt|count=3
+10-13 22:53:49.154 I/llama_diag(29618): DIAG|chunk|prompt|i=0|type=text|n_tok=4|n_pos=4
+10-13 22:53:49.154 I/llama_diag(29618): DIAG|tokens|prompt.0|n=4|hash=ff5948b7b998a13e|head=248045,846,198,248053
+10-13 22:53:49.154 I/llama_diag(29618): DIAG|chunk|prompt|i=1|type=image|n_tok=448|n_pos=32
+10-13 22:53:49.154 I/llama_diag(29618): DIAG|chunk|prompt|i=2|type=text|n_tok=14|n_pos=14
+10-13 22:53:49.154 I/llama_diag(29618): DIAG|tokens|prompt.2|n=14|hash=4dfb3159fd143805|head=248054,198,81681,150615,156958,248046,198,248045,74455,198,248068,271,248069,271
+10-13 22:53:49.154 I/llama_bridge(29618): nativeCompleteWithMedia: chunks=3 total_tokens=466 media_tokens=448 total_pos=50 n_past_before=0
+10-13 22:53:49.154 I/llama_bridge(29618): eval_chunk[0]: type=text n_tok=4 n_past_before=0
+10-13 22:53:53.142 I/llama_bridge(29618): eval_chunk[0]: n_past_after=4 ret=0
+10-13 22:53:53.142 I/llama_bridge(29618): eval_chunk[1]: type=media n_tok=448 n_past_before=4
+10-13 22:53:53.146 I/llama_bridge(29618): mtmd_batch_encode_impl: encoding batch with 1 entries and total 448 tokens
+10-13 22:53:53.156 I/llama_bridge(29618): clip_encode: copying image 1/1 to input buffer (nx=448, ny=1024)
+10-13 22:55:09.242 I/llama_bridge(29618): clip_encode: output embedding shape [2048, 448, 1]
+10-13 22:55:09.247 I/llama_diag(29618): DIAG|embd|image|n_tok=448|n_embd=2048|mean=-0.000890|maxabs=4.0997|nan=0|inf=0
+10-13 22:55:09.250 I/llama_bridge(29618): decoding image batch 1/1, n_tokens_batch = 448
+10-13 22:55:09.270 W/llama_bridge(29618): find_slot: non-consecutive token position 4 after 3 for sequence 0 with 448 new tokens
+10-13 22:55:09.271 W/llama_bridge(29618): find_slot: non-consecutive token position 4 after 3 for sequence 0 with 448 new tokens
+10-13 22:55:59.177 I/llama_bridge(29618): image decoded (batch 1/1) in 49926 ms
+10-13 22:55:59.179 I/llama_bridge(29618): eval_chunk[1]: n_past_after=36 ret=0
+10-13 22:55:59.185 I/llama_bridge(29618): eval_chunk[2]: type=text n_tok=14 n_past_before=36
+10-13 22:55:59.186 W/llama_bridge(29618): find_slot: non-consecutive token position 49 after 4 for sequence 0 with 14 new tokens
+10-13 22:55:59.186 W/llama_bridge(29618): find_slot: non-consecutive token position 49 after 4 for sequence 0 with 14 new tokens
+10-13 22:56:07.518 I/llama_bridge(29618): eval_chunk[2]: n_past_after=50 ret=0
+10-13 22:56:07.522 I/llama_diag(29618): DIAG|pos|eval_done|n_past=50
+10-13 22:56:07.522 I/llama_bridge(29618): nativeCompleteWithMedia: eval done n_past=50 (delta from start logged per chunk)
+10-13 22:56:07.561 I/llama_diag(29618): DIAG|pos|gen|step=0|n_past=50
+10-13 22:56:07.574 I/llama_diag(29618): DIAG|logits|gen|step=0|sampled=220|argmax=220|max=11.247|min=-14.643|nan=0|top5=220:11.247,16:8.693,8210:8.217,15:8.198,318:8.045
+10-13 22:56:07.574 I/llama_bridge(29618): generate_loop: early token id=220 piece=' ' n_past=50
+10-13 22:56:08.734 I/llama_diag(29618): DIAG|pos|gen|step=1|n_past=51
+10-13 22:56:08.737 I/llama_diag(29618): DIAG|logits|gen|step=1|sampled=106639|argmax=106639|max=9.198|min=-12.113|nan=0|top5=106639:9.198,2694:8.916,125665:8.838,71351:8.512,28567:8.240
+10-13 22:56:08.737 I/llama_bridge(29618): generate_loop: early token id=106639 piece='荳雁ｽ・ n_past=51
+10-13 22:56:09.495 I/llama_diag(29618): DIAG|pos|gen|step=2|n_past=52
+10-13 22:56:09.498 I/llama_diag(29618): DIAG|logits|gen|step=2|sampled=30350|argmax=185159|max=9.255|min=-10.774|nan=0|top5=185159:9.255,36530:9.111,236134:8.557,90364:8.493,59306:8.426
+10-13 22:56:09.498 I/llama_bridge(29618): generate_loop: early token id=30350 piece='ﾘｧﾙ・ n_past=52
+10-13 22:56:10.138 I/llama_bridge(29618): generate_loop: early token id=146315 piece='閻ｰ蛹・ n_past=53
+10-13 22:56:10.974 I/llama_bridge(29618): generate_loop: early token id=99040 piece='襍' n_past=54
+10-13 22:56:11.475 I/llama_bridge(29618): generate_loop: early token id=17279 piece='ACHE' n_past=55
+10-13 22:56:12.209 I/llama_bridge(29618): generate_loop: early token id=1197 piece='loat' n_past=56
+10-13 22:56:12.810 I/llama_bridge(29618): generate_loop: early token id=231729 piece='blic' n_past=57
+10-13 22:56:13.433 I/llama_bridge(29618): generate_loop: early token id=106904 piece='蜈亥芦' n_past=58
+10-13 22:56:14.121 I/llama_bridge(29618): generate_loop: early token id=193485 piece='牋ｾ牋ｲ' n_past=59
+10-13 22:56:14.826 I/llama_bridge(29618): generate_loop: early token id=323 piece='se' n_past=60
+10-13 22:56:15.500 I/llama_bridge(29618): generate_loop: early token id=101113 piece='謌門茜逕ｨ' n_past=61
+10-13 22:56:16.138 I/llama_bridge(29618): generate_loop: early token id=24615 piece='unto' n_past=62
+10-13 22:56:16.738 I/llama_bridge(29618): generate_loop: early token id=164707 piece='yesi' n_past=63
+10-13 22:56:17.498 I/llama_bridge(29618): generate_loop: early token id=39353 piece='ehen' n_past=64
+10-13 22:56:20.490 I/llama_bridge(29618): generate_loop: interrupted

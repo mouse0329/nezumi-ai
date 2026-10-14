@@ -198,7 +198,7 @@ class ChatViewModel(
         /** 1 回の生成の上限（ネイティブが onDone を返さない場合の保険） */
         private const val GENERATION_WALL_TIMEOUT_MS = 900_000L
         /** 最初のトークン以降、この時間チャンクが無ければ打ち切り */
-        private const val GENERATION_STALL_TIMEOUT_MS = 180_000L
+        private const val GENERATION_STALL_TIMEOUT_MS = 900_000L
         private const val GENERATION_STALL_CHECK_MS = 5_000L
         // バグ修正 (#binder-thread-pool-starvation): estimateContextUsageChars の
         // 最小起動間隔。これより短い間隔で _messages Flow が再emitされても、

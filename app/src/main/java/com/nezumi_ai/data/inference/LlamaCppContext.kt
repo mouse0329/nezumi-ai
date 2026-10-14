@@ -27,6 +27,7 @@ class LlamaCppContext(
     useMlock: Boolean = false
 ) {
     private var ptr: Long = if (LlamaBridge.isLibraryLoaded()) {
+        LlamaBridge.nativeSetDiagEnabled(true)
         LlamaBridge.llamaInit(
             modelPath,
             nCtx,
