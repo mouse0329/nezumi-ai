@@ -178,6 +178,76 @@ class ReasoningEffortGranularityTest {
         assertTrue(ModelNameHeuristics.usesThinkingEffortVariable("qwen4-something"))
     }
 
+    @Test
+    fun usesThinkingEffortVariable_includesGranite4() {
+        // テンプレート未読時のフォールバック: Granite 4.x は Binary (low / default)。
+        assertTrue(ModelNameHeuristics.usesThinkingEffortVariable("granite-4.2-30b"))
+        assertTrue(ModelNameHeuristics.usesThinkingEffortVariable("ibm-granite/granite-4.2-8b"))
+    }
+
+    // ---- Qwen3.8 公式 chat_template (HF Qwen/Qwen3.8-27B) ----
+
+    /**
+     * Qwen3.8-27B 公式 chat_template.jinja からの抜粋。
+     * - enable_thinking で Thinking ON/OFF を切り替え可能
+     * - reasoning_effort ∈ {xhigh, medium, low} (default: xhigh)
+     * - medium は比較ブランチ無し (命令文を足さない中立値)
+     * Ternary-Bonsai と同じ `not in (...)` 構文だが、公式ソースであることを明示する。
+     */
+    private val qwen38OfficialTemplate = """
+        {%- set reasoning_instructions = '' %}
+        {%- if enable_thinking is undefined or enable_thinking is true %}
+            {%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}
+            {%- if resolved_reasoning_effort not in ('xhigh', 'medium', 'low') %}
+                {{- raise_exception('Unexpected reasoning effort ' ~ reasoning_effort ~ '. Supported types are xhigh (default), medium, and low.') }}
+            {%- endif %}
+            {%- if resolved_reasoning_effort == 'xhigh' %}
+                {%- set reasoning_instructions = 'Reasoning effort is set to xhigh. ...' %}
+            {%- elif resolved_reasoning_effort == 'low' %}
+                {%- set reasoning_instructions = 'Reasoning effort is set to low. ...' %}
+            {%- endif %}
+        {%- endif %}
+        {%- if add_generation_prompt %}
+            {{- '<|im_start|>assistant\n' }}
+            {%- if enable_thinking is defined and enable_thinking is false %}
+                {{- '<think>\n\n</think>\n\n' }}
+            {%- else %}
+                {{- '<think>\n' }}
+            {%- endif %}
+        {%- endif %}
+    """.trimIndent()
+
+    @Test
+    fun qwen38OfficialTemplate_isDetectedAsGradedWithXhighMediumLow() {
+        // Qwen3.8 は Graded {low, medium, xhigh}。Granite Binary や Qwen3.5 None と混同しない。
+        val result = ModelNameHeuristics.parseReasoningEffortGranularity(qwen38OfficialTemplate)
+        assertEquals(
+            ReasoningEffortGranularity.Graded(setOf("xhigh", "medium", "low")),
+            result
+        )
+        assertEquals(
+            listOf("low", "medium", "xhigh"),
+            ModelNameHeuristics.supportedEffortLevels(result)
+        )
+        assertTrue(ModelNameHeuristics.templateSupportsThinkingEffort(qwen38OfficialTemplate))
+        assertTrue(ModelNameHeuristics.templateHasSwitchableThinking(qwen38OfficialTemplate))
+        assertTrue(ModelNameHeuristics.templateDeclaresThinking(qwen38OfficialTemplate))
+    }
+
+    @Test
+    fun granite42Template_hasSwitchableThinkingAndBinaryEffort() {
+        // Granite 4.2: enable_thinking で ON/OFF、effort は Binary (default / low)。
+        assertTrue(ModelNameHeuristics.templateHasSwitchableThinking(
+            "{%- set enable_thinking = enable_thinking if enable_thinking is defined else True %}\n" +
+                granite42Template
+        ))
+        assertTrue(ModelNameHeuristics.templateSupportsThinkingEffort(granite42Template))
+        assertEquals(
+            ReasoningEffortGranularity.Binary,
+            ModelNameHeuristics.parseReasoningEffortGranularity(granite42Template)
+        )
+    }
+
     // ---- `in (...)` タプル所属チェック形式のテンプレート ----
 
     /**

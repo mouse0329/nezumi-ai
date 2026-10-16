@@ -86,6 +86,19 @@ data class ChatMarkupSpec(
  */
 object ChatMarkupSpecExtractor {
 
+    /**
+     * llama.cpp CLI の専用パーサが知っている思考タグ対。
+     * モデル名ではなくテンプレート文字列に出現したときだけ採用する。
+     * (Ministral `[THINK]`、MiniMax `<mm:think>`、Cohere2 `<|START_THINKING|>` など)
+     */
+    private val SPECIALIZED_THINKING_PAIRS: List<Pair<String, String>> = listOf(
+        "[THINK]" to "[/THINK]",
+        "<mm:think>" to "</mm:think>",
+        "<|START_THINKING|>" to "<|END_THINKING|>",
+        "<reasoning>" to "</reasoning>",
+        "<|channel|>analysis<|message|>" to "<|end|>",
+    )
+
     fun extract(template: String): ChatMarkupSpec {
         val thinkingPairs = mutableListOf<Pair<String, String>>()
         if (ToolCallTags.THINK_OPEN in template && ToolCallTags.THINK_CLOSE in template) {
@@ -100,6 +113,12 @@ object ChatMarkupSpecExtractor {
             // 開きだけ宣言されているテンプレ (Gemma 4 のシステム側 <|think|>) も記録する。
             thinkingPairs += ToolCallTags.GEMMA_THINK_TRIGGER to ToolCallTags.THINK_CLOSE_ALT
         }
+        // CLI 専用タグ: テンプレートに実際に書かれている対だけを追加 (モデル名ハードコードなし)。
+        for ((open, close) in SPECIALIZED_THINKING_PAIRS) {
+            if (open in template && close in template) {
+                thinkingPairs += open to close
+            }
+        }
         if (thinkingPairs.isEmpty()) {
             thinkingPairs += ToolCallTags.THINK_OPEN to ToolCallTags.THINK_CLOSE
         }
@@ -112,6 +131,16 @@ object ChatMarkupSpecExtractor {
         }
         if (ToolCallTags.TOOL_CALL_OPEN in template && ToolCallTags.TOOL_CALL_CLOSE in template) {
             toolCallPairs += ToolCallTags.TOOL_CALL_OPEN to ToolCallTags.TOOL_CALL_CLOSE
+        }
+        // LFM / Ministral 系のツールマーカー (テンプレートに出現した場合のみ)。
+        if ("<|tool_call_start|>" in template && "<|tool_call_end|>" in template) {
+            toolCallPairs += "<|tool_call_start|>" to "<|tool_call_end|>"
+        }
+        if ("[TOOL_CALLS]" in template && "[ARGS]" in template) {
+            toolCallPairs += "[TOOL_CALLS]" to "[ARGS]"
+        }
+        if ("<|START_ACTION|>" in template && "<|END_ACTION|>" in template) {
+            toolCallPairs += "<|START_ACTION|>" to "<|END_ACTION|>"
         }
         if (toolCallPairs.isEmpty() && ModelNameHeuristics.templateDeclaresToolSupport(template)) {
             toolCallPairs += ToolCallTags.TOOL_CALL_OPEN to ToolCallTags.TOOL_CALL_CLOSE
@@ -147,6 +176,8 @@ object ChatMarkupSpecExtractor {
                 (template.contains("enable_thinking") || template.contains("thinking"))
         val usesAssistantThinkPrefill =
             template.contains(ToolCallTags.THINK_OPEN) && template.contains("add_generation_prompt")
+        val hasSpecializedThinkingTag =
+            SPECIALIZED_THINKING_PAIRS.any { (open, close) -> open in template && close in template }
         return when {
             hasChannel && ToolCallTags.GEMMA_THINK_TRIGGER in template ->
                 ThinkingPromptStyle.GEMMA4_CHANNEL
@@ -154,9 +185,12 @@ object ChatMarkupSpecExtractor {
                 ThinkingPromptStyle.GEMMA_PREFIX
             usesSoftSwitch && !template.contains("<|/think|>") ->
                 ThinkingPromptStyle.QWEN_COMMAND
+            // enable_thinking がある = 切り替え可能 (Qwen3.5+/Granite/Qwen3.8 等)。
+            // 空 <think></think> プレフィルで OFF を表現する。
             usesEmptyThinkPrefill && template.contains("enable_thinking") ->
                 ThinkingPromptStyle.QWEN_ASSISTANT_PREFILL
-            usesAssistantThinkPrefill || template.contains(ToolCallTags.THINK_OPEN) ->
+            usesAssistantThinkPrefill || template.contains(ToolCallTags.THINK_OPEN) ||
+                hasSpecializedThinkingTag ->
                 ThinkingPromptStyle.ASSISTANT_TAG
             else -> null
         }

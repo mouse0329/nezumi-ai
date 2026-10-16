@@ -271,23 +271,61 @@ object ModelNameHeuristics {
             template.contains("<tool_call>") ||
             template.contains("<function=") ||
             template.contains("<tools>") ||
+            template.contains("<|tool_call_start|>") ||
+            template.contains("[TOOL_CALLS]") ||
+            template.contains("<|START_ACTION|>") ||
             ToolCallTags.GEMMA4_TOOL_CALL_OPEN in template ||
             ToolCallTags.GEMMA4_TOOL_CALL_CLOSE in template
 
     /**
      * chat_template が Thinking 制御を宣言しているか。
      * モデル設定の Thinking トグルは、これが true のときだけ有効化する。
+     *
+     * 切り替え可能 (`enable_thinking`) と常時推論 (CLI 専用タグのみ) の両方を含む。
+     * 常時推論かどうかは [templateHasSwitchableThinking] で区別する。
      */
     fun templateDeclaresThinking(template: String): Boolean {
         if (template.isBlank()) return false
         return template.contains("enable_thinking") ||
             template.contains("reasoning_effort") ||
+            template.contains("low_effort") ||
             ToolCallTags.THINK_OPEN in template ||
             ToolCallTags.GEMMA_THINK_TRIGGER in template ||
             ToolCallTags.QWEN_NO_THINK_COMMAND in template ||
             containsStandaloneQwenThinkCommand(template) ||
-            (ToolCallTags.CHANNEL_OPEN in template && ToolCallTags.CHANNEL_CLOSE in template)
+            (ToolCallTags.CHANNEL_OPEN in template && ToolCallTags.CHANNEL_CLOSE in template) ||
+            // llama.cpp CLI 専用タグ (テンプレートに出現した場合のみ。モデル名ハードコードなし)
+            ("[THINK]" in template && "[/THINK]" in template) ||
+            ("<mm:think>" in template && "</mm:think>" in template) ||
+            ("<|START_THINKING|>" in template && "<|END_THINKING|>" in template) ||
+            // LFM2.5: `List of tools: [` があり `<|tool_list_start|>` が無い (CLI と同じ条件)
+            ("List of tools: [" in template && "<|tool_list_start|>" !in template) ||
+            // Ministral / Mistral Large 3: [SYSTEM_PROMPT]+[TOOL_CALLS]+[ARGS] があり [CALL_ID] が無い
+            (templateContainsMinistralMarkers(template))
     }
+
+    /**
+     * Thinking を ON/OFF 切り替えできるテンプレートか。
+     * `enable_thinking` 変数、または Qwen ソフトスイッチ (`/think` `/no_think`) がある場合 true。
+     * 常時推論モデル (LFM2.5 / Ministral 等) は false → UI トグルは出してもテンプレートが無視する。
+     */
+    fun templateHasSwitchableThinking(template: String): Boolean {
+        if (template.isBlank()) return false
+        if ("enable_thinking" in template) return true
+        if (ToolCallTags.QWEN_NO_THINK_COMMAND in template &&
+            containsStandaloneQwenThinkCommand(template)
+        ) {
+            return true
+        }
+        return false
+    }
+
+    /** Ministral 3 / Mistral Large 3 系テンプレートの CLI と同じ特徴検出。 */
+    private fun templateContainsMinistralMarkers(template: String): Boolean =
+        "[SYSTEM_PROMPT]" in template &&
+            "[TOOL_CALLS]" in template &&
+            "[ARGS]" in template &&
+            "[CALL_ID]" !in template
 
     /**
      * add_generation_prompt 時に `<think>\n` を開いたまま生成を始めるテンプレか。
@@ -330,27 +368,33 @@ object ModelNameHeuristics {
     }
 
     /**
-     * チャットテンプレートが `reasoning_effort` 変数を解釈するかどうか。
-     * (Qwen3.5 / gpt-oss 系など、思考強度をテンプレート経由で制御するモデル。)
-     * 要望: 思考強度 (low / medium / high) の UI 表示とプロンプト注入は、
-     * この判定が true のモデルのみで行う。
+     * チャットテンプレートが思考強度変数を解釈するかどうか。
+     *
+     * - `reasoning_effort`: Qwen3.8 (low/medium/xhigh)、gpt-oss、Granite 4.2 等
+     * - `low_effort`: Granite 4.2 系の別名 (reasoning_effort == "low" にマッピングされる)
+     *
+     * 要望: 思考強度の UI 表示とプロンプト注入は、この判定が true のモデルのみで行う。
+     * Qwen3.5 / 3.6 のように enable_thinking のみのテンプレートは false のまま。
      */
     fun templateSupportsThinkingEffort(template: String): Boolean =
-        template.contains("reasoning_effort")
+        template.contains("reasoning_effort") || template.contains("low_effort")
 
     /**
-     * モデル名が `reasoning_effort` 前提の公式テンプレートを持つ既知ファミリかどうか。
+     * モデル名が思考強度変数前提の公式テンプレートを持つ既知ファミリかどうか。
      * GGUF メタデータが読めない状況 (ロード前 / クラウド) でのフォールバック判定。
      *
-     * 修正: Qwen は 3.5 / 3.6 では reasoning_effort 非対応と実測で判明したため、
-     * [isQwen35OrLaterModelName] ではなく [isQwen38OrLaterModelName] を使う。
+     * - Qwen: 3.5 / 3.6 は非対応と実測で判明したため [isQwen38OrLaterModelName] のみ。
+     * - Granite: 4.x 以降が Binary (low / default) を解釈する。
+     * - gpt-oss: low / medium / high。
+     *
      * テンプレートが読める場合は [templateSupportsThinkingEffort] による実測判定が
      * 常に優先され、ここは読めない場合のみのフォールバックである点に注意。
      */
     fun usesThinkingEffortVariable(modelPathOrName: String): Boolean {
-        val name = modelPathOrName.lowercase()
+        val name = resolveModelNameForCheck(modelPathOrName).lowercase()
         return "gpt-oss" in name || "gpt_oss" in name ||
-            isQwen38OrLaterModelName(name)
+            isQwen38OrLaterModelName(name) ||
+            isGranite4OrLaterModelName(name)
     }
 
     // ---- 思考強度 (reasoning_effort) のテンプレート解析 ----
@@ -391,24 +435,29 @@ object ModelNameHeuristics {
     private val QUOTED_TOKEN_REGEX = Regex("""["']([A-Za-z0-9_\-]+)["']""")
 
     /**
-     * chat_template 文字列を静的にスキャンし、`reasoning_effort` がどの値と
-     * 比較されているかを検出する (GGUF メタデータ `tokenizer.chat_template`
-     * やユーザー選択の Jinja テンプレートに対して使う)。
+     * chat_template 文字列を静的にスキャンし、思考強度の粒度を検出する
+     * (GGUF メタデータ `tokenizer.chat_template` やユーザー選択 Jinja に対して使う)。
      *
      * 判定規則:
-     *  - テンプレートに `reasoning_effort` の言及自体がない → None
-     *  - 比較対象が "low" の 1 種類のみ → Binary
-     *    (Granite 4.2 系の `reasoning_effort == "low"` 二値解釈が該当)
+     *  - `reasoning_effort` も `low_effort` も無い → None
+     *  - `low_effort` のみ (Granite 系の別名) → Binary
+     *  - `reasoning_effort` の比較対象が "low" の 1 種類のみ → Binary
+     *    (Granite 4.2 系の `reasoning_effort == "low"` 二値解釈)
      *  - 複数レベルが個別比較されている → Graded(levels)
-     *    (`==` 比較の列挙、および `in (...)` タプル所属チェックの両方から集める。
-     *    後者は prism-ml/Ternary-Bonsai-2-27B-gguf のように
-     *    `resolved_reasoning_effort not in ('xhigh', 'medium', 'low')` の形で
-     *    未知値を `raise_exception` するテンプレートで使われている)
+     *    (`==` 比較と `in (...)` タプル所属チェックの両方から集める。
+     *    Qwen3.8 公式は `resolved_reasoning_effort not in ('xhigh', 'medium', 'low')`
+     *    の形で、levels = {xhigh, medium, low} になる)
      *  - 言及はあるが比較パターンを読み取れない → 従来互換の 3 値 Graded
+     *
+     * Qwen3.5 / 3.6 は enable_thinking のみで reasoning_effort に言及しないため None。
      */
     fun parseReasoningEffortGranularity(template: String): ReasoningEffortGranularity {
         if (template.isBlank()) return ReasoningEffortGranularity.None
-        if (!template.contains("reasoning_effort")) return ReasoningEffortGranularity.None
+        val hasReasoningEffort = template.contains("reasoning_effort")
+        val hasLowEffortOnly = !hasReasoningEffort && template.contains("low_effort")
+        if (!hasReasoningEffort && !hasLowEffortOnly) return ReasoningEffortGranularity.None
+        if (hasLowEffortOnly) return ReasoningEffortGranularity.Binary
+
         val equalityLevels = REASONING_EFFORT_COMPARISON_REGEX.findAll(template)
             .map { it.groupValues[1].lowercase() }
         val tupleLevels = REASONING_EFFORT_IN_TUPLE_REGEX.findAll(template)
