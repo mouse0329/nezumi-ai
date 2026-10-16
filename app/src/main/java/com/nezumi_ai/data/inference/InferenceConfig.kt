@@ -20,7 +20,7 @@ data class InferenceConfig(
     val llamaCppThreads: Int = getDefaultThreadCount(),
     val llamaCppGpuLayers: Int = 0,
     val llamaCppGpuBackend: String = LlamaCppGpuBackend.CPU,
- val llamaCppBatchSize: Int = 512, // バッチサイズをデフォルトに戻す：32 → 512
+ val llamaCppBatchSize: Int = 1024,
     val llamaCppUBatchSize: Int = 512,  // n_ubatch を独立制御できるように準備
     val llamaCppKvUnified: Boolean = true,  // KV 統合をデフォルトで有効化
     val llamaCppNKeep: Int = 0,  // KV キャッシュ無効化
@@ -45,7 +45,7 @@ data class InferenceConfig(
 ) {
     data class GgufConfig(
         val nThreads: Int = 4,
-        val nBatch: Int = 512,
+        val nBatch: Int = 1024,
         val nUBatch: Int = 512,
         val nGpuLayers: Int = 0,
         val kvUnified: Boolean = true,

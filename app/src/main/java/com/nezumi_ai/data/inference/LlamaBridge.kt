@@ -310,7 +310,7 @@ object LlamaBridge {
      * @param modelPath gguf ファイルの絶対パス
      * @param nCtx コンテキストウィンドウサイズ（0 以下でモデルの context_length を使用）
      * @param nGpuLayers GPU オフロード層数（負値で全層オフロード扱い）
-     * @param nBatch 論理バッチサイズ（0 以下で 512 を使用、計算バッファ見積もりに使用）
+     * @param nBatch 論理バッチサイズ（0 以下で 1024 を使用、計算バッファ見積もりに使用）
      * @param kvCacheType KV キャッシュの型 ("f16" / "f32" / "q8_0" / "q4_0")
      * @return 見積もり結果の JSON 文字列。失敗時は {"ok":false,"error":"..."}
      */

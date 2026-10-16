@@ -320,7 +320,7 @@ namespace
         //   compute_buffer ≈ n_batch * n_embd * 数バイト * 定数係数
         // ここでは 「n_batch * embedding_length * 4 byte(f32) * layer安全係数」
         // を基準に、最低 32MB を確保する形の概算とする。
-        uint32_t n_batch_used = n_batch > 0 ? static_cast<uint32_t>(n_batch) : 512u;
+        uint32_t n_batch_used = n_batch > 0 ? static_cast<uint32_t>(n_batch) : 1024u;
         uint64_t compute_estimate =
             static_cast<uint64_t>(n_batch_used) *
             static_cast<uint64_t>(meta.embedding_length) *

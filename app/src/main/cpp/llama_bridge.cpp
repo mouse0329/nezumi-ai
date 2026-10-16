@@ -132,6 +132,9 @@ static std::vector<ggml_backend_dev_t> nezumi_collect_devices(const char *gpu_ba
         if (fallback_occurred)
             *fallback_occurred = true;
     }
+    // ヌル終端。中身が {nullptr} だけのときは llama.cpp の --device none。
+    // オフロード先 0 台になり、repack 済み CPU バッファは維持される。
+    // NULL を渡すと「全デバイス」になり、n_gpu_layers=0 でも Vulkan0 が選ばれる。
     selected.push_back(nullptr);
     return selected;
 }
@@ -162,7 +165,7 @@ struct NezumiLlamaCtx
     std::string last_applied_prompt;
 
     int n_ctx = 0;
-    int n_batch = 512;
+    int n_batch = 1024;
     int n_ubatch = 512;
     int n_past = 0;                       // KVキャッシュに書き込み済みのトークン数（位置オフセット）
     int32_t last_prompt_tokens = 0;       // 直近リクエストのプロンプトトークン数 (画像・音声含む)
@@ -687,19 +690,30 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     const std::string cache_type_k_str = cache_type_k_chars ? cache_type_k_chars : "";
     const std::string cache_type_v_str = cache_type_v_chars ? cache_type_v_chars : "";
     const std::string requested_gpu_backend = gpu_backend_chars ? gpu_backend_chars : "CPU";
+    const std::string model_path_str = model_path ? model_path : "";
     int gpu_layers = n_gpu_layers;
     bool gpu_backend_fallback_occurred = false;
     std::vector<ggml_backend_dev_t> devices = nezumi_collect_devices(
         requested_gpu_backend.c_str(), &gpu_layers, &gpu_backend_fallback_occurred);
     // フォールバック時は実際に使われたバックエンドを "CPU" として記録する。
     // ログや呼び出し元 (Kotlin) には「要求値」ではなくこちらを返す。
+    // Vulkan が使えてもハイブリッドモデルだから、という理由では立てない。
+    // 立てると UI が「Vulkan を初期化できない」と誤報する。
     const std::string actual_gpu_backend = gpu_backend_fallback_occurred ? "CPU" : requested_gpu_backend;
+    // {nullptr} は --device none。ユーザーが CPU を選んだとき、または要求
+    // バックエンドが無いときだけ true。Vulkan デバイスが入っているときは false。
+    const bool cpu_only_devices = devices.front() == nullptr;
 
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = gpu_layers;
-    // CPU または要求バックエンド未検出時は nullptr（全デバイス + n_gpu_layers=0）。
-    // 空の {nullptr} リストを渡すと llama.cpp がデバイス 0 件でロードに失敗する。
-    mparams.devices = (!devices.empty() && devices.front() != nullptr) ? devices.data() : nullptr;
+    // 常にヌル終端リストを渡す。NULL は全デバイスで、CPU 指定でも
+    // llama_prepare_model_devices が Vulkan0 (Mali) を掴む。Qwen3.5 の
+    // Gated DeltaNet がその経路で壊れ、'@' や空白の繰り返しになる。
+    mparams.devices = devices.data();
+    if (cpu_only_devices)
+    {
+        LOGI("llamaInit: offload devices = none (CPU only)");
+    }
     // mmap/mlock: 新APIでは llama_load_mode で指定する
     if (use_mmap && use_mlock)
         mparams.load_mode = LLAMA_LOAD_MODE_MMAP_MLOCK;
@@ -716,7 +730,15 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     }
     g_capture_load_errors.store(true);
     llama_log_set(nezumi_llama_load_log_callback, nullptr);
-    llama_model *model = llama_model_load_from_file(model_path, mparams);
+    llama_model *model = llama_model_load_from_file(model_path_str.c_str(), mparams);
+    if (!model && cpu_only_devices)
+    {
+        // 一部の llama.cpp はデバイス 0 件を拒否する。NULL で再試行するが
+        // op_offload は切ったままにする（Vulkan をスケジューラで動かさない）。
+        LOGW("llamaInit: --device none was rejected; retrying default devices with op_offload off");
+        mparams.devices = nullptr;
+        model = llama_model_load_from_file(model_path_str.c_str(), mparams);
+    }
     env->ReleaseStringUTFChars(j_model_path, model_path);
     if (gpu_backend_chars)
         env->ReleaseStringUTFChars(j_gpu_backend, gpu_backend_chars);
@@ -734,7 +756,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
 
     llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx = static_cast<uint32_t>(n_ctx);
-    cparams.n_batch = static_cast<uint32_t>(n_batch > 0 ? n_batch : 512);
+    cparams.n_batch = static_cast<uint32_t>(n_batch > 0 ? n_batch : 1024);
     cparams.n_ubatch = static_cast<uint32_t>(n_ubatch > 0 ? n_ubatch : cparams.n_batch);
     cparams.n_threads = static_cast<int32_t>(n_threads);
     cparams.n_threads_batch = static_cast<int32_t>(n_threads_batch > 0 ? n_threads_batch : n_threads);
@@ -767,6 +789,50 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     cparams.flash_attn_type = flash_attn_enabled ? LLAMA_FLASH_ATTN_TYPE_ENABLED
                                                  : LLAMA_FLASH_ATTN_TYPE_DISABLED;
     cparams.kv_unified = kv_unified ? true : false;
+    if (cpu_only_devices || gpu_layers <= 0)
+    {
+        // n_gpu_layers=0 でも op_offload が残ると、プリフィルの GDN が Mali に乗る
+        // （ログ上 splits=388、Vulkan0 compute buffer が数百 MiB）。
+        cparams.op_offload = false;
+        cparams.offload_kqv = false;
+    }
+    // Vulkan の Gated DeltaNet は予約グラフが n_ubatch=512 だと壊れて
+    // 同一トークンを吐き続ける（llama.cpp#27237。1024 以上は正常）。
+    // デバイスは Vulkan のまま。CPU へ落とすと UI が初期化失敗と誤報する。
+    // 1024 でコンテキスト確保に失敗したら元のバッチで再試行する。
+    const uint32_t requested_n_batch = cparams.n_batch;
+    const uint32_t requested_n_ubatch = cparams.n_ubatch;
+    bool vulkan_gdn_batch_bumped = false;
+    if (gpu_layers > 0 && nezumi_iequals(actual_gpu_backend.c_str(), "VULKAN") &&
+        (llama_model_is_hybrid(model) || llama_model_is_recurrent(model)))
+    {
+        constexpr uint32_t k_min_batch = 1024;
+        const uint32_t ctx_limit = cparams.n_ctx == 0 ? k_min_batch : cparams.n_ctx;
+        const uint32_t target = std::min(k_min_batch, ctx_limit);
+        if (cparams.n_batch < target)
+        {
+            LOGW("llamaInit: hybrid model on Vulkan: n_batch %u -> %u "
+                 "(GDN garbage at 512; llama.cpp#27237)",
+                 cparams.n_batch, target);
+            cparams.n_batch = target;
+            vulkan_gdn_batch_bumped = true;
+        }
+        if (cparams.n_ubatch < target)
+        {
+            LOGW("llamaInit: hybrid model on Vulkan: n_ubatch %u -> %u",
+                 cparams.n_ubatch, target);
+            cparams.n_ubatch = target;
+            vulkan_gdn_batch_bumped = true;
+        }
+        if (cparams.n_ubatch > cparams.n_batch)
+            cparams.n_ubatch = cparams.n_batch;
+        if (ctx_limit < k_min_batch)
+        {
+            LOGW("llamaInit: n_ctx=%u < 1024; Qwen3.5 on Vulkan may still repeat tokens. "
+                 "Raise context size to at least 1024.",
+                 ctx_limit);
+        }
+    }
     // Quantized V cache requires flash attention. GPT-2 conservative settings disable FA,
     // so fall back to F16 instead of failing with a misleading init error.
     if (ggml_is_quantized(cparams.type_v) &&
@@ -778,6 +844,15 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_llamaInit(
     }
 
     llama_context *ctx = llama_init_from_model(model, cparams);
+    if (!ctx && vulkan_gdn_batch_bumped)
+    {
+        LOGW("llamaInit: context init failed at n_batch=%u n_ubatch=%u; "
+             "retrying requested %u/%u so Vulkan still comes up",
+             cparams.n_batch, cparams.n_ubatch, requested_n_batch, requested_n_ubatch);
+        cparams.n_batch = requested_n_batch;
+        cparams.n_ubatch = requested_n_ubatch;
+        ctx = llama_init_from_model(model, cparams);
+    }
     g_capture_load_errors.store(false);
     if (!ctx)
     {
@@ -2071,7 +2146,7 @@ Java_com_nezumi_1ai_data_inference_LlamaBridge_nativeTtsSynthesize(
     // コンテキスト。hidden state を音声生成ヘルパーへ渡すため embeddings=true が必須。
     llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx = 4096;
-    cparams.n_batch = 512;
+    cparams.n_batch = 1024;
     cparams.n_ubatch = 512;
     cparams.n_threads = nThreads > 0 ? nThreads : 4;
     cparams.embeddings = true;

@@ -32,7 +32,7 @@ data class SettingsEntity(
         .coerceAtLeast(1),
     val llamaCppGpuLayers: Int = 0,
     val llamaCppGpuBackend: String = "CPU",
-    val llamaCppBatchSize: Int = 512,
+    val llamaCppBatchSize: Int = 1024,
     val llamaCppUBatchSize: Int = 512,
     val llamaCppKvUnified: Boolean = true,
     val llamaCppNKeep: Int = 0,

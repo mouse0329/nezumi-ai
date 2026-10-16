@@ -58,7 +58,7 @@ object MemoryEstimator {
     data class EstimateParams(
         val nCtx: Int = 4096,
         val nGpuLayers: Int = 0,
-        val nBatch: Int = 512,
+        val nBatch: Int = 1024,
         val kvCacheType: KvCacheType = KvCacheType.F16,
     )
 

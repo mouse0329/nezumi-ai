@@ -27,7 +27,7 @@ struct NezumiLlamaCtx
     std::string last_applied_prompt;
 
     int n_ctx = 0;
-    int n_batch = 512;
+    int n_batch = 1024;
     int n_ubatch = 512;
     int n_past = 0;
     int32_t last_prompt_tokens = 0;

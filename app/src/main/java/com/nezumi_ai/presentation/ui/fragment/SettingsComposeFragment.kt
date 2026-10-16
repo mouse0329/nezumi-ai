@@ -156,7 +156,7 @@ class SettingsComposeFragment : Fragment() {
     // ここではビルド定義と同じ静的な集合を使う。
     internal val llamaCppCompiledGpuBackends: Set<String> =
         setOf(LlamaCppGpuBackend.OPENCL, LlamaCppGpuBackend.VULKAN)
-    internal var llamaCppBatchSize by mutableStateOf(512)
+    internal var llamaCppBatchSize by mutableStateOf(1024)
     internal var llamaCppUBatchSize by mutableStateOf(512)
     // マルチモーダル (mtmd) の画像最大トークン数。0 = デフォルト (256)。
     internal var llamaCppImageMaxTokens by mutableStateOf(0)
