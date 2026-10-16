@@ -25,7 +25,22 @@ nezumi-aiのllama.cpp推論エンジンに以下の最適化を実装しまし�
 
 ## 使用方法
 
+### Qwen3.5系でマルチモーダル入力を使う場合
+
+GGUF の Qwen3.5系モデルでは、画像などのマルチモーダル入力を正常に処理するため `n_batch` を **1024** に設定してください。設定項目は `llamaCppBatchSize`（`OptimizationConfig.Config` を使う場合は `batchSize`）です。デバイス別推奨設定の 128～512 はこのケースには適用せず、1024未満に下げないでください。`n_ubatch` は別の設定値です。
+
+`OptimizationConfig` の自動最適化はデバイスによって 128～512 を選ぶため、Qwen3.5系では次のように自動設定を1024へ上書きしてください。
+
+```kotlin
+val optimizationConfig = OptimizationConfig(context)
+val config = optimizationConfig.getConfig(backendType = "GPU")
+optimizationConfig.setManualConfig(config.copy(batchSize = 1024))
+optimizationConfig.autoOptimize = false
+```
+
 ### 1. 自動最適化（推奨）
+
+Qwen3.5系以外では、自動最適化を利用できます。Qwen3.5系のマルチモーダル入力では、上記の `n_batch=1024` への上書きを行ってください。
 
 ```kotlin
 // OptimizationConfigを初期化
