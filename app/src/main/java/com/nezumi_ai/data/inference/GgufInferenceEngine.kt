@@ -1110,7 +1110,22 @@ class GgufInferenceEngine(
                 }
                 val toolResults = mutableListOf<Pair<ToolCall, ToolExecutionResult>>()
                 for (toolCall in parsed.toolCalls) {
-                    val result = toolExecutor.execute(toolCall)
+                    // Bug fix (ツール結果がモデルに届かない):
+                    //   execute が例外を投げるとループが中断し、以降のツールも
+                    //   formatToolResults への結果も欠落する。失敗結果を合成して
+                    //   モデルに必ず戻す。
+                    val result = try {
+                        toolExecutor.execute(toolCall)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Tool execution error: ${toolCall.name}", e)
+                        ToolExecutionResult(
+                            success = false,
+                            payload = mapOf(
+                                "success" to false,
+                                "error" to (e.message ?: e.javaClass.simpleName)
+                            )
+                        )
+                    }
                     toolResults.add(toolCall to result)
                     val status = if (result.success) "success" else "error"
                     trySendBlocking(InferenceStreamProtocol.encodeToolResultChunk(toolCall.name, status))

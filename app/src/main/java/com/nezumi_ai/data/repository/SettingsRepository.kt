@@ -230,21 +230,31 @@ class SettingsRepository(
         }
         val presetToolCallingOn = appContext?.let { ctx ->
             runCatching {
-                val presetId = PreferencesHelper.getCurrentPresetId(ctx)
-                if (presetId.isBlank()) {
-                    // プリセット未選択時は「未設定 = 制約なし」と解釈する。
-                    true
+                // Bug fix (プリセット解除後もツールが使える):
+                //   以前は presetId 空を「未設定 = 制約なし → true」と解釈していたため、
+                //   clearCurrentPreset 後も modelSupportsToolCall が true なモデル
+                //   (Gemma4 / .litertlm / capability ON の GGUF 等) で enableToolCalling が
+                //   立ったままになり、ツールコールが動き続けていた。
+                //   PresetRepository.applyActivePresetToolsSync / clearActiveTools は
+                //   「プリセット無し = ツール OFF」なので、ここも同じ意味にする。
+                if (PreferencesHelper.isPresetDetached(ctx)) {
+                    false
                 } else {
-                    val db = NezumiAiDatabase.getInstance(ctx)
-                    val preset = db.presetDao().getById(presetId)
-                    // preset 取得失敗時は保守的に true にして、モデル側可否のみで判定させる。
-                    preset?.toolCallingEnabled ?: true
+                    val presetId = PreferencesHelper.getCurrentPresetId(ctx)
+                    if (presetId.isBlank()) {
+                        false
+                    } else {
+                        val db = NezumiAiDatabase.getInstance(ctx)
+                        val preset = db.presetDao().getById(presetId)
+                        // プリセット行が消えている等はツール OFF (誤って全解放しない)。
+                        preset?.toolCallingEnabled ?: false
+                    }
                 }
             }.getOrElse {
-                Log.w("SettingsRepository", "Failed to read preset toolCallingEnabled; treating as ON", it)
-                true
+                Log.w("SettingsRepository", "Failed to read preset toolCallingEnabled; treating as OFF", it)
+                false
             }
-        } ?: true
+        } ?: false
         val enableToolCalling = modelSupportsToolCall && presetToolCallingOn
         Log.d(
             "SettingsRepository",

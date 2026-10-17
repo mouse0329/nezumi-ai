@@ -347,9 +347,11 @@ private class WebSearchSchema : ToolSet {
         @ToolParam(description = "Search query text") query: String,
         @ToolParam(description = "Result count 1-20") count: Int?,
         @ToolParam(description = "Page offset 0-9") offset: Int?,
-        @ToolParam(description = "2-letter ISO country code only. Example: JP, US, GB") country: String?,
-        @ToolParam(description = "2-letter language code only. Example: ja, en") searchLang: String?,
-        @ToolParam(description = "Safe search: off, moderate, or strict") safeSearch: String?
+        // enum/短い文字列はクォート無しで出されやすく、Gemma4 LiteRT パーサが落ちるため
+        // 文字列であることと具体例を強調する。
+        @ToolParam(description = "Optional 2-letter ISO country code as a string, e.g. \"JP\" or \"US\". Omit if unknown.") country: String?,
+        @ToolParam(description = "Optional 2-letter language code as a string, e.g. \"ja\" or \"en\". Omit if unknown.") searchLang: String?,
+        @ToolParam(description = "Optional safe search level as a string: \"off\", \"moderate\", or \"strict\". Prefer omitting this parameter unless the user asks.") safeSearch: String?
     ): Map<String, Any?> = emptyMap()
 }
 

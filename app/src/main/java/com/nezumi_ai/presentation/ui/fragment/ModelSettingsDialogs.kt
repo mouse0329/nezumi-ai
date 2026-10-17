@@ -651,20 +651,59 @@ internal fun ModelSettingsFragment.ImportedModelSettingsDialog(model: ModelFileM
                                         when {
                                             // 要望: 手動に切り替えたときは GGUF メタデータの
                                             // テンプレートを自動入力する (編集の出発点)。
+                                            // Bug fix (手動切替でアプリがハング):
+                                            //   以前は onClick (メインスレッド) で
+                                            //   GgufMetadataReader.readChatTemplate を同期実行しており、
+                                            //   大きい GGUF で UI が固まっていた。
+                                            //   ダイアログ開時に読んだ cache を優先し、無いときだけ IO へ逃がす。
                                             id == PromptTemplateStore.MODE_CUSTOM &&
                                                 previousMode != PromptTemplateStore.MODE_CUSTOM -> {
-                                                val ggufTemplate = runCatching {
-                                                    GgufMetadataReader.readChatTemplate(
-                                                        File(modelSettingsDialogModel?.path.orEmpty())
-                                                    )
-                                                }.getOrNull()
-                                                if (!ggufTemplate.isNullOrBlank()) {
-                                                    capabilityDialogTemplateCustom = ggufTemplate
-                                                } else if (capabilityDialogTemplateCustom.isBlank()) {
-                                                    capabilityDialogTemplateCustom =
+                                                val cached = capabilityDialogCachedAutoTemplate
+                                                if (!cached.isNullOrBlank()) {
+                                                    capabilityDialogTemplateCustom = cached
+                                                } else {
+                                                    val modelPath =
+                                                        modelSettingsDialogModel?.path.orEmpty()
+                                                    val fallbackBuiltin =
                                                         PromptTemplateStore.BUILTIN_TEMPLATES
-                                                            .firstOrNull { it.id == previousMode }?.template
+                                                            .firstOrNull { it.id == previousMode }
+                                                            ?.template
                                                             ?: ""
+                                                    if (modelPath.isBlank()) {
+                                                        if (capabilityDialogTemplateCustom.isBlank()) {
+                                                            capabilityDialogTemplateCustom =
+                                                                fallbackBuiltin
+                                                        }
+                                                    } else {
+                                                        viewLifecycleOwner.lifecycleScope.launch {
+                                                            val ggufTemplate =
+                                                                withContext(Dispatchers.IO) {
+                                                                    runCatching {
+                                                                        GgufMetadataReader
+                                                                            .readChatTemplate(
+                                                                                File(modelPath)
+                                                                            )
+                                                                    }.getOrNull()
+                                                                }
+                                                            if (capabilityDialogTemplateMode !=
+                                                                PromptTemplateStore.MODE_CUSTOM
+                                                            ) {
+                                                                return@launch
+                                                            }
+                                                            if (!ggufTemplate.isNullOrBlank()) {
+                                                                capabilityDialogCachedAutoTemplate =
+                                                                    ggufTemplate
+                                                                capabilityDialogTemplateCustom =
+                                                                    ggufTemplate
+                                                            } else if (
+                                                                capabilityDialogTemplateCustom
+                                                                    .isBlank()
+                                                            ) {
+                                                                capabilityDialogTemplateCustom =
+                                                                    fallbackBuiltin
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                             // 要望: GGUF メタデータへ戻したら手動テンプレートは削除する。

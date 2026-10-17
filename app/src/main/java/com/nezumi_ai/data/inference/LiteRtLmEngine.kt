@@ -1470,6 +1470,12 @@ class LiteRtLmEngine(
                                     ?: throw IllegalStateException("Tool response message missing")
                             )
                         }
+                        // Bug fix (Status Code: 3 tool-call パース失敗):
+                        //   Gemma4 形式の壊れた tool call で native が
+                        //   "Failed to parse tool calls from code block" を投げたとき、
+                        //   例外を握りつぶさず上位の generationJob catch へ渡し、
+                        //   callbackFlow を close(e) して UI が生成中のまま残らないようにする。
+                        try {
                         messageFlow.collect { message ->
                             val calls = message.toolCalls
                             if (calls.isNotEmpty()) {
@@ -1559,6 +1565,17 @@ class LiteRtLmEngine(
                                 }
                             }
                         }
+                        } catch (t: Throwable) {
+                            if (t is CancellationException) throw t
+                            val msg = t.message.orEmpty()
+                            Log.e(
+                                TAG,
+                                "messageFlow failed session=$sessionId round=$toolRound: $msg",
+                                t
+                            )
+                            // Status Code: 3 等は上位でモーダル表示するためそのまま再送出
+                            throw if (t is Exception) t else RuntimeException(t)
+                        }
 
                         if (toolCallsInTurn.isEmpty()) {
                             break
@@ -1618,20 +1635,51 @@ class LiteRtLmEngine(
                                             "error"
                                         )
                                     )
+                                    // Bug fix (ツール結果がモデルに届かない):
+                                    //   例外時にスロットを空のままにすると filterNotNull で落ち、
+                                    //   モデル側に対応する ToolResponse が渡らず、次ラウンドで
+                                    //   「呼んだツールの結果が無い」状態になる。失敗も必ず返す。
+                                    val errorPayload = mapOf(
+                                        "success" to false,
+                                        "error" to (e.message ?: e.javaClass.simpleName)
+                                    )
+                                    roundResponseSlots[callIndex] =
+                                        Content.ToolResponse(toolCall.name, errorPayload)
+                                    roundResultSlots[callIndex] = ToolResultCard(
+                                        toolName = toolCall.name.lowercase(),
+                                        success = false,
+                                        payload = errorPayload.mapValues { (_, v) ->
+                                            anyToJsonElement(v)
+                                        }
+                                    )
                                 }
                             }
                         }
                         // すべてのツール実行が完了するまで待機
                         toolJobs.forEach { it.join() }
                         // 呼び出し順 (callIndex) のまま toolResultCards / モデル応答へ追記する。
-                        // 例外で書き込まれなかったスロット (null) はスキップする。
+                        // 例外パスでもスロットは埋めるので、通常は null にならない。
                         synchronized(toolResultCards) {
                             roundResultSlots.forEach { card ->
                                 if (card != null) toolResultCards.add(card)
                             }
                         }
                         val orderedToolResponses: List<Content> = roundResponseSlots.filterNotNull()
-                        pendingToolResponseMessage = Message.Companion.tool(Contents.of(orderedToolResponses))
+                        // 全ツールが例外などで落ちて空になった場合でも、空の tool メッセージを
+                        // 送ると Conversation が壊れるためガードする。
+                        pendingToolResponseMessage = if (orderedToolResponses.isNotEmpty()) {
+                            Message.Companion.tool(Contents.of(orderedToolResponses))
+                        } else {
+                            null
+                        }
+                        if (pendingToolResponseMessage == null) {
+                            Log.w(
+                                TAG,
+                                "No tool responses produced after toolCallsInTurn=" +
+                                    "${toolCallsInTurn.map { it.name }} session=$sessionId"
+                            )
+                            break
+                        }
 
                         // バグ修正 (tool_response が履歴コンテキストに保存されない):
                         //   LiteRt は構造化 API (Message.Companion.tool(...)) でモデルにツール結果を戻すため、

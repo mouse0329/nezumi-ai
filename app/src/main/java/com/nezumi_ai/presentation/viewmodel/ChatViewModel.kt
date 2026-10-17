@@ -1826,6 +1826,12 @@ class ChatViewModel(
             val job = generationJob
             generationJob = null
             _isLoading.value = false
+            // Bug fix (停止中/開始前のステータス不整合):
+            //   ツール実行中に停止すると isLoading だけ false になり、
+            //   _toolCallState が Executing / Result / Responding のまま残る。
+            //   送信ボタンは通常表示に戻るのに、インラインカードや進捗が
+            //   「実行中」のまま固まる。停止時点で同期的にクリアする。
+            _toolCallState.value = null
             job
         }
 
@@ -2145,10 +2151,11 @@ class ChatViewModel(
             // Acquire WakeLock to prevent screen sleep during generation
             acquireScreenWakeLock()
 
-            // Tool Call State マシンをリセット（非同期化して TTFT を短縮）
-            viewModelScope.launch {
-                _toolCallState.value = null
-            }
+            // Tool Call State マシンをリセット。
+            //   以前は viewModelScope.launch で非同期にしていたが、前ターンの
+            //   Executing / Result が開始直後の 1 フレーム残る / 停止直後の開始で
+            //   古い状態が一瞬表示される原因になっていたため同期でクリアする。
+            _toolCallState.value = null
 
             val manager = requireModelManager()
             val selectedModel = getActiveSelectedModel()
@@ -2626,8 +2633,13 @@ class ChatViewModel(
                                     throw GenerationWallTimeoutException()
                                 }
                                 if (!firstTokenSeen.get()) continue
-                                if (toolCallInProgress.get()) continue
                                 val idle = SystemClock.elapsedRealtime() - lastChunkAt.get()
+                                // Bug fix (LiteRT tool-call パース失敗後に生成中のまま):
+                                //   Gemma4 形式の壊れた tool call で native が Status Code: 3
+                                //   (Failed to parse tool calls from code block) を出したあと
+                                //   Flow が完了せず、toolCallInProgress=true のまま停滞検知を
+                                //   永久スキップしていた。ツール実行中でも chunk 無通信が
+                                //   stallTimeout を超えたら停滞扱いにする。
                                 if (idle >= stallTimeoutMs) {
                                     throw GenerationStalledException()
                                 }
@@ -3678,6 +3690,16 @@ class ChatViewModel(
                     runCatching { messageRepository.deleteMessageById(id) }
                         .onFailure { Log.w(TAG, "Failed to delete streaming error placeholder id=$id", it) }
                     normalCompletionPersisted = true
+                }
+                // Bug fix (Status Code: 3 tool-call パース失敗後に生成中のまま):
+                //   finally でも落とすが、モーダル表示時点で同期的に UI 状態を戻す。
+                //   LiteRT は壊れた Conversation が残りやすいので回復も試みる。
+                _isLoading.value = false
+                _toolCallState.value = null
+                runCatching {
+                    requireModelManager().recoverFromStalledLiteRtInference()
+                }.onFailure {
+                    Log.w(TAG, "recoverFromStalledLiteRtInference failed after inference error", it)
                 }
                 withContext(Dispatchers.Main) {
                     _modelErrorDialogMessage.value = formatModelErrorDialogMessage(

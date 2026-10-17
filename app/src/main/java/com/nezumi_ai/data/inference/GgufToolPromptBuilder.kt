@@ -373,6 +373,15 @@ object GgufToolPromptBuilder {
         appendLine("Available tools are listed in ${ToolCallTags.TOOLS_OPEN}${ToolCallTags.TOOLS_CLOSE}.")
         appendLine("When calling a tool, respond ONLY with:")
         appendLine("${ToolCallTags.GEMMA4_TOOL_CALL_OPEN}call:<tool-name>{arg:<|\"|>value<|\"|>}${ToolCallTags.GEMMA4_TOOL_CALL_CLOSE}")
+        // Bug fix (Status Code: 3 parse tool calls):
+        //   モデルが safe_search:off / search_lang:ja のように enum や短い文字列を
+        //   クォート無しで出すと LiteRT native パーサが FallThrough で落ちる。
+        //   数値以外の値は必ず <|"|> で囲むよう明示する。
+        appendLine("Rules for arguments inside the call:")
+        appendLine("- EVERY string value (including enums like safe_search, search_lang, country) MUST be wrapped with <|\"|>...<|\"|>.")
+        appendLine("- Numbers and booleans stay bare (example: count:1, offset:0).")
+        appendLine("- Do NOT write bare words like safe_search:off or search_lang:ja.")
+        appendLine("- Correct example: safe_search:<|\"|>off<|\"|>,search_lang:<|\"|>ja<|\"|>")
         appendLine("Do not use any other tool-call format.")
         appendLine("Tool results will be returned to you wrapped in ${ToolCallTags.TOOL_RESPONSE_OPEN}${ToolCallTags.TOOL_RESPONSE_CLOSE}.")
         appendLine(ToolCallTags.TOOLS_OPEN)
