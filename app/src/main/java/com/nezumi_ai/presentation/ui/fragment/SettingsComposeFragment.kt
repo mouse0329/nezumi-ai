@@ -1388,6 +1388,81 @@ class SettingsComposeFragment : Fragment() {
 
                                 HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
 
+                                // ロード無通信タイムアウト / 出力ストールタイムアウト
+                                var loadIdleTimeoutSec by remember {
+                                    mutableStateOf(
+                                        (PreferencesHelper.getModelLoadIdleTimeoutMs(context) / 1000).toString()
+                                    )
+                                }
+                                var generationStallTimeoutSec by remember {
+                                    mutableStateOf(
+                                        (PreferencesHelper.getGenerationStallTimeoutMs(context) / 1000).toString()
+                                    )
+                                }
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        text = stringResource(id = R.string.settings_load_idle_timeout_title),
+                                        color = colorResource(id = R.color.text_primary),
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text(
+                                        text = stringResource(id = R.string.settings_load_idle_timeout_desc),
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    OutlinedTextField(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        value = loadIdleTimeoutSec,
+                                        onValueChange = { raw ->
+                                            loadIdleTimeoutSec = raw.filter { it.isDigit() }.take(4)
+                                            loadIdleTimeoutSec.toIntOrNull()?.let { sec ->
+                                                PreferencesHelper.setModelLoadIdleTimeoutMs(context, sec * 1000)
+                                            }
+                                        },
+                                        singleLine = true,
+                                        suffix = { Text("sec") }
+                                    )
+                                    Text(
+                                        text = stringResource(id = R.string.settings_generation_stall_timeout_title),
+                                        color = colorResource(id = R.color.text_primary),
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text(
+                                        text = stringResource(id = R.string.settings_generation_stall_timeout_desc),
+                                        color = colorResource(id = R.color.text_secondary),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    OutlinedTextField(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        value = generationStallTimeoutSec,
+                                        onValueChange = { raw ->
+                                            generationStallTimeoutSec = raw.filter { it.isDigit() }.take(4)
+                                            generationStallTimeoutSec.toIntOrNull()?.let { sec ->
+                                                PreferencesHelper.setGenerationStallTimeoutMs(context, sec * 1000)
+                                            }
+                                        },
+                                        singleLine = true,
+                                        suffix = { Text("sec") }
+                                    )
+                                    TextButton(
+                                        onClick = {
+                                            com.nezumi_ai.data.inference.MemoryEstimateCache.clear()
+                                            toast(context.getString(R.string.settings_clear_memory_estimate_cache_done))
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column {
+                                            Text(stringResource(id = R.string.settings_clear_memory_estimate_cache_title))
+                                            Text(
+                                                text = stringResource(id = R.string.settings_clear_memory_estimate_cache_desc),
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                        }
+                                    }
+                                }
+
+                                HorizontalDivider(color = colorResource(id = R.color.text_secondary).copy(alpha = 0.2f), thickness = 1.dp)
+
                                 // Mini App 表示 (ベータのため既定オフ)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),

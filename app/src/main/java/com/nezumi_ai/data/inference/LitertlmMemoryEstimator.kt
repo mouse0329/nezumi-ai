@@ -123,6 +123,12 @@ object LitertlmMemoryEstimator {
      * @param params ロード想定パラメータ（maxNumTokens など）
      */
     fun estimate(modelPath: String, params: EstimateParams = EstimateParams()): EstimateResult {
+        if (!MemoryEstimateCache.isEligible(modelPath)) {
+            return EstimateResult.Failure("not an estimable LLM model path")
+        }
+        MemoryEstimateCache.getLitertlm(modelPath, params)?.let {
+            return EstimateResult.Success(it)
+        }
         val file = File(modelPath)
         if (!file.exists()) {
             return EstimateResult.Failure("model file not found: $modelPath")
@@ -174,20 +180,20 @@ object LitertlmMemoryEstimator {
             (kvCacheBytes ?: 0L) +
             computeBufferBytes
 
-        return EstimateResult.Success(
-            MemoryEstimate(
-                architecture = architecture,
-                fileSizeBytes = file.length(),
-                weightsBytes = weightsBytes,
-                auxSectionsBytes = auxSectionsBytes,
-                contextUsed = contextUsed,
-                kvCacheBytes = kvCacheBytes,
-                computeBufferBytes = computeBufferBytes,
-                archParamsGuessed = archParams != null,
-                estimatedRamBytes = estimatedRamBytes,
-                sections = sections,
-            )
+        val estimate = MemoryEstimate(
+            architecture = architecture,
+            fileSizeBytes = file.length(),
+            weightsBytes = weightsBytes,
+            auxSectionsBytes = auxSectionsBytes,
+            contextUsed = contextUsed,
+            kvCacheBytes = kvCacheBytes,
+            computeBufferBytes = computeBufferBytes,
+            archParamsGuessed = archParams != null,
+            estimatedRamBytes = estimatedRamBytes,
+            sections = sections,
         )
+        MemoryEstimateCache.putLitertlm(modelPath, params, estimate)
+        return EstimateResult.Success(estimate)
     }
 
     /**

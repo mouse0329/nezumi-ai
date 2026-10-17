@@ -1612,6 +1612,14 @@ When you attach and send it, the contents are automatically converted to Markdow
     <string name="model_loading_phase_weights">Loading weights</string>
     <string name="model_loading_phase_engine_init">Initializing engine</string>
     <string name="model_loading_phase_template_scan">Checking chat template</string>
+    <string name="model_loading_phase_memory_estimate">Estimating memory</string>
+    <string name="settings_load_idle_timeout_title">Model load idle timeout</string>
+    <string name="settings_load_idle_timeout_desc">Seconds without engine log during load before failure (10–600)</string>
+    <string name="settings_generation_stall_timeout_title">Output stall timeout</string>
+    <string name="settings_generation_stall_timeout_desc">Seconds without chunks after first token before abort (30–900)</string>
+    <string name="settings_clear_memory_estimate_cache_title">Clear memory estimate cache</string>
+    <string name="settings_clear_memory_estimate_cache_desc">Discard in-process fixed metadata and parameterized estimate results</string>
+    <string name="settings_clear_memory_estimate_cache_done">Memory estimate cache cleared</string>
     <string name="model_loading_phase_memory_release">Releasing memory</string>
     <string name="model_kind_custom">Model</string>
 

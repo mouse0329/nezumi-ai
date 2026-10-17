@@ -2414,8 +2414,28 @@ open class ModelSettingsFragment : Fragment() {
             if (isExpanded && (isGguf || isLitertlm) && memoryEstimateStates[model.path] == null) {
                 memoryEstimateStates[model.path] = MemoryEstimateUiState(loading = true)
                 val nextEstimate = withContext(Dispatchers.IO) {
+                    // 現在の推論設定で推定する（n_ctx / GPU layers / batch / KV 型）
+                    val nCtx = runCatching {
+                        settingsRepository.getContextWindowForModel(model.path)
+                    }.getOrDefault(4096)
+                    val gpuLayers = runCatching {
+                        settingsRepository.getLlamaCppGpuLayers()
+                    }.getOrDefault(0)
+                    val batchSize = runCatching {
+                        settingsRepository.getLlamaCppBatchSize()
+                    }.getOrDefault(1024)
                     if (isGguf) {
-                        when (val result = MemoryEstimator.estimate(model.path)) {
+                        val kvNative = PreferencesHelper.getLlamaCppCacheTypeK(requireContext())
+                        val kvType = MemoryEstimator.KvCacheType.entries
+                            .firstOrNull { it.nativeValue == kvNative }
+                            ?: MemoryEstimator.KvCacheType.F16
+                        val params = MemoryEstimator.EstimateParams(
+                            nCtx = nCtx,
+                            nGpuLayers = gpuLayers,
+                            nBatch = batchSize,
+                            kvCacheType = kvType,
+                        )
+                        when (val result = MemoryEstimator.estimate(model.path, params)) {
                             is MemoryEstimator.EstimateResult.Success -> {
                                 val e = result.estimate
                                 MemoryEstimateUiState(
@@ -2428,7 +2448,11 @@ open class ModelSettingsFragment : Fragment() {
                             }
                         }
                     } else {
-                        when (val result = LitertlmMemoryEstimator.estimate(model.path)) {
+                        val params = LitertlmMemoryEstimator.EstimateParams(
+                            maxNumTokens = nCtx,
+                            withVisionAudio = false,
+                        )
+                        when (val result = LitertlmMemoryEstimator.estimate(model.path, params)) {
                             is LitertlmMemoryEstimator.EstimateResult.Success -> {
                                 val e = result.estimate
                                 val kvText = e.kvCacheBytes?.let { LitertlmMemoryEstimator.formatBytes(it) } ?: "不明"

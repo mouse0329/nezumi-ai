@@ -31,6 +31,9 @@ import com.nezumi_ai.data.inference.ModelDownloadWorker
 import com.nezumi_ai.data.inference.ModelFileManager
 import com.nezumi_ai.data.inference.ModelManager
 import com.nezumi_ai.data.inference.MemoryObserver
+import com.nezumi_ai.data.inference.MemoryEstimateCache
+import com.nezumi_ai.data.inference.MemoryEstimator
+import com.nezumi_ai.data.inference.LitertlmMemoryEstimator
 import com.nezumi_ai.data.inference.ChatMarkupSpec
 import com.nezumi_ai.data.inference.Gemma4ThinkingParser
 import com.nezumi_ai.data.inference.GgufFormatResolver
@@ -1646,6 +1649,50 @@ class ChatViewModel(
             try {
             updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_template_scan))
             val config = chatInferenceConfigForModel(selectedModel, probeTemplate = true)
+            // テンプレート確認中に現設定でメモリ推定を走らせキャッシュする（セーフティ等は対象外）
+            updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_memory_estimate))
+            runCatching {
+                val engineName = toEngineModelName(selectedModel)
+                val path = when {
+                    engineName.lowercase().endsWith(".gguf") ->
+                        resolveGgufModelPath(engineName) ?: engineName
+                    engineName.lowercase().endsWith(".litertlm") ||
+                        engineName.lowercase().endsWith(".task") -> engineName
+                    else -> {
+                        // 内蔵 LiteRT モデルは modelFile から実パスを取る
+                        val local = runCatching {
+                            ModelFileManager.resolveModelName(engineName)
+                        }.getOrNull() ?: return@runCatching
+                        ModelFileManager.modelFile(appContext, local).absolutePath
+                    }
+                }
+                if (!MemoryEstimateCache.isEligible(path)) return@runCatching
+                val lower = path.lowercase()
+                if (lower.endsWith(".gguf")) {
+                    val kvNative = PreferencesHelper.getLlamaCppCacheTypeK(appContext)
+                    val kvType = MemoryEstimator.KvCacheType.entries
+                        .firstOrNull { it.nativeValue == kvNative }
+                        ?: MemoryEstimator.KvCacheType.F16
+                    MemoryEstimator.estimate(
+                        path,
+                        MemoryEstimator.EstimateParams(
+                            nCtx = config.contextWindow,
+                            nGpuLayers = config.llamaCppGpuLayers,
+                            nBatch = config.llamaCppBatchSize,
+                            kvCacheType = kvType,
+                        )
+                    )
+                } else if (lower.endsWith(".litertlm") || lower.endsWith(".task")) {
+                    LitertlmMemoryEstimator.estimate(
+                        path,
+                        LitertlmMemoryEstimator.EstimateParams(
+                            maxNumTokens = config.contextWindow,
+                            withVisionAudio = config.requireMultimodal,
+                        )
+                    )
+                }
+            }.onFailure { Log.w(TAG, "preload memory estimate failed", it) }
+            updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_template_scan))
             Log.d(TAG, "preloadActivePresetModel: start model=$selectedModel")
             val result = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = true)
             if (result.isFailure) {
@@ -2563,6 +2610,8 @@ class ChatViewModel(
                             }
                         }
 
+                        val stallTimeoutMs = PreferencesHelper
+                            .getGenerationStallTimeoutMs(appContext).toLong()
                         val stallWatchJob = launch {
                             while (isActive) {
                                 delay(GENERATION_STALL_CHECK_MS)
@@ -2579,7 +2628,7 @@ class ChatViewModel(
                                 if (!firstTokenSeen.get()) continue
                                 if (toolCallInProgress.get()) continue
                                 val idle = SystemClock.elapsedRealtime() - lastChunkAt.get()
-                                if (idle >= GENERATION_STALL_TIMEOUT_MS) {
+                                if (idle >= stallTimeoutMs) {
                                     throw GenerationStalledException()
                                 }
                             }

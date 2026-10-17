@@ -1680,6 +1680,14 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="model_loading_phase_weights">重みロード</string>
     <string name="model_loading_phase_engine_init">エンジン初期化</string>
     <string name="model_loading_phase_template_scan">チャットテンプレート確認</string>
+    <string name="model_loading_phase_memory_estimate">メモリ推定中</string>
+    <string name="settings_load_idle_timeout_title">モデルロード無通信タイムアウト</string>
+    <string name="settings_load_idle_timeout_desc">ロード中にエンジンログが途絶えてから失敗とみなす秒数（10〜600）</string>
+    <string name="settings_generation_stall_timeout_title">出力ストールタイムアウト</string>
+    <string name="settings_generation_stall_timeout_desc">最初のトークン以降、チャンクが来なくなってから打ち切る秒数（30〜900）</string>
+    <string name="settings_clear_memory_estimate_cache_title">メモリ推定キャッシュをクリア</string>
+    <string name="settings_clear_memory_estimate_cache_desc">固定メタデータと設定付き見積もり結果のプロセス内キャッシュを破棄します</string>
+    <string name="settings_clear_memory_estimate_cache_done">メモリ推定キャッシュをクリアしました</string>
     <string name="model_loading_phase_memory_release">メモリ解放中</string>
     <string name="model_kind_custom">モデル</string>
 

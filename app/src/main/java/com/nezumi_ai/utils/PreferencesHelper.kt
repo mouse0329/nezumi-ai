@@ -55,6 +55,11 @@ object PreferencesHelper {
     private const val KEY_DISABLE_SCREENSHOT = "disable_screenshot"
  // アプリ UI の言語 (i18n)。SYSTEM / JA / EN のいずれか。
     private const val KEY_LANGUAGE = "app_language"
+    // ロード無通信タイムアウト (ms) / 生成出力ストールタイムアウト (ms)
+    private const val KEY_MODEL_LOAD_IDLE_TIMEOUT_MS = "model_load_idle_timeout_ms"
+    private const val KEY_GENERATION_STALL_TIMEOUT_MS = "generation_stall_timeout_ms"
+    private const val DEFAULT_MODEL_LOAD_IDLE_TIMEOUT_MS = 60_000
+    private const val DEFAULT_GENERATION_STALL_TIMEOUT_MS = 180_000
 
     const val THEME_SYSTEM = "SYSTEM"
     const val THEME_LIGHT = "LIGHT"
@@ -571,6 +576,28 @@ object PreferencesHelper {
 
     fun setDisableScreenshot(context: Context, enabled: Boolean) {
         getSharedPreferences(context).edit().putBoolean(KEY_DISABLE_SCREENSHOT, enabled).apply()
+    }
+
+    /** モデルロード中の無通信タイムアウト (ms)。既定 60_000。 */
+    fun getModelLoadIdleTimeoutMs(context: Context): Int =
+        getSharedPreferences(context).getInt(KEY_MODEL_LOAD_IDLE_TIMEOUT_MS, DEFAULT_MODEL_LOAD_IDLE_TIMEOUT_MS)
+            .coerceIn(10_000, 600_000)
+
+    fun setModelLoadIdleTimeoutMs(context: Context, valueMs: Int) {
+        getSharedPreferences(context).edit()
+            .putInt(KEY_MODEL_LOAD_IDLE_TIMEOUT_MS, valueMs.coerceIn(10_000, 600_000))
+            .apply()
+    }
+
+    /** 生成ストール (トークンが来ない) タイムアウト (ms)。既定 180_000。 */
+    fun getGenerationStallTimeoutMs(context: Context): Int =
+        getSharedPreferences(context).getInt(KEY_GENERATION_STALL_TIMEOUT_MS, DEFAULT_GENERATION_STALL_TIMEOUT_MS)
+            .coerceIn(30_000, 900_000)
+
+    fun setGenerationStallTimeoutMs(context: Context, valueMs: Int) {
+        getSharedPreferences(context).edit()
+            .putInt(KEY_GENERATION_STALL_TIMEOUT_MS, valueMs.coerceIn(30_000, 900_000))
+            .apply()
     }
 }
 

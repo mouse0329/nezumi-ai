@@ -106,6 +106,12 @@ object MemoryEstimator {
      * @param params ロード想定パラメータ（n_ctx / n_gpu_layers など）
      */
     fun estimate(modelPath: String, params: EstimateParams = EstimateParams()): EstimateResult {
+        if (!MemoryEstimateCache.isEligible(modelPath)) {
+            return EstimateResult.Failure("not an estimable LLM model path")
+        }
+        MemoryEstimateCache.getGguf(modelPath, params)?.let {
+            return EstimateResult.Success(it)
+        }
         if (!LlamaBridge.isLibraryLoaded()) {
             return EstimateResult.Failure("llama_bridge library not loaded")
         }
@@ -137,23 +143,23 @@ object MemoryEstimator {
             return EstimateResult.Failure(raw.error ?: "unknown error")
         }
 
-        return EstimateResult.Success(
-            MemoryEstimate(
-                architecture = raw.architecture,
-                paramCount = raw.nParams,
-                fileSizeBytes = raw.fileSizeBytes,
-                layerTotal = raw.nLayerTotal,
-                layerOffloaded = raw.nLayerOffloaded,
-                weightsCpuBytes = raw.weightsCpuBytes,
-                weightsGpuBytes = raw.weightsGpuBytes,
-                contextUsed = raw.nCtxUsed,
-                kvCacheBytes = raw.kvCacheBytes,
-                computeBufferBytes = raw.computeBufferBytes,
-                estimatedRamBytes = raw.totalRamBytes,
-                estimatedVramBytes = raw.totalVramBytes,
-                estimatedRamBytesNoGpu = raw.totalBytesNoGpu,
-            )
+        val estimate = MemoryEstimate(
+            architecture = raw.architecture,
+            paramCount = raw.nParams,
+            fileSizeBytes = raw.fileSizeBytes,
+            layerTotal = raw.nLayerTotal,
+            layerOffloaded = raw.nLayerOffloaded,
+            weightsCpuBytes = raw.weightsCpuBytes,
+            weightsGpuBytes = raw.weightsGpuBytes,
+            contextUsed = raw.nCtxUsed,
+            kvCacheBytes = raw.kvCacheBytes,
+            computeBufferBytes = raw.computeBufferBytes,
+            estimatedRamBytes = raw.totalRamBytes,
+            estimatedVramBytes = raw.totalVramBytes,
+            estimatedRamBytesNoGpu = raw.totalBytesNoGpu,
         )
+        MemoryEstimateCache.putGguf(modelPath, params, estimate)
+        return EstimateResult.Success(estimate)
     }
 
     /**

@@ -377,24 +377,26 @@ class RemoteEngineConnection(
     private suspend fun awaitLoadWithIdleTimeout(
         result: CompletableDeferred<Result<Unit>>
     ): Result<Unit> {
+        val idleTimeoutMs = com.nezumi_ai.utils.PreferencesHelper
+            .getModelLoadIdleTimeoutMs(context).toLong()
         while (true) {
             if (result.isCompleted) return result.await()
             val now = SystemClock.elapsedRealtime()
             val lastLog = EngineLoadLogHub.lastLogElapsedMs()
             val idleAnchor = if (lastLog > 0L) lastLog else EngineLoadLogHub.loadStartedElapsedMs()
             val idleFor = now - idleAnchor
-            if (idleAnchor > 0L && idleFor >= LOAD_IDLE_TIMEOUT_MS) {
+            if (idleAnchor > 0L && idleFor >= idleTimeoutMs) {
                 val since = if (lastLog > 0L) "last engine log" else "load start (no engine log)"
                 Log.w(tag, "loadModel idle timeout; no engine log for ${idleFor}ms ($since)")
                 val likelyOutOfMemory = wasProcessKilledForLowMemory(lastKnownPid)
                 return Result.failure(
                     RemoteEngineProcessDiedException(
-                        "loadModel idle timeout; no engine log for ${LOAD_IDLE_TIMEOUT_MS}ms",
+                        "loadModel idle timeout; no engine log for ${idleTimeoutMs}ms",
                         likelyOutOfMemory
                     )
                 )
             }
-            val remaining = (LOAD_IDLE_TIMEOUT_MS - idleFor).coerceAtLeast(1L)
+            val remaining = (idleTimeoutMs - idleFor).coerceAtLeast(1L)
             val step = minOf(remaining, 250L)
             delay(step)
             if (result.isCompleted) return result.await()
