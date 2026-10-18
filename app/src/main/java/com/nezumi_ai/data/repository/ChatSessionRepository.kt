@@ -83,11 +83,23 @@ class ChatSessionRepository(
         dao.update(session.copy(name = name, lastUpdated = System.currentTimeMillis()))
     }
 
+    /** インポート用: createDate / selectedModel / isPinned などをまとめて反映する。 */
+    suspend fun updateSessionEntity(session: ChatSessionEntity) {
+        dao.update(session)
+    }
+
     suspend fun togglePinSession(sessionId: Long) {
         val session = dao.getSessionById(sessionId) ?: return
         val newPinState = !session.isPinned
         dao.update(session.copy(isPinned = newPinState))
         android.util.Log.d("ChatSessionRepository", "togglePinSession: sessionId=$sessionId isPinned=$newPinState")
+    }
+
+    suspend fun setPinSession(sessionId: Long, pinned: Boolean) {
+        val session = dao.getSessionById(sessionId) ?: return
+        if (session.isPinned == pinned) return
+        dao.update(session.copy(isPinned = pinned))
+        android.util.Log.d("ChatSessionRepository", "setPinSession: sessionId=$sessionId isPinned=$pinned")
     }
 
     suspend fun getLatestSession(): ChatSessionEntity? {

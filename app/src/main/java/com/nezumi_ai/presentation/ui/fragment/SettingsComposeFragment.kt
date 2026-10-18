@@ -250,6 +250,8 @@ class SettingsComposeFragment : Fragment() {
     private val ttsDebugTokenizerUrl = "https://huggingface.co/Mouserat/qwen3-tts-0.6b-base-gguf/resolve/main/qwen-tokenizer-12hz-f16.gguf"
     private val ttsDebugTokenizerName = "qwen-tokenizer-12hz-f16.gguf"
     private lateinit var skillImportLauncher: ActivityResultLauncher<Array<String>>
+    /** 設定 > チャット から .nzai セッションを取り込む。 */
+    internal lateinit var sessionImportLauncher: ActivityResultLauncher<Array<String>>
     internal var skillScanResult by mutableStateOf(SkillScanResult(emptyList(), emptyList()))
     // エラーダイアログ用。追加/削除/リネームが失敗したときのメッセージを保持する。
     internal var skillDialogMessage by mutableStateOf<String?>(null)
@@ -297,6 +299,9 @@ class SettingsComposeFragment : Fragment() {
         }
         skillImportLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) lifecycleScope.launch(Dispatchers.IO) { importSkillArchive(uri) }
+        }
+        sessionImportLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) importNzaiSessions(uri)
         }
         ttsSpeakerPickLauncher = registerForActivityResult(
             ActivityResultContracts.GetContent()
@@ -1878,6 +1883,46 @@ class SettingsComposeFragment : Fragment() {
             skillInfoMessage = context.getString(R.string.skills_import_success)
         } else {
             skillDialogMessage = context.getString(R.string.skills_import_failed, error.message ?: "unknown")
+        }
+    }
+
+    /** 設定 > チャット から .nzai を取り込み、セッション履歴に復元する。 */
+    private fun importNzaiSessions(uri: Uri) {
+        val appContext = requireContext().applicationContext
+        Toast.makeText(appContext, "読み込み中…", Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching {
+                val database = NezumiAiDatabase.getInstance(appContext)
+                val messageRepo = MessageRepository(database.messageDao())
+                val sessionRepo = ChatSessionRepository(
+                    database.chatSessionDao(),
+                    SettingsRepository.fromDatabase(database),
+                    messageRepo
+                )
+                com.nezumi_ai.data.export.SessionImportReader.importFromUri(
+                    context = appContext,
+                    uri = uri,
+                    sessionRepository = sessionRepo,
+                    messageRepository = messageRepo
+                )
+            }.onSuccess { result ->
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        appContext,
+                        "${result.sessionCount}件のセッションを取り込みました（メッセージ ${result.messageCount}件）",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }.onFailure { e ->
+                Log.e("SettingsComposeFragment", "importNzaiSessions failed", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        appContext,
+                        "取り込みに失敗しました: ${e.message ?: "不明なエラー"}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
         }
     }
 

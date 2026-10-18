@@ -40,6 +40,9 @@ class MessageRepository(private val dao: MessageDao) {
         )
         return dao.insert(message)
     }
+
+    /** インポート用: タイムスタンプや toolResults なども含めてそのまま挿入する。 */
+    suspend fun insertMessage(message: MessageEntity): Long = dao.insert(message)
     
     suspend fun getLastMessage(sessionId: Long): MessageEntity? =
         dao.getLastMessageInSession(sessionId)

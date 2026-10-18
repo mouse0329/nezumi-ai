@@ -809,6 +809,29 @@ internal fun SettingsComposeFragment.ChatHistoryCard(settingsSearchJumpState: Se
                     modifier = Modifier.weight(1f)
                 )
             }
+
+            HorizontalDivider(color = colorResource(id = R.color.border))
+
+            Text(
+                text = "セッションの取り込み",
+                color = colorResource(id = R.color.text_secondary),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "書き出した .nzai ファイルからチャット履歴を復元します。Thinking・ツール結果・添付も含みます。",
+                color = colorResource(id = R.color.text_secondary),
+                style = MaterialTheme.typography.bodySmall
+            )
+            OutlinedButton(
+                onClick = {
+                    // */* と application/json を許可。.nzai は octet-stream になりがち
+                    sessionImportLauncher.launch(arrayOf("*/*", "application/json", "application/octet-stream"))
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("ファイルから取り込む (.nzai)")
+            }
         }
     }
 }

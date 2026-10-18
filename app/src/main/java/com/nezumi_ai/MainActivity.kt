@@ -69,7 +69,9 @@ import com.nezumi_ai.presentation.viewmodel.ChatSessionListViewModel
 import com.nezumi_ai.presentation.viewmodel.ChatSessionListViewModelFactory
 import com.nezumi_ai.data.database.entity.ChatSessionEntity
 import com.nezumi_ai.data.repository.ChatSessionRepository
+import com.nezumi_ai.data.repository.MessageRepository
 import com.nezumi_ai.data.repository.SettingsRepository
+import com.nezumi_ai.data.export.SessionExportWriter
 import com.nezumi_ai.presentation.ui.theme.NezumiComposeTheme
 import com.nezumi_ai.utils.CrashLogDialog
 import com.nezumi_ai.utils.LocaleHelper
@@ -79,12 +81,16 @@ import com.nezumi_ai.utils.PreferencesHelper
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import android.widget.Toast
+import android.net.Uri
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.Calendar
 
 class MainActivity : AppCompatActivity() {
@@ -116,6 +122,7 @@ class MainActivity : AppCompatActivity() {
     // 「・・・」メニュー対象のセッション (非 null で DropdownMenu を表示)
     private var drawerMenuSession by mutableStateOf<ChatSessionEntity?>(null)
     private lateinit var sessionRepository: ChatSessionRepository
+    private lateinit var messageRepository: MessageRepository
     private lateinit var settingsRepository: SettingsRepository
     private var dbInitialized = false
     private var repositoriesReady = false
@@ -131,10 +138,46 @@ class MainActivity : AppCompatActivity() {
     private var crashDialogPresentationAttempted = false
     // 現在のナビゲーション画面がサイドバー操作を許可するか (setContent 内で更新)。
     private var drawerEnabledByNav by mutableStateOf(true)
+    /** .nzai を「名前を付けて保存」するための SAF ランチャー。 */
+    private lateinit var sessionExportSaveLauncher: ActivityResultLauncher<String>
+    /** CreateDocument 完了まで一時保持する書き出しキャッシュファイル。 */
+    private var pendingExportFile: File? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         isIncognitoModeActive = savedInstanceState?.getBoolean("is_incognito_mode_active") ?: false
+
+        // Activity Result は STARTED 前に登録する必要がある。
+        sessionExportSaveLauncher = registerForActivityResult(
+            ActivityResultContracts.CreateDocument("application/octet-stream")
+        ) { uri: Uri? ->
+            val source = pendingExportFile
+            pendingExportFile = null
+            if (uri == null || source == null) {
+                // ユーザーがキャンセルした場合はキャッシュだけ掃除
+                source?.delete()
+                return@registerForActivityResult
+            }
+            lifecycleScope.launch {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        contentResolver.openOutputStream(uri)?.use { out ->
+                            source.inputStream().use { input -> input.copyTo(out) }
+                        } ?: error("保存先を開けませんでした")
+                        source.delete()
+                    }
+                }.onSuccess {
+                    Toast.makeText(this@MainActivity, "ファイルを保存しました", Toast.LENGTH_SHORT).show()
+                }.onFailure {
+                    Log.e(TAG, "Failed to write exported session file", it)
+                    Toast.makeText(
+                        this@MainActivity,
+                        "保存に失敗しました: ${it.message ?: "不明なエラー"}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
 
         try {
             // XML レイアウト (activity_main.xml) を廃止したあとも、チャット本体は
@@ -169,11 +212,12 @@ class MainActivity : AppCompatActivity() {
                 runCatching {
                     val database = NezumiAiDatabase.getInstance(this@MainActivity)
                     val sr = SettingsRepository.fromDatabase(database)
-                    val messageRepository = com.nezumi_ai.data.repository.MessageRepository(database.messageDao())
-                    val cr = ChatSessionRepository(database.chatSessionDao(), sr, messageRepository)
+                    val mr = com.nezumi_ai.data.repository.MessageRepository(database.messageDao())
+                    val cr = ChatSessionRepository(database.chatSessionDao(), sr, mr)
                     withContext(Dispatchers.Main) {
                         settingsRepository = sr
                         sessionRepository = cr
+                        messageRepository = mr
                         repositoriesReady = true
                         // 起動時のシークレット履歴掃除は添付ファイル数に応じて時間がかかる。
                         // その完了を待つと通常の履歴 Flow の初回取得まで遅れるため、先に購読する。
@@ -287,6 +331,23 @@ class MainActivity : AppCompatActivity() {
                         onDeleteSession = { session ->
                             drawerMenuSession = null
                             showDeleteSessionDialog(session)
+                        },
+                        onExportSession = { session ->
+                            drawerMenuSession = null
+                            exportSessions(listOf(session))
+                        },
+                        onBulkDeleteSessions = { sessions ->
+                            drawerMenuSession = null
+                            showBulkDeleteSessionsDialog(sessions)
+                        },
+                        onBulkSetPin = { sessions, pinned ->
+                            drawerMenuSession = null
+                            bulkSetPinSessions(sessions, pinned)
+                        },
+                        onBulkExportSessions = { sessions ->
+                            drawerMenuSession = null
+                            // 複数選択時は 1 ファイルにまとめる (個別書き出しはしない)
+                            exportSessions(sessions)
                         },
                         onSettingsClick = { navigateFromDrawer(R.id.settingsFragment) },
                         onModelSettingsClick = { navigateFromDrawer(R.id.modelSettingsFragment) },
@@ -1303,6 +1364,91 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             .show()
+    }
+
+    private fun showBulkDeleteSessionsDialog(sessions: List<ChatSessionEntity>) {
+        if (sessions.isEmpty()) return
+        MaterialAlertDialogBuilder(this)
+            .setTitle("チャットを削除")
+            .setMessage("${sessions.size}件のチャットを削除します。よろしいですか？")
+            .setNegativeButton("キャンセル", null)
+            .setPositiveButton("削除") { _, _ ->
+                lifecycleScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            val currentId = getCurrentSessionId()
+                            val ctx = applicationContext
+                            for (session in sessions) {
+                                if (session.id == currentId) {
+                                    clearCurrentSessionId()
+                                }
+                                sessionRepository.deleteSessionWithAttachments(session.id) { imageUri, audioUri ->
+                                    com.nezumi_ai.data.media.MessageMediaStore.deleteMessageAttachments(
+                                        ctx, imageUri, audioUri
+                                    )
+                                }
+                            }
+                        }
+                    }.onFailure {
+                        Log.e(TAG, "Failed to bulk delete sessions", it)
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun bulkSetPinSessions(sessions: List<ChatSessionEntity>, pinned: Boolean) {
+        if (sessions.isEmpty()) return
+        lifecycleScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    for (session in sessions) {
+                        sessionRepository.setPinSession(session.id, pinned)
+                    }
+                }
+            }.onFailure {
+                Log.e(TAG, "Failed to bulk set pin", it)
+            }
+        }
+    }
+
+    /**
+     * セッションを .nzai で書き出し、「名前を付けて保存」ダイアログで保存先を選ばせる。
+     * 複数セッションは常に 1 ファイルにまとめる。
+     * Thinking・ツールコール結果・本文・添付 (画像/音声/PDF 等 Base64) を含む。
+     */
+    private fun exportSessions(sessions: List<ChatSessionEntity>) {
+        if (sessions.isEmpty()) return
+        if (!repositoriesReady || !::messageRepository.isInitialized) {
+            Toast.makeText(this, "準備中です。少し待ってから再度お試しください。", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!::sessionExportSaveLauncher.isInitialized) {
+            Toast.makeText(this, "保存の準備ができていません", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Toast.makeText(this, "書き出し中…", Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            runCatching {
+                val result = withContext(Dispatchers.IO) {
+                    SessionExportWriter.exportToCacheFile(
+                        context = applicationContext,
+                        sessions = sessions,
+                        messageRepository = messageRepository
+                    )
+                }
+                // 共有シートではなく SAF の CreateDocument でファイルとして保存する
+                pendingExportFile = result.file
+                sessionExportSaveLauncher.launch(result.file.name)
+            }.onFailure {
+                Log.e(TAG, "Failed to export sessions", it)
+                Toast.makeText(
+                    this@MainActivity,
+                    "書き出しに失敗しました: ${it.message ?: "不明なエラー"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
     private fun clearCurrentSessionId() {
