@@ -75,3 +75,6 @@
 -dontwarn javax.xml.stream.**
 # JPEG2000 (JP2) コーデック。pdfbox の JPXFilter がオプション参照するのみ。
 -dontwarn com.gemalto.jp2.**
+# Apache POI の PowerPoint SVG 描画に使われる Batik (SVGImageRenderer) は
+# オプション依存で、アプリでは POI による Word/Excel 生成のみを行う。
+-dontwarn org.apache.batik.**
