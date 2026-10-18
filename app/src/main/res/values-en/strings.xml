@@ -1077,6 +1077,7 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="preset_action_reset">Reset</string>
     <string name="preset_action_clear">Clear</string>
     <string name="preset_action_edit">Edit</string>
+    <string name="preset_action_export">Export</string>
     <string name="preset_action_details">Details</string>
     <string name="preset_action_pin">Pin</string>
     <string name="preset_tools_on">Tools on</string>
@@ -1084,6 +1085,7 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="preset_memory_on">Memory on</string>
     <string name="preset_tool_count">%1$d</string>
     <string name="preset_fab_new">New preset</string>
+    <string name="preset_fab_import">Import</string>
     <string name="preset_group_other">Other</string>
     <string name="preset_cat_device">Device</string>
     <string name="preset_cat_memory">Memory</string>
@@ -1141,6 +1143,10 @@ Used by the web page fetch tool to convert fetched HTML into Markdown. Version u
     <string name="preset_toast_selected">Selected \"%1$s\"</string>
     <string name="preset_toast_deleted">Preset deleted</string>
     <string name="preset_toast_cannot_delete">This preset cannot be deleted</string>
+    <string name="preset_toast_exported">Preset exported</string>
+    <string name="preset_toast_export_failed">Export failed: %1$s</string>
+    <string name="preset_toast_imported">Imported \"%1$s\"</string>
+    <string name="preset_toast_import_failed">Import failed: %1$s</string>
     <string name="preset_toast_name_required">Please enter a preset name</string>
     <string name="preset_toast_no_downloaded_models">No downloaded models</string>
     <string name="preset_tool_name_time">Current time</string>

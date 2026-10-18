@@ -136,6 +136,53 @@ class PresetSettingsFragment : Fragment() {
         cb?.invoke(granted)
     }
 
+    /** .nzaip エクスポート用: CreateDocument 完了まで保持するキャッシュファイル。 */
+    private var pendingPresetExportFile: java.io.File? = null
+    private val presetExportSaveLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri ->
+        val source = pendingPresetExportFile
+        pendingPresetExportFile = null
+        if (uri == null || source == null) return@registerForActivityResult
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            runCatching {
+                requireContext().contentResolver.openOutputStream(uri)?.use { out ->
+                    source.inputStream().use { input -> input.copyTo(out) }
+                } ?: error("openOutputStream failed")
+            }.onSuccess {
+                withContext(Dispatchers.Main) {
+                    toast(getString(R.string.preset_toast_exported))
+                }
+            }.onFailure { e ->
+                withContext(Dispatchers.Main) {
+                    toast(getString(R.string.preset_toast_export_failed, e.message ?: ""))
+                }
+            }
+            source.delete()
+        }
+    }
+
+    private val presetImportOpenLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        viewLifecycleOwner.lifecycleScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    com.nezumi_ai.data.export.PresetImportReader.importFromUri(
+                        context = requireContext().applicationContext,
+                        uri = uri,
+                        presetRepository = presetRepository
+                    )
+                }
+            }.onSuccess { result ->
+                toast(getString(R.string.preset_toast_imported, result.presetName))
+            }.onFailure { e ->
+                toast(getString(R.string.preset_toast_import_failed, e.message ?: ""))
+            }
+        }
+    }
+
     /**
      * フラッシュライトを有効化しようとしたときにカメラ権限を保証する。
      * すでに許可済みなら即座に true でコールバックする。
@@ -329,6 +376,9 @@ class PresetSettingsFragment : Fragment() {
                 findNavController().navigateUp()
             },
             onCreate = { showCreateDialog = true },
+            onImport = {
+                presetImportOpenLauncher.launch(arrayOf("*/*"))
+            },
             onTogglePin = { key ->
                 persistPins(if (key in pins) pins - key else pins + key)
             },
@@ -408,7 +458,24 @@ class PresetSettingsFragment : Fragment() {
                 if (preset.isLocked) toast(getString(R.string.preset_toast_locked_edit))
                 else editingPreset = preset
             },
-            onDelete = { pendingDelete = it }
+            onDelete = { pendingDelete = it },
+            onExport = { preset ->
+                viewLifecycleOwner.lifecycleScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            com.nezumi_ai.data.export.PresetExportWriter.exportToCacheFile(
+                                context = requireContext().applicationContext,
+                                preset = preset
+                            )
+                        }
+                    }.onSuccess { result ->
+                        pendingPresetExportFile = result.file
+                        presetExportSaveLauncher.launch(result.file.name)
+                    }.onFailure { e ->
+                        toast(getString(R.string.preset_toast_export_failed, e.message ?: ""))
+                    }
+                }
+            }
         )
     }
 

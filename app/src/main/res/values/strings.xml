@@ -937,6 +937,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="preset_action_reset">戻す</string>
     <string name="preset_action_clear">解除</string>
     <string name="preset_action_edit">編集</string>
+    <string name="preset_action_export">エクスポート</string>
     <string name="preset_action_details">詳細</string>
     <string name="preset_action_pin">ピン留め</string>
     <string name="preset_tools_on">ツールあり</string>
@@ -944,6 +945,7 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="preset_memory_on">メモリ ON</string>
     <string name="preset_tool_count">%1$d</string>
     <string name="preset_fab_new">新しいプリセット</string>
+    <string name="preset_fab_import">読み込み</string>
     <string name="preset_group_other">その他</string>
     <string name="preset_cat_device">端末</string>
     <string name="preset_cat_memory">メモリ</string>
@@ -1001,6 +1003,10 @@ MarkItDown が各 Office / PDF 形式の読み取りに利用する Python ラ�
     <string name="preset_toast_selected">「%1$s」を選択しました</string>
     <string name="preset_toast_deleted">プリセットを削除しました</string>
     <string name="preset_toast_cannot_delete">このプリセットは削除できません</string>
+    <string name="preset_toast_exported">プリセットをエクスポートしました</string>
+    <string name="preset_toast_export_failed">エクスポートに失敗しました: %1$s</string>
+    <string name="preset_toast_imported">「%1$s」を読み込みました</string>
+    <string name="preset_toast_import_failed">読み込みに失敗しました: %1$s</string>
     <string name="preset_toast_name_required">プリセット名を入力してください</string>
     <string name="preset_toast_no_downloaded_models">ダウンロード済みモデルがありません</string>
     <string name="preset_tool_name_time">現在時刻</string>

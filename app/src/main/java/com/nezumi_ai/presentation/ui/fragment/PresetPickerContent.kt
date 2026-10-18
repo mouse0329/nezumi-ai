@@ -114,6 +114,7 @@ internal fun PresetPickerContent(
     onQuery: (String) -> Unit,
     onBack: () -> Unit,
     onCreate: () -> Unit,
+    onImport: () -> Unit,
     onTogglePin: (String) -> Unit,
     onToggleExpanded: (String) -> Unit,
     onSelectPreset: (PresetEntity) -> Unit,
@@ -122,7 +123,8 @@ internal fun PresetPickerContent(
     onResetOverride: () -> Unit,
     onSelectModel: (String) -> Unit,
     onEdit: (PresetEntity) -> Unit,
-    onDelete: (PresetEntity) -> Unit
+    onDelete: (PresetEntity) -> Unit,
+    onExport: (PresetEntity) -> Unit
 ) {
     val dark = androidx.compose.foundation.isSystemInDarkTheme()
     val bg = if (dark) Color(0xFF0B1220) else MaterialTheme.colorScheme.background
@@ -340,7 +342,8 @@ internal fun PresetPickerContent(
                                         onPin = { onTogglePin(pinKeyPreset(preset.id)) },
                                         onExpand = { onToggleExpanded(preset.id) },
                                         onEdit = { onEdit(preset) },
-                                        onDelete = { onDelete(preset) }
+                                        onDelete = { onDelete(preset) },
+                                        onExport = { onExport(preset) }
                                     )
                                 }
                             }
@@ -371,7 +374,8 @@ internal fun PresetPickerContent(
                                         onPin = { onTogglePin(pinKeyPreset(preset.id)) },
                                         onExpand = { onToggleExpanded(preset.id) },
                                         onEdit = { onEdit(preset) },
-                                        onDelete = { onDelete(preset) }
+                                        onDelete = { onDelete(preset) },
+                                        onExport = { onExport(preset) }
                                     )
                                 }
                             }
@@ -447,27 +451,54 @@ internal fun PresetPickerContent(
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
                     .padding(start = 14.dp, end = 14.dp, bottom = 16.dp)
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(99.dp))
-                    .background(Color(0xFF3A6FD8))
-                    .clickable(onClick = onCreate)
-                    .padding(vertical = 14.dp),
-                horizontalArrangement = Arrangement.Center,
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_add),
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = stringResource(R.string.preset_fab_new),
-                    color = Color.White,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                // 読み込み (.nzaip)
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(99.dp))
+                        .background(if (dark) Color(0xFF1E2F4D) else Color(0xFFE7F0FF))
+                        .border(1.dp, accent.copy(alpha = 0.55f), RoundedCornerShape(99.dp))
+                        .clickable(onClick = onImport)
+                        .padding(vertical = 14.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.preset_fab_import),
+                        color = accent,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                // 新しいプリセット
+                Row(
+                    modifier = Modifier
+                        .weight(1.35f)
+                        .clip(RoundedCornerShape(99.dp))
+                        .background(Color(0xFF3A6FD8))
+                        .clickable(onClick = onCreate)
+                        .padding(vertical = 14.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_add),
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = stringResource(R.string.preset_fab_new),
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }
@@ -677,7 +708,8 @@ private fun PresetPickerRow(
     onPin: () -> Unit,
     onExpand: () -> Unit,
     onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onExport: () -> Unit
 ) {
     val counts = toolIds.groupingBy { toolBucket(it) }.eachCount()
     Column(
@@ -822,6 +854,13 @@ private fun PresetPickerRow(
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.clickable(onClick = onDelete).padding(vertical = 4.dp)
+                        )
+                        Text(
+                            text = stringResource(R.string.preset_action_export),
+                            color = accent,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.clickable(onClick = onExport).padding(vertical = 4.dp)
                         )
                     }
                 }
