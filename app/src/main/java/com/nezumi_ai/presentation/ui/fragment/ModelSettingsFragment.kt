@@ -265,8 +265,8 @@ open class ModelSettingsFragment : Fragment() {
     private var voicevoxStyleMenuExpanded by mutableStateOf(false)
 
     // モデル管理画面の右下 FAB メニュの開閉状態。
-    // このメニュに「モデルをインポート / mmproj 追加 / クラウドモデル追加 / HF 検索」を集約し、
-    // 旧レイアウトにあった LocalModelAddCard / HfModelSearchCard / mmproj 追加ボタンは廃止した。
+    // このメニュに「ローカルインポート（モデル本体 + mmproj 共通）/ クラウドモデル追加 / HF 検索」を集約し、
+    // 旧レイアウトにあった LocalModelAddCard / HfModelSearchCard / 専用 mmproj 追加ボタンは廃止した。
     private var addFabMenuExpanded by mutableStateOf(false)
 
     // --- ダウンロード前ライセンス確認ダイアログ ---
@@ -304,17 +304,8 @@ open class ModelSettingsFragment : Fragment() {
             }
         }
 
-    private val mmprojPickerLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri == null) return@registerForActivityResult
-            viewLifecycleOwner.lifecycleScope.launch {
-                val result = withContext(Dispatchers.IO) {
-                    ModelFileManager.importTaskFromUri(requireContext(), uri)
-                }
-                result.onSuccess { capabilityDialogMmprojPath = it.absolutePath }
-                    .onFailure { toast("mmproj追加失敗: ${it.message}") }
-            }
-        }
+    // mmproj 専用ピッカーは廃止。ローカルインポート (importTaskLauncher) に統合し、
+    // インポート時に GGUF メタデータで mmproj かどうかを厳密判定する。
     // .vvm の外部手動追加は仕様上削除されたため、ピッカー Launcher も削除している。
     internal var settingsDialogDisplayName by mutableStateOf("")
     internal var settingsDialogStopTokens by mutableStateOf("")
@@ -380,22 +371,37 @@ open class ModelSettingsFragment : Fragment() {
             isImportingModel = true
             viewLifecycleOwner.lifecycleScope.launch {
                 try {
-                    val modelPath = withContext(Dispatchers.IO) {
+                    val importedFile = withContext(Dispatchers.IO) {
                         val file = ModelFileManager.importTaskFromUri(requireContext(), uri).getOrThrow()
-                        if (file.name.lowercase().endsWith(".gguf")) runCatching { GgufMetadataReader.readSummary(file) }
-                        file.absolutePath
+                        if (file.name.lowercase().endsWith(".gguf")) {
+                            runCatching { GgufMetadataReader.readSummary(file) }
+                        }
+                        file
                     }
-                    toast("モデルを追加しました: ${File(modelPath).name}")
-                    refreshImportedTasks()
-                    // インポート完了後はプリセットを追加しない。孤児参照の掃除だけ行う。
-                    presetRepository.ensurePlainPresetsForDownloadedModels()
-                    val imported = ModelFileManager.ImportedTaskModel(
-                        path = modelPath,
-                        fileNameStem = File(modelPath).nameWithoutExtension,
-                        shortDisplayName = File(modelPath).nameWithoutExtension,
-                        hfRepoQualifier = null
-                    )
-                    openModelSettingsDialog(imported)
+                    // インポート時に厳密判定: 拡張子 .mmproj、または GGUF メタデータが mmproj
+                    // (general.architecture=clip / general.type=mmproj / clip.*projector* 等)。
+                    // ファイル名に "mmproj" が含まれることだけでは判定しない。
+                    val isMmproj = withContext(Dispatchers.IO) {
+                        GgufMetadataReader.isMmprojFile(importedFile)
+                    }
+                    if (isMmproj) {
+                        toast("mmproj を追加しました: ${importedFile.name}")
+                        refreshImportedTasks()
+                        capabilityDialogMmprojPath = importedFile.absolutePath
+                    } else {
+                        val modelPath = importedFile.absolutePath
+                        toast("モデルを追加しました: ${importedFile.name}")
+                        refreshImportedTasks()
+                        // インポート完了後はプリセットを追加しない。孤児参照の掃除だけ行う。
+                        presetRepository.ensurePlainPresetsForDownloadedModels()
+                        val imported = ModelFileManager.ImportedTaskModel(
+                            path = modelPath,
+                            fileNameStem = importedFile.nameWithoutExtension,
+                            shortDisplayName = importedFile.nameWithoutExtension,
+                            hfRepoQualifier = null
+                        )
+                        openModelSettingsDialog(imported)
+                    }
                 } catch (e: Exception) {
                     toast("追加失敗: ${e.message}")
                 }
@@ -792,20 +798,9 @@ open class ModelSettingsFragment : Fragment() {
                     },
                     onClick = {
                         addFabMenuExpanded = false
+                        // モデル本体と mmproj を同一ピッカーで受け付ける。
+                        // mmproj 判定は importTaskLauncher 内で GGUF メタデータにより行う。
                         importTaskLauncher.launch(arrayOf("*/*"))
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("mmproj を追加") },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Filled.Attachment,
-                            contentDescription = null
-                        )
-                    },
-                    onClick = {
-                        addFabMenuExpanded = false
-                        mmprojPickerLauncher.launch(arrayOf("*/*"))
                     }
                 )
                 DropdownMenuItem(
@@ -2030,7 +2025,7 @@ open class ModelSettingsFragment : Fragment() {
                 if (importedMmprojTasks.isEmpty()) {
                     OutlinedButton(
                         modifier = Modifier.fillMaxWidth(),
-                        onClick = { mmprojPickerLauncher.launch(arrayOf("*/*")) }
+                        onClick = { importTaskLauncher.launch(arrayOf("*/*")) }
                     ) {
                         Text("mmproj ファイルを追加")
                     }
@@ -2057,7 +2052,7 @@ open class ModelSettingsFragment : Fragment() {
                         }
                         OutlinedButton(
                             modifier = Modifier.fillMaxWidth(),
-                            onClick = { mmprojPickerLauncher.launch(arrayOf("*/*")) }
+                            onClick = { importTaskLauncher.launch(arrayOf("*/*")) }
                         ) {
                             Text("+ 追加")
                         }

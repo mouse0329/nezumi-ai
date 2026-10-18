@@ -358,6 +358,9 @@ object ModelFileManager {
                         it.name.lowercase().endsWith(".gguf")
                     )
             }
+            // 一覧は従来どおりファイル名で mmproj を除外する。
+            // 全 GGUF をメタデータ走査するとリスト表示が固まって空に見えるため、
+            // 厳密判定 (GgufMetadataReader.isMmprojFile) はインポート時のみ使う。
             ?.filter { !it.name.lowercase().contains("mmproj") }
             ?.filter { validateImportedTaskFile(it).isSuccess }
             ?.sortedByDescending { it.lastModified() }
@@ -375,7 +378,10 @@ object ModelFileManager {
             ?.asSequence()
             ?.filter {
                 val name = it.name.lowercase()
-                it.isFile && name.contains("mmproj") && (name.endsWith(".gguf") || name.endsWith(".mmproj"))
+                // 一覧互換: ファイル名に mmproj を含む .gguf / .mmproj のみ。
+                // メタデータ厳密判定はインポート経路で実施済み。
+                it.isFile && name.contains("mmproj") &&
+                    (name.endsWith(".gguf") || name.endsWith(".mmproj"))
             }
             ?.sortedByDescending { it.lastModified() }
             ?.map { ImportedTaskModel.fromImportedFile(it) }

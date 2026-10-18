@@ -108,6 +108,22 @@ class ChatMarkupSpecTest {
         assertFalse(ModelNameHeuristics.templateDeclaresThinking("history: </think> stripped"))
         assertTrue(ModelNameHeuristics.templateDeclaresThinking("{{ content }} /think"))
         assertTrue(ModelNameHeuristics.templateDeclaresThinking("/no_think"))
+        // LFM2 非 Thinking: List of tools と </think> strip だけで Thinking 扱いにしない
+        assertFalse(
+            ModelNameHeuristics.templateDeclaresThinking(
+                "List of tools: [{% if \"</think>\" in content %}{% endif %}]"
+            )
+        )
+        // 常時 Thinking: add_generation_prompt 分岐に <think> がある
+        val alwaysOn = "{% if add_generation_prompt %}<|im_start|>assistant\n<think>{% endif %}"
+        assertTrue(ModelNameHeuristics.templateDeclaresThinking(alwaysOn))
+        assertFalse(ModelNameHeuristics.templateHasSwitchableThinking(alwaysOn))
+        assertTrue(ModelNameHeuristics.templateForcesThinkingOn(alwaysOn))
+        // 履歴にだけ <think> があり生成分岐に無い → 常時ではない
+        val historyOnly =
+            "{% if message.role == 'assistant' %}<think>{% endif %}" +
+                "{% if add_generation_prompt %}<|im_start|>assistant\n{% endif %}"
+        assertFalse(ModelNameHeuristics.templateForcesThinkingOn(historyOnly))
     }
 
     @Test

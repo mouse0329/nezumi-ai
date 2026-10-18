@@ -540,11 +540,15 @@ class SettingsRepository(
         if (com.nezumi_ai.data.inference.cloud.CloudModelId.isCloud(model)) return true
         val ctx = appContext ?: return false
         if (isGgufModel(model)) {
+            // テンプレートが Thinking を宣言していても、モデル設定で明示 OFF なら UI を出さない。
+            // （SamplerConfig 側の ggufThinking 判定と同じ条件にする）
             val templateDeclaresThinking =
                 com.nezumi_ai.data.inference.ChatMarkupSpec.fromChatTemplate(
                     com.nezumi_ai.data.inference.GgufFormatResolver.resolveChatTemplateText(ctx, model)
                 ).supportsThinking
-            return templateDeclaresThinking
+            if (!templateDeclaresThinking) return false
+            return !ImportedModelCapabilityStore.hasThinkingSetting(ctx, model) ||
+                ImportedModelCapabilityStore.get(ctx, model).thinkingEnabled
         }
         // 外部インポート LiteRT-LM (.task / .litertlm) はモデル設定で Thinking を ON にしたときのみ表示する。
         if (isLiteRtImportedModel(model)) {

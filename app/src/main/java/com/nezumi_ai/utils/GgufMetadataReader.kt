@@ -63,6 +63,90 @@ object GgufMetadataReader {
         return summary
     }
 
+    /**
+     * ファイルが multimodal projector (mmproj) かどうかを GGUF メタデータで厳密判定する。
+     *
+     * 根拠 (llama.cpp / clip.cpp / ollama isProjectorGGUF 相当):
+     * - 拡張子 `.mmproj` は常に mmproj
+     * - `general.type` が `mmproj` / `projector`
+     * - `general.architecture` が `clip` かつ
+     *   (`clip.has_vision_encoder` / `clip.has_audio_encoder` が true、
+     *    または `clip.projector_type` / `clip.vision.projector_type` /
+     *    `clip.audio.projector_type` が存在)
+     *
+     * ファイル名に "mmproj" が含まれることだけでは判定しない。
+     */
+    fun isMmprojFile(file: File): Boolean {
+        val lower = file.name.lowercase()
+        if (lower.endsWith(".mmproj")) return true
+        if (!lower.endsWith(".gguf") || !file.isFile) return false
+        return runCatching { readMmprojProbe(file) }.getOrDefault(false)
+    }
+
+    private fun readMmprojProbe(file: File): Boolean {
+        RandomAccessFile(file, "r").use { raf ->
+            val magic = raf.readLittleInt()
+            if (magic != GGUF_MAGIC) return false
+            val version = raf.readLittleUInt32()
+            if (version !in 1L..3L) return false
+            raf.readLittleUInt64() // tensorCount
+            val metadataCount = raf.readLittleUInt64()
+
+            var architecture: String? = null
+            var generalType: String? = null
+            var hasVisionEncoder = false
+            var hasAudioEncoder = false
+            var hasProjectorType = false
+
+            var i = 0L
+            while (i < metadataCount) {
+                val key = raf.readGgufString()
+                val valueType = raf.readLittleUInt32().toInt()
+                when (key) {
+                    "general.architecture" -> {
+                        architecture = readValueAsString(raf, valueType)?.lowercase()?.trim()
+                    }
+                    "general.type" -> {
+                        generalType = readValueAsString(raf, valueType)?.lowercase()?.trim()
+                    }
+                    "clip.has_vision_encoder" -> {
+                        hasVisionEncoder = readValueAsBool(raf, valueType) == true
+                    }
+                    "clip.has_audio_encoder" -> {
+                        hasAudioEncoder = readValueAsBool(raf, valueType) == true
+                    }
+                    "clip.projector_type",
+                    "clip.vision.projector_type",
+                    "clip.audio.projector_type" -> {
+                        val v = readValueAsString(raf, valueType)
+                        if (!v.isNullOrBlank()) hasProjectorType = true
+                    }
+                    else -> skipValue(raf, valueType)
+                }
+                i++
+            }
+
+            if (generalType == "mmproj" || generalType == "projector") return true
+            if (architecture == "clip" && (hasVisionEncoder || hasAudioEncoder || hasProjectorType)) {
+                return true
+            }
+            return false
+        }
+    }
+
+    private fun readValueAsBool(raf: RandomAccessFile, valueType: Int): Boolean? {
+        return when (valueType) {
+            TYPE_BOOL -> raf.read() != 0
+            TYPE_UINT8, TYPE_INT8 -> raf.read() != 0
+            TYPE_UINT32, TYPE_INT32 -> raf.readLittleInt() != 0
+            TYPE_UINT64, TYPE_INT64 -> raf.readLittleLong() != 0L
+            else -> {
+                skipValue(raf, valueType)
+                null
+            }
+        }
+    }
+
     fun invalidate(path: String): Boolean {
         chatTemplateCache.remove(path)
         persistentCacheFile(path)?.delete()

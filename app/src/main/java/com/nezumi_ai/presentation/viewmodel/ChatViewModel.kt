@@ -1165,6 +1165,8 @@ class ChatViewModel(
                 _selectedModel.collect { model ->
                     refreshContextWindowForModel(model)
                     syncThinkingEffortForModel(model)
+                    // LFM2.5 思考版など常時 Thinking はモデル切替直後から ON 固定
+                    ensureAlwaysOnThinkingSession(model)
                 }
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
@@ -1255,9 +1257,19 @@ class ChatViewModel(
             _chatSessionThinkingEnabledOverride.value = false
         }
         // チャットを開いた直後は OFF 表示（disableThinking=true）を既定にする。
+        // ただし常時 Thinking テンプレートのモデルは既定も ON 固定にする。
         if (!hasUserToggledThinking) {
-            _chatSessionDisableThinking.value = true
-            _chatSessionThinkingEnabledOverride.value = false
+            if (isAlwaysOnThinkingModel(_selectedModel.value)) {
+                _chatSessionDisableThinking.value = false
+                _chatSessionThinkingEnabledOverride.value = true
+            } else {
+                _chatSessionDisableThinking.value = true
+                _chatSessionThinkingEnabledOverride.value = false
+            }
+        } else if (isAlwaysOnThinkingModel(_selectedModel.value)) {
+            // 前モデルで OFF にしたまま常時 Thinking モデルへ切り替えた場合も ON に戻す
+            _chatSessionDisableThinking.value = false
+            _chatSessionThinkingEnabledOverride.value = true
         }
 
  // Bug fix: セッションを作り直した / 切り替えた際に KV キャッシュをクリアして
@@ -1398,6 +1410,12 @@ class ChatViewModel(
     }
 
     fun setChatSessionDisableThinking(disabled: Boolean) {
+        // 常時 Thinking テンプレート (LFM2.5 思考版など) は OFF にできない。
+        val modelKey = _selectedModel.value
+        if (disabled && !isThinkingSwitchableForModel(modelKey)) {
+            Log.d(TAG, "setChatSessionDisableThinking: ignored OFF for always-on thinking model=$modelKey")
+            return
+        }
         // 設定値のみ更新。モデルリロードは行わない。
         // 次のメッセージ送信時に新しい設定が自動的に適用される。
         Log.d(TAG, "setChatSessionDisableThinking: disabled=$disabled")
@@ -1419,6 +1437,54 @@ class ChatViewModel(
         viewModelScope.launch {
             _uiMessage.emit(if (disabled) appContext.getString(R.string.chat_thinking_off_toast) else appContext.getString(R.string.chat_thinking_on_toast))
         }
+    }
+
+    /**
+     * チャットの Thinking ON/OFF をユーザーが切り替えられるか。
+     * 常時 Thinking テンプレート (生成開始で無条件に `<think>` を開く等) は false。
+     */
+    fun isThinkingSwitchableForModel(modelKey: String): Boolean {
+        return runCatching {
+            if (isAlwaysOnThinkingModel(modelKey)) return@runCatching false
+            val template = resolveChatTemplateForThinking(modelKey) ?: return@runCatching true
+            com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
+                .templateHasSwitchableThinking(template)
+        }.getOrDefault(true)
+    }
+
+    /**
+     * Thinking 対応かつ切替不可 (= 常時 Thinking) のモデルか。
+     * UI ロックと enableThinking 強制 ON の両方で使う。
+     */
+    fun isAlwaysOnThinkingModel(modelKey: String): Boolean {
+        return runCatching {
+            val template = resolveChatTemplateForThinking(modelKey) ?: return@runCatching false
+            val h = com.nezumi_ai.data.inference.prompt.ModelNameHeuristics
+            // 生成プロンプトで無条件に <think> を開く系を最優先
+            if (h.templateForcesThinkingOn(template)) return@runCatching true
+            // 切替変数が無く Thinking を宣言している系 (Ministral 等)
+            h.templateDeclaresThinking(template) && !h.templateHasSwitchableThinking(template)
+        }.getOrDefault(false)
+    }
+
+    /** 常時 Thinking モデル向けにセッション状態を ON 固定する（トーストなし）。 */
+    fun ensureAlwaysOnThinkingSession(modelKey: String = _selectedModel.value) {
+        if (!isAlwaysOnThinkingModel(modelKey)) return
+        if (!_chatSessionDisableThinking.value && _chatSessionThinkingEnabledOverride.value) return
+        Log.d(TAG, "ensureAlwaysOnThinkingSession: forcing ON for $modelKey")
+        _chatSessionDisableThinking.value = false
+        _chatSessionThinkingEnabledOverride.value = true
+    }
+
+    /**
+     * Thinking 判定用の chat_template を解決する。
+     * モデル ID の表記ゆれ (ファイル名のみ等) は imported から絶対パスに直し、
+     * [GgufFormatResolver] と同じ経路 (ユーザー選択テンプレ → GGUF 内蔵) で読む。
+     */
+    private fun resolveChatTemplateForThinking(modelKey: String): String? {
+        val resolved = resolveGgufModelPath(modelKey) ?: modelKey.trim()
+        return com.nezumi_ai.data.inference.GgufFormatResolver
+            .resolveChatTemplateText(appContext, resolved)
     }
 
     fun setChatSessionThinkingEffort(effort: String) {
@@ -4565,6 +4631,9 @@ class ChatViewModel(
         )
         val disableThinking = _chatSessionDisableThinking.value
         val thinkingEnabledOverride = _chatSessionThinkingEnabledOverride.value
+        // 常時 Thinking テンプレートはセッション OFF / グローバル OFF でも enableThinking=true。
+        // (テンプレが生成開始で無条件に <think> を開くため、パース・表示側も常に ON が必要)
+        val forcesAlwaysOnThinking = isAlwaysOnThinkingModel(model)
  // Bug fix: 以前は modelSupportsGemmaThinking() でしか override を受け付けないため、
         //   Qwen 系 GGUF などで「このチャットで Thinking: ON」にしても enable_thinking が
         //   反映されず、結果として `/no_think` directive のままユーザーには Thinking 表示だけ
@@ -4572,6 +4641,7 @@ class ChatViewModel(
         //   常に enableThinking を上書きする (チャットテンプレ側で `/think` `/no_think` を
         //   正しく付け替える)。
         val result = when {
+            forcesAlwaysOnThinking -> base.copy(enableThinking = true)
             thinkingEnabledOverride -> base.copy(enableThinking = true)
             disableThinking -> base.copy(enableThinking = false)
             else -> base

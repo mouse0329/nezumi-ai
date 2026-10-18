@@ -306,6 +306,8 @@ class ChatFragment : Fragment() {
     private var thinkingToggleEnabled by mutableStateOf(false)
     private var thinkingToggleChecked by mutableStateOf(false)
     private var thinkingToggleText by mutableStateOf("")
+    // 常時 Thinking テンプレートではトグルを出すが OFF にできない (ロック)。
+    private var thinkingToggleSwitchable by mutableStateOf(true)
     // 添付シートのエフォートセグメント (low / medium / high)。PreferencesHelper に永続化。
     private var thinkingEffort by mutableStateOf(PreferencesHelper.THINKING_EFFORT_LOW)
     // 要望: 思考強度 UI はテンプレートが reasoning_effort を解釈するモデルのみ表示。
@@ -2465,7 +2467,8 @@ class ChatFragment : Fragment() {
         //   ヘッダーの Switch 自体が消失して見えなくなっていた。
         //   enabled を visible と切り離し、ヘッダーの表示自体は常に保ちつつ、
         //   押下可否のみロードステータスで制御する。
-        thinkingToggleEnabled = !isModelLoadingNow
+        // 常時 Thinking モデルはトグル自体を無効化 (ON 固定表示)。
+        thinkingToggleEnabled = !isModelLoadingNow && thinkingToggleSwitchable
     }
 
     private fun updateThinkingToggleVisibility() {
@@ -2476,6 +2479,7 @@ class ChatFragment : Fragment() {
             // 要望: 思考強度 (low / medium / high) はテンプレートが reasoning_effort を
             // 解釈するモデルのみ表示する。非対応モデルでは UI から消す。
             val thinkingEffortSupported = viewModel.isThinkingEffortSupportedForModel(modelKey)
+            val thinkingSwitchable = viewModel.isThinkingSwitchableForModel(modelKey)
             // 添付シート用。未ロードの GGUF / LiteRT-LM でもメニュー表示時に
             // ファイル走査やエンジン問い合わせをしない。
             val effortLevels = runCatching {
@@ -2484,8 +2488,13 @@ class ChatFragment : Fragment() {
             withContext(Dispatchers.Main) {
                 if (!isAdded || !isViewCreated || currentModelKey != modelKey) return@withContext
                 thinkingToggleVisible = modelSupportsThinking
+                thinkingToggleSwitchable = thinkingSwitchable
                 thinkingEffortVisible = thinkingEffortSupported
                 attachmentEffortLevels = effortLevels
+                // 常時 Thinking モデルはセッション側も OFF に残さない（トーストなし）
+                if (modelSupportsThinking && !thinkingSwitchable) {
+                    viewModel.ensureAlwaysOnThinkingSession(modelKey)
+                }
                 renderThinkingToggleState()
             }
         }
@@ -3713,10 +3722,8 @@ class ChatFragment : Fragment() {
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             if (thinkingToggleVisible) {
-                // ヘッダーのシンキング切替は添付 (+) シートへ移設済み。
-                //   ここには現在の状態を示す読み取り専用のステータスピルを表示する
-                //   (1 行目: 思考ON / 思考OFF、2 行目: ON のときだけ effort の小文字表記)。
-                //   ピル自体はタップ不可で、シートは従来どおり「+」ボタンから開く。
+                // ヘッダーのシンキング状態ピル。タップで添付シート（思考 ON/OFF・強度切替 UI）を開く。
+                //   シートは従来どおり「+」からも開ける。ピル自体が切替 UI へのショートカットになる。
                 val thinkingOn = !thinkingToggleChecked
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -3729,6 +3736,10 @@ class ChatFragment : Fragment() {
                             1.dp,
                             colorResource(id = R.color.border),
                             RoundedCornerShape(14.dp)
+                        )
+                        .clickable(
+                            enabled = thinkingToggleEnabled,
+                            onClick = { showAttachmentActionSheet() }
                         )
                         .padding(horizontal = 14.dp, vertical = 6.dp)
                 ) {
@@ -3811,11 +3822,13 @@ class ChatFragment : Fragment() {
                         imageEnabled = imageInputEnabled,
                         // シンキング非対応モデルではセクション自体を出さない (従来どおり添付のみ)。
                         thinkingOn = if (thinkingToggleVisible) !thinkingToggleChecked else null,
+                        thinkingSwitchable = thinkingToggleSwitchable,
                         thinkingEffort = thinkingEffort,
                         // 未ロード時にここで GGUF を読むとメニューが開かず固まる。
                         // モデル選択時に IO で解決済みの値だけを渡す。
                         effortLevels = attachmentEffortLevels,
                         onThinkingChange = { checked ->
+                            if (!thinkingToggleSwitchable) return@AttachmentOptionsSheet
                             viewModel.setChatSessionDisableThinking(!checked)
                         },
                         onEffortChange = { effort ->

@@ -281,14 +281,20 @@ object ModelNameHeuristics {
      * chat_template が Thinking 制御を宣言しているか。
      * モデル設定の Thinking トグルは、これが true のときだけ有効化する。
      *
-     * 切り替え可能 (`enable_thinking`) と常時推論 (CLI 専用タグのみ) の両方を含む。
+     * 切り替え可能 (`enable_thinking`) と常時推論 (生成プロンプトで `<think>` を開く等) の両方を含む。
      * 常時推論かどうかは [templateHasSwitchableThinking] で区別する。
+     *
+     * 注意:
+     * - 履歴から `</think>` 以降だけ残す (keep_past_thinking / preserve_thinking の strip) だけの
+     *   テンプレートはシンキング非対応。開きタグ `<think>` や enable_thinking 等が無い。
+     * - `List of tools: [` だけでは判定しない (非 Thinking の LFM2 系でも同じ文面が出る)。
      */
     fun templateDeclaresThinking(template: String): Boolean {
         if (template.isBlank()) return false
         return template.contains("enable_thinking") ||
             template.contains("reasoning_effort") ||
             template.contains("low_effort") ||
+            // 開きタグがある = 生成または履歴で思考ブロックを扱う (閉じタグだけの strip は除外)
             ToolCallTags.THINK_OPEN in template ||
             ToolCallTags.GEMMA_THINK_TRIGGER in template ||
             ToolCallTags.QWEN_NO_THINK_COMMAND in template ||
@@ -298,8 +304,6 @@ object ModelNameHeuristics {
             ("[THINK]" in template && "[/THINK]" in template) ||
             ("<mm:think>" in template && "</mm:think>" in template) ||
             ("<|START_THINKING|>" in template && "<|END_THINKING|>" in template) ||
-            // LFM2.5: `List of tools: [` があり `<|tool_list_start|>` が無い (CLI と同じ条件)
-            ("List of tools: [" in template && "<|tool_list_start|>" !in template) ||
             // Ministral / Mistral Large 3: [SYSTEM_PROMPT]+[TOOL_CALLS]+[ARGS] があり [CALL_ID] が無い
             (templateContainsMinistralMarkers(template))
     }
@@ -307,7 +311,9 @@ object ModelNameHeuristics {
     /**
      * Thinking を ON/OFF 切り替えできるテンプレートか。
      * `enable_thinking` 変数、または Qwen ソフトスイッチ (`/think` `/no_think`) がある場合 true。
-     * 常時推論モデル (LFM2.5 / Ministral 等) は false → UI トグルは出してもテンプレートが無視する。
+     *
+     * 常時推論モデル (add_generation_prompt で無条件に `<think>` を開く LFM2.5 思考版など) は
+     * false。UI ではトグルを出すがロックし、OFF にできないようにする。
      */
     fun templateHasSwitchableThinking(template: String): Boolean {
         if (template.isBlank()) return false
@@ -317,8 +323,49 @@ object ModelNameHeuristics {
         ) {
             return true
         }
+        // reasoning_effort のみで ON/OFF 相当を表現する系も切替可能とみなす
+        if ("reasoning_effort" in template || "low_effort" in template) return true
         return false
     }
+
+    /**
+     * 常時 Thinking テンプレートか。
+     *
+     * 判定: `add_generation_prompt` 分岐の近傍に Thinking 開きタグがある。
+     * 例 (LFM2.5 思考版):
+     * ```
+     * {%- if add_generation_prompt -%}
+     *     {{- "<|im_start|>assistant\n<think>" -}}
+     * {%- endif -%}
+     * ```
+     * 切替変数 (`enable_thinking` / Qwen `/think` `/no_think` / reasoning_effort) がある
+     * テンプレは [templateHasSwitchableThinking] で除外する。
+     * 履歴 strip 専用 (`</think>` のみで生成分岐に開きタグが無い) は false。
+     */
+    fun templateForcesThinkingOn(template: String): Boolean {
+        if (template.isBlank()) return false
+        if (templateHasSwitchableThinking(template)) return false
+        val region = generationPromptRegion(template) ?: return false
+        return regionContainsThinkingOpenTag(region)
+    }
+
+    /**
+     * `add_generation_prompt` 出現位置から先の生成プロンプト領域を取り出す。
+     * Jinja のネスト endif を完全には解析せず、後続の有限ウィンドウで十分判定する。
+     */
+    private fun generationPromptRegion(template: String): String? {
+        val idx = template.indexOf("add_generation_prompt")
+        if (idx < 0) return null
+        val end = (idx + 800).coerceAtMost(template.length)
+        return template.substring(idx, end)
+    }
+
+    private fun regionContainsThinkingOpenTag(region: String): Boolean =
+        ToolCallTags.THINK_OPEN in region ||
+            ToolCallTags.GEMMA_THINK_TRIGGER in region ||
+            ("[THINK]" in region) ||
+            ("<mm:think>" in region) ||
+            ("<|START_THINKING|>" in region)
 
     /** Ministral 3 / Mistral Large 3 系テンプレートの CLI と同じ特徴検出。 */
     private fun templateContainsMinistralMarkers(template: String): Boolean =

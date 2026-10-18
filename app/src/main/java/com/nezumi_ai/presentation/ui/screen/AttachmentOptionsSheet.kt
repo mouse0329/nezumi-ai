@@ -63,6 +63,8 @@ internal fun availableEffortLevels(
  *
  * [thinkingOn] が null のときはシンキングセクション自体を表示しない
  * (モデルがシンキング非対応の場合など、従来どおり添付のみのシートになる)。
+ * [thinkingSwitchable] が false のときは常時 Thinking モデルとしてトグルを
+ * ON 固定・操作不可 (ロック) にする。
  * [effortLevels] はロード中モデルの chat_template が解釈できる思考強度レベル
  * (PreferencesHelper.resolveSupportedThinkingEffortLevels の結果)。空のときは
  * エフォートセグメントを表示せず ON/OFF トグルのみとする。
@@ -76,6 +78,7 @@ fun AttachmentOptionsSheet(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
     thinkingOn: Boolean? = null,
+    thinkingSwitchable: Boolean = true,
     thinkingEffort: String = PreferencesHelper.THINKING_EFFORT_LOW,
     effortLevels: List<String> = PreferencesHelper.ALL_THINKING_EFFORTS,
     onThinkingChange: (Boolean) -> Unit = {},
@@ -123,6 +126,7 @@ fun AttachmentOptionsSheet(
                 Switch(
                     checked = thinkingOn,
                     onCheckedChange = onThinkingChange,
+                    enabled = thinkingSwitchable,
                     colors = nezumiSwitchColors(),
                     modifier = Modifier.padding(start = 12.dp)
                 )
