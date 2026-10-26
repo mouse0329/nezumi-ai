@@ -113,7 +113,6 @@ object ModelFileManager {
     private const val MAX_RETRIES = 3
     private const val RETRY_DELAY_MS = 2000L
     private const val MIN_FREE_DISK_BYTES = 100 * 1024 * 1024 // 100MB
-    private const val MIN_VALID_MODEL_BYTES = 50L * 1024L * 1024L // 50MB
     private const val BUFFER_SIZE = 32 * 1024 // 32KB buffer
     private const val WARN_SMALL_IMPORTED_TASK_BYTES = 64L * 1024L
 
@@ -561,7 +560,7 @@ object ModelFileManager {
                 "${normalizedModelId.replace('/', '_')}__${normalizedFilePath.replace('/', '_')}"
                     .replace(Regex("[^A-Za-z0-9._-]"), "_")
             val outFile = File(importedDir, finalName)
-            if (outFile.isFile && outFile.canRead() && outFile.length() >= MIN_VALID_MODEL_BYTES) {
+            if (outFile.isFile && outFile.canRead() && outFile.length() > 0L) {
                 Log.d(TAG, "HF file already exists, skipping download: ${outFile.name}")
                 onProgress?.invoke(outFile.length(), outFile.length())
                 return@runCatching outFile
@@ -1153,9 +1152,9 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
             coroutineContext.ensureActive()
             migrateLegacyLiteRtLmToTaskIfNeeded(file, model)
             cleanupLegacyLiteRtLmFiles(file, model)
-            // 1) 不完全ファイル（小さすぎる等）は削除
-            if (file.exists() && file.length() < MIN_VALID_MODEL_BYTES) {
-                Log.w(TAG, "Model file is too small, removing: ${file.length()} bytes")
+            // 1) 空ファイルだけを不完全ファイルとして削除する。小容量の有効モデルも許可する。
+            if (file.exists() && file.length() == 0L) {
+                Log.w(TAG, "Empty model file, removing")
                 file.delete()
                 metadataFile(file).delete()
             }
@@ -1227,7 +1226,7 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
     ): Boolean {
         if (!file.exists() || !file.isFile) return false
         val length = file.length()
-        if (length < MIN_VALID_MODEL_BYTES) return false
+        if (length <= 0L) return false
 
         // HEAD失敗時はcontentLengthが推定値の可能性があるため、SHA取得時のみサイズ厳密化
         if (!expectedSha256.isNullOrBlank() && remoteContentLength > 0L && length != remoteContentLength) {
@@ -1462,10 +1461,8 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
                     "File size mismatch: ${tmpFile.length()} vs $totalBytes"
                 )
             }
-            if (tmpFile.length() < MIN_VALID_MODEL_BYTES) {
-                throw IllegalStateException(
-                    "Downloaded file is unexpectedly small: ${tmpFile.length()} bytes"
-                )
+            if (tmpFile.length() <= 0L) {
+                throw IllegalStateException("Downloaded file is empty")
             }
 
             // ファイルを確定
@@ -1631,8 +1628,8 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
         if (!legacy.isFile) return
         if (isValidDownloadedFile(taskFile)) return
 
-        if (legacy.length() < MIN_VALID_MODEL_BYTES) {
-            Log.w(TAG, "Legacy litertlm too small to migrate: ${legacy.absolutePath}")
+        if (legacy.length() <= 0L) {
+            Log.w(TAG, "Legacy litertlm is empty; skipping migration: ${legacy.absolutePath}")
             return
         }
 
@@ -1697,8 +1694,9 @@ val importedDir = File(context.filesDir, "models/imported").canonicalFile
 
         val metadata = readMetadata(file)
         if (metadata == null) {
-            // #16 fix: 1MB is insufficient to detect incomplete downloads; use MIN_VALID_MODEL_BYTES
-            return fileLength >= MIN_VALID_MODEL_BYTES
+            // サイズ下限は設けず、空ファイルのみ無効とする。
+            // ダウンロード時は Content-Length との一致を別途検証する。
+            return fileLength > 0L
         }
 
         // メタデータがある場合はサイズで検証
