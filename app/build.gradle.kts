@@ -109,7 +109,7 @@ android {
             applicationIdSuffix = ".open"
         }
 
-        buildConfigField("String", "LITERTLM_VERSION", "\"0.17.0\"")
+        buildConfigField("String", "LITERTLM_VERSION", "\"0.19.0\"")
         buildConfigField("String", "LLAMACPP_VERSION", "\"$llamaCppVersion\"")
 
         // テレメトリ (Sentry) の DSN。空文字の場合、TelemetryGate は初期化を行わない。
@@ -240,6 +240,7 @@ chaquopy {
         // 済みのバージョン（例: "3.11", "3.12"）に合わせて変更するか、
         // buildPython() で絶対パスを指定すること。
         version = "3.13"
+        buildPython(localProperties.getProperty("python.path") ?: "python")
 
         pip {
             // MarkItDown 本体（PDF/Word/Excel/PowerPoint/HTML等 → Markdown 変換）。
@@ -301,14 +302,14 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.11.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.0")
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.30.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.0")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.1")
 
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("net.openid:appauth:0.11.1")
 
     implementation("io.coil-kt:coil-compose:2.7.0")
-    implementation("com.squareup.okhttp3:okhttp:5.4.0")
+    implementation("com.squareup.okhttp3:okhttp:5.5.1")
     // クラウド推論エンジン (Claude / Gemini / OpenAI / LM Studio) の
     // SSE ストリームを行単位で解析するために okhttp-sse を追加。
     // Ollama は NDJSON ストリームなので通常の Response.body().source() で処理する。

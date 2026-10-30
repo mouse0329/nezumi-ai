@@ -209,12 +209,6 @@ class ChatViewModel(
         // 起動そのものをスキップする。メーター表示はコンテキスト使用量の目安なので、
         // 数百ms〜1秒程度の遅延は実用上問題にならない。
         private const val CONTEXT_USAGE_ESTIMATION_MIN_INTERVAL_MS = 1_000L
-        /** 推論開始を拒否するメモリ使用率閾値 */
-        private const val MEMORY_BLOCK_INFERENCE_PERCENT = 90
-        /** 推論中にキャンセルするメモリ使用率閾値 */
-        private const val MEMORY_ABORT_INFERENCE_PERCENT = 95
-        /** 推論中メモリ監視の確認間隔 */
-        private const val MEMORY_WATCH_INTERVAL_MS = 10_000L
         /** メモリ注入に使えるコンテキスト予算の最大比率 */
         private const val MEMORY_BUDGET_RATIO = 0.15f
         /** 会話履歴のために最低限確保する文字数 */
@@ -1710,13 +1704,9 @@ class ChatViewModel(
                 _uiMessage.emit(msg)
                 return@launch
             }
-            // 全走査はキャッシュする。未キャッシュ時の時間はロード画面のあいだに含める。
-            acquireModelLoadingOverlay()
-            try {
-            updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_template_scan))
+            // 全走査はキャッシュする。警告確認前にロードUIを出さない。
             val config = chatInferenceConfigForModel(selectedModel, probeTemplate = true)
             // テンプレート確認中に現設定でメモリ推定を走らせキャッシュする（セーフティ等は対象外）
-            updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_memory_estimate))
             runCatching {
                 val engineName = toEngineModelName(selectedModel)
                 val path = when {
@@ -1758,7 +1748,6 @@ class ChatViewModel(
                     )
                 }
             }.onFailure { Log.w(TAG, "preload memory estimate failed", it) }
-            updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_template_scan))
             Log.d(TAG, "preloadActivePresetModel: start model=$selectedModel")
             val result = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = true)
             if (result.isFailure) {
@@ -1789,9 +1778,6 @@ class ChatViewModel(
                         details = error?.message
                     )
                 }
-            }
-            } finally {
-                releaseModelLoadingOverlay()
             }
         }
     }
@@ -2225,22 +2211,10 @@ class ChatViewModel(
 
             val manager = requireModelManager()
             val selectedModel = getActiveSelectedModel()
-
-            val memoryPercent = manager.getMemoryUsagePercent()
-            Log.d(TAG, "generateAIResponse: memoryUsage=$memoryPercent%")
-            if (memoryPercent >= MEMORY_BLOCK_INFERENCE_PERCENT) {
-                Log.w(TAG, "generateAIResponse: memory too high ($memoryPercent%), blocking inference")
-                val memStatus = MemoryObserver.getMemoryStatus(appContext)
-                _memoryError.value = MemoryErrorInfo(
-                    usedPercent = memStatus.usedPercent,
-                    usedMB = memStatus.usedMB,
-                    totalMB = memStatus.maxMB
-                )
-                return
-            }
-            _selectedModel.value = selectedModel
             val engineModelName = toEngineModelName(selectedModel)
             currentEngineModelName = engineModelName
+
+            _selectedModel.value = selectedModel
             val hasMediaInput = images.isNotEmpty() || audioClips.isNotEmpty()
             currentHasMediaInput = hasMediaInput
             val modelAvailable = ModelFileManager.isModelAvailable(appContext, engineModelName)
@@ -2263,18 +2237,10 @@ class ChatViewModel(
                 return
             }
             // GGUF のテンプレート全走査はロード時間に含める。結果はディスクキャッシュする。
+            // 警告確認前にロードUIを出さないため、ここではオーバーレイを立てない。
             val includeTemplateProbe = engineModelName.endsWith(".gguf", ignoreCase = true)
             val modelLoadStartMs = System.currentTimeMillis()
-            if (includeTemplateProbe) {
-                acquireModelLoadingOverlay()
-                updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_template_scan))
-            }
-            val baseConfig = try {
-                chatInferenceConfigForModel(selectedModel, probeTemplate = includeTemplateProbe)
-            } catch (t: Throwable) {
-                if (includeTemplateProbe) releaseModelLoadingOverlay()
-                throw t
-            }
+            val baseConfig = chatInferenceConfigForModel(selectedModel, probeTemplate = includeTemplateProbe)
             val backend = settingsRepository.getBackendForModel(selectedModel)
             // Bug fix: LiteRT-LM 外部インポートモデル (.task / .litertlm) については、
             // モデル設定で画像/音声のスイッチを ON にしていない限り requireMultimodal を立てない。
@@ -2294,25 +2260,21 @@ class ChatViewModel(
                 requireMultimodal = importedMultimodalAllowed && !engineModelName.endsWith(".gguf", ignoreCase = true)
             ).normalized()
             val aiStartMs = System.currentTimeMillis()
-            Log.d(TAG, "generateAIResponse START: model=$selectedModel, enableThinking=${config.enableThinking}, backend=${config.backendType}, requestedBackend=$backend, memoryUsage=$memoryPercent%")
+            Log.d(TAG, "generateAIResponse START: model=$selectedModel, enableThinking=${config.enableThinking}, backend=${config.backendType}, requestedBackend=$backend")
 
             // Phase 11: ロード進捗ログの細分化
             Log.d(TAG, "generateAIResponse LOAD_START: model=$selectedModel templateProbe=$includeTemplateProbe")
 
-            // チャット推論時はメモリ警告を出さずロードを続行する。
-            // 警告はモデルダウンロード・設定画面側に限定し、会話のたびにブロックしない。
+            // ロード前メモリ警告を出す。ユーザーが続行を選ぶまで実ロードは始めない。
+            // proceedWithModelLoad 側で skipMemoryWarning=true にしてから再呼び出しする。
             val isModelAlreadyLoaded = manager.isModelLoaded(engineModelName, config)
-            val skipMemoryWarning = true
+            val skipMemoryWarning = false
             Log.d(
                 TAG,
                 "generateAIResponse: engineModelName=$engineModelName isModelAlreadyLoaded=$isModelAlreadyLoaded skipMemoryWarning=$skipMemoryWarning"
             )
 
-            val loadResult = try {
-                loadModelWithOverlay(selectedModel, config, onlyIfAvailable = false, skipMemoryWarning = skipMemoryWarning)
-            } finally {
-                if (includeTemplateProbe) releaseModelLoadingOverlay()
-            }
+            val loadResult = loadModelWithOverlay(selectedModel, config, onlyIfAvailable = false, skipMemoryWarning = skipMemoryWarning)
 
             val modelLoadEndMs = System.currentTimeMillis()
             Log.d(TAG, "generateAIResponse LOAD_END: model=$selectedModel duration=${modelLoadEndMs - modelLoadStartMs}ms success=${loadResult.isSuccess}")
@@ -2708,24 +2670,6 @@ class ChatViewModel(
                                 //   stallTimeout を超えたら停滞扱いにする。
                                 if (idle >= stallTimeoutMs) {
                                     throw GenerationStalledException()
-                                }
-                            }
-                        }
-
-                        // 推論中メモリ監視：閾値超えたらキャンセル
-                        val memoryWatchJob = launch {
-                            while (isActive) {
-                                delay(MEMORY_WATCH_INTERVAL_MS)
-                                val mem = manager.getMemoryUsagePercent()
-                                if (mem >= MEMORY_ABORT_INFERENCE_PERCENT) {
-                                    Log.w(TAG, "memoryWatchJob: memory critical ($mem%), aborting inference")
-                                    val memStatus = MemoryObserver.getMemoryStatus(appContext)
-                                    _memoryError.value = MemoryErrorInfo(
-                                        usedPercent = memStatus.usedPercent,
-                                        usedMB = memStatus.usedMB,
-                                        totalMB = memStatus.maxMB
-                                    )
-                                    cancel(CancellationException("MEMORY_CRITICAL"))
                                 }
                             }
                         }
@@ -3273,7 +3217,6 @@ class ChatViewModel(
                             generationEndAtMs = SystemClock.elapsedRealtime()
                             firstTokenTimeoutJob.cancel()
                             stallWatchJob.cancel()
-                            memoryWatchJob.cancel()
                             Log.d(TAG, "Flow collection completed")
                         }
                     }
@@ -5942,7 +5885,7 @@ class ChatViewModel(
         val isSameModelLoaded = manager.isSameModelLoaded(engineModelName)
         val effectiveSkipMemoryWarning = skipMemoryWarning || isModelAlreadyLoaded
 
- // 重要なショートカット:
+        // 重要なショートカット:
         //   モデルが既にロード済みで現コンフィグと互換なら、一切のオーバーレイを出さずに成功を返す。
         //   以前はこのケースでも _isModelLoading = true を一旦立ててしまい、入り口側で先に立てたタイマーと不整合を起こし
         //   「ロード不要なのにグルグルが永遠に続く」バグの主な原因だった。
@@ -5951,6 +5894,50 @@ class ChatViewModel(
             setMeterLoadedModel(engineModelName)
             Log.d(TAG, "loadModelWithOverlay: SHORT_CIRCUIT model=$model already loaded, skip overlay entirely")
             return Result.success(Unit)
+        }
+
+        // ロード前メモリ警告は、オーバーレイや実ロードを始める前に出す。
+        // 警告表示中は続行を選ぶまでロードを開始しない。
+        if (!effectiveSkipMemoryWarning) {
+            val thresholdPercent = settingsRepository.getPreloadMemoryWarningThresholdPercent()
+            if (thresholdPercent > 0) {
+                val isMemoryLowByFileSize = if (File(engineModelName).exists()) {
+                    val fileSize = File(engineModelName).length()
+                    MemoryObserver.isMemoryLowForFileSize(appContext, fileSize, thresholdPercent, modelIdentifier = engineModelName)
+                } else {
+                    val knownSize = getEngineModelSizeBytes(engineModelName)
+                    if (knownSize != null) {
+                        MemoryObserver.isMemoryLowForFileSize(appContext, knownSize, thresholdPercent, modelIdentifier = engineModelName)
+                    } else {
+                        Log.w(TAG, "loadModelWithOverlay: unknown model size for engineModelName=$engineModelName, skipping memory size warning")
+                        false
+                    }
+                }
+                if (isMemoryLowByFileSize) {
+                    Log.w(TAG, "loadModelWithOverlay: MEMORY LOW - model=$model byFileSize=true (before overlay)")
+                    val displayModel = when (model.uppercase()) {
+                        "GEMMA4-2B" -> "Gemma4-2B"
+                        "GEMMA4-4B" -> "Gemma4-4B"
+                        else -> appContext.getString(R.string.model_kind_custom)
+                    }
+                    val systemMemInfo = MemoryObserver.getSystemMemoryInfo(appContext)
+                    if (_memoryWarning.value == null) {
+                        _memoryWarning.value = MemoryWarningInfo(
+                            modelName = displayModel,
+                            predictedUsagePercent = systemMemInfo.usedPercent,
+                            currentUsagePercent = systemMemInfo.usedPercent,
+                            currentUsageMB = systemMemInfo.usedMemoryMB,
+                            maxMB = systemMemInfo.totalMemoryMB,
+                            usedMemoryMB = systemMemInfo.usedMemoryMB,
+                            totalMemoryMB = systemMemInfo.totalMemoryMB,
+                            usedPercent = systemMemInfo.usedPercent,
+                            lowMemoryFlag = systemMemInfo.lowMemoryFlag
+                        )
+                    }
+                    // 既に警告表示中でも、続行前にロードを始めない
+                    return Result.failure(RuntimeException("MEMORY_WARNING_SHOWN"))
+                }
+            }
         }
 
         acquireModelLoadingOverlay()
@@ -6047,30 +6034,10 @@ class ChatViewModel(
                     }
 
                     if (isMemoryLowByFileSize) {
-                        Log.w(TAG, "loadModelWithOverlay: MEMORY LOW - model=$model byFileSize=$isMemoryLowByFileSize")
-                        updateModelLoadingPhase(appContext.getString(R.string.model_loading_phase_memory_check))
-
-                        // 警告情報を取得
-                        val systemMemInfo = MemoryObserver.getSystemMemoryInfo(appContext)
-
- // バグ修正: 既に警告が表示されている場合はスキップ
-                        if (_memoryWarning.value == null) {
-                            _memoryWarning.value = MemoryWarningInfo(
-                                modelName = displayModel,
-                                predictedUsagePercent = systemMemInfo.usedPercent,
-                                currentUsagePercent = systemMemInfo.usedPercent,
-                                currentUsageMB = systemMemInfo.usedMemoryMB,
-                                maxMB = systemMemInfo.totalMemoryMB,
-                                usedMemoryMB = systemMemInfo.usedMemoryMB,
-                                totalMemoryMB = systemMemInfo.totalMemoryMB,
-                                usedPercent = systemMemInfo.usedPercent,
-                                lowMemoryFlag = systemMemInfo.lowMemoryFlag
-                            )
- // 以前は _isModelLoading だけ false にしてラベルを残していたが、
-                            //   メモリ警告ダイアログを閉じた後に UI で「モデル準備中」が見え施けていた
-                            //   不具合を防ぐため、タイマー・フェーズも一旦クリアする。
-                            return Result.failure(RuntimeException("MEMORY_WARNING_SHOWN"))
-                        }
+                        // 早期チェックで既に警告を出して return しているはず。
+                        // ここに来た場合も、続行前にロードしない。
+                        Log.w(TAG, "loadModelWithOverlay: MEMORY LOW still true inside overlay path - aborting")
+                        return Result.failure(RuntimeException("MEMORY_WARNING_SHOWN"))
                     }
                 }
             }
