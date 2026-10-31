@@ -5,12 +5,10 @@
 # For more details, see
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# web_fetch (JS描画) がページ本文を Kotlin へ返すためのブリッジ。
+-keepclassmembers class com.nezumi_ai.data.inference.PageDumpBridge {
+    @android.webkit.JavascriptInterface <methods>;
+}
 
 # Uncomment this to preserve the line number information for
 # debugging stack traces.

@@ -357,9 +357,13 @@ private class WebSearchSchema : ToolSet {
 
 private class WebFetchSchema : ToolSet {
     @Tool(
-        description = "Fetch a web page and return its content as Markdown text. " +
-            "Use this to read the body of a URL found by web_search. " +
-            "JavaScript-rendered pages are not supported."
+        description = "Fetch a web page and return its content as Markdown. " +
+            "Use this to read a URL found by web_search. " +
+            "Static HTML is always available. When JavaScript rendering is enabled in tool settings, " +
+            "the page is rendered in an off-screen browser first so SPAs can be read; " +
+            "that path is slower, and if it fails the tool falls back to static HTML. " +
+            "Results may include jsRendered=true or jsFallback=true. " +
+            "Login walls, anti-bot interstitials, and pages that never render text can still fail."
     )
     fun webFetch(
         @ToolParam(description = "http(s) URL of the page to fetch") url: String,
