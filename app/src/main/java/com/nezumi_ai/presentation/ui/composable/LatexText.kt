@@ -5,50 +5,66 @@ import android.graphics.Canvas
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
-import ru.noties.jlatexmath.JLatexMathDrawable
-
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.unit.sp
+import android.widget.Toast
+import coil.compose.AsyncImage
 import com.halilibo.richtext.commonmark.Markdown
 import com.halilibo.richtext.ui.RichTextStyle
 import com.halilibo.richtext.ui.material3.RichText
 import com.halilibo.richtext.ui.string.RichTextStringStyle
+import com.nezumi_ai.R
+import dev.hossain.highlight.ui.HighlightThemeProvider
+import dev.hossain.highlight.ui.SyntaxHighlightedCode
+import ru.noties.jlatexmath.JLatexMathDrawable
 
 private sealed class MixedPart {
     data class MarkdownPart(val content: String) : MixedPart()
     data class LatexBlockPart(val formula: String) : MixedPart()
     data class LatexInlinePart(val formula: String) : MixedPart()
     data class ImagePart(val url: String) : MixedPart()
+    data class CodeBlockPart(val language: String?, val code: String) : MixedPart()
 }
 
 private fun parseMixed(text: String): List<MixedPart> {
@@ -106,16 +122,16 @@ private fun parseMixed(text: String): List<MixedPart> {
 
         when {
             firstMatch == codeBlockMatch -> {
-                // コードブロックはMarkdownの一部として扱う
-                val lineStart = remaining.lastIndexOf('\n', firstMatch.range.first).let { 
-                    if (it < 0) 0 else it + 1 
+                val fullBlock = remaining.substring(firstMatch.range)
+                val lines = fullBlock.trim().lines()
+                val lang = lines.firstOrNull()?.removePrefix("```")?.trim()?.takeIf { it.isNotBlank() }
+                val code = if (lines.size > 2) {
+                    lines.subList(1, lines.size - 1).joinToString("\n")
+                } else {
+                    ""
                 }
-                val lineEnd = remaining.indexOf('\n', firstMatch.range.last).let {
-                    if (it < 0) remaining.length else it
-                }
-                val fullLine = remaining.substring(lineStart, lineEnd)
-                parts.add(MixedPart.MarkdownPart(fullLine))
-                remaining = remaining.substring(lineEnd)
+                parts.add(MixedPart.CodeBlockPart(lang, code))
+                remaining = remaining.substring(firstMatch.range.last + 1)
             }
             firstMatch == blockLatexMatch -> {
                 parts.add(MixedPart.LatexBlockPart(firstMatch.groupValues[1]))
@@ -210,6 +226,13 @@ fun MarkdownLatexText(
                     AsyncImage(
                         model = part.url,
                         contentDescription = "Markdown Image",
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                is MixedPart.CodeBlockPart -> {
+                    CodeBlockView(
+                        language = part.language,
+                        code = part.code,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -420,4 +443,24 @@ private fun parseLatex(text: String): List<LatexPart> {
     }
 
     return parts
+}
+
+@Composable
+private fun CodeBlockView(
+    language: String?,
+    code: String,
+    modifier: Modifier = Modifier
+) {
+    // 言語指定なしの場合は plaintext にフォールバック（Highlight.js が対応）。
+    // 必要なら将来 highlightAuto で自動判定も可能。
+    val resolvedLang = language?.trim()?.takeIf { it.isNotBlank() } ?: "plaintext"
+
+    HighlightThemeProvider {
+        SyntaxHighlightedCode(
+            code = code,
+            language = resolvedLang,
+            modifier = modifier.padding(vertical = 6.dp),
+            showLineNumbers = false
+        )
+    }
 }

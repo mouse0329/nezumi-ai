@@ -288,6 +288,8 @@ dependencies {
     implementation(libs.compose.richtext.commonmark)
     implementation(libs.compose.richtext.ui.material3)
     implementation("ru.noties:jlatexmath-android:0.2.0")
+    // コードブロックのシンタックスハイライト (Highlight.js ベース, MIT)
+    implementation("dev.hossain:compose-highlight:0.40.0")
 
     implementation("androidx.navigation:navigation-fragment-ktx:2.9.8")
     implementation("androidx.navigation:navigation-ui-ktx:2.10.0")
