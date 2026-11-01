@@ -1373,9 +1373,15 @@ class ChatViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             // チャット画面表示時にはモデルをロードしない。
             // 実ロードは送信時(generateAIResponse)に遅延させる。
-            _selectedModel.value = getActiveSelectedModel()
-            // チャット準備完了を示す
-            _isChatReady.value = true
+            // getActiveSelectedModel 失敗時も入力欄が永久に無効化されないよう、
+            // isChatReady は finally で立てる。
+            try {
+                _selectedModel.value = getActiveSelectedModel()
+            } catch (t: Throwable) {
+                Log.e(TAG, "setCurrentSession: getActiveSelectedModel failed", t)
+            } finally {
+                _isChatReady.value = true
+            }
         }
     }
 
@@ -5944,7 +5950,7 @@ class ChatViewModel(
             startModelLoadingIndicator()
         }
         return try {
-            modelLoadMutex.withLock {
+            val loadResult = modelLoadMutex.withLock {
             val loadedAfterWait = manager.isModelLoaded(engineModelName, config)
             if (loadedAfterWait) {
                 setMeterLoadedModel(engineModelName)
@@ -6059,36 +6065,6 @@ class ChatViewModel(
                 setMeterLoadedModel(engineModelName)
                 updateModelLoadingPhase("ロード完了")
                 Log.d(TAG, "loadModelWithOverlay: SUCCESS - model=$model")
-
-                // 要求したGPUバックエンドが端末で使えずCPUにフォールバックしていないか確認する。
-                // 起きていた場合はユーザーに通知し、続行するか選ばせる（黙って進めない）。
-                val requestedBackend = LlamaCppGpuBackend.normalize(config.llamaCppGpuBackend)
-                if (LlamaCppGpuBackend.isGpu(requestedBackend) &&
-                    manager.didFallBackFromRequestedGpuBackend()
-                ) {
-                    val actualBackend = manager.currentActualGpuBackend()
-                    Log.w(
-                        TAG,
-                        "loadModelWithOverlay: requested backend=$requestedBackend was not available; " +
-                            "running on $actualBackend instead. Notifying user."
-                    )
-                    _gpuBackendFallback.value = GpuBackendFallbackInfo(
-                        requestedBackend = requestedBackend,
-                        actualBackend = actualBackend
-                    )
-                    val decision = CompletableDeferred<Boolean>()
-                    gpuBackendFallbackDecision = decision
-                    try {
-                        if (!decision.await()) {
-                            manager.unloadModel()
-                            return Result.failure(RuntimeException("GPU_BACKEND_FALLBACK_CANCELLED"))
-                        }
-                    } finally {
-                        if (gpuBackendFallbackDecision === decision) {
-                            gpuBackendFallbackDecision = null
-                        }
-                    }
-                }
             } else {
                 val error = result.exceptionOrNull()
                 Log.e(TAG, "loadModelWithOverlay: FAILED - model=$model, error=${error?.message}", error)
@@ -6118,6 +6094,44 @@ class ChatViewModel(
             }
             result
             }
+
+            // GPU フォールバック確認は modelLoadMutex の外で行う。
+            //   以前は withLock 内で decision.await() しており、ダイアログが閉じられない/
+            //   フラグメント破棄で Deferred が完了しないと mutex とオーバーレイが掴みっぱなしになり、
+            //   以降のロードが始まらず入力欄も isModelLoading のまま無効化され続けた。
+            if (loadResult.isSuccess) {
+                val requestedBackend = LlamaCppGpuBackend.normalize(config.llamaCppGpuBackend)
+                if (LlamaCppGpuBackend.isGpu(requestedBackend) &&
+                    manager.didFallBackFromRequestedGpuBackend()
+                ) {
+                    val actualBackend = manager.currentActualGpuBackend()
+                    Log.w(
+                        TAG,
+                        "loadModelWithOverlay: requested backend=$requestedBackend was not available; " +
+                            "running on $actualBackend instead. Notifying user."
+                    )
+                    // ロード自体は完了しているので、ユーザー確認待ち中はオーバーレイを外して
+                    // 入力を戻す（キャンセル時は下で unload）。
+                    releaseModelLoadingOverlay()
+                    _gpuBackendFallback.value = GpuBackendFallbackInfo(
+                        requestedBackend = requestedBackend,
+                        actualBackend = actualBackend
+                    )
+                    val decision = CompletableDeferred<Boolean>()
+                    gpuBackendFallbackDecision = decision
+                    try {
+                        if (!decision.await()) {
+                            manager.unloadModel()
+                            return Result.failure(RuntimeException("GPU_BACKEND_FALLBACK_CANCELLED"))
+                        }
+                    } finally {
+                        if (gpuBackendFallbackDecision === decision) {
+                            gpuBackendFallbackDecision = null
+                        }
+                    }
+                }
+            }
+            loadResult
         } finally {
             releaseModelLoadingOverlay()
         }

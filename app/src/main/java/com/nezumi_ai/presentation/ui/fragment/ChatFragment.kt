@@ -223,6 +223,20 @@ class ChatFragment : Fragment() {
     private var isGenerating = false
     private var isModelLoadingNow = false
     private var isEmbeddingDownloading = false
+    // 入力欄 enabled は複数 StateFlow が個別に上書きすると競合する。
+    //   isChatReady / isModelLoading / 録音中 を合成して再計算する。
+    private var isChatReadyNow = false
+
+    /**
+     * 入力欄の有効状態を単一の式で再計算する。
+     * 以前は isChatReady / isModelLoading / embeddingDownload の各 collect が
+     * inputEnabledState を個別に上書きしており、後から来た false のイベントや
+     * embedding 完了の true がロード中に再有効化するなど、起動直後や
+     * モデル切替直後に入力不能/操作不能になる原因になっていた。
+     */
+    private fun recomputeInputEnabled() {
+        inputEnabledState = isChatReadyNow && !isModelLoadingNow && !isRecordingAudio
+    }
 
     // 入力欄のテキスト変化を監視して送信ボタンの有効/無効 (青/グレー) を即時反映する。
     // Bug fix (何も入力されていないのに送信ボタンが青い):
@@ -1666,9 +1680,10 @@ class ChatFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
                 viewModel.isEmbeddingDownloadInProgress.collect { downloading ->
-                    // 抽出中・埋め込みダウンロード中は入力を無効化しないが、ダウンロード中は送信を防ぐ
-                    inputEnabledState = !downloading
-                    // sendEnabledState は renderSendButtonState() が入力有無を含めて再計算する。
+                    // 抽出中・埋め込みダウンロード中は入力を無効化しない。送信可否のみ
+                    // renderSendButtonState() 側で isEmbeddingDownloading を見て止める。
+                    // 以前は inputEnabledState = !downloading としており、コメントと矛盾し
+                    // ロード中に完了イベントが来ると入力が誤って再有効化されていた。
                     isEmbeddingDownloading = downloading
                     renderSendButtonState()
                 if (isGenerating) {
@@ -1848,7 +1863,7 @@ class ChatFragment : Fragment() {
                 isModelLoadingNow = loading
                 modelLoadingOverlayVisible = loading
                 renderSendButtonState()
-                inputEnabledState = !loading
+                recomputeInputEnabled()
                 if (loading) {
                     requireActivity().window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 } else {
@@ -1919,7 +1934,8 @@ class ChatFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.isChatReady.collect { isReady ->
-                inputEnabledState = isReady
+                isChatReadyNow = isReady
+                recomputeInputEnabled()
                 // sendEnabledState は renderSendButtonState() が入力有無を含めて再計算する。
                 renderSendButtonState()
             }
@@ -4229,7 +4245,7 @@ class ChatFragment : Fragment() {
             //  - + ボタンを一時的に隠して誤タップを防ぐ
             //  - マイクボタンは「停止」へ
             showInlineRecordingBar()
-            inputEnabledState = false
+            recomputeInputEnabled()
             mediaMenuEnabledState = false
 
             // 録音アニメーションを開始
@@ -4240,6 +4256,7 @@ class ChatFragment : Fragment() {
             isRecordingAudio = false
             mediaRecorder?.release()
             mediaRecorder = null
+            recomputeInputEnabled()
         }
     }
 
@@ -4268,7 +4285,7 @@ class ChatFragment : Fragment() {
                 hideInlineRecordingBar()
 
                 renderSendButtonState()
-                inputEnabledState = true
+                recomputeInputEnabled()
                 mediaMenuEnabledState = true
 
                 // キャンセル時は録音ファイルを破棄する。
